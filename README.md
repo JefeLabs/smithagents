@@ -87,8 +87,11 @@ it — it's the riskiest integration in the design.
 # JVM: build every module from the root reactor
 mvn -q install
 
-# run the gateway
-mvn -pl gateway spring-boot:run
+# run the gateway — starts on :8080. Without DISCORD_TOKEN, Discord is disabled
+# (the gateway still runs). With a token AND the MESSAGE_CONTENT privileged intent
+# enabled in the Discord Developer Portal, the bot connects; type "!ping" in a
+# channel and it replies "pong 🏓".
+DISCORD_TOKEN=your-bot-token mvn -pl gateway spring-boot:run
 
 # control plane (front-end dev server on :1420)
 cd control-plane && npm install && npm run dev
@@ -96,6 +99,9 @@ cd control-plane && npm install && npm run dev
 
 > No Maven/Node wrapper is committed yet; add `mvnw`/a pinned Node as a follow-up.
 > The Tauri Rust crate (`control-plane/src-tauri/`) is not scaffolded yet.
+> **Temporary:** Embabel's `AgentPlatformAutoConfiguration` is excluded in
+> `gateway/src/main/resources/application.yml` — it eagerly requires an LLM at
+> startup. Remove the exclusion once a local model (e.g. Ollama) is wired.
 
 ## Your first contribution
 

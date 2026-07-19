@@ -1,0 +1,20 @@
+spring:
+  autoconfigure:
+    # TEMPORARY (see PRD §3 "no external APIs"): Embabel's platform eagerly builds
+    # an AgentPlatform at startup and requires a registered LLM (its default is the
+    # OpenAI model 'gpt-4.1-mini'). With no model configured the context fails to
+    # start. Exclude it so the gateway boots for the Discord/channel work; REMOVE
+    # this once a LOCAL model (e.g. Ollama) is wired for Embabel routing.
+    exclude:
+      - com.embabel.agent.autoconfigure.platform.AgentPlatformAutoConfiguration
+
+smithagents:
+  discord:
+    # Secret — provided at runtime via the DISCORD_TOKEN env var; never committed.
+    # Blank = Discord disabled (gateway still starts).
+    token: ${DISCORD_TOKEN:}
+
+logging:
+  level:
+    com.jefelabs.smithagents: INFO
+    net.dv8tion.jda: INFO

@@ -2,6 +2,7 @@ package com.jefelabs.smithagents.gateway;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 
 /**
  * The Spring Boot entry point and "central nervous system" of the swarm (PRD §3).
@@ -21,6 +22,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * {@code personas} module.
  */
 @SpringBootApplication(scanBasePackages = "com.jefelabs.smithagents")
+@ConfigurationPropertiesScan
 public class GatewayApplication {
 
     public static void main(String[] args) {
