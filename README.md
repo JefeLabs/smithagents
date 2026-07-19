@@ -30,6 +30,12 @@ smithagents/            (git root)
 `personas` and `agent-robot` modules are plain libraries; only `gateway` is a
 Spring Boot application (and the only module that runs the `spring-boot-maven-plugin`).
 
+**Discord lives inside `gateway`** (JDA embedded — not a separate module or
+service). A deliberate choice for responsiveness (no process boundary in the
+voice-audio hot path) and simplicity on the single host. Trade-off, accepted:
+Discord shares the gateway's lifecycle and failure domain, so an Embabel crash or
+a gateway redeploy drops the bot connection.
+
 **Java packages:** base `com.jefelabs.smithagents`, per module `.gateway`,
 `.persona`, `.robot`. The gateway sets `scanBasePackages = "com.jefelabs.smithagents"`
 so it discovers the persona beans across the module boundary.
