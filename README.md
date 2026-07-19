@@ -54,11 +54,16 @@ so it discovers the persona beans across the module boundary.
 ## Version decisions
 
 - **Spring Boot 4.1.0** (GA 2026-06-10) — the target.
-- **Embabel Agent 2.0.0** — the Spring Boot **4** line (validated vs Spring Boot
-  4.0.6 + Spring AI 2.0.0-M8, Java 17+). Run on 4.1; **fallback to 4.0.6** on a
-  transitive conflict.
+- **Embabel Agent 2.0.0-SNAPSHOT** — the Spring Boot **4** line is *unreleased*.
+  It is pulled from **Embabel's Artifactory** (`repo.embabel.com/artifactory/libs-snapshot`),
+  **not** Maven Central. Bleeding edge — snapshot bytes can change without notice,
+  and the build depends on that Artifactory being reachable. Baseline is Spring
+  Boot 4.0.6 + Spring AI 2.0.0; we run it on 4.1. Pin a timestamped snapshot for
+  reproducible CI. ✅ Verified: the full reactor compiles against it.
 - **Java 21** (LTS).
-- Spring AI 2.0.0-M8 is a milestone → the root pom adds the Spring Milestones repo.
+- Repos added to the root pom: **Embabel Artifactory** (snapshots + releases) and
+  **Spring Milestones** (for Spring AI). It transitively pulls Spring AI 2.0.0 +
+  Jackson 3.
 - **Routing engine: Embabel (`_embabel`), not Spring Integration** — Spring
   Integration was considered as a routing substrate and explicitly ruled out.
 
