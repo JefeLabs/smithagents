@@ -1,0 +1,16 @@
+{
+  "name": "@smithagents/voice",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "VoiceProvider abstraction: local (Piper/MLX), ElevenLabs (BYO key), and a pre-cache decorator. Same interface, chosen by policy.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}
