@@ -87,11 +87,13 @@ it — it's the riskiest integration in the design.
 # JVM: build every module from the root reactor
 mvn -q install
 
-# run the gateway — starts on :8080. Without DISCORD_TOKEN, Discord is disabled
-# (the gateway still runs). With a token AND the MESSAGE_CONTENT privileged intent
-# enabled in the Discord Developer Portal, the bot connects; type "!ping" in a
-# channel and it replies "pong 🏓".
-DISCORD_TOKEN=your-bot-token mvn -pl gateway spring-boot:run
+# run the gateway — starts on :8080. Discord creds live in a git-ignored .env
+# (DISCORD_TOKEN). Export them, then run. Requires the MESSAGE_CONTENT privileged
+# intent enabled in the Discord Developer Portal.
+set -a && source .env && set +a
+mvn -pl gateway spring-boot:run
+# then type "!ping" in a channel → the bot replies "pong 🏓".
+# (Without a token the gateway still starts, with Discord disabled.)
 
 # control plane (front-end dev server on :1420)
 cd control-plane && npm install && npm run dev
