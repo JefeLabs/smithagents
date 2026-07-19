@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <!-- Project decision: target Spring Boot 4.1 (GA 2026-06-10).
+         Fallback = 4.0.6 (Embabel 2.0.0's validated baseline) if a Spring AI /
+         Spring Framework transitive conflict surfaces. -->
+    <version>4.1.0</version>
+    <relativePath/>
+  </parent>
+
+  <groupId>com.jefelabs</groupId>
+  <artifactId>smithagents-gateway</artifactId>
+  <version>0.1.0</version>
+  <name>smithagents-gateway</name>
+  <description>Spring Boot + Embabel gateway: Discord WebSockets, _embabel routing, mTLS (PRD §3).</description>
+
+  <properties>
+    <java.version>21</java.version>
+    <!-- Embabel 2.x is the Spring Boot 4 line. 2.0.0 is validated against
+         Spring Boot 4.0.6 + Spring AI 2.0.0-M8 (Java 17+).
+         TODO: confirm the latest 2.0.x patch on Maven Central. -->
+    <embabel.version>2.0.0</embabel.version>
+    <!-- Discord API. TODO: confirm latest JDA 5.x on Maven Central before first build. -->
+    <jda.version>5.2.1</jda.version>
+    <!-- Flat topology: entry point is in the DEFAULT package (see README). -->
+    <start-class>GatewayApplication</start-class>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+    <!-- WebSocket server that synchronizes the Tauri thin clients (PRD §3, §5). -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-websocket</artifactId>
+    </dependency>
+
+    <!-- _embabel routing engine (PRD §3). For platform-level autoconfigure,
+         swap in `embabel-agent-starter-platform`. -->
+    <dependency>
+      <groupId>com.embabel.agent</groupId>
+      <artifactId>embabel-agent-starter</artifactId>
+      <version>${embabel.version}</version>
+    </dependency>
+
+    <!-- Discord (JDA): stream raw PCM audio + route transcriptions (PRD §3). -->
+    <dependency>
+      <groupId>net.dv8tion</groupId>
+      <artifactId>JDA</artifactId>
+      <version>${jda.version}</version>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <!-- Flat topology (PRD §2): compile .java from the repo root rather than
+         src/main/java. Consequence: the compiler scans the whole tree for
+         *.java, so keep stray Java files out of subdirectories. -->
+    <sourceDirectory>${project.basedir}</sourceDirectory>
+    <resources>
+      <!-- Allow a root-level application.yml/properties to stay flat too. -->
+      <resource>
+        <directory>${project.basedir}</directory>
+        <includes>
+          <include>application*.properties</include>
+          <include>application*.yml</include>
+          <include>application*.yaml</include>
+        </includes>
+      </resource>
+    </resources>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+      </plugin>
+    </plugins>
+  </build>
+
+  <!-- Embabel 2.0.0 pulls Spring AI 2.0.0-M8 (a milestone), so the milestone
+       repository is required for dependency resolution. -->
+  <repositories>
+    <repository>
+      <id>spring-milestones</id>
+      <name>Spring Milestones</name>
+      <url>https://repo.spring.io/milestone</url>
+      <snapshots><enabled>false</enabled></snapshots>
+    </repository>
+  </repositories>
+  <pluginRepositories>
+    <pluginRepository>
+      <id>spring-milestones</id>
+      <name>Spring Milestones</name>
+      <url>https://repo.spring.io/milestone</url>
+      <snapshots><enabled>false</enabled></snapshots>
+    </pluginRepository>
+  </pluginRepositories>
+</project>

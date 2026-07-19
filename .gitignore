@@ -1,0 +1,45 @@
+# --- JVM / Maven ---
+target/
+*.class
+*.jar
+!.mvn/wrapper/maven-wrapper.jar
+
+# --- Node / front-end ---
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# --- Rust / Tauri ---
+# (Cargo.lock is intentionally committed for the control-plane app once it exists)
+gen/
+**/*.rs.bk
+
+# --- Secrets / mTLS material (NEVER commit) ---
+*.p12
+*.pfx
+*.pem
+*.key
+*.crt
+*.csr
+keystore.jks
+truststore.jks
+.env
+.env.*
+!.env.example
+
+# --- ngrok ---
+ngrok
+ngrok.yml
+.ngrok2/
+
+# --- Generated audio assets ---
+# Ephemeral MLX output is regenerated on demand; keep the folder, drop the contents.
+# (If you later commit *pre-cached* persona reactions, add explicit `!audio-cache/<name>.wav` unignores.)
+audio-cache/*
+!audio-cache/.gitkeep
+
+# --- macOS / IDE ---
+.DS_Store
+.idea/
+*.iml
