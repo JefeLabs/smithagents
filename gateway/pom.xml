@@ -50,6 +50,10 @@
       <groupId>com.jefelabs</groupId>
       <artifactId>agent-robot</artifactId>
     </dependency>
+    <dependency>
+      <groupId>com.jefelabs</groupId>
+      <artifactId>sandbox</artifactId>
+    </dependency>
 
     <dependency>
       <groupId>org.springframework.boot</groupId>

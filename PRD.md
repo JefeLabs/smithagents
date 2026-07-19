@@ -62,13 +62,38 @@ external APIs.
 
 ## 4. The Ephemeral Execution Sandboxes
 
-Execution environments are tied exclusively to the lifecycle of a feature branch.
-They are spawned when a branch is created and completely annihilated the moment
-the pull request is merged.
+Execution environments are tied to the lifecycle of a feature branch — provisioned
+when work begins and annihilated when the PR merges. **How** an environment is
+isolated is pluggable: a single `Sandbox` contract (the `sandbox/` module) with
+three backends, chosen by policy rather than hardcoded.
 
-* **The Blueprint Handoff:** Once the Java gateway generates a structured `PRD-*.md` file from a Discord conversation, the `AgentRobot` triggers the integrated terminal.
-* **The Isolated Environment:** A Docker DevContainer spins up specifically for the active feature branch. Inside, Claude Code operates via a `tmux` session, outfitted with the GitHub CLI, `@biomejs/biome`, `kubectl`, and the TypeScript compiler.
-* **Context Initialization:** Before executing, the container immediately connects to the Helmsmith MCP to ingest the strict atomic design rules, ensuring no codebase modifications violate established patterns.
+**Isolation tiers (weakest → strongest):**
+
+* **`IN_PROCESS`** *(default, interactive)* — runs on the host directly. Fastest,
+  zero overhead, no isolation. Assumes a trusted operator already on the branch.
+* **`WORKTREE`** — a `git worktree` per branch: filesystem-isolated parallel
+  branches that share the host toolchain, no containers. The lightweight "multiplex".
+* **`DOCKER`** *(default for autonomous runs)* — a container from the golden image
+  (`infra/sandbox.Dockerfile`) with the branch's worktree mounted at `/workspace`.
+  Full isolation, reproducible, disposable — the safe choice when agents run
+  unattended (and the only viable tier for the multi-tenant hosted model).
+
+**Policy, not hardcoding:** `SandboxPolicy` maps an execution mode to a tier
+(interactive → in-process, autonomous → docker), overridable via
+`smithagents.sandbox.*-kind`. The swarm codes against the `Sandbox` interface and
+never cares which backend runs; `SandboxProvider` resolves it.
+
+**Dependency management (Docker path):** one golden, version-pinned base image
+(`infra/sandbox.Dockerfile`) bakes in the GitHub CLI, `@biomejs/biome`, `kubectl`,
+Node + the TypeScript compiler, `tmux`, and Claude Code — rebuilt on a cadence, not
+per branch. Containers **mount** the branch worktree (code) and keep **tools baked**
+(image), so spawning a sandbox never reinstalls the toolchain.
+
+**Lifecycle:** once the gateway generates a `PRD-*.md` from a Discord conversation,
+the `AgentRobot` triggers the integrated terminal, a sandbox is opened for the
+branch, Claude Code operates inside it (via `tmux` in the Docker tier), and the
+environment connects to the Helmsmith MCP to ingest the atomic-design rules before
+executing. On merge, the session is closed and the environment annihilated.
 
 ---
 

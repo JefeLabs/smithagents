@@ -25,6 +25,7 @@
   <modules>
     <module>personas</module>
     <module>agent-robot</module>
+    <module>sandbox</module>
     <module>gateway</module>
   </modules>
 
@@ -51,6 +52,11 @@
       <dependency>
         <groupId>com.jefelabs</groupId>
         <artifactId>agent-robot</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.jefelabs</groupId>
+        <artifactId>sandbox</artifactId>
         <version>${project.version}</version>
       </dependency>
       <!-- Third-party pinned here so modules don't repeat versions. -->

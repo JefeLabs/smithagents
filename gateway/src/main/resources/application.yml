@@ -13,6 +13,9 @@ smithagents:
     # Secret — provided at runtime via the DISCORD_TOKEN env var; never committed.
     # Blank = Discord disabled (gateway still starts).
     token: ${DISCORD_TOKEN:}
+    # Optional: a channel id the bot greets on connect (a visible outbound send).
+    # Set DISCORD_ANNOUNCE_CHANNEL_ID in .env. Blank = no greeting.
+    announce-channel-id: ${DISCORD_ANNOUNCE_CHANNEL_ID:}
 
 logging:
   level:

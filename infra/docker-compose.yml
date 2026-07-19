@@ -1,19 +1,20 @@
-# Ephemeral execution sandboxes (PRD §4).
+# Ephemeral execution sandboxes — DOCKER tier (PRD §4).
 #
 # Lifecycle contract: one sandbox per feature branch. Spawned when the branch is
-# created; annihilated the moment its PR merges. Nothing here is meant to be
-# long-lived — treat every container as disposable.
+# created; annihilated the moment its PR merges. Every container is disposable.
 #
-# The gateway (AgentRobot) drives `docker compose run` against this file with a
-# per-branch project name so multiple sandboxes coexist without colliding:
-#   docker compose -p sandbox-<branch> run --rm feature-sandbox
+# The gateway (DockerSandbox) normally drives `docker run` directly against the
+# golden image, mounting a per-branch git worktree. This compose file is the
+# equivalent for manual/local use with a per-branch project name:
+#   docker compose -f infra/docker-compose.yml -p sandbox-<branch> run --rm feature-sandbox
 
 services:
   feature-sandbox:
-    # TODO(devcontainer): replace with a purpose-built image that bakes in
-    #   gh, @biomejs/biome, kubectl, node + tsc, tmux, and Claude Code.
-    # Base image is a placeholder so the compose file is valid today.
-    image: mcr.microsoft.com/devcontainers/base:ubuntu
+    # Golden image (infra/sandbox.Dockerfile): gh, biome, kubectl, node+tsc, tmux, Claude Code.
+    build:
+      context: ..
+      dockerfile: infra/sandbox.Dockerfile
+    image: smithagents/sandbox:latest
     working_dir: /workspace
     environment:
       # Injected by the gateway when the sandbox is spawned.
@@ -21,9 +22,10 @@ services:
       # Helmsmith MCP endpoint the container ingests atomic-design rules from.
       HELMSMITH_MCP_URL: ${HELMSMITH_MCP_URL:-http://host.docker.internal:8080/mcp}
     volumes:
-      - ./:/workspace:cached
+      # Compose paths resolve relative to this file (infra/); `..` is the repo root.
+      - ../:/workspace:cached
     # tmux + interactive Claude Code session need a TTY held open.
     stdin_open: true
     tty: true
-    # Keep the container alive; the gateway attaches a tmux session into it.
-    command: ["tail", "-f", "/dev/null"]
+    # Keep the container alive; the gateway attaches / execs into it.
+    command: ["sleep", "infinity"]
