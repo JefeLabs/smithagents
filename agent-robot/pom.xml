@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.jefelabs</groupId>
+    <artifactId>smithagents-parent</artifactId>
+    <version>0.1.0</version>
+    <relativePath>../pom.xml</relativePath>
+  </parent>
+
+  <artifactId>agent-robot</artifactId>
+  <name>agent-robot</name>
+  <description>Native AWT keystroke-injection bridge (PRD §2, §4). JDK-only, no runtime deps.</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>

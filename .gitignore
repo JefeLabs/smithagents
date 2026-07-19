@@ -39,7 +39,17 @@ ngrok.yml
 audio-cache/*
 !audio-cache/.gitkeep
 
+# --- Python (voice-engine) ---
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+
 # --- macOS / IDE ---
 .DS_Store
 .idea/
 *.iml
+
+# --- Claude Code local (per-user) settings ---
+.claude/settings.local.json

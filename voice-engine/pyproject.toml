@@ -1,0 +1,13 @@
+[project]
+name = "smithagents-voice-engine"
+version = "0.1.0"
+description = "Local MLX audio LLM: zero-shot voice cloning + paralinguistic reactions (PRD §3)."
+requires-python = ">=3.11"
+dependencies = [
+    # TODO: pin the MLX runtime + chosen 3B audio model
+    #   (e.g. mlx, mlx-audio, and Step Audio EditX or Qwen3-TTS weights).
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

@@ -21,20 +21,31 @@ back to the host via an `ngrok` tunnel.
 
 ---
 
-## 2. Flat Topology & File System
+## 2. Multi-Project Topology & File System
 
-The repository architecture explicitly forbids a traditional `src` folder. All
-orchestrators, registries, configuration files, and terminal views live directly
-at the root to maintain strict domain visibility and prevent nested abstraction.
+The repository is a **monorepo of independent projects**: each component is its
+own Maven module or front-end project, wired together by a root Maven **reactor**
+(aggregator POM). Module boundaries give each component its own build, test,
+versioning, and dependency graph. (This supersedes the project's original
+flat-root layout.)
 
-**Root Directory Map:**
+**Project Map:**
 
-* `.github/prompts/` — Persona configurations, behavioral constraints, and domain directives.
-* `audio-cache/` — Repository for instantaneously accessible `.wav`/`.mp3` files, populated by the local MLX engine.
-* `GatewayApplication.java` — The Spring Boot entry point, operating the Discord WebSockets, the `_embabel` routing engine, and the mTLS validation layer.
-* `AgentRobot.java` — The native AWT execution bridge for OS-level keystroke injection.
-* `docker-compose.yml` — Infrastructure definitions for the ephemeral branch environments.
-* `tauri.conf.json` & `index.html` — The Tauri 2.0 configuration and React entry points for the unified desktop and iOS control plane.
+* `pom.xml` — Root reactor: aggregates the Java modules, pins shared versions
+  (Spring Boot 4.1, Embabel 2.0.0, JDA), and declares the Spring Milestones repo.
+* `gateway/` — Spring Boot entry point (`GatewayApplication`): the Discord
+  WebSockets, the `_embabel` routing engine, and the mTLS validation layer.
+  Depends on `personas` and `agent-robot`.
+* `personas/` — Data-driven persona roster: `Persona`, `PersonaRegistry`,
+  `PersonaRouter`, plus the persona configs under `src/main/resources/prompts/`
+  (loaded from the classpath — never hardcoded).
+* `agent-robot/` — The native AWT execution bridge for OS-level keystroke injection.
+* `control-plane/` — The Tauri 2.0 + React/TypeScript control plane (desktop + iOS).
+* `voice-engine/` — The local MLX audio LLM project (Python).
+* `infra/` — `docker-compose.yml` and other infrastructure for the ephemeral
+  branch environments.
+* `audio-cache/` — Instantly accessible `.wav`/`.mp3` files, populated by the MLX
+  engine; shared runtime state at the repo root.
 
 ---
 

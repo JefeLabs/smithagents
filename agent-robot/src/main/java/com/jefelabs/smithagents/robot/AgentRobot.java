@@ -1,3 +1,6 @@
+package com.jefelabs.smithagents.robot;
+
+import java.awt.AWTException;
 import java.awt.Robot;
 import java.awt.Toolkit;
 import java.awt.datatransfer.StringSelection;
@@ -14,9 +17,6 @@ import java.awt.event.KeyEvent;
  * JVM and, on macOS, the host process must be granted <i>Accessibility</i>
  * permission (System Settings → Privacy &amp; Security → Accessibility). Without
  * it, injected events are silently dropped.
- *
- * <p>Flat topology: this class lives in the default package at the repo root by
- * design (see PRD §2). See README for the trade-offs that entails.
  */
 public final class AgentRobot {
 
@@ -25,7 +25,7 @@ public final class AgentRobot {
 
     private final Robot robot;
 
-    public AgentRobot() throws java.awt.AWTException {
+    public AgentRobot() throws AWTException {
         this.robot = new Robot();
         this.robot.setAutoDelay(20);
     }

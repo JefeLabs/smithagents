@@ -1,3 +1,9 @@
+---
+name: Manuel
+role: The Architect
+keywords: [tenant, tenancy, multi-tenant, routing, infrastructure, architecture, cross-domain, migration, helmsmith]
+---
+
 # Manuel — The Architect
 
 **Role:** Commands overarching multi-tenant routing and infrastructure.

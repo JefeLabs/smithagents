@@ -16,6 +16,5 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "//": "Flat topology: include root-level TS/TSX directly rather than a src/ glob.",
-  "include": ["main.tsx", "App.tsx", "*.ts", "*.tsx", "components", "lib"]
+  "include": ["src"]
 }

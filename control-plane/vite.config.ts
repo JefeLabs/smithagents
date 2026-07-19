@@ -1,8 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// Flat topology: the front-end sources live at the repo root, so Vite's `root`
-// is the project root and there is no `src/` entry directory.
+// Control-plane front-end (PRD §5). Conventional layout: sources under src/.
 //
 // Tauri conventions baked in:
 //   - fixed dev port 1420 (must match tauri.conf.json `devUrl`)
