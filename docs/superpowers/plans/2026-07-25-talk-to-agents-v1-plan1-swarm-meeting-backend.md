@@ -652,51 +652,87 @@ git commit -m "feat(swarm): meeting orchestrator + /meetings routes (LiveKit roo
 
 ---
 
-### Task 4: Agent participant (LiveKit Agents worker) — Deepgram + Ollama + ElevenLabs
+> **ARCHITECTURE (decided — Option A/B):** the agent's brain is a **Claude Code headless session** (`claude -p`), not a hosted/local LLM. Each conversational turn runs `claude -p` against the agent's persistent session on the operator's **subscription** (Claude Code CLI auth), giving the agent native tools + delegation and unifying "talk" and "work". Deepgram STT and ElevenLabs TTS are unchanged; the LiveKit `llm` node is a **custom adapter** wrapping the Claude Code bridge. Ollama/qwen is **not** used for the brain here (kept in `.env` for a possible future two-tier design). Confirmed against `claude` 2.1.220: `-p/--print`, `--output-format json|stream-json`, `--resume <id>`/`--session-id <id>`, `--append-system-prompt <text>`, `--model <alias>`, `--permission-mode`.
 
-Concrete v1 voice stack (decided): **STT = Deepgram** (direct Node plugin, `DEEPGRAM_API_KEY`), **LLM = Ollama** (local, OpenAI-compatible endpoint `OLLAMA_BASE_URL`, model `OLLAMA_MODEL` default `qwen2.5:14b` — fast + strong tool-calling for later swarm delegation), **TTS = ElevenLabs** (direct Node plugin, `ELEVENLABS_API_KEY`, voice from `agent.voice.voiceId`, low-latency model e.g. `eleven_flash_v2_5`). Note: the meeting LLM uses the global `OLLAMA_MODEL`; the composed-agent `engine.model` field is the *coding-task CLI* model (claude/codex/etc.), a different provider space — per-agent conversation models are a follow-up, not v1.
+### Task 4a: ClaudeBrain — Claude Code headless conversational bridge
+
+**Files:**
+- Create: `swarm/src/claude-brain.ts`
+- Create: `swarm/src/claude-brain.test.ts`
+- Modify: `swarm/src/index.ts` (export ClaudeBrain)
+
+**Interfaces:**
+- Consumes: `ComposedAgent` (Task 1).
+- Produces:
+  - `interface BrainDeps { run?: (args: string[], input: string, env: NodeJS.ProcessEnv) => Promise<string> }` — the exec seam (default spawns `claude`); returns the child's stdout.
+  - `class ClaudeBrain` — `constructor(agent: ComposedAgent, opts?: { model?: string; cwd?: string }, deps?: BrainDeps)`; `readonly sessionId: string` (a `randomUUID()` fixed at construction); `async turn(userText: string): Promise<string>` — runs one `claude -p` turn (first turn `--session-id <sessionId>`, subsequent `--resume <sessionId>`), returns the assistant's reply text.
+  - Behavior: model defaults to `opts.model ?? 'claude-haiku-4-5'`; directives passed via `--append-system-prompt`; output via `--output-format json`, parsed for the assistant text; the child env is `{ ...process.env }` with **`ANTHROPIC_API_KEY` deleted** (so it authenticates against the subscription, not the metered API); `--permission-mode` set so the agent can use tools (v1: a read-oriented/default mode — do not add `--dangerously-skip-permissions`).
+
+- [ ] **Step 1: Confirm the `claude -p` JSON shape.** Run:
+  `claude -p "reply with exactly: ok" --output-format json --model claude-haiku-4-5 --session-id "$(uuidgen)"`
+  Record which field holds the assistant text (expected `.result`) and the exact model alias that works. Put the finding at the top of `claude-brain.ts` as a comment. (This spawns a real `claude`; if it errors on auth, note it and continue — the unit test below does not need a live claude.)
+
+- [ ] **Step 2: Write the failing unit test** `swarm/src/claude-brain.test.ts` — inject a fake `run` so no real `claude` is spawned; assert (a) the first turn's argv contains `-p`, `--output-format`, `json`, `--model`, the agent's model, `--append-system-prompt`, the directives, and `--session-id <sessionId>`; (b) the env passed to `run` has NO `ANTHROPIC_API_KEY`; (c) `turn()` returns the assistant text parsed from the fake JSON; (d) a second `turn()` uses `--resume <sessionId>` (not `--session-id`) and the sessionId is unchanged. Use the field name confirmed in Step 1 for the fake JSON.
+
+- [ ] **Step 3: Run it, verify it fails** — `cd swarm && npm test` → FAIL (`./claude-brain.js` missing).
+
+- [ ] **Step 4: Implement `swarm/src/claude-brain.ts`** to satisfy the test: build the argv, delete `ANTHROPIC_API_KEY` from a copy of `process.env`, call `deps.run` (default: a helper that spawns `claude` with the argv, writes nothing to stdin, resolves stdout), `JSON.parse` the stdout and return the confirmed text field; track a `#started` flag to switch `--session-id`→`--resume` after turn 1. Export from `src/index.ts`.
+
+- [ ] **Step 5: Run it, verify it passes** — `cd swarm && npm test` → PASS (all prior + new).
+
+- [ ] **Step 6: Manual smoke (real claude, needs subscription login).** In a Node/tsx REPL or a tiny scratch script: `new ClaudeBrain(<a seed agent>).turn('Introduce yourself in one sentence.')` → prints a persona-flavored sentence; a second `turn('what did I just ask?')` shows it remembered (session continuity). Note latency. If `claude` isn't logged into a subscription (only `ANTHROPIC_API_KEY` present), record that the brain still works via the API but bills metered — flag for the operator.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add swarm/src/claude-brain.ts swarm/src/claude-brain.test.ts swarm/src/index.ts
+git commit -m "feat(swarm): ClaudeBrain — Claude Code headless conversational bridge (subscription brain)"
+```
+
+---
+
+### Task 4b: LiveKit worker — Deepgram STT + ClaudeBrain LLM node + ElevenLabs TTS
 
 **Files:**
 - Create: `swarm/src/agent-worker.ts`
-- Create: `swarm/AGENT-WORKER.md` (run notes + the manual voice-test steps)
-- Modify: `swarm/package.json` (add the agent + plugin deps; add a `worker` script)
-- Modify: `swarm/.env.example` (add `DEEPGRAM_API_KEY=`, `OLLAMA_BASE_URL=http://127.0.0.1:11434/v1`, `OLLAMA_MODEL=qwen2.5:14b`)
+- Create: `swarm/src/claude-brain-llm.ts` (the LiveKit custom-LLM adapter around ClaudeBrain)
+- Create: `swarm/AGENT-WORKER.md` (run notes + manual voice-test steps)
+- Modify: `swarm/package.json` (agent + Deepgram + ElevenLabs + VAD deps; `worker` script)
+- Modify: `swarm/.env.example` (add `DEEPGRAM_API_KEY=`)
 
 **Interfaces:**
-- Consumes: `ComposedAgent`, `loadAgents`, `findAgent` (Task 1); a running meeting room + the token's `RoomConfiguration` agent dispatch that carries `metadata = JSON.stringify({ agentIds })` (Task 3). Ollama running locally with `llama3.1:8b` pulled; `livekit-server --dev` up.
-- Produces: a worker process that, dispatched into a `meeting-*` room, loads the composed agent named in the dispatch metadata, joins as its participant, and runs Deepgram→Ollama→ElevenLabs with the agent's `directives` as system instructions.
+- Consumes: `ClaudeBrain` (Task 4a); `ComposedAgent`/`loadAgents`/`findAgent` (Task 1); a `meeting-*` room whose dispatch token carries `metadata = JSON.stringify({ agentIds })` (Task 3). `livekit-server --dev` up; `claude` logged in.
+- Produces: a worker that, dispatched into a `meeting-*` room, loads the agent from dispatch metadata, and runs **Deepgram (STT) → ClaudeBrain (LLM) → ElevenLabs (TTS)**.
 
-> The exact `@livekit/agents` package names, plugin constructor options, and CLI subcommand move between versions. Step 1 pulls the **current** shapes via context7 (`/websites/livekit_io_agents`) and the installed `.d.ts` files, and the code matches what's verified — do not finalize names from memory.
+> `@livekit/agents` Node API (package names, the **custom-LLM base class/interface**, plugin constructors, VAD/turn-detector, CLI subcommand) moves between versions. Step 1 pulls the current shapes via context7 (`/websites/livekit_io_agents`) + the installed `.d.ts` and matches them — do not finalize from memory.
 
-- [ ] **Step 1: Verify + install deps.** Query context7 `/websites/livekit_io_agents` for: (a) the Node quickstart `defineAgent`/`voice.AgentSession`/`cli.runApp` shape and how a worker reads its job/dispatch **metadata** and room; (b) the **Deepgram** STT plugin package + constructor (`@livekit/agents-plugin-deepgram`, `new deepgram.STT({ model:'nova-3', language:'en' })`); (c) the **ElevenLabs** TTS plugin package + constructor (`@livekit/agents-plugin-elevenlabs`, voice id + a low-latency model); (d) how to use an **OpenAI-compatible** LLM against a custom `baseURL` (for Ollama) — likely `@livekit/agents-plugin-openai` with `baseURL`/`apiKey` options; (e) whether a **VAD/turn-detector** plugin (e.g. `@livekit/agents-plugin-silero`) is required. Install exactly the packages verified; record names + versions in `AGENT-WORKER.md`.
+- [ ] **Step 1: Verify + install deps.** Query context7 `/websites/livekit_io_agents` for: (a) the Node worker quickstart (`defineAgent`/`voice.AgentSession`/`cli.runApp`) and how it reads dispatch **metadata** + room; (b) how to implement a **custom LLM node** (not a plugin) — the base class/interface, and the method that receives the chat context and returns/streams reply text; (c) the **Deepgram** STT plugin (`@livekit/agents-plugin-deepgram`, `nova-3`); (d) the **ElevenLabs** TTS plugin (`@livekit/agents-plugin-elevenlabs`, `voiceId` + low-latency model e.g. `eleven_flash_v2_5`); (e) the required **VAD/turn-detector** (e.g. `@livekit/agents-plugin-silero`). Install exactly what's verified; record names+versions in `AGENT-WORKER.md`.
 
-- [ ] **Step 2: Implement `swarm/src/agent-worker.ts`** against the verified API:
-  1. On job entry, read the dispatch **metadata**, parse `{ agentIds }`, take the first id; load agents via `loadAgents(resolve(process.cwd(), '.smith/agents'))` and `findAgent`. If metadata is absent/empty, fall back to the first agent and log a warning.
-  2. Build the session models from the resolved agent:
-     - `stt`: Deepgram `nova-3`.
-     - `llm`: OpenAI-compatible plugin with `baseURL = process.env.OLLAMA_BASE_URL`, `apiKey = 'ollama'` (dummy), `model = process.env.OLLAMA_MODEL || 'qwen2.5:14b'` (v1 uses the global model for every agent — do NOT read `agent.engine.model`, which is the coding-CLI model, a different provider space).
-     - `tts`: ElevenLabs with `voiceId = agent.voice?.voiceId` and a low-latency model; if no `voiceId`, that agent isn't ElevenLabs-configured — log and use the plugin's default voice (per-agent MLX comes in Task 5).
-     - VAD/turn detection per Step 1's finding.
-  3. `voice.Agent.create({ instructions: agent.directives, onEnter → generateReply greeting that states the agent's name + role })`, then `await session.start({ agent, room: ctx.room })` and `await ctx.connect()`.
-  4. Register the worker under the agent name the dispatch targets — Task 3's dispatch uses `agentName: 'smith-agent'`, so `cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url), agentName: 'smith-agent' }))` (confirm the option names in Step 1).
+- [ ] **Step 2: Implement `swarm/src/claude-brain-llm.ts`** — a class implementing the verified LiveKit custom-LLM interface that holds one `ClaudeBrain` and, on each user turn, extracts the latest user message from the chat context, calls `brain.turn(text)`, and emits the returned string as the assistant reply (stream it if the interface is streaming; otherwise return it). No system prompt here — the persona lives in ClaudeBrain's `--append-system-prompt`.
 
-- [ ] **Step 3: Add the `worker` script** to `swarm/package.json` (confirm the subcommand — `start`/`dev` — from Step 1):
+- [ ] **Step 3: Implement `swarm/src/agent-worker.ts`** against the verified API:
+  1. On job entry, parse dispatch `metadata` `{ agentIds }`, take the first; `loadAgents(resolve(process.cwd(), '.smith/agents'))` + `findAgent`; fall back to the first agent with a warning if metadata is absent.
+  2. `session = new voice.AgentSession({ stt: deepgram nova-3, llm: new ClaudeBrainLLM(new ClaudeBrain(agent, { model: 'claude-haiku-4-5', cwd: <repo root> })), tts: elevenlabs({ voiceId: agent.voice?.voiceId, model: 'eleven_flash_v2_5' }), <vad/turn per Step 1> })`.
+  3. Start the session on `ctx.room`, `await ctx.connect()`, and greet on enter (a short spoken intro — this exercises ClaudeBrain→TTS without needing the human mic).
+  4. `cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url), agentName: 'smith-agent' }))` (match Task 3's dispatch `agentName`; confirm option names in Step 1).
+
+- [ ] **Step 4: Add the `worker` script** (confirm subcommand from Step 1):
 
 ```json
 "worker": "node --import tsx src/agent-worker.ts start",
 ```
 
-- [ ] **Step 4: Verify — build, start, join.**
+- [ ] **Step 5: Verify.**
   - `npm run typecheck` green.
-  - Structural check (no keys needed): start the worker (`npm run worker`) with `OLLAMA_BASE_URL` set and Ollama running; confirm it boots and registers as `smith-agent` without error (check the log).
-  - Live join check (needs `DEEPGRAM_API_KEY` + `ELEVENLABS_API_KEY` in env, `livekit-server --dev` + the swarm server up): `POST /meetings {"agent":"Manuel"}`, and confirm the `smith-agent` participant joins the room and emits a spoken greeting — verifiable via `lk room participants <roomName>` (from the `livekit-cli`) showing two participants and an audio track published by the agent, without needing a human mic.
-  - Full spoken back-and-forth (human speaks, agent replies) is a **manual** test — document the exact steps (LiveKit Agents Playground or a `livekit-client` page using the meeting's `serverUrl`+`participantToken`) in `AGENT-WORKER.md`. If `DEEPGRAM_API_KEY` is not yet present, report the live checks as pending-key (DONE_WITH_CONCERNS) — the build + structural check must still pass.
+  - Structural: start the worker; confirm it boots and registers as `smith-agent` (log), no keys required.
+  - Live greeting (needs `ELEVENLABS_API_KEY` ✓ + `claude` logged in + `livekit-server --dev` + swarm server): `POST /meetings {"agent":"Manuel"}` → confirm `smith-agent` joins and publishes an audio track (`lk room participants <roomName>`), i.e. ClaudeBrain→ElevenLabs works end-to-end without a human mic.
+  - Full back-and-forth (you speak → Deepgram → ClaudeBrain → ElevenLabs) is a **manual** test — document steps (LiveKit Agents Playground or a `livekit-client` page with the meeting's `serverUrl`+`participantToken`) in `AGENT-WORKER.md`. Gated on `DEEPGRAM_API_KEY`; if absent, report those checks pending-key (DONE_WITH_CONCERNS) — build + structural + greeting checks must still pass.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add swarm/src/agent-worker.ts swarm/AGENT-WORKER.md swarm/package.json swarm/package-lock.json swarm/.env.example
-git commit -m "feat(swarm): agent worker — composed agent joins a meeting (Deepgram/Ollama/ElevenLabs)"
+git add swarm/src/agent-worker.ts swarm/src/claude-brain-llm.ts swarm/AGENT-WORKER.md swarm/package.json swarm/package-lock.json swarm/.env.example
+git commit -m "feat(swarm): LiveKit worker — Deepgram + ClaudeBrain(Claude Code) + ElevenLabs voice meeting"
 ```
 
 ---
