@@ -18,7 +18,9 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
     "@deepgram/sdk": "^5.7.0",
+    "@livekit/rtc-node": "^0.13.31",
     "@smithagents/voice": "file:../voice",
+    "livekit-server-sdk": "^2.17.0",
     "ws": "^8.21.1"
   },
   "devDependencies": {
