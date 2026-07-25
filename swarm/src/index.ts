@@ -59,3 +59,7 @@ export * from './types.js';
 
 // Re-export TmuxSessionManager as a backwards-compatible alias
 export { TmuxRuntime as TmuxSessionManager } from './runtime.js';
+
+// Composed-agent registry
+export { loadAgents, findAgent } from './agents.js';
+export type { ComposedAgent, AgentEngine, AgentVoice } from './agents.js';
