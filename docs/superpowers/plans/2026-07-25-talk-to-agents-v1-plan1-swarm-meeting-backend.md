@@ -652,44 +652,51 @@ git commit -m "feat(swarm): meeting orchestrator + /meetings routes (LiveKit roo
 
 ---
 
-### Task 4: Agent participant (LiveKit Agents worker)
+### Task 4: Agent participant (LiveKit Agents worker) — Deepgram + Ollama + ElevenLabs
+
+Concrete v1 voice stack (decided): **STT = Deepgram** (direct Node plugin, `DEEPGRAM_API_KEY`), **LLM = Ollama** (local, OpenAI-compatible endpoint `OLLAMA_BASE_URL`, model `OLLAMA_MODEL` default `qwen2.5:14b` — fast + strong tool-calling for later swarm delegation), **TTS = ElevenLabs** (direct Node plugin, `ELEVENLABS_API_KEY`, voice from `agent.voice.voiceId`, low-latency model e.g. `eleven_flash_v2_5`). Note: the meeting LLM uses the global `OLLAMA_MODEL`; the composed-agent `engine.model` field is the *coding-task CLI* model (claude/codex/etc.), a different provider space — per-agent conversation models are a follow-up, not v1.
 
 **Files:**
 - Create: `swarm/src/agent-worker.ts`
-- Create: `swarm/AGENT-WORKER.md` (run notes)
-- Modify: `swarm/package.json` (add `@livekit/agents` + a starter model plugin; add a `worker` script)
+- Create: `swarm/AGENT-WORKER.md` (run notes + the manual voice-test steps)
+- Modify: `swarm/package.json` (add the agent + plugin deps; add a `worker` script)
+- Modify: `swarm/.env.example` (add `DEEPGRAM_API_KEY=`, `OLLAMA_BASE_URL=http://127.0.0.1:11434/v1`, `OLLAMA_MODEL=qwen2.5:14b`)
 
 **Interfaces:**
-- Consumes: `ComposedAgent`, `loadAgents`, `findAgent` (Task 1); a running meeting room (Task 3).
-- Produces: a worker process that, dispatched to a `meeting-*` room, joins as the agent participant and runs an STT → LLM → TTS loop whose system instructions are the agent's `directives`.
+- Consumes: `ComposedAgent`, `loadAgents`, `findAgent` (Task 1); a running meeting room + the token's `RoomConfiguration` agent dispatch that carries `metadata = JSON.stringify({ agentIds })` (Task 3). Ollama running locally with `llama3.1:8b` pulled; `livekit-server --dev` up.
+- Produces: a worker process that, dispatched into a `meeting-*` room, loads the composed agent named in the dispatch metadata, joins as its participant, and runs Deepgram→Ollama→ElevenLabs with the agent's `directives` as system instructions.
 
-> Note: `@livekit/agents` internals (exact plugin/inference class names, the custom-TTS base interface) move fast. Each code step below begins by pulling the **current** API via context7 (`/websites/livekit_io_agents`) and matching the verified shape — do not code these from memory.
+> The exact `@livekit/agents` package names, plugin constructor options, and CLI subcommand move between versions. Step 1 pulls the **current** shapes via context7 (`/websites/livekit_io_agents`) and the installed `.d.ts` files, and the code matches what's verified — do not finalize names from memory.
 
-- [ ] **Step 1: Verify + add deps.** Query context7 `/websites/livekit_io_agents` for "Node.js quickstart: minimum packages for an STT-LLM-TTS AgentSession and how the worker connects to a specific room." Then install the packages it names (baseline: `@livekit/agents` plus an inference/plugin set for STT+LLM+TTS to prove the loop). Record exact versions in `AGENT-WORKER.md`.
+- [ ] **Step 1: Verify + install deps.** Query context7 `/websites/livekit_io_agents` for: (a) the Node quickstart `defineAgent`/`voice.AgentSession`/`cli.runApp` shape and how a worker reads its job/dispatch **metadata** and room; (b) the **Deepgram** STT plugin package + constructor (`@livekit/agents-plugin-deepgram`, `new deepgram.STT({ model:'nova-3', language:'en' })`); (c) the **ElevenLabs** TTS plugin package + constructor (`@livekit/agents-plugin-elevenlabs`, voice id + a low-latency model); (d) how to use an **OpenAI-compatible** LLM against a custom `baseURL` (for Ollama) — likely `@livekit/agents-plugin-openai` with `baseURL`/`apiKey` options; (e) whether a **VAD/turn-detector** plugin (e.g. `@livekit/agents-plugin-silero`) is required. Install exactly the packages verified; record names + versions in `AGENT-WORKER.md`.
 
-- [ ] **Step 2: Implement `swarm/src/agent-worker.ts`** against the verified API. The worker must:
-  1. On job entry, read the room name; the room is `meeting-<uuid>`.
-  2. Load the composed agents from `.smith/agents`, pick the one for this meeting — for v1, pass the agent id as job metadata when dispatching (extend Task 3's `open()` to include `RoomConfiguration`/agent-dispatch metadata per the token-with-agent-dispatch example), or fall back to the first agent if metadata is absent.
-  3. Build a `voice.AgentSession({ stt, llm, tts, turnHandling })` using the inference/plugin models, and `voice.Agent.create({ instructions: agent.directives, onEnter → generateReply greeting })`.
-  4. `await session.start({ agent, room })` then `await ctx.connect()`.
+- [ ] **Step 2: Implement `swarm/src/agent-worker.ts`** against the verified API:
+  1. On job entry, read the dispatch **metadata**, parse `{ agentIds }`, take the first id; load agents via `loadAgents(resolve(process.cwd(), '.smith/agents'))` and `findAgent`. If metadata is absent/empty, fall back to the first agent and log a warning.
+  2. Build the session models from the resolved agent:
+     - `stt`: Deepgram `nova-3`.
+     - `llm`: OpenAI-compatible plugin with `baseURL = process.env.OLLAMA_BASE_URL`, `apiKey = 'ollama'` (dummy), `model = process.env.OLLAMA_MODEL || 'qwen2.5:14b'` (v1 uses the global model for every agent — do NOT read `agent.engine.model`, which is the coding-CLI model, a different provider space).
+     - `tts`: ElevenLabs with `voiceId = agent.voice?.voiceId` and a low-latency model; if no `voiceId`, that agent isn't ElevenLabs-configured — log and use the plugin's default voice (per-agent MLX comes in Task 5).
+     - VAD/turn detection per Step 1's finding.
+  3. `voice.Agent.create({ instructions: agent.directives, onEnter → generateReply greeting that states the agent's name + role })`, then `await session.start({ agent, room: ctx.room })` and `await ctx.connect()`.
+  4. Register the worker under the agent name the dispatch targets — Task 3's dispatch uses `agentName: 'smith-agent'`, so `cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url), agentName: 'smith-agent' }))` (confirm the option names in Step 1).
 
-  Use the verified quickstart shape from Step 1 as the skeleton (structure it exactly like the `defineAgent`/`cli.runApp` example returned by context7), substituting `instructions: agent.directives` and a greeting that says the agent's name/role.
-
-- [ ] **Step 3: Add the `worker` script** to `swarm/package.json`:
+- [ ] **Step 3: Add the `worker` script** to `swarm/package.json` (confirm the subcommand — `start`/`dev` — from Step 1):
 
 ```json
 "worker": "node --import tsx src/agent-worker.ts start",
 ```
 
-(Confirm the subcommand — `start`/`dev` — against the context7 CLI docs from Step 1.)
-
-- [ ] **Step 4: Manual end-to-end smoke.** With LiveKit up and the swarm server running (Task 3 Step 8 env), in one terminal `cd swarm && npm run worker`; in another, `POST /meetings {"agent":"Manuel"}`, then open the LiveKit room in the [Agents Playground / a `livekit-client` test page] using the returned `url`+`token`. Expected: the "Manuel" participant joins, greets you by voice/text, and answers when you speak. Document the exact playground/test-client steps used in `AGENT-WORKER.md`.
+- [ ] **Step 4: Verify — build, start, join.**
+  - `npm run typecheck` green.
+  - Structural check (no keys needed): start the worker (`npm run worker`) with `OLLAMA_BASE_URL` set and Ollama running; confirm it boots and registers as `smith-agent` without error (check the log).
+  - Live join check (needs `DEEPGRAM_API_KEY` + `ELEVENLABS_API_KEY` in env, `livekit-server --dev` + the swarm server up): `POST /meetings {"agent":"Manuel"}`, and confirm the `smith-agent` participant joins the room and emits a spoken greeting — verifiable via `lk room participants <roomName>` (from the `livekit-cli`) showing two participants and an audio track published by the agent, without needing a human mic.
+  - Full spoken back-and-forth (human speaks, agent replies) is a **manual** test — document the exact steps (LiveKit Agents Playground or a `livekit-client` page using the meeting's `serverUrl`+`participantToken`) in `AGENT-WORKER.md`. If `DEEPGRAM_API_KEY` is not yet present, report the live checks as pending-key (DONE_WITH_CONCERNS) — the build + structural check must still pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add swarm/src/agent-worker.ts swarm/AGENT-WORKER.md swarm/package.json swarm/package-lock.json
-git commit -m "feat(swarm): LiveKit agent worker — composed agent joins a meeting as a voice participant"
+git add swarm/src/agent-worker.ts swarm/AGENT-WORKER.md swarm/package.json swarm/package-lock.json swarm/.env.example
+git commit -m "feat(swarm): agent worker — composed agent joins a meeting (Deepgram/Ollama/ElevenLabs)"
 ```
 
 ---
