@@ -31,10 +31,15 @@ export class LiveKitRoomBridge {
     room.on(RoomEvent.TrackSubscribed, (track) => {
       if (track.kind !== TrackKind.KIND_AUDIO) return;
       void (async () => {
-        const stream = new AudioStream(track, { sampleRate: 48000 });
-        for await (const frame of stream) {
-          const bytes = new Uint8Array(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength);
-          this.remoteAudioCb?.(bytes.slice(0));
+        try {
+          const stream = new AudioStream(track, { sampleRate: 48000 });
+          for await (const frame of stream) {
+            const bytes = new Uint8Array(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength);
+            this.remoteAudioCb?.(bytes.slice(0));
+          }
+        } catch (err) {
+          console.error('[room] remote audio stream ended abnormally:', err);
+          return;
         }
       })();
     });
