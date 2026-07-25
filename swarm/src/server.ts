@@ -45,6 +45,10 @@ import type {
   WorkerMessage,
   RegisteredMessage,
 } from './remote-types.js';
+import { loadAgents } from './agents.js';
+import { MeetingOrchestrator } from './meetings.js';
+import { loadLiveKitConfig } from './config.js';
+import { resolve } from 'node:path';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -124,6 +128,9 @@ export class OrchestratorServer {
 
   // Auth — bearer token from SMITH_API_TOKEN; null means loopback-only dev mode
   private readonly apiToken: string | null;
+
+  // Meetings — built lazily (agents loaded from disk) on first use
+  private meetingOrchestrator: MeetingOrchestrator | null = null;
 
   constructor(config?: Partial<ServerConfig>) {
     this.config = { ...DEFAULT_SERVER_CONFIG, ...config };
@@ -239,6 +246,15 @@ export class OrchestratorServer {
         return reply.status(401).send({ error: 'unauthorized' });
       }
     });
+  }
+
+  /** Lazily build the meeting orchestrator (agents loaded from disk on first use). */
+  private async meetings(): Promise<MeetingOrchestrator> {
+    if (!this.meetingOrchestrator) {
+      const agents = await loadAgents(resolve(process.cwd(), '.smith/agents'));
+      this.meetingOrchestrator = new MeetingOrchestrator(loadLiveKitConfig(), agents);
+    }
+    return this.meetingOrchestrator;
   }
 
   // -------------------------------------------------------------------------
@@ -842,6 +858,33 @@ export class OrchestratorServer {
       } catch (err) {
         return reply.status(500).send({ error: 'Failed to send directive', details: String(err) });
       }
+    });
+
+    // ── Agents registry ───────────────────────────────────────────────
+    this.app.get('/agents/registry', async () => {
+      const agents = await loadAgents(resolve(process.cwd(), '.smith/agents'));
+      return { agents };
+    });
+
+    // ── Meetings ──────────────────────────────────────────────────────
+    this.app.post('/meetings', async (req, reply) => {
+      const body = (req.body ?? {}) as { agent?: string; all?: boolean };
+      if (!body.agent && !body.all) {
+        return reply.status(400).send({ error: 'provide "agent" (name/id) or "all": true' });
+      }
+      try {
+        const join = await (await server.meetings()).open(body);
+        return reply.status(201).send(join);
+      } catch (e) {
+        return reply.status(400).send({ error: (e as Error).message });
+      }
+    });
+
+    this.app.get('/meetings', async () => ({ meetings: (await server.meetings()).list() }));
+
+    this.app.delete<{ Params: { id: string } }>('/meetings/:id', async (req) => {
+      await (await server.meetings()).close(req.params.id);
+      return { id: req.params.id, status: 'closed' };
     });
   }
 

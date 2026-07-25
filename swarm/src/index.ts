@@ -63,3 +63,7 @@ export { TmuxRuntime as TmuxSessionManager } from './runtime.js';
 // Composed-agent registry
 export { loadAgents, findAgent } from './agents.js';
 export type { ComposedAgent, AgentEngine, AgentVoice } from './agents.js';
+
+// Meetings
+export { MeetingOrchestrator } from './meetings.js';
+export type { Meeting, MeetingJoin } from './meetings.js';
