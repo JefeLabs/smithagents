@@ -1,7 +1,7 @@
 :root {
   --ground: #090b10;
   --ground-2: #0d1119;
-  --bloom: rgba(74, 96, 190, 0.20);
+  --bloom: rgba(74, 96, 190, 0.2);
   --dot: #222a38;
   --dot-hi: #7aa2ff;
   --accent: #7aa2ff;
@@ -15,20 +15,36 @@
   color-scheme: dark;
 }
 :root[data-theme="light"] {
-  --ground: #f3f5f9; --ground-2: #ffffff;
+  --ground: #f3f5f9;
+  --ground-2: #ffffff;
   --bloom: rgba(90, 118, 230, 0.14);
-  --dot: #cfd6e2; --dot-hi: #3f6fe0; --accent: #3f6fe0;
-  --text: #1a2130; --text-2: #556074; --text-dim: #8b94a4;
-  --pill: rgba(255, 255, 255, 0.82); --pill-br: rgba(15, 23, 42, 0.10); --rail-br: rgba(15, 23, 42, 0.07);
-  --online: #17a877; color-scheme: light;
+  --dot: #cfd6e2;
+  --dot-hi: #3f6fe0;
+  --accent: #3f6fe0;
+  --text: #1a2130;
+  --text-2: #556074;
+  --text-dim: #8b94a4;
+  --pill: rgba(255, 255, 255, 0.82);
+  --pill-br: rgba(15, 23, 42, 0.1);
+  --rail-br: rgba(15, 23, 42, 0.07);
+  --online: #17a877;
+  color-scheme: light;
 }
 @media (prefers-color-scheme: light) {
   :root:not([data-theme]) {
-    --ground: #f3f5f9; --ground-2: #ffffff;
+    --ground: #f3f5f9;
+    --ground-2: #ffffff;
     --bloom: rgba(90, 118, 230, 0.14);
-    --dot: #cfd6e2; --dot-hi: #3f6fe0; --accent: #3f6fe0;
-    --text: #1a2130; --text-2: #556074; --text-dim: #8b94a4;
-    --pill: rgba(255, 255, 255, 0.82); --pill-br: rgba(15, 23, 42, 0.10); --rail-br: rgba(15, 23, 42, 0.07);
-    --online: #17a877; color-scheme: light;
+    --dot: #cfd6e2;
+    --dot-hi: #3f6fe0;
+    --accent: #3f6fe0;
+    --text: #1a2130;
+    --text-2: #556074;
+    --text-dim: #8b94a4;
+    --pill: rgba(255, 255, 255, 0.82);
+    --pill-br: rgba(15, 23, 42, 0.1);
+    --rail-br: rgba(15, 23, 42, 0.07);
+    --online: #17a877;
+    color-scheme: light;
   }
 }
