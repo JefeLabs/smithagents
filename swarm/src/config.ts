@@ -76,3 +76,20 @@ function ensureDirectories(config: OrchestratorConfig): void {
     mkdirSync(dir, { recursive: true });
   }
 }
+
+export interface LiveKitConfig {
+  url: string;
+  apiKey: string;
+  apiSecret: string;
+}
+
+/** Read LiveKit connection config from the environment. Throws naming the first missing var. */
+export function loadLiveKitConfig(env: NodeJS.ProcessEnv = process.env): LiveKitConfig {
+  const url = env.LIVEKIT_URL;
+  const apiKey = env.LIVEKIT_API_KEY;
+  const apiSecret = env.LIVEKIT_API_SECRET;
+  if (!url) throw new Error('LIVEKIT_URL is required');
+  if (!apiKey) throw new Error('LIVEKIT_API_KEY is required');
+  if (!apiSecret) throw new Error('LIVEKIT_API_SECRET is required');
+  return { url, apiKey, apiSecret };
+}
