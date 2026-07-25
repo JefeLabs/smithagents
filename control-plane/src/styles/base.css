@@ -1,0 +1,21 @@
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(56% 44% at 50% 60%, var(--bloom), transparent 72%),
+    radial-gradient(130% 100% at 50% 30%, var(--ground-2), var(--ground) 74%);
+  overflow: hidden;
+}
+#root { height: 100%; }
+#bg { position: fixed; inset: 0; z-index: 0; }
+
+main { position: fixed; inset: 0 72px; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; gap: 30px; }
+
+.subhint { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 2; color: var(--text-dim); font-size: 11px; letter-spacing: 0.05em; }
+.subhint kbd { border: 1px solid var(--pill-br); border-radius: 4px; padding: 1px 5px; font-family: ui-monospace, monospace; color: var(--text-2); }
+
+@keyframes rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+@keyframes ring { 0% { transform: scale(0.9); opacity: 0.6; } 100% { transform: scale(1.5); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .greeting, .voice { animation: none; } .mic-hero::after { animation: none; } }
