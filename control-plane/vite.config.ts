@@ -1,5 +1,5 @@
-import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
 
 // Control-plane front-end (PRD §5). Conventional layout: sources under src/.
 //

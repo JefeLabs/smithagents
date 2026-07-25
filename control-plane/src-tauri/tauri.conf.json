@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.jefelabs.smithagents",
   "build": {
-    "frontendDist": "./dist",
+    "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build"
@@ -33,6 +33,9 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "android": {
+      "debugApplicationIdSuffix": ".debug"
+    }
   }
 }
