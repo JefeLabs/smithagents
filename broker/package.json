@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
+    "@deepgram/sdk": "^5.7.0",
     "@smithagents/voice": "file:../voice",
     "ws": "^8.21.1"
   },
