@@ -1,9 +1,5 @@
 package com.jefelabs.smithagents.gateway;
 
-import com.jefelabs.smithagents.persona.IncomingMessage;
-import com.jefelabs.smithagents.persona.Persona;
-import com.jefelabs.smithagents.persona.PersonaRegistry;
-import com.jefelabs.smithagents.persona.PersonaRouter;
 import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
 import net.dv8tion.jda.api.events.session.ReadyEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
@@ -11,29 +7,26 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import java.util.stream.Collectors;
-
 /**
  * Handles Discord gateway events (PRD §3).
  *
  * <p>Connectivity slice: confirm login on {@code onReady}, post a one-line
  * greeting to a configured channel (a visible outbound send), log inbound
- * messages (proves the {@code MESSAGE_CONTENT} intent), answer {@code !ping},
- * and hand real messages to {@link PersonaRouter} — the one piece still to be
- * implemented — so the pipeline is wired end-to-end.
+ * messages (proves the {@code MESSAGE_CONTENT} intent), and answer {@code !ping}.
+ *
+ * <p>Message routing to an agent is intentionally absent here: agent identity
+ * and dispatch now live in the swarm orchestrator (the {@code swarm/} module).
+ * This listener will be rebuilt to route inbound messages against the swarm's
+ * agent registry once that path exists.
  */
 @Component
 public class DiscordMessageListener extends ListenerAdapter {
 
     private static final Logger log = LoggerFactory.getLogger(DiscordMessageListener.class);
 
-    private final PersonaRouter router;
-    private final PersonaRegistry registry;
     private final DiscordProperties props;
 
-    public DiscordMessageListener(PersonaRouter router, PersonaRegistry registry, DiscordProperties props) {
-        this.router = router;
-        this.registry = registry;
+    public DiscordMessageListener(DiscordProperties props) {
         this.props = props;
     }
 
@@ -56,9 +49,7 @@ public class DiscordMessageListener extends ListenerAdapter {
                     props.announceChannelId());
             return;
         }
-        String names = registry.all().stream().map(Persona::name).collect(Collectors.joining(" · "));
-        channel.sendMessage("🟢 **smithagents** online — " + registry.all().size()
-                        + " agents standing by: " + names)
+        channel.sendMessage("🟢 **smithagents** gateway online.")
                 .queue(m -> log.info("Announcement posted to #{}", channel.getName()),
                         err -> log.warn("Announcement failed: {}", err.getMessage()));
     }
@@ -75,16 +66,8 @@ public class DiscordMessageListener extends ListenerAdapter {
 
         if (content.equalsIgnoreCase("!ping")) {
             event.getChannel().sendMessage("pong 🏓").queue();
-            return;
         }
-
-        try {
-            Persona persona = router.route(
-                    new IncomingMessage(author, content, event.getChannel().getId()));
-            log.info("→ routed to persona: {}", persona.name());
-            // TODO(next slice): post the reply AS that persona via a channel webhook.
-        } catch (UnsupportedOperationException e) {
-            log.debug("Routing not implemented yet (PersonaRouter.route); message not dispatched.");
-        }
+        // Routing an inbound message to an agent will be rebuilt against the
+        // swarm orchestrator's agent registry (was: personas PersonaRouter).
     }
 }

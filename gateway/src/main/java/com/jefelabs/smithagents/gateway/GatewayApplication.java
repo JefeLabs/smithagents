@@ -11,15 +11,15 @@ import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
  * <ul>
  *   <li><b>Discord (JDA):</b> stream raw PCM audio + route transcriptions.</li>
  *   <li><b>WebSocket server:</b> synchronize the Tauri thin clients (desktop + iOS).</li>
- *   <li><b>_embabel routing engine:</b> {@code PersonaRouter} (in the {@code personas}
- *       module) chooses a persona per message, iterating a data-driven
- *       {@code PersonaRegistry} — never a hardcoded roster.</li>
+ *   <li><b>Agent routing:</b> inbound messages route to an agent defined in the
+ *       swarm orchestrator's registry (the {@code swarm/} module), which owns
+ *       agent identity and dispatch — never a hardcoded roster.</li>
  *   <li><b>mTLS validation:</b> reject clients lacking a valid device certificate.</li>
  * </ul>
  *
  * <p>{@code scanBasePackages} spans the whole {@code com.jefelabs.smithagents}
- * tree so the gateway discovers the persona beans that live in the sibling
- * {@code personas} module.
+ * tree so the gateway discovers component beans across sibling modules (e.g.
+ * {@code sandbox}).
  */
 @SpringBootApplication(scanBasePackages = "com.jefelabs.smithagents")
 @ConfigurationPropertiesScan

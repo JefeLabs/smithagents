@@ -23,7 +23,6 @@
 
   <!-- Reactor build order follows dependency order: libs before the app. -->
   <modules>
-    <module>personas</module>
     <module>agent-robot</module>
     <module>sandbox</module>
     <module>gateway</module>
@@ -44,11 +43,6 @@
   <dependencyManagement>
     <dependencies>
       <!-- Internal modules: version pinned once, consumed without versions. -->
-      <dependency>
-        <groupId>com.jefelabs</groupId>
-        <artifactId>personas</artifactId>
-        <version>${project.version}</version>
-      </dependency>
       <dependency>
         <groupId>com.jefelabs</groupId>
         <artifactId>agent-robot</artifactId>

@@ -44,10 +44,6 @@
     <!-- Internal modules. -->
     <dependency>
       <groupId>com.jefelabs</groupId>
-      <artifactId>personas</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>com.jefelabs</groupId>
       <artifactId>agent-robot</artifactId>
     </dependency>
     <dependency>
