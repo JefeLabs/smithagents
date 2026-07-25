@@ -48,10 +48,14 @@ async function* speak(text: string): AsyncIterable<Uint8Array> {
  * was drafted against). The live connection is `deepgram.listen.v1.connect(...)`,
  * which is ASYNC and returns a `V1Socket` whose messages already carry the
  * exact shape `DeepgramSttStream` expects: `{ type: 'Results', is_final,
- * speech_final, channel: { alternatives: [{ transcript }] } }`. stt.ts's
- * `LiveLike`/`LiveFactory` contract stays fixed and synchronous, so this
- * adapter bridges the gap: audio sent before the socket finishes opening is
- * queued and flushed once connected.
+ * speech_final, channel: { alternatives: [{ transcript }] } }`. Resolving
+ * that promise does NOT mean the underlying websocket is open yet — per the
+ * SDK's own documented usage (README: "connection.connect(); await
+ * connection.waitForOpen();"), the socket must be explicitly opened and that
+ * open awaited before any `sendMedia()` call, or it throws "Socket is not
+ * open." stt.ts's `LiveLike`/`LiveFactory` contract stays fixed and
+ * synchronous, so this adapter bridges the gap: audio sent before the socket
+ * finishes connecting *and* opening is queued and flushed once truly open.
  */
 const deepgram = new DeepgramClient({ apiKey: config.deepgramApiKey });
 
@@ -72,13 +76,21 @@ function makeDeepgramLive(): LiveLike {
       smart_format: 'true',
       endpointing: 300,
     })
-    .then((s) => {
+    .then(async (s) => {
+      if (closed) {
+        s.close();
+        return null;
+      }
+      s.on('message', (message) => resultsCb?.(message));
+      // connect() resolves as soon as the socket object exists, not once the
+      // websocket handshake completes — open it and wait before sending.
+      s.connect();
+      await s.waitForOpen();
       if (closed) {
         s.close();
         return null;
       }
       socket = s;
-      s.on('message', (message) => resultsCb?.(message));
       for (const chunk of pending.splice(0)) s.sendMedia(chunk);
       return s;
     })

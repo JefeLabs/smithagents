@@ -27,11 +27,12 @@ function makeFakes(meetings: SwarmMeeting[]) {
   };
 
   const sttAudio: Uint8Array[] = [];
+  const sttStops: number[] = [];
   let utteranceSink: ((t: string) => void) | null = null;
   const stt: SttLike = {
     start: (cb) => (utteranceSink = cb),
     sendAudio: (b) => sttAudio.push(b),
-    stop: () => {},
+    stop: () => void sttStops.push(1),
   };
 
   const published: Array<{ bytes: Uint8Array; sampleRate: number }> = [];
@@ -57,7 +58,7 @@ function makeFakes(meetings: SwarmMeeting[]) {
   };
 
   return {
-    swarm, stt, bridge, brain, submitted, published, heard,
+    swarm, stt, bridge, brain, submitted, published, heard, sttStops,
     emitEvent: (e: SwarmEvent) => eventSink?.(e),
     emitUtterance: (t: string) => utteranceSink?.(t),
   };
@@ -142,4 +143,83 @@ test('task:completed for a bound task triggers a spoken system note', async () =
   await new Promise((r) => setTimeout(r, 10));
   assert.ok(f.heard.some((h) => h.startsWith('NOTE:') && /Manuel/.test(h)));
   await b.stop();
+});
+
+test('speech chain survives a failing chunk: later chunks still publish, no unhandled rejection', async () => {
+  const f = makeFakes([MEETING]);
+  const unhandled: unknown[] = [];
+  const onUnhandledRejection = (err: unknown) => unhandled.push(err);
+  process.on('unhandledRejection', onUnhandledRejection);
+  let speakCalls = 0;
+  const b = new Broker({
+    swarm: f.swarm,
+    directory: new AgentDirectory(),
+    brain: f.brain,
+    makeStt: () => f.stt,
+    makeBridge: () => f.bridge,
+    speak: async function* (text) {
+      speakCalls += 1;
+      if (speakCalls === 1) throw new Error('tts blew up');
+      yield new Uint8Array(Buffer.from(`AUDIO(${text})`));
+    },
+    mintToken: async (room) => `jwt-for-${room}`,
+    livekitUrl: 'ws://test',
+    pollMs: 999999,
+  });
+  try {
+    await b.start();
+    await b.pollOnce();
+    f.emitUtterance('first');
+    await new Promise((r) => setTimeout(r, 10)); // first chunk's speak() throws
+    f.emitUtterance('second');
+    await new Promise((r) => setTimeout(r, 10)); // second chunk must still run
+    assert.equal(f.published.length, 1);
+    assert.match(Buffer.from(f.published[0]!.bytes).toString(), /AUDIO\(spoken reply\)/);
+    assert.deepEqual(unhandled, []);
+  } finally {
+    await b.stop();
+    process.off('unhandledRejection', onUnhandledRejection);
+  }
+});
+
+test('joinMeeting failure stops the stt and leaves active unset; next pollOnce retries', async () => {
+  const f = makeFakes([MEETING]);
+  let connectAttempts = 0;
+  const bridge: BridgeLike & { connected: string[] } = {
+    connected: [],
+    connect: async (opts) => {
+      connectAttempts += 1;
+      if (connectAttempts === 1) throw new Error('connect failed');
+      bridge.connected.push(opts.token);
+    },
+    onRemoteAudio: () => {},
+    publishPcm: async () => {},
+    disconnect: async () => {},
+  };
+  const b = new Broker({
+    swarm: f.swarm,
+    directory: new AgentDirectory(),
+    brain: f.brain,
+    makeStt: () => f.stt,
+    makeBridge: () => bridge,
+    speak: async function* (text) {
+      yield new Uint8Array(Buffer.from(`AUDIO(${text})`));
+    },
+    mintToken: async (room) => `jwt-for-${room}`,
+    livekitUrl: 'ws://test',
+    pollMs: 999999,
+  });
+  try {
+    await b.start();
+    await b.pollOnce(); // bridge.connect rejects: joinMeeting must clean up, not throw
+    assert.equal(connectAttempts, 1);
+    assert.equal(f.sttStops.length, 1);
+    assert.equal(bridge.connected.length, 0);
+
+    await b.pollOnce(); // active is still unset, so this retries and succeeds
+    assert.equal(connectAttempts, 2);
+    assert.deepEqual(bridge.connected, ['jwt-for-meeting-m-1']);
+  } finally {
+    await b.stop();
+  }
 });

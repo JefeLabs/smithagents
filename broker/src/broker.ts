@@ -68,6 +68,8 @@ export class Broker {
   private unsubscribe: (() => void) | null = null;
   private pollTimer: NodeJS.Timeout | null = null;
   private speaking = Promise.resolve();
+  /** True while a joinMeeting() call is in flight, so overlapping pollOnce ticks don't double-join. */
+  private joining = false;
 
   /** Tool executors handed to the brain; public for tests + reuse. */
   readonly executors = {
@@ -124,6 +126,7 @@ export class Broker {
 
   /** One poll cycle: join the first open meeting; leave when it closes. */
   async pollOnce(): Promise<void> {
+    if (this.joining) return; // a join from a previous tick is still in flight
     let meetings: SwarmMeeting[];
     try {
       meetings = await this.deps.swarm.listMeetings();
@@ -132,7 +135,14 @@ export class Broker {
     }
     const open = meetings.find((m) => m.status === 'open');
     if (this.active && (!open || open.id !== this.active.meeting.id)) await this.leaveMeeting();
-    if (open && !this.active) await this.joinMeeting(open);
+    if (open && !this.active) {
+      this.joining = true;
+      try {
+        await this.joinMeeting(open);
+      } finally {
+        this.joining = false;
+      }
+    }
   }
 
   /** Public so the stdin dev channel (and tests) can inject an utterance. */
@@ -145,8 +155,14 @@ export class Broker {
     const stt = this.deps.makeStt();
     stt.start((utterance) => void this.handleUtterance(utterance));
     bridge.onRemoteAudio((pcm) => stt.sendAudio(pcm));
-    const token = await this.deps.mintToken(meeting.roomName);
-    await bridge.connect({ url: this.deps.livekitUrl, token });
+    try {
+      const token = await this.deps.mintToken(meeting.roomName);
+      await bridge.connect({ url: this.deps.livekitUrl, token });
+    } catch (err) {
+      stt.stop();
+      console.error('[broker] failed to join meeting:', err);
+      return; // this.active stays null — next poll retries
+    }
     this.active = { meeting, bridge, stt };
     this.deps.directory.setMeeting(meeting.agentIds);
   }
@@ -180,14 +196,24 @@ export class Broker {
     };
   }
 
-  /** Serialize TTS chunks so audio never interleaves mid-sentence. */
+  /**
+   * Serialize TTS chunks so audio never interleaves mid-sentence. Each link
+   * catches its own failure so one bad chunk (a `speak()`/`publishPcm()`
+   * rejection) never poisons the chain — `this.speaking` always settles
+   * fulfilled, so later chunks still run and no unhandled rejection escapes.
+   */
   private enqueueSpeech(text: string): void {
-    this.speaking = this.speaking.then(async () => {
-      const bridge = this.active?.bridge;
-      if (!bridge) return;
-      for await (const bytes of this.deps.speak(text)) {
-        await bridge.publishPcm(bytes, TTS_SAMPLE_RATE);
+    const run = async (): Promise<void> => {
+      try {
+        const bridge = this.active?.bridge;
+        if (!bridge) return;
+        for await (const bytes of this.deps.speak(text)) {
+          await bridge.publishPcm(bytes, TTS_SAMPLE_RATE);
+        }
+      } catch (err) {
+        console.error('[broker] speech chunk failed:', err);
       }
-    });
+    };
+    this.speaking = this.speaking.then(run);
   }
 }
