@@ -16,6 +16,7 @@
     "node": ">=24.0.0"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
     "@smithagents/voice": "file:../voice",
     "ws": "^8.21.1"
   },
