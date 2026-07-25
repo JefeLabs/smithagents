@@ -16,10 +16,12 @@
     "node": ">=24.0.0"
   },
   "dependencies": {
-    "@smithagents/voice": "file:../voice"
+    "@smithagents/voice": "file:../voice",
+    "ws": "^8.21.1"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
+    "@types/ws": "^8.18.1",
     "tsx": "^4.23.1",
     "typescript": "^5.6.0"
   }
