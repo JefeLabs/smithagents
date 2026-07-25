@@ -1,0 +1,437 @@
+<!-- Canonical porting reference: claude.ai artifact 9095b184-b66d-4d6e-a653-ef06b583bc44
+     "smithagents · control plane", fetched 2026-07-24. claude.ai frame-runtime wrapper stripped;
+     this is the artifact's own markup/styles/script verbatim. -->
+<title>smithagents · control plane</title>
+<style>
+  :root {
+    --ground: #090b10;
+    --ground-2: #0d1119;
+    --bloom: rgba(74, 96, 190, 0.20);
+    --dot: #222a38;
+    --dot-hi: #7aa2ff;
+    --accent: #7aa2ff;
+    --text: #e7ecf4;
+    --text-2: #9aa6b6;
+    --text-dim: #5c6675;
+    --pill: rgba(28, 33, 44, 0.72);
+    --pill-br: rgba(255, 255, 255, 0.08);
+    --rail-br: rgba(255, 255, 255, 0.06);
+    --online: #46d19e;
+    color-scheme: dark;
+  }
+  :root[data-theme="light"] {
+    --ground: #f3f5f9; --ground-2: #ffffff;
+    --bloom: rgba(90, 118, 230, 0.14);
+    --dot: #cfd6e2; --dot-hi: #3f6fe0; --accent: #3f6fe0;
+    --text: #1a2130; --text-2: #556074; --text-dim: #8b94a4;
+    --pill: rgba(255, 255, 255, 0.82); --pill-br: rgba(15, 23, 42, 0.10); --rail-br: rgba(15, 23, 42, 0.07);
+    --online: #17a877; color-scheme: light;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme]) {
+      --ground: #f3f5f9; --ground-2: #ffffff;
+      --bloom: rgba(90, 118, 230, 0.14);
+      --dot: #cfd6e2; --dot-hi: #3f6fe0; --accent: #3f6fe0;
+      --text: #1a2130; --text-2: #556074; --text-dim: #8b94a4;
+      --pill: rgba(255, 255, 255, 0.82); --pill-br: rgba(15, 23, 42, 0.10); --rail-br: rgba(15, 23, 42, 0.07);
+      --online: #17a877; color-scheme: light;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--text);
+    background:
+      radial-gradient(56% 44% at 50% 60%, var(--bloom), transparent 72%),
+      radial-gradient(130% 100% at 50% 30%, var(--ground-2), var(--ground) 74%);
+    overflow: hidden;
+  }
+  #bg { position: fixed; inset: 0; z-index: 0; }
+
+  /* ---- shared rails ---- */
+  .rail {
+    position: fixed; top: 0; bottom: 0; z-index: 3; width: 72px;
+    display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 16px 0;
+  }
+  .rail--left { left: 0; border-right: 1px solid var(--rail-br); background: linear-gradient(90deg, rgba(0,0,0,0.18), transparent); }
+  .rail--right { right: 0; border-left: 1px solid var(--rail-br); background: linear-gradient(270deg, rgba(0,0,0,0.18), transparent); }
+  .spacer { flex: 1; }
+  .rail__label { font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-dim); }
+
+  .logo { width: 30px; height: 30px; margin-bottom: 4px; color: var(--accent); display: grid; place-items: center; }
+  .logo svg { width: 26px; height: 26px; }
+
+  /* left rail: tool / activity icons */
+  .tool {
+    width: 42px; height: 42px; border-radius: 12px; border: none; cursor: pointer;
+    display: grid; place-items: center; color: var(--text-2); background: transparent;
+    transition: color 0.15s, background 0.15s;
+  }
+  .tool:hover { color: var(--text); background: rgba(255,255,255,0.05); }
+  .tool[aria-current="true"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  .tool:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .tool svg { width: 20px; height: 20px; }
+
+  /* right rail: agent avatars */
+  .avatar {
+    position: relative; width: 44px; height: 44px; flex: none;
+    border-radius: 50%; border: none; padding: 0; cursor: pointer;
+    display: grid; place-items: center; background: rgba(255,255,255,0.03);
+    color: var(--text); font-weight: 600; font-size: 15px;
+    box-shadow: inset 0 0 0 1.5px var(--ring, var(--rail-br));
+    transition: transform 0.18s ease, box-shadow 0.18s ease;
+  }
+  .avatar:hover { transform: translateX(-3px) scale(1.05); box-shadow: inset 0 0 0 1.5px var(--ring), 0 0 0 4px color-mix(in srgb, var(--ring) 22%, transparent); }
+  .avatar:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .avatar .status { position: absolute; right: -1px; bottom: -1px; width: 11px; height: 11px; border-radius: 50%; background: var(--online); border: 2.5px solid var(--ground); }
+  .avatar .tip {
+    position: absolute; right: 56px; top: 50%; transform: translateY(-50%) translateX(4px);
+    white-space: nowrap; pointer-events: none; opacity: 0;
+    background: var(--pill); border: 1px solid var(--pill-br); border-radius: 8px; padding: 6px 10px;
+    font-size: 12px; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    transition: opacity 0.16s ease, transform 0.16s ease; z-index: 5;
+  }
+  .avatar .tip b { display: block; font-weight: 600; }
+  .avatar .tip span { color: var(--text-2); font-size: 11px; }
+  .avatar:hover .tip, .avatar:focus-visible .tip { opacity: 1; transform: translateY(-50%) translateX(0); }
+  .add { width: 42px; height: 42px; border-radius: 50%; border: 1px dashed var(--rail-br); background: transparent; color: var(--text-dim); cursor: pointer; font-size: 18px; }
+  .add:hover { color: var(--accent); border-color: var(--accent); }
+
+  /* ---- center stage (voice-first) ---- */
+  main { position: fixed; inset: 0 72px; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; gap: 30px; }
+  .greeting {
+    margin: 0; text-align: center; text-wrap: balance; font-weight: 300; letter-spacing: -0.01em; line-height: 1.1;
+    font-size: clamp(1.7rem, 4.4vw, 3.1rem); color: var(--text);
+    animation: rise 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+  .greeting em { font-style: normal; color: var(--accent); }
+
+  .voice { display: flex; flex-direction: column; align-items: center; gap: 12px; animation: rise 0.7s 0.06s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+  .mic-hero {
+    position: relative; width: 84px; height: 84px; border-radius: 50%; cursor: pointer;
+    border: 1.5px solid color-mix(in srgb, var(--accent) 55%, transparent);
+    background: radial-gradient(circle at 50% 40%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 70%), var(--pill);
+    color: var(--accent); display: grid; place-items: center;
+    box-shadow: 0 12px 40px color-mix(in srgb, var(--accent) 18%, transparent);
+    transition: transform 0.18s ease;
+  }
+  .mic-hero:hover { transform: scale(1.05); }
+  .mic-hero:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+  .mic-hero svg { width: 30px; height: 30px; }
+  .mic-hero::after {
+    content: ""; position: absolute; inset: -8px; border-radius: 50%;
+    border: 1.5px solid color-mix(in srgb, var(--accent) 40%, transparent);
+    animation: ring 2.6s ease-out infinite; opacity: 0;
+  }
+  .mic-hero.live { color: #fff; background: var(--accent); }
+  .mic-hero.live::after { animation-duration: 1.2s; }
+  .mic-caption { font-size: 12px; letter-spacing: 0.04em; color: var(--text-dim); }
+  .mic-caption b { color: var(--text-2); font-weight: 500; }
+
+  .composer {
+    width: min(560px, 90%); display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 14px;
+    background: var(--pill); border: 1px solid var(--pill-br); border-radius: 26px;
+    backdrop-filter: blur(16px) saturate(1.3); -webkit-backdrop-filter: blur(16px) saturate(1.3);
+    opacity: 0.92;
+  }
+  .composer .plus { flex: none; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; cursor: pointer; background: transparent; border: none; color: var(--text-2); }
+  .composer .plus:hover { color: var(--text); }
+  .composer input { flex: 1; min-width: 0; background: transparent; border: none; outline: none; color: var(--text); font: inherit; font-size: 14px; }
+  .composer input::placeholder { color: var(--text-dim); }
+  .selector { flex: none; display: flex; align-items: center; gap: 3px; padding: 5px 9px; border-radius: 999px; cursor: pointer; color: var(--text-2); font-size: 12px; font-weight: 500; border: 1px solid transparent; }
+  .selector:hover { border-color: var(--pill-br); color: var(--text); }
+  .selector svg { width: 13px; height: 13px; }
+  .plus:focus-visible, .selector:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .subhint { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 2; color: var(--text-dim); font-size: 11px; letter-spacing: 0.05em; }
+  .subhint kbd { border: 1px solid var(--pill-br); border-radius: 4px; padding: 1px 5px; font-family: ui-monospace, monospace; color: var(--text-2); }
+
+  @keyframes rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+  @keyframes ring { 0% { transform: scale(0.9); opacity: 0.6; } 100% { transform: scale(1.5); opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .greeting, .voice { animation: none; } .mic-hero::after { animation: none; } }
+
+  /* tiny hidden tuner (press g) */
+  .tuner { position: fixed; top: 14px; right: 88px; z-index: 6; width: 208px; background: var(--pill); border: 1px solid var(--pill-br); border-radius: 10px; backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); padding: 10px 12px; font-size: 10px; display: none; }
+  .tuner[data-open="true"] { display: grid; gap: 8px; }
+  .tuner h4 { margin: 0 0 2px; font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-dim); }
+  .tuner .r { display: grid; gap: 3px; }
+  .tuner .r .t { display: flex; justify-content: space-between; color: var(--text-2); }
+  .tuner .r output { color: var(--accent); font-family: ui-monospace, monospace; }
+  .tuner input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 3px; border-radius: 3px; background: var(--pill-br); }
+  .tuner input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%; background: var(--accent); cursor: pointer; }
+  .tuner button { width: 100%; margin-top: 2px; font: inherit; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-2); background: transparent; border: 1px solid var(--pill-br); border-radius: 6px; padding: 6px; cursor: pointer; }
+  .tuner button:hover { color: var(--accent); border-color: var(--accent); }
+
+  /* ---- add-agent modal ---- */
+  .scrim { position: fixed; inset: 0; z-index: 10; background: rgba(4,6,10,0.6); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); display: none; place-items: center; padding: 24px; }
+  .scrim[data-open="true"] { display: grid; }
+  .modal { width: min(460px, 96vw); max-height: 88vh; overflow: auto; background: var(--pill); border: 1px solid var(--pill-br); border-radius: 18px; backdrop-filter: blur(20px) saturate(1.3); -webkit-backdrop-filter: blur(20px) saturate(1.3); box-shadow: 0 30px 90px rgba(0,0,0,0.5); padding: 22px; animation: rise 0.28s ease both; }
+  .modal h2 { margin: 0 0 3px; font-size: 17px; font-weight: 600; }
+  .modal .sub { margin: 0 0 18px; font-size: 12px; color: var(--text-2); }
+  .field { display: grid; gap: 6px; margin-bottom: 14px; }
+  .field > label { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-dim); }
+  .field input[type=text], .field input[type=password], .field textarea { width: 100%; background: rgba(255,255,255,0.04); border: 1px solid var(--pill-br); border-radius: 10px; padding: 10px 12px; color: var(--text); font: inherit; font-size: 14px; outline: none; }
+  .field input:focus, .field textarea:focus { border-color: var(--accent); }
+  .field textarea { resize: vertical; min-height: 60px; }
+  .id-head { display: flex; gap: 12px; align-items: center; margin-bottom: 14px; }
+  .id-avatar { width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center; font-weight: 600; font-size: 20px; color: var(--text); box-shadow: inset 0 0 0 1.5px var(--ring, var(--accent)); background: rgba(255,255,255,0.04); flex: none; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chip { padding: 7px 12px; border-radius: 999px; border: 1px solid var(--pill-br); background: transparent; color: var(--text-2); font: inherit; font-size: 13px; cursor: pointer; }
+  .chip[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .seg { display: flex; gap: 4px; background: rgba(255,255,255,0.04); border: 1px solid var(--pill-br); border-radius: 10px; padding: 4px; }
+  .seg button { flex: 1; padding: 8px; border: none; background: transparent; color: var(--text-2); border-radius: 7px; font: inherit; font-size: 13px; cursor: pointer; }
+  .seg button[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--text); }
+  .discord-panel { margin-top: 6px; padding: 14px; border: 1px dashed var(--pill-br); border-radius: 12px; }
+  .note { font-size: 12px; color: var(--text-2); line-height: 1.5; margin: 0; }
+  .note b { color: var(--text); }
+  .check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); margin-top: 4px; }
+  .check input { accent-color: var(--accent); }
+  .modal-actions { display: flex; gap: 10px; margin-top: 20px; }
+  .modal-actions button { flex: 1; padding: 11px; border-radius: 12px; font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; border: 1px solid var(--pill-br); background: transparent; color: var(--text); }
+  .modal-actions button:hover { border-color: var(--accent); }
+  .modal-actions .primary { background: var(--accent); color: #05070c; border-color: transparent; }
+  .modal-actions .primary:hover { filter: brightness(1.08); }
+  .modal :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .hidden { display: none !important; }
+</style>
+
+<canvas id="bg"></canvas>
+
+<!-- LEFT: tools / activity task bar -->
+<nav class="rail rail--left" aria-label="Tools and activity">
+  <div class="logo" title="smithagents" aria-hidden="true">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 2l2.4 5.6L20 10l-5.6 2.4L12 18l-2.4-5.6L4 10l5.6-2.4z"/></svg>
+  </div>
+  <button class="tool" aria-current="true" title="New session" aria-label="New session"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>
+  <button class="tool" title="Search" aria-label="Search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></button>
+  <button class="tool" title="Tasks / activity" aria-label="Tasks and activity"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 12l2 2 4-4"/></svg></button>
+  <button class="tool" title="Branches &amp; PRs" aria-label="Branches and pull requests"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="8" r="2.4"/><path d="M6 8.4v7.2M8.4 7h4.2A3 3 0 0 1 15.6 10v0"/></svg></button>
+  <button class="tool" title="Apps" aria-label="Apps"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="4" width="6" height="6" rx="1.5"/><rect x="14" y="4" width="6" height="6" rx="1.5"/><rect x="4" y="14" width="6" height="6" rx="1.5"/><rect x="14" y="14" width="6" height="6" rx="1.5"/></svg></button>
+  <div class="spacer"></div>
+  <button class="tool" title="Settings" aria-label="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 7 19.4l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 4.6 15H4.5a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 6 8.6l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.6 1.6 0 0 0 11 4.6V4.5a2 2 0 1 1 4 0v.1A1.6 1.6 0 0 0 17 6l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0 1.1 2.7h.1a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg></button>
+  <button class="avatar" title="Edwin · operator" aria-label="Edwin, operator" style="--ring: var(--rail-br); background: linear-gradient(135deg,#3a4358,#232a38); font-size:14px">E</button>
+</nav>
+
+<!-- RIGHT: agent roster -->
+<aside class="rail rail--right" aria-label="Agents">
+  <div class="rail__label">agents</div>
+  <div id="roster" style="display:flex;flex-direction:column;gap:12px;align-items:center"></div>
+  <button class="add" id="addAgent" title="Configure a new agent" aria-label="Add agent">+</button>
+  <div class="spacer"></div>
+</aside>
+
+<main>
+  <h1 class="greeting">The mic is yours, <em>Edwin</em></h1>
+  <div class="voice">
+    <button class="mic-hero" id="mic" title="Push to talk" aria-label="Push to talk">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0 0 12 0M12 17v4M8 21h8"/></svg>
+    </button>
+    <div class="mic-caption" id="cap"><b>Push to talk</b> — or type below</div>
+  </div>
+  <form class="composer" onsubmit="return false">
+    <button class="plus" type="button" title="Attach screenshot or file" aria-label="Attach"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 5v14M5 12h14"/></svg></button>
+    <input type="text" placeholder="Type a request…" aria-label="Type a request" />
+    <div class="selector" role="button" tabindex="0" title="Route to a specific agent, or let the swarm decide">Swarm<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></div>
+  </form>
+</main>
+
+<div class="subhint">endless canvas · press <kbd>g</kbd> to tune the grid</div>
+
+<aside class="tuner" id="tuner" data-open="false" aria-label="Background tuning">
+  <h4>fisheye grid</h4><div id="tbody"></div><button id="treset">reset</button>
+</aside>
+
+<!-- Add-agent modal -->
+<div class="scrim" id="scrim" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+  <div class="modal">
+    <h2 id="modalTitle">New agent</h2>
+    <p class="sub">Give the agent an identity and pick where it shows up.</p>
+
+    <div class="id-head">
+      <div class="id-avatar" id="prevAvatar" style="--ring: var(--accent)">A</div>
+      <div class="field" style="flex:1; margin:0">
+        <label for="agName">Name</label>
+        <input id="agName" type="text" placeholder="e.g. Manuel" value="Vera" />
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="agRole">Role</label>
+      <input id="agRole" type="text" placeholder="e.g. Architect" value="Release Marshal" />
+    </div>
+
+    <div class="field">
+      <label>Channels</label>
+      <div class="chips">
+        <button type="button" class="chip" aria-pressed="true" data-ch="discord">Discord</button>
+        <button type="button" class="chip" aria-pressed="false" data-ch="web">Web widget</button>
+        <button type="button" class="chip" aria-pressed="false" data-ch="tauri">Tauri</button>
+      </div>
+    </div>
+
+    <div class="field" id="discordField">
+      <label>Discord identity — how it appears on the server</label>
+      <div class="seg" role="tablist" aria-label="Discord identity mode">
+        <button type="button" role="tab" aria-selected="true" data-mode="webhook">Webhook identity</button>
+        <button type="button" role="tab" aria-selected="false" data-mode="bot">Dedicated bot</button>
+      </div>
+      <div class="discord-panel">
+        <div id="modeWebhook">
+          <p class="note"><b>Distinct sender — no token.</b> Posts as this agent’s name &amp; avatar in every channel, seen by everyone. Rides the shared bot’s <em>Manage&nbsp;Webhooks</em> permission. No presence in the member list.</p>
+        </div>
+        <div id="modeBot" class="hidden">
+          <p class="note"><b>A real member.</b> Appears in the member list with presence and can join voice — needs its own bot token.</p>
+          <div class="field" style="margin-top:12px">
+            <label for="agToken">Bot token</label>
+            <input id="agToken" type="password" placeholder="paste the agent’s bot token" autocomplete="off" />
+          </div>
+          <label class="check"><input type="checkbox" checked /> Enable the <b>MESSAGE_CONTENT</b> intent</label>
+          <div class="field" style="margin-top:12px">
+            <label for="agGuild">Guild ID</label>
+            <input id="agGuild" type="text" value="" placeholder="defaults to GUILD_ID from .env" />
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="agDir">Directives <span style="text-transform:none; letter-spacing:0; color:var(--text-dim)">— system prompt, optional</span></label>
+      <textarea id="agDir" placeholder="How this agent behaves — its domain, tone, and hard constraints…"></textarea>
+    </div>
+
+    <div class="modal-actions">
+      <button type="button" id="cancelAgent">Cancel</button>
+      <button type="button" class="primary" id="createAgent">Create agent</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  "use strict";
+  const AGENTS = [
+    { id: "manuel",  name: "Manuel",  role: "Architect",              ring: "#6f8dff" },
+    { id: "octavio", name: "Octavio", role: "Security / Integration", ring: "#e0a15a" },
+    { id: "aurelio", name: "Aurelio", role: "UI Purist",              ring: "#d977c8" }
+  ];
+  const roster = document.getElementById("roster");
+  AGENTS.forEach(a => {
+    const b = document.createElement("button");
+    b.className = "avatar"; b.style.setProperty("--ring", a.ring);
+    b.setAttribute("aria-label", a.name + ", " + a.role);
+    b.innerHTML = a.name[0] + '<span class="status"></span><span class="tip"><b>' + a.name + '</b><span>' + a.role + '</span></span>';
+    roster.appendChild(b);
+  });
+
+  const mic = document.getElementById("mic"), cap = document.getElementById("cap");
+  mic.addEventListener("click", () => {
+    const live = mic.classList.toggle("live");
+    cap.innerHTML = live ? '<b style="color:var(--accent)">Listening…</b> tap to stop' : '<b>Push to talk</b> — or type below';
+  });
+
+  /* ---- fisheye dot grid (dialed subtle) ---- */
+  const canvas = document.getElementById("bg"), ctx = canvas.getContext("2d"), TAU = Math.PI * 2;
+  const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const DEFAULTS = { distortion: 1.6, radius: 170, spacing: 36, dotSize: 1.2, glow: 0.85, base: 0.26 };
+  const META = {
+    distortion: { min: 0.4, max: 4, step: 0.1, label: "distortion" },
+    radius: { min: 90, max: 420, step: 10, label: "radius" },
+    spacing: { min: 22, max: 64, step: 2, label: "spacing" },
+    dotSize: { min: 0.6, max: 2.6, step: 0.1, label: "dot size" },
+    glow: { min: 0, max: 1, step: 0.05, label: "glow" },
+    base: { min: 0.08, max: 0.6, step: 0.02, label: "quietness" }
+  };
+  const params = { ...DEFAULTS };
+  let colDot = { r: 34, g: 42, b: 56 }, colHi = { r: 122, g: 162, b: 255 };
+  function hexToRgb(hex) { hex = (hex || "").trim().replace("#", ""); if (hex.length === 3) hex = hex.split("").map(c => c + c).join(""); const n = parseInt(hex, 16); return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 }; }
+  function readColors() { const cs = getComputedStyle(document.documentElement); colDot = hexToRgb(cs.getPropertyValue("--dot")); colHi = hexToRgb(cs.getPropertyValue("--dot-hi")); }
+
+  let W = 0, H = 0, dpr = 1, dots = [];
+  function resize() { dpr = Math.min(devicePixelRatio || 1, 2); W = innerWidth; H = innerHeight; canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr); canvas.style.width = W + "px"; canvas.style.height = H + "px"; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); buildGrid(); }
+  function buildGrid() { dots = []; const s = params.spacing, cols = Math.floor(W / s), rows = Math.floor(H / s), ox = (W - (cols - 1) * s) / 2, oy = (H - (rows - 1) * s) / 2; for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) dots.push({ x: ox + c * s, y: oy + r * s }); }
+
+  let fx = 0, fy = 0, tx = 0, ty = 0, hasMouse = false, lastMove = -1e9, hidden = false;
+  addEventListener("pointermove", e => { tx = e.clientX; ty = e.clientY; hasMouse = true; lastMove = performance.now(); }, { passive: true });
+  addEventListener("pointerleave", () => hasMouse = false);
+  document.addEventListener("visibilitychange", () => hidden = document.hidden);
+
+  function frame(now) {
+    requestAnimationFrame(frame); if (hidden) return;
+    const idle = !hasMouse || now - lastMove > 2600;
+    if (idle && !reduceMotion) { const t = now * 0.00015; tx = W / 2 + Math.cos(t) * Math.min(W, H) * 0.2; ty = H * 0.6 + Math.sin(t * 0.9) * Math.min(W, H) * 0.12; }
+    else if (idle && reduceMotion) { tx = -1e5; ty = -1e5; }
+    const e = reduceMotion ? 1 : 0.15; fx += (tx - fx) * e; fy += (ty - fy) * e;
+    const R = params.radius, D = params.distortion, R2 = R * R; let k0 = Math.exp(D); k0 = (k0 / (k0 - 1)) * R; const k1 = D / R;
+    ctx.clearRect(0, 0, W, H);
+    for (let i = 0; i < dots.length; i++) {
+      const p = dots[i], dx = p.x - fx, dy = p.y - fy, d2 = dx * dx + dy * dy;
+      let px = p.x, py = p.y, t = 0;
+      if (d2 < R2) { const dd = Math.sqrt(d2); if (dd > 0.5) { const k = (k0 * (1 - Math.exp(-dd * k1)) / dd) * 0.75 + 0.25; px = fx + dx * k; py = fy + dy * k; t = Math.max(0, Math.min(1, (k - 1) / 1.4)); } }
+      const rad = params.dotSize * (1 + t * 1.7), cT = t * params.glow;
+      const r = (colDot.r + (colHi.r - colDot.r) * cT) | 0, g = (colDot.g + (colHi.g - colDot.g) * cT) | 0, b = (colDot.b + (colHi.b - colDot.b) * cT) | 0;
+      const a = params.base + (0.9 - params.base) * cT;
+      ctx.beginPath(); ctx.arc(px, py, rad, 0, TAU); ctx.fillStyle = "rgba(" + r + "," + g + "," + b + "," + a.toFixed(3) + ")"; ctx.fill();
+    }
+  }
+
+  const tbody = document.getElementById("tbody"), outs = {};
+  const fmt = (k, v) => META[k].step < 1 ? (+v).toFixed(2) : String(v);
+  Object.keys(META).forEach(k => {
+    const m = META[k], row = document.createElement("div"); row.className = "r";
+    row.innerHTML = '<div class="t"><span>' + m.label + '</span><output>' + fmt(k, params[k]) + '</output></div><input type="range" min="' + m.min + '" max="' + m.max + '" step="' + m.step + '" value="' + params[k] + '">';
+    tbody.appendChild(row); const inp = row.querySelector("input"); outs[k] = row.querySelector("output");
+    inp.addEventListener("input", () => { params[k] = +inp.value; outs[k].textContent = fmt(k, params[k]); if (k === "spacing") buildGrid(); });
+  });
+  document.getElementById("treset").addEventListener("click", () => { Object.assign(params, DEFAULTS); const ins = tbody.querySelectorAll("input"); Object.keys(META).forEach((k, i) => { ins[i].value = params[k]; outs[k].textContent = fmt(k, params[k]); }); buildGrid(); });
+  const tuner = document.getElementById("tuner");
+  addEventListener("keydown", e => { if (e.key === "g" && !/input|textarea/i.test(e.target.tagName)) tuner.setAttribute("data-open", tuner.getAttribute("data-open") !== "true"); });
+
+  /* ---- add-agent modal ---- */
+  (() => {
+    const scrim = document.getElementById("scrim");
+    const nameI = document.getElementById("agName"), prev = document.getElementById("prevAvatar");
+    const open = () => { scrim.setAttribute("data-open", "true"); nameI.focus(); nameI.select(); };
+    const close = () => scrim.setAttribute("data-open", "false");
+    document.getElementById("addAgent").addEventListener("click", open);
+    document.getElementById("cancelAgent").addEventListener("click", close);
+    scrim.addEventListener("click", e => { if (e.target === scrim) close(); });
+    addEventListener("keydown", e => { if (e.key === "Escape" && scrim.getAttribute("data-open") === "true") close(); });
+
+    const upd = () => prev.textContent = (nameI.value.trim()[0] || "?").toUpperCase();
+    nameI.addEventListener("input", upd); upd();
+
+    const discordField = document.getElementById("discordField");
+    document.querySelectorAll(".chip").forEach(c => c.addEventListener("click", () => {
+      const on = c.getAttribute("aria-pressed") !== "true";
+      c.setAttribute("aria-pressed", String(on));
+      if (c.dataset.ch === "discord") discordField.classList.toggle("hidden", !on);
+    }));
+
+    document.querySelectorAll(".seg button").forEach(b => b.addEventListener("click", () => {
+      document.querySelectorAll(".seg button").forEach(x => x.setAttribute("aria-selected", "false"));
+      b.setAttribute("aria-selected", "true");
+      const bot = b.dataset.mode === "bot";
+      document.getElementById("modeBot").classList.toggle("hidden", !bot);
+      document.getElementById("modeWebhook").classList.toggle("hidden", bot);
+    }));
+
+    const rings = ["#6f8dff", "#e0a15a", "#d977c8", "#5fd0b0", "#f2778f", "#9b8cff"];
+    document.getElementById("createAgent").addEventListener("click", () => {
+      const nm = nameI.value.trim() || "Agent";
+      const role = document.getElementById("agRole").value.trim() || "Agent";
+      const ring = rings[roster.children.length % rings.length];
+      const b = document.createElement("button");
+      b.className = "avatar"; b.style.setProperty("--ring", ring);
+      b.setAttribute("aria-label", nm + ", " + role);
+      b.innerHTML = nm[0].toUpperCase() + '<span class="status"></span><span class="tip"><b>' + nm + '</b><span>' + role + '</span></span>';
+      roster.appendChild(b);
+      close();
+    });
+  })();
+
+  readColors();
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", readColors);
+  new MutationObserver(readColors).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  addEventListener("resize", resize); resize(); fx = tx = W / 2; fy = ty = H * 0.6; requestAnimationFrame(frame);
+</script>
