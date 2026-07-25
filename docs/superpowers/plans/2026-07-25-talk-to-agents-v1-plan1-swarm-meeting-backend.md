@@ -373,11 +373,11 @@ git commit -m "feat(swarm): LiveKit dev-server run notes + LiveKit env config"
 - Consumes: `ComposedAgent`, `loadAgents`, `findAgent` (Task 1); `LiveKitConfig`, `loadLiveKitConfig` (Task 2).
 - Produces:
   - `interface Meeting { id: string; roomName: string; agentIds: string[]; mode: 'solo' | 'council'; status: 'open' | 'closed'; createdAt: string }`
-  - `interface MeetingJoin { meetingId: string; roomName: string; url: string; token: string }` (`token` = the **human** participant's join JWT)
+  - `interface MeetingJoin { meetingId: string; roomName: string; serverUrl: string; participantToken: string }` — field names match LiveKit's token-endpoint convention (`server_url`/`participant_token`) so Plan 2's client SDK `TokenSource` consumes it directly. `participantToken` = the **human** join JWT.
   - `class MeetingOrchestrator` with `constructor(cfg: LiveKitConfig, agents: ComposedAgent[], deps?: { roomService?: RoomServiceLike; mintToken?: MintToken })`, `open(scope: { agent?: string; all?: boolean }): Promise<MeetingJoin>`, `close(id: string): Promise<void>`, `list(): Meeting[]`, `get(id: string): Meeting | undefined`.
   - Test seams: `interface RoomServiceLike { createRoom(opts: { name: string }): Promise<unknown>; deleteRoom(name: string): Promise<void> }` and `type MintToken = (identity: string, room: string) => Promise<string>`.
 
-- [ ] **Step 1: Add the dependency** — `cd swarm && npm install livekit-server-sdk` (pin whatever it resolves; commit the lockfile in Step 9).
+- [ ] **Step 1: Add the dependencies** — `cd swarm && npm install livekit-server-sdk @livekit/protocol` (the latter provides `RoomConfiguration`/`RoomAgentDispatch` for agent dispatch; pin whatever resolves; commit the lockfile in Step 9).
 
 - [ ] **Step 2: Write the failing test** `swarm/src/meetings.test.ts` (fakes the LiveKit seams, so no server needed):
 
@@ -399,7 +399,7 @@ function makeOrchestrator() {
     async createRoom(opts: { name: string }) { created.push(opts.name); return {}; },
     async deleteRoom(name: string) { deleted.push(name); },
   };
-  const mintToken = async (identity: string, room: string) => `token:${identity}:${room}`;
+  const mintToken = async (identity: string, room: string, _agentIds: string[]) => `token:${identity}:${room}`;
   const orch = new MeetingOrchestrator(
     { url: 'ws://x', apiKey: 'k', apiSecret: 's' },
     AGENTS,
@@ -413,7 +413,7 @@ test('open(solo) creates a room and returns a human join token', async () => {
   const join = await orch.open({ agent: 'Manuel' });
   assert.equal(created.length, 1);
   assert.equal(join.roomName, created[0]);
-  assert.match(join.token, /^token:human:/);
+  assert.match(join.participantToken, /^token:human:/);
   const m = orch.get(join.meetingId)!;
   assert.equal(m.mode, 'solo');
   assert.deepEqual(m.agentIds, ['manuel']);
@@ -449,9 +449,16 @@ test('close deletes the room and marks the meeting closed', async () => {
 ```ts
 import { randomUUID } from 'node:crypto';
 import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
+// Agent dispatch types — verify the exact import path/shape against the installed
+// @livekit/protocol version at build time (Task 4 pulls current docs).
+import { RoomConfiguration, RoomAgentDispatch } from '@livekit/protocol';
 import type { ComposedAgent } from './agents.js';
 import { findAgent } from './agents.js';
 import type { LiveKitConfig } from './config.js';
+
+// The name the LiveKit agent worker registers under (Task 4 `cli.runApp`).
+// Explicit dispatch (below) uses it to route our worker into a meeting room.
+const AGENT_NAME = 'smith-agent';
 
 export interface Meeting {
   id: string;
@@ -462,11 +469,13 @@ export interface Meeting {
   createdAt: string;
 }
 
+// Field names match LiveKit's token-endpoint convention so Plan 2's client SDK
+// TokenSource consumes this response directly.
 export interface MeetingJoin {
   meetingId: string;
   roomName: string;
-  url: string;
-  token: string;
+  serverUrl: string;
+  participantToken: string;
 }
 
 export interface RoomServiceLike {
@@ -474,7 +483,7 @@ export interface RoomServiceLike {
   deleteRoom(name: string): Promise<void>;
 }
 
-export type MintToken = (identity: string, room: string) => Promise<string>;
+export type MintToken = (identity: string, room: string, agentIds: string[]) => Promise<string>;
 
 /**
  * Opens/closes voice meetings backed by LiveKit rooms. A meeting seats one agent
@@ -497,9 +506,14 @@ export class MeetingOrchestrator {
       deps?.roomService ?? (new RoomServiceClient(httpUrl, cfg.apiKey, cfg.apiSecret) as unknown as RoomServiceLike);
     this.mintToken =
       deps?.mintToken ??
-      (async (identity, room) => {
-        const at = new AccessToken(cfg.apiKey, cfg.apiSecret, { identity });
+      (async (identity, room, agentIds) => {
+        const at = new AccessToken(cfg.apiKey, cfg.apiSecret, { identity, ttl: '2h' });
         at.addGrant({ roomJoin: true, room });
+        // Explicit agent dispatch: LiveKit sends our worker into this room and
+        // hands it the chosen composed-agent ids as metadata (Task 4 reads them).
+        at.roomConfig = new RoomConfiguration({
+          agents: [new RoomAgentDispatch({ agentName: AGENT_NAME, metadata: JSON.stringify({ agentIds }) })],
+        });
         return at.toJwt();
       });
   }
@@ -519,6 +533,8 @@ export class MeetingOrchestrator {
 
     const id = randomUUID();
     const roomName = `meeting-${id}`;
+    // Rooms auto-create on first join; we create it up front so it exists
+    // immediately and so close() can deleteRoom to end the meeting.
     await this.roomService.createRoom({ name: roomName });
 
     const meeting: Meeting = {
@@ -531,8 +547,8 @@ export class MeetingOrchestrator {
     };
     this.meetings.set(id, meeting);
 
-    const token = await this.mintToken('human', roomName);
-    return { meetingId: id, roomName, url: this.cfg.url, token };
+    const participantToken = await this.mintToken('human', roomName, agentIds);
+    return { meetingId: id, roomName, serverUrl: this.cfg.url, participantToken };
   }
 
   async close(id: string): Promise<void> {
@@ -733,4 +749,4 @@ git commit -m "feat(swarm): per-agent voice (MLX local or ElevenLabs, cached) in
 
 ## Handoff to Plan 2
 
-Plan 2 (Tauri app + wake activation) consumes the swarm's `POST /meetings {agent|all} → MeetingJoin{url,token}`, `DELETE /meetings/:id`, and `GET /agents/registry`. The app connects to `url` with `token` via `livekit-client` in the webview (mic + remote audio), brokered by a thin Rust command; the wake-command gate calls `POST /meetings` with the resolved scope.
+Plan 2 (Tauri app + wake activation) consumes the swarm's `POST /meetings {agent|all} → MeetingJoin{serverUrl,participantToken}`, `DELETE /meetings/:id`, and `GET /agents/registry`. The app connects to `serverUrl` with `participantToken` via `livekit-client` in the webview (mic + remote audio), brokered by a thin Rust command; the wake-command gate calls `POST /meetings` with the resolved scope. The agent auto-joins via the token's `RoomConfiguration` dispatch (no separate join call needed).
