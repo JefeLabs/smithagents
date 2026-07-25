@@ -1,0 +1,26 @@
+{
+  "name": "@smithagents/broker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Conversation broker: coordinates LiveKit media, Deepgram STT, ElevenLabs TTS, and swarm delegation around a Haiku tool-use brain.",
+  "exports": {
+    ".": "./src/broker.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "serve": "node --env-file=../.env --import tsx src/main.ts",
+    "test": "node --import tsx --test src/*.test.ts"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "dependencies": {
+    "@smithagents/voice": "file:../voice"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "tsx": "^4.23.1",
+    "typescript": "^5.6.0"
+  }
+}
