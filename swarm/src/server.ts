@@ -275,8 +275,11 @@ export class OrchestratorServer {
         });
       }
 
-      // Build full manifest with defaults
-      const taskId = body.taskId ?? randomUUID();
+      // Build full manifest with defaults.
+      // taskId is always generated server-side — a client-supplied value would
+      // flow into session names, git branch names, and worktree paths, opening
+      // command- and path-injection. Callers correlate via the returned taskId.
+      const taskId = randomUUID();
       const agentName = server.namePool.claim(taskId);
       const manifest: TaskManifest = {
         taskId,

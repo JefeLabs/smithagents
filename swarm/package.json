@@ -1,9 +1,9 @@
 {
-  "name": "@smith/agents",
+  "name": "@smithagents/swarm",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Smith Agent Orchestrator — fire-and-forget AI agent swarm with squads, permissions, and remote workers",
+  "description": "Fire-and-forget agent-swarm orchestrator (dispatcher, runtimes, server, CLI, squads, remote workers). Consumed by the e2e test framework.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {

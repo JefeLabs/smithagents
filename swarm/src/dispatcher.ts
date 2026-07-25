@@ -172,13 +172,22 @@ export class Dispatcher extends EventEmitter {
       manifest.taskId,
     );
 
-    // Create the git worktree on a dedicated branch
+    // Create the git worktree on a dedicated branch.
+    // The base branch comes from the (untrusted) task manifest: validate it and
+    // pass it after `--` so a value like `--upload-pack=…` can't be parsed as a
+    // git flag (argument injection). branchName is derived from a server-issued
+    // UUID taskId, so it can't begin with `-`.
+    const baseBranch = manifest.context.branch;
+    if (!/^[A-Za-z0-9._/-]+$/.test(baseBranch) || baseBranch.startsWith('-')) {
+      throw new Error(`Invalid base branch: ${baseBranch}`);
+    }
     const branchName = `smith/${manifest.taskId}`;
     await this.git([
       'worktree', 'add',
       worktreePath,
       '-b', branchName,
-      manifest.context.branch,
+      '--',
+      baseBranch,
     ]);
 
     // Inject the smith-delegate tool into the worktree's bin/ directory
