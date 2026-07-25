@@ -16,6 +16,11 @@ import { DeepgramSttStream, type LiveLike } from './stt.ts';
 import { SwarmClient } from './swarm-client.ts';
 import { mintRoomToken } from './token.ts';
 
+// Defense in depth: the brain-turn queue in broker.ts isolates errors from
+// every turn it runs, but this catches anything outside that queue so a
+// stray rejection never takes the whole process down under Node defaults.
+process.on('unhandledRejection', (err) => console.error('[broker] unhandled rejection:', err));
+
 const config = loadBrokerConfig();
 
 const anthropic = new Anthropic({ apiKey: config.anthropicApiKey });

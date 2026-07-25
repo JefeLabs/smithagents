@@ -182,6 +182,100 @@ test('speech chain survives a failing chunk: later chunks still publish, no unha
   }
 });
 
+test('brain turns are serialized: a system note queued mid-utterance waits for it to finish', async () => {
+  const f = makeFakes([MEETING]);
+  const order: string[] = [];
+  let releaseA: (() => void) | null = null;
+  const deferredA = new Promise<void>((resolve) => (releaseA = resolve));
+  const brain: BrainLike = {
+    handleUtterance: async (text, turn) => {
+      order.push(`start:${text}`);
+      await deferredA;
+      order.push(`end:${text}`);
+      turn.onSpeech('spoken reply');
+    },
+    handleSystemNote: async (note, turn) => {
+      order.push(`note:${note}`);
+      turn.onSpeech('narration');
+    },
+  };
+  const b = new Broker({
+    swarm: f.swarm,
+    directory: new AgentDirectory(),
+    brain,
+    makeStt: () => f.stt,
+    makeBridge: () => f.bridge,
+    speak: async function* (text) {
+      yield new Uint8Array(Buffer.from(`AUDIO(${text})`));
+    },
+    mintToken: async (room) => `jwt-for-${room}`,
+    livekitUrl: 'ws://test',
+    pollMs: 999999,
+  });
+  try {
+    await b.start();
+    await b.pollOnce();
+    const utterancePromise = b.handleUtterance('A');
+    await new Promise((r) => setTimeout(r, 10)); // let turn A start and block on deferredA
+    await b.executors.delegate({ agent: 'Manuel', task: 'build the thing' });
+    f.emitEvent({ type: 'task:dispatched', taskId: 't-77', sessionName: 's' });
+    f.emitEvent({ type: 'task:completed', taskId: 't-77', result: { outcome: 'completed' } });
+    await new Promise((r) => setTimeout(r, 10)); // the queued note must NOT run while A is pending
+    assert.deepEqual(order, ['start:A']);
+    releaseA!();
+    await utterancePromise;
+    await new Promise((r) => setTimeout(r, 10)); // let the queued note run after A settles
+    assert.equal(order.length, 3);
+    assert.equal(order[0], 'start:A');
+    assert.equal(order[1], 'end:A');
+    assert.match(order[2]!, /^note:/);
+  } finally {
+    await b.stop();
+  }
+});
+
+test('a rejecting brain turn does not kill the queue or raise an unhandled rejection', async () => {
+  const f = makeFakes([MEETING]);
+  const unhandled: unknown[] = [];
+  const onUnhandledRejection = (err: unknown) => unhandled.push(err);
+  process.on('unhandledRejection', onUnhandledRejection);
+  let calls = 0;
+  const heard: string[] = [];
+  const brain: BrainLike = {
+    handleUtterance: async (text, turn) => {
+      calls += 1;
+      if (calls === 1) throw new Error('stream blew up');
+      heard.push(text);
+      turn.onSpeech('spoken reply');
+    },
+    handleSystemNote: async () => {},
+  };
+  const b = new Broker({
+    swarm: f.swarm,
+    directory: new AgentDirectory(),
+    brain,
+    makeStt: () => f.stt,
+    makeBridge: () => f.bridge,
+    speak: async function* (text) {
+      yield new Uint8Array(Buffer.from(`AUDIO(${text})`));
+    },
+    mintToken: async (room) => `jwt-for-${room}`,
+    livekitUrl: 'ws://test',
+    pollMs: 999999,
+  });
+  try {
+    await b.start();
+    await b.pollOnce();
+    await b.handleUtterance('first');
+    await b.handleUtterance('second');
+    assert.deepEqual(heard, ['second']);
+    assert.deepEqual(unhandled, []);
+  } finally {
+    await b.stop();
+    process.off('unhandledRejection', onUnhandledRejection);
+  }
+});
+
 test('joinMeeting failure stops the stt and leaves active unset; next pollOnce retries', async () => {
   const f = makeFakes([MEETING]);
   let connectAttempts = 0;

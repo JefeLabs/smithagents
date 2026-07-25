@@ -70,6 +70,15 @@ export class Broker {
   private speaking = Promise.resolve();
   /** True while a joinMeeting() call is in flight, so overlapping pollOnce ticks don't double-join. */
   private joining = false;
+  /**
+   * Serializes brain turns. `handleUtterance` (mic + stdin dev channel) and
+   * `handleSystemNote` (async task-completion narration) both mutate the
+   * brain's single shared conversation history across `await`s — running two
+   * turns concurrently can interleave history pushes and split a tool_use
+   * from its tool_result, which the Anthropic API rejects with a 400. Every
+   * turn is funneled through this queue so only one is ever in flight.
+   */
+  private turnQueue: Promise<void> = Promise.resolve();
 
   /** Tool executors handed to the brain; public for tests + reuse. */
   readonly executors = {
@@ -146,8 +155,8 @@ export class Broker {
   }
 
   /** Public so the stdin dev channel (and tests) can inject an utterance. */
-  async handleUtterance(text: string): Promise<void> {
-    await this.deps.brain.handleUtterance(text, this.makeTurn());
+  handleUtterance(text: string): Promise<void> {
+    return this.enqueueTurn(() => this.deps.brain.handleUtterance(text, this.makeTurn()));
   }
 
   private async joinMeeting(meeting: SwarmMeeting): Promise<void> {
@@ -180,13 +189,33 @@ export class Broker {
       const presence = this.deps.directory.findByTask(e.taskId);
       if (presence && this.active) {
         const verdict = e.type === 'task:completed' ? 'finished' : 'FAILED';
-        void this.deps.brain.handleSystemNote(
-          `${presence.agent.name} ${verdict} the delegated task (${presence.taskSummary ?? e.taskId}). Tell the human in one short sentence.`,
-          this.makeTurn(),
-        );
+        const note = `${presence.agent.name} ${verdict} the delegated task (${presence.taskSummary ?? e.taskId}). Tell the human in one short sentence.`;
+        void this.enqueueTurn(() => this.deps.brain.handleSystemNote(note, this.makeTurn()));
       }
     }
     this.deps.directory.onEvent(e);
+  }
+
+  /**
+   * Run one brain turn after every turn already queued, isolating its errors
+   * so a transient stream failure never rejects uncaught (the fire-and-forget
+   * call sites — the stt callback and the system-note path — have no catch
+   * of their own). `fn` is invoked lazily, only once its turn is actually
+   * dequeued, so callers building a turn (e.g. `this.makeTurn()`, which
+   * captures a roster snapshot) get a fresh one instead of a stale snapshot
+   * taken at enqueue time. Mirrors `enqueueSpeech`: the chain itself never
+   * rejects, so one failed turn never blocks the ones behind it.
+   */
+  private enqueueTurn(fn: () => Promise<void>): Promise<void> {
+    const next = this.turnQueue.then(async () => {
+      try {
+        await fn();
+      } catch (err) {
+        console.error('[broker] brain turn failed:', err);
+      }
+    });
+    this.turnQueue = next;
+    return next;
   }
 
   private makeTurn(): BrainTurn {
