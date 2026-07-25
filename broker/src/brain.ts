@@ -34,6 +34,7 @@ export type StreamFactory = (params: {
   system: string;
   messages: unknown[];
   tools: unknown[];
+  tool_choice?: unknown;
 }) => BrainStreamLike;
 
 const TOOLS = [
@@ -76,8 +77,13 @@ Current roster:
 
 const MAX_TOOL_ROUNDS = 4;
 
+/** A turn is: user(string) -> assistant(...) -> [user(tool_results) -> assistant(...)]*.
+ * Only a `{role: 'user', content: string}` entry marks the start of a turn — tool_result
+ * entries are also role 'user' but carry array content. */
+type HistoryEntry = { role: 'user' | 'assistant'; content: string | unknown[] };
+
 export class BrokerBrain {
-  private history: unknown[] = [];
+  private history: HistoryEntry[] = [];
   private readonly model: string;
   private readonly maxHistory: number;
 
@@ -95,13 +101,20 @@ export class BrokerBrain {
     this.history.push({ role: 'user', content: text });
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      const stream = this.streamFactory({
+      const params: Parameters<StreamFactory>[0] = {
         model: this.model,
         max_tokens: 1024,
         system: PERSONA + turn.roster,
         messages: [...this.history],
         tools: TOOLS,
-      });
+      };
+      if (round === MAX_TOOL_ROUNDS - 1) {
+        // Last permitted round: keep tools in the request (required whenever history
+        // contains tool blocks) but force a text-only reply so the turn always closes
+        // with speech instead of leaving a dangling tool_use with no tool_result.
+        params.tool_choice = { type: 'none' };
+      }
+      const stream = this.streamFactory(params);
       stream.on('text', (delta) => chunker.push(delta));
       const final = await stream.finalMessage();
 
@@ -119,14 +132,29 @@ export class BrokerBrain {
     }
 
     chunker.flush();
-    if (this.history.length > this.maxHistory) {
-      this.history = this.history.slice(-this.maxHistory);
-    }
+    this.trimHistory();
   }
 
   /** Inject a system-originated observation (e.g. "task finished") as a turn. */
   async handleSystemNote(note: string, turn: BrainTurn): Promise<void> {
     await this.handleUtterance(`[system note — not the human speaking] ${note}`, turn);
+  }
+
+  /**
+   * Trim history down to maxHistory entries WITHOUT cutting mid-turn: the Anthropic API
+   * requires the first message to have role 'user', and every tool_use block must be
+   * followed immediately by its tool_result. A naive `slice(-maxHistory)` can land the
+   * cut inside a turn (e.g. right after an assistant tool_use, before its tool_result),
+   * producing a 400. Instead, scan forward from the naive cut point to the next real
+   * turn boundary — a `{role: 'user', content: string}` entry — and cut there.
+   */
+  private trimHistory(): void {
+    if (this.history.length <= this.maxHistory) return;
+    let start = this.history.length - this.maxHistory;
+    while (start < this.history.length && !(this.history[start]!.role === 'user' && typeof this.history[start]!.content === 'string')) {
+      start++;
+    }
+    this.history = this.history.slice(start);
   }
 
   private async execute(name: string, input: unknown): Promise<string> {
