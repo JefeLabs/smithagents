@@ -67,7 +67,3 @@ export type { ComposedAgent, AgentEngine, AgentVoice } from './agents.js';
 // Meetings
 export { MeetingOrchestrator } from './meetings.js';
 export type { Meeting, MeetingJoin } from './meetings.js';
-
-// ClaudeBrain — Claude Code headless conversational bridge
-export { ClaudeBrain } from './claude-brain.js';
-export type { BrainDeps } from './claude-brain.js';
