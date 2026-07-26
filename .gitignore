@@ -67,3 +67,6 @@ swarm/.smith/
 
 # Playwright MCP browser artifacts — transient verification output.
 .playwright-mcp/
+
+# Claude Code project dir — local settings only in this repo.
+.claude/
