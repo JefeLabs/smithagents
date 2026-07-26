@@ -64,3 +64,6 @@ swarm/.smith/
 
 # Superpowers plugin working state — per-machine, never source.
 .superpowers/
+
+# Playwright MCP browser artifacts — transient verification output.
+.playwright-mcp/
