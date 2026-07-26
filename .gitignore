@@ -58,3 +58,6 @@ __pycache__/
 swarm/.smith/
 !swarm/.smith/agents/
 !swarm/.smith/agents/*.json
+
+# Verification screenshots — local working artifacts, not source.
+.screenshots/
