@@ -1,128 +1,128 @@
-# Implementation Product Requirements Document: `smithagents`
+# Product Requirements: `smithagents`
 
-> **Status:** Source of truth. Committed 2026-07-18. Amend this file — do not fork it into side docs.
+> **Status:** Source of truth for the shipped TypeScript stack. Rewritten
+> 2026-07-26, superseding the 2026-07-18 JVM-era PRD (that iteration —
+> Spring Boot/Embabel/JDA — was deleted from the tree; see git history).
+> Amend this file — do not fork it into side docs.
 
 ## 1. Product Overview
 
-**Project Name:** `smithagents`
+**The pitch:** not one Jarvis — a *council*. A cast of specialist AI agents with
+persistent personas who meet with you like a team: they debate with meeting
+etiquette, defer to each other's domains, raise hands instead of interrupting,
+and take on real coding work you can watch, steer, and cancel. The crew has an
+identity: a Latino team out of the Dominican Republic, each member with their
+own voice (literally — per-agent TTS) and communication style.
 
-**Objective:** Deploy a localized, multi-agent autonomous swarm to operate as
-specialized virtual contractors accelerating the refactor of a multi-tenant B2B
-platform (SkoolScout). The swarm rigidly enforces a five-experience atomic
-design structure (atoms → molecules → organisms → templates → pages),
-interfacing with the human engineering team via Discord voice and text.
+**Local-first:** everything runs on the operator's machine. The only external
+calls are model APIs (Anthropic for the brain, Deepgram for STT, ElevenLabs for
+voices). Delegated work executes in git worktrees on the host.
 
-**Hosting Infrastructure:** A split-brain architecture. The computational heavy
-lifting — local MLX audio generation, LLM orchestration, and ephemeral
-execution environments — is centralized on a localized Mac Studio (Apple silicon
-Ultra; verify exact SKU). The control plane is a unified Tauri 2.0 application
-deployed to both a premium iPhone and a remote laptop, communicating securely
-back to the host via an `ngrok` tunnel.
+## 2. Core Concepts
 
----
+**Hierarchy (settled 2026-07-26): workspace → repos, workspace → sessions.**
+No "project" layer — if one is ever needed it becomes an additive label on
+sessions, never a restructure.
 
-## 2. Multi-Project Topology & File System
+* **Workspace** — a named group of one or more local repos
+  (`swarm/.smith/workspaces/*.json`). Delegations route to a workspace repo;
+  the server resolves repo paths (client-sent paths are never trusted).
+* **Session** — a persistent conversation inside a workspace
+  (`broker/.smith/sessions/*.json`). Owns its transcript *and* the brain's
+  memory; switching sessions swaps both. One active at a time.
+* **Agent (persona)** — data, never code (`swarm/.smith/agents/*.json`):
+  `directives` (the work prompt prepended to delegated tasks), `persona.style`
+  (meeting character), `voice.voiceId` (ElevenLabs) + `voice.speech` (fallback
+  profile). Registry agents are the only *delegable* units.
+* **Squad** — a working unit rendered as one circle. Swarm squads
+  (alpha/beta/gamma; 4 members with G/F/O/S initial-coded roles:
+  leader/architect/senior/developer) are execution config; user-formed squads
+  (delta, epsilon, …) are created in the UI by dragging agents together.
+  An agent exists solo **or** in exactly one squad, never both.
+* **Meeting etiquette** — enforced in the brain prompt: every spoken line is
+  speaker-prefixed; only the addressed party answers; a squad speaks through
+  its leader (even when asked to "introduce yourselves"); non-addressed agents
+  with something to add use the `raise_hand` tool → ✋ badge in the roster;
+  the human clicks to give them the floor; speaking lowers the hand.
 
-The repository is a **monorepo of independent projects**: each component is its
-own Maven module or front-end project, wired together by a root Maven **reactor**
-(aggregator POM). Module boundaries give each component its own build, test,
-versioning, and dependency graph. (This supersedes the project's original
-flat-root layout.)
+## 3. Architecture (three services + a library)
 
-**Project Map:**
+* **`swarm/` — execution orchestrator (:7777).** Agents-as-data registry,
+  squads, workspaces, meetings, WS events, `smith` CLI. A task = git worktree
+  cut from the target workspace repo (branch `smith/<taskId>`) + a real coding
+  CLI (`claude --dangerously-skip-permissions`) pinned to a tmux session,
+  with steer (`send-keys`) and kill endpoints. `smith-delegate` is injected
+  into each worktree so agents can sub-delegate through the API. Docker is the
+  isolation upgrade path for unattended/multi-tenant runs.
+* **`broker/` — conversation coordinator (:7790).** ONE Claude Haiku call per
+  turn: streamed text is speech (chunked at sentence/newline boundaries for
+  TTS), `tool_use` blocks are routing (`delegate`, `check_status`,
+  `raise_hand`). Inputs: text channel (HTTP), push-to-talk (binary PCM over
+  WS → per-client Deepgram sessions), stdin (dev), LiveKit rooms (meetings).
+  Outputs: WS frames — transcript, live roster (presence, hands, squads),
+  per-agent ElevenLabs mp3 audio (with premade stand-ins when the plan gates
+  library voices), session snapshots. Roster composition and sessions persist
+  under `broker/.smith/`. Busy agents are locked from roster edits; their
+  tasks are inspectable/steerable/cancellable.
+* **`control-plane/` — Tauri 2 app (desktop + iOS, one codebase).** The
+  meeting stage: transcript with speaker labels, composer, push-to-talk mic,
+  sound toggle with serialized playback and turn-taking gaps (850ms on speaker
+  change). Roster rail: iPhone-style edit mode (3s long-press → jiggle;
+  drag to reorder; drag agent onto agent/squad to form/join; tap squad to
+  expand members; drag member out to free them), group badge on multi-member
+  circles, glowing ring on working units, click-to-open work view (live
+  output, steering composer, cancel). Sessions panel on the left rail.
+* **`voice/` — provider library.** `ElevenLabsVoiceProvider` (streaming TTS,
+  BYO key), `LocalVoiceProvider` (spawn a local binary), and a router keyed by
+  each persona's `voice.provider`.
 
-* `pom.xml` — Root reactor: aggregates the Java modules, pins shared versions
-  (Spring Boot 4.1, Embabel 2.0.0, JDA), and declares the Spring Milestones repo.
-* `gateway/` — Spring Boot entry point (`GatewayApplication`): the Discord
-  WebSockets, the `_embabel` routing engine, and the mTLS validation layer.
-  Depends on `personas` and `agent-robot`.
-* `personas/` — Data-driven persona roster: `Persona`, `PersonaRegistry`,
-  `PersonaRouter`, plus the persona configs under `src/main/resources/prompts/`
-  (loaded from the classpath — never hardcoded).
-* `agent-robot/` — The native AWT execution bridge for OS-level keystroke injection.
-* `control-plane/` — The Tauri 2.0 + React/TypeScript control plane (desktop + iOS).
-* `voice-engine/` — The local MLX audio LLM project (Python).
-* `infra/` — `docker-compose.yml` and other infrastructure for the ephemeral
-  branch environments.
-* `audio-cache/` — Instantly accessible `.wav`/`.mp3` files, populated by the MLX
-  engine; shared runtime state at the repo root.
+## 4. Interaction Model
 
----
+1. **Meet:** type or hold push-to-talk. The brain voices the crew per
+   etiquette; replies stream as text and per-agent audio.
+2. **Compose:** long-press the roster to arrange the org — form squads, add
+   or free members. Composition is conversation-layer for swarm squads
+   (execution rosters stay fixed config) and fully real for user squads.
+   The brain always sees the current arrangement.
+3. **Delegate:** ask for work. The brain picks the specialist (directives
+   define domains: Manuel — architecture/routing; Octavio — security and
+   integration boundaries; Aurelio — atomic-design UI), names the repo when
+   it isn't the session default, and the swarm runs it for real.
+4. **Supervise:** working agents glow; click to watch live terminal output,
+   send steering mid-run, or cancel. Completion is announced in the meeting
+   by the responsible agent.
 
-## 3. The Mac Studio Host (The Central Nervous System)
+## 5. Shipped & Verified (as of 2026-07-26)
 
-The Ultra host executes the entire backend infrastructure with zero reliance on
-external APIs.
+End-to-end, against live services: text loop with per-persona voices; squad
+addressing rules; raise-hand round-trip; push-to-talk (real audio → Deepgram →
+brain reply); ElevenLabs per-agent audio frames; iPhone-style roster editing
+with persistence across restarts; workspaces routing a chat-initiated
+delegation into a git worktree where a claude CLI produced a committed file;
+sessions with transcript replay and per-session brain memory; busy-lock +
+activity/steer/cancel paths. Test suites: broker 56, swarm 9, all green.
 
-* **Spring Boot & `_embabel` Gateway:** Runs the Java Discord API (JDA) to stream raw PCM audio directly to the channel and route transcriptions. Hosts the WebSocket server that synchronizes the Tauri thin clients.
-* **Native MLX Voice Engine:** A localized 3B audio LLM (e.g., Step Audio EditX or Qwen3-TTS) runs directly in unified memory. When triggered, it zero-shot clones voices and synthesizes paralinguistic reactions (sighs, "hmm") in milliseconds, dumping assets straight into `audio-cache/`.
-* **Helmsmith Memory Server:** The persistent memory module maintaining established architectural decisions and multi-tenant rules across the SkoolScout platform. It outlives the ephemeral Docker containers and acts as the contextual bedrock.
+## 6. Roadmap / Open Items
 
----
-
-## 4. The Ephemeral Execution Sandboxes
-
-Execution environments are tied to the lifecycle of a feature branch — provisioned
-when work begins and annihilated when the PR merges. **How** an environment is
-isolated is pluggable: a single `Sandbox` contract (the `sandbox/` module) with
-three backends, chosen by policy rather than hardcoded.
-
-**Isolation tiers (weakest → strongest):**
-
-* **`IN_PROCESS`** *(default, interactive)* — runs on the host directly. Fastest,
-  zero overhead, no isolation. Assumes a trusted operator already on the branch.
-* **`WORKTREE`** — a `git worktree` per branch: filesystem-isolated parallel
-  branches that share the host toolchain, no containers. The lightweight "multiplex".
-* **`DOCKER`** *(default for autonomous runs)* — a container from the golden image
-  (`infra/sandbox.Dockerfile`) with the branch's worktree mounted at `/workspace`.
-  Full isolation, reproducible, disposable — the safe choice when agents run
-  unattended (and the only viable tier for the multi-tenant hosted model).
-
-**Policy, not hardcoding:** `SandboxPolicy` maps an execution mode to a tier
-(interactive → in-process, autonomous → docker), overridable via
-`smithagents.sandbox.*-kind`. The swarm codes against the `Sandbox` interface and
-never cares which backend runs; `SandboxProvider` resolves it.
-
-**Dependency management (Docker path):** one golden, version-pinned base image
-(`infra/sandbox.Dockerfile`) bakes in the GitHub CLI, `@biomejs/biome`, `kubectl`,
-Node + the TypeScript compiler, `tmux`, and Claude Code — rebuilt on a cadence, not
-per branch. Containers **mount** the branch worktree (code) and keep **tools baked**
-(image), so spawning a sandbox never reinstalls the toolchain.
-
-**Lifecycle:** once the gateway generates a `PRD-*.md` from a Discord conversation,
-the `AgentRobot` triggers the integrated terminal, a sandbox is opened for the
-branch, Claude Code operates inside it (via `tmux` in the Docker tier), and the
-environment connects to the Helmsmith MCP to ingest the atomic-design rules before
-executing. On merge, the session is closed and the environment annihilated.
-
----
-
-## 5. The Tauri Control Plane (Mobile & Desktop)
-
-The operator dashboard is a single React/TypeScript codebase compiled into two
-distinct native wrappers using Tauri 2.0, acting as remote controls for the host.
-
-* **Security (mTLS over `ngrok`):** Both clients connect to the Spring Boot WebSocket server through the `ngrok` tunnel. The Java backend strictly enforces Mutual TLS (mTLS); it rejects any connection lacking the specific device certificates stored in the laptop's secure enclave and the iPhone's keychain.
-* **iOS Tactical Interface:** Running via WKWebView on the iPhone, the mobile view provides push-to-talk audio injection and instant haptic feedback when a feature branch container spins up or dies. It allows immediate overriding and audio-cache generation on the go.
-* **Desktop Strategic Interface:** The laptop view uses the wider screen real estate for multiplexed streaming. It renders real-time terminal outputs from active Docker containers alongside the Audio Forge, allowing drag-and-drop voice cloning directly into the MLX pipeline.
-
----
-
-## 6. The Persona Roster & Team Alignment
-
-The swarm's logic is defined by the specific roles of the agents, dictating how
-they influence the repository and interact with human engineers.
-
-* **Manuel (The Architect):** Commands the overarching multi-tenant routing and infrastructure. Pulls context directly from Helmsmith to evaluate cross-domain impacts and deflects processing latency with warm, human-like conversational audio generated by the local MLX engine.
-* **Octavio (The Security / Integration Auditor):** Coldly analytical. Asserts complete control over API integration boundaries and page-level compositions. Relentlessly audits Phillip's pull requests, pulling diffs via the GitHub MCP and interjecting with clipped, pre-cached acoustic humming if an API payload strays from specification.
-* **Aurelio (The UI Purist):** The absolute enforcer of atomic design patterns. Focuses exclusively on Yellison's view components. If a proposed component breaks visual isolation rules, Aurelio triggers an arrogant, locally synthesized sigh into the Discord voice channel before the Biome.js failure logs are even posted.
-
-### Open spec gaps (to resolve)
-
-* **Phillip** and **Yellison** are referenced as the *implementers* whose work is
-  audited (Octavio → Phillip's PRs; Aurelio → Yellison's components) but are not
-  defined in this roster. If the swarm has implementer agents distinct from the
-  three auditors, they need roles, domains, and prompt configs.
-* The mapping between the three defined personas and the five atomic-design
-  levels needs to be made explicit (which persona owns molecules vs. organisms
-  vs. templates?).
+* **Voices:** upgrade the ElevenLabs plan so the picked Latin library voices
+  replace premade stand-ins (automatic — the fallback only fires on the 402).
+  Remaining uncast: Fabian, Osvaldo, Fernando, Orlando, Sebastian.
+* **Voice meetings:** LiveKit path exists (room bridge, meeting polling,
+  per-agent meeting TTS) but the in-app meeting UX (join/leave, who's
+  speaking) is unbuilt.
+* **Squad execution vs conversation:** user-formed squads and swarm-squad
+  edits are conversation-layer only; making arbitrary squads *executable*
+  requires generalizing swarm's fixed 4-pane squad dispatch.
+* **PR flow:** task branches (`smith/<id>`) are created but nothing opens PRs
+  yet; worktree cleanup policy after merge is undefined.
+* **iOS:** the Tauri iOS target builds from this codebase but needs Xcode.app
+  on the build machine; mic permission plist is in place.
+* **UI polish:** composition errors are silent in the UI (broker returns
+  reasons; surface them); the composer's "Swarm ▾" route selector is
+  decorative; brain-history persistence skips system-note turns until the
+  next user turn.
+* **Discord:** deliberately out — it lived in the deleted JVM gateway. If it
+  returns, it enters the broker as another text/voice channel, not a service.
+  (`DISCORD_TOKEN`/`GUILD_ID` in `.env` are vestigial and can be removed.)
+* **Hosted/multi-tenant tier:** Docker/microVM isolation for unattended runs,
+  BYO-compute pricing posture — direction unchanged, not scheduled.
