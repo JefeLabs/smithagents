@@ -15,8 +15,8 @@
 
 import { EventEmitter } from 'node:events';
 import { execFile } from 'node:child_process';
-import { copyFile, mkdir, writeFile } from 'node:fs/promises';
-import { resolve, join } from 'node:path';
+import { appendFile, copyFile, mkdir, writeFile } from 'node:fs/promises';
+import { dirname, resolve, join } from 'node:path';
 
 import type {
   OrchestratorConfig,
@@ -206,6 +206,12 @@ export class Dispatcher extends EventEmitter {
       resolve(this.config.delegateBin),
       join(worktreeBin, 'smith-delegate'),
     );
+
+    // The injected tool is dispatcher plumbing, not work product — exclude it
+    // locally so neither the agent's commit nor the auto-commit sweeps it up.
+    const excludeFile = await this.git(['rev-parse', '--git-path', 'info/exclude'], worktreePath);
+    await mkdir(dirname(resolve(worktreePath, excludeFile)), { recursive: true });
+    await appendFile(resolve(worktreePath, excludeFile), 'bin/smith-delegate\n');
 
     return worktreePath;
   }
