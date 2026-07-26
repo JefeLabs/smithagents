@@ -61,3 +61,6 @@ swarm/.smith/
 
 # Verification screenshots — local working artifacts, not source.
 .screenshots/
+
+# Superpowers plugin working state — per-machine, never source.
+.superpowers/
