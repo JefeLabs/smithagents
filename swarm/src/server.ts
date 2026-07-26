@@ -408,6 +408,7 @@ export class OrchestratorServer {
         status: r.outcome,
         exitCode: r.exitCode,
         durationMs: r.durationMs,
+        pullRequestUrl: r.pullRequestUrl,
       }));
 
       return { active, queued, completed };

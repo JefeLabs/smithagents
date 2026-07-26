@@ -142,6 +142,14 @@ export class Dispatcher extends EventEmitter {
         logs: join(this.config.logsDir, manifest.taskId, 'session.log'),
       };
 
+      // Phase 5.5: successful work goes up for human review — push the task
+      // branch and open a (draft) pull request. Best effort: a PR failure
+      // never fails the task.
+      result.branch = `smith/${manifest.taskId}`;
+      if (exitCode === 0) {
+        result.pullRequestUrl = await this.openPullRequest(manifest, worktreePath);
+      }
+
       // Phase 6: Capture session output to logs before teardown
       await this.captureSessionLogs(manifest.taskId, runtime, sessionName);
 
@@ -447,14 +455,81 @@ export class Dispatcher extends EventEmitter {
   }
 
   /**
+   * Push the task branch and open a pull request for review. Defaults ON
+   * (draft when the plan allows it); disable per task via
+   * manifest.pullRequest.autoCreate = false. Returns the PR URL, or
+   * undefined when there is no remote, no work, or gh fails.
+   */
+  private async openPullRequest(
+    manifest: TaskManifest,
+    worktreePath: string,
+  ): Promise<string | undefined> {
+    const pr = manifest.pullRequest ?? {};
+    if (pr.autoCreate === false) return undefined;
+    const base = pr.targetBranch ?? manifest.context.branch;
+    const branchName = `smith/${manifest.taskId}`;
+    const agent = manifest.agentName ?? manifest.agent;
+    try {
+      const remotes = await this.git(['remote'], worktreePath);
+      if (!remotes.split('\n').includes('origin')) return undefined;
+      const commits = await this.git(['rev-list', '--count', `${base}..HEAD`], worktreePath);
+      if (commits === '0') return undefined;
+      await this.git(['push', '-u', 'origin', branchName], worktreePath);
+
+      const firstSubject = (await this.git(['log', '--reverse', '--format=%s', `${base}..HEAD`], worktreePath)).split('\n')[0];
+      const title = pr.titlePattern
+        ? pr.titlePattern
+            .replace('{taskId}', manifest.taskId)
+            .replace('{agent}', agent)
+            .replace('{prompt}', firstSubject ?? '')
+        : (firstSubject ?? `task ${manifest.taskId}`);
+      const taskText = manifest.prompt.split('Task from the live meeting:').pop()?.trim() ?? manifest.prompt;
+      const body = [
+        `Delegated task \`${manifest.taskId}\`, completed by **${agent}**.`,
+        '',
+        '## Task',
+        '',
+        taskText,
+        '',
+        '---',
+        '🤖 Delegated to the crew via smithagents',
+      ].join('\n');
+
+      const args = ['pr', 'create', '--head', branchName, '--base', base, '--title', title, '--body', body];
+      for (const label of pr.labels ?? []) args.push('--label', label);
+      for (const reviewer of pr.reviewers ?? []) args.push('--reviewer', reviewer);
+      const wantDraft = pr.draft !== false;
+      try {
+        const url = await this.run('gh', wantDraft ? [...args, '--draft'] : args, worktreePath);
+        return url.split('\n').pop()?.trim();
+      } catch (err) {
+        // Draft PRs are unavailable on some plans/private repos — retry normal.
+        if (wantDraft && /draft/i.test(String(err))) {
+          const url = await this.run('gh', args, worktreePath);
+          return url.split('\n').pop()?.trim();
+        }
+        throw err;
+      }
+    } catch (err) {
+      console.error(`[dispatch] PR creation failed for ${manifest.taskId}:`, err);
+      return undefined;
+    }
+  }
+
+  /**
    * Execute a git command and return stdout.
    */
   private git(args: string[], cwd?: string): Promise<string> {
+    return this.run('git', args, cwd);
+  }
+
+  /** Execute a command, resolving stdout — stderr surfaces in the rejection. */
+  private run(cmd: string, args: string[], cwd?: string): Promise<string> {
     return new Promise((resolve, reject) => {
-      execFile('git', args, { cwd }, (error, stdout, stderr) => {
+      execFile(cmd, args, { cwd }, (error, stdout, stderr) => {
         if (error) {
           reject(
-            new Error(`git ${args[0]} failed: ${stderr || error.message}`),
+            new Error(`${cmd} ${args[0]} failed: ${stderr || error.message}`),
           );
           return;
         }

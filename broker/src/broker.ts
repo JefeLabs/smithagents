@@ -263,7 +263,8 @@ export class Broker {
       const presence = this.deps.directory.findByTask(e.taskId);
       if (presence && this.active) {
         const verdict = e.type === 'task:completed' ? 'finished' : 'FAILED';
-        const note = `${presence.agent.name} ${verdict} the delegated task (${presence.taskSummary ?? e.taskId}). Tell the human in one short sentence.`;
+        const prUrl = (e as { result?: { pullRequestUrl?: string } }).result?.pullRequestUrl;
+        const note = `${presence.agent.name} ${verdict} the delegated task (${presence.taskSummary ?? e.taskId}).${prUrl ? ` A pull request is open for review at ${prUrl} — mention that it's ready for review, do not read the URL aloud.` : ''} Tell the human in one short sentence.`;
         void this.enqueueTurn(() => this.deps.brain.handleSystemNote(note, this.makeTurn()));
       }
     }
