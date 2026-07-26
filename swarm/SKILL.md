@@ -10,7 +10,7 @@ description: >
 
 ## Overview
 
-The `smith` CLI dispatches coding tasks to AI agents (`claude`, `agy`, `codex`) via a Fastify server on **port 7777**. Tasks run in `tmux` (bare-metal) or `docker` (containerized) runtimes with a max of **11 concurrent tasks at 8 GB each**. The dispatcher is fire-and-forget: exit 0 = completed, exit 1 = failed. Failed tasks go to quarantine immediately — there are no retries.
+The `smith` CLI dispatches coding tasks to AI agents (`claude`, `agy`, `codex`) via a Fastify server on **port 7777**. Tasks run in `tmux` (bare-metal) or `docker` (containerized) runtimes with a max of **12 concurrent tasks at 8 GB each**. The dispatcher is fire-and-forget: exit 0 = completed, exit 1 = failed. Failed tasks go to quarantine immediately — there are no retries.
 
 Set `SMITH_SERVER_URL` if the server is not at `http://localhost:7777`.
 

@@ -28,6 +28,8 @@ export class AgentDirectory {
   private agents = new Map<string, RegistryAgent>();
   private placements = new Map<string, Placement>(); // agentId -> placement
   private meetingIds = new Set<string>();
+  /** Tasks that terminated before their bindTask arrived (fast-fail race). */
+  private terminated = new Set<string>();
 
   seed(agents: RegistryAgent[]): void {
     this.agents = new Map(agents.map((a) => [a.id, a]));
@@ -43,6 +45,7 @@ export class AgentDirectory {
 
   bindTask(agentId: string, bind: { taskId: string; summary?: string; swarmName?: string }): void {
     if (!this.agents.has(agentId)) return;
+    if (this.terminated.delete(bind.taskId)) return; // task already ended before we could bind — never mark busy
     this.placements.set(agentId, { ...bind, dispatched: false });
   }
 
@@ -55,7 +58,25 @@ export class AgentDirectory {
     if (e.type === 'task:completed' || e.type === 'task:failed' || e.type === 'task:quarantined') {
       const hit = this.entryByTask(e.taskId);
       if (hit) this.placements.delete(hit[0]);
+      else {
+        // Terminal event for a task we haven't bound yet — remember it so a
+        // late bindTask doesn't leave the agent busy forever.
+        this.terminated.add(e.taskId);
+        if (this.terminated.size > 100) this.terminated.delete(this.terminated.values().next().value as string);
+      }
     }
+  }
+
+  /** Drop placements whose task the swarm no longer knows as live. Returns true when anything changed. */
+  reconcile(liveTaskIds: ReadonlySet<string>): boolean {
+    let changed = false;
+    for (const [agentId, placement] of [...this.placements]) {
+      if (!liveTaskIds.has(placement.taskId)) {
+        this.placements.delete(agentId);
+        changed = true;
+      }
+    }
+    return changed;
   }
 
   setMeeting(agentIds: string[]): void {
@@ -88,12 +109,16 @@ export class AgentDirectory {
     });
   }
 
-  /** Roster block injected into the brain's system prompt each turn. */
-  describeForPrompt(): string {
+  /** Roster block injected into the brain's system prompt each turn. Excluded ids (agents living inside a squad) are omitted. */
+  describeForPrompt(excludeIds: ReadonlySet<string> = new Set()): string {
     return this.snapshot()
+      .filter((p) => !excludeIds.has(p.agent.id))
       .map((p) => {
-        const base = `${p.agent.name} (${p.agent.role}) — ${p.status}`;
-        return p.status === 'busy' && p.taskSummary ? `${base}: ${p.taskSummary}` : base;
+        let base = `${p.agent.name} (${p.agent.role}) — ${p.status}`;
+        if (p.status === 'busy' && p.taskSummary) base += `: ${p.taskSummary}`;
+        base += `\n  Persona: ${p.agent.directives}`;
+        if (p.agent.persona?.style) base += `\n  Speaking style: ${p.agent.persona.style}`;
+        return base;
       })
       .join('\n');
   }

@@ -44,3 +44,11 @@ test('never emits empty chunks', () => {
   c.flush();
   assert.deepEqual(chunks, []);
 });
+
+test('newline is a hard boundary: speaker lines never merge', () => {
+  const chunks: string[] = [];
+  const c = new SpeechChunker((t) => chunks.push(t));
+  c.push('Octavio: We move forward.\nGabriel: Squad Alpha is locked and loaded, hermano.');
+  c.flush();
+  assert.deepEqual(chunks, ['Octavio: We move forward.', 'Gabriel: Squad Alpha is locked and loaded, hermano.']);
+});

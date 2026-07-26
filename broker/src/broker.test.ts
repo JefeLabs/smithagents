@@ -14,6 +14,14 @@ function makeFakes(meetings: SwarmMeeting[]) {
   let eventSink: ((e: SwarmEvent) => void) | null = null;
   const swarm: SwarmClientLike = {
     listMeetings: async () => meetings,
+    listSquads: async () => [
+      { id: 'alpha', status: 'idle', leader: { name: 'Gabriel', role: 'leader' }, members: [{ name: 'Gabriel', role: 'leader' }] },
+      { id: 'beta', status: 'idle', leader: { name: 'Gustavo', role: 'leader' }, members: [{ name: 'Gustavo', role: 'leader' }] },
+    ],
+    listLiveTaskIds: async () => new Set(['t-77']),
+    listWorkspaces: async () => [
+      { name: 'jefelabs', default: true, repos: [{ name: 'smithagents', branch: 'main' }] },
+    ],
     registry: async () => AGENTS,
     subscribe: (cb) => {
       eventSink = cb;
@@ -24,6 +32,8 @@ function makeFakes(meetings: SwarmMeeting[]) {
       return { taskId: 't-77', agentName: 'bold-falcon' };
     },
     getOutput: async () => ({ taskId: 't-77', output: 'line1\nline2\nDONE building the thing' }),
+    steer: async () => {},
+    killTask: async () => {},
   };
 
   const sttAudio: Uint8Array[] = [];
@@ -64,14 +74,22 @@ function makeFakes(meetings: SwarmMeeting[]) {
   };
 }
 
-function makeBroker(f: ReturnType<typeof makeFakes>) {
+function makeBroker(
+  f: ReturnType<typeof makeFakes>,
+  opts?: {
+    onSpeechText?: (text: string) => void;
+    onRosterChange?: (roster: { agents: Array<{ status: string }>; squads: unknown[] }) => void;
+  },
+) {
   const directory = new AgentDirectory();
   return new Broker({
+    onRosterChange: opts?.onRosterChange,
     swarm: f.swarm,
     directory,
     brain: f.brain,
     makeStt: () => f.stt,
     makeBridge: () => f.bridge,
+    onSpeechText: opts?.onSpeechText,
     speak: async function* (text) {
       yield new Uint8Array(Buffer.from(`AUDIO(${text})`));
     },
@@ -106,6 +124,32 @@ test('utterance flows: stt -> brain -> speak -> publishPcm at 44100', async () =
   assert.equal(f.published.length, 1);
   assert.equal(f.published[0]!.sampleRate, 44100);
   assert.match(Buffer.from(f.published[0]!.bytes).toString(), /AUDIO\(spoken reply\)/);
+  await b.stop();
+});
+
+test('speech text reaches onSpeechText even with no active meeting; no PCM published', async () => {
+  const f = makeFakes([]); // no meetings — text-only mode (stdin / text channel)
+  const transcript: string[] = [];
+  const b = makeBroker(f, { onSpeechText: (t) => transcript.push(t) });
+  await b.start();
+  await b.handleUtterance('status check');
+  await new Promise((r) => setTimeout(r, 10)); // speech chain settles after the turn
+  assert.deepEqual(f.heard, ['status check']);
+  assert.deepEqual(transcript, ['spoken reply']);
+  assert.equal(f.published.length, 0); // no bridge -> no TTS spend
+  await b.stop();
+});
+
+test('roster notifications fire on seed and on delegation, carrying agents and squads', async () => {
+  const f = makeFakes([]);
+  const rosters: Array<{ agents: Array<{ status: string }>; squads: unknown[] }> = [];
+  const b = makeBroker(f, { onRosterChange: (r) => rosters.push(r) });
+  await b.start();
+  assert.equal(rosters.length, 1); // seeded snapshot
+  assert.equal(rosters[0]!.squads.length, 2);
+  await b.executors.delegate({ agent: 'Manuel', task: 'build the thing' });
+  assert.equal(rosters.length, 2); // busy snapshot after bindTask
+  assert.equal(rosters.at(-1)!.agents[0]!.status, 'busy');
   await b.stop();
 });
 
@@ -317,3 +361,130 @@ test('joinMeeting failure stops the stt and leaves active unset; next pollOnce r
     await b.stop();
   }
 });
+
+test('raise_hand stores the hand, roster carries it, and speaking lowers it', async () => {
+  const f = makeFakes([]);
+  const b = makeBroker(f);
+  await b.start();
+  const ack = await b.executors.raise_hand({ agent: 'Octavio', reason: 'sees a trust-boundary risk' });
+  assert.match(ack, /Octavio/);
+  assert.deepEqual(b.uiRoster().hands, { Octavio: 'sees a trust-boundary risk' });
+  // Octavio takes the floor -> hand comes down.
+  await b.handleUtterance('go ahead Octavio');
+  await new Promise((r) => setTimeout(r, 10));
+  // fake brain speaks as 'spoken reply' (no speaker prefix) — hand persists...
+  assert.deepEqual(b.uiRoster().hands, { Octavio: 'sees a trust-boundary risk' });
+  // ...until a chunk with his speaker prefix goes out.
+  b.handleUtterance('x'); // enqueue another turn
+  await new Promise((r) => setTimeout(r, 10));
+  b['enqueueSpeech']('Octavio: The risk is contained.');
+  assert.deepEqual(b.uiRoster().hands, {});
+  await b.stop();
+});
+
+test('compose: form a group, add a member, remove down to one dissolves it', async () => {
+  const f = makeFakes([]);
+  const b = makeBroker(f);
+  await b.start();
+  // Registry has only Manuel; forming needs two distinct known agents.
+  assert.match(b.compose({ op: 'form', agents: ['Manuel', 'Nobody'] }) ?? '', /two distinct known agents/);
+  assert.equal(b.compose({ op: 'add', target: 'squad-alpha', agent: 'Manuel' }), null);
+  assert.deepEqual(b.uiRoster().squads[0]!.extraMembers, ['Manuel']);
+  // Removing an original alpha member is a conversation-layer exclusion by name.
+  assert.equal(b.compose({ op: 'remove', target: 'squad-alpha', agent: 'Gabriel' }), null);
+  assert.deepEqual(b.uiRoster().squads[0]!.removedMembers, ['Gabriel']);
+  // Removing the guest again clears the addition.
+  assert.equal(b.compose({ op: 'remove', target: 'squad-alpha', agent: 'Manuel' }), null);
+  assert.deepEqual(b.uiRoster().squads[0]!.extraMembers, []);
+  await b.stop();
+});
+
+test('an agent exists solo OR in one squad, never both', async () => {
+  const f = makeFakes([]);
+  const b = makeBroker(f);
+  await b.start();
+  assert.equal(b.uiRoster().agents.length, 1); // Manuel solo
+  assert.equal(b.compose({ op: 'add', target: 'squad-alpha', agent: 'Manuel' }), null);
+  assert.equal(b.uiRoster().agents.length, 0); // solo circle gone
+  assert.deepEqual(b.uiRoster().squads[0]!.extraMembers, ['Manuel']);
+  // Joining beta detaches from alpha — one membership at a time.
+  assert.equal(b.compose({ op: 'add', target: 'squad-beta', agent: 'Manuel' }), null);
+  assert.deepEqual(b.uiRoster().squads[0]!.extraMembers, []);
+  assert.deepEqual(b.uiRoster().squads[1]!.extraMembers, ['Manuel']);
+  assert.equal(b.uiRoster().agents.length, 0);
+  // Leaving beta restores the solo circle.
+  assert.equal(b.compose({ op: 'remove', target: 'squad-beta', agent: 'Manuel' }), null);
+  assert.equal(b.uiRoster().agents.length, 1);
+  await b.stop();
+});
+
+test('busy units are locked from composition; activity/steer/cancel route to the task', async () => {
+  const f = makeFakes([]);
+  const b = makeBroker(f);
+  await b.start();
+  await b.executors.delegate({ agent: 'Manuel', task: 'refactor the router' });
+  // Manuel is busy -> composition involving him is rejected.
+  assert.match(b.compose({ op: 'add', target: 'squad-alpha', agent: 'Manuel' }) ?? '', /working/);
+  // Activity view maps his name to the live task output.
+  const activity = await b.activity('Manuel');
+  assert.equal(activity.busy, true);
+  assert.match(activity.output ?? '', /DONE building the thing/);
+  assert.equal(await b.steerWork('Manuel', 'focus on tenancy'), null);
+  assert.equal(await b.cancelWork('Manuel'), null);
+  // Idle agents have no activity and cannot be steered.
+  assert.equal((await b.activity('nobody')).busy, false);
+  assert.match((await b.steerWork('nobody', 'x')) ?? '', /not working/);
+  await b.stop();
+});
+
+test('a squad member dragged out becomes a freed individual; dragging home rejoins', async () => {
+  const f = makeFakes([]);
+  const b = makeBroker(f);
+  await b.start();
+  assert.equal(b.compose({ op: 'remove', target: 'squad-alpha', agent: 'Gabriel' }), null);
+  assert.deepEqual(b.uiRoster().freed, [{ name: 'Gabriel', role: 'leader', squadId: 'alpha' }]);
+  // Freed members can only rejoin their own squad.
+  assert.match(b.compose({ op: 'add', target: 'squad-beta', agent: 'Gabriel' }) ?? '', /only rejoin the alpha squad/);
+  // Dragging home (UI sends the freed- prefixed id) rejoins.
+  assert.equal(b.compose({ op: 'add', target: 'squad-alpha', agent: 'freed-gabriel' }), null);
+  assert.deepEqual(b.uiRoster().freed, []);
+  assert.deepEqual(b.uiRoster().squads[0]!.removedMembers, []);
+  await b.stop();
+});
+
+test('roster composition persists: a second broker restores groups and edits, dropping stale ids', async () => {
+  let saved: import('./broker.ts').RosterState | null = null;
+  const store = { load: () => saved, save: (s: import('./broker.ts').RosterState) => void (saved = s) };
+  const f1 = makeFakes([]);
+  const dir1 = new AgentDirectory();
+  const a = new Broker({ ...basicDeps(f1, dir1), rosterStore: store });
+  await a.start();
+  assert.equal(a.compose({ op: 'remove', target: 'squad-alpha', agent: 'Gabriel' }), null);
+  const snapshot = store.load();
+  assert.ok(snapshot);
+  snapshot.groups.push({ id: 'g9', name: 'ghost', memberIds: ['manuel', 'deleted-agent'] }); // stale on reload
+  await a.stop();
+
+  const f2 = makeFakes([]);
+  const b = new Broker({ ...basicDeps(f2, new AgentDirectory()), rosterStore: store });
+  await b.start();
+  assert.deepEqual(b.uiRoster().freed, [{ name: 'Gabriel', role: 'leader', squadId: 'alpha' }]); // survived restart
+  assert.deepEqual(b.uiRoster().groups, []); // ghost group dropped (member no longer exists)
+  await b.stop();
+});
+
+function basicDeps(f: ReturnType<typeof makeFakes>, directory: AgentDirectory) {
+  return {
+    swarm: f.swarm,
+    directory,
+    brain: f.brain,
+    makeStt: () => f.stt,
+    makeBridge: () => f.bridge,
+    speak: async function* (text: string) {
+      yield new Uint8Array(Buffer.from(`AUDIO(${text})`));
+    },
+    mintToken: async (room: string) => `jwt-for-${room}`,
+    livekitUrl: 'ws://test',
+    pollMs: 999999,
+  };
+}

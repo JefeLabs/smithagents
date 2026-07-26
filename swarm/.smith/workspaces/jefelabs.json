@@ -1,0 +1,12 @@
+{
+  "name": "jefelabs",
+  "description": "Jefelabs platform work",
+  "default": true,
+  "repos": [
+    {
+      "name": "smithagents",
+      "path": "/Users/edwincruz/Development/Workspaces/jefelabs/smithagents",
+      "branch": "feat/swarm-meeting-backend"
+    }
+  ]
+}

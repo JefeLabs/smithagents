@@ -31,6 +31,7 @@ function scripted(responses: Array<{ textDeltas: string[]; final: FinalMsg }>): 
 const NOOP_EXEC: ToolExecutors = {
   delegate: async () => 'ok',
   check_status: async () => 'ok',
+  raise_hand: async () => 'ok',
 };
 
 test('plain text answer streams to onSpeech as chunks', async () => {
@@ -71,6 +72,7 @@ test('tool_use runs the executor and continues with tool_result', async () => {
       return 'queued as task t-42';
     },
     check_status: async () => 'unused',
+    raise_hand: async () => 'unused',
   };
   const spoken: string[] = [];
   const brain = new BrokerBrain(factory, exec);
@@ -131,6 +133,7 @@ test('history trim respects turn boundaries even after a tool-use turn', async (
   const exec: ToolExecutors = {
     delegate: async () => 'ok',
     check_status: async () => 'ok',
+    raise_hand: async () => 'ok',
   };
   const brain = new BrokerBrain(factory, exec, { maxHistory: 4 });
   await brain.handleUtterance('have octavio refactor auth', { roster: 'ROSTER', onSpeech: () => {} });
@@ -162,6 +165,7 @@ test('the final permitted tool round forces a text-only reply via tool_choice: n
   const exec: ToolExecutors = {
     delegate: async () => 'ok',
     check_status: async () => 'ok',
+    raise_hand: async () => 'ok',
   };
   const spoken: string[] = [];
   const brain = new BrokerBrain(factory, exec);
@@ -173,4 +177,27 @@ test('the final permitted tool round forces a text-only reply via tool_choice: n
   assert.deepEqual(calls[2]!.tool_choice, undefined);
   assert.deepEqual(calls[3]!.tool_choice, { type: 'none' });
   assert.match(spoken.join(' '), /Wrapping up now/);
+});
+
+test('round boundary flushes speech: pre-tool text never merges with next round', async () => {
+  const { factory } = scripted([
+    {
+      textDeltas: ['Gabriel: Let me scan for pain points.'], // no trailing whitespace
+      final: {
+        content: [
+          { type: 'text', text: 'Gabriel: Let me scan for pain points.' },
+          { type: 'tool_use', id: 'tu_9', name: 'delegate', input: { agent: 'Aurelio', task: 'scan' } },
+        ],
+        stop_reason: 'tool_use',
+      },
+    },
+    {
+      textDeltas: ["Gabriel: Aurelio is on it now."],
+      final: { content: [{ type: 'text', text: "Gabriel: Aurelio is on it now." }], stop_reason: 'end_turn' },
+    },
+  ]);
+  const spoken: string[] = [];
+  const brain = new BrokerBrain(factory, NOOP_EXEC);
+  await brain.handleUtterance('alpha: go', { roster: 'r', onSpeech: (c) => spoken.push(c) });
+  assert.deepEqual(spoken, ['Gabriel: Let me scan for pain points.', 'Gabriel: Aurelio is on it now.']);
 });

@@ -19,7 +19,12 @@ const OPERATOR_STYLE = {
   fontSize: 14,
 } as CSSProperties;
 
-export function ToolRail() {
+interface ToolRailProps {
+  /** "New session" tool — opens the sessions panel. */
+  onSessions?: () => void;
+}
+
+export function ToolRail({ onSessions }: ToolRailProps) {
   const [active, setActive] = useState(0);
   return (
     <nav className="rail rail--left" aria-label="Tools and activity">
@@ -32,7 +37,10 @@ export function ToolRail() {
           icon={tool.icon}
           label={tool.label}
           active={i === active}
-          onClick={() => setActive(i)}
+          onClick={() => {
+            setActive(i);
+            if (tool.label === "New session") onSessions?.();
+          }}
         />
       ))}
       <div className="spacer" />

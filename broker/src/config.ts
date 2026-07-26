@@ -5,7 +5,8 @@ export interface BrokerConfig {
   elevenlabsApiKey?: string;
   livekit: { url: string; apiKey: string; apiSecret: string };
   swarm: { baseUrl: string; token?: string; repository: string };
-  voice: { voiceId?: string };
+  /** Loopback port for the text channel (POST /utterance + WS /events). */
+  textPort: number;
 }
 
 export function loadBrokerConfig(env: Record<string, string | undefined> = process.env): BrokerConfig {
@@ -28,6 +29,6 @@ export function loadBrokerConfig(env: Record<string, string | undefined> = proce
       token: env.SMITH_API_TOKEN || undefined,
       repository: env.SWARM_REPO || '',
     },
-    voice: { voiceId: env.ELEVENLABS_VOICE_ID || undefined },
+    textPort: env.BROKER_TEXT_PORT ? Number(env.BROKER_TEXT_PORT) : 7790,
   };
 }

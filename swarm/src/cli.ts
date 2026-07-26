@@ -372,7 +372,7 @@ async function cmdSquadList(): Promise<void> {
   for (const s of d.squads) {
     const isAct = s.status === 'active';
     const color = isAct ? '\x1b[32m' : '\x1b[2m';
-    const leader = s.id === 'alpha' ? 'Gabriel' : s.id === 'beta' ? 'Gideon' : 'Genevieve';
+    const leader = (s as { leader?: { name: string } }).leader?.name ?? s.id;
     console.log(`  ${color}● ${s.id.padEnd(8)}\x1b[0m ${color}(${leader}→)\x1b[0m ${s.taskId ? `[Task: ${s.taskId}]` : ''}`);
   }
   console.log();

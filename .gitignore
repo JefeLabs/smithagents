@@ -55,9 +55,11 @@ __pycache__/
 .claude/settings.local.json
 
 # Swarm runtime state is ignored, but the seed composed-agents are committed.
-swarm/.smith/
+swarm/.smith/*
 !swarm/.smith/agents/
 !swarm/.smith/agents/*.json
+!swarm/.smith/workspaces/
+!swarm/.smith/workspaces/*.json
 
 # Verification screenshots — local working artifacts, not source.
 .screenshots/
@@ -70,3 +72,6 @@ swarm/.smith/
 
 # Claude Code project dir — local settings only in this repo.
 .claude/
+
+# Broker runtime state — personal arrangements and conversations, never source.
+broker/.smith/

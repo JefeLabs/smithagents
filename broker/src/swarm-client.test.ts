@@ -24,7 +24,8 @@ test('submitTask posts prompt/agent/context and returns taskId', async () => {
   assert.equal(r.taskId, 't-1');
   const sent = JSON.parse(String(calls[0]!.init!.body));
   assert.equal(sent.agent, 'claude');
-  assert.deepEqual(sent.context, { files: [], repository: 'git@x:y.git', branch: 'main' });
+  // branch '' -> the server substitutes the workspace repo's default branch
+  assert.deepEqual(sent.context, { files: [], repository: 'git@x:y.git', branch: '' });
   assert.equal((calls[0]!.init!.headers as Record<string, string>).authorization, 'Bearer secret');
 });
 

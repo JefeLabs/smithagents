@@ -5,13 +5,37 @@
  */
 import WebSocket from 'ws';
 
+export interface SpeechProfile {
+  voiceName?: string;
+  lang?: string;
+  pitch?: number;
+  rate?: number;
+}
+
 export interface RegistryAgent {
   id: string;
   name: string;
   role: string;
   directives: string;
   engine: { cli: 'agy' | 'claude' | 'codex'; model: string };
-  voice?: { provider: string; voiceId?: string };
+  persona?: { style: string };
+  voice?: { provider: string; voiceId?: string; speech?: SpeechProfile };
+  avatarRing?: string;
+}
+
+export interface SwarmSquad {
+  id: string;
+  status: 'active' | 'idle';
+  taskId?: string | null;
+  leader: { name: string; role: string };
+  members: Array<{ name: string; role: string }>;
+}
+
+export interface SwarmWorkspace {
+  name: string;
+  description?: string;
+  default: boolean;
+  repos: Array<{ name: string; repository?: string; branch: string }>;
 }
 
 export interface SwarmMeeting {
@@ -60,12 +84,14 @@ export class SwarmClient {
     agent: 'agy' | 'claude' | 'codex';
     repository: string;
     branch?: string;
+    workspace?: string;
+    repo?: string;
     metadata?: Record<string, unknown>;
   }): Promise<{ taskId: string; agentName: string | null }> {
     const body = {
       prompt: req.prompt,
       agent: req.agent,
-      context: { files: [], repository: req.repository, branch: req.branch ?? 'main' },
+      context: { files: [], repository: req.repository, branch: req.branch ?? '', workspace: req.workspace, repo: req.repo },
       metadata: req.metadata,
     };
     const r = await this.http('POST', '/tasks', body);
@@ -81,6 +107,10 @@ export class SwarmClient {
     await this.http('POST', `/tasks/${encodeURIComponent(taskIdOrName)}/steer`, { message });
   }
 
+  async killTask(taskIdOrName: string): Promise<void> {
+    await this.http('POST', `/tasks/${encodeURIComponent(taskIdOrName)}/kill`, {});
+  }
+
   async registry(): Promise<RegistryAgent[]> {
     const r = await this.http('GET', '/agents/registry');
     return r.agents as RegistryAgent[];
@@ -89,6 +119,26 @@ export class SwarmClient {
   async listMeetings(): Promise<SwarmMeeting[]> {
     const r = await this.http('GET', '/meetings');
     return r.meetings as SwarmMeeting[];
+  }
+
+  async listSquads(): Promise<SwarmSquad[]> {
+    const r = await this.http('GET', '/squads');
+    return (r.squads as SwarmSquad[]).filter((s) => s.leader?.name);
+  }
+
+  /** IDs of tasks the swarm currently considers live (queued or active). */
+  async listLiveTaskIds(): Promise<Set<string>> {
+    const r = await this.http('GET', '/tasks');
+    const ids = new Set<string>();
+    for (const t of [...((r.active as Array<{ taskId: string }>) ?? []), ...((r.queued as Array<{ taskId: string }>) ?? [])]) {
+      ids.add(t.taskId);
+    }
+    return ids;
+  }
+
+  async listWorkspaces(): Promise<SwarmWorkspace[]> {
+    const r = await this.http('GET', '/workspaces');
+    return (r.workspaces as SwarmWorkspace[]) ?? [];
   }
 
   /** Subscribe to /ws events. Reconnects every 2s until the returned fn is called. */

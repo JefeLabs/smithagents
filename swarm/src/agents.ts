@@ -12,6 +12,13 @@ export interface AgentEngine {
 export interface AgentVoice {
   provider: string;
   voiceId?: string;
+  /** Web Speech profile for text-channel UIs: named system voice + delivery. */
+  speech?: { voiceName?: string; lang?: string; pitch?: number; rate?: number };
+}
+
+/** Communication-style profile — shapes how the agent talks, not what it owns. */
+export interface AgentPersona {
+  style: string;
 }
 
 export interface ComposedAgent {
@@ -20,6 +27,7 @@ export interface ComposedAgent {
   role: string;
   directives: string;
   engine: AgentEngine;
+  persona?: AgentPersona;
   voice?: AgentVoice;
   avatarRing?: string;
   channels?: string[];

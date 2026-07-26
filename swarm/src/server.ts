@@ -46,6 +46,7 @@ import type {
   RegisteredMessage,
 } from './remote-types.js';
 import { loadAgents } from './agents.js';
+import { loadWorkspacesFromDir, resolveRepo, type Workspace } from './workspaces.js';
 import { MeetingOrchestrator } from './meetings.js';
 import { loadLiveKitConfig } from './config.js';
 import { resolve } from 'node:path';
@@ -132,6 +133,9 @@ export class OrchestratorServer {
   // Meetings — built lazily (agents loaded from disk) on first use
   private meetingOrchestrator: MeetingOrchestrator | null = null;
 
+  // Workspaces — named repo groupings delegations can target (loaded at start)
+  private workspaces: Workspace[] = [];
+
   constructor(config?: Partial<ServerConfig>) {
     this.config = { ...DEFAULT_SERVER_CONFIG, ...config };
     this.apiToken = process.env.SMITH_API_TOKEN?.trim() || null;
@@ -172,6 +176,11 @@ export class OrchestratorServer {
         `Refusing to bind ${this.config.host} without SMITH_API_TOKEN set. ` +
         'Export SMITH_API_TOKEN to expose the API beyond loopback, or use --host 127.0.0.1.',
       );
+    }
+
+    this.workspaces = await loadWorkspacesFromDir(resolve(process.cwd(), '.smith/workspaces'));
+    if (this.workspaces.length > 0) {
+      this.app.log.info(`Workspaces: ${this.workspaces.map((w) => `${w.name}(${w.repos.map((r) => r.name).join(',')})`).join(' ')}`);
     }
 
     await this.registerPlugins();
@@ -295,6 +304,15 @@ export class OrchestratorServer {
       // taskId is always generated server-side — a client-supplied value would
       // flow into session names, git branch names, and worktree paths, opening
       // command- and path-injection. Callers correlate via the returned taskId.
+      // Resolve the target repo server-side. Client-sent repoPath is ignored —
+      // only the workspace registry may name filesystem paths.
+      const resolved = resolveRepo(server.workspaces, body.context.workspace, body.context.repo);
+      if ((body.context.workspace || body.context.repo) && !resolved) {
+        return reply.status(400).send({
+          error: `Unknown workspace/repo: ${body.context.workspace ?? '(default)'}/${body.context.repo ?? '(default)'}`,
+        });
+      }
+
       const taskId = randomUUID();
       const agentName = server.namePool.claim(taskId);
       const manifest: TaskManifest = {
@@ -304,7 +322,13 @@ export class OrchestratorServer {
         agent: body.agent,
         runtime: body.runtime ?? server.orchConfig.defaultRuntime,
         location: body.location ?? (body.runtime === 'docker' ? 'docker' : 'local'),
-        context: body.context,
+        context: {
+          ...body.context,
+          workspace: resolved?.workspace.name,
+          repo: resolved?.repo.name,
+          repoPath: resolved?.repo.path,
+          branch: body.context.branch || resolved?.repo.branch || 'main',
+        },
         createdAt: new Date().toISOString(),
         priority: body.priority ?? 'normal',
         metadata: body.metadata,
@@ -732,6 +756,17 @@ export class OrchestratorServer {
       };
     });
 
+    this.app.get('/workspaces', async () => {
+      return {
+        workspaces: server.workspaces.map((w) => ({
+          name: w.name,
+          description: w.description,
+          default: Boolean(w.default) || (!server.workspaces.some((x) => x.default) && server.workspaces[0] === w),
+          repos: w.repos.map((r) => ({ name: r.name, repository: r.repository, branch: r.branch ?? 'main' })),
+        })),
+      };
+    });
+
     this.app.get('/squads', async () => {
       const all = SQUAD_ROSTER.map(s => {
         const isActive = server.squadPool.isActive(s.id) || server.activeSquads.has(s.id);
@@ -739,6 +774,8 @@ export class OrchestratorServer {
           id: s.id,
           status: isActive ? 'active' : 'idle',
           taskId: server.activeSquads.get(s.id)?.taskId ?? null,
+          leader: { name: s.leader.name, role: s.leader.role },
+          members: s.members.map(m => ({ name: m.name, role: m.role })),
         };
       });
       return { squads: all, active: server.activeSquads.size, total: SQUAD_ROSTER.length };

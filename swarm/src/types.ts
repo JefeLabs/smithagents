@@ -180,6 +180,10 @@ export interface TaskManifest {
     files: string[];           // Files relevant to this task
     repository: string;        // Git remote URL (overrides project default)
     branch: string;            // Source branch to worktree from
+    workspace?: string;        // Workspace name (see workspaces.ts)
+    repo?: string;             // Repo name within the workspace
+    /** Absolute path of the resolved repo — set SERVER-SIDE only (never trusted from clients). */
+    repoPath?: string;
   };
   agent: AgentType;            // Which CLI tool to use as Alpha
   runtime?: RuntimeType;       // Execution runtime (default from project or 'tmux')

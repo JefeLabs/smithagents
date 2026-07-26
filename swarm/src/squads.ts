@@ -288,21 +288,24 @@ function matchesAnyGlob(path: string, patterns: string[]): boolean {
   return false;
 }
 
+// The twelve — a Latino crew out of the Dominican Republic. Naming convention
+// kept: initial encodes role (G=leader, F=architect, O=senior, S=developer),
+// three syllables each for clean TTS.
 export const SQUAD_MEMBERS: SquadMember[] = [
   { name: 'Gabriel', pane: 1, model: 'gemini-pro', role: 'leader', squad: 'alpha' },
   { name: 'Fabian', pane: 2, model: 'claude-fable', role: 'architect', squad: 'alpha' },
-  { name: 'Oliver', pane: 3, model: 'claude-opus', role: 'senior', squad: 'alpha' },
-  { name: 'Samantha', pane: 4, model: 'claude-sonnet', role: 'developer', squad: 'alpha' },
-  
-  { name: 'Gideon', pane: 1, model: 'gemini-pro', role: 'leader', squad: 'beta' },
-  { name: 'Fiona', pane: 2, model: 'claude-fable', role: 'architect', squad: 'beta' },
+  { name: 'Osvaldo', pane: 3, model: 'claude-opus', role: 'senior', squad: 'alpha' },
+  { name: 'Santiago', pane: 4, model: 'claude-sonnet', role: 'developer', squad: 'alpha' },
+
+  { name: 'Gustavo', pane: 1, model: 'gemini-pro', role: 'leader', squad: 'beta' },
+  { name: 'Fernando', pane: 2, model: 'claude-fable', role: 'architect', squad: 'beta' },
   { name: 'Orlando', pane: 3, model: 'claude-opus', role: 'senior', squad: 'beta' },
   { name: 'Sebastian', pane: 4, model: 'claude-sonnet', role: 'developer', squad: 'beta' },
-  
-  { name: 'Genevieve', pane: 1, model: 'gemini-pro', role: 'leader', squad: 'gamma' },
-  { name: 'Finnegan', pane: 2, model: 'claude-fable', role: 'architect', squad: 'gamma' },
-  { name: 'Orion', pane: 3, model: 'claude-opus', role: 'senior', squad: 'gamma' },
-  { name: 'Savannah', pane: 4, model: 'claude-sonnet', role: 'developer', squad: 'gamma' }
+
+  { name: 'Graciela', pane: 1, model: 'gemini-pro', role: 'leader', squad: 'gamma' },
+  { name: 'Francisca', pane: 2, model: 'claude-fable', role: 'architect', squad: 'gamma' },
+  { name: 'Ofelia', pane: 3, model: 'claude-opus', role: 'senior', squad: 'gamma' },
+  { name: 'Soledad', pane: 4, model: 'claude-sonnet', role: 'developer', squad: 'gamma' }
 ];
 
 export const SQUAD_ROSTER: SquadDefinition[] = [

@@ -11,8 +11,9 @@
 import { SpeechChunker } from './chunker.ts';
 
 export interface ToolExecutors {
-  delegate(input: { agent: string; task: string }): Promise<string>;
+  delegate(input: { agent: string; task: string; workspace?: string; repo?: string }): Promise<string>;
   check_status(input: { agent: string }): Promise<string>;
+  raise_hand(input: { agent: string; reason: string }): Promise<string>;
 }
 
 export interface BrainTurn {
@@ -47,6 +48,8 @@ const TOOLS = [
       properties: {
         agent: { type: 'string' as const, description: 'Agent name or id from the roster' },
         task: { type: 'string' as const, description: 'Complete, self-contained task description' },
+        repo: { type: 'string' as const, description: 'Repo name from the workspaces list. Omit for the default repo.' },
+        workspace: { type: 'string' as const, description: 'Workspace name. Omit for the default workspace.' },
       },
       required: ['agent', 'task'],
     },
@@ -62,11 +65,39 @@ const TOOLS = [
       required: ['agent'],
     },
   },
+  {
+    name: 'raise_hand',
+    description:
+      "Raise a hand for an agent or squad leader who was NOT addressed but has something valuable to add. They do not speak — the human sees the hand in the roster and decides whether to call on them. Use instead of letting a non-addressed agent interrupt.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        agent: { type: 'string' as const, description: 'Name of the agent or squad leader raising their hand' },
+        reason: { type: 'string' as const, description: 'One short line: what they want to add' },
+      },
+      required: ['agent', 'reason'],
+    },
+  },
 ];
 
-const PERSONA = `You are the meeting coordinator for a team of AI agents, speaking aloud in a live voice meeting.
+const PERSONA = `You voice a team of AI agents in a live meeting. You speak FOR the agents — never as a neutral narrator or coordinator.
+
+The team is a tight Latino crew out of the Dominican Republic. They speak English sprinkled naturally with Dominican Spanish where it fits ("dale", "tranquilo", "mi gente", "ahora sí") — warm, expressive, proud. Each agent's own persona style always wins over the group default.
+
+Addressing rules — decide who the human is talking to, and reply accordingly:
+- Every spoken line MUST begin with the speaking agent's name, a colon, and a space (e.g. "Manuel: On it."). There is NO narrator and no "I" outside a named agent — a line without a speaker prefix is a bug. If unsure who was addressed, pick the most relevant agent and have THEM answer.
+- Addressed to one agent by name -> ONLY that agent replies.
+- Addressed to the whole team, or to no one in particular -> every INDIVIDUAL agent replies once, briefly, in their own voice, and each squad's leader replies once on the squad's behalf. An agent inside a squad exists only as that squad — they never also reply solo.
+- Addressed to a squad (by squad id or its leader's name) -> ONLY that squad's leader replies, speaking for the whole squad. This holds even when the message asks squad members to each respond ("introduce yourselves") — the leader answers on the squad's behalf; members never speak.
+
+Meeting etiquette (respectful video-call rules):
+- Only the addressed party speaks in a turn. Nobody talks over anybody.
+- A non-addressed agent or squad leader with something valuable to add does NOT speak — use the raise_hand tool with their name and a one-line reason. The human sees the hand in the roster and may call on them.
+- When the human gives someone the floor ("go ahead, X", "X, you have the floor"), that agent speaks and their hand comes down.
+
 Rules:
-- Keep every reply SHORT and conversational — one to three spoken sentences. You are heard, not read.
+- Keep every reply SHORT and conversational — one to three spoken sentences per speaker. You are heard, not read.
+- Stay in each agent's voice as described by their persona.
 - Never read code, JSON, file paths, or long output aloud; summarize what it means instead.
 - Use the delegate tool for any real work; do not attempt work yourself.
 - Use check_status when asked what an agent is doing.
@@ -80,7 +111,7 @@ const MAX_TOOL_ROUNDS = 4;
 /** A turn is: user(string) -> assistant(...) -> [user(tool_results) -> assistant(...)]*.
  * Only a `{role: 'user', content: string}` entry marks the start of a turn — tool_result
  * entries are also role 'user' but carry array content. */
-type HistoryEntry = { role: 'user' | 'assistant'; content: string | unknown[] };
+export type HistoryEntry = { role: 'user' | 'assistant'; content: string | unknown[] };
 
 export class BrokerBrain {
   private history: HistoryEntry[] = [];
@@ -117,6 +148,10 @@ export class BrokerBrain {
       const stream = this.streamFactory(params);
       stream.on('text', (delta) => chunker.push(delta));
       const final = await stream.finalMessage();
+      // A round boundary is a speech boundary: flush so text that ends without
+      // trailing whitespace ("…pain points.") can't concatenate onto the next
+      // round's speaker line ("Gabriel: …") inside one chunk.
+      chunker.flush();
 
       this.history.push({ role: 'assistant', content: final.content });
 
@@ -140,6 +175,16 @@ export class BrokerBrain {
     await this.handleUtterance(`[system note — not the human speaking] ${note}`, turn);
   }
 
+  /** Snapshot the conversation for session persistence. */
+  exportHistory(): HistoryEntry[] {
+    return [...this.history];
+  }
+
+  /** Replace the conversation — switching sessions swaps brain memory wholesale. */
+  loadHistory(history: HistoryEntry[]): void {
+    this.history = [...history];
+  }
+
   /**
    * Trim history down to maxHistory entries WITHOUT cutting mid-turn: the Anthropic API
    * requires the first message to have role 'user', and every tool_use block must be
@@ -159,8 +204,9 @@ export class BrokerBrain {
 
   private async execute(name: string, input: unknown): Promise<string> {
     try {
-      if (name === 'delegate') return await this.executors.delegate(input as { agent: string; task: string });
+      if (name === 'delegate') return await this.executors.delegate(input as { agent: string; task: string; workspace?: string; repo?: string });
       if (name === 'check_status') return await this.executors.check_status(input as { agent: string });
+      if (name === 'raise_hand') return await this.executors.raise_hand(input as { agent: string; reason: string });
       return `unknown tool: ${name}`;
     } catch (err) {
       return `tool ${name} failed: ${err instanceof Error ? err.message : String(err)}`;

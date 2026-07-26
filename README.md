@@ -1,125 +1,135 @@
 # smithagents
 
-A localized, multi-agent autonomous swarm that operates as specialized virtual
-contractors accelerating a refactor of the SkoolScout multi-tenant B2B platform.
-The swarm enforces a five-level atomic-design structure and interfaces with the
-human team over Discord voice and text.
+Talk to your agent crew like a team, not a chatbot. `smithagents` is a local-first
+control plane where a cast of specialist AI agents — a Latino crew out of the
+Dominican Republic — meet with you over text and voice, debate with meeting
+etiquette, and take on real coding work that runs in git worktrees on your machine.
 
-> The full design lives in [`PRD.md`](./PRD.md) — the committed source of truth.
+> Product design and concepts live in [`PRD.md`](./PRD.md).
 
 ## Monorepo layout
 
-A **Maven reactor** aggregates the JVM modules; the front-end and voice engine are
-their own projects alongside it. Each component owns its build, tests, and
-dependency graph.
+All TypeScript. Each package owns its build and tests; there is no shared
+framework between them — services talk over HTTP/WS.
 
 ```
 smithagents/            (git root)
-  pom.xml               reactor: aggregates modules, pins shared versions
-  gateway/              Spring Boot: Discord, WebSocket, _embabel, mTLS   (PRD §3)
-  personas/             data-driven persona roster: registry + router     (PRD §6)
-  agent-robot/          AWT keystroke-injection bridge                     (PRD §2,§4)
-  control-plane/        Tauri 2.0 + React/TS (desktop + iOS)              (PRD §5)
-  voice-engine/         local MLX audio LLM (Python)                       (PRD §3)
-  infra/                docker-compose.yml, ngrok, k8s                     (PRD §4)
-  audio-cache/          MLX-generated audio (git-ignored contents)         (PRD §3)
+  swarm/                orchestrator: agents-as-data, squads, tasks (git worktree +
+                        tmux/docker CLI runs), workspaces, meetings, HTTP API :7777
+  broker/               conversation coordinator: the meeting brain (Claude Haiku),
+                        STT/TTS, etiquette, sessions, text channel :7790
+  control-plane/        Tauri 2 + React UI (desktop + iOS from one codebase)
+  voice/                voice-provider library (ElevenLabs, local binary, router)
+  docs/                 design specs and implementation plans
   PRD.md  README.md
 ```
 
-**Module dependencies:** `gateway → personas`, `gateway → agent-robot`. The
-`personas` and `agent-robot` modules are plain libraries; only `gateway` is a
-Spring Boot application (and the only module that runs the `spring-boot-maven-plugin`).
+**Data over code — the product is configured by dropping files:**
 
-**Discord lives inside `gateway`** (JDA embedded — not a separate module or
-service). A deliberate choice for responsiveness (no process boundary in the
-voice-audio hot path) and simplicity on the single host. Trade-off, accepted:
-Discord shares the gateway's lifecycle and failure domain, so an Embabel crash or
-a gateway redeploy drops the bot connection.
+| Path | What it defines |
+|---|---|
+| `swarm/.smith/agents/*.json` | composed agents: identity, role, `directives` (work prompt), `persona.style` (meeting voice), ElevenLabs `voice.voiceId` |
+| `swarm/.smith/workspaces/*.json` | workspaces → one or more repos (`{name, path, branch}`); delegations route here |
+| `broker/.smith/roster-state.json` | user-formed squads and roster edits (written by the UI's edit mode) |
+| `broker/.smith/sessions/*.json` | sessions: per-conversation transcript + brain memory |
 
-**Java packages:** base `com.jefelabs.smithagents`, per module `.gateway`,
-`.persona`, `.robot`. The gateway sets `scanBasePackages = "com.jefelabs.smithagents"`
-so it discovers the persona beans across the module boundary.
-
-## Split-brain architecture
+## Architecture
 
 ```
-        ┌──────────────────── Mac Studio host (central nervous system) ────────────────────┐
-        │  gateway/        Spring Boot 4.1 + Embabel (_embabel) + JDA (Discord)             │
-        │  voice-engine/   local 3B MLX audio LLM → audio-cache/                            │
-        │  Helmsmith       persistent architectural memory (MCP)                            │
-        │  infra/          ephemeral per-feature-branch Docker sandboxes                    │
-        └───────────────────────────────────┬──────────────────────────────────────────────┘
-                                             │  ngrok tunnel (mTLS enforced at the gateway)
-                    ┌────────────────────────┴────────────────────────┐
-             ┌──────┴───────┐                                 ┌────────┴──────┐
-             │ Desktop      │   ← one control-plane codebase →│ iOS (iPhone)  │
-             │ Tauri 2.0    │                                 │ Tauri/WKWebView│
-             └──────────────┘                                 └───────────────┘
+   ┌───────────────────────────── your machine ─────────────────────────────┐
+   │                                                                        │
+   │  control-plane (Tauri/React) ──────── ws/http :7790 ──────┐            │
+   │    transcript · PTT mic · per-agent  ─ audio frames (mp3) │            │
+   │    voices · roster edit mode · sessions                   ▼            │
+   │                                                        broker          │
+   │    Deepgram STT ◄── mic PCM        Claude Haiku brain (1 call/turn:    │
+   │    ElevenLabs TTS ──► audio        text = speech, tool_use = routing)  │
+   │    LiveKit room bridge (meetings)     │ delegate / check_status /      │
+   │                                       │ raise_hand                     │
+   │                                       ▼  http/ws :7777                 │
+   │                                     swarm                              │
+   │    tasks → git worktree (per workspace repo) → claude CLI in tmux      │
+   │    squads (alpha/beta/gamma) · registry · meetings · events            │
+   └────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Version decisions
+- **broker** owns the conversation: one Haiku call per turn where streamed text
+  *is* speech and tool calls *are* routing decisions. Meeting etiquette is
+  enforced in the prompt: every line is speaker-prefixed, only the addressed
+  party answers, squads speak through their leader, and non-addressed agents
+  raise a ✋ instead of interrupting.
+- **swarm** owns execution: a delegated task gets a git worktree cut from the
+  target workspace repo (branch `smith/<taskId>`) and a real coding CLI pinned
+  to a tmux session, steerable and killable mid-run.
+- **control-plane** renders it: live roster (solo agents + squads, iPhone-style
+  edit mode with drag-to-form-squads), transcript with per-agent ElevenLabs
+  voices, push-to-talk, glowing rings on working agents with click-to-watch
+  work views, and workspace-scoped sessions.
 
-- **Spring Boot 4.1.0** (GA 2026-06-10) — the target.
-- **Embabel Agent 2.0.0-SNAPSHOT** — the Spring Boot **4** line is *unreleased*.
-  It is pulled from **Embabel's Artifactory** (`repo.embabel.com/artifactory/libs-snapshot`),
-  **not** Maven Central. Bleeding edge — snapshot bytes can change without notice,
-  and the build depends on that Artifactory being reachable. Baseline is Spring
-  Boot 4.0.6 + Spring AI 2.0.0; we run it on 4.1. Pin a timestamped snapshot for
-  reproducible CI. ✅ Verified: the full reactor compiles against it.
-- **Java 21** (LTS).
-- Repos added to the root pom: **Embabel Artifactory** (snapshots + releases) and
-  **Spring Milestones** (for Spring AI). It transitively pulls Spring AI 2.0.0 +
-  Jackson 3.
-- **Routing engine: Embabel (`_embabel`), not Spring Integration** — Spring
-  Integration was considered as a routing substrate and explicitly ruled out.
+## Prerequisites
 
-## Security reality-check (mTLS over ngrok)
+- Node **≥ 24**, `tmux`, and the `claude` CLI (delegated tasks run it)
+- Rust toolchain (for `tauri dev`)
+- Optional for voice meetings: `livekit-server` (`--dev` mode is fine)
 
-The PRD requires genuine end-to-end mutual TLS terminating at the gateway. ngrok's
-standard HTTPS tunnels terminate TLS at **ngrok's edge**, so client-certificate
-validation at your server needs either an ngrok **TLS/TCP** (raw pass-through)
-tunnel or ngrok's **mutual-TLS edge** feature. Prove this path before building on
-it — it's the riskiest integration in the design.
+## Configure
 
-## Build & run
+Create a git-ignored `.env` at the repo root:
 
 ```bash
-# JVM: build every module from the root reactor
-mvn -q install
-
-# run the gateway — starts on :8080. Discord creds live in a git-ignored .env
-# (DISCORD_TOKEN). Export them, then run. Requires the MESSAGE_CONTENT privileged
-# intent enabled in the Discord Developer Portal.
-set -a && source .env && set +a
-mvn -pl gateway spring-boot:run
-# then type "!ping" in a channel → the bot replies "pong 🏓".
-# (Without a token the gateway still starts, with Discord disabled.)
-
-# control plane (front-end dev server on :1420)
-cd control-plane && npm install && npm run dev
+ANTHROPIC_API_KEY=sk-ant-...      # the meeting brain (Claude Haiku)
+DEEPGRAM_API_KEY=...              # push-to-talk / meeting STT
+ELEVENLABS_API_KEY=...            # agent voices (paid plan for library voices;
+                                  # premade stand-ins kick in on free tier)
+LIVEKIT_URL=ws://127.0.0.1:7880   # voice meetings (livekit-server --dev)
+LIVEKIT_API_KEY=devkey
+LIVEKIT_API_SECRET=secret
+SMITH_API_TOKEN=                  # blank = loopback-only dev mode
 ```
 
-> No Maven/Node wrapper is committed yet; add `mvnw`/a pinned Node as a follow-up.
-> The Tauri Rust crate (`control-plane/src-tauri/`) is not scaffolded yet.
-> **Temporary:** Embabel's `AgentPlatformAutoConfiguration` is excluded in
-> `gateway/src/main/resources/application.yml` — it eagerly requires an LLM at
-> startup. Remove the exclusion once a local model (e.g. Ollama) is wired.
+Then register at least one workspace in `swarm/.smith/workspaces/<name>.json`:
 
-## Your first contribution
+```json
+{
+  "name": "jefelabs",
+  "default": true,
+  "repos": [{ "name": "smithagents", "path": "/abs/path/to/repo", "branch": "main" }]
+}
+```
 
-The `_embabel` routing engine's core decision — *which persona handles an incoming
-Discord message* — is left for you to shape. The prepared spot is
-`PersonaRouter.route(IncomingMessage)` in the **personas** module
-(`personas/src/main/java/com/jefelabs/smithagents/persona/PersonaRouter.java`). It
-iterates `registry.all()` and matches on `persona.keywords()` / `persona.name()`.
-The comment block there lays out the strategy trade-offs (explicit @mention vs.
-keyword/domain vs. LLM classification) and the two decisions to make: the cheap
-default path, and the no-match behavior. Keep it data-driven — never name a
-persona literally.
+## Run
 
-## Open spec gaps (from PRD §6)
+```bash
+# 1. orchestrator (:7777)
+cd swarm && npm install && npm run serve
 
-- **Phillip** and **Yellison** are referenced as the audited implementers but never
-  defined. Agents (needing persona configs under `personas/`), or humans?
-- The mapping of the three personas onto the five atomic-design levels needs to be
-  made explicit.
+# 2. conversation broker (:7790 text channel; stdin doubles as a dev mic)
+cd broker && npm install && npm run serve
+
+# 3. the app (desktop window + vite on :1420)
+cd control-plane && npm install && npm run tauri dev
+```
+
+Type at the crew, or hold the mic button and talk. Delegate real work
+("have Aurelio refactor the composer") and watch the agent's ring glow —
+click it to see live output, steer, or cancel.
+
+## Tests
+
+Each package: `npm test` (node:test) and `npm run typecheck`. The UI lints with
+`npx biome check src`.
+
+## Ports
+
+| Port | Service |
+|---|---|
+| 7777 | swarm HTTP API + WS events (7778/udp heartbeat) |
+| 7790 | broker text channel: REST + WS transcript/roster/audio + PTT |
+| 1420 | control-plane dev server (Tauri window loads it) |
+| 7880 | livekit-server (dev) |
+
+## History
+
+The first iteration was a Java/Spring Boot/Embabel Maven reactor with a Discord
+gateway; it was fully superseded by this TypeScript stack and deleted on
+2026-07-26 (recoverable from git history).

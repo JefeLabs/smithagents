@@ -1,0 +1,29 @@
+#!/bin/sh
+# smith-delegate — sub-delegation from inside a task worktree.
+# Usage: smith-delegate <agent: agy|claude|codex> <task description...>
+# Submits a task to the swarm orchestrator and prints the task id.
+set -eu
+
+SMITH_URL="${SMITH_URL:-http://127.0.0.1:7777}"
+
+if [ "$#" -lt 2 ]; then
+  echo "usage: smith-delegate <agent: agy|claude|codex> <task description...>" >&2
+  exit 2
+fi
+
+AGENT="$1"
+shift
+PROMPT="$*"
+
+BODY=$(printf '%s' "$PROMPT" | python3 -c 'import json,sys; print(json.dumps({
+  "prompt": sys.stdin.read(),
+  "agent": sys.argv[1],
+  "context": {"files": [], "repository": "", "branch": ""},
+  "metadata": {"source": "smith-delegate"},
+}))' "$AGENT")
+
+curl -sf -X POST "$SMITH_URL/tasks" \
+  ${SMITH_API_TOKEN:+-H "authorization: Bearer $SMITH_API_TOKEN"} \
+  -H 'content-type: application/json' \
+  -d "$BODY"
+echo

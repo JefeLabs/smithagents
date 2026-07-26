@@ -167,10 +167,13 @@ export class Dispatcher extends EventEmitter {
    * @returns Absolute path to the worktree directory
    */
   private async prepareWorktree(manifest: TaskManifest): Promise<string> {
-    const worktreePath = resolve(
-      this.config.worktreeDir,
-      manifest.taskId,
-    );
+    // Workspace-routed tasks worktree from their repo's clone; otherwise from
+    // the server's own repo (legacy behavior). repoPath is server-resolved
+    // from the workspace registry — never a client-supplied path.
+    const repoRoot = manifest.context.repoPath;
+    const worktreePath = repoRoot
+      ? resolve(repoRoot, this.config.worktreeDir, manifest.taskId)
+      : resolve(this.config.worktreeDir, manifest.taskId);
 
     // Create the git worktree on a dedicated branch.
     // The base branch comes from the (untrusted) task manifest: validate it and
@@ -188,7 +191,7 @@ export class Dispatcher extends EventEmitter {
       '-b', branchName,
       '--',
       baseBranch,
-    ]);
+    ], repoRoot);
 
     // Inject the smith-delegate tool into the worktree's bin/ directory
     // so the Alpha agent can find it on PATH
@@ -401,9 +404,9 @@ export class Dispatcher extends EventEmitter {
   /**
    * Execute a git command and return stdout.
    */
-  private git(args: string[]): Promise<string> {
+  private git(args: string[], cwd?: string): Promise<string> {
     return new Promise((resolve, reject) => {
-      execFile('git', args, (error, stdout, stderr) => {
+      execFile('git', args, { cwd }, (error, stdout, stderr) => {
         if (error) {
           reject(
             new Error(`git ${args[0]} failed: ${stderr || error.message}`),

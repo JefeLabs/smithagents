@@ -3,6 +3,13 @@ export interface AgentSeed {
   name: string;
   role: string;
   ring: string;
+  status?: "idle" | "busy" | "in-meeting" | "offline";
+  /** One-line reason when the agent has a raised hand. */
+  hand?: string;
+  /** Solo agent, or a squad/group rendered as one circle. */
+  kind?: "agent" | "squad";
+  /** Squad entries: member display names for the edit-mode expansion. */
+  members?: string[];
 }
 
 // Mirrors the personas module: agents are data, never a hardcoded enum.

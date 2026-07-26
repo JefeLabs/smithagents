@@ -2,6 +2,9 @@
  * SpeechChunker — turns a token stream into speakable ~200-char chunks.
  *
  * Flush rules, in priority order:
+ *   0. Newline: hard boundary regardless of minChars — the brain separates
+ *      speakers ("Octavio: …\nGabriel: …") by line, and a merged chunk would
+ *      voice one agent's words with another's voice.
  *   1. Sentence boundary (. ! ? followed by whitespace) AND buffer >= minChars.
  *   2. Buffer exceeds maxChars: split at the last word boundary before the cap.
  *   3. flush(): emit whatever remains (trimmed), if non-empty.
@@ -40,6 +43,13 @@ export class SpeechChunker {
 
   private drain(): void {
     for (;;) {
+      // Rule 0 — newline is a hard boundary (speaker/paragraph separator).
+      const nl = this.buf.indexOf('\n');
+      if (nl >= 0) {
+        this.emit(this.buf.slice(0, nl));
+        this.buf = this.buf.slice(nl + 1);
+        continue;
+      }
       // Rule 1 — first sentence boundary at or past minChars (not merely the
       // first boundary: "Short. " below the minimum must not block emission),
       // as long as the resulting chunk stays within the cap.
