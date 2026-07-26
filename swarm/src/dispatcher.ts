@@ -121,6 +121,11 @@ export class Dispatcher extends EventEmitter {
       // until the entire swarm collapses to a single exit code.
       const exitCode = await runtime.waitFor(sessionName);
 
+      // Phase 4.5: preserve the work. Agents sometimes exit without
+      // committing; anything uncommitted would die with the worktree. Stage
+      // and commit as the agent so the task branch always carries the work.
+      await this.ensureWorkCommitted(manifest, worktreePath, exitCode === 0);
+
       // Phase 5: Build the result
       const completedAt = new Date().toISOString();
       const durationMs = Date.now() - startMs;
@@ -220,7 +225,10 @@ export class Dispatcher extends EventEmitter {
     worktreePath: string,
   ): string {
     const agentCmd = this.config.agentCommands[manifest.agent];
-    const escapedPrompt = manifest.prompt.replace(/'/g, "'\\''");
+    // Work must land on the task branch — the worktree is disposable, commits
+    // are not. The dispatcher also auto-commits leftovers after exit.
+    const promptWithCommit = `${manifest.prompt}\n\nWhen you finish: stage and commit ALL your changes on the current branch with a concise conventional commit message. Do not push.`;
+    const escapedPrompt = promptWithCommit.replace(/'/g, "'\\''");
     const binDir = join(worktreePath, 'bin');
 
     // Build the full command with PATH injection
@@ -399,6 +407,37 @@ export class Dispatcher extends EventEmitter {
    */
   private emitEvent(event: DispatcherEvent): void {
     this.emit(event.type, event);
+  }
+
+  /**
+   * Commit any uncommitted worktree changes on the task branch, authored as
+   * the agent. A failed task's partial work is committed too (marked
+   * incomplete) — it is forensic value, not garbage. Never throws: a commit
+   * failure must not turn a completed task into a failed one.
+   */
+  private async ensureWorkCommitted(
+    manifest: TaskManifest,
+    worktreePath: string,
+    completed: boolean,
+  ): Promise<void> {
+    if (!worktreePath) return;
+    try {
+      const status = await this.git(['status', '--porcelain'], worktreePath);
+      if (!status) return;
+      const agent = manifest.agentName ?? manifest.agent;
+      await this.git(['add', '-A'], worktreePath);
+      await this.git(
+        [
+          '-c', `user.name=${agent} (smith)`,
+          '-c', 'user.email=crew@smithagents.local',
+          'commit', '-q', '-m',
+          `${completed ? 'task' : 'task(incomplete)'}: ${agent} — ${manifest.taskId}\n\nAuto-committed by the dispatcher after the agent session exited${completed ? '' : ' with a non-zero code'}.`,
+        ],
+        worktreePath,
+      );
+    } catch (err) {
+      console.error(`[dispatch] auto-commit failed for ${manifest.taskId}:`, err);
+    }
   }
 
   /**
