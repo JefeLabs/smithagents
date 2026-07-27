@@ -1,0 +1,29 @@
+{
+  "id": "gamma",
+  "members": [
+    {
+      "name": "Graciela",
+      "pane": 1,
+      "model": "gemini-pro",
+      "role": "leader"
+    },
+    {
+      "name": "Francisca",
+      "pane": 2,
+      "model": "claude-fable",
+      "role": "architect"
+    },
+    {
+      "name": "Ofelia",
+      "pane": 3,
+      "model": "claude-opus",
+      "role": "senior"
+    },
+    {
+      "name": "Soledad",
+      "pane": 4,
+      "model": "claude-sonnet",
+      "role": "developer"
+    }
+  ]
+}

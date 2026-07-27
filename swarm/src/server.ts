@@ -35,6 +35,8 @@ import { WorkerPool } from './remote-runtime.js';
 import {
   SquadPool,
   SQUAD_ROSTER,
+  loadSquadsFromDir,
+  setSquadRoster,
   type SquadManifest,
   type SquadMode,
   type SquadId,
@@ -182,6 +184,10 @@ export class OrchestratorServer {
         'Export SMITH_API_TOKEN to expose the API beyond loopback, or use --host 127.0.0.1.',
       );
     }
+
+    // Squads are data, like agents: seeded on first boot, then owned by
+    // .smith/squads/*.json — an empty dir legitimately means "no squads".
+    setSquadRoster(await loadSquadsFromDir(resolve(process.cwd(), '.smith/squads')));
 
     this.workspaces = await loadWorkspacesFromDir(resolve(process.cwd(), '.smith/workspaces'));
     if (this.workspaces.length > 0) {
@@ -850,7 +856,7 @@ export class OrchestratorServer {
     this.app.post('/reset', async (req) => {
       const body = (req.body ?? {}) as { runtime?: boolean; worktrees?: boolean; agents?: boolean };
       const scope = { runtime: body.runtime !== false, worktrees: Boolean(body.worktrees), agents: Boolean(body.agents) };
-      const killed = { warmSessions: 0, taskSessions: 0, queued: 0, active: 0, worktrees: 0, agents: 0 };
+      const killed = { warmSessions: 0, taskSessions: 0, queued: 0, active: 0, worktrees: 0, agents: 0, squads: 0 };
       const preserved: string[] = [];
 
       if (scope.runtime) {
@@ -896,19 +902,26 @@ export class OrchestratorServer {
       }
 
       if (scope.agents) {
-        // Roster wipe: personas are user data, so they are archived, never
-        // deleted — restore by moving the files back.
+        // Roster wipe: personas and squads are user data, so they are
+        // archived, never deleted — restore by moving the files back.
+        const stamp = Date.now();
         const agentsDir = resolve(process.cwd(), '.smith/agents');
-        const archive = resolve(process.cwd(), `.smith/agents-archived-${Date.now()}`);
         const existing = await loadAgents(agentsDir);
         if (existing.length > 0) {
-          await rename(agentsDir, archive).catch(() => {});
+          await rename(agentsDir, resolve(process.cwd(), `.smith/agents-archived-${stamp}`)).catch(() => {});
           await mkdir(agentsDir, { recursive: true }).catch(() => {});
           killed.agents = existing.length;
-          preserved.push(`agent personas archived to ${archive}`);
+        }
+        const squadsDir = resolve(process.cwd(), '.smith/squads');
+        killed.squads = SQUAD_ROSTER.length;
+        await rename(squadsDir, resolve(process.cwd(), `.smith/squads-archived-${stamp}`)).catch(() => {});
+        await mkdir(squadsDir, { recursive: true }).catch(() => {});
+        setSquadRoster([]);
+        if (killed.agents > 0 || killed.squads > 0) {
+          preserved.push(`agents and squads archived to .smith/*-archived-${stamp} (restore by moving them back)`);
         }
       } else {
-        preserved.push('agent personas');
+        preserved.push('agent personas and squads');
       }
 
       server.app.log.warn(`Reset (${JSON.stringify(scope)}): ${JSON.stringify(killed)}`);

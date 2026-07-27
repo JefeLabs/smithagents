@@ -60,6 +60,8 @@ swarm/.smith/*
 !swarm/.smith/agents/*.json
 !swarm/.smith/workspaces/
 !swarm/.smith/workspaces/*.json
+!swarm/.smith/squads/
+!swarm/.smith/squads/*.json
 
 # Verification screenshots — local working artifacts, not source.
 .screenshots/
