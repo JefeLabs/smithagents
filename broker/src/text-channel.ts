@@ -74,6 +74,8 @@ export class TextChannel {
       create(title?: string, workspace?: string): string | null;
       activate(id: string): string | null;
     },
+    /** Full-setup reset (settings). Returns a report of what was destroyed/preserved. */
+    private readonly onReset?: (scope: Record<string, unknown>) => Promise<Record<string, unknown>>,
   ) {}
 
   private clientSeq = 0;
@@ -123,6 +125,26 @@ export class TextChannel {
           const error = parsed ? this.onCompose(parsed) : 'body must be JSON';
           const status = error ? 400 : 200;
           res.writeHead(status, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify(error ? { error } : { ok: true }));
+        });
+        return;
+      }
+      if (req.method === 'POST' && req.url === '/reset' && this.onReset) {
+        let body = '';
+        req.on('data', (c) => {
+          body += c;
+        });
+        req.on('end', () => {
+          let scope: Record<string, unknown> = {};
+          try {
+            scope = JSON.parse(body || '{}') as Record<string, unknown>;
+          } catch {
+            /* empty body = default scope */
+          }
+          void this.onReset!(scope)
+            .then((report) => res.writeHead(200, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify(report)))
+            .catch((err: unknown) =>
+              res.writeHead(500, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify({ error: String(err) })),
+            );
         });
         return;
       }

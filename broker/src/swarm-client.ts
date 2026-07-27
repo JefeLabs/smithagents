@@ -136,6 +136,11 @@ export class SwarmClient {
     return ids;
   }
 
+  /** Tiered runtime reset on the orchestrator (remote workers are never killed). */
+  async reset(scope: { runtime?: boolean; worktrees?: boolean; agents?: boolean }): Promise<Record<string, unknown>> {
+    return this.http('POST', '/reset', scope);
+  }
+
   async listWorkspaces(): Promise<SwarmWorkspace[]> {
     const r = await this.http('GET', '/workspaces');
     return (r.workspaces as SwarmWorkspace[]) ?? [];

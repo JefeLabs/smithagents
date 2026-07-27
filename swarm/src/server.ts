@@ -45,6 +45,8 @@ import type {
   WorkerMessage,
   RegisteredMessage,
 } from './remote-types.js';
+import { execFile } from 'node:child_process';
+import { mkdir, rename } from 'node:fs/promises';
 import { loadAgents, findAgent } from './agents.js';
 import { AgentSessionManager } from './agent-sessions.js';
 import { loadWorkspacesFromDir, resolveRepo, type Workspace } from './workspaces.js';
@@ -839,6 +841,79 @@ export class OrchestratorServer {
       } catch (err) {
         return reply.status(sessionErrorStatus(err)).send({ error: String((err as Error).message) });
       }
+    });
+
+    // ── Reset ──────────────────────────────────────────────────────────
+    // Tiered, explicit, and never silent: the caller names the scope and gets
+    // back exactly what was destroyed and what was preserved. Remote workers
+    // are NEVER killed — they are other machines' processes.
+    this.app.post('/reset', async (req) => {
+      const body = (req.body ?? {}) as { runtime?: boolean; worktrees?: boolean; agents?: boolean };
+      const scope = { runtime: body.runtime !== false, worktrees: Boolean(body.worktrees), agents: Boolean(body.agents) };
+      const killed = { warmSessions: 0, taskSessions: 0, queued: 0, active: 0, worktrees: 0, agents: 0 };
+      const preserved: string[] = [];
+
+      if (scope.runtime) {
+        // Warm conversational sessions first (they own worktrees + branches).
+        if (server.agentSessions) {
+          for (const info of await server.agentSessions.list()) {
+            await server.agentSessions.destroy(info.id).catch(() => {});
+            killed.warmSessions += 1;
+          }
+        }
+        killed.queued = server.taskQueue.length;
+        server.taskQueue.length = 0;
+        for (const [taskId, task] of server.activeTasks) {
+          await task.runtime?.kill(task.sessionName).catch(() => {});
+          server.namePool.releaseByTaskId(taskId);
+          killed.active += 1;
+        }
+        server.activeTasks.clear();
+        // Sweep any orphaned local sessions this swarm launched.
+        const local = createRuntime('tmux', server.orchConfig.docker);
+        killed.taskSessions = await local.killPattern(`${server.orchConfig.tmuxPrefix}-`).catch(() => 0);
+        killed.taskSessions += await local.killPattern('smith-warm-').catch(() => 0);
+        server.completedTasks.clear();
+      }
+
+      const remoteWorkers = server.workerPool.listWorkers().length;
+      if (remoteWorkers > 0) preserved.push(`${remoteWorkers} remote worker(s) — remote instances are never killed`);
+
+      if (scope.worktrees) {
+        // Prune only orphaned worktree registrations; task BRANCHES (and their
+        // PRs) survive — committed work is never destroyed by a reset.
+        for (const workspace of server.workspaces) {
+          for (const repo of workspace.repos) {
+            await new Promise<void>((res) => {
+              execFile('git', ['worktree', 'prune'], { cwd: repo.path }, () => res());
+            });
+            killed.worktrees += 1;
+          }
+        }
+        preserved.push('task branches and their pull requests (committed work is never destroyed)');
+      } else {
+        preserved.push('worktrees, task branches, and pull requests');
+      }
+
+      if (scope.agents) {
+        // Roster wipe: personas are user data, so they are archived, never
+        // deleted — restore by moving the files back.
+        const agentsDir = resolve(process.cwd(), '.smith/agents');
+        const archive = resolve(process.cwd(), `.smith/agents-archived-${Date.now()}`);
+        const existing = await loadAgents(agentsDir);
+        if (existing.length > 0) {
+          await rename(agentsDir, archive).catch(() => {});
+          await mkdir(agentsDir, { recursive: true }).catch(() => {});
+          killed.agents = existing.length;
+          preserved.push(`agent personas archived to ${archive}`);
+        }
+      } else {
+        preserved.push('agent personas');
+      }
+
+      server.app.log.warn(`Reset (${JSON.stringify(scope)}): ${JSON.stringify(killed)}`);
+      server.broadcast({ type: 'session:orphan_cleanup', sessionPattern: `${server.orchConfig.tmuxPrefix}-*`, killed: killed.taskSessions });
+      return { ok: true, scope, killed, preserved };
     });
 
     this.app.get('/workspaces', async () => {

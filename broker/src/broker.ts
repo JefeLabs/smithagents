@@ -358,6 +358,22 @@ export class Broker {
     }
   }
 
+  /**
+   * Reset the conversation layer: drop user-formed squads, squad edits and
+   * raised hands, and re-seed the roster from the swarm registry. Running
+   * work is NOT touched here — the caller decides whether to kill runtime.
+   */
+  async resetComposition(): Promise<void> {
+    this.groups = [];
+    this.squadEdits.clear();
+    this.raisedHands.clear();
+    this.groupSeq = 0;
+    this.persistRosterState();
+    this.deps.directory.seed(await this.deps.swarm.registry().catch(() => []));
+    this.squads = await this.fetchSquads();
+    this.notifyRoster();
+  }
+
   /** Working units are locked: cancel or wait before recomposing them. */
   private busyReason(nameOrId: string): string | null {
     const agent = this.deps.directory.resolve(nameOrId);

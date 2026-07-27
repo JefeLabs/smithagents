@@ -12,7 +12,7 @@ import { Broker } from './broker.ts';
 import { loadBrokerConfig } from './config.ts';
 import { AgentDirectory } from './directory.ts';
 import { LiveKitRoomBridge } from './room.ts';
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { RosterState, UiRoster } from './broker.ts';
 import { SessionManager, type Session } from './sessions.ts';
@@ -353,6 +353,32 @@ const textChannel = new TextChannel(
       textChannel.broadcast(sessionFrame());
       return null;
     },
+  },
+  // Reset (settings): tiered and explicit. Runtime is killed on the swarm side
+  // (remote workers are never touched); conversations and roster arrangements
+  // are cleared here. Committed work — branches and PRs — always survives.
+  async (scope) => {
+    const wants = {
+      runtime: scope.runtime !== false,
+      conversations: scope.conversations !== false,
+      worktrees: Boolean(scope.worktrees),
+      agents: Boolean(scope.agents),
+    };
+    const swarmReport = await swarm
+      .reset({ runtime: wants.runtime, worktrees: wants.worktrees, agents: wants.agents })
+      .catch((err: unknown) => ({ error: `swarm reset failed: ${String(err)}` }));
+
+    if (wants.conversations) {
+      for (const file of readdirSync(sessionsDir).filter((f) => f.endsWith('.json'))) {
+        rmSync(join(sessionsDir, file), { force: true });
+      }
+      const fresh = sessionManager.resetAll(workspaceNames[0] ?? 'default');
+      brain.loadHistory(fresh.brainHistory);
+    }
+    await broker.resetComposition();
+    textChannel.broadcast(sessionFrame());
+    textChannel.broadcast({ type: 'roster', agents: toRosterEntries(broker.uiRoster()) });
+    return { ok: true, scope: wants, swarm: swarmReport };
   },
 );
 const micSessions = new Map<number, DeepgramSttStream>();

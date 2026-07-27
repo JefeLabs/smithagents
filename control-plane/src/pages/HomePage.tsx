@@ -9,6 +9,7 @@ import { AgentRoster } from "../organisms/AgentRoster";
 import { DotGridCanvas } from "../organisms/DotGridCanvas";
 import { DotGridTuner } from "../organisms/DotGridTuner";
 import { SessionsPanel } from "../organisms/SessionsPanel";
+import { SettingsPanel } from "../organisms/SettingsPanel";
 import { ToolRail } from "../organisms/ToolRail";
 import { VoiceStage } from "../organisms/VoiceStage";
 import { WorkStage } from "../organisms/WorkStage";
@@ -23,6 +24,7 @@ export function HomePage() {
   /** A busy agent/squad being inspected — swaps the stage to their work view. */
   const [inspecting, setInspecting] = useState<AgentSeed | null>(null);
   const [sessionsOpen, setSessionsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   // The audio sink is a ref so useBrokerChat (which produces the frames) can be
   // declared before useSpokenReplies (which consumes them) without a cycle.
   const audioSink = useRef<(frame: AudioFrame) => void>(() => {});
@@ -42,6 +44,7 @@ export function HomePage() {
     micAudio,
     createSession,
     activateSession,
+    resetSetup,
   } = useBrokerChat({ onAudio: (frame) => audioSink.current(frame) });
   const { soundOn, toggleSound, playAudioFrame } = useSpokenReplies(messages, roster, !audioMode);
   audioSink.current = (frame) => void playAudioFrame(frame);
@@ -93,7 +96,12 @@ export function HomePage() {
   return (
     <ControlPlaneLayout
       background={<DotGridCanvas params={gridParams} />}
-      leftRail={<ToolRail onSessions={() => setSessionsOpen((open) => !open)} />}
+      leftRail={
+        <ToolRail
+          onSessions={() => setSessionsOpen((open) => !open)}
+          onSettings={() => setSettingsOpen((open) => !open)}
+        />
+      }
       rightRail={
         <AgentRoster
           agents={agents}
@@ -132,6 +140,7 @@ export function HomePage() {
       }
       overlays={
         <>
+          <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} onReset={resetSetup} />
           <SessionsPanel
             open={sessionsOpen}
             sessions={sessions}
