@@ -80,3 +80,6 @@ broker/.smith/
 
 # Synthesized audio cache — regenerable, per-machine.
 broker/.smith/voice-cache/
+
+# Crew memory is personal state, like sessions.
+broker/.smith/memory.json

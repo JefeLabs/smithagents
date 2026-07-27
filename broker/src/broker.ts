@@ -8,6 +8,7 @@
  */
 import type { AgentDirectory, AgentPresence } from './directory.ts';
 import type { BrainTurn } from './brain.ts';
+import type { MemoryPort, MemoryScope } from './memory.ts';
 import type { RegistryAgent, SwarmEvent, SwarmMeeting, SwarmSquad, SwarmWorkspace } from './swarm-client.ts';
 
 export interface SwarmClientLike {
@@ -66,6 +67,10 @@ export interface BrokerDeps {
   onSpeechText?: (text: string) => void;
   /** Fired with a fresh roster snapshot after every directory, squad, group, or hand change. */
   onRosterChange?: (roster: UiRoster) => void;
+  /** Crew memory — durable facts recalled into every turn. Optional: without it the crew simply forgets. */
+  memory?: MemoryPort;
+  /** Scope for memory reads/writes: the active session and its workspace. */
+  memoryScope?: () => MemoryScope;
   /** Durable store for roster composition (user squads, edits). Loaded on start, saved on every change. */
   rosterStore?: { load(): RosterState | null; save(state: RosterState): void };
   mintToken: (roomName: string) => Promise<string>;
@@ -137,6 +142,16 @@ export class Broker {
       });
       this.notifyRoster();
       return `Delegated to ${agent.name}: task ${taskId} queued. They will work asynchronously; you will be notified on completion.`;
+    },
+    remember: async (input: { key: string; text: string; scope: string }): Promise<string> => {
+      if (!this.deps.memory) return 'Memory is not available in this deployment.';
+      const base = this.deps.memoryScope?.() ?? {};
+      // 'global' deliberately drops every dimension; 'workspace' keeps the
+      // workspace but not the session, so the fact outlives the conversation.
+      const scope: MemoryScope =
+        input.scope === 'global' ? {} : input.scope === 'workspace' ? { workspace: base.workspace } : base;
+      const entry = this.deps.memory.remember({ key: input.key, text: input.text, scope, source: 'human' });
+      return `Remembered "${entry.key}" at ${input.scope} scope. Confirm it in one short line.`;
     },
     raise_hand: async (input: { agent: string; reason: string }): Promise<string> => {
       const name = input.agent.trim();
@@ -228,7 +243,7 @@ export class Broker {
 
   /** Public so the stdin dev channel (and tests) can inject an utterance. */
   handleUtterance(text: string): Promise<void> {
-    return this.enqueueTurn(() => this.deps.brain.handleUtterance(text, this.makeTurn()));
+    return this.enqueueTurn(() => this.deps.brain.handleUtterance(text, this.makeTurn(text)));
   }
 
   private async joinMeeting(meeting: SwarmMeeting): Promise<void> {
@@ -527,9 +542,9 @@ export class Broker {
     return next;
   }
 
-  private makeTurn(): BrainTurn {
+  private makeTurn(utterance?: string): BrainTurn {
     return {
-      roster: this.describeRosterForBrain(),
+      roster: this.describeRosterForBrain() + this.describeMemoryForBrain(utterance),
       onSpeech: (chunk) => this.enqueueSpeech(chunk),
     };
   }
@@ -583,6 +598,19 @@ export class Broker {
       out += `\n\nRaised hands (already up — do not re-raise; they speak only when the human calls on them):\n${handLines}`;
     }
     return out;
+  }
+
+  /**
+   * Relevant memories for this turn, appended to the roster block. Recall is
+   * keyed on what the human just said, so the crew surfaces what matters now
+   * instead of reciting everything it knows.
+   */
+  private describeMemoryForBrain(utterance?: string): string {
+    if (!this.deps.memory || !utterance) return '';
+    const hits = this.deps.memory.recall({ text: utterance, scope: this.deps.memoryScope?.() ?? {} });
+    if (hits.length === 0) return '';
+    const lines = hits.map((h) => `- ${h.text}`).join('\n');
+    return `\n\nWhat the crew remembers (relevant to this turn — use it naturally, never recite it):\n${lines}`;
   }
 
   /** Squad structure is optional context — an older swarm without it is not an error. */

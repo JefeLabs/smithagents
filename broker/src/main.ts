@@ -15,6 +15,7 @@ import { LiveKitRoomBridge } from './room.ts';
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { RosterState, UiRoster } from './broker.ts';
+import { LocalMemory, type MemoryEntry } from './memory.ts';
 import { SessionManager, type Session } from './sessions.ts';
 import { DeepgramSttStream, type LiveLike } from './stt.ts';
 import { SwarmClient, type SwarmSquad } from './swarm-client.ts';
@@ -150,6 +151,7 @@ const brain = new BrokerBrain(streamFactory, {
   delegate: (input) => broker.executors.delegate({ ...input, workspace: input.workspace ?? sessionManager.active().workspace }),
   check_status: (input) => broker.executors.check_status(input),
   raise_hand: (input) => broker.executors.raise_hand(input),
+  remember: (input) => broker.executors.remember(input),
 });
 
 // Sessions — workspace-scoped conversations persisted under .smith/sessions/.
@@ -174,6 +176,27 @@ const sessionStore = {
   },
 };
 const sessionManager = new SessionManager(sessionStore);
+
+// Crew memory — durable facts recalled into every turn. One inspectable JSON
+// file; the crew's continuity across conversations lives here.
+const memoryFile = process.env.BROKER_MEMORY_FILE ?? '.smith/memory.json';
+const memory = new LocalMemory({
+  load(): MemoryEntry[] {
+    try {
+      return JSON.parse(readFileSync(memoryFile, 'utf8')) as MemoryEntry[];
+    } catch {
+      return [];
+    }
+  },
+  save(entries: MemoryEntry[]): void {
+    try {
+      mkdirSync(dirname(memoryFile), { recursive: true });
+      writeFileSync(memoryFile, JSON.stringify(entries, null, 2));
+    } catch (err) {
+      console.error('[memory] persist failed:', err);
+    }
+  },
+});
 
 // One model call fills the whole creation wizard (structured output).
 const personaGenerator = new PersonaGenerator(anthropic as never);
@@ -518,6 +541,11 @@ broker = new Broker(
     swarm,
     directory,
     brain,
+    memory,
+    memoryScope: () => {
+      const active = sessionManager.active();
+      return { workspace: active.workspace, session: active.id };
+    },
     rosterStore,
     makeStt: () => new DeepgramSttStream(makeDeepgramLive),
     makeBridge: () => new LiveKitRoomBridge(),

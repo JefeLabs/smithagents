@@ -32,6 +32,7 @@ const NOOP_EXEC: ToolExecutors = {
   delegate: async () => 'ok',
   check_status: async () => 'ok',
   raise_hand: async () => 'ok',
+  remember: async () => 'ok',
 };
 
 test('plain text answer streams to onSpeech as chunks', async () => {
@@ -73,6 +74,7 @@ test('tool_use runs the executor and continues with tool_result', async () => {
     },
     check_status: async () => 'unused',
     raise_hand: async () => 'unused',
+    remember: async () => 'unused',
   };
   const spoken: string[] = [];
   const brain = new BrokerBrain(factory, exec);
@@ -134,6 +136,7 @@ test('history trim respects turn boundaries even after a tool-use turn', async (
     delegate: async () => 'ok',
     check_status: async () => 'ok',
     raise_hand: async () => 'ok',
+    remember: async () => 'ok',
   };
   const brain = new BrokerBrain(factory, exec, { maxHistory: 4 });
   await brain.handleUtterance('have octavio refactor auth', { roster: 'ROSTER', onSpeech: () => {} });
@@ -166,6 +169,7 @@ test('the final permitted tool round forces a text-only reply via tool_choice: n
     delegate: async () => 'ok',
     check_status: async () => 'ok',
     raise_hand: async () => 'ok',
+    remember: async () => 'ok',
   };
   const spoken: string[] = [];
   const brain = new BrokerBrain(factory, exec);
