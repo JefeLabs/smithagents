@@ -34,10 +34,17 @@ interface EngineOption {
   note?: string;
 }
 
+interface LanguageOption {
+  id: string;
+  label: string;
+  speech: string;
+}
+
 interface Catalog {
   stereotypes: Stereotype[];
   jobRoles: JobRole[];
   engines: EngineOption[];
+  languages: LanguageOption[];
   quickQuestions: Array<{ id: string; question: string }>;
   reactionLevels: string[];
 }
@@ -57,13 +64,17 @@ const LEVEL_LABELS: Record<string, string> = {
   strong_disagree: "Strongly disagrees",
 };
 
-const STEPS = ["Stereotype", "Role", "Identity", "Engine", "Voice", "Reactions", "Answers"] as const;
+const STEPS = ["Setup", "Persona", "Voice", "Reactions", "Answers"] as const;
 
 /**
- * Agent creation wizard: stereotype → identity → voice → reactions → answers.
- * The stereotype seeds style and directives; everything after it is the user's.
- * Reactions and quick answers are fixed lines, so the broker pre-synthesizes
- * them on create — they play back instantly instead of waiting on TTS.
+ * Agent creation wizard: setup → persona → voice → reactions → answers.
+ *
+ * Setup comes first and holds the decisions that actually determine what gets
+ * launched — job role, CLI, model, personality, and the language they speak.
+ * Everything after it is flavor, and can be typed by hand or written by AI in
+ * one call. Reactions and quick answers are fixed lines, so the broker
+ * pre-synthesizes them on create — they play back instantly instead of
+ * waiting on TTS.
  */
 export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) {
   const [step, setStep] = useState(0);
@@ -80,6 +91,7 @@ export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) 
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [engine, setEngine] = useState<EngineOption | null>(null);
   const [model, setModel] = useState("");
+  const [language, setLanguage] = useState("");
   const [voiceId, setVoiceId] = useState("");
   const [voices, setVoices] = useState<CatalogVoice[]>([]);
   const [voiceError, setVoiceError] = useState<string | null>(null);
@@ -100,6 +112,7 @@ export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) 
           setEngine(first);
           setModel(first.models[0] ?? "");
         }
+        setLanguage(c.languages?.[0]?.id ?? "");
       })
       .catch(() => setError("Could not load the persona catalog — is the broker running?"));
   }, [open, catalog]);
@@ -136,15 +149,17 @@ export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) 
   // step only: search and gender re-query on submit/toggle, not per keystroke.
   // biome-ignore lint/correctness/useExhaustiveDependencies: see above
   useEffect(() => {
-    if (open && step === 4) void loadVoices(voiceSearch, gender);
+    if (open && step === 2) void loadVoices(voiceSearch, gender);
   }, [open, step]);
 
   if (!open) return null;
 
-  const pickStereotype = (s: Stereotype) => {
+  /** Seeds the reaction lines from the archetype; the user edits them later. */
+  const pickStereotype = (s: Stereotype | null) => {
     setStereotype(s);
-    setReactions(Object.fromEntries(Object.entries(s.reactions).map(([level, lines]) => [level, lines[0] ?? ""])));
-    setStep(1);
+    if (s) {
+      setReactions(Object.fromEntries(Object.entries(s.reactions).map(([level, lines]) => [level, lines[0] ?? ""])));
+    }
   };
 
   /** One model call fills every field; the user edits whatever they want after. */
@@ -154,7 +169,7 @@ export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) 
     const draft = (await fetch(`http://${BASE}/agents/generate`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ stereotype: stereotype?.id, jobRole: jobRole?.id, gender, hint }),
+      body: JSON.stringify({ stereotype: stereotype?.id, jobRole: jobRole?.id, gender, hint, language }),
     })
       .then((r) => r.json())
       .catch((err: unknown) => ({ error: String(err) }))) as {
@@ -179,7 +194,7 @@ export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) 
     setGeneratedDirectives(draft.directives);
     if (draft.reactions) setReactions(Object.fromEntries(draft.reactions.map((r) => [r.level, r.line])));
     if (draft.quickAnswers) setAnswers(Object.fromEntries(draft.quickAnswers.map((a) => [a.id, a.answer])));
-    setStep(2);
+    setStep(1); // land on Persona with every field filled in and editable
   };
 
   const preview = async (id: string) => {
@@ -205,6 +220,7 @@ export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) 
         backstory,
         stereotype: stereotype?.id,
         jobRole: jobRole?.id,
+        language,
         persona: { style: generatedStyle ?? stereotype?.style },
         directives: generatedDirectives ?? jobRole?.directives ?? stereotype?.directives,
         engine: engine ? { cli: engine.cli, model } : undefined,
@@ -228,7 +244,10 @@ export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) 
     setVoiceId("");
   };
 
-  const canAdvance = step === 0 ? Boolean(stereotype) : step === 2 ? name.trim().length > 0 : true;
+  // Setup is the only step whose fields decide what actually gets launched, so
+  // it is the only one that gates. Persona needs a name to create the agent.
+  const canAdvance =
+    step === 0 ? Boolean(engine && model.trim() && language) : step === 1 ? name.trim().length > 0 : true;
   const onScrimClick = (e: MouseEvent<HTMLDivElement>) => {
     if (e.target === e.currentTarget) onClose();
   };
@@ -254,40 +273,98 @@ export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) 
 
         <div className="wizard__body">
           {step === 0 && (
-            <div className="stereotype-grid">
-              {(catalog?.stereotypes ?? []).map((s) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  className={`stereotype-card${stereotype?.id === s.id ? " is-picked" : ""}`}
-                  onClick={() => pickStereotype(s)}
+            <div className="wizard__form">
+              <p className="wizard__hint">
+                These decide what actually gets launched: the job they own, the CLI process they live in, and the
+                language they speak. Everything after this is flavor.
+              </p>
+              <label>
+                Job role
+                <select
+                  value={jobRole?.id ?? ""}
+                  onChange={(e) => setJobRole(catalog?.jobRoles.find((r) => r.id === e.target.value) ?? null)}
                 >
-                  <b>{s.label}</b>
-                  <span>{s.style}</span>
-                </button>
-              ))}
-              {!catalog && <p className="wizard__hint">Loading personas…</p>}
+                  <option value="">— pick a role —</option>
+                  {(catalog?.jobRoles ?? []).map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                CLI
+                <select
+                  value={engine?.cli ?? ""}
+                  onChange={(e) => {
+                    const picked = catalog?.engines.find((x) => x.cli === e.target.value) ?? null;
+                    setEngine(picked);
+                    setModel(picked?.models[0] ?? "");
+                  }}
+                >
+                  {(catalog?.engines ?? []).map((e) => (
+                    <option key={e.cli} value={e.cli}>
+                      {e.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Model
+                <select value={model} onChange={(e) => setModel(e.target.value)}>
+                  {(engine?.models ?? []).map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                  {model && !(engine?.models ?? []).includes(model) && <option value={model}>{model} (custom)</option>}
+                </select>
+              </label>
+              <label>
+                Or type any model id {engine?.label ?? "this CLI"} accepts
+                <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="claude-opus" />
+              </label>
+              {engine && (
+                <p className="wizard__hint">
+                  {engine.warmSessions
+                    ? "Supports warm sessions — this agent can hold context across turns."
+                    : (engine.note ?? "Task work and steering only.")}
+                </p>
+              )}
+              <label>
+                Personality
+                <select
+                  value={stereotype?.id ?? ""}
+                  onChange={(e) => pickStereotype(catalog?.stereotypes.find((x) => x.id === e.target.value) ?? null)}
+                >
+                  <option value="">— pick an archetype —</option>
+                  {(catalog?.stereotypes ?? []).map((x) => (
+                    <option key={x.id} value={x.id}>
+                      {x.label} — {x.style}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Primary language
+                <select value={language} onChange={(e) => setLanguage(e.target.value)}>
+                  {(catalog?.languages ?? []).map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {!catalog && <p className="wizard__hint">Loading the catalog…</p>}
             </div>
           )}
 
           {step === 1 && (
             <div className="wizard__form">
               <p className="wizard__hint">
-                The job says what they own; the archetype says how they say it. Pick a role, then let AI write the rest
-                — or fill it in yourself.
+                Write this yourself, or let AI fill every remaining field from your setup — name, backstory, reactions
+                and answers included. Everything stays editable after.
               </p>
-              <div className="role-grid">
-                {(catalog?.jobRoles ?? []).map((r) => (
-                  <button
-                    key={r.id}
-                    type="button"
-                    className={`chip${jobRole?.id === r.id ? " is-picked" : ""}`}
-                    onClick={() => setJobRole(r)}
-                  >
-                    {r.label}
-                  </button>
-                ))}
-              </div>
               <label>
                 Anything specific? (optional)
                 <input
@@ -303,22 +380,14 @@ export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) 
                 disabled={generating}
               >
                 <Sparkles size={12} strokeWidth={2} />{" "}
-                {generating ? "writing the persona…" : "generate everything with AI"}
+                {generating ? "writing the persona…" : "generate the rest with AI"}
               </button>
-              <button type="button" className="settings-btn settings-btn--wide" onClick={() => setStep(2)}>
-                skip — I'll write it myself
-              </button>
-            </div>
-          )}
-
-          {step === 2 && (
-            <div className="wizard__form">
               <label>
                 Name
                 <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Fabian" />
               </label>
               <label>
-                Role
+                Title
                 <input value={role} onChange={(e) => setRole(e.target.value)} placeholder="The Architect" />
               </label>
               <div className="wizard__genders">
@@ -346,57 +415,7 @@ export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) 
             </div>
           )}
 
-          {step === 3 && (
-            <div className="wizard__form">
-              <p className="wizard__hint">Which CLI this agent runs on, and the model it uses for delegated work.</p>
-              <div className="role-grid">
-                {(catalog?.engines ?? []).map((e) => (
-                  <button
-                    key={e.cli}
-                    type="button"
-                    className={`chip${engine?.cli === e.cli ? " is-picked" : ""}`}
-                    onClick={() => {
-                      setEngine(e);
-                      setModel(e.models[0] ?? "");
-                    }}
-                  >
-                    {e.label}
-                  </button>
-                ))}
-              </div>
-              {engine && (
-                <>
-                  <div className="role-grid">
-                    {engine.models.map((m) => (
-                      <button
-                        key={m}
-                        type="button"
-                        className={`chip${model === m ? " is-picked" : ""}`}
-                        onClick={() => setModel(m)}
-                      >
-                        {m}
-                      </button>
-                    ))}
-                  </div>
-                  <label>
-                    Model passed to {engine.label}
-                    <input
-                      value={model}
-                      onChange={(e) => setModel(e.target.value)}
-                      placeholder="pick above, or type any id this CLI accepts"
-                    />
-                  </label>
-                  <p className="wizard__hint">
-                    {engine.warmSessions
-                      ? "Supports warm sessions — this agent can hold context across turns."
-                      : (engine.note ?? "Task work and steering only.")}
-                  </p>
-                </>
-              )}
-            </div>
-          )}
-
-          {step === 4 && (
+          {step === 2 && (
             <div className="voice-browser">
               <div className="voice-browser__search">
                 <Search size={13} strokeWidth={2} />
@@ -442,7 +461,7 @@ export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) 
             </div>
           )}
 
-          {step === 5 && (
+          {step === 3 && (
             <div className="wizard__form">
               <p className="wizard__hint">
                 What they say across the agreement spectrum. Cached as audio on create, so they fire instantly.

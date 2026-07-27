@@ -50,7 +50,7 @@ import type {
 import { execFile } from 'node:child_process';
 import { mkdir, rename } from 'node:fs/promises';
 import { loadAgents, findAgent, saveAgent, type ComposedAgent } from './agents.js';
-import { QUICK_QUESTIONS, STEREOTYPES, JOB_ROLES, ENGINES, findStereotype, findJobRole, findEngine, REACTION_LEVELS } from './personas.js';
+import { QUICK_QUESTIONS, STEREOTYPES, JOB_ROLES, ENGINES, LANGUAGES, DEFAULT_LANGUAGE, findStereotype, findJobRole, findEngine, findLanguage, REACTION_LEVELS } from './personas.js';
 import { AgentSessionManager } from './agent-sessions.js';
 import { SessionStore } from './session-store.js';
 import { isValidModelId } from './drivers/model-flag.js';
@@ -818,6 +818,7 @@ export class OrchestratorServer {
         stereotypes: STEREOTYPES,
         jobRoles: JOB_ROLES,
         engines: ENGINES,
+        languages: LANGUAGES,
         quickQuestions: QUICK_QUESTIONS,
         reactionLevels: REACTION_LEVELS,
       };
@@ -833,6 +834,9 @@ export class OrchestratorServer {
 
       if (b.engine?.cli && !findEngine(b.engine.cli)) {
         return reply.status(400).send({ error: `Unknown CLI: ${b.engine.cli}` });
+      }
+      if (b.language && !findLanguage(b.language)) {
+        return reply.status(400).send({ error: `Unknown language: ${b.language}` });
       }
       // The model reaches a shell command string at launch. Reject a bad id
       // here so the wizard shows a clear error, rather than at launch time —
@@ -863,6 +867,7 @@ export class OrchestratorServer {
         stereotype: b.stereotype,
         gender: b.gender,
         backstory: b.backstory?.trim() || undefined,
+        language: b.language ?? DEFAULT_LANGUAGE,
         reactions: b.reactions ?? seed?.reactions,
         quickAnswers: b.quickAnswers,
         voice: b.voice?.voiceId ? { provider: 'elevenlabs', voiceId: b.voice.voiceId } : undefined,

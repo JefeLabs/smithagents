@@ -180,7 +180,7 @@ export const ENGINES: EngineOption[] = [
   },
   {
     cli: 'opencode',
-    label: 'opencode',
+    label: 'OpenCode',
     models: ['anthropic/claude-sonnet', 'openai/gpt-5', 'local'],
     warmSessions: true,
   },
@@ -192,7 +192,7 @@ export const ENGINES: EngineOption[] = [
   },
   {
     cli: 'agy',
-    label: 'agy',
+    label: 'Antigravity',
     models: ['default'],
     warmSessions: false,
     note: 'Keeps conversations server-side — task work and steering only, no warm sessions.',
@@ -209,4 +209,52 @@ export function findJobRole(id: string): JobRole | undefined {
 
 export function findStereotype(id: string): Stereotype | undefined {
   return STEREOTYPES.find((s) => s.id === id);
+}
+
+/**
+ * Primary language — the language an agent actually speaks in meetings.
+ *
+ * `speech` is prose, not a locale code, because its only consumer is the
+ * persona generator's prompt: it describes how this teammate should sound.
+ * Keeping the crew's Dominican identity as one option among several is what
+ * turns it from a hardcoded assumption into a choice.
+ */
+export interface LanguageOption {
+  id: string;
+  label: string;
+  speech: string;
+}
+
+export const LANGUAGES: LanguageOption[] = [
+  {
+    id: 'en-do',
+    label: 'English (Dominican)',
+    speech:
+      'English with natural Dominican Spanish sprinkled in ("dale", "tranquilo", "mi gente")',
+  },
+  {
+    id: 'es-do',
+    label: 'Spanish (Dominican)',
+    speech:
+      'Dominican Spanish — warm and quick, leaving technical terms in English the way developers actually talk',
+  },
+  {
+    id: 'es',
+    label: 'Spanish (neutral)',
+    speech: 'neutral Latin American Spanish, leaving technical terms in English',
+  },
+  { id: 'en', label: 'English', speech: 'plain English, no regional idiom' },
+  {
+    id: 'pt-br',
+    label: 'Portuguese (Brazil)',
+    speech: 'Brazilian Portuguese — warm and direct, leaving technical terms in English',
+  },
+  { id: 'fr', label: 'French', speech: 'French, leaving technical terms in English' },
+];
+
+/** The crew's default: matches the existing Dominican cast. */
+export const DEFAULT_LANGUAGE = 'en-do';
+
+export function findLanguage(id?: string): LanguageOption | undefined {
+  return LANGUAGES.find((l) => l.id === id);
 }

@@ -15,6 +15,11 @@ export interface GenerateRequest {
   gender?: string;
   /** Free-text steer: "grumpy veteran", "fresh out of school, eager". */
   hint?: string;
+  /**
+   * How this teammate should sound, from the chosen primary language
+   * (personas.LANGUAGES[].speech). Absent = the crew's Dominican default.
+   */
+  speech?: string;
   /** Crew identity so a generated teammate fits the existing cast. */
   crewContext?: string;
   reactionLevels: string[];
@@ -103,8 +108,8 @@ export class PersonaGenerator {
       model: this.model,
       max_tokens: 4096,
       system:
-        'You invent a member of a tight AI engineering crew from the Dominican Republic. ' +
-        'They speak English with natural Dominican Spanish sprinkled in ("dale", "tranquilo", "mi gente"), ' +
+        'You invent a member of a tight AI engineering crew. ' +
+        `They speak ${req.speech ?? 'English with natural Dominican Spanish sprinkled in ("dale", "tranquilo", "mi gente")'}, ` +
         'and every line you write is SPOKEN ALOUD in a live meeting: short, human, never bulleted, never corporate. ' +
         'Give them a specific personality with edges — likes, irritations, a way of disagreeing that is theirs alone. ' +
         'Vary rhythm between agents; avoid stock phrasing.',

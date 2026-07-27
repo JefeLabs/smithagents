@@ -423,6 +423,7 @@ const textChannel = new TextChannel(
         jobRoles?: Array<{ id: string; label: string; directives: string }>;
         quickQuestions?: Array<{ id: string; question: string }>;
         reactionLevels?: string[];
+        languages?: Array<{ id: string; label: string; speech: string }>;
       };
       const stereotype = catalog.stereotypes?.find((s) => s.id === b.stereotype);
       const jobRole = catalog.jobRoles?.find((r) => r.id === b.jobRole);
@@ -434,6 +435,8 @@ const textChannel = new TextChannel(
         jobRoleDirectives: jobRole?.directives,
         gender: b.gender,
         hint: b.hint,
+        // The chosen primary language decides how every generated line sounds.
+        speech: catalog.languages?.find((l) => l.id === b.language)?.speech,
         crewContext: crew.join(', '),
         existingNames: directory.snapshot().map((p) => p.agent.name),
         reactionLevels: catalog.reactionLevels ?? [],

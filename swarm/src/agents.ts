@@ -37,6 +37,8 @@ export interface ComposedAgent {
   gender?: Gender;
   /** Free-text history that colors how they talk about their work. */
   backstory?: string;
+  /** Primary language they speak in meetings (see personas.LANGUAGES). */
+  language?: string;
   /** What they say across the agreement spectrum — pre-synthesized for instant playback. */
   reactions?: Partial<Reactions>;
   /** Answers to the getting-to-know-you questions, cached as audio. */
