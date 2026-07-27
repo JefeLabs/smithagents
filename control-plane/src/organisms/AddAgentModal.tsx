@@ -49,11 +49,28 @@ interface Catalog {
   reactionLevels: string[];
 }
 
+/** The stored agent record, as the registry returns it. */
+interface StoredAgent {
+  id: string;
+  name?: string;
+  role?: string;
+  backstory?: string;
+  gender?: string;
+  language?: string;
+  stereotype?: string;
+  engine?: { cli?: string; model?: string };
+  voice?: { voiceId?: string };
+  reactions?: Record<string, string[]>;
+  quickAnswers?: Record<string, string>;
+}
+
 interface AddAgentModalProps {
   open: boolean;
   onClose: () => void;
   /** Fired after the registry accepted the new agent. */
   onCreated?: (name: string) => void;
+  /** Agent id to edit. Absent = creating a new one. */
+  editingId?: string;
 }
 
 const LEVEL_LABELS: Record<string, string> = {
@@ -76,7 +93,8 @@ const STEPS = ["Setup", "Persona", "Voice", "Reactions", "Answers"] as const;
  * pre-synthesizes them on create — they play back instantly instead of
  * waiting on TTS.
  */
-export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) {
+export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentModalProps) {
+  const editing = Boolean(editingId);
   const [step, setStep] = useState(0);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [stereotype, setStereotype] = useState<Stereotype | null>(null);
@@ -116,6 +134,34 @@ export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) 
       })
       .catch(() => setError("Could not load the persona catalog — is the broker running?"));
   }, [open, catalog]);
+
+  // Editing pre-fills from the STORED record, not the roster frame — the
+  // frame is a view model and carries none of the persona detail.
+  useEffect(() => {
+    if (!open || !editingId || !catalog) return;
+    void fetch(`http://${BASE}/agents`)
+      .then((r) => r.json())
+      .then((res: { agents?: StoredAgent[] }) => {
+        const a = res.agents?.find((x) => x.id === editingId);
+        if (!a) {
+          setError(`Could not load ${editingId} — it may have been removed.`);
+          return;
+        }
+        setName(a.name ?? "");
+        setRole(a.role ?? "");
+        setBackstory(a.backstory ?? "");
+        setGender((a.gender as "male" | "female" | "neutral") ?? "neutral");
+        setLanguage(a.language ?? catalog.languages?.[0]?.id ?? "");
+        setVoiceId(a.voice?.voiceId ?? "");
+        setStereotype(catalog.stereotypes.find((x) => x.id === a.stereotype) ?? null);
+        const eng = catalog.engines.find((x) => x.cli === a.engine?.cli) ?? null;
+        setEngine(eng);
+        setModel(a.engine?.model ?? eng?.models[0] ?? "");
+        setReactions(Object.fromEntries(Object.entries(a.reactions ?? {}).map(([k, v]) => [k, v?.[0] ?? ""])));
+        setAnswers(a.quickAnswers ?? {});
+      })
+      .catch(() => setError("Could not load this agent — is the broker running?"));
+  }, [open, editingId, catalog]);
 
   useEffect(() => {
     if (!open) return;
@@ -210,8 +256,8 @@ export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) 
   const submit = async () => {
     setBusy(true);
     setError(null);
-    const res = (await fetch(`http://${BASE}/agents`, {
-      method: "POST",
+    const res = (await fetch(`http://${BASE}/agents${editingId ? `/${encodeURIComponent(editingId)}` : ""}`, {
+      method: editing ? "PUT" : "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         name,
@@ -221,8 +267,13 @@ export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) 
         stereotype: stereotype?.id,
         jobRole: jobRole?.id,
         language,
-        persona: { style: generatedStyle ?? stereotype?.style },
-        directives: generatedDirectives ?? jobRole?.directives ?? stereotype?.directives,
+        // When editing, only send prose the user actually changed. Falling back
+        // to the stereotype's copy here would silently overwrite the directives
+        // and style already saved on this agent.
+        persona: editing && !generatedStyle ? undefined : { style: generatedStyle ?? stereotype?.style },
+        directives: editing
+          ? (generatedDirectives ?? jobRole?.directives)
+          : (generatedDirectives ?? jobRole?.directives ?? stereotype?.directives),
         engine: engine ? { cli: engine.cli, model } : undefined,
         voice: voiceId ? { voiceId } : undefined,
         reactions: Object.fromEntries(Object.entries(reactions).map(([k, v]) => [k, [v]])),
@@ -259,7 +310,7 @@ export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) 
       data-open="true"
       role="dialog"
       aria-modal="true"
-      aria-label="Create an agent"
+      aria-label={editing ? "Edit agent" : "Create an agent"}
       onClick={onScrimClick}
     >
       <section className="wizard">
@@ -380,7 +431,11 @@ export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) 
                 disabled={generating}
               >
                 <Sparkles size={12} strokeWidth={2} />{" "}
-                {generating ? "writing the persona…" : "generate the rest with AI"}
+                {generating
+                  ? "writing the persona…"
+                  : editing
+                    ? "rewrite the persona with AI"
+                    : "generate the rest with AI"}
               </button>
               <label>
                 Name
@@ -518,7 +573,7 @@ export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) 
               onClick={() => void submit()}
               disabled={busy || !name.trim()}
             >
-              {busy ? "creating…" : "create agent"}
+              {busy ? (editing ? "saving…" : "creating…") : editing ? "save changes" : "create agent"}
             </button>
           )}
         </footer>

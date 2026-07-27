@@ -80,6 +80,9 @@ export class TextChannel {
     private readonly onReset?: (scope: Record<string, unknown>) => Promise<Record<string, unknown>>,
     /** Agent creation: catalog browse, voice audition, and registry writes. */
     private readonly creation?: {
+      /** Full stored records, so the wizard can pre-fill when editing. */
+      records(): Promise<Record<string, unknown>[]>;
+      update(id: string, body: Record<string, unknown>): Promise<Record<string, unknown>>;
       catalog(): Promise<Record<string, unknown>>;
       generate(body: Record<string, unknown>): Promise<Record<string, unknown>>;
       voices(query: Record<string, string>): Promise<Record<string, unknown>>;
@@ -206,6 +209,32 @@ export class TextChannel {
               return json(400, { error: 'body must be JSON' });
             }
             void this.creation!.generate(parsed).then((draft) => json(200, draft), fail);
+          });
+          return;
+        }
+        // Full records for the edit wizard — the roster frame is a view model
+        // and deliberately carries none of the persona detail.
+        if (req.method === 'GET' && url.pathname === '/agents') {
+          void this.creation.records().then((agents) => json(200, { agents }), fail);
+          return;
+        }
+        const editMatch = /^\/agents\/([^/]+)$/.exec(url.pathname);
+        if (req.method === 'PUT' && editMatch) {
+          let body = '';
+          req.on('data', (c) => {
+            body += c;
+          });
+          req.on('end', () => {
+            let parsed: Record<string, unknown> = {};
+            try {
+              parsed = JSON.parse(body || '{}') as Record<string, unknown>;
+            } catch {
+              return json(400, { error: 'body must be JSON' });
+            }
+            void this.creation!.update(decodeURIComponent(editMatch[1]!), parsed).then(
+              (r) => json(r.error ? 400 : 200, r),
+              fail,
+            );
           });
           return;
         }

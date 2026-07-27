@@ -30,6 +30,8 @@ interface AgentRosterProps {
   onCompose?: (op: ComposeOp) => void;
   /** Open the focused work view for a busy agent/squad. */
   onInspect?: (entry: AgentSeed) => void;
+  /** Edit an agent's details — tapping its circle while in edit mode. */
+  onEdit?: (entry: AgentSeed) => void;
 }
 
 function loadOrder(): string[] {
@@ -125,7 +127,7 @@ function MemberChip({ squadId, name }: { squadId: string; name: string }) {
   );
 }
 
-export function AgentRoster({ agents, onAdd, onCall, onCompose, onInspect }: AgentRosterProps) {
+export function AgentRoster({ agents, onAdd, onCall, onCompose, onInspect, onEdit }: AgentRosterProps) {
   const [editMode, setEditMode] = useState(false);
   const [order, setOrder] = useState<string[]>(loadOrder);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -235,7 +237,13 @@ export function AgentRoster({ agents, onAdd, onCall, onCompose, onInspect }: Age
                 expanded={expandedId === entry.id}
                 onLongPress={() => setEditMode(true)}
                 onTap={() => {
-                  if (entry.kind === "squad") setExpandedId((cur) => (cur === entry.id ? null : entry.id));
+                  if (entry.kind === "squad") {
+                    setExpandedId((cur) => (cur === entry.id ? null : entry.id));
+                    return;
+                  }
+                  // A working agent stays locked: editing its definition while
+                  // its process is mid-task would desync the two.
+                  if (entry.status !== "busy") onEdit?.(entry);
                 }}
                 onCallWhenHand={
                   entry.status === "busy" && onInspect

@@ -883,6 +883,63 @@ export class OrchestratorServer {
       return reply.status(201).send(agent);
     });
 
+    // Editing an existing agent. Merge, don't replace: the wizard submits
+    // every field it knows, but a caller that sends three fields must not
+    // silently blank the rest of the persona.
+    this.app.put<{ Params: { id: string } }>('/agents/:id', async (req, reply) => {
+      const b = req.body as Partial<ComposedAgent> & { stereotype?: string; jobRole?: string };
+      const agentsDir = resolve(process.cwd(), '.smith/agents');
+      const agents = await loadAgents(agentsDir);
+      const existing = agents.find((a) => a.id === req.params.id);
+      if (!existing) return reply.status(404).send({ error: `Unknown agent: ${req.params.id}` });
+
+      if (b.stereotype && !findStereotype(b.stereotype)) {
+        return reply.status(400).send({ error: `Unknown stereotype: ${b.stereotype}` });
+      }
+      if (b.engine?.cli && !findEngine(b.engine.cli)) {
+        return reply.status(400).send({ error: `Unknown CLI: ${b.engine.cli}` });
+      }
+      if (b.language && !findLanguage(b.language)) {
+        return reply.status(400).send({ error: `Unknown language: ${b.language}` });
+      }
+      const nextModel = b.engine?.model?.trim();
+      if (nextModel && nextModel !== 'default' && !isValidModelId(nextModel)) {
+        return reply.status(400).send({
+          error: `Invalid model id: ${nextModel}. Use letters, digits, and . _ : / - only (e.g. "claude-opus").`,
+        });
+      }
+
+      const updated: ComposedAgent = {
+        ...existing,
+        // The id is the file key and the handle other records point at, so a
+        // rename changes the display name only.
+        id: existing.id,
+        name: b.name?.trim() || existing.name,
+        role: b.role?.trim() || existing.role,
+        directives: b.directives?.trim() || existing.directives,
+        engine: {
+          cli: b.engine?.cli ?? existing.engine.cli,
+          model: nextModel || existing.engine.model,
+        },
+        persona: b.persona?.style !== undefined ? { style: b.persona.style.trim() } : existing.persona,
+        stereotype: b.stereotype ?? existing.stereotype,
+        gender: b.gender ?? existing.gender,
+        backstory: b.backstory !== undefined ? b.backstory.trim() || undefined : existing.backstory,
+        language: b.language ?? existing.language,
+        reactions: b.reactions ?? existing.reactions,
+        quickAnswers: b.quickAnswers ?? existing.quickAnswers,
+        voice: b.voice?.voiceId ? { provider: 'elevenlabs', voiceId: b.voice.voiceId } : existing.voice,
+        avatarRing: b.avatarRing ?? existing.avatarRing,
+      };
+      try {
+        await saveAgent(agentsDir, updated);
+      } catch (err) {
+        return reply.status(400).send({ error: String((err as Error).message) });
+      }
+      server.app.log.info(`Agent updated: ${updated.id} (${updated.name})`);
+      return reply.status(200).send(updated);
+    });
+
     this.app.delete<{ Params: { id: string } }>('/agents/:id', async (req, reply) => {
       const agentsDir = resolve(process.cwd(), '.smith/agents');
       const agents = await loadAgents(agentsDir);

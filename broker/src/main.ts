@@ -429,6 +429,8 @@ const textChannel = new TextChannel(
   {
     // Agent creation: the swarm owns the registry, the broker owns voices.
     catalog: () => swarm.agentCatalog(),
+    records: async () => (await swarm.registry()) as unknown as Record<string, unknown>[],
+    update: (id, body) => swarm.updateAgent(id, body),
     generate: async (body) => {
       const b = body as Record<string, string>;
       const catalog = (await swarm.agentCatalog()) as {

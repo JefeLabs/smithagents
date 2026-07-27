@@ -18,6 +18,8 @@ import { ControlPlaneLayout } from "../templates/ControlPlaneLayout";
 
 export function HomePage() {
   const [modalOpen, setModalOpen] = useState(false);
+  /** Agent being edited via edit mode; null means the wizard creates a new one. */
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [tunerOpen, setTunerOpen] = useState(false);
   const [gridParams, setGridParams] = useState<GridParams>(GRID_DEFAULTS);
   /** A busy agent/squad being inspected — swaps the stage to their work view. */
@@ -91,8 +93,15 @@ export function HomePage() {
       }
       rightRail={
         <AgentRoster
+          onEdit={(entry) => {
+            setEditingId(entry.id);
+            setModalOpen(true);
+          }}
           agents={agents}
-          onAdd={() => setModalOpen(true)}
+          onAdd={() => {
+            setEditingId(null); // the + button always creates
+            setModalOpen(true);
+          }}
           onCall={callOn}
           onCompose={compose}
           onInspect={setInspecting}
@@ -150,8 +159,14 @@ export function HomePage() {
           />
           <AddAgentModal
             open={modalOpen}
-            onClose={() => setModalOpen(false)}
-            onCreated={(n) => send(`${n} just joined the crew — welcome them in one short line.`)}
+            editingId={editingId ?? undefined}
+            onClose={() => {
+              setModalOpen(false);
+              setEditingId(null);
+            }}
+            onCreated={(n) =>
+              editingId ? undefined : send(`${n} just joined the crew — welcome them in one short line.`)
+            }
           />
         </>
       }

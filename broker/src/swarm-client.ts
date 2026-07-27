@@ -151,6 +151,10 @@ export class SwarmClient {
     return this.http('POST', '/agents', body);
   }
 
+  async updateAgent(id: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return this.http('PUT', `/agents/${encodeURIComponent(id)}`, body);
+  }
+
   async listWorkspaces(): Promise<SwarmWorkspace[]> {
     const r = await this.http('GET', '/workspaces');
     return (r.workspaces as SwarmWorkspace[]) ?? [];
@@ -199,7 +203,16 @@ export class SwarmClient {
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    if (!res.ok) throw new Error(`swarm ${method} ${path} -> ${res.status}`);
+    if (!res.ok) {
+      // Surface swarm's own reason. Validation errors ("Invalid model id: …")
+      // exist to be read by a human in the wizard; a bare status code makes
+      // that message unreachable and the field impossible to fix.
+      const detail = await res
+        .json()
+        .then((b) => (b as { error?: string }).error)
+        .catch(() => undefined);
+      throw new Error(detail ?? `swarm ${method} ${path} -> ${res.status}`);
+    }
     return (await res.json()) as Record<string, unknown>;
   }
 }

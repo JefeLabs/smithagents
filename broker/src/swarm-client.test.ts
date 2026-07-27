@@ -36,11 +36,19 @@ test('registry unwraps the agents array', async () => {
   assert.deepEqual(await c.registry(), agents);
 });
 
-test('getOutput returns output; non-200 throws with status', async () => {
+test('getOutput returns output; a failure surfaces swarm\'s own reason', async () => {
   const { fetch } = fakeFetch({ '/tasks/t-1/output': { taskId: 't-1', output: 'pane text' } });
   const c = new SwarmClient({ baseUrl: 'http://x', fetchImpl: fetch });
   assert.equal((await c.getOutput('t-1')).output, 'pane text');
-  await assert.rejects(() => c.getOutput('nope'), /404/);
+  // The reason is what a human reads in the UI ("Invalid model id: …"), so it
+  // must reach the caller rather than being flattened to a status code.
+  await assert.rejects(() => c.getOutput('nope'), /not found/);
+});
+
+test('a failure with no reason in the body still reports the status', async () => {
+  const f = (async () => new Response('<html>gateway blew up</html>', { status: 502 })) as typeof fetch;
+  const c = new SwarmClient({ baseUrl: 'http://x', fetchImpl: f });
+  await assert.rejects(() => c.getOutput('t-1'), /502/);
 });
 
 test('subscribe parses events and reconnects; unsubscribe stops it', async () => {
