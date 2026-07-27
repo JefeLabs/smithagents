@@ -92,7 +92,7 @@ sessions, never a restructure.
    send steering mid-run, or cancel. Completion is announced in the meeting
    by the responsible agent.
 
-## 5. Shipped & Verified (as of 2026-07-26)
+## 5. Shipped & Verified (as of 2026-07-27)
 
 End-to-end, against live services: text loop with per-persona voices; squad
 addressing rules; raise-hand round-trip; push-to-talk (real audio → Deepgram →
@@ -100,56 +100,68 @@ brain reply); ElevenLabs per-agent audio frames; iPhone-style roster editing
 with persistence across restarts; workspaces routing a chat-initiated
 delegation into a git worktree where a claude CLI produced a committed file;
 sessions with transcript replay and per-session brain memory; busy-lock +
-activity/steer/cancel paths. Test suites: broker 56, swarm 9, all green.
+activity/steer/cancel paths.
+
+Added 2026-07-27: draft PRs opened for completed tasks; warm conversational
+sessions with per-tool drivers (claude, codex, opencode, copilot; agy
+steering-only) and profile materialization; the agent-creation wizard
+(stereotype, job role, engine/model, voice catalog, reactions, cached quick
+answers, AI-generated personas); tiered settings reset; theme switcher; and
+crew memory — scoped facts recalled across conversations, verified by a fresh
+session answering from a prior one.
 
 ## 6. Roadmap / Open Items
 
-### 6.1 Infrastructure gaps (from the Orca comparison, 2026-07-27)
+### 6.1 Infrastructure gaps (benchmarked against Orca, 2026-07-27)
 
 Benchmarked against [Orca](https://www.onorca.dev/docs), an ADE for running
-coding agents in parallel worktrees. It drives agents the same way we do —
-long-lived CLIs in terminals, addressed by handle — so the differences are
-instructive rather than cosmetic. Ours is a *council*; theirs is a *workbench*.
-The items below are where their engineering is ahead and the gap is real.
+coding agents in parallel worktrees. It drives agents the way we do — long-lived
+CLIs in terminals, addressed by handle — so the differences are instructive.
+Ours is a *council*; theirs is a *workbench*.
 
-* **Session reconciliation on boot (highest leverage).** tmux keeps agent
-  processes alive across a swarm crash or restart — but the task registry and
-  the warm-session manager are both in-memory, so the orchestrator forgets
-  sessions that are still running. We pay tmux's costs and bank only half its
-  benefit. Fix: session names already encode the id (`task-<uuid>`,
-  `smith-warm-<uuid>`), so on boot `listByPrefix` and re-adopt live sessions,
-  the same self-healing pattern the roster and sessions already use. This
-  turns "agents survive a crash" from a fact about processes into a fact about
-  the product.
-* **Tool-driver breadth.** One working driver (claude) versus their five-plus
-  with account hot-swapping. This is also the *product* stake, not just parity:
-  a Gemini skeptic arguing with a Claude architect is a different product, not
-  a demo. Next: opencode, then agy characterization (h3).
-* **Turn completion — keep our approach, borrow their ergonomics.** They wait
-  for `tui-idle` (screen state), which is tool-agnostic but misfires on
-  spinners and long tool calls; we read the tool's persisted transcript, which
-  is precise but needs a driver per tool. Keep session-file detection; adopt
-  their documented *read-before-send* practice (we currently send blind).
-* **Persistent server mode.** They run a server clients attach to, so sessions
-  restore across laptop/web/mobile. Our equivalent is broker + swarm as a
-  reachable runtime rather than a pair of local processes.
-* **Per-workspace environment recipes.** Their `orca.yaml` spins an ephemeral
-  sandbox (Fly/Modal/Vercel/Docker) per worktree. Ours would extend the
-  workspace file with an environment block — a natural fit for the already
-  scoped `swarm/.smith/workspaces/*.json`.
-* **`--json` everywhere on the swarm CLI**, so automation does not scrape.
-* **Windows is out of reach while tmux is the substrate** (Unix-only). The
-  Tauri UI is cross-platform; the runtime is not. Accepted for now — revisit
-  only if Windows users appear.
-* **Mobile companion.** The iOS target exists; a read-mostly view (agent
-  status, recent output, call-on/cancel) is the pragmatic first version.
+**Next up (ordered by leverage):**
 
-**Deliberate non-goal:** do not build an in-app diff-review IDE. Our review
-surface is the draft PR — a team-shaped output — and competing on the
-individual developer's editor loop plays to someone else's strength.
+1. **Session reconciliation on boot.** tmux keeps agent processes alive across
+   a swarm restart, but the task registry and warm-session manager are
+   in-memory, so the orchestrator forgets sessions that are still running. We
+   pay tmux's costs and bank half its benefit. Session names already encode
+   their ids (`task-<uuid>`, `smith-warm-<uuid>`): on boot, `listByPrefix` and
+   re-adopt. Turns "agents survive a crash" from a fact about processes into a
+   fact about the product.
+2. **Read-before-send in warm sessions.** We send blind; their CLI documents
+   reading terminal state first. Cheap, and prevents typing into a TUI that is
+   mid-prompt.
+3. **Persistent server mode.** A runtime clients attach to, so sessions restore
+   across laptop/web/mobile instead of living in two local processes.
+4. **Per-workspace environment recipes.** Their `orca.yaml` spins an ephemeral
+   sandbox per worktree; ours would be an environment block in the existing
+   `swarm/.smith/workspaces/*.json`.
+5. **`--json` everywhere on the swarm CLI**, so automation never scrapes.
+6. **Mobile companion** — read-mostly first (status, recent output, call-on,
+   cancel). The iOS target already builds.
+
+**Closed:** tool-driver breadth — claude, codex, opencode and copilot all have
+drivers; agy is steering-only *by evidence* (it keeps conversations
+server-side, so turn completion cannot be observed honestly). Turn completion
+stays session-file based rather than screen-idle.
+
+**Accepted constraints:** Windows is out of reach while tmux is the substrate
+(the UI is cross-platform; the runtime is not). Revisit only if Windows users
+appear.
+
+**Deliberate non-goal:** no in-app diff-review IDE. Our review surface is the
+draft PR — a team-shaped output — and competing on the individual developer's
+editor loop plays to someone else's strength.
 
 ### 6.2 Product gaps
 
+* **Memory (shipped, with room):** scoped facts recall across conversations
+  via a `MemoryPort` with a dependency-free lexical implementation. Open:
+  memory is written only when the brain calls `remember` (no passive
+  extraction); recall is lexical, so a similarity backend behind the same port
+  is the upgrade path if the corpus outgrows it; agents in task worktrees
+  cannot read it yet — injecting a memory CLI like `smith-delegate` is the
+  obvious next step.
 * **Voices:** upgrade the ElevenLabs plan so the picked Latin library voices
   replace premade stand-ins (automatic — the fallback only fires on the 402).
   The same plan gate blocks pre-caching of a new agent's reaction lines, and
@@ -164,6 +176,11 @@ individual developer's editor loop plays to someone else's strength.
 * **PR flow:** shipped — completed tasks commit, push, and open a draft PR.
   Still open: worktree cleanup policy after merge, and surfacing the PR link
   in the work view (it currently rides the task result and the spoken note).
+* **Agent creation (shipped, with room):** the wizard covers stereotype, job
+  role, engine/model, voice, reactions and quick answers, with one-call AI
+  generation. Open: no edit/delete surface for an existing agent (only create
+  and archive-by-API), and generated personas are never previewed aloud before
+  the voice cache is warmed.
 * **iOS:** the Tauri iOS target builds from this codebase but needs Xcode.app
   on the build machine; mic permission plist is in place.
 * **UI polish:** composition errors are silent in the UI (broker returns
