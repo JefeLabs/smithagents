@@ -830,7 +830,9 @@ export class OrchestratorServer {
       const id = (b.id ?? b.name).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
       const seed = b.stereotype ? findStereotype(b.stereotype) : undefined;
       if (b.stereotype && !seed) return reply.status(400).send({ error: `Unknown stereotype: ${b.stereotype}` });
-      const job = (b as { jobRole?: string }).jobRole ? findJobRole((b as { jobRole?: string }).jobRole!) : undefined;
+      const jobRoleId = (b as { jobRole?: string }).jobRole;
+      const job = jobRoleId ? findJobRole(jobRoleId) : undefined;
+      if (jobRoleId && !job) return reply.status(400).send({ error: `Unknown job role: ${jobRoleId}` });
 
       if (b.engine?.cli && !findEngine(b.engine.cli)) {
         return reply.status(400).send({ error: `Unknown CLI: ${b.engine.cli}` });
@@ -865,6 +867,9 @@ export class OrchestratorServer {
         },
         persona: { style: b.persona?.style?.trim() || seed?.style || '' },
         stereotype: b.stereotype,
+        // Kept so the edit wizard can restore the dropdown; `role` alone is a
+        // free-text title and cannot be mapped back to a catalog entry.
+        jobRole: job?.id,
         gender: b.gender,
         backstory: b.backstory?.trim() || undefined,
         language: b.language ?? DEFAULT_LANGUAGE,
@@ -902,6 +907,9 @@ export class OrchestratorServer {
       if (b.language && !findLanguage(b.language)) {
         return reply.status(400).send({ error: `Unknown language: ${b.language}` });
       }
+      if (b.jobRole && !findJobRole(b.jobRole)) {
+        return reply.status(400).send({ error: `Unknown job role: ${b.jobRole}` });
+      }
       const nextModel = b.engine?.model?.trim();
       if (nextModel && nextModel !== 'default' && !isValidModelId(nextModel)) {
         return reply.status(400).send({
@@ -923,6 +931,7 @@ export class OrchestratorServer {
         },
         persona: b.persona?.style !== undefined ? { style: b.persona.style.trim() } : existing.persona,
         stereotype: b.stereotype ?? existing.stereotype,
+        jobRole: b.jobRole ?? existing.jobRole,
         gender: b.gender ?? existing.gender,
         backstory: b.backstory !== undefined ? b.backstory.trim() || undefined : existing.backstory,
         language: b.language ?? existing.language,

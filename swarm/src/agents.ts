@@ -34,6 +34,8 @@ export interface ComposedAgent {
   channels?: string[];
   /** Stereotype the persona was seeded from (wizard provenance). */
   stereotype?: string;
+  /** Job role picked in the wizard — kept so editing can restore the choice. */
+  jobRole?: string;
   gender?: Gender;
   /** Free-text history that colors how they talk about their work. */
   backstory?: string;

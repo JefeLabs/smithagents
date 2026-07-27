@@ -58,6 +58,7 @@ interface StoredAgent {
   gender?: string;
   language?: string;
   stereotype?: string;
+  jobRole?: string;
   engine?: { cli?: string; model?: string };
   voice?: { voiceId?: string };
   reactions?: Record<string, string[]>;
@@ -154,6 +155,11 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
         setLanguage(a.language ?? catalog.languages?.[0]?.id ?? "");
         setVoiceId(a.voice?.voiceId ?? "");
         setStereotype(catalog.stereotypes.find((x) => x.id === a.stereotype) ?? null);
+        // Agents created before jobRole was stored have only their free-text
+        // title; recover the dropdown by matching it against the catalog.
+        setJobRole(
+          catalog.jobRoles.find((x) => x.id === a.jobRole) ?? catalog.jobRoles.find((x) => x.label === a.role) ?? null,
+        );
         const eng = catalog.engines.find((x) => x.cli === a.engine?.cli) ?? null;
         setEngine(eng);
         setModel(a.engine?.model ?? eng?.models[0] ?? "");
