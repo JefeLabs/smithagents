@@ -378,17 +378,59 @@
   font-size: 12px;
 }
 
-/* Working units: the ring glows while they're on a task. */
-.roster-item:has(.status--busy) .avatar {
-  animation: ring-glow 1.8s ease-in-out infinite;
+/* --- avatar activity states -------------------------------------------------
+   Two states, two distinct motions, so they are never confused at a glance:
+     listening — addressed by name, ring pulses outward
+     working   — on a task, a dotted ring rotates clockwise
+   Both are drawn on a ::after overlay rather than the button's own border, so
+   the identity ring underneath stays exactly where it is. */
+.avatar[data-state]::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  pointer-events: none;
 }
-@keyframes ring-glow {
-  0%,
-  100% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--ring, #6f8dff) 0%, transparent);
+
+/* Listening: a soft pulse outward — "I heard my name". */
+.avatar[data-state="listening"]::after {
+  border: 2px solid var(--ring, #6f8dff);
+  animation: ring-pulse 1.25s ease-out infinite;
+}
+@keyframes ring-pulse {
+  0% {
+    transform: scale(0.94);
+    opacity: 0.9;
   }
-  50% {
-    box-shadow: 0 0 14px 3px color-mix(in srgb, var(--ring, #6f8dff) 55%, transparent);
+  70% {
+    transform: scale(1.14);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.14);
+    opacity: 0;
+  }
+}
+
+/* Working: a dotted ring turning clockwise — motion means progress. */
+.avatar[data-state="working"]::after {
+  border: 2px dotted var(--ring, #6f8dff);
+  opacity: 0.85;
+  animation: ring-spin 3.2s linear infinite;
+}
+@keyframes ring-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Respect a stated preference for less motion: keep the state legible as a
+   steady ring rather than animating it. */
+@media (prefers-reduced-motion: reduce) {
+  .avatar[data-state="listening"]::after,
+  .avatar[data-state="working"]::after {
+    animation: none;
+    opacity: 0.7;
   }
 }
 

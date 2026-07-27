@@ -253,7 +253,14 @@ function elevenVoiceFor(speaker?: string): string {
 
 const GROUP_RING_PALETTE = ['#5fd0b0', '#f2778f', '#9b8cff', '#f2b04a', '#6f8dff', '#d977c8'];
 
-const toRosterEntries = (roster: UiRoster): RosterEntry[] => [
+const toRosterEntries = (roster: UiRoster): RosterEntry[] => {
+  // Names are matched case-insensitively: the brain and the human both say
+  // "manuel" and "Manuel", and a listening ring that depends on casing would
+  // light up unpredictably.
+  const addressed = new Set(roster.listening.map((n) => n.toLowerCase()));
+  const isListening = (...names: Array<string | undefined>) =>
+    names.some((n) => n !== undefined && addressed.has(n.toLowerCase())) || undefined;
+  return [
   ...roster.agents.map(
     (p): RosterEntry => ({
       id: p.agent.id,
@@ -265,6 +272,7 @@ const toRosterEntries = (roster: UiRoster): RosterEntry[] => [
       kind: 'agent',
       speech: p.agent.voice?.speech,
       hand: roster.hands[p.agent.name],
+      listening: isListening(p.agent.name),
     }),
   ),
   ...roster.squads.map(
@@ -277,6 +285,8 @@ const toRosterEntries = (roster: UiRoster): RosterEntry[] => [
       kind: 'squad',
       // A squad's hand is its leader's hand (either name may be used by the brain).
       hand: roster.hands[s.leader.name] ?? roster.hands[s.id[0]!.toUpperCase() + s.id.slice(1)],
+      // A squad listens when addressed by its id or through its leader.
+      listening: isListening(s.id, s.leader.name),
       members: s.members
         .map((m) => m.name)
         .concat(s.extraMembers)
@@ -292,6 +302,7 @@ const toRosterEntries = (roster: UiRoster): RosterEntry[] => [
       status: 'idle',
       kind: 'agent',
       hand: roster.hands[m.name],
+      listening: isListening(m.name),
     }),
   ),
   ...roster.groups.map(
@@ -303,10 +314,12 @@ const toRosterEntries = (roster: UiRoster): RosterEntry[] => [
       status: 'idle',
       kind: 'squad',
       hand: g.members[0] ? roster.hands[g.members[0].name] : undefined,
+      listening: isListening(g.name, g.members[0]?.name),
       members: g.members.map((m) => m.name),
     }),
   ),
-];
+  ];
+};
 
 // Text I/O for UIs (Tauri control plane): POST /utterance in, WS transcript +
 // live roster out. New clients get capabilities + a roster snapshot on connect.

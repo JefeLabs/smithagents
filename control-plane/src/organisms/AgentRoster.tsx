@@ -89,6 +89,7 @@ function RosterItem(props: {
         hand={editMode ? undefined : entry.hand}
         onCall={editMode ? undefined : props.onCallWhenHand}
         group={entry.kind === "squad" && (entry.members?.length ?? 0) >= 2}
+        listening={!editMode && entry.listening}
       />
     </div>
   );

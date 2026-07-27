@@ -6,6 +6,8 @@ export interface AgentSeed {
   status?: "idle" | "busy" | "in-meeting" | "offline";
   /** One-line reason when the agent has a raised hand. */
   hand?: string;
+  /** True while the live utterance is addressing them ("Hey Manuel"). */
+  listening?: boolean;
   /** Solo agent, or a squad/group rendered as one circle. */
   kind?: "agent" | "squad";
   /** Squad entries: member display names for the edit-mode expansion. */

@@ -35,6 +35,8 @@ export interface RosterAgent {
   kind: "agent" | "squad";
   speech?: SpeechProfile;
   hand?: string;
+  /** True while the live utterance is addressing them ("Hey Manuel"). */
+  listening?: boolean;
   members?: string[];
 }
 

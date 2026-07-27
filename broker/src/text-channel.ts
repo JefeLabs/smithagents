@@ -21,6 +21,8 @@ export interface RosterEntry {
   speech?: { voiceName?: string; lang?: string; pitch?: number; rate?: number };
   /** One-line reason when this agent/squad leader has a hand raised. */
   hand?: string;
+  /** True while the live utterance is addressing them ("Hey Manuel"). */
+  listening?: boolean;
   /** Squad/group entries: member display names, for the edit-mode expansion. */
   members?: string[];
 }

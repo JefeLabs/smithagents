@@ -11,16 +11,35 @@ interface AgentAvatarProps {
   onCall?: () => void;
   /** True for a squad/group circle of two or more agents — shows the group badge. */
   group?: boolean;
+  /** True while the human is addressing them — drives the listening ring. */
+  listening?: boolean;
 }
 
-export function AgentAvatar({ name, role, ring, status = "idle", hand, onCall, group = false }: AgentAvatarProps) {
+export function AgentAvatar({
+  name,
+  role,
+  ring,
+  status = "idle",
+  hand,
+  onCall,
+  group = false,
+  listening = false,
+}: AgentAvatarProps) {
   const label = hand
     ? `${name} has a hand raised: ${hand} — click to give them the floor`
-    : status === "busy"
-      ? `${name} is working — click to watch and steer`
-      : `${name}, ${role} — ${status}`;
+    : listening
+      ? `${name} is being addressed`
+      : status === "busy"
+        ? `${name} is working — click to watch and steer`
+        : `${name}, ${role} — ${status}`;
   return (
-    <Avatar initial={name[0]?.toUpperCase() ?? "?"} ring={ring} label={label} onClick={onCall}>
+    <Avatar
+      initial={name[0]?.toUpperCase() ?? "?"}
+      ring={ring}
+      label={label}
+      onClick={onCall}
+      state={status === "busy" ? "working" : listening ? "listening" : undefined}
+    >
       <span className={`status status--${status}`} />
       {group && (
         <span className="group-badge" aria-hidden="true">
@@ -34,7 +53,7 @@ export function AgentAvatar({ name, role, ring, status = "idle", hand, onCall, g
       )}
       <span className="tip">
         <b>{name}</b>
-        <span>{hand ? `✋ ${hand}` : status === "idle" ? role : `${role} — ${status}`}</span>
+        <span>{hand ? `✋ ${hand}` : listening ? "listening…" : status === "idle" ? role : `${role} — ${status}`}</span>
       </span>
     </Avatar>
   );

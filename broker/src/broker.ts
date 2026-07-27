@@ -9,6 +9,7 @@
 import type { AgentDirectory, AgentPresence } from './directory.ts';
 import type { BrainTurn } from './brain.ts';
 import type { MemoryPort, MemoryScope } from './memory.ts';
+import { whoIsAddressed } from './addressing.ts';
 import type { RegistryAgent, SwarmEvent, SwarmMeeting, SwarmSquad, SwarmWorkspace } from './swarm-client.ts';
 
 export interface SwarmClientLike {
@@ -89,6 +90,8 @@ export interface RosterState {
 
 /** The who's-who snapshot UIs render: presence, squads (with UI edits), user groups, freed members, hands. */
 export interface UiRoster {
+  /** Names addressed by the live utterance — the listening state. */
+  listening: string[];
   agents: AgentPresence[];
   squads: Array<SwarmSquad & { extraMembers: string[]; removedMembers: string[] }>;
   groups: Array<{ id: string; name: string; members: Array<{ id: string; name: string }> }>;
@@ -176,6 +179,8 @@ export class Broker {
   private workspaces: SwarmWorkspace[] = [];
   /** Raised hands by display name (agents or squad leaders) -> one-line reason. */
   private raisedHands = new Map<string, string>();
+  /** Who the current utterance spoke to. Lives for one turn (see handleUtterance). */
+  private listening = new Set<string>();
   /** User-formed squads (from the UI's edit mode). First member leads. */
   private groups: Array<{ id: string; name: string; memberIds: string[] }> = [];
   /** Conversation-layer edits to swarm squads: agents dragged in/out via the UI. */
@@ -243,7 +248,31 @@ export class Broker {
 
   /** Public so the stdin dev channel (and tests) can inject an utterance. */
   handleUtterance(text: string): Promise<void> {
-    return this.enqueueTurn(() => this.deps.brain.handleUtterance(text, this.makeTurn(text)));
+    return this.enqueueTurn(async () => {
+      // Light the ring the moment they are spoken to — before the model has
+      // decided anything. Cleared when the turn ends, however it ends.
+      this.setListening(whoIsAddressed(text, this.addressableNames()));
+      try {
+        await this.deps.brain.handleUtterance(text, this.makeTurn(text));
+      } finally {
+        this.setListening([]);
+      }
+    });
+  }
+
+  /** Every name a human could speak to: solo agents, squads, and groups. */
+  private addressableNames(): string[] {
+    const grouped = this.groupedAgentIds();
+    return [
+      ...this.deps.directory.snapshot().filter((p) => !grouped.has(p.agent.id)).map((p) => p.agent.name),
+      ...this.squads.flatMap((s) => [s.id, s.leader.name]),
+      ...this.groups.map((g) => g.name),
+    ];
+  }
+
+  private setListening(names: string[]): void {
+    this.listening = new Set(names);
+    this.deps.onRosterChange?.(this.uiRoster());
   }
 
   private async joinMeeting(meeting: SwarmMeeting): Promise<void> {
@@ -314,6 +343,7 @@ export class Broker {
         }),
       ),
       hands: Object.fromEntries(this.raisedHands),
+      listening: [...this.listening],
     };
   }
 

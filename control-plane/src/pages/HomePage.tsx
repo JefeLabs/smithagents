@@ -62,6 +62,7 @@ export function HomePage() {
       ring: a.ring ?? ringForIndex(i),
       status: a.status,
       hand: a.hand,
+      listening: a.listening,
       kind: a.kind,
       members: a.members,
     })),
