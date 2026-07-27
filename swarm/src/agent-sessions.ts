@@ -15,6 +15,8 @@ import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { ComposedAgent } from './agents.js';
 import { getDriver } from './drivers/index.js';
+import { SessionStore, type SessionRecord } from './session-store.js';
+import { classifySession } from './session-reconcile.js';
 import { SessionDeadError, SessionNotFoundError, ToolLaunchError, TurnTimeoutError } from './drivers/errors.js';
 import type { NormalizedMessage, ToolDriver } from './drivers/types.js';
 import type { RuntimeAdapter } from './runtime.js';
@@ -54,6 +56,8 @@ export interface AgentSessionConfig {
   pollIntervalMs?: number;
   /** Driver lookup override — tests inject fakes; defaults to the registry. */
   resolveDriver?: (toolId: string) => ToolDriver | null;
+  /** Durable session records. Absent = in-memory only (tests, ephemeral runs). */
+  store?: SessionStore;
 }
 
 const DEFAULTS = { readinessTimeoutMs: 30_000, readinessSettleMs: 3_000, turnTimeoutMs: 300_000, pollIntervalMs: 500 };
@@ -134,10 +138,12 @@ export class AgentSessionManager {
       if (fresh.length > 0) {
         state.sessionFile = await this.newest(fresh);
         state.status = 'ready';
+        await this.persist(state);
         return this.info(state);
       }
       if (Date.now() >= settleUntil) {
         state.status = 'ready'; // alive; session file resolves on the first turn
+        await this.persist(state);
         return this.info(state);
       }
       if (Date.now() > deadline) {
@@ -180,6 +186,7 @@ export class AgentSessionManager {
           state.turns += 1;
           state.lastTurnAt = new Date().toISOString();
           state.status = 'ready';
+          await this.persist(state);
           return messages.slice(before.length);
         }
         if (!(await this.runtime.exists(state.tmuxSession))) {
@@ -218,6 +225,97 @@ export class AgentSessionManager {
     await this.sleep(500);
     await this.runtime.kill(state.tmuxSession).catch(() => {});
     state.status = 'dead';
+    await this.config.store?.delete(id);
+  }
+
+  /**
+   * Boot-time reconciliation: make the in-memory registry agree with reality.
+   *
+   * Two directions of drift, and both matter:
+   *   - a RECORD with no live process (crash, reboot, manual tmux kill), and
+   *   - a live PROCESS with no record (records lost, or a session created by
+   *     a build that predates persistence) — an orphan holding a worktree
+   *     that nothing will ever clean.
+   *
+   * `currentHashes` maps agentId to the hash of its agent file as it stands
+   * now; a missing entry means the agent is gone. Returns a summary for the
+   * boot log, because silently adopting or killing sessions is the kind of
+   * thing you want to see in plain text when something looks wrong.
+   */
+  async reconcile(currentHashes: Map<string, string>): Promise<{ adopted: number; forgotten: number; killed: number; orphans: string[] }> {
+    const store = this.config.store;
+    const summary = { adopted: 0, forgotten: 0, killed: 0, orphans: [] as string[] };
+    if (!store) return summary;
+
+    const records = await store.load();
+    const claimed = new Set<string>();
+
+    for (const record of records) {
+      claimed.add(record.tmuxSession);
+      const verdict = classifySession({
+        processAlive: await this.runtime.exists(record.tmuxSession),
+        recordedProfileHash: record.profileHash,
+        currentProfileHash: currentHashes.get(record.agentId) ?? null,
+      });
+
+      if (verdict.action === 'adopt') {
+        const driver = (this.config.resolveDriver ?? getDriver)(record.tool);
+        if (!driver) {
+          // The tool that ran this session is no longer registered, so we
+          // cannot read its transcript — adopting would give a handle that
+          // can never complete a turn.
+          summary.forgotten += 1;
+          await store.delete(record.id);
+          continue;
+        }
+        this.sessions.set(record.id, {
+          ...record,
+          status: 'ready',
+          driver,
+          // Every file present now predates our adoption; newness is only
+          // meaningful relative to a launch we did not perform.
+          preexisting: new Set(),
+        });
+        summary.adopted += 1;
+        continue;
+      }
+
+      if (verdict.action === 'kill') {
+        await this.runtime.kill(record.tmuxSession).catch(() => {});
+        summary.killed += 1;
+      } else {
+        summary.forgotten += 1;
+      }
+      await store.delete(record.id);
+    }
+
+    // Orphans: live warm sessions no record accounts for. Reported, never
+    // killed — an unexplained live process is exactly the thing a human
+    // should look at before anything destroys it.
+    for (const name of await this.runtime.listByPrefix('smith-warm-')) {
+      if (!claimed.has(name)) summary.orphans.push(name);
+    }
+    return summary;
+  }
+
+  /** Durable half of a session's state, written on every meaningful change. */
+  private async persist(state: SessionState): Promise<void> {
+    if (!this.config.store) return;
+    const record: SessionRecord = {
+      id: state.id,
+      agentId: state.agentId,
+      agentName: state.agentName,
+      tool: state.tool,
+      profileHash: state.profileHash,
+      cwd: state.cwd,
+      branch: state.branch,
+      tmuxSession: state.tmuxSession,
+      createdAt: state.createdAt,
+      lastTurnAt: state.lastTurnAt,
+      turns: state.turns,
+      sessionFile: state.sessionFile,
+    };
+    await this.config.store.save(record);
   }
 
   private get(id: string): SessionState {

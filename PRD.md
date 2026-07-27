@@ -132,13 +132,19 @@ Ours is a *council*; theirs is a *workbench*.
    (the persona file lands in the task worktree; `--model` appears in the real
    tmux command). Lesson worth keeping: unit tests passed while the feature was
    dead, because the bug was in the wiring, not the units.
-2. **Session reconciliation on boot.** tmux keeps agent processes alive across
-   a swarm restart, but the task registry and warm-session manager are
-   in-memory, so the orchestrator forgets sessions that are still running. We
-   pay tmux's costs and bank half its benefit. Session names already encode
-   their ids (`task-<uuid>`, `smith-warm-<uuid>`): on boot, `listByPrefix` and
-   re-adopt. Turns "agents survive a crash" from a fact about processes into a
-   fact about the product.
+2. ~~**Session reconciliation on boot.**~~ **Warm sessions done (2026-07-27).**
+   Sessions now persist a durable record (`.smith/sessions/<id>.json`), and
+   boot cross-checks those records against live tmux: survivors are adopted
+   (handle still works — verified by sending a turn through a re-adopted
+   session), records with no process are forgotten, and live `smith-warm-*`
+   sessions with no record are *reported, never killed* — an unexplained live
+   process is what a human should look at first. The policy is a pure function
+   (`session-reconcile.ts`), so every branch is testable without a process.
+   On its first real boot it surfaced 6 orphaned sessions that had been
+   invisible. **Still open:** task sessions (`task-<uuid>`) are not yet
+   reconciled — only warm sessions are. And the changed-profile branch is
+   deliberately conservative (adopt and keep) pending a decision on whether a
+   session whose agent file moved should be killed instead.
 3. **Read-before-send in warm sessions.** We send blind; their CLI documents
    reading terminal state first. Cheap, and prevents typing into a TUI that is
    mid-prompt.

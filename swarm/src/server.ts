@@ -52,6 +52,7 @@ import { mkdir, rename } from 'node:fs/promises';
 import { loadAgents, findAgent, saveAgent, type ComposedAgent } from './agents.js';
 import { QUICK_QUESTIONS, STEREOTYPES, JOB_ROLES, ENGINES, findStereotype, findJobRole, findEngine, REACTION_LEVELS } from './personas.js';
 import { AgentSessionManager } from './agent-sessions.js';
+import { SessionStore } from './session-store.js';
 import { isValidModelId } from './drivers/model-flag.js';
 import { loadWorkspacesFromDir, resolveRepo, type Workspace } from './workspaces.js';
 import { MeetingOrchestrator } from './meetings.js';
@@ -171,6 +172,35 @@ export class OrchestratorServer {
     this.dispatcher.on('session:orphan_cleanup', (e: DispatcherEvent) => this.broadcast(e));
   }
 
+  /**
+   * Adopt warm sessions that outlived the last run. Never fatal: a swarm that
+   * cannot reconcile must still boot and serve, or one bad record takes the
+   * whole orchestrator down.
+   */
+  private async reconcileSessions(): Promise<void> {
+    try {
+      const agents = await loadAgents(resolve(process.cwd(), '.smith/agents'));
+      const hashes = new Map(
+        agents.map((a) => [a.id, createHash('sha256').update(JSON.stringify(a)).digest('hex').slice(0, 16)]),
+      );
+      const manager = new AgentSessionManager(createRuntime('tmux', this.orchConfig.docker), {
+        agentCommands: this.orchConfig.agentCommands,
+        worktreeDir: this.orchConfig.worktreeDir,
+        store: new SessionStore(resolve(process.cwd(), '.smith/sessions')),
+      });
+      const summary = await manager.reconcile(hashes);
+      this.agentSessions = manager;
+      if (summary.adopted || summary.forgotten || summary.killed || summary.orphans.length) {
+        this.app.log.info(
+          `Session reconciliation: adopted ${summary.adopted}, forgot ${summary.forgotten}, killed ${summary.killed}` +
+            (summary.orphans.length ? `, ${summary.orphans.length} orphan(s) left running: ${summary.orphans.join(', ')}` : ''),
+        );
+      }
+    } catch (err) {
+      this.app.log.warn(`Session reconciliation skipped: ${(err as Error).message}`);
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Public API
   // -------------------------------------------------------------------------
@@ -190,6 +220,8 @@ export class OrchestratorServer {
     // Squads are data, like agents: seeded on first boot, then owned by
     // .smith/squads/*.json — an empty dir legitimately means "no squads".
     setSquadRoster(await loadSquadsFromDir(resolve(process.cwd(), '.smith/squads')));
+
+    await this.reconcileSessions();
 
     this.workspaces = await loadWorkspacesFromDir(resolve(process.cwd(), '.smith/workspaces'));
     if (this.workspaces.length > 0) {
@@ -864,6 +896,7 @@ export class OrchestratorServer {
       server.agentSessions ??= new AgentSessionManager(createRuntime('tmux', server.orchConfig.docker), {
         agentCommands: server.orchConfig.agentCommands,
         worktreeDir: server.orchConfig.worktreeDir,
+        store: new SessionStore(resolve(process.cwd(), '.smith/sessions')),
       });
       return server.agentSessions;
     };

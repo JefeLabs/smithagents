@@ -12,6 +12,8 @@ import type { ComposedAgent } from './agents.js';
 import { SessionDeadError, ToolLaunchError } from './drivers/errors.js';
 import type { NormalizedMessage, ToolDriver } from './drivers/types.js';
 import { TmuxRuntime } from './runtime.js';
+import { SessionStore } from './session-store.js';
+import { createHash, randomUUID } from 'node:crypto';
 
 const AGENT: ComposedAgent = {
   id: 'manuel',
@@ -149,4 +151,96 @@ test('launch failure is a typed error naming the tool', async () => {
     readinessTimeoutMs: 3_000,
   });
   await assert.rejects(broken.create(AGENT, '{}', repoRoot, 'main'), ToolLaunchError);
+});
+
+// ── Boot reconciliation (real tmux) ────────────────────────────────────────
+// The point of running agents in tmux is that they outlive the server. These
+// tests restart the MANAGER (a fresh instance over the same store) while the
+// tmux process keeps running, which is exactly what a swarm restart looks like.
+
+test('reconcile: a session that outlived the server is adopted and still usable', async () => {
+  const store = new SessionStore(join(repoRoot, '.smith/sessions'));
+  const first = new AgentSessionManager(runtime, {
+    agentCommands: { claude: toolScript },
+    worktreeDir: '.smith/worktrees',
+    resolveDriver: () => new FakeDriver(),
+    pollIntervalMs: 100,
+    readinessTimeoutMs: 10_000,
+    turnTimeoutMs: 10_000,
+    store,
+  });
+  const info = await first.create(AGENT, JSON.stringify(AGENT), repoRoot, 'main');
+  created.push(info.id);
+
+  // The server dies; the tmux process does not.
+  const reborn = new AgentSessionManager(runtime, {
+    agentCommands: { claude: toolScript },
+    worktreeDir: '.smith/worktrees',
+    resolveDriver: () => new FakeDriver(),
+    pollIntervalMs: 100,
+    turnTimeoutMs: 10_000,
+    store,
+  });
+  const hash = createHash('sha256').update(JSON.stringify(AGENT)).digest('hex').slice(0, 16);
+  const summary = await reborn.reconcile(new Map([[AGENT.id, hash]]));
+
+  assert.equal(summary.adopted, 1);
+  // Claimed sessions are excluded from the orphan sweep. (Sessions from other
+  // tests share this tmux server and legitimately show up as orphans here.)
+  assert.ok(
+    !summary.orphans.includes(`smith-warm-${info.id}`),
+    'an adopted session must not also be reported as an orphan',
+  );
+  // Adoption is only real if the handle works: send a turn through it.
+  const replies = await reborn.send(info.id, 'still there?');
+  assert.match(replies.map((m) => m.text).join(' '), /echo: still there\?/);
+});
+
+test('reconcile: a record whose process died is forgotten and its file removed', async () => {
+  const store = new SessionStore(join(repoRoot, '.smith/sessions-dead'));
+  const first = new AgentSessionManager(runtime, {
+    agentCommands: { claude: toolScript },
+    worktreeDir: '.smith/worktrees',
+    resolveDriver: () => new FakeDriver(),
+    pollIntervalMs: 100,
+    readinessTimeoutMs: 10_000,
+    store,
+  });
+  const info = await first.create(AGENT, JSON.stringify(AGENT), repoRoot, 'main');
+  assert.equal((await store.load()).length, 1);
+
+  // Kill the process out from under the record, as a reboot would.
+  await runtime.kill(`smith-warm-${info.id}`);
+
+  const reborn = new AgentSessionManager(runtime, {
+    agentCommands: { claude: toolScript },
+    worktreeDir: '.smith/worktrees',
+    resolveDriver: () => new FakeDriver(),
+    store,
+  });
+  const summary = await reborn.reconcile(new Map());
+  assert.equal(summary.forgotten, 1);
+  assert.equal(summary.adopted, 0);
+  assert.deepEqual(await store.load(), [], 'a stale record must not linger to be re-adopted');
+});
+
+test('reconcile: a live warm session with no record is reported, never silently killed', async () => {
+  const store = new SessionStore(join(repoRoot, '.smith/sessions-orphan'));
+  const orphan = `smith-warm-${randomUUID()}`;
+  await runtime.launch(orphan, 'sleep 60', repoRoot);
+
+  const manager2 = new AgentSessionManager(runtime, {
+    agentCommands: { claude: toolScript },
+    worktreeDir: '.smith/worktrees',
+    resolveDriver: () => new FakeDriver(),
+    store,
+  });
+  const summary = await manager2.reconcile(new Map());
+
+  // Other tests' sessions share this tmux server and are equally unaccounted
+  // for by this store, so assert inclusion rather than exclusivity.
+  assert.ok(summary.orphans.includes(orphan), 'the unrecorded live session is reported');
+  assert.equal(summary.killed, 0);
+  assert.equal(await runtime.exists(orphan), true, 'an unexplained live process is left for a human to inspect');
+  await runtime.kill(orphan);
 });
