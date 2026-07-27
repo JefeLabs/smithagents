@@ -1,5 +1,6 @@
 import { AlertTriangle, X } from "lucide-react";
 import { useState } from "react";
+import { THEMES, type ThemeId } from "../hooks/useTheme";
 
 export interface ResetScope {
   runtime: boolean;
@@ -12,6 +13,8 @@ interface SettingsPanelProps {
   open: boolean;
   onClose: () => void;
   onReset: (scope: ResetScope) => Promise<{ ok?: boolean; error?: string; swarm?: unknown }>;
+  theme: ThemeId;
+  onThemeChange: (theme: ThemeId) => void;
 }
 
 const OPTIONS: Array<{ key: keyof ResetScope; label: string; detail: string; danger?: boolean }> = [
@@ -41,7 +44,7 @@ const OPTIONS: Array<{ key: keyof ResetScope; label: string; detail: string; dan
 ];
 
 /** Settings: the reset surface. Tiered, explicit, and confirmed before it fires. */
-export function SettingsPanel({ open, onClose, onReset }: SettingsPanelProps) {
+export function SettingsPanel({ open, onClose, onReset, theme, onThemeChange }: SettingsPanelProps) {
   const [scope, setScope] = useState<ResetScope>({
     runtime: true,
     conversations: true,
@@ -71,12 +74,34 @@ export function SettingsPanel({ open, onClose, onReset }: SettingsPanelProps) {
   return (
     <section className="settings-panel" aria-label="Settings">
       <header>
-        <span className="settings-panel__title">settings · reset setup</span>
+        <span className="settings-panel__title">settings</span>
         <button type="button" className="sessions-panel__close" onClick={onClose} aria-label="Close settings">
           <X size={13} strokeWidth={2} />
         </button>
       </header>
 
+      <div className="settings-section">
+        <span className="settings-section__title">theme</span>
+        <div className="theme-row">
+          {THEMES.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              className={`theme-chip${theme === t.id ? " is-picked" : ""}`}
+              onClick={() => onThemeChange(t.id)}
+              title={t.label}
+              aria-pressed={theme === t.id}
+            >
+              <span className="theme-chip__swatch" style={{ background: t.swatch }} />
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <span className="settings-section__title">reset</span>
+      </div>
       <div className="settings-panel__options">
         {OPTIONS.map((option) => (
           <label key={option.key} className={`settings-option${option.danger ? " settings-option--danger" : ""}`}>

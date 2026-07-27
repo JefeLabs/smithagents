@@ -4,6 +4,7 @@ import { type AudioFrame, useBrokerChat } from "../hooks/useBrokerChat";
 import { GRID_DEFAULTS, type GridParams } from "../hooks/useDotGrid";
 import { usePushToTalk } from "../hooks/usePushToTalk";
 import { useSpokenReplies } from "../hooks/useSpokenReplies";
+import { useTheme } from "../hooks/useTheme";
 import { AddAgentModal } from "../organisms/AddAgentModal";
 import { AgentRoster } from "../organisms/AgentRoster";
 import { DotGridCanvas } from "../organisms/DotGridCanvas";
@@ -23,6 +24,7 @@ export function HomePage() {
   const [inspecting, setInspecting] = useState<AgentSeed | null>(null);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const { theme, setTheme } = useTheme();
   // The audio sink is a ref so useBrokerChat (which produces the frames) can be
   // declared before useSpokenReplies (which consumes them) without a cycle.
   const audioSink = useRef<(frame: AudioFrame) => void>(() => {});
@@ -124,7 +126,13 @@ export function HomePage() {
       }
       overlays={
         <>
-          <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} onReset={resetSetup} />
+          <SettingsPanel
+            open={settingsOpen}
+            onClose={() => setSettingsOpen(false)}
+            onReset={resetSetup}
+            theme={theme}
+            onThemeChange={setTheme}
+          />
           <SessionsPanel
             open={sessionsOpen}
             sessions={sessions}

@@ -1296,3 +1296,42 @@
   flex-wrap: wrap;
   gap: 6px;
 }
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.settings-section__title {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.theme-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.theme-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 5px;
+  border-radius: 999px;
+  border: 1px solid var(--pill-br);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.theme-chip.is-picked {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.theme-chip__swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--pill-br);
+}
