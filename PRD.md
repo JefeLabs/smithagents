@@ -1,8 +1,6 @@
 # Product Requirements: `smithagents`
 
-> **Status:** Source of truth for the shipped TypeScript stack. Rewritten
-> 2026-07-26, superseding the 2026-07-18 JVM-era PRD (that iteration —
-> Spring Boot/Embabel/JDA — was deleted from the tree; see git history).
+> **Status:** Source of truth for the shipped TypeScript stack.
 > Amend this file — do not fork it into side docs.
 
 ## 1. Product Overview
@@ -200,8 +198,8 @@ editor loop plays to someone else's strength.
   reasons; surface them); the composer's "Swarm ▾" route selector is
   decorative; brain-history persistence skips system-note turns until the
   next user turn.
-* **Discord:** deliberately out — it lived in the deleted JVM gateway. If it
-  returns, it enters the broker as another text/voice channel, not a service.
-  (`DISCORD_TOKEN`/`GUILD_ID` in `.env` are vestigial and can be removed.)
+* **Discord:** deliberately out. If it returns, it enters the broker as
+  another text/voice channel, not a service. (`DISCORD_TOKEN`/`GUILD_ID` in
+  `.env` are vestigial and can be removed.)
 * **Hosted/multi-tenant tier:** Docker/microVM isolation for unattended runs,
   BYO-compute pricing posture — direction unchanged, not scheduled.

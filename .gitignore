@@ -1,9 +1,3 @@
-# --- JVM / Maven ---
-target/
-*.class
-*.jar
-!.mvn/wrapper/maven-wrapper.jar
-
 # --- Node / front-end ---
 node_modules/
 dist/

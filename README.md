@@ -127,9 +127,3 @@ Each package: `npm test` (node:test) and `npm run typecheck`. The UI lints with
 | 7790 | broker text channel: REST + WS transcript/roster/audio + PTT |
 | 1420 | control-plane dev server (Tauri window loads it) |
 | 7880 | livekit-server (dev) |
-
-## History
-
-The first iteration was a Java/Spring Boot/Embabel Maven reactor with a Discord
-gateway; it was fully superseded by this TypeScript stack and deleted on
-2026-07-26 (recoverable from git history).

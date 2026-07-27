@@ -59,7 +59,7 @@ Set `SMITH_SERVER_URL` if the server is not at `http://localhost:7777`.
 ## Runtime Selection
 
 - **tmux** (default) — bare-metal, uses host toolchain directly.
-- **docker** — containerized with Node 24, Java 25, PostgreSQL 16, and Playwright Chromium. Use `--runtime docker` when tasks need an isolated environment or database access.
+- **docker** — containerized with Node 24 (`smith-agent:latest`). Use `--runtime docker` when a task needs isolation from the host toolchain.
 
 ## Common Mistakes
 
