@@ -77,3 +77,6 @@ swarm/.smith/*
 
 # Broker runtime state — personal arrangements and conversations, never source.
 broker/.smith/
+
+# Synthesized audio cache — regenerable, per-machine.
+broker/.smith/voice-cache/

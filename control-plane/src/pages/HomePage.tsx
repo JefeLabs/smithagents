@@ -16,8 +16,6 @@ import { WorkStage } from "../organisms/WorkStage";
 import { ControlPlaneLayout } from "../templates/ControlPlaneLayout";
 
 export function HomePage() {
-  // Local additions from the modal only — the real roster streams from the broker.
-  const [localAgents, setLocalAgents] = useState<AgentSeed[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [tunerOpen, setTunerOpen] = useState(false);
   const [gridParams, setGridParams] = useState<GridParams>(GRID_DEFAULTS);
@@ -65,7 +63,6 @@ export function HomePage() {
       kind: a.kind,
       members: a.members,
     })),
-    ...localAgents,
   ];
 
   const callOn = (name: string) => send(`Go ahead, ${name} — you have the floor.`);
@@ -79,19 +76,6 @@ export function HomePage() {
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
   }, []);
-
-  const createAgent = (name: string, role: string) => {
-    setLocalAgents((list) => [
-      ...list,
-      {
-        id: `${name.toLowerCase().replace(/\s+/g, "-")}-${list.length}`,
-        name,
-        role,
-        ring: ringForIndex(roster.length + list.length),
-      },
-    ]);
-    setModalOpen(false);
-  };
 
   return (
     <ControlPlaneLayout
@@ -155,7 +139,11 @@ export function HomePage() {
             onChange={(key, value) => setGridParams((p) => ({ ...p, [key]: value }))}
             onReset={() => setGridParams(GRID_DEFAULTS)}
           />
-          <AddAgentModal open={modalOpen} onClose={() => setModalOpen(false)} onCreate={createAgent} />
+          <AddAgentModal
+            open={modalOpen}
+            onClose={() => setModalOpen(false)}
+            onCreated={(n) => send(`${n} just joined the crew — welcome them in one short line.`)}
+          />
         </>
       }
     />

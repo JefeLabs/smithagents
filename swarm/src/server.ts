@@ -49,7 +49,8 @@ import type {
 } from './remote-types.js';
 import { execFile } from 'node:child_process';
 import { mkdir, rename } from 'node:fs/promises';
-import { loadAgents, findAgent } from './agents.js';
+import { loadAgents, findAgent, saveAgent, type ComposedAgent } from './agents.js';
+import { QUICK_QUESTIONS, STEREOTYPES, findStereotype, REACTION_LEVELS } from './personas.js';
 import { AgentSessionManager } from './agent-sessions.js';
 import { loadWorkspacesFromDir, resolveRepo, type Workspace } from './workspaces.js';
 import { MeetingOrchestrator } from './meetings.js';
@@ -776,6 +777,61 @@ export class OrchestratorServer {
         members: activeAgents.map(m => m.name),
         status: 'queued'
       };
+    });
+
+    // ── Agent creation catalog + registry writes ───────────────────────
+    this.app.get('/agents/catalog', async () => {
+      return { stereotypes: STEREOTYPES, quickQuestions: QUICK_QUESTIONS, reactionLevels: REACTION_LEVELS };
+    });
+
+    this.app.post('/agents', async (req, reply) => {
+      const b = req.body as Partial<ComposedAgent> & { stereotype?: string };
+      if (!b.name?.trim()) return reply.status(400).send({ error: 'Missing required field: name' });
+      const id = (b.id ?? b.name).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      const seed = b.stereotype ? findStereotype(b.stereotype) : undefined;
+      if (b.stereotype && !seed) return reply.status(400).send({ error: `Unknown stereotype: ${b.stereotype}` });
+
+      const agentsDir = resolve(process.cwd(), '.smith/agents');
+      const existing = await loadAgents(agentsDir);
+      if (existing.some((a) => a.id === id)) return reply.status(409).send({ error: `Agent "${id}" already exists` });
+
+      // The stereotype seeds; every field the wizard sent wins over it.
+      const agent: ComposedAgent = {
+        id,
+        name: b.name.trim(),
+        role: b.role?.trim() || seed?.label || 'Specialist',
+        directives: b.directives?.trim() || seed?.directives || 'You are a specialist on this team.',
+        engine: { cli: b.engine?.cli ?? 'claude', model: b.engine?.model ?? 'claude-sonnet' },
+        persona: { style: b.persona?.style?.trim() || seed?.style || '' },
+        stereotype: b.stereotype,
+        gender: b.gender,
+        backstory: b.backstory?.trim() || undefined,
+        reactions: b.reactions ?? seed?.reactions,
+        quickAnswers: b.quickAnswers,
+        voice: b.voice?.voiceId ? { provider: 'elevenlabs', voiceId: b.voice.voiceId } : undefined,
+        avatarRing: b.avatarRing,
+        channels: ['tauri'],
+      };
+      try {
+        await saveAgent(agentsDir, agent);
+      } catch (err) {
+        return reply.status(400).send({ error: String((err as Error).message) });
+      }
+      server.app.log.info(`Agent created: ${agent.id} (${agent.name})`);
+      return reply.status(201).send(agent);
+    });
+
+    this.app.delete<{ Params: { id: string } }>('/agents/:id', async (req, reply) => {
+      const agentsDir = resolve(process.cwd(), '.smith/agents');
+      const agents = await loadAgents(agentsDir);
+      const agent = agents.find((a) => a.id === req.params.id);
+      if (!agent) return reply.status(404).send({ error: `Unknown agent: ${req.params.id}` });
+      // Archived, never deleted — same contract as the settings reset.
+      await rename(
+        resolve(agentsDir, `${agent.id}.json`),
+        resolve(process.cwd(), `.smith/agent-${agent.id}-archived-${Date.now()}.json`),
+      );
+      return { ok: true, archived: agent.id };
     });
 
     // ── Persistent agent sessions (warm conversational workers) ────────

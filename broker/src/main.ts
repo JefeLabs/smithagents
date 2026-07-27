@@ -18,6 +18,7 @@ import type { RosterState, UiRoster } from './broker.ts';
 import { SessionManager, type Session } from './sessions.ts';
 import { DeepgramSttStream, type LiveLike } from './stt.ts';
 import { SwarmClient, type SwarmSquad } from './swarm-client.ts';
+import { VoiceCatalog } from './voice-catalog.ts';
 import { TextChannel, type RosterEntry } from './text-channel.ts';
 import { mintRoomToken } from './token.ts';
 
@@ -36,6 +37,10 @@ const swarm = new SwarmClient({ baseUrl: config.swarm.baseUrl, token: config.swa
 const directory = new AgentDirectory();
 
 const tts = config.elevenlabsApiKey ? new ElevenLabsVoiceProvider({ apiKey: config.elevenlabsApiKey }) : null;
+// Voice library browsing + the fixed-line audio cache (reactions, quick answers).
+const voiceCatalog = config.elevenlabsApiKey
+  ? new VoiceCatalog(config.elevenlabsApiKey, process.env.BROKER_VOICE_CACHE_DIR ?? '.smith/voice-cache')
+  : null;
 
 // Meeting TTS speaks with the per-agent cast — same voices as the app's audio
 // frames. Falls back to a premade stand-in when a library voice is plan-gated.
@@ -357,6 +362,7 @@ const textChannel = new TextChannel(
   // Reset (settings): tiered and explicit. Runtime is killed on the swarm side
   // (remote workers are never touched); conversations and roster arrangements
   // are cleared here. Committed work — branches and PRs — always survives.
+  // (reset handler)
   async (scope) => {
     const wants = {
       runtime: scope.runtime !== false,
@@ -379,6 +385,46 @@ const textChannel = new TextChannel(
     textChannel.broadcast(sessionFrame());
     textChannel.broadcast({ type: 'roster', agents: toRosterEntries(broker.uiRoster()) });
     return { ok: true, scope: wants, swarm: swarmReport };
+  },
+  {
+    // Agent creation: the swarm owns the registry, the broker owns voices.
+    catalog: () => swarm.agentCatalog(),
+    voices: async (query) => {
+      if (!voiceCatalog) return { voices: [], hasMore: false, error: 'no ElevenLabs key configured' };
+      return voiceCatalog.browse({
+        search: query.search,
+        gender: query.gender,
+        language: query.language,
+        page: query.page ? Number(query.page) : undefined,
+      });
+    },
+    preview: async (voiceId, text) => {
+      if (!voiceCatalog) throw new Error('no ElevenLabs key configured');
+      return voiceCatalog.synthesize(voiceId, text);
+    },
+    create: async (body) => {
+      const created = await swarm.createAgent(body);
+      // Warm the cache so the new agent's fixed lines play instantly. Best
+      // effort: a partial cache still beats none, and never blocks creation.
+      const agent = created as {
+        id?: string;
+        voice?: { voiceId?: string };
+        reactions?: Record<string, string[]>;
+        quickAnswers?: Record<string, string>;
+      };
+      if (voiceCatalog && agent.voice?.voiceId) {
+        const lines = [
+          ...Object.values(agent.reactions ?? {}).flat(),
+          ...Object.values(agent.quickAnswers ?? {}),
+        ];
+        const warm = await voiceCatalog.warmAgent(agent.voice.voiceId, lines).catch(() => ({ cached: 0, failed: [] }));
+        // Roster refresh so the new agent appears immediately.
+        await broker.resetComposition().catch(() => {});
+        return { ...created, voiceCache: warm };
+      }
+      await broker.resetComposition().catch(() => {});
+      return created;
+    },
   },
 );
 const micSessions = new Map<number, DeepgramSttStream>();

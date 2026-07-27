@@ -34,7 +34,8 @@ const OPTIONS: Array<{ key: keyof ResetScope; label: string; detail: string; dan
   {
     key: "agents",
     label: "Remove all agents & squads",
-    detail: "Empties the roster completely. Persona and squad files are archived on disk (not deleted) — restore by moving them back.",
+    detail:
+      "Empties the roster completely. Persona and squad files are archived on disk (not deleted) — restore by moving them back.",
     danger: true,
   },
 ];

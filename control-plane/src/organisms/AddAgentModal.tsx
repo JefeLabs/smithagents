@@ -1,33 +1,81 @@
-import type { CSSProperties, MouseEvent } from "react";
-import { useEffect, useRef, useState } from "react";
-import { Chip } from "../atoms/Chip";
-import { Field } from "../atoms/Field";
-import { DiscordIdentityPanel, type DiscordMode } from "../molecules/DiscordIdentityPanel";
+import { Check, ChevronLeft, ChevronRight, Play, Search } from "lucide-react";
+import type { MouseEvent } from "react";
+import { useEffect, useState } from "react";
+
+const BASE = "127.0.0.1:7790";
+
+interface Stereotype {
+  id: string;
+  label: string;
+  style: string;
+  directives: string;
+  reactions: Record<string, string[]>;
+}
+
+interface CatalogVoice {
+  voiceId: string;
+  name: string;
+  gender?: string;
+  accent?: string;
+  description?: string;
+}
+
+interface Catalog {
+  stereotypes: Stereotype[];
+  quickQuestions: Array<{ id: string; question: string }>;
+  reactionLevels: string[];
+}
 
 interface AddAgentModalProps {
   open: boolean;
   onClose: () => void;
-  onCreate: (name: string, role: string) => void;
+  /** Fired after the registry accepted the new agent. */
+  onCreated?: (name: string) => void;
 }
 
-const CHANNELS = [
-  { id: "discord", label: "Discord" },
-  { id: "web", label: "Web widget" },
-  { id: "tauri", label: "Tauri" },
-];
+const LEVEL_LABELS: Record<string, string> = {
+  strong_agree: "Strongly agrees",
+  agree: "Agrees",
+  neutral: "Neutral",
+  disagree: "Disagrees",
+  strong_disagree: "Strongly disagrees",
+};
 
-export function AddAgentModal({ open, onClose, onCreate }: AddAgentModalProps) {
-  const [name, setName] = useState("Vera");
-  const [role, setRole] = useState("Release Marshal");
-  const [channels, setChannels] = useState<Record<string, boolean>>({ discord: true, web: false, tauri: false });
-  const [mode, setMode] = useState<DiscordMode>("webhook");
-  const [directives, setDirectives] = useState("");
-  const nameRef = useRef<HTMLInputElement>(null);
+const STEPS = ["Stereotype", "Identity", "Voice", "Reactions", "Answers"] as const;
+
+/**
+ * Agent creation wizard: stereotype → identity → voice → reactions → answers.
+ * The stereotype seeds style and directives; everything after it is the user's.
+ * Reactions and quick answers are fixed lines, so the broker pre-synthesizes
+ * them on create — they play back instantly instead of waiting on TTS.
+ */
+export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) {
+  const [step, setStep] = useState(0);
+  const [catalog, setCatalog] = useState<Catalog | null>(null);
+  const [stereotype, setStereotype] = useState<Stereotype | null>(null);
+  const [name, setName] = useState("");
+  const [role, setRole] = useState("");
+  const [gender, setGender] = useState<"male" | "female" | "neutral">("neutral");
+  const [backstory, setBackstory] = useState("");
+  const [reactions, setReactions] = useState<Record<string, string>>({});
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [voiceId, setVoiceId] = useState("");
+  const [voices, setVoices] = useState<CatalogVoice[]>([]);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [voiceSearch, setVoiceSearch] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open || catalog) return;
+    void fetch(`http://${BASE}/agent-catalog`)
+      .then((r) => r.json())
+      .then((c: Catalog) => setCatalog(c))
+      .catch(() => setError("Could not load the persona catalog — is the broker running?"));
+  }, [open, catalog]);
 
   useEffect(() => {
     if (!open) return;
-    nameRef.current?.focus();
-    nameRef.current?.select();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
@@ -35,99 +83,270 @@ export function AddAgentModal({ open, onClose, onCreate }: AddAgentModalProps) {
     return () => removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
+  // Voice browsing is its own async surface: a key without voices_read fails
+  // here with an actionable message while every other step still works.
+  const loadVoices = async (search: string, genderFilter: string) => {
+    const params = new URLSearchParams();
+    if (search) params.set("search", search);
+    if (genderFilter && genderFilter !== "neutral") params.set("gender", genderFilter);
+    const res = (await fetch(`http://${BASE}/voices?${params}`).then((r) => r.json())) as {
+      voices?: CatalogVoice[];
+      error?: string;
+    };
+    if (res.error) {
+      setVoiceError(res.error);
+      setVoices([]);
+    } else {
+      setVoiceError(null);
+      setVoices(res.voices ?? []);
+    }
+  };
+
+  // Load the catalog when the voice step opens. Deliberately keyed on the
+  // step only: search and gender re-query on submit/toggle, not per keystroke.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: see above
+  useEffect(() => {
+    if (open && step === 2) void loadVoices(voiceSearch, gender);
+  }, [open, step]);
+
+  if (!open) return null;
+
+  const pickStereotype = (s: Stereotype) => {
+    setStereotype(s);
+    setRole((r) => r || s.label);
+    setReactions(Object.fromEntries(Object.entries(s.reactions).map(([level, lines]) => [level, lines[0] ?? ""])));
+    setStep(1);
+  };
+
+  const preview = async (id: string) => {
+    const res = await fetch(`http://${BASE}/voices/preview`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ voiceId: id, text: `Hola, I am ${name || "your new teammate"}.` }),
+    });
+    if (!res.ok) return;
+    void new Audio(URL.createObjectURL(await res.blob())).play();
+  };
+
+  const submit = async () => {
+    setBusy(true);
+    setError(null);
+    const res = (await fetch(`http://${BASE}/agents`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name,
+        role,
+        gender,
+        backstory,
+        stereotype: stereotype?.id,
+        persona: { style: stereotype?.style },
+        directives: stereotype?.directives,
+        voice: voiceId ? { voiceId } : undefined,
+        reactions: Object.fromEntries(Object.entries(reactions).map(([k, v]) => [k, [v]])),
+        quickAnswers: answers,
+      }),
+    }).then((r) => r.json())) as { error?: string; name?: string };
+    setBusy(false);
+    if (res.error) {
+      setError(res.error);
+      return;
+    }
+    onCreated?.(name);
+    onClose();
+    setStep(0);
+    setStereotype(null);
+    setName("");
+    setRole("");
+    setBackstory("");
+    setVoiceId("");
+  };
+
+  const canAdvance = step === 0 ? Boolean(stereotype) : step === 1 ? name.trim().length > 0 : true;
   const onScrimClick = (e: MouseEvent<HTMLDivElement>) => {
     if (e.target === e.currentTarget) onClose();
   };
 
-  const initial = name.trim()[0]?.toUpperCase() ?? "?";
-
   return (
-    // biome-ignore lint/a11y/useKeyWithClickEvents: artifact-faithful scrim — click-outside dismiss; the keyboard path is the global Escape handler bound while open
+    // biome-ignore lint/a11y/useKeyWithClickEvents: click-outside dismiss; the keyboard path is the Escape handler bound while open
     <div
       className="scrim"
-      data-open={open ? "true" : "false"}
+      data-open="true"
       role="dialog"
       aria-modal="true"
-      aria-labelledby="modalTitle"
+      aria-label="Create an agent"
       onClick={onScrimClick}
     >
-      <div className="modal">
-        <h2 id="modalTitle">New agent</h2>
-        <p className="sub">Give the agent an identity and pick where it shows up.</p>
+      <section className="wizard">
+        <header className="wizard__head">
+          {STEPS.map((label, i) => (
+            <span key={label} className={`wizard__step${i === step ? " is-active" : ""}${i < step ? " is-done" : ""}`}>
+              {i < step ? <Check size={10} strokeWidth={3} /> : `${i + 1}`} {label}
+            </span>
+          ))}
+        </header>
 
-        <div className="id-head">
-          <div className="id-avatar" style={{ "--ring": "var(--accent)" } as CSSProperties}>
-            {initial}
-          </div>
-          <Field label="Name" htmlFor="agName" style={{ flex: 1, margin: 0 }}>
-            <input
-              id="agName"
-              ref={nameRef}
-              type="text"
-              placeholder="e.g. Manuel"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </Field>
+        <div className="wizard__body">
+          {step === 0 && (
+            <div className="stereotype-grid">
+              {(catalog?.stereotypes ?? []).map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  className={`stereotype-card${stereotype?.id === s.id ? " is-picked" : ""}`}
+                  onClick={() => pickStereotype(s)}
+                >
+                  <b>{s.label}</b>
+                  <span>{s.style}</span>
+                </button>
+              ))}
+              {!catalog && <p className="wizard__hint">Loading personas…</p>}
+            </div>
+          )}
+
+          {step === 1 && (
+            <div className="wizard__form">
+              <label>
+                Name
+                <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Fabian" />
+              </label>
+              <label>
+                Role
+                <input value={role} onChange={(e) => setRole(e.target.value)} placeholder="The Architect" />
+              </label>
+              <div className="wizard__genders">
+                <span>Voice gender</span>
+                {(["male", "female", "neutral"] as const).map((g) => (
+                  <button
+                    key={g}
+                    type="button"
+                    className={`chip${gender === g ? " is-picked" : ""}`}
+                    onClick={() => setGender(g)}
+                  >
+                    {g}
+                  </button>
+                ))}
+              </div>
+              <label>
+                Backstory
+                <textarea
+                  value={backstory}
+                  onChange={(e) => setBackstory(e.target.value)}
+                  rows={3}
+                  placeholder="Grew up debugging his father's POS system in Santiago; believes every outage is a design smell."
+                />
+              </label>
+            </div>
+          )}
+
+          {step === 2 && (
+            <div className="voice-browser">
+              <div className="voice-browser__search">
+                <Search size={13} strokeWidth={2} />
+                <input
+                  value={voiceSearch}
+                  onChange={(e) => setVoiceSearch(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void loadVoices(voiceSearch, gender);
+                  }}
+                  placeholder="Search the ElevenLabs catalog — latin, warm, deep…"
+                />
+              </div>
+              {voiceError && <p className="wizard__error">{voiceError}</p>}
+              <div className="voice-list">
+                {voices.map((v) => (
+                  <div key={v.voiceId} className={`voice-row${voiceId === v.voiceId ? " is-picked" : ""}`}>
+                    <button type="button" className="voice-row__pick" onClick={() => setVoiceId(v.voiceId)}>
+                      <b>{v.name}</b>
+                      <span>{[v.gender, v.accent, v.description].filter(Boolean).join(" · ").slice(0, 70)}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="voice-row__play"
+                      onClick={() => void preview(v.voiceId)}
+                      aria-label={`Preview ${v.name}`}
+                    >
+                      <Play size={12} strokeWidth={2} />
+                    </button>
+                  </div>
+                ))}
+                {voices.length === 0 && !voiceError && (
+                  <p className="wizard__hint">Search the catalog above to audition voices.</p>
+                )}
+              </div>
+              <label>
+                Or paste a voice id
+                <input
+                  value={voiceId}
+                  onChange={(e) => setVoiceId(e.target.value)}
+                  placeholder="bnes5tb6xZ5GxqUjhUSq"
+                />
+              </label>
+            </div>
+          )}
+
+          {step === 3 && (
+            <div className="wizard__form">
+              <p className="wizard__hint">
+                What they say across the agreement spectrum. Cached as audio on create, so they fire instantly.
+              </p>
+              {(catalog?.reactionLevels ?? []).map((level) => (
+                <label key={level}>
+                  {LEVEL_LABELS[level] ?? level}
+                  <input
+                    value={reactions[level] ?? ""}
+                    onChange={(e) => setReactions((r) => ({ ...r, [level]: e.target.value }))}
+                  />
+                </label>
+              ))}
+            </div>
+          )}
+
+          {step === 4 && (
+            <div className="wizard__form">
+              <p className="wizard__hint">
+                First-meeting answers — pre-synthesized so they never wait on a model. Blank = skip.
+              </p>
+              {(catalog?.quickQuestions ?? []).map((q) => (
+                <label key={q.id}>
+                  {q.question}
+                  <input
+                    value={answers[q.id] ?? ""}
+                    onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: e.target.value }))}
+                  />
+                </label>
+              ))}
+            </div>
+          )}
         </div>
 
-        <Field label="Role" htmlFor="agRole">
-          <input
-            id="agRole"
-            type="text"
-            placeholder="e.g. Architect"
-            value={role}
-            onChange={(e) => setRole(e.target.value)}
-          />
-        </Field>
+        {error && <p className="wizard__error">{error}</p>}
 
-        <Field label="Channels">
-          <div className="chips">
-            {CHANNELS.map((channel) => (
-              <Chip
-                key={channel.id}
-                label={channel.label}
-                pressed={channels[channel.id] ?? false}
-                onToggle={() => setChannels((c) => ({ ...c, [channel.id]: !c[channel.id] }))}
-              />
-            ))}
-          </div>
-        </Field>
-
-        <DiscordIdentityPanel mode={mode} onModeChange={setMode} hidden={!channels.discord} />
-
-        <Field
-          label={
-            <>
-              Directives{" "}
-              <span style={{ textTransform: "none", letterSpacing: 0, color: "var(--text-dim)" }}>
-                — system prompt, optional
-              </span>
-            </>
-          }
-          htmlFor="agDir"
-        >
-          <textarea
-            id="agDir"
-            placeholder="How this agent behaves — its domain, tone, and hard constraints…"
-            value={directives}
-            onChange={(e) => setDirectives(e.target.value)}
-          />
-        </Field>
-
-        <div className="modal-actions">
-          <button type="button" onClick={onClose}>
-            Cancel
-          </button>
+        <footer className="wizard__foot">
           <button
             type="button"
-            className="primary"
-            onClick={() => onCreate(name.trim() || "Agent", role.trim() || "Agent")}
+            className="settings-btn"
+            onClick={() => setStep((s) => Math.max(0, s - 1))}
+            disabled={step === 0}
           >
-            Create agent
+            <ChevronLeft size={12} strokeWidth={2} /> back
           </button>
-        </div>
-      </div>
+          {step < STEPS.length - 1 ? (
+            <button type="button" className="settings-btn" onClick={() => setStep((s) => s + 1)} disabled={!canAdvance}>
+              next <ChevronRight size={12} strokeWidth={2} />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="settings-btn settings-btn--primary"
+              onClick={() => void submit()}
+              disabled={busy || !name.trim()}
+            >
+              {busy ? "creating…" : "create agent"}
+            </button>
+          )}
+        </footer>
+      </section>
     </div>
   );
 }

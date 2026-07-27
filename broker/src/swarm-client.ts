@@ -141,6 +141,16 @@ export class SwarmClient {
     return this.http('POST', '/reset', scope);
   }
 
+  /** Stereotypes, quick questions and reaction levels for the creation wizard. */
+  async agentCatalog(): Promise<Record<string, unknown>> {
+    return this.http('GET', '/agents/catalog');
+  }
+
+  /** Create a composed agent from the wizard payload. */
+  async createAgent(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return this.http('POST', '/agents', body);
+  }
+
   async listWorkspaces(): Promise<SwarmWorkspace[]> {
     const r = await this.http('GET', '/workspaces');
     return (r.workspaces as SwarmWorkspace[]) ?? [];
