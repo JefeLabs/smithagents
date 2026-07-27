@@ -45,7 +45,8 @@ import type {
   WorkerMessage,
   RegisteredMessage,
 } from './remote-types.js';
-import { loadAgents } from './agents.js';
+import { loadAgents, findAgent } from './agents.js';
+import { AgentSessionManager } from './agent-sessions.js';
 import { loadWorkspacesFromDir, resolveRepo, type Workspace } from './workspaces.js';
 import { MeetingOrchestrator } from './meetings.js';
 import { loadLiveKitConfig } from './config.js';
@@ -121,6 +122,8 @@ export class OrchestratorServer {
   private readonly namePool = new AgentNamePool();
   readonly workerPool = new WorkerPool();
   readonly squadPool = new SquadPool();
+  /** Warm conversational sessions (design §3) — lazy so tests don't need tmux. */
+  private agentSessions: AgentSessionManager | null = null;
   private readonly activeSquads = new Map<SquadId, SquadManifest>();
 
   // UDP
@@ -311,6 +314,16 @@ export class OrchestratorServer {
         return reply.status(400).send({
           error: `Unknown workspace/repo: ${body.context.workspace ?? '(default)'}/${body.context.repo ?? '(default)'}`,
         });
+      }
+
+      // Resolve the composed-agent profile (broker sends composedAgentId) so
+      // the dispatcher can materialize it into the worktree (design §5).
+      let profile: TaskManifest['profile'];
+      const composedId = (body.metadata as Record<string, unknown> | undefined)?.composedAgentId;
+      if (typeof composedId === 'string') {
+        const registryAgents = await loadAgents(resolve(process.cwd(), '.smith/agents'));
+        const composed = registryAgents.find((a) => a.id === composedId);
+        if (composed) profile = { name: composed.name, role: composed.role, directives: composed.directives };
       }
 
       const taskId = randomUUID();
@@ -755,6 +768,77 @@ export class OrchestratorServer {
         members: activeAgents.map(m => m.name),
         status: 'queued'
       };
+    });
+
+    // ── Persistent agent sessions (warm conversational workers) ────────
+    const sessionManager = (): AgentSessionManager => {
+      server.agentSessions ??= new AgentSessionManager(createRuntime('tmux', server.orchConfig.docker), {
+        agentCommands: server.orchConfig.agentCommands,
+        worktreeDir: server.orchConfig.worktreeDir,
+      });
+      return server.agentSessions;
+    };
+    const sessionErrorStatus = (err: unknown): number => {
+      const code = (err as { code?: string }).code;
+      if (code === 'session_not_found') return 404;
+      if (code === 'session_dead') return 410;
+      if (code === 'turn_timeout') return 408;
+      return 500;
+    };
+
+    this.app.post('/agent-sessions', async (req, reply) => {
+      const body = req.body as { agent?: string; workspace?: string; repo?: string };
+      if (!body.agent) return reply.status(400).send({ error: 'Missing required field: agent' });
+      const agents = await loadAgents(resolve(process.cwd(), '.smith/agents'));
+      const agent = findAgent(agents, body.agent);
+      if (!agent) return reply.status(404).send({ error: `Unknown agent: ${body.agent}` });
+      const resolved = resolveRepo(server.workspaces, body.workspace, body.repo);
+      if ((body.workspace || body.repo) && !resolved) {
+        return reply.status(400).send({ error: `Unknown workspace/repo: ${body.workspace ?? '(default)'}/${body.repo ?? '(default)'}` });
+      }
+      const repoRoot = resolved?.repo.path ?? process.cwd();
+      const baseBranch = resolved?.repo.branch ?? 'main';
+      try {
+        // Pin the profile content at start (design §5): a changed agent file
+        // never mutates a live session — it means a new session.
+        const raw = JSON.stringify(agent);
+        const info = await sessionManager().create(agent, raw, repoRoot, baseBranch);
+        return reply.status(201).send(info);
+      } catch (err) {
+        return reply.status(sessionErrorStatus(err)).send({ error: String((err as Error).message) });
+      }
+    });
+
+    this.app.get('/agent-sessions', async () => {
+      return { sessions: server.agentSessions ? await server.agentSessions.list() : [] };
+    });
+
+    this.app.post<{ Params: { id: string } }>('/agent-sessions/:id/send', async (req, reply) => {
+      const body = req.body as { text?: string; timeoutMs?: number };
+      if (!body.text?.trim()) return reply.status(400).send({ error: 'Missing required field: text' });
+      try {
+        const messages = await sessionManager().send(req.params.id, body.text, body.timeoutMs);
+        return { messages };
+      } catch (err) {
+        return reply.status(sessionErrorStatus(err)).send({ error: String((err as Error).message) });
+      }
+    });
+
+    this.app.get<{ Params: { id: string } }>('/agent-sessions/:id/messages', async (req, reply) => {
+      try {
+        return { messages: await sessionManager().messages(req.params.id) };
+      } catch (err) {
+        return reply.status(sessionErrorStatus(err)).send({ error: String((err as Error).message) });
+      }
+    });
+
+    this.app.delete<{ Params: { id: string } }>('/agent-sessions/:id', async (req, reply) => {
+      try {
+        await sessionManager().destroy(req.params.id);
+        return { ok: true };
+      } catch (err) {
+        return reply.status(sessionErrorStatus(err)).send({ error: String((err as Error).message) });
+      }
     });
 
     this.app.get('/workspaces', async () => {

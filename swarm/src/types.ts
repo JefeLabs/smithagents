@@ -193,6 +193,9 @@ export interface TaskManifest {
   metadata?: Record<string, unknown>;
   /** Project name — resolved to ProjectConfig at dispatch time */
   project?: string;
+  /** Composed-agent profile, resolved server-side — materialized into the
+   *  tool's native config in the worktree (design §5). */
+  profile?: { name: string; role: string; directives: string };
   /** Override pull request settings for this task */
   pullRequest?: Partial<PullRequestConfig>;
   /** Override branching for this task */

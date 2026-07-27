@@ -26,6 +26,7 @@ import type {
   RuntimeType,
 } from './types.js';
 import type { RuntimeAdapter } from './runtime.js';
+import { getDriver } from './drivers/index.js';
 import { createRuntime } from './runtime.js';
 import { QuarantineManager } from './quarantine.js';
 
@@ -215,11 +216,20 @@ export class Dispatcher extends EventEmitter {
       join(worktreeBin, 'smith-delegate'),
     );
 
-    // The injected tool is dispatcher plumbing, not work product — exclude it
-    // locally so neither the agent's commit nor the auto-commit sweeps it up.
+    // Materialize the composed-agent profile into the tool's native config
+    // (design §5): by the time the CLI starts, the agent already is that
+    // persona — instructions arrive via the worktree, not only the prompt.
+    const injected = ['bin/smith-delegate'];
+    const driver = getDriver(manifest.agent);
+    if (driver && manifest.profile) {
+      injected.push(...(await driver.materialize(manifest.profile, worktreePath)));
+    }
+
+    // Injected artifacts are plumbing, not work product — exclude them locally
+    // so neither the agent's commit nor the auto-commit sweeps them up.
     const excludeFile = await this.git(['rev-parse', '--git-path', 'info/exclude'], worktreePath);
     await mkdir(dirname(resolve(worktreePath, excludeFile)), { recursive: true });
-    await appendFile(resolve(worktreePath, excludeFile), 'bin/smith-delegate\n');
+    await appendFile(resolve(worktreePath, excludeFile), `${injected.join('\n')}\n`);
 
     return worktreePath;
   }
@@ -245,14 +255,17 @@ export class Dispatcher extends EventEmitter {
     const escapedPrompt = promptWithCommit.replace(/'/g, "'\\''");
     const binDir = join(worktreePath, 'bin');
 
-    // Build the full command with PATH injection
-    // The agent CLI gets the task via --task (agy) or --print (claude) or
-    // positional arg (codex). We normalize to a simple prompt append.
-    const promptFlag = this.getPromptFlag(manifest.agent);
+    // Build the full command with PATH injection. Tools with a driver own
+    // their invocation shape; the legacy flag map covers the rest until they
+    // are characterized (design §4).
+    const driver = getDriver(manifest.agent);
+    const invocation = driver
+      ? driver.taskCommand(agentCmd, escapedPrompt)
+      : `${agentCmd} ${this.getPromptFlag(manifest.agent)} '${escapedPrompt}'`;
 
     return [
       `export PATH="${binDir}:$PATH"`,
-      `${agentCmd} ${promptFlag} '${escapedPrompt}'`,
+      invocation,
     ].join(' && ');
   }
 

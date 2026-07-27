@@ -264,6 +264,13 @@ export class WorkerPool {
     }
   }
 
+  async sendText(sessionName: string, text: string, target?: string): Promise<void> {
+    // The remote worker protocol has no paste op yet (h3: remote-worker
+    // hardening) — relay as a steer message; the worker's tmux applies its
+    // usual send-keys semantics. Persistent sessions are local-first today.
+    await this.sendKeys(sessionName, text, target);
+  }
+
   // -------------------------------------------------------------------------
   // State queries
   // -------------------------------------------------------------------------
@@ -333,5 +340,9 @@ export class RemoteRuntime implements RuntimeAdapter {
   }
   sendKeys(sessionName: string, keys: string, target?: string): Promise<void> {
     return this.pool.sendKeys(sessionName, keys, target);
+  }
+
+  sendText(sessionName: string, text: string, target?: string): Promise<void> {
+    return this.pool.sendText(sessionName, text, target);
   }
 }
