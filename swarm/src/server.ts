@@ -35,6 +35,8 @@ import { WorkerPool } from './remote-runtime.js';
 import {
   SquadPool,
   SQUAD_ROSTER,
+  loadSquadsFromDir,
+  setSquadRoster,
   type SquadManifest,
   type SquadMode,
   type SquadId,
@@ -45,7 +47,12 @@ import type {
   WorkerMessage,
   RegisteredMessage,
 } from './remote-types.js';
-import { loadAgents } from './agents.js';
+import { execFile } from 'node:child_process';
+import { mkdir, rename } from 'node:fs/promises';
+import { loadAgents, findAgent, saveAgent, type ComposedAgent } from './agents.js';
+import { QUICK_QUESTIONS, STEREOTYPES, JOB_ROLES, ENGINES, findStereotype, findJobRole, findEngine, REACTION_LEVELS } from './personas.js';
+import { AgentSessionManager } from './agent-sessions.js';
+import { isValidModelId } from './drivers/model-flag.js';
 import { loadWorkspacesFromDir, resolveRepo, type Workspace } from './workspaces.js';
 import { MeetingOrchestrator } from './meetings.js';
 import { loadLiveKitConfig } from './config.js';
@@ -121,6 +128,8 @@ export class OrchestratorServer {
   private readonly namePool = new AgentNamePool();
   readonly workerPool = new WorkerPool();
   readonly squadPool = new SquadPool();
+  /** Warm conversational sessions (design §3) — lazy so tests don't need tmux. */
+  private agentSessions: AgentSessionManager | null = null;
   private readonly activeSquads = new Map<SquadId, SquadManifest>();
 
   // UDP
@@ -177,6 +186,10 @@ export class OrchestratorServer {
         'Export SMITH_API_TOKEN to expose the API beyond loopback, or use --host 127.0.0.1.',
       );
     }
+
+    // Squads are data, like agents: seeded on first boot, then owned by
+    // .smith/squads/*.json — an empty dir legitimately means "no squads".
+    setSquadRoster(await loadSquadsFromDir(resolve(process.cwd(), '.smith/squads')));
 
     this.workspaces = await loadWorkspacesFromDir(resolve(process.cwd(), '.smith/workspaces'));
     if (this.workspaces.length > 0) {
@@ -313,6 +326,14 @@ export class OrchestratorServer {
         });
       }
 
+      // Resolve the composed-agent profile (broker sends composedAgentId) so
+      // the dispatcher can materialize it into the worktree (design §5).
+      const composedId = (body.metadata as Record<string, unknown> | undefined)?.composedAgentId;
+      const { profile, model } = enrichFromComposedAgent(
+        typeof composedId === 'string' ? await loadAgents(resolve(process.cwd(), '.smith/agents')) : [],
+        composedId,
+      );
+
       const taskId = randomUUID();
       const agentName = server.namePool.claim(taskId);
       const manifest: TaskManifest = {
@@ -332,6 +353,8 @@ export class OrchestratorServer {
         createdAt: new Date().toISOString(),
         priority: body.priority ?? 'normal',
         metadata: body.metadata,
+        profile,
+        model,
       };
 
       // Queue it
@@ -757,6 +780,236 @@ export class OrchestratorServer {
       };
     });
 
+    // ── Agent creation catalog + registry writes ───────────────────────
+    this.app.get('/agents/catalog', async () => {
+      return {
+        stereotypes: STEREOTYPES,
+        jobRoles: JOB_ROLES,
+        engines: ENGINES,
+        quickQuestions: QUICK_QUESTIONS,
+        reactionLevels: REACTION_LEVELS,
+      };
+    });
+
+    this.app.post('/agents', async (req, reply) => {
+      const b = req.body as Partial<ComposedAgent> & { stereotype?: string };
+      if (!b.name?.trim()) return reply.status(400).send({ error: 'Missing required field: name' });
+      const id = (b.id ?? b.name).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      const seed = b.stereotype ? findStereotype(b.stereotype) : undefined;
+      if (b.stereotype && !seed) return reply.status(400).send({ error: `Unknown stereotype: ${b.stereotype}` });
+      const job = (b as { jobRole?: string }).jobRole ? findJobRole((b as { jobRole?: string }).jobRole!) : undefined;
+
+      if (b.engine?.cli && !findEngine(b.engine.cli)) {
+        return reply.status(400).send({ error: `Unknown CLI: ${b.engine.cli}` });
+      }
+      // The model reaches a shell command string at launch. Reject a bad id
+      // here so the wizard shows a clear error, rather than at launch time —
+      // and so a malformed one is never persisted to an agent file.
+      const requestedModel = b.engine?.model?.trim();
+      if (requestedModel && requestedModel !== 'default' && !isValidModelId(requestedModel)) {
+        return reply.status(400).send({
+          error: `Invalid model id: ${requestedModel}. Use letters, digits, and . _ : / - only (e.g. "claude-opus" or "anthropic/claude-sonnet").`,
+        });
+      }
+
+      const agentsDir = resolve(process.cwd(), '.smith/agents');
+      const existing = await loadAgents(agentsDir);
+      if (existing.some((a) => a.id === id)) return reply.status(409).send({ error: `Agent "${id}" already exists` });
+
+      // The stereotype seeds; every field the wizard sent wins over it.
+      const agent: ComposedAgent = {
+        id,
+        name: b.name.trim(),
+        role: b.role?.trim() || job?.label || seed?.label || 'Specialist',
+        // Job role says WHAT they own; the stereotype colors HOW they say it.
+        directives: b.directives?.trim() || job?.directives || seed?.directives || 'You are a specialist on this team.',
+        engine: {
+          cli: b.engine?.cli ?? 'claude',
+          model: b.engine?.model ?? findEngine(b.engine?.cli ?? 'claude')?.models[0] ?? 'claude-sonnet',
+        },
+        persona: { style: b.persona?.style?.trim() || seed?.style || '' },
+        stereotype: b.stereotype,
+        gender: b.gender,
+        backstory: b.backstory?.trim() || undefined,
+        reactions: b.reactions ?? seed?.reactions,
+        quickAnswers: b.quickAnswers,
+        voice: b.voice?.voiceId ? { provider: 'elevenlabs', voiceId: b.voice.voiceId } : undefined,
+        avatarRing: b.avatarRing,
+        channels: ['tauri'],
+      };
+      try {
+        await saveAgent(agentsDir, agent);
+      } catch (err) {
+        return reply.status(400).send({ error: String((err as Error).message) });
+      }
+      server.app.log.info(`Agent created: ${agent.id} (${agent.name})`);
+      return reply.status(201).send(agent);
+    });
+
+    this.app.delete<{ Params: { id: string } }>('/agents/:id', async (req, reply) => {
+      const agentsDir = resolve(process.cwd(), '.smith/agents');
+      const agents = await loadAgents(agentsDir);
+      const agent = agents.find((a) => a.id === req.params.id);
+      if (!agent) return reply.status(404).send({ error: `Unknown agent: ${req.params.id}` });
+      // Archived, never deleted — same contract as the settings reset.
+      await rename(
+        resolve(agentsDir, `${agent.id}.json`),
+        resolve(process.cwd(), `.smith/agent-${agent.id}-archived-${Date.now()}.json`),
+      );
+      return { ok: true, archived: agent.id };
+    });
+
+    // ── Persistent agent sessions (warm conversational workers) ────────
+    const sessionManager = (): AgentSessionManager => {
+      server.agentSessions ??= new AgentSessionManager(createRuntime('tmux', server.orchConfig.docker), {
+        agentCommands: server.orchConfig.agentCommands,
+        worktreeDir: server.orchConfig.worktreeDir,
+      });
+      return server.agentSessions;
+    };
+    const sessionErrorStatus = (err: unknown): number => {
+      const code = (err as { code?: string }).code;
+      if (code === 'session_not_found') return 404;
+      if (code === 'session_dead') return 410;
+      if (code === 'turn_timeout') return 408;
+      return 500;
+    };
+
+    this.app.post('/agent-sessions', async (req, reply) => {
+      const body = req.body as { agent?: string; workspace?: string; repo?: string };
+      if (!body.agent) return reply.status(400).send({ error: 'Missing required field: agent' });
+      const agents = await loadAgents(resolve(process.cwd(), '.smith/agents'));
+      const agent = findAgent(agents, body.agent);
+      if (!agent) return reply.status(404).send({ error: `Unknown agent: ${body.agent}` });
+      const resolved = resolveRepo(server.workspaces, body.workspace, body.repo);
+      if ((body.workspace || body.repo) && !resolved) {
+        return reply.status(400).send({ error: `Unknown workspace/repo: ${body.workspace ?? '(default)'}/${body.repo ?? '(default)'}` });
+      }
+      const repoRoot = resolved?.repo.path ?? process.cwd();
+      const baseBranch = resolved?.repo.branch ?? 'main';
+      try {
+        // Pin the profile content at start (design §5): a changed agent file
+        // never mutates a live session — it means a new session.
+        const raw = JSON.stringify(agent);
+        const info = await sessionManager().create(agent, raw, repoRoot, baseBranch);
+        return reply.status(201).send(info);
+      } catch (err) {
+        return reply.status(sessionErrorStatus(err)).send({ error: String((err as Error).message) });
+      }
+    });
+
+    this.app.get('/agent-sessions', async () => {
+      return { sessions: server.agentSessions ? await server.agentSessions.list() : [] };
+    });
+
+    this.app.post<{ Params: { id: string } }>('/agent-sessions/:id/send', async (req, reply) => {
+      const body = req.body as { text?: string; timeoutMs?: number };
+      if (!body.text?.trim()) return reply.status(400).send({ error: 'Missing required field: text' });
+      try {
+        const messages = await sessionManager().send(req.params.id, body.text, body.timeoutMs);
+        return { messages };
+      } catch (err) {
+        return reply.status(sessionErrorStatus(err)).send({ error: String((err as Error).message) });
+      }
+    });
+
+    this.app.get<{ Params: { id: string } }>('/agent-sessions/:id/messages', async (req, reply) => {
+      try {
+        return { messages: await sessionManager().messages(req.params.id) };
+      } catch (err) {
+        return reply.status(sessionErrorStatus(err)).send({ error: String((err as Error).message) });
+      }
+    });
+
+    this.app.delete<{ Params: { id: string } }>('/agent-sessions/:id', async (req, reply) => {
+      try {
+        await sessionManager().destroy(req.params.id);
+        return { ok: true };
+      } catch (err) {
+        return reply.status(sessionErrorStatus(err)).send({ error: String((err as Error).message) });
+      }
+    });
+
+    // ── Reset ──────────────────────────────────────────────────────────
+    // Tiered, explicit, and never silent: the caller names the scope and gets
+    // back exactly what was destroyed and what was preserved. Remote workers
+    // are NEVER killed — they are other machines' processes.
+    this.app.post('/reset', async (req) => {
+      const body = (req.body ?? {}) as { runtime?: boolean; worktrees?: boolean; agents?: boolean };
+      const scope = { runtime: body.runtime !== false, worktrees: Boolean(body.worktrees), agents: Boolean(body.agents) };
+      const killed = { warmSessions: 0, taskSessions: 0, queued: 0, active: 0, worktrees: 0, agents: 0, squads: 0 };
+      const preserved: string[] = [];
+
+      if (scope.runtime) {
+        // Warm conversational sessions first (they own worktrees + branches).
+        if (server.agentSessions) {
+          for (const info of await server.agentSessions.list()) {
+            await server.agentSessions.destroy(info.id).catch(() => {});
+            killed.warmSessions += 1;
+          }
+        }
+        killed.queued = server.taskQueue.length;
+        server.taskQueue.length = 0;
+        for (const [taskId, task] of server.activeTasks) {
+          await task.runtime?.kill(task.sessionName).catch(() => {});
+          server.namePool.releaseByTaskId(taskId);
+          killed.active += 1;
+        }
+        server.activeTasks.clear();
+        // Sweep any orphaned local sessions this swarm launched.
+        const local = createRuntime('tmux', server.orchConfig.docker);
+        killed.taskSessions = await local.killPattern(`${server.orchConfig.tmuxPrefix}-`).catch(() => 0);
+        killed.taskSessions += await local.killPattern('smith-warm-').catch(() => 0);
+        server.completedTasks.clear();
+      }
+
+      const remoteWorkers = server.workerPool.listWorkers().length;
+      if (remoteWorkers > 0) preserved.push(`${remoteWorkers} remote worker(s) — remote instances are never killed`);
+
+      if (scope.worktrees) {
+        // Prune only orphaned worktree registrations; task BRANCHES (and their
+        // PRs) survive — committed work is never destroyed by a reset.
+        for (const workspace of server.workspaces) {
+          for (const repo of workspace.repos) {
+            await new Promise<void>((res) => {
+              execFile('git', ['worktree', 'prune'], { cwd: repo.path }, () => res());
+            });
+            killed.worktrees += 1;
+          }
+        }
+        preserved.push('task branches and their pull requests (committed work is never destroyed)');
+      } else {
+        preserved.push('worktrees, task branches, and pull requests');
+      }
+
+      if (scope.agents) {
+        // Roster wipe: personas and squads are user data, so they are
+        // archived, never deleted — restore by moving the files back.
+        const stamp = Date.now();
+        const agentsDir = resolve(process.cwd(), '.smith/agents');
+        const existing = await loadAgents(agentsDir);
+        if (existing.length > 0) {
+          await rename(agentsDir, resolve(process.cwd(), `.smith/agents-archived-${stamp}`)).catch(() => {});
+          await mkdir(agentsDir, { recursive: true }).catch(() => {});
+          killed.agents = existing.length;
+        }
+        const squadsDir = resolve(process.cwd(), '.smith/squads');
+        killed.squads = SQUAD_ROSTER.length;
+        await rename(squadsDir, resolve(process.cwd(), `.smith/squads-archived-${stamp}`)).catch(() => {});
+        await mkdir(squadsDir, { recursive: true }).catch(() => {});
+        setSquadRoster([]);
+        if (killed.agents > 0 || killed.squads > 0) {
+          preserved.push(`agents and squads archived to .smith/*-archived-${stamp} (restore by moving them back)`);
+        }
+      } else {
+        preserved.push('agent personas and squads');
+      }
+
+      server.app.log.warn(`Reset (${JSON.stringify(scope)}): ${JSON.stringify(killed)}`);
+      server.broadcast({ type: 'session:orphan_cleanup', sessionPattern: `${server.orchConfig.tmuxPrefix}-*`, killed: killed.taskSessions });
+      return { ok: true, scope, killed, preserved };
+    });
+
     this.app.get('/workspaces', async () => {
       return {
         workspaces: server.workspaces.map((w) => ({
@@ -1121,4 +1374,23 @@ if (isMain) {
     console.error('Failed to start server:', err);
     process.exit(1);
   });
+}
+
+/**
+ * A delegated task inherits its identity from the composed agent that was
+ * addressed: the persona the driver materializes into the worktree, and the
+ * model its CLI is launched with. Both must land on the manifest — dropping
+ * either silently downgrades the task to a generic, default-model run.
+ */
+export function enrichFromComposedAgent(
+  agents: ComposedAgent[],
+  composedId: unknown,
+): { profile: TaskManifest['profile']; model: string | undefined } {
+  if (typeof composedId !== 'string') return { profile: undefined, model: undefined };
+  const composed = agents.find((a) => a.id === composedId);
+  if (!composed) return { profile: undefined, model: undefined };
+  return {
+    profile: { name: composed.name, role: composed.role, directives: composed.directives },
+    model: composed.engine?.model,
+  };
 }

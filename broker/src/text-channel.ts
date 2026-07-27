@@ -74,6 +74,16 @@ export class TextChannel {
       create(title?: string, workspace?: string): string | null;
       activate(id: string): string | null;
     },
+    /** Full-setup reset (settings). Returns a report of what was destroyed/preserved. */
+    private readonly onReset?: (scope: Record<string, unknown>) => Promise<Record<string, unknown>>,
+    /** Agent creation: catalog browse, voice audition, and registry writes. */
+    private readonly creation?: {
+      catalog(): Promise<Record<string, unknown>>;
+      generate(body: Record<string, unknown>): Promise<Record<string, unknown>>;
+      voices(query: Record<string, string>): Promise<Record<string, unknown>>;
+      preview(voiceId: string, text: string): Promise<Buffer>;
+      create(body: Record<string, unknown>): Promise<Record<string, unknown>>;
+    },
   ) {}
 
   private clientSeq = 0;
@@ -125,6 +135,94 @@ export class TextChannel {
           res.writeHead(status, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify(error ? { error } : { ok: true }));
         });
         return;
+      }
+      if (req.method === 'POST' && req.url === '/reset' && this.onReset) {
+        let body = '';
+        req.on('data', (c) => {
+          body += c;
+        });
+        req.on('end', () => {
+          let scope: Record<string, unknown> = {};
+          try {
+            scope = JSON.parse(body || '{}') as Record<string, unknown>;
+          } catch {
+            /* empty body = default scope */
+          }
+          void this.onReset!(scope)
+            .then((report) => res.writeHead(200, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify(report)))
+            .catch((err: unknown) =>
+              res.writeHead(500, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify({ error: String(err) })),
+            );
+        });
+        return;
+      }
+      if (this.creation) {
+        const url = new URL(req.url ?? '/', 'http://localhost');
+        const json = (status: number, payload: unknown) =>
+          res.writeHead(status, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify(payload));
+        const fail = (err: unknown) => json(500, { error: String((err as Error).message ?? err) });
+
+        if (req.method === 'GET' && url.pathname === '/agent-catalog') {
+          void this.creation.catalog().then((c) => json(200, c), fail);
+          return;
+        }
+        if (req.method === 'GET' && url.pathname === '/voices') {
+          const query = Object.fromEntries(url.searchParams.entries());
+          void this.creation.voices(query).then((v) => json(200, v), fail);
+          return;
+        }
+        if (req.method === 'POST' && url.pathname === '/voices/preview') {
+          let body = '';
+          req.on('data', (c) => {
+            body += c;
+          });
+          req.on('end', () => {
+            let parsed: { voiceId?: string; text?: string } = {};
+            try {
+              parsed = JSON.parse(body || '{}') as typeof parsed;
+            } catch {
+              /* handled below */
+            }
+            if (!parsed.voiceId) return json(400, { error: 'body must be {voiceId, text?}' });
+            void this.creation!.preview(parsed.voiceId, parsed.text?.trim() || 'Hola, mi gente. This is how I sound.').then(
+              (audio) => res.writeHead(200, { ...CORS, 'content-type': 'audio/mpeg' }).end(audio),
+              fail,
+            );
+          });
+          return;
+        }
+        if (req.method === 'POST' && url.pathname === '/agents/generate') {
+          let body = '';
+          req.on('data', (c) => {
+            body += c;
+          });
+          req.on('end', () => {
+            let parsed: Record<string, unknown> = {};
+            try {
+              parsed = JSON.parse(body || '{}') as Record<string, unknown>;
+            } catch {
+              return json(400, { error: 'body must be JSON' });
+            }
+            void this.creation!.generate(parsed).then((draft) => json(200, draft), fail);
+          });
+          return;
+        }
+        if (req.method === 'POST' && url.pathname === '/agents') {
+          let body = '';
+          req.on('data', (c) => {
+            body += c;
+          });
+          req.on('end', () => {
+            let parsed: Record<string, unknown> = {};
+            try {
+              parsed = JSON.parse(body || '{}') as Record<string, unknown>;
+            } catch {
+              return json(400, { error: 'body must be JSON' });
+            }
+            void this.creation!.create(parsed).then((r) => json(r.error ? 400 : 201, r), fail);
+          });
+          return;
+        }
       }
       const sessionMatch = /^\/sessions(?:\/([^/]+)\/activate)?$/.exec(req.url ?? '');
       if (req.method === 'POST' && sessionMatch && this.sessions) {

@@ -4,25 +4,27 @@ import { type AudioFrame, useBrokerChat } from "../hooks/useBrokerChat";
 import { GRID_DEFAULTS, type GridParams } from "../hooks/useDotGrid";
 import { usePushToTalk } from "../hooks/usePushToTalk";
 import { useSpokenReplies } from "../hooks/useSpokenReplies";
+import { useTheme } from "../hooks/useTheme";
 import { AddAgentModal } from "../organisms/AddAgentModal";
 import { AgentRoster } from "../organisms/AgentRoster";
 import { DotGridCanvas } from "../organisms/DotGridCanvas";
 import { DotGridTuner } from "../organisms/DotGridTuner";
 import { SessionsPanel } from "../organisms/SessionsPanel";
+import { SettingsPanel } from "../organisms/SettingsPanel";
 import { ToolRail } from "../organisms/ToolRail";
 import { VoiceStage } from "../organisms/VoiceStage";
 import { WorkStage } from "../organisms/WorkStage";
 import { ControlPlaneLayout } from "../templates/ControlPlaneLayout";
 
 export function HomePage() {
-  // Local additions from the modal only — the real roster streams from the broker.
-  const [localAgents, setLocalAgents] = useState<AgentSeed[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [tunerOpen, setTunerOpen] = useState(false);
   const [gridParams, setGridParams] = useState<GridParams>(GRID_DEFAULTS);
   /** A busy agent/squad being inspected — swaps the stage to their work view. */
   const [inspecting, setInspecting] = useState<AgentSeed | null>(null);
   const [sessionsOpen, setSessionsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const { theme, setTheme } = useTheme();
   // The audio sink is a ref so useBrokerChat (which produces the frames) can be
   // declared before useSpokenReplies (which consumes them) without a cycle.
   const audioSink = useRef<(frame: AudioFrame) => void>(() => {});
@@ -42,6 +44,7 @@ export function HomePage() {
     micAudio,
     createSession,
     activateSession,
+    resetSetup,
   } = useBrokerChat({ onAudio: (frame) => audioSink.current(frame) });
   const { soundOn, toggleSound, playAudioFrame } = useSpokenReplies(messages, roster, !audioMode);
   audioSink.current = (frame) => void playAudioFrame(frame);
@@ -62,7 +65,6 @@ export function HomePage() {
       kind: a.kind,
       members: a.members,
     })),
-    ...localAgents,
   ];
 
   const callOn = (name: string) => send(`Go ahead, ${name} — you have the floor.`);
@@ -77,23 +79,15 @@ export function HomePage() {
     return () => removeEventListener("keydown", onKey);
   }, []);
 
-  const createAgent = (name: string, role: string) => {
-    setLocalAgents((list) => [
-      ...list,
-      {
-        id: `${name.toLowerCase().replace(/\s+/g, "-")}-${list.length}`,
-        name,
-        role,
-        ring: ringForIndex(roster.length + list.length),
-      },
-    ]);
-    setModalOpen(false);
-  };
-
   return (
     <ControlPlaneLayout
       background={<DotGridCanvas params={gridParams} />}
-      leftRail={<ToolRail onSessions={() => setSessionsOpen((open) => !open)} />}
+      leftRail={
+        <ToolRail
+          onSessions={() => setSessionsOpen((open) => !open)}
+          onSettings={() => setSettingsOpen((open) => !open)}
+        />
+      }
       rightRail={
         <AgentRoster
           agents={agents}
@@ -132,6 +126,13 @@ export function HomePage() {
       }
       overlays={
         <>
+          <SettingsPanel
+            open={settingsOpen}
+            onClose={() => setSettingsOpen(false)}
+            onReset={resetSetup}
+            theme={theme}
+            onThemeChange={setTheme}
+          />
           <SessionsPanel
             open={sessionsOpen}
             sessions={sessions}
@@ -146,7 +147,11 @@ export function HomePage() {
             onChange={(key, value) => setGridParams((p) => ({ ...p, [key]: value }))}
             onReset={() => setGridParams(GRID_DEFAULTS)}
           />
-          <AddAgentModal open={modalOpen} onClose={() => setModalOpen(false)} onCreate={createAgent} />
+          <AddAgentModal
+            open={modalOpen}
+            onClose={() => setModalOpen(false)}
+            onCreated={(n) => send(`${n} just joined the crew — welcome them in one short line.`)}
+          />
         </>
       }
     />

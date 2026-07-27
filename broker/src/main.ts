@@ -12,12 +12,15 @@ import { Broker } from './broker.ts';
 import { loadBrokerConfig } from './config.ts';
 import { AgentDirectory } from './directory.ts';
 import { LiveKitRoomBridge } from './room.ts';
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { RosterState, UiRoster } from './broker.ts';
+import { LocalMemory, type MemoryEntry } from './memory.ts';
 import { SessionManager, type Session } from './sessions.ts';
 import { DeepgramSttStream, type LiveLike } from './stt.ts';
 import { SwarmClient, type SwarmSquad } from './swarm-client.ts';
+import { PersonaGenerator } from './persona-generator.ts';
+import { VoiceCatalog } from './voice-catalog.ts';
 import { TextChannel, type RosterEntry } from './text-channel.ts';
 import { mintRoomToken } from './token.ts';
 
@@ -36,6 +39,10 @@ const swarm = new SwarmClient({ baseUrl: config.swarm.baseUrl, token: config.swa
 const directory = new AgentDirectory();
 
 const tts = config.elevenlabsApiKey ? new ElevenLabsVoiceProvider({ apiKey: config.elevenlabsApiKey }) : null;
+// Voice library browsing + the fixed-line audio cache (reactions, quick answers).
+const voiceCatalog = config.elevenlabsApiKey
+  ? new VoiceCatalog(config.elevenlabsApiKey, process.env.BROKER_VOICE_CACHE_DIR ?? '.smith/voice-cache')
+  : null;
 
 // Meeting TTS speaks with the per-agent cast — same voices as the app's audio
 // frames. Falls back to a premade stand-in when a library voice is plan-gated.
@@ -144,6 +151,7 @@ const brain = new BrokerBrain(streamFactory, {
   delegate: (input) => broker.executors.delegate({ ...input, workspace: input.workspace ?? sessionManager.active().workspace }),
   check_status: (input) => broker.executors.check_status(input),
   raise_hand: (input) => broker.executors.raise_hand(input),
+  remember: (input) => broker.executors.remember(input),
 });
 
 // Sessions — workspace-scoped conversations persisted under .smith/sessions/.
@@ -168,6 +176,30 @@ const sessionStore = {
   },
 };
 const sessionManager = new SessionManager(sessionStore);
+
+// Crew memory — durable facts recalled into every turn. One inspectable JSON
+// file; the crew's continuity across conversations lives here.
+const memoryFile = process.env.BROKER_MEMORY_FILE ?? '.smith/memory.json';
+const memory = new LocalMemory({
+  load(): MemoryEntry[] {
+    try {
+      return JSON.parse(readFileSync(memoryFile, 'utf8')) as MemoryEntry[];
+    } catch {
+      return [];
+    }
+  },
+  save(entries: MemoryEntry[]): void {
+    try {
+      mkdirSync(dirname(memoryFile), { recursive: true });
+      writeFileSync(memoryFile, JSON.stringify(entries, null, 2));
+    } catch (err) {
+      console.error('[memory] persist failed:', err);
+    }
+  },
+});
+
+// One model call fills the whole creation wizard (structured output).
+const personaGenerator = new PersonaGenerator(anthropic as never);
 
 const SQUAD_RINGS: Record<string, string> = { alpha: '#5fd0b0', beta: '#f2778f', gamma: '#9b8cff' };
 
@@ -354,6 +386,98 @@ const textChannel = new TextChannel(
       return null;
     },
   },
+  // Reset (settings): tiered and explicit. Runtime is killed on the swarm side
+  // (remote workers are never touched); conversations and roster arrangements
+  // are cleared here. Committed work — branches and PRs — always survives.
+  // (reset handler)
+  async (scope) => {
+    const wants = {
+      runtime: scope.runtime !== false,
+      conversations: scope.conversations !== false,
+      worktrees: Boolean(scope.worktrees),
+      agents: Boolean(scope.agents),
+    };
+    const swarmReport = await swarm
+      .reset({ runtime: wants.runtime, worktrees: wants.worktrees, agents: wants.agents })
+      .catch((err: unknown) => ({ error: `swarm reset failed: ${String(err)}` }));
+
+    if (wants.conversations) {
+      for (const file of readdirSync(sessionsDir).filter((f) => f.endsWith('.json'))) {
+        rmSync(join(sessionsDir, file), { force: true });
+      }
+      const fresh = sessionManager.resetAll(workspaceNames[0] ?? 'default');
+      brain.loadHistory(fresh.brainHistory);
+    }
+    await broker.resetComposition();
+    textChannel.broadcast(sessionFrame());
+    textChannel.broadcast({ type: 'roster', agents: toRosterEntries(broker.uiRoster()) });
+    return { ok: true, scope: wants, swarm: swarmReport };
+  },
+  {
+    // Agent creation: the swarm owns the registry, the broker owns voices.
+    catalog: () => swarm.agentCatalog(),
+    generate: async (body) => {
+      const b = body as Record<string, string>;
+      const catalog = (await swarm.agentCatalog()) as {
+        stereotypes?: Array<{ id: string; label: string; style: string }>;
+        jobRoles?: Array<{ id: string; label: string; directives: string }>;
+        quickQuestions?: Array<{ id: string; question: string }>;
+        reactionLevels?: string[];
+      };
+      const stereotype = catalog.stereotypes?.find((s) => s.id === b.stereotype);
+      const jobRole = catalog.jobRoles?.find((r) => r.id === b.jobRole);
+      const crew = directory.snapshot().map((p) => `${p.agent.name} (${p.agent.role})`);
+      const draft = await personaGenerator.generate({
+        stereotypeLabel: stereotype?.label,
+        stereotypeStyle: stereotype?.style,
+        jobRoleLabel: jobRole?.label,
+        jobRoleDirectives: jobRole?.directives,
+        gender: b.gender,
+        hint: b.hint,
+        crewContext: crew.join(', '),
+        existingNames: directory.snapshot().map((p) => p.agent.name),
+        reactionLevels: catalog.reactionLevels ?? [],
+        quickQuestions: catalog.quickQuestions ?? [],
+      });
+      return draft as unknown as Record<string, unknown>;
+    },
+    voices: async (query) => {
+      if (!voiceCatalog) return { voices: [], hasMore: false, error: 'no ElevenLabs key configured' };
+      return voiceCatalog.browse({
+        search: query.search,
+        gender: query.gender,
+        language: query.language,
+        page: query.page ? Number(query.page) : undefined,
+      });
+    },
+    preview: async (voiceId, text) => {
+      if (!voiceCatalog) throw new Error('no ElevenLabs key configured');
+      return voiceCatalog.synthesize(voiceId, text);
+    },
+    create: async (body) => {
+      const created = await swarm.createAgent(body);
+      // Warm the cache so the new agent's fixed lines play instantly. Best
+      // effort: a partial cache still beats none, and never blocks creation.
+      const agent = created as {
+        id?: string;
+        voice?: { voiceId?: string };
+        reactions?: Record<string, string[]>;
+        quickAnswers?: Record<string, string>;
+      };
+      if (voiceCatalog && agent.voice?.voiceId) {
+        const lines = [
+          ...Object.values(agent.reactions ?? {}).flat(),
+          ...Object.values(agent.quickAnswers ?? {}),
+        ];
+        const warm = await voiceCatalog.warmAgent(agent.voice.voiceId, lines).catch(() => ({ cached: 0, failed: [] }));
+        // Roster refresh so the new agent appears immediately.
+        await broker.resetComposition().catch(() => {});
+        return { ...created, voiceCache: warm };
+      }
+      await broker.resetComposition().catch(() => {});
+      return created;
+    },
+  },
 );
 const micSessions = new Map<number, DeepgramSttStream>();
 
@@ -417,6 +541,11 @@ broker = new Broker(
     swarm,
     directory,
     brain,
+    memory,
+    memoryScope: () => {
+      const active = sessionManager.active();
+      return { workspace: active.workspace, session: active.id };
+    },
     rosterStore,
     makeStt: () => new DeepgramSttStream(makeDeepgramLive),
     makeBridge: () => new LiveKitRoomBridge(),

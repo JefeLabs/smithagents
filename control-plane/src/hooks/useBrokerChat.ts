@@ -154,6 +154,22 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
     [base],
   );
 
+  const resetSetup = useCallback(
+    async (scope: { runtime?: boolean; conversations?: boolean; worktrees?: boolean; agents?: boolean }) => {
+      const res = await fetch(`http://${base}/reset`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(scope),
+      });
+      return (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        swarm?: { preserved?: string[]; killed?: Record<string, number> };
+      };
+    },
+    [base],
+  );
+
   const activity = useCallback(
     async (name: string): Promise<{ busy: boolean; label?: string; output?: string }> => {
       const res = await fetch(`http://${base}/activity/${encodeURIComponent(name)}`);
@@ -218,5 +234,6 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
     micAudio,
     createSession,
     activateSession,
+    resetSetup,
   };
 }

@@ -60,6 +60,8 @@ swarm/.smith/*
 !swarm/.smith/agents/*.json
 !swarm/.smith/workspaces/
 !swarm/.smith/workspaces/*.json
+!swarm/.smith/squads/
+!swarm/.smith/squads/*.json
 
 # Verification screenshots — local working artifacts, not source.
 .screenshots/
@@ -75,3 +77,9 @@ swarm/.smith/*
 
 # Broker runtime state — personal arrangements and conversations, never source.
 broker/.smith/
+
+# Synthesized audio cache — regenerable, per-machine.
+broker/.smith/voice-cache/
+
+# Crew memory is personal state, like sessions.
+broker/.smith/memory.json

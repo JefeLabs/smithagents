@@ -97,6 +97,18 @@ export class SessionManager {
       .map((s) => ({ id: s.id, title: s.title, workspace: s.workspace, updatedAt: s.updatedAt, active: s.id === this.activeId }));
   }
 
+  /**
+   * Wipe every conversation and start one fresh session. The store's own
+   * files are removed by the caller (it owns persistence); this resets the
+   * in-memory world so UIs see a clean slate immediately.
+   */
+  resetAll(workspace: string): Session {
+    this.sessions.clear();
+    this.activeId = '';
+    this.seq = 0;
+    return this.create(workspace);
+  }
+
   appendTranscript(role: 'user' | 'broker', text: string): void {
     const session = this.active();
     session.transcript.push({ role, text, at: this.now() });

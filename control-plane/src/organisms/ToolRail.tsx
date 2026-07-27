@@ -22,9 +22,11 @@ const OPERATOR_STYLE = {
 interface ToolRailProps {
   /** "New session" tool — opens the sessions panel. */
   onSessions?: () => void;
+  /** Settings — the reset surface. */
+  onSettings?: () => void;
 }
 
-export function ToolRail({ onSessions }: ToolRailProps) {
+export function ToolRail({ onSessions, onSettings }: ToolRailProps) {
   const [active, setActive] = useState(0);
   return (
     <nav className="rail rail--left" aria-label="Tools and activity">
@@ -44,7 +46,7 @@ export function ToolRail({ onSessions }: ToolRailProps) {
         />
       ))}
       <div className="spacer" />
-      <ToolButton icon={Settings} label="Settings" />
+      <ToolButton icon={Settings} label="Settings" onClick={onSettings} />
       <Avatar initial="E" label="Edwin · operator" style={OPERATOR_STYLE} />
     </nav>
   );

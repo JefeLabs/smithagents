@@ -48,3 +48,39 @@
     color-scheme: light;
   }
 }
+
+/* Midnight — deeper, cooler, higher contrast for low-light rooms. */
+:root[data-theme="midnight"] {
+  --ground: #050a14;
+  --ground-2: #080f1d;
+  --bloom: rgba(56, 132, 255, 0.18);
+  --dot: #16243a;
+  --dot-hi: #5fd0ff;
+  --accent: #5fd0ff;
+  --text: #eaf2ff;
+  --text-2: #93a6c4;
+  --text-dim: #56698a;
+  --pill: rgba(14, 24, 42, 0.78);
+  --pill-br: rgba(120, 180, 255, 0.14);
+  --rail-br: rgba(120, 180, 255, 0.09);
+  --online: #4fe0b0;
+  color-scheme: dark;
+}
+
+/* Sand — warm paper; easier on the eyes than pure white for long sessions. */
+:root[data-theme="sand"] {
+  --ground: #f6f1e7;
+  --ground-2: #fffdf8;
+  --bloom: rgba(196, 138, 74, 0.16);
+  --dot: #ded3c2;
+  --dot-hi: #c07a3e;
+  --accent: #b4682f;
+  --text: #2a2118;
+  --text-2: #6a5c4c;
+  --text-dim: #9c8f7e;
+  --pill: rgba(255, 253, 248, 0.86);
+  --pill-br: rgba(60, 45, 30, 0.12);
+  --rail-br: rgba(60, 45, 30, 0.08);
+  --online: #3f9d6b;
+  color-scheme: light;
+}

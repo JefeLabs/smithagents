@@ -22,7 +22,7 @@ export type TaskStatus =
 /**
  * Supported CLI agent types that can serve as the Alpha agent.
  */
-export type AgentType = 'agy' | 'claude' | 'codex';
+export type AgentType = 'agy' | 'claude' | 'codex' | 'opencode' | 'copilot';
 
 /**
  * Execution runtime for task sessions.
@@ -186,6 +186,9 @@ export interface TaskManifest {
     repoPath?: string;
   };
   agent: AgentType;            // Which CLI tool to use as Alpha
+  /** Model the CLI should run, from the composed agent's engine. Resolved
+   *  server-side; the driver spells the flag its tool understands. */
+  model?: string;
   runtime?: RuntimeType;       // Execution runtime (default from project or 'tmux')
   location?: LocationType;     // Where: local, docker, or remote
   createdAt: string;           // ISO 8601
@@ -193,6 +196,9 @@ export interface TaskManifest {
   metadata?: Record<string, unknown>;
   /** Project name — resolved to ProjectConfig at dispatch time */
   project?: string;
+  /** Composed-agent profile, resolved server-side — materialized into the
+   *  tool's native config in the worktree (design §5). */
+  profile?: { name: string; role: string; directives: string };
   /** Override pull request settings for this task */
   pullRequest?: Partial<PullRequestConfig>;
   /** Override branching for this task */

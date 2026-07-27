@@ -11,6 +11,7 @@
 import { SpeechChunker } from './chunker.ts';
 
 export interface ToolExecutors {
+  remember(input: { key: string; text: string; scope: string }): Promise<string>;
   delegate(input: { agent: string; task: string; workspace?: string; repo?: string }): Promise<string>;
   check_status(input: { agent: string }): Promise<string>;
   raise_hand(input: { agent: string; reason: string }): Promise<string>;
@@ -63,6 +64,24 @@ const TOOLS = [
         agent: { type: 'string' as const, description: 'Agent name or id from the roster' },
       },
       required: ['agent'],
+    },
+  },
+  {
+    name: 'remember',
+    description:
+      "Save something the crew should still know in future conversations: a preference the human states, a decision made, a fact about a workspace or teammate. Do NOT use it for chit-chat or for anything already in this conversation — memory is for what outlives it.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        key: { type: 'string' as const, description: 'Short stable handle, e.g. "pr-style" or "base-branch". Reusing a key updates that memory.' },
+        text: { type: 'string' as const, description: 'The fact, in one sentence, written so it makes sense weeks later.' },
+        scope: {
+          type: 'string' as const,
+          enum: ['session', 'workspace', 'global'],
+          description: 'session = only this conversation; workspace = this repo group; global = always true of the crew.',
+        },
+      },
+      required: ['key', 'text', 'scope'],
     },
   },
   {
@@ -207,6 +226,7 @@ export class BrokerBrain {
       if (name === 'delegate') return await this.executors.delegate(input as { agent: string; task: string; workspace?: string; repo?: string });
       if (name === 'check_status') return await this.executors.check_status(input as { agent: string });
       if (name === 'raise_hand') return await this.executors.raise_hand(input as { agent: string; reason: string });
+      if (name === 'remember') return await this.executors.remember(input as { key: string; text: string; scope: string });
       return `unknown tool: ${name}`;
     } catch (err) {
       return `tool ${name} failed: ${err instanceof Error ? err.message : String(err)}`;

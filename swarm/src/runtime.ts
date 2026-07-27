@@ -78,6 +78,14 @@ export interface RuntimeAdapter {
    * @param target - Optional tmux target pane within the session (default: first pane)
    */
   sendKeys(sessionName: string, keys: string, target?: string): Promise<void>;
+
+  /**
+   * Deliver arbitrary text as INPUT (bracketed paste + Enter). Unlike
+   * sendKeys, the text is never interpreted as tmux key names — a message
+   * that happens to be "Enter" is typed, not pressed. The input surface for
+   * persistent agent sessions (design: tmux is input-only).
+   */
+  sendText(sessionName: string, text: string, target?: string): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -206,6 +214,20 @@ export class TmuxRuntime implements RuntimeAdapter {
       : sessionName;
 
     await this.tmux(['send-keys', '-t', tmuxTarget, keys, 'Enter']);
+  }
+
+  async sendText(
+    sessionName: string,
+    text: string,
+    target?: string,
+  ): Promise<void> {
+    const tmuxTarget = target ? `${sessionName}:${target}` : sessionName;
+    const buffer = `smith-input-${Date.now()}`;
+    // set-buffer + paste-buffer -p = bracketed paste: multi-line text arrives
+    // as one input block; -d frees the buffer after pasting.
+    await this.tmux(['set-buffer', '-b', buffer, '--', text]);
+    await this.tmux(['paste-buffer', '-p', '-d', '-b', buffer, '-t', tmuxTarget]);
+    await this.tmux(['send-keys', '-t', tmuxTarget, 'Enter']);
   }
 
   // ── Private helpers ──────────────────────────────────────────────────
@@ -427,6 +449,18 @@ export class DockerRuntime implements RuntimeAdapter {
       'exec', sessionName,
       'tmux', 'send-keys', '-t', tmuxTarget, keys, 'Enter',
     ]);
+  }
+
+  async sendText(
+    sessionName: string,
+    text: string,
+    target?: string,
+  ): Promise<void> {
+    const tmuxTarget = target ?? 'main';
+    const buffer = `smith-input-${Date.now()}`;
+    await this.docker(['exec', sessionName, 'tmux', 'set-buffer', '-b', buffer, '--', text]);
+    await this.docker(['exec', sessionName, 'tmux', 'paste-buffer', '-p', '-d', '-b', buffer, '-t', tmuxTarget]);
+    await this.docker(['exec', sessionName, 'tmux', 'send-keys', '-t', tmuxTarget, 'Enter']);
   }
 
   // ── Private helpers ──────────────────────────────────────────────────

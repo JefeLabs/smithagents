@@ -308,6 +308,12 @@ export const SQUAD_MEMBERS: SquadMember[] = [
   { name: 'Soledad', pane: 4, model: 'claude-sonnet', role: 'developer', squad: 'gamma' }
 ];
 
+/**
+ * The live squad roster. Seeded from the defaults below on first boot, then
+ * owned by `.smith/squads/*.json` — squads are DATA, like agents: editable,
+ * deletable, and cleared by a settings reset. Mutated in place by
+ * setSquadRoster so existing holders of this array see the change.
+ */
 export const SQUAD_ROSTER: SquadDefinition[] = [
   {
     id: 'alpha',
@@ -325,6 +331,59 @@ export const SQUAD_ROSTER: SquadDefinition[] = [
     leader: SQUAD_MEMBERS.find(m => m.squad === 'gamma' && m.role === 'leader')!
   }
 ];
+
+/** Replace the live roster in place (boot-time load, reset). */
+export function setSquadRoster(defs: SquadDefinition[]): void {
+  SQUAD_ROSTER.length = 0;
+  SQUAD_ROSTER.push(...defs);
+}
+
+/** Serializable form of a squad — what a .smith/squads/*.json file holds. */
+export interface SquadFile {
+  id: string;
+  members: Array<{ name: string; pane: number; model: SquadModel; role: SquadRole }>;
+}
+
+function toDefinition(file: SquadFile): SquadDefinition {
+  const members = file.members.map((m) => ({ ...m, squad: file.id as SquadId })) as SquadDefinition['members'];
+  const leader = members.find((m) => m.role === 'leader') ?? members[0];
+  return { id: file.id as SquadId, members, leader };
+}
+
+/**
+ * Load squads from `dir`. On first ever boot the directory does not exist:
+ * seed it with the built-in roster so it is visible and editable on disk.
+ * An existing but EMPTY directory means "no squads" — that is a valid state
+ * (e.g. after a settings reset), never a reason to resurrect the defaults.
+ */
+export async function loadSquadsFromDir(dir: string): Promise<SquadDefinition[]> {
+  const { readdir, readFile, mkdir, writeFile } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  let entries: string[];
+  try {
+    entries = await readdir(dir);
+  } catch {
+    await mkdir(dir, { recursive: true });
+    for (const squad of SQUAD_ROSTER) {
+      const file: SquadFile = {
+        id: squad.id,
+        members: squad.members.map((m) => ({ name: m.name, pane: m.pane, model: m.model, role: m.role })),
+      };
+      await writeFile(join(dir, `${squad.id}.json`), JSON.stringify(file, null, 2));
+    }
+    return [...SQUAD_ROSTER];
+  }
+  const defs: SquadDefinition[] = [];
+  for (const entry of entries.filter((f) => f.endsWith('.json'))) {
+    const raw = await readFile(join(dir, entry), 'utf8');
+    const parsed = JSON.parse(raw) as SquadFile;
+    if (!parsed.id || !Array.isArray(parsed.members) || parsed.members.length === 0) {
+      throw new Error(`Invalid squad file ${entry}: requires id and a non-empty members[]`);
+    }
+    defs.push(toDefinition(parsed));
+  }
+  return defs;
+}
 
 export class SquadPool {
   private activeAssignments = new Map<SquadId, string>();

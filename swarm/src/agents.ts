@@ -1,11 +1,12 @@
 // Composed-agent registry — the swarm owns agent identity as data.
 // One JSON file per agent under .smith/agents/. Replaces the old anonymous
 // name pool + hardcoded squad rosters (see the v1 design spec).
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { Gender, Reactions } from './personas.js';
 
 export interface AgentEngine {
-  cli: 'agy' | 'claude' | 'codex';
+  cli: 'agy' | 'claude' | 'codex' | 'opencode' | 'copilot';
   model: string;
 }
 
@@ -31,6 +32,15 @@ export interface ComposedAgent {
   voice?: AgentVoice;
   avatarRing?: string;
   channels?: string[];
+  /** Stereotype the persona was seeded from (wizard provenance). */
+  stereotype?: string;
+  gender?: Gender;
+  /** Free-text history that colors how they talk about their work. */
+  backstory?: string;
+  /** What they say across the agreement spectrum — pre-synthesized for instant playback. */
+  reactions?: Partial<Reactions>;
+  /** Answers to the getting-to-know-you questions, cached as audio. */
+  quickAnswers?: Record<string, string>;
 }
 
 function assertAgent(file: string, v: unknown): ComposedAgent {
@@ -72,6 +82,15 @@ export async function loadAgents(dir: string): Promise<ComposedAgent[]> {
     agents.push(assertAgent(file, parsed));
   }
   return agents;
+}
+
+/** Write one composed agent to `dir`. Used by the creation wizard. */
+export async function saveAgent(dir: string, agent: ComposedAgent): Promise<void> {
+  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(agent.id)) {
+    throw new Error(`Invalid agent id "${agent.id}": use lowercase letters, digits and dashes`);
+  }
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, `${agent.id}.json`), `${JSON.stringify(agent, null, 2)}\n`);
 }
 
 /** Resolve an agent by id (preferred) or name, case-insensitive. */
