@@ -52,6 +52,7 @@ import { mkdir, rename } from 'node:fs/promises';
 import { loadAgents, findAgent, saveAgent, type ComposedAgent } from './agents.js';
 import { QUICK_QUESTIONS, STEREOTYPES, JOB_ROLES, ENGINES, findStereotype, findJobRole, findEngine, REACTION_LEVELS } from './personas.js';
 import { AgentSessionManager } from './agent-sessions.js';
+import { isValidModelId } from './drivers/model-flag.js';
 import { loadWorkspacesFromDir, resolveRepo, type Workspace } from './workspaces.js';
 import { MeetingOrchestrator } from './meetings.js';
 import { loadLiveKitConfig } from './config.js';
@@ -800,6 +801,15 @@ export class OrchestratorServer {
 
       if (b.engine?.cli && !findEngine(b.engine.cli)) {
         return reply.status(400).send({ error: `Unknown CLI: ${b.engine.cli}` });
+      }
+      // The model reaches a shell command string at launch. Reject a bad id
+      // here so the wizard shows a clear error, rather than at launch time —
+      // and so a malformed one is never persisted to an agent file.
+      const requestedModel = b.engine?.model?.trim();
+      if (requestedModel && requestedModel !== 'default' && !isValidModelId(requestedModel)) {
+        return reply.status(400).send({
+          error: `Invalid model id: ${requestedModel}. Use letters, digits, and . _ : / - only (e.g. "claude-opus" or "anthropic/claude-sonnet").`,
+        });
       }
 
       const agentsDir = resolve(process.cwd(), '.smith/agents');

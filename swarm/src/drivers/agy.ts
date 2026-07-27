@@ -12,6 +12,7 @@
 // manager fail fast at launch instead of hanging until the readiness timeout.
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { modelFlag } from './model-flag.js';
 import type { AgentProfile, NormalizedMessage, ToolDriver } from './types.js';
 
 export class AgyDriver implements ToolDriver {
@@ -52,12 +53,3 @@ export class AgyDriver implements ToolDriver {
   }
 }
 
-/**
- * `agy` takes `--model <id>`. A blank or "default" model means "whatever the
- * tool is configured for" — emit nothing rather than an invalid flag.
- */
-function modelFlag(model?: string): string {
-  const id = model?.trim();
-  if (!id || id === 'default') return '';
-  return ` --model ${id}`;
-}

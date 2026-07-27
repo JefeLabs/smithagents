@@ -11,6 +11,7 @@ import { readdir, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { SessionParseError } from './errors.js';
+import { modelFlag } from './model-flag.js';
 import type { AgentProfile, NormalizedMessage, ToolDriver } from './types.js';
 
 /** stop_reason values that end a turn; 'tool_use' and null are mid-turn. */
@@ -118,12 +119,3 @@ export class ClaudeDriver implements ToolDriver {
   }
 }
 
-/**
- * `claude` takes `--model <id>`. A blank or "default" model means "whatever the
- * tool is configured for" — emit nothing rather than an invalid flag.
- */
-function modelFlag(model?: string): string {
-  const id = model?.trim();
-  if (!id || id === 'default') return '';
-  return ` --model ${id}`;
-}
