@@ -1,4 +1,4 @@
-import { Check, ChevronLeft, ChevronRight, Play, Search } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Play, Search, Sparkles } from "lucide-react";
 import type { MouseEvent } from "react";
 import { useEffect, useState } from "react";
 
@@ -20,8 +20,15 @@ interface CatalogVoice {
   description?: string;
 }
 
+interface JobRole {
+  id: string;
+  label: string;
+  directives: string;
+}
+
 interface Catalog {
   stereotypes: Stereotype[];
+  jobRoles: JobRole[];
   quickQuestions: Array<{ id: string; question: string }>;
   reactionLevels: string[];
 }
@@ -41,7 +48,7 @@ const LEVEL_LABELS: Record<string, string> = {
   strong_disagree: "Strongly disagrees",
 };
 
-const STEPS = ["Stereotype", "Identity", "Voice", "Reactions", "Answers"] as const;
+const STEPS = ["Stereotype", "Role", "Identity", "Voice", "Reactions", "Answers"] as const;
 
 /**
  * Agent creation wizard: stereotype → identity → voice → reactions → answers.
@@ -53,6 +60,9 @@ export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) 
   const [step, setStep] = useState(0);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [stereotype, setStereotype] = useState<Stereotype | null>(null);
+  const [jobRole, setJobRole] = useState<JobRole | null>(null);
+  const [hint, setHint] = useState("");
+  const [generating, setGenerating] = useState(false);
   const [name, setName] = useState("");
   const [role, setRole] = useState("");
   const [gender, setGender] = useState<"male" | "female" | "neutral">("neutral");
@@ -63,6 +73,8 @@ export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) 
   const [voices, setVoices] = useState<CatalogVoice[]>([]);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [voiceSearch, setVoiceSearch] = useState("");
+  const [generatedStyle, setGeneratedStyle] = useState<string | undefined>();
+  const [generatedDirectives, setGeneratedDirectives] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -106,16 +118,50 @@ export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) 
   // step only: search and gender re-query on submit/toggle, not per keystroke.
   // biome-ignore lint/correctness/useExhaustiveDependencies: see above
   useEffect(() => {
-    if (open && step === 2) void loadVoices(voiceSearch, gender);
+    if (open && step === 3) void loadVoices(voiceSearch, gender);
   }, [open, step]);
 
   if (!open) return null;
 
   const pickStereotype = (s: Stereotype) => {
     setStereotype(s);
-    setRole((r) => r || s.label);
     setReactions(Object.fromEntries(Object.entries(s.reactions).map(([level, lines]) => [level, lines[0] ?? ""])));
     setStep(1);
+  };
+
+  /** One model call fills every field; the user edits whatever they want after. */
+  const generate = async () => {
+    setGenerating(true);
+    setError(null);
+    const draft = (await fetch(`http://${BASE}/agents/generate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ stereotype: stereotype?.id, jobRole: jobRole?.id, gender, hint }),
+    })
+      .then((r) => r.json())
+      .catch((err: unknown) => ({ error: String(err) }))) as {
+      error?: string;
+      name?: string;
+      role?: string;
+      backstory?: string;
+      style?: string;
+      directives?: string;
+      reactions?: Array<{ level: string; line: string }>;
+      quickAnswers?: Array<{ id: string; answer: string }>;
+    };
+    setGenerating(false);
+    if (draft.error) {
+      setError(draft.error);
+      return;
+    }
+    setName(draft.name ?? "");
+    setRole(draft.role ?? "");
+    setBackstory(draft.backstory ?? "");
+    setGeneratedStyle(draft.style);
+    setGeneratedDirectives(draft.directives);
+    if (draft.reactions) setReactions(Object.fromEntries(draft.reactions.map((r) => [r.level, r.line])));
+    if (draft.quickAnswers) setAnswers(Object.fromEntries(draft.quickAnswers.map((a) => [a.id, a.answer])));
+    setStep(2);
   };
 
   const preview = async (id: string) => {
@@ -140,8 +186,9 @@ export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) 
         gender,
         backstory,
         stereotype: stereotype?.id,
-        persona: { style: stereotype?.style },
-        directives: stereotype?.directives,
+        jobRole: jobRole?.id,
+        persona: { style: generatedStyle ?? stereotype?.style },
+        directives: generatedDirectives ?? jobRole?.directives ?? stereotype?.directives,
         voice: voiceId ? { voiceId } : undefined,
         reactions: Object.fromEntries(Object.entries(reactions).map(([k, v]) => [k, [v]])),
         quickAnswers: answers,
@@ -162,7 +209,7 @@ export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) 
     setVoiceId("");
   };
 
-  const canAdvance = step === 0 ? Boolean(stereotype) : step === 1 ? name.trim().length > 0 : true;
+  const canAdvance = step === 0 ? Boolean(stereotype) : step === 2 ? name.trim().length > 0 : true;
   const onScrimClick = (e: MouseEvent<HTMLDivElement>) => {
     if (e.target === e.currentTarget) onClose();
   };
@@ -206,6 +253,47 @@ export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) 
 
           {step === 1 && (
             <div className="wizard__form">
+              <p className="wizard__hint">
+                The job says what they own; the archetype says how they say it. Pick a role, then let AI write the rest
+                — or fill it in yourself.
+              </p>
+              <div className="role-grid">
+                {(catalog?.jobRoles ?? []).map((r) => (
+                  <button
+                    key={r.id}
+                    type="button"
+                    className={`chip${jobRole?.id === r.id ? " is-picked" : ""}`}
+                    onClick={() => setJobRole(r)}
+                  >
+                    {r.label}
+                  </button>
+                ))}
+              </div>
+              <label>
+                Anything specific? (optional)
+                <input
+                  value={hint}
+                  onChange={(e) => setHint(e.target.value)}
+                  placeholder="veteran who has seen three failed launches"
+                />
+              </label>
+              <button
+                type="button"
+                className="settings-btn settings-btn--primary settings-btn--wide"
+                onClick={() => void generate()}
+                disabled={generating}
+              >
+                <Sparkles size={12} strokeWidth={2} />{" "}
+                {generating ? "writing the persona…" : "generate everything with AI"}
+              </button>
+              <button type="button" className="settings-btn settings-btn--wide" onClick={() => setStep(2)}>
+                skip — I'll write it myself
+              </button>
+            </div>
+          )}
+
+          {step === 2 && (
+            <div className="wizard__form">
               <label>
                 Name
                 <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Fabian" />
@@ -239,7 +327,7 @@ export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) 
             </div>
           )}
 
-          {step === 2 && (
+          {step === 3 && (
             <div className="voice-browser">
               <div className="voice-browser__search">
                 <Search size={13} strokeWidth={2} />
@@ -285,7 +373,7 @@ export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) 
             </div>
           )}
 
-          {step === 3 && (
+          {step === 4 && (
             <div className="wizard__form">
               <p className="wizard__hint">
                 What they say across the agreement spectrum. Cached as audio on create, so they fire instantly.

@@ -50,7 +50,7 @@ import type {
 import { execFile } from 'node:child_process';
 import { mkdir, rename } from 'node:fs/promises';
 import { loadAgents, findAgent, saveAgent, type ComposedAgent } from './agents.js';
-import { QUICK_QUESTIONS, STEREOTYPES, findStereotype, REACTION_LEVELS } from './personas.js';
+import { QUICK_QUESTIONS, STEREOTYPES, JOB_ROLES, findStereotype, findJobRole, REACTION_LEVELS } from './personas.js';
 import { AgentSessionManager } from './agent-sessions.js';
 import { loadWorkspacesFromDir, resolveRepo, type Workspace } from './workspaces.js';
 import { MeetingOrchestrator } from './meetings.js';
@@ -781,7 +781,7 @@ export class OrchestratorServer {
 
     // ── Agent creation catalog + registry writes ───────────────────────
     this.app.get('/agents/catalog', async () => {
-      return { stereotypes: STEREOTYPES, quickQuestions: QUICK_QUESTIONS, reactionLevels: REACTION_LEVELS };
+      return { stereotypes: STEREOTYPES, jobRoles: JOB_ROLES, quickQuestions: QUICK_QUESTIONS, reactionLevels: REACTION_LEVELS };
     });
 
     this.app.post('/agents', async (req, reply) => {
@@ -790,6 +790,7 @@ export class OrchestratorServer {
       const id = (b.id ?? b.name).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
       const seed = b.stereotype ? findStereotype(b.stereotype) : undefined;
       if (b.stereotype && !seed) return reply.status(400).send({ error: `Unknown stereotype: ${b.stereotype}` });
+      const job = (b as { jobRole?: string }).jobRole ? findJobRole((b as { jobRole?: string }).jobRole!) : undefined;
 
       const agentsDir = resolve(process.cwd(), '.smith/agents');
       const existing = await loadAgents(agentsDir);
@@ -799,8 +800,9 @@ export class OrchestratorServer {
       const agent: ComposedAgent = {
         id,
         name: b.name.trim(),
-        role: b.role?.trim() || seed?.label || 'Specialist',
-        directives: b.directives?.trim() || seed?.directives || 'You are a specialist on this team.',
+        role: b.role?.trim() || job?.label || seed?.label || 'Specialist',
+        // Job role says WHAT they own; the stereotype colors HOW they say it.
+        directives: b.directives?.trim() || job?.directives || seed?.directives || 'You are a specialist on this team.',
         engine: { cli: b.engine?.cli ?? 'claude', model: b.engine?.model ?? 'claude-sonnet' },
         persona: { style: b.persona?.style?.trim() || seed?.style || '' },
         stereotype: b.stereotype,

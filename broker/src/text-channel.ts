@@ -79,6 +79,7 @@ export class TextChannel {
     /** Agent creation: catalog browse, voice audition, and registry writes. */
     private readonly creation?: {
       catalog(): Promise<Record<string, unknown>>;
+      generate(body: Record<string, unknown>): Promise<Record<string, unknown>>;
       voices(query: Record<string, string>): Promise<Record<string, unknown>>;
       preview(voiceId: string, text: string): Promise<Buffer>;
       create(body: Record<string, unknown>): Promise<Record<string, unknown>>;
@@ -187,6 +188,22 @@ export class TextChannel {
               (audio) => res.writeHead(200, { ...CORS, 'content-type': 'audio/mpeg' }).end(audio),
               fail,
             );
+          });
+          return;
+        }
+        if (req.method === 'POST' && url.pathname === '/agents/generate') {
+          let body = '';
+          req.on('data', (c) => {
+            body += c;
+          });
+          req.on('end', () => {
+            let parsed: Record<string, unknown> = {};
+            try {
+              parsed = JSON.parse(body || '{}') as Record<string, unknown>;
+            } catch {
+              return json(400, { error: 'body must be JSON' });
+            }
+            void this.creation!.generate(parsed).then((draft) => json(200, draft), fail);
           });
           return;
         }

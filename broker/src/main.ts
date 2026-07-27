@@ -18,6 +18,7 @@ import type { RosterState, UiRoster } from './broker.ts';
 import { SessionManager, type Session } from './sessions.ts';
 import { DeepgramSttStream, type LiveLike } from './stt.ts';
 import { SwarmClient, type SwarmSquad } from './swarm-client.ts';
+import { PersonaGenerator } from './persona-generator.ts';
 import { VoiceCatalog } from './voice-catalog.ts';
 import { TextChannel, type RosterEntry } from './text-channel.ts';
 import { mintRoomToken } from './token.ts';
@@ -173,6 +174,9 @@ const sessionStore = {
   },
 };
 const sessionManager = new SessionManager(sessionStore);
+
+// One model call fills the whole creation wizard (structured output).
+const personaGenerator = new PersonaGenerator(anthropic as never);
 
 const SQUAD_RINGS: Record<string, string> = { alpha: '#5fd0b0', beta: '#f2778f', gamma: '#9b8cff' };
 
@@ -389,6 +393,31 @@ const textChannel = new TextChannel(
   {
     // Agent creation: the swarm owns the registry, the broker owns voices.
     catalog: () => swarm.agentCatalog(),
+    generate: async (body) => {
+      const b = body as Record<string, string>;
+      const catalog = (await swarm.agentCatalog()) as {
+        stereotypes?: Array<{ id: string; label: string; style: string }>;
+        jobRoles?: Array<{ id: string; label: string; directives: string }>;
+        quickQuestions?: Array<{ id: string; question: string }>;
+        reactionLevels?: string[];
+      };
+      const stereotype = catalog.stereotypes?.find((s) => s.id === b.stereotype);
+      const jobRole = catalog.jobRoles?.find((r) => r.id === b.jobRole);
+      const crew = directory.snapshot().map((p) => `${p.agent.name} (${p.agent.role})`);
+      const draft = await personaGenerator.generate({
+        stereotypeLabel: stereotype?.label,
+        stereotypeStyle: stereotype?.style,
+        jobRoleLabel: jobRole?.label,
+        jobRoleDirectives: jobRole?.directives,
+        gender: b.gender,
+        hint: b.hint,
+        crewContext: crew.join(', '),
+        existingNames: directory.snapshot().map((p) => p.agent.name),
+        reactionLevels: catalog.reactionLevels ?? [],
+        quickQuestions: catalog.quickQuestions ?? [],
+      });
+      return draft as unknown as Record<string, unknown>;
+    },
     voices: async (query) => {
       if (!voiceCatalog) return { voices: [], hasMore: false, error: 'no ElevenLabs key configured' };
       return voiceCatalog.browse({

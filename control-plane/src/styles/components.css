@@ -1291,3 +1291,8 @@
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 50%, transparent);
 }
+.role-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
