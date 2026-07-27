@@ -37,12 +37,12 @@ export class ClaudeDriver implements ToolDriver {
 
   constructor(private readonly configDir: string = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')) {}
 
-  interactiveCommand(baseCommand: string): string {
-    return baseCommand;
+  interactiveCommand(baseCommand: string, model?: string): string {
+    return `${baseCommand}${modelFlag(model)}`;
   }
 
-  taskCommand(baseCommand: string, escapedPrompt: string): string {
-    return `${baseCommand} --print '${escapedPrompt}'`;
+  taskCommand(baseCommand: string, escapedPrompt: string, model?: string): string {
+    return `${baseCommand}${modelFlag(model)} --print '${escapedPrompt}'`;
   }
 
   sessionDir(cwd: string): string {
@@ -116,4 +116,14 @@ export class ClaudeDriver implements ToolDriver {
     await writeFile(join(worktreePath, 'CLAUDE.md'), lines.join('\n'));
     return ['CLAUDE.md'];
   }
+}
+
+/**
+ * `claude` takes `--model <id>`. A blank or "default" model means "whatever the
+ * tool is configured for" — emit nothing rather than an invalid flag.
+ */
+function modelFlag(model?: string): string {
+  const id = model?.trim();
+  if (!id || id === 'default') return '';
+  return ` --model ${id}`;
 }

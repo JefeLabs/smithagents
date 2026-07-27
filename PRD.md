@@ -121,19 +121,19 @@ Ours is a *council*; theirs is a *workbench*.
 
 **Next up (ordered by leverage):**
 
-1. **Honor `engine.cli` + `engine.model` at launch (currently decorative).**
-   The agent definition already carries both, the creation wizard collects
-   them, and the CLI *is* honored — but the MODEL never reaches the process.
-   Both launch paths build their command from `config.agentCommands[cli]`
-   alone (`dispatcher.buildAgentCommand`, `AgentSessionManager.create`), so an
-   agent configured for opus and one configured for haiku start the identical
-   process. Fix: the driver owns the model flag (claude `--model`, codex
-   `--model`, opencode `--model`, copilot `--model`), applied for BOTH task
-   runs and the warm tmux session, so the tmux process an agent is
-   instantiated in is fully determined by its definition. Until this lands,
-   model choice in the wizard is a stored preference, not a runtime fact —
-   and a heterogeneous crew (the differentiator behind driver breadth) is not
-   actually heterogeneous.
+1. ~~**Honor `engine.cli` + `engine.model` at launch.**~~ **Done (2026-07-27).**
+   Each driver now owns its model flag via `interactiveCommand(base, model)` /
+   `taskCommand(base, prompt, model)`, so the process an agent is instantiated
+   in is fully determined by its definition — for both warm tmux sessions and
+   task runs. A blank or `default` model emits no flag rather than an invalid
+   one. Wiring this up surfaced a second, larger bug: `POST /tasks` computed
+   the composed agent's `profile` but never attached it to the manifest, so
+   `driver.materialize` was a silent no-op and **every delegated task ran with
+   no persona at all** — generic agents wearing a name. Both fields now flow
+   through `enrichFromComposedAgent()`, covered by tests, and verified live
+   (the persona file lands in the task worktree; `--model` appears in the real
+   tmux command). Lesson worth keeping: unit tests passed while the feature was
+   dead, because the bug was in the wiring, not the units.
 2. **Session reconciliation on boot.** tmux keeps agent processes alive across
    a swarm restart, but the task registry and warm-session manager are
    in-memory, so the orchestrator forgets sessions that are still running. We

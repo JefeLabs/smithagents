@@ -378,6 +378,14 @@ export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) 
                       </button>
                     ))}
                   </div>
+                  <label>
+                    Model passed to {engine.label}
+                    <input
+                      value={model}
+                      onChange={(e) => setModel(e.target.value)}
+                      placeholder="pick above, or type any id this CLI accepts"
+                    />
+                  </label>
                   <p className="wizard__hint">
                     {engine.warmSessions
                       ? "Supports warm sessions — this agent can hold context across turns."

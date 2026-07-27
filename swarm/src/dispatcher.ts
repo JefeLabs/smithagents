@@ -260,7 +260,7 @@ export class Dispatcher extends EventEmitter {
     // are characterized (design §4).
     const driver = getDriver(manifest.agent);
     const invocation = driver
-      ? driver.taskCommand(agentCmd, escapedPrompt)
+      ? driver.taskCommand(agentCmd, escapedPrompt, manifest.model)
       : `${agentCmd} ${this.getPromptFlag(manifest.agent)} '${escapedPrompt}'`;
 
     return [

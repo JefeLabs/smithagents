@@ -33,12 +33,12 @@ export class CodexDriver implements ToolDriver {
 
   constructor(private readonly configDir: string = process.env.CODEX_HOME ?? join(homedir(), '.codex')) {}
 
-  interactiveCommand(baseCommand: string): string {
-    return baseCommand;
+  interactiveCommand(baseCommand: string, model?: string): string {
+    return `${baseCommand}${modelFlag(model)}`;
   }
 
-  taskCommand(baseCommand: string, escapedPrompt: string): string {
-    return `${baseCommand} exec '${escapedPrompt}'`;
+  taskCommand(baseCommand: string, escapedPrompt: string, model?: string): string {
+    return `${baseCommand}${modelFlag(model)} exec '${escapedPrompt}'`;
   }
 
   sessionDir(_cwd: string): string {
@@ -124,4 +124,14 @@ export class CodexDriver implements ToolDriver {
     );
     return ['AGENTS.md'];
   }
+}
+
+/**
+ * `codex` takes `--model <id>`. A blank or "default" model means "whatever the
+ * tool is configured for" — emit nothing rather than an invalid flag.
+ */
+function modelFlag(model?: string): string {
+  const id = model?.trim();
+  if (!id || id === 'default') return '';
+  return ` --model ${id}`;
 }

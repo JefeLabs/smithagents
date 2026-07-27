@@ -31,11 +31,14 @@ export interface ToolDriver {
    */
   readonly warmSessionsSupported?: boolean;
 
-  /** Interactive TUI command for a warm session (base command from config). */
-  interactiveCommand(baseCommand: string): string;
+  /**
+   * Interactive TUI command for a warm session. `model` comes from the agent
+   * definition — the driver spells the flag its own tool understands.
+   */
+  interactiveCommand(baseCommand: string, model?: string): string;
 
   /** One-shot command for a fire-and-forget task run. */
-  taskCommand(baseCommand: string, escapedPrompt: string): string;
+  taskCommand(baseCommand: string, escapedPrompt: string, model?: string): string;
 
   /** Where this tool persists session files for work rooted at `cwd`. */
   sessionDir(cwd: string): string;

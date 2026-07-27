@@ -115,7 +115,9 @@ export class AgentSessionManager {
     this.sessions.set(id, state);
 
     state.preexisting = new Set(await driver.listSessionFiles(cwd));
-    await this.runtime.launch(state.tmuxSession, driver.interactiveCommand(baseCommand), cwd);
+    // The tmux process an agent lives in is fully determined by its
+    // definition: its CLI picks the binary, its model picks the flag.
+    await this.runtime.launch(state.tmuxSession, driver.interactiveCommand(baseCommand, agent.engine.model), cwd);
 
     // Readiness: the TUI is up and stays up. Some tools (claude) only write
     // their session file once the first turn happens, so the file is

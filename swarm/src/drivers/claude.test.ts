@@ -78,3 +78,17 @@ test('turn completion: terminal stop_reason after the send marker, never tool_us
 test('sessionDir is rooted in the configured claude home', () => {
   assert.equal(driver.sessionDir('/work/x'), '/tmp/fake-claude-home/projects/-work-x');
 });
+
+test('the agent definition determines the launched process: model flag on both paths', () => {
+  // A definition set to opus and one set to haiku must NOT produce the same
+  // command — that was the bug this closes.
+  assert.equal(driver.interactiveCommand('claude --dsp', 'claude-opus'), 'claude --dsp --model claude-opus');
+  assert.equal(driver.interactiveCommand('claude --dsp', 'claude-haiku'), 'claude --dsp --model claude-haiku');
+  assert.match(driver.taskCommand('claude --dsp', 'do it', 'claude-opus'), /--model claude-opus .*--print 'do it'|--model claude-opus/);
+});
+
+test('no model, or "default", emits no flag rather than an invalid one', () => {
+  assert.equal(driver.interactiveCommand('claude'), 'claude');
+  assert.equal(driver.interactiveCommand('claude', '  '), 'claude');
+  assert.equal(driver.interactiveCommand('claude', 'default'), 'claude');
+});

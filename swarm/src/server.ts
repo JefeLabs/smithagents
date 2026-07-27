@@ -327,13 +327,11 @@ export class OrchestratorServer {
 
       // Resolve the composed-agent profile (broker sends composedAgentId) so
       // the dispatcher can materialize it into the worktree (design §5).
-      let profile: TaskManifest['profile'];
       const composedId = (body.metadata as Record<string, unknown> | undefined)?.composedAgentId;
-      if (typeof composedId === 'string') {
-        const registryAgents = await loadAgents(resolve(process.cwd(), '.smith/agents'));
-        const composed = registryAgents.find((a) => a.id === composedId);
-        if (composed) profile = { name: composed.name, role: composed.role, directives: composed.directives };
-      }
+      const { profile, model } = enrichFromComposedAgent(
+        typeof composedId === 'string' ? await loadAgents(resolve(process.cwd(), '.smith/agents')) : [],
+        composedId,
+      );
 
       const taskId = randomUUID();
       const agentName = server.namePool.claim(taskId);
@@ -354,6 +352,8 @@ export class OrchestratorServer {
         createdAt: new Date().toISOString(),
         priority: body.priority ?? 'normal',
         metadata: body.metadata,
+        profile,
+        model,
       };
 
       // Queue it
@@ -1364,4 +1364,23 @@ if (isMain) {
     console.error('Failed to start server:', err);
     process.exit(1);
   });
+}
+
+/**
+ * A delegated task inherits its identity from the composed agent that was
+ * addressed: the persona the driver materializes into the worktree, and the
+ * model its CLI is launched with. Both must land on the manifest — dropping
+ * either silently downgrades the task to a generic, default-model run.
+ */
+export function enrichFromComposedAgent(
+  agents: ComposedAgent[],
+  composedId: unknown,
+): { profile: TaskManifest['profile']; model: string | undefined } {
+  if (typeof composedId !== 'string') return { profile: undefined, model: undefined };
+  const composed = agents.find((a) => a.id === composedId);
+  if (!composed) return { profile: undefined, model: undefined };
+  return {
+    profile: { name: composed.name, role: composed.role, directives: composed.directives },
+    model: composed.engine?.model,
+  };
 }

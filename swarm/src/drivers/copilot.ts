@@ -22,12 +22,12 @@ export class CopilotDriver implements ToolDriver {
     return join(this.configDir, 'session-store.db');
   }
 
-  interactiveCommand(baseCommand: string): string {
-    return baseCommand;
+  interactiveCommand(baseCommand: string, model?: string): string {
+    return `${baseCommand}${modelFlag(model)}`;
   }
 
-  taskCommand(baseCommand: string, escapedPrompt: string): string {
-    return `${baseCommand} -p '${escapedPrompt}'`;
+  taskCommand(baseCommand: string, escapedPrompt: string, model?: string): string {
+    return `${baseCommand}${modelFlag(model)} -p '${escapedPrompt}'`;
   }
 
   sessionDir(_cwd: string): string {
@@ -76,4 +76,14 @@ export class CopilotDriver implements ToolDriver {
     );
     return ['.github/copilot-instructions.md'];
   }
+}
+
+/**
+ * `copilot` takes `--model <id>`. A blank or "default" model means "whatever the
+ * tool is configured for" — emit nothing rather than an invalid flag.
+ */
+function modelFlag(model?: string): string {
+  const id = model?.trim();
+  if (!id || id === 'default') return '';
+  return ` --model ${id}`;
 }

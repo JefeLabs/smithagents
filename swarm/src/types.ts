@@ -186,6 +186,9 @@ export interface TaskManifest {
     repoPath?: string;
   };
   agent: AgentType;            // Which CLI tool to use as Alpha
+  /** Model the CLI should run, from the composed agent's engine. Resolved
+   *  server-side; the driver spells the flag its tool understands. */
+  model?: string;
   runtime?: RuntimeType;       // Execution runtime (default from project or 'tmux')
   location?: LocationType;     // Where: local, docker, or remote
   createdAt: string;           // ISO 8601
