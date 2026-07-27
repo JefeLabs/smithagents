@@ -11,9 +11,11 @@ import type { AgentType, DockerConfig, OrchestratorConfig } from './types.js';
  * These are the raw commands that get composed with the task prompt.
  */
 const DEFAULT_AGENT_COMMANDS: Record<AgentType, string> = {
-  agy: 'agy code',
+  agy: 'agy --dangerously-skip-permissions',
   claude: 'claude --dangerously-skip-permissions',
   codex: 'codex --full-auto',
+  opencode: 'opencode',
+  copilot: 'copilot --allow-all-tools',
 };
 
 /**

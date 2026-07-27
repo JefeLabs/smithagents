@@ -152,6 +152,57 @@ export const JOB_ROLES: JobRole[] = [
   { id: 'research', label: 'Researcher', directives: 'You own investigation: gather sources, weigh evidence, and report what is known versus assumed.' },
 ];
 
+/**
+ * CLI engines an agent can run on. `warmSessions` reflects whether the tool
+ * persists a transcript we can read turn completion from — agy keeps
+ * conversations server-side, so it does task work and steering only.
+ */
+export interface EngineOption {
+  cli: string;
+  label: string;
+  models: string[];
+  warmSessions: boolean;
+  note?: string;
+}
+
+export const ENGINES: EngineOption[] = [
+  {
+    cli: 'claude',
+    label: 'Claude Code',
+    models: ['claude-opus', 'claude-sonnet', 'claude-haiku'],
+    warmSessions: true,
+  },
+  {
+    cli: 'codex',
+    label: 'Codex',
+    models: ['gpt-5-codex', 'gpt-5'],
+    warmSessions: true,
+  },
+  {
+    cli: 'opencode',
+    label: 'opencode',
+    models: ['anthropic/claude-sonnet', 'openai/gpt-5', 'local'],
+    warmSessions: true,
+  },
+  {
+    cli: 'copilot',
+    label: 'GitHub Copilot',
+    models: ['default', 'gpt-5', 'claude-sonnet'],
+    warmSessions: true,
+  },
+  {
+    cli: 'agy',
+    label: 'agy',
+    models: ['default'],
+    warmSessions: false,
+    note: 'Keeps conversations server-side — task work and steering only, no warm sessions.',
+  },
+];
+
+export function findEngine(cli: string): EngineOption | undefined {
+  return ENGINES.find((e) => e.cli === cli);
+}
+
 export function findJobRole(id: string): JobRole | undefined {
   return JOB_ROLES.find((r) => r.id === id);
 }

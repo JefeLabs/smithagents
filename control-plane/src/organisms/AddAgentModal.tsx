@@ -26,9 +26,18 @@ interface JobRole {
   directives: string;
 }
 
+interface EngineOption {
+  cli: string;
+  label: string;
+  models: string[];
+  warmSessions: boolean;
+  note?: string;
+}
+
 interface Catalog {
   stereotypes: Stereotype[];
   jobRoles: JobRole[];
+  engines: EngineOption[];
   quickQuestions: Array<{ id: string; question: string }>;
   reactionLevels: string[];
 }
@@ -48,7 +57,7 @@ const LEVEL_LABELS: Record<string, string> = {
   strong_disagree: "Strongly disagrees",
 };
 
-const STEPS = ["Stereotype", "Role", "Identity", "Voice", "Reactions", "Answers"] as const;
+const STEPS = ["Stereotype", "Role", "Identity", "Engine", "Voice", "Reactions", "Answers"] as const;
 
 /**
  * Agent creation wizard: stereotype → identity → voice → reactions → answers.
@@ -69,6 +78,8 @@ export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) 
   const [backstory, setBackstory] = useState("");
   const [reactions, setReactions] = useState<Record<string, string>>({});
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [engine, setEngine] = useState<EngineOption | null>(null);
+  const [model, setModel] = useState("");
   const [voiceId, setVoiceId] = useState("");
   const [voices, setVoices] = useState<CatalogVoice[]>([]);
   const [voiceError, setVoiceError] = useState<string | null>(null);
@@ -82,7 +93,14 @@ export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) 
     if (!open || catalog) return;
     void fetch(`http://${BASE}/agent-catalog`)
       .then((r) => r.json())
-      .then((c: Catalog) => setCatalog(c))
+      .then((c: Catalog) => {
+        setCatalog(c);
+        const first = c.engines?.[0];
+        if (first) {
+          setEngine(first);
+          setModel(first.models[0] ?? "");
+        }
+      })
       .catch(() => setError("Could not load the persona catalog — is the broker running?"));
   }, [open, catalog]);
 
@@ -118,7 +136,7 @@ export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) 
   // step only: search and gender re-query on submit/toggle, not per keystroke.
   // biome-ignore lint/correctness/useExhaustiveDependencies: see above
   useEffect(() => {
-    if (open && step === 3) void loadVoices(voiceSearch, gender);
+    if (open && step === 4) void loadVoices(voiceSearch, gender);
   }, [open, step]);
 
   if (!open) return null;
@@ -189,6 +207,7 @@ export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) 
         jobRole: jobRole?.id,
         persona: { style: generatedStyle ?? stereotype?.style },
         directives: generatedDirectives ?? jobRole?.directives ?? stereotype?.directives,
+        engine: engine ? { cli: engine.cli, model } : undefined,
         voice: voiceId ? { voiceId } : undefined,
         reactions: Object.fromEntries(Object.entries(reactions).map(([k, v]) => [k, [v]])),
         quickAnswers: answers,
@@ -328,6 +347,48 @@ export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) 
           )}
 
           {step === 3 && (
+            <div className="wizard__form">
+              <p className="wizard__hint">Which CLI this agent runs on, and the model it uses for delegated work.</p>
+              <div className="role-grid">
+                {(catalog?.engines ?? []).map((e) => (
+                  <button
+                    key={e.cli}
+                    type="button"
+                    className={`chip${engine?.cli === e.cli ? " is-picked" : ""}`}
+                    onClick={() => {
+                      setEngine(e);
+                      setModel(e.models[0] ?? "");
+                    }}
+                  >
+                    {e.label}
+                  </button>
+                ))}
+              </div>
+              {engine && (
+                <>
+                  <div className="role-grid">
+                    {engine.models.map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        className={`chip${model === m ? " is-picked" : ""}`}
+                        onClick={() => setModel(m)}
+                      >
+                        {m}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="wizard__hint">
+                    {engine.warmSessions
+                      ? "Supports warm sessions — this agent can hold context across turns."
+                      : (engine.note ?? "Task work and steering only.")}
+                  </p>
+                </>
+              )}
+            </div>
+          )}
+
+          {step === 4 && (
             <div className="voice-browser">
               <div className="voice-browser__search">
                 <Search size={13} strokeWidth={2} />
@@ -373,7 +434,7 @@ export function AddAgentModal({ open, onClose, onCreated }: AddAgentModalProps) 
             </div>
           )}
 
-          {step === 4 && (
+          {step === 5 && (
             <div className="wizard__form">
               <p className="wizard__hint">
                 What they say across the agreement spectrum. Cached as audio on create, so they fire instantly.

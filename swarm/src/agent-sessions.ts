@@ -74,6 +74,12 @@ export class AgentSessionManager {
   async create(agent: ComposedAgent, agentFileRaw: string, repoRoot: string, baseBranch: string): Promise<AgentSessionInfo> {
     const driver = (this.config.resolveDriver ?? getDriver)(agent.engine.cli);
     if (!driver) throw new ToolLaunchError(agent.engine.cli, 'no driver for this tool — task runs only');
+    if (driver.warmSessionsSupported === false) {
+      throw new ToolLaunchError(
+        agent.engine.cli,
+        'this tool keeps conversations server-side and persists no local transcript, so turn completion cannot be observed — it supports task runs and steering, not warm sessions',
+      );
+    }
     const baseCommand = this.config.agentCommands[agent.engine.cli];
     if (!baseCommand) throw new ToolLaunchError(agent.engine.cli, 'no configured command');
 
@@ -227,11 +233,16 @@ export class AgentSessionManager {
 
   private async parse(state: SessionState): Promise<NormalizedMessage[]> {
     if (!state.sessionFile) return [];
+    // Database-backed drivers read by handle; file drivers parse from disk.
+    if (state.driver.readMessages) return state.driver.readMessages(state.sessionFile);
     const content = await readFile(state.sessionFile, 'utf8').catch(() => '');
     return state.driver.parseSessionFile(content);
   }
 
   private async newest(files: string[]): Promise<string> {
+    // Database handles (db::<id>) come back newest-first from their query and
+    // have no mtime to compare.
+    if (files.some((f) => f.startsWith('db::'))) return files[0]!;
     const stats = await Promise.all(files.map(async (f) => ({ f, mtime: (await stat(f)).mtimeMs })));
     stats.sort((a, b) => b.mtime - a.mtime);
     return stats[0]!.f;

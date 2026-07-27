@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import type { Gender, Reactions } from './personas.js';
 
 export interface AgentEngine {
-  cli: 'agy' | 'claude' | 'codex';
+  cli: 'agy' | 'claude' | 'codex' | 'opencode' | 'copilot';
   model: string;
 }
 

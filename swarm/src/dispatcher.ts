@@ -272,11 +272,17 @@ export class Dispatcher extends EventEmitter {
   /**
    * Get the CLI flag used to pass the prompt to each agent type.
    */
+  /**
+   * Legacy per-tool prompt flags, used only for tools without a driver.
+   * Driven tools build their own invocation via driver.taskCommand.
+   */
   private getPromptFlag(agent: TaskManifest['agent']): string {
     switch (agent) {
       case 'agy':   return '--task';
       case 'claude': return '--print';
       case 'codex':  return '';  // codex uses positional arg
+      default:
+        return '--prompt';
     }
   }
 

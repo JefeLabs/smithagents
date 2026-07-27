@@ -24,6 +24,13 @@ export interface ToolDriver {
   /** Matches TaskManifest.agent / ComposedAgent.engine.cli. */
   readonly id: string;
 
+  /**
+   * False when the tool persists no local transcript, so turn completion
+   * cannot be observed honestly (agy). Such tools still run task work and
+   * accept steering; they just cannot host a warm session.
+   */
+  readonly warmSessionsSupported?: boolean;
+
   /** Interactive TUI command for a warm session (base command from config). */
   interactiveCommand(baseCommand: string): string;
 
@@ -41,6 +48,13 @@ export interface ToolDriver {
    * Throws SessionParseError (with the offending excerpt) on malformed input.
    */
   parseSessionFile(content: string): NormalizedMessage[];
+
+  /**
+   * Database-backed tools (opencode, copilot) read messages by handle instead
+   * of parsing a file. When present, the session manager prefers this and
+   * never reads the handle off disk.
+   */
+  readMessages?(handle: string): Promise<NormalizedMessage[]>;
 
   /**
    * Turn completion, detected ONLY from persisted state (design §3): true when

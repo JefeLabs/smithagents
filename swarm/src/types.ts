@@ -22,7 +22,7 @@ export type TaskStatus =
 /**
  * Supported CLI agent types that can serve as the Alpha agent.
  */
-export type AgentType = 'agy' | 'claude' | 'codex';
+export type AgentType = 'agy' | 'claude' | 'codex' | 'opencode' | 'copilot';
 
 /**
  * Execution runtime for task sessions.

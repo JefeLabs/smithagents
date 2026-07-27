@@ -50,7 +50,7 @@ import type {
 import { execFile } from 'node:child_process';
 import { mkdir, rename } from 'node:fs/promises';
 import { loadAgents, findAgent, saveAgent, type ComposedAgent } from './agents.js';
-import { QUICK_QUESTIONS, STEREOTYPES, JOB_ROLES, findStereotype, findJobRole, REACTION_LEVELS } from './personas.js';
+import { QUICK_QUESTIONS, STEREOTYPES, JOB_ROLES, ENGINES, findStereotype, findJobRole, findEngine, REACTION_LEVELS } from './personas.js';
 import { AgentSessionManager } from './agent-sessions.js';
 import { loadWorkspacesFromDir, resolveRepo, type Workspace } from './workspaces.js';
 import { MeetingOrchestrator } from './meetings.js';
@@ -781,7 +781,13 @@ export class OrchestratorServer {
 
     // ── Agent creation catalog + registry writes ───────────────────────
     this.app.get('/agents/catalog', async () => {
-      return { stereotypes: STEREOTYPES, jobRoles: JOB_ROLES, quickQuestions: QUICK_QUESTIONS, reactionLevels: REACTION_LEVELS };
+      return {
+        stereotypes: STEREOTYPES,
+        jobRoles: JOB_ROLES,
+        engines: ENGINES,
+        quickQuestions: QUICK_QUESTIONS,
+        reactionLevels: REACTION_LEVELS,
+      };
     });
 
     this.app.post('/agents', async (req, reply) => {
@@ -791,6 +797,10 @@ export class OrchestratorServer {
       const seed = b.stereotype ? findStereotype(b.stereotype) : undefined;
       if (b.stereotype && !seed) return reply.status(400).send({ error: `Unknown stereotype: ${b.stereotype}` });
       const job = (b as { jobRole?: string }).jobRole ? findJobRole((b as { jobRole?: string }).jobRole!) : undefined;
+
+      if (b.engine?.cli && !findEngine(b.engine.cli)) {
+        return reply.status(400).send({ error: `Unknown CLI: ${b.engine.cli}` });
+      }
 
       const agentsDir = resolve(process.cwd(), '.smith/agents');
       const existing = await loadAgents(agentsDir);
@@ -803,7 +813,10 @@ export class OrchestratorServer {
         role: b.role?.trim() || job?.label || seed?.label || 'Specialist',
         // Job role says WHAT they own; the stereotype colors HOW they say it.
         directives: b.directives?.trim() || job?.directives || seed?.directives || 'You are a specialist on this team.',
-        engine: { cli: b.engine?.cli ?? 'claude', model: b.engine?.model ?? 'claude-sonnet' },
+        engine: {
+          cli: b.engine?.cli ?? 'claude',
+          model: b.engine?.model ?? findEngine(b.engine?.cli ?? 'claude')?.models[0] ?? 'claude-sonnet',
+        },
         persona: { style: b.persona?.style?.trim() || seed?.style || '' },
         stereotype: b.stereotype,
         gender: b.gender,
