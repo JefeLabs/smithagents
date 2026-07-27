@@ -104,8 +104,56 @@ activity/steer/cancel paths. Test suites: broker 56, swarm 9, all green.
 
 ## 6. Roadmap / Open Items
 
+### 6.1 Infrastructure gaps (from the Orca comparison, 2026-07-27)
+
+Benchmarked against [Orca](https://www.onorca.dev/docs), an ADE for running
+coding agents in parallel worktrees. It drives agents the same way we do —
+long-lived CLIs in terminals, addressed by handle — so the differences are
+instructive rather than cosmetic. Ours is a *council*; theirs is a *workbench*.
+The items below are where their engineering is ahead and the gap is real.
+
+* **Session reconciliation on boot (highest leverage).** tmux keeps agent
+  processes alive across a swarm crash or restart — but the task registry and
+  the warm-session manager are both in-memory, so the orchestrator forgets
+  sessions that are still running. We pay tmux's costs and bank only half its
+  benefit. Fix: session names already encode the id (`task-<uuid>`,
+  `smith-warm-<uuid>`), so on boot `listByPrefix` and re-adopt live sessions,
+  the same self-healing pattern the roster and sessions already use. This
+  turns "agents survive a crash" from a fact about processes into a fact about
+  the product.
+* **Tool-driver breadth.** One working driver (claude) versus their five-plus
+  with account hot-swapping. This is also the *product* stake, not just parity:
+  a Gemini skeptic arguing with a Claude architect is a different product, not
+  a demo. Next: opencode, then agy characterization (h3).
+* **Turn completion — keep our approach, borrow their ergonomics.** They wait
+  for `tui-idle` (screen state), which is tool-agnostic but misfires on
+  spinners and long tool calls; we read the tool's persisted transcript, which
+  is precise but needs a driver per tool. Keep session-file detection; adopt
+  their documented *read-before-send* practice (we currently send blind).
+* **Persistent server mode.** They run a server clients attach to, so sessions
+  restore across laptop/web/mobile. Our equivalent is broker + swarm as a
+  reachable runtime rather than a pair of local processes.
+* **Per-workspace environment recipes.** Their `orca.yaml` spins an ephemeral
+  sandbox (Fly/Modal/Vercel/Docker) per worktree. Ours would extend the
+  workspace file with an environment block — a natural fit for the already
+  scoped `swarm/.smith/workspaces/*.json`.
+* **`--json` everywhere on the swarm CLI**, so automation does not scrape.
+* **Windows is out of reach while tmux is the substrate** (Unix-only). The
+  Tauri UI is cross-platform; the runtime is not. Accepted for now — revisit
+  only if Windows users appear.
+* **Mobile companion.** The iOS target exists; a read-mostly view (agent
+  status, recent output, call-on/cancel) is the pragmatic first version.
+
+**Deliberate non-goal:** do not build an in-app diff-review IDE. Our review
+surface is the draft PR — a team-shaped output — and competing on the
+individual developer's editor loop plays to someone else's strength.
+
+### 6.2 Product gaps
+
 * **Voices:** upgrade the ElevenLabs plan so the picked Latin library voices
   replace premade stand-ins (automatic — the fallback only fires on the 402).
+  The same plan gate blocks pre-caching of a new agent's reaction lines, and
+  catalog browsing additionally needs the key's `voices_read` permission.
   Remaining uncast: Fabian, Osvaldo, Fernando, Orlando, Sebastian.
 * **Voice meetings:** LiveKit path exists (room bridge, meeting polling,
   per-agent meeting TTS) but the in-app meeting UX (join/leave, who's
@@ -113,8 +161,9 @@ activity/steer/cancel paths. Test suites: broker 56, swarm 9, all green.
 * **Squad execution vs conversation:** user-formed squads and swarm-squad
   edits are conversation-layer only; making arbitrary squads *executable*
   requires generalizing swarm's fixed 4-pane squad dispatch.
-* **PR flow:** task branches (`smith/<id>`) are created but nothing opens PRs
-  yet; worktree cleanup policy after merge is undefined.
+* **PR flow:** shipped — completed tasks commit, push, and open a draft PR.
+  Still open: worktree cleanup policy after merge, and surfacing the PR link
+  in the work view (it currently rides the task result and the spoken note).
 * **iOS:** the Tauri iOS target builds from this codebase but needs Xcode.app
   on the build machine; mic permission plist is in place.
 * **UI polish:** composition errors are silent in the UI (broker returns
