@@ -121,23 +121,36 @@ Ours is a *council*; theirs is a *workbench*.
 
 **Next up (ordered by leverage):**
 
-1. **Session reconciliation on boot.** tmux keeps agent processes alive across
+1. **Honor `engine.cli` + `engine.model` at launch (currently decorative).**
+   The agent definition already carries both, the creation wizard collects
+   them, and the CLI *is* honored — but the MODEL never reaches the process.
+   Both launch paths build their command from `config.agentCommands[cli]`
+   alone (`dispatcher.buildAgentCommand`, `AgentSessionManager.create`), so an
+   agent configured for opus and one configured for haiku start the identical
+   process. Fix: the driver owns the model flag (claude `--model`, codex
+   `--model`, opencode `--model`, copilot `--model`), applied for BOTH task
+   runs and the warm tmux session, so the tmux process an agent is
+   instantiated in is fully determined by its definition. Until this lands,
+   model choice in the wizard is a stored preference, not a runtime fact —
+   and a heterogeneous crew (the differentiator behind driver breadth) is not
+   actually heterogeneous.
+2. **Session reconciliation on boot.** tmux keeps agent processes alive across
    a swarm restart, but the task registry and warm-session manager are
    in-memory, so the orchestrator forgets sessions that are still running. We
    pay tmux's costs and bank half its benefit. Session names already encode
    their ids (`task-<uuid>`, `smith-warm-<uuid>`): on boot, `listByPrefix` and
    re-adopt. Turns "agents survive a crash" from a fact about processes into a
    fact about the product.
-2. **Read-before-send in warm sessions.** We send blind; their CLI documents
+3. **Read-before-send in warm sessions.** We send blind; their CLI documents
    reading terminal state first. Cheap, and prevents typing into a TUI that is
    mid-prompt.
-3. **Persistent server mode.** A runtime clients attach to, so sessions restore
+4. **Persistent server mode.** A runtime clients attach to, so sessions restore
    across laptop/web/mobile instead of living in two local processes.
-4. **Per-workspace environment recipes.** Their `orca.yaml` spins an ephemeral
+5. **Per-workspace environment recipes.** Their `orca.yaml` spins an ephemeral
    sandbox per worktree; ours would be an environment block in the existing
    `swarm/.smith/workspaces/*.json`.
-5. **`--json` everywhere on the swarm CLI**, so automation never scrapes.
-6. **Mobile companion** — read-mostly first (status, recent output, call-on,
+6. **`--json` everywhere on the swarm CLI**, so automation never scrapes.
+7. **Mobile companion** — read-mostly first (status, recent output, call-on,
    cancel). The iOS target already builds.
 
 **Closed:** tool-driver breadth — claude, codex, opencode and copilot all have
