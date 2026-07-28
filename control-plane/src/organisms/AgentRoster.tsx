@@ -12,7 +12,7 @@ import {
 } from "@dnd-kit/core";
 import { arrayMove, SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Check, GripVertical } from "lucide-react";
+import { Check, GripVertical, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { AgentSeed } from "../data/agents";
 import type { ComposeOp } from "../hooks/useBrokerChat";
@@ -32,6 +32,8 @@ interface AgentRosterProps {
   onInspect?: (entry: AgentSeed) => void;
   /** Edit an agent's details — tapping its circle while in edit mode. */
   onEdit?: (entry: AgentSeed) => void;
+  /** Remove a solo agent — the ✕ badge in edit mode. */
+  onRemove?: (entry: AgentSeed) => void;
 }
 
 function loadOrder(): string[] {
@@ -56,6 +58,7 @@ function RosterItem(props: {
   onLongPress: () => void;
   onTap: () => void;
   onCallWhenHand?: () => void;
+  onRemove?: () => void;
 }) {
   const { entry, editMode, combineTarget, expanded } = props;
   const busy = entry.status === "busy";
@@ -93,6 +96,19 @@ function RosterItem(props: {
         group={entry.kind === "squad" && (entry.members?.length ?? 0) >= 2}
         listening={!editMode && entry.listening}
       />
+      {editMode && entry.kind !== "squad" && !busy && props.onRemove && (
+        <button
+          type="button"
+          className="roster-item__remove"
+          aria-label={`Remove ${entry.name}`}
+          onClick={(e) => {
+            e.stopPropagation(); // the circle tap opens the edit wizard — not this
+            props.onRemove?.();
+          }}
+        >
+          <X size={10} strokeWidth={2.5} />
+        </button>
+      )}
     </div>
   );
 }
@@ -127,7 +143,7 @@ function MemberChip({ squadId, name }: { squadId: string; name: string }) {
   );
 }
 
-export function AgentRoster({ agents, onAdd, onCall, onCompose, onInspect, onEdit }: AgentRosterProps) {
+export function AgentRoster({ agents, onAdd, onCall, onCompose, onInspect, onEdit, onRemove }: AgentRosterProps) {
   const [editMode, setEditMode] = useState(false);
   const [order, setOrder] = useState<string[]>(loadOrder);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -252,6 +268,7 @@ export function AgentRoster({ agents, onAdd, onCall, onCompose, onInspect, onEdi
                       ? () => onCall(entry.name)
                       : undefined
                 }
+                onRemove={onRemove ? () => onRemove(entry) : undefined}
               />
             ))}
           </div>

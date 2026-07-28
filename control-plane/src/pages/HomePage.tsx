@@ -5,6 +5,7 @@ import { GRID_DEFAULTS, type GridParams } from "../hooks/useDotGrid";
 import { usePushToTalk } from "../hooks/usePushToTalk";
 import { useSpokenReplies } from "../hooks/useSpokenReplies";
 import { useTheme } from "../hooks/useTheme";
+import { ConfirmSheet } from "../molecules/ConfirmSheet";
 import { AddAgentModal } from "../organisms/AddAgentModal";
 import { AgentRoster } from "../organisms/AgentRoster";
 import { DotGridCanvas } from "../organisms/DotGridCanvas";
@@ -26,6 +27,8 @@ export function HomePage() {
   const [inspecting, setInspecting] = useState<AgentSeed | null>(null);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /** Agent slated for removal — the outcome preview drives the confirm sheet's copy. */
+  const [removing, setRemoving] = useState<{ entry: AgentSeed; outcome: string; reasons: string[] } | null>(null);
   const { theme, setTheme } = useTheme();
   // The audio sink is a ref so useBrokerChat (which produces the frames) can be
   // declared before useSpokenReplies (which consumes them) without a cycle.
@@ -41,6 +44,8 @@ export function HomePage() {
     send,
     compose,
     activity,
+    removalPreview,
+    removeAgent,
     workAction,
     micControl,
     micAudio,
@@ -105,6 +110,7 @@ export function HomePage() {
           onCall={callOn}
           onCompose={compose}
           onInspect={setInspecting}
+          onRemove={async (entry) => setRemoving({ entry, ...(await removalPreview(entry.id)) })}
         />
       }
       stage={
@@ -136,6 +142,21 @@ export function HomePage() {
       }
       overlays={
         <>
+          <ConfirmSheet
+            open={removing !== null}
+            title={`Remove ${removing?.entry.name}?`}
+            body={
+              removing?.outcome === "delete"
+                ? `${removing.entry.name} has never worked or spoken — this removes them permanently.`
+                : `${removing?.entry.name} has history (${removing?.reasons.join(", ")}) — they will be archived.`
+            }
+            confirmLabel={removing?.outcome === "delete" ? "delete" : "archive"}
+            onConfirm={async () => {
+              if (removing) await removeAgent(removing.entry.id);
+              setRemoving(null); // roster frame refresh arrives over WS
+            }}
+            onCancel={() => setRemoving(null)}
+          />
           <SettingsPanel
             open={settingsOpen}
             onClose={() => setSettingsOpen(false)}

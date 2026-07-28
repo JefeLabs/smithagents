@@ -180,6 +180,22 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
     [base],
   );
 
+  const removalPreview = useCallback(
+    async (id: string): Promise<{ outcome: "delete" | "archive"; reasons: string[] }> => {
+      const res = await fetch(`http://${base}/agents/${encodeURIComponent(id)}/removal`);
+      return (await res.json()) as { outcome: "delete" | "archive"; reasons: string[] };
+    },
+    [base],
+  );
+
+  const removeAgent = useCallback(
+    async (id: string): Promise<{ outcome?: string; error?: string }> => {
+      const res = await fetch(`http://${base}/agents/${encodeURIComponent(id)}`, { method: "DELETE" });
+      return (await res.json()) as { outcome?: string; error?: string };
+    },
+    [base],
+  );
+
   const workAction = useCallback(
     async (name: string, action: "steer" | "cancel", message?: string): Promise<string | null> => {
       const res = await fetch(`http://${base}/activity/${encodeURIComponent(name)}/${action}`, {
@@ -231,6 +247,8 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
     send,
     compose,
     activity,
+    removalPreview,
+    removeAgent,
     workAction,
     micControl,
     micAudio,
