@@ -97,3 +97,18 @@ test('lifecycle methods hit the right swarm routes', async () => {
     'GET /workspaces/w/usage',
   ]);
 });
+
+test('deleteAgent/deleteWorkspace send no body and no content-type header', async () => {
+  // A bodiless DELETE with Content-Type: application/json 400s against a real
+  // fastify server (FST_ERR_CTP_EMPTY_JSON_BODY) — this was live-broken end
+  // to end (verified against swarm) until http() stopped setting the header
+  // when there is nothing to send.
+  const { calls, fetch } = fakeFetch({ '/agents/wilkin': { ok: true, deleted: 'wilkin' }, '/workspaces/w': { ok: true, deleted: 'w' } });
+  const client = new SwarmClient({ baseUrl: 'http://s', fetchImpl: fetch });
+  await client.deleteAgent('wilkin');
+  await client.deleteWorkspace('w');
+  for (const call of calls) {
+    assert.equal(call.init?.body, undefined);
+    assert.equal((call.init?.headers as Record<string, string> | undefined)?.['content-type'], undefined);
+  }
+});

@@ -238,7 +238,13 @@ export class SwarmClient {
   }
 
   private async http(method: string, path: string, body?: unknown): Promise<Record<string, unknown>> {
-    const headers: Record<string, string> = { 'content-type': 'application/json' };
+    // Only set content-type when a body actually follows: fastify's default
+    // JSON body parser 400s ("FST_ERR_CTP_EMPTY_JSON_BODY") on a
+    // Content-Type: application/json request with no body, which is exactly
+    // what deleteAgent/deleteWorkspace send. That 400 silently defeated every
+    // delete-outcome removal through the broker until this was e2e-tested.
+    const headers: Record<string, string> = {};
+    if (body !== undefined) headers['content-type'] = 'application/json';
     if (this.token) headers.authorization = `Bearer ${this.token}`;
     const res = await this.fetchImpl(`${this.baseUrl}${path}`, {
       method,
