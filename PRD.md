@@ -108,6 +108,14 @@ answers, AI-generated personas); tiered settings reset; theme switcher; and
 crew memory — scoped facts recalled across conversations, verified by a fresh
 session answering from a prior one.
 
+Added 2026-07-28: workspaces and agents are fully managed from the UI —
+create, edit, and remove, with the broker deciding archive-vs-delete from
+cross-service evidence (has the agent spoken? a warm session or running task
+in the workspace?) rather than ever erasing history a human might want back.
+The legacy per-project config layer is gone; workspaces are the only grouping
+concept. Un-archiving a soft-removed agent or workspace is API-only (`PUT`
+with `archived:false`) — there is no UI surface for it yet.
+
 ## 6. Roadmap / Open Items
 
 ### 6.1 Infrastructure gaps (benchmarked against Orca, 2026-07-27)
@@ -195,9 +203,10 @@ editor loop plays to someone else's strength.
   in the work view (it currently rides the task result and the spoken note).
 * **Agent creation (shipped, with room):** the wizard covers stereotype, job
   role, engine/model, voice, reactions and quick answers, with one-call AI
-  generation. Open: no edit/delete surface for an existing agent (only create
-  and archive-by-API), and generated personas are never previewed aloud before
-  the voice cache is warmed.
+  generation; existing agents can be edited or removed from the roster's edit
+  mode, with the broker choosing archive-vs-delete from real evidence. Open:
+  generated personas are never previewed aloud before the voice cache is
+  warmed.
 * **iOS:** the Tauri iOS target builds from this codebase but needs Xcode.app
   on the build machine; mic permission plist is in place.
 * **UI polish:** composition errors are silent in the UI (broker returns

@@ -28,8 +28,8 @@ smithagents/            (git root)
 
 | Path | What it defines |
 |---|---|
-| `swarm/.smith/agents/*.json` | composed agents: identity, role, `directives` (work prompt), `persona.style` (meeting voice), ElevenLabs `voice.voiceId` |
-| `swarm/.smith/workspaces/*.json` | workspaces → one or more repos (`{name, path, branch}`); delegations route here |
+| `swarm/.smith/agents/*.json` | composed agents: identity, role, `directives` (work prompt), `persona.style` (meeting voice), ElevenLabs `voice.voiceId`. May carry `archived: true` — hidden from the roster and delegation, kept on disk for history. |
+| `swarm/.smith/workspaces/*.json` | workspaces → one or more repos (`{name, path, branch}`); delegations route here. May carry `archived: true` for the same soft-removal reason. Managed from the app (create/edit/remove); dropping a file by hand still works. |
 | `broker/.smith/roster-state.json` | user-formed squads and roster edits (written by the UI's edit mode) |
 | `broker/.smith/sessions/*.json` | sessions: per-conversation transcript + brain memory |
 
