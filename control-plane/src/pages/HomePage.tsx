@@ -15,6 +15,7 @@ import { SettingsPanel } from "../organisms/SettingsPanel";
 import { ToolRail } from "../organisms/ToolRail";
 import { VoiceStage } from "../organisms/VoiceStage";
 import { WorkStage } from "../organisms/WorkStage";
+import { WorkspaceManagerModal } from "../organisms/WorkspaceManagerModal";
 import { ControlPlaneLayout } from "../templates/ControlPlaneLayout";
 
 export function HomePage() {
@@ -27,6 +28,7 @@ export function HomePage() {
   const [inspecting, setInspecting] = useState<AgentSeed | null>(null);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [workspacesOpen, setWorkspacesOpen] = useState(false);
   /**
    * Agent slated for removal — the outcome preview drives the confirm sheet's copy.
    * `error` holds the last preview/removal failure text; `outcome` stays unset until
@@ -62,6 +64,9 @@ export function HomePage() {
     createSession,
     activateSession,
     resetSetup,
+    listWorkspaceRecords,
+    saveWorkspace,
+    removeWorkspace,
   } = useBrokerChat({ onAudio: (frame) => audioSink.current(frame) });
   const { soundOn, toggleSound, playAudioFrame } = useSpokenReplies(messages, roster, !audioMode);
   audioSink.current = (frame) => void playAudioFrame(frame);
@@ -208,6 +213,14 @@ export function HomePage() {
             onClose={() => setSessionsOpen(false)}
             onActivate={activateSession}
             onCreate={createSession}
+            onManage={() => setWorkspacesOpen(true)}
+          />
+          <WorkspaceManagerModal
+            open={workspacesOpen}
+            onClose={() => setWorkspacesOpen(false)}
+            list={listWorkspaceRecords}
+            save={saveWorkspace}
+            remove={removeWorkspace}
           />
           <DotGridTuner
             open={tunerOpen}

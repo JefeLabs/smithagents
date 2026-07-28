@@ -50,6 +50,15 @@ export interface SessionSummary {
   active: boolean;
 }
 
+/** Full workspace record, as the manager UI reads and writes it. */
+export interface WorkspaceRecord {
+  name: string;
+  description?: string;
+  default: boolean;
+  archived?: boolean;
+  repos: Array<{ name: string; path: string; branch: string }>;
+}
+
 const DEFAULT_BASE = "127.0.0.1:7790";
 const RECONNECT_MS = 2000;
 
@@ -198,6 +207,32 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
     [base],
   );
 
+  const listWorkspaceRecords = useCallback(async (): Promise<WorkspaceRecord[]> => {
+    const res = await fetch(`http://${base}/workspaces`);
+    const body = (await res.json()) as { workspaces?: WorkspaceRecord[] };
+    return body.workspaces ?? [];
+  }, [base]);
+
+  const saveWorkspace = useCallback(
+    async (body: WorkspaceRecord, isNew: boolean): Promise<{ error?: string }> => {
+      const res = await fetch(`http://${base}/workspaces${isNew ? "" : `/${encodeURIComponent(body.name)}`}`, {
+        method: isNew ? "POST" : "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      return (await res.json()) as { error?: string };
+    },
+    [base],
+  );
+
+  const removeWorkspace = useCallback(
+    async (name: string): Promise<{ outcome?: string; error?: string }> => {
+      const res = await fetch(`http://${base}/workspaces/${encodeURIComponent(name)}`, { method: "DELETE" });
+      return (await res.json()) as { outcome?: string; error?: string };
+    },
+    [base],
+  );
+
   const workAction = useCallback(
     async (name: string, action: "steer" | "cancel", message?: string): Promise<string | null> => {
       const res = await fetch(`http://${base}/activity/${encodeURIComponent(name)}/${action}`, {
@@ -257,5 +292,8 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
     createSession,
     activateSession,
     resetSetup,
+    listWorkspaceRecords,
+    saveWorkspace,
+    removeWorkspace,
   };
 }
