@@ -349,6 +349,7 @@ function sessionFrame() {
 // sessions) and re-push the session frame that carries them to every client.
 async function refreshWorkspaceNames(): Promise<void> {
   workspaceNames = (await swarm.listWorkspaces().catch(() => [])).filter((w) => !w.archived).map((w) => w.name);
+  await broker.refreshWorkspaces();
   textChannel.broadcast(sessionFrame());
 }
 

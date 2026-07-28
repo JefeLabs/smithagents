@@ -197,7 +197,7 @@ export class Broker {
   async start(): Promise<void> {
     this.deps.directory.seed((await this.deps.swarm.registry()).filter((a) => !a.archived));
     this.squads = await this.fetchSquads();
-    this.workspaces = await this.deps.swarm.listWorkspaces().catch(() => []);
+    await this.refreshWorkspaces();
     this.restoreRosterState();
     this.notifyRoster();
     this.unsubscribe = this.deps.swarm.subscribe((e) => this.onSwarmEvent(e));
@@ -417,6 +417,17 @@ export class Broker {
     this.deps.directory.seed((await this.deps.swarm.registry().catch(() => [])).filter((a) => !a.archived));
     this.squads = await this.fetchSquads();
     this.notifyRoster();
+  }
+
+  /**
+   * Re-fetch active (non-archived) workspaces so the delegation prompt
+   * (describeRosterForBrain) reflects swarm reality. Called on start() and
+   * must be called again by the caller after any workspace mutation —
+   * main.ts's refreshWorkspaceNames does this since it already runs after
+   * every create/update/archive/delete.
+   */
+  async refreshWorkspaces(): Promise<void> {
+    this.workspaces = (await this.deps.swarm.listWorkspaces().catch(() => [])).filter((w) => !w.archived);
   }
 
   /** Working units are locked: cancel or wait before recomposing them. */

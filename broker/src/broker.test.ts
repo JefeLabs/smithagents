@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { Broker, type BridgeLike, type SttLike, type SwarmClientLike } from './broker.ts';
 import { AgentDirectory } from './directory.ts';
 import type { BrainLike } from './broker.ts';
-import type { RegistryAgent, SwarmEvent, SwarmMeeting } from './swarm-client.ts';
+import type { RegistryAgent, SwarmEvent, SwarmMeeting, SwarmWorkspace } from './swarm-client.ts';
 
 const AGENTS: RegistryAgent[] = [
   { id: 'manuel', name: 'Manuel', role: 'lead', directives: 'Be Manuel.', engine: { cli: 'claude', model: 'claude-sonnet-5' } },
@@ -56,19 +56,22 @@ function makeFakes(meetings: SwarmMeeting[]) {
   };
 
   const heard: string[] = [];
+  const rosters: string[] = [];
   const brain: BrainLike = {
     handleUtterance: async (text, turn) => {
       heard.push(text);
+      rosters.push(turn.roster);
       turn.onSpeech('spoken reply');
     },
     handleSystemNote: async (note, turn) => {
       heard.push(`NOTE:${note}`);
+      rosters.push(turn.roster);
       turn.onSpeech('narration');
     },
   };
 
   return {
-    swarm, stt, bridge, brain, submitted, published, heard, sttStops,
+    swarm, stt, bridge, brain, submitted, published, heard, rosters, sttStops,
     emitEvent: (e: SwarmEvent) => eventSink?.(e),
     emitUtterance: (t: string) => utteranceSink?.(t),
   };
@@ -150,6 +153,27 @@ test('roster notifications fire on seed and on delegation, carrying agents and s
   await b.executors.delegate({ agent: 'Manuel', task: 'build the thing' });
   assert.equal(rosters.length, 2); // busy snapshot after bindTask
   assert.equal(rosters.at(-1)!.agents[0]!.status, 'busy');
+  await b.stop();
+});
+
+test('refreshWorkspaces drops an archived workspace from the brain roster; start() already filters', async () => {
+  const f = makeFakes([]);
+  let workspaces: SwarmWorkspace[] = [
+    { name: 'jefelabs', default: true, repos: [{ name: 'smithagents', path: '/path/to/smithagents', branch: 'main' }] },
+  ];
+  f.swarm.listWorkspaces = async () => workspaces;
+  const b = makeBroker(f);
+  await b.start();
+  await b.handleUtterance('one');
+  assert.match(f.rosters.at(-1)!, /jefelabs/); // live workspace reaches the delegation prompt
+
+  // Archive it (as workspaces.remove would after the last usage disappears) and
+  // refresh — mirrors main.ts's refreshWorkspaceNames, which now calls this too.
+  workspaces = [{ ...workspaces[0]!, archived: true }];
+  await b.refreshWorkspaces();
+  await b.handleUtterance('two');
+  assert.doesNotMatch(f.rosters.at(-1)!, /jefelabs/); // archived workspace no longer offered
+
   await b.stop();
 });
 
