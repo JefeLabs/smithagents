@@ -68,3 +68,32 @@ test('subscribe parses events and reconnects; unsubscribe stops it', async () =>
   stop();
   assert.equal(sockets[0]!.closed, true);
 });
+
+test('lifecycle methods hit the right swarm routes', async () => {
+  const calls: string[] = [];
+  const client = new SwarmClient({
+    baseUrl: 'http://s',
+    fetchImpl: (async (url: unknown, init?: RequestInit) => {
+      calls.push(`${init?.method} ${String(url).replace('http://s', '')}`);
+      return new Response(JSON.stringify({ ok: true, warmSessions: 0, activeTasks: 0, workspaces: [] }));
+    }) as typeof fetch,
+  });
+  await client.agentUsage('wilkin');
+  await client.archiveAgent('wilkin');
+  await client.deleteAgent('wilkin');
+  await client.createWorkspace({ name: 'w', repos: [] });
+  await client.updateWorkspace('w', { description: 'd' });
+  await client.archiveWorkspace('w');
+  await client.deleteWorkspace('w');
+  await client.workspaceUsage('w');
+  assert.deepEqual(calls, [
+    'GET /agents/wilkin/usage',
+    'POST /agents/wilkin/archive',
+    'DELETE /agents/wilkin',
+    'POST /workspaces',
+    'PUT /workspaces/w',
+    'POST /workspaces/w/archive',
+    'DELETE /workspaces/w',
+    'GET /workspaces/w/usage',
+  ]);
+});

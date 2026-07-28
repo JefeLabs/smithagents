@@ -20,7 +20,7 @@ function makeFakes(meetings: SwarmMeeting[]) {
     ],
     listLiveTaskIds: async () => new Set(['t-77']),
     listWorkspaces: async () => [
-      { name: 'jefelabs', default: true, repos: [{ name: 'smithagents', branch: 'main' }] },
+      { name: 'jefelabs', default: true, repos: [{ name: 'smithagents', path: '/path/to/smithagents', branch: 'main' }] },
     ],
     registry: async () => AGENTS,
     subscribe: (cb) => {

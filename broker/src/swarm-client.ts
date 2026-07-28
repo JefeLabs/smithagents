@@ -21,6 +21,7 @@ export interface RegistryAgent {
   persona?: { style: string };
   voice?: { provider: string; voiceId?: string; speech?: SpeechProfile };
   avatarRing?: string;
+  archived?: boolean;
 }
 
 export interface SwarmSquad {
@@ -31,11 +32,16 @@ export interface SwarmSquad {
   members: Array<{ name: string; role: string }>;
 }
 
-export interface SwarmWorkspace {
+export interface WorkspaceBody {
   name: string;
   description?: string;
+  repos: Array<{ name: string; path: string; repository?: string; branch?: string }>;
+  default?: boolean;
+}
+
+export interface SwarmWorkspace extends WorkspaceBody {
   default: boolean;
-  repos: Array<{ name: string; repository?: string; branch: string }>;
+  archived?: boolean;
 }
 
 export interface SwarmMeeting {
@@ -153,6 +159,42 @@ export class SwarmClient {
 
   async updateAgent(id: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
     return this.http('PUT', `/agents/${encodeURIComponent(id)}`, body);
+  }
+
+  async agentUsage(id: string): Promise<{ warmSessions: number; activeTasks: number }> {
+    const r = await this.http('GET', `/agents/${encodeURIComponent(id)}/usage`);
+    return { warmSessions: r.warmSessions as number, activeTasks: r.activeTasks as number };
+  }
+
+  async archiveAgent(id: string): Promise<void> {
+    await this.http('POST', `/agents/${encodeURIComponent(id)}/archive`, {});
+  }
+
+  async deleteAgent(id: string): Promise<void> {
+    await this.http('DELETE', `/agents/${encodeURIComponent(id)}`, undefined);
+  }
+
+  async createWorkspace(body: WorkspaceBody): Promise<SwarmWorkspace> {
+    const r = await this.http('POST', '/workspaces', body);
+    return r as unknown as SwarmWorkspace;
+  }
+
+  async updateWorkspace(name: string, body: Partial<WorkspaceBody>): Promise<SwarmWorkspace> {
+    const r = await this.http('PUT', `/workspaces/${encodeURIComponent(name)}`, body);
+    return r as unknown as SwarmWorkspace;
+  }
+
+  async archiveWorkspace(name: string): Promise<void> {
+    await this.http('POST', `/workspaces/${encodeURIComponent(name)}/archive`, {});
+  }
+
+  async deleteWorkspace(name: string): Promise<void> {
+    await this.http('DELETE', `/workspaces/${encodeURIComponent(name)}`, undefined);
+  }
+
+  async workspaceUsage(name: string): Promise<{ activeTasks: number }> {
+    const r = await this.http('GET', `/workspaces/${encodeURIComponent(name)}/usage`);
+    return { activeTasks: r.activeTasks as number };
   }
 
   async listWorkspaces(): Promise<SwarmWorkspace[]> {
