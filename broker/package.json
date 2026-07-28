@@ -20,6 +20,7 @@
     "@deepgram/sdk": "^5.7.0",
     "@livekit/rtc-node": "^0.13.31",
     "@smithagents/voice": "file:../voice",
+    "discord.js": "^14.27.0",
     "livekit-server-sdk": "^2.17.0",
     "ws": "^8.21.1"
   },
