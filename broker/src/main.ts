@@ -9,7 +9,9 @@ import { createInterface } from 'node:readline';
 import { ElevenLabsVoiceProvider } from '@smithagents/voice';
 import { BrokerBrain, type StreamFactory } from './brain.ts';
 import { Broker } from './broker.ts';
+import { AdapterHub } from './channels.ts';
 import { loadBrokerConfig } from './config.ts';
+import { createDiscordAdapter } from './discord-adapter.ts';
 import { AgentDirectory } from './directory.ts';
 import { LiveKitRoomBridge } from './room.ts';
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -38,6 +40,16 @@ const streamFactory: StreamFactory = (params) =>
 
 const swarm = new SwarmClient({ baseUrl: config.swarm.baseUrl, token: config.swarm.token });
 const directory = new AgentDirectory();
+
+// Routes external channel (Discord, …) traffic through the same turn the app
+// uses. resolveSpokenLine/handleUserText are `function` declarations further
+// down this file — hoisted, so referencing them here ahead of their textual
+// definition is safe.
+const adapterHub = new AdapterHub({
+  resolveSpeaker: resolveSpokenLine,
+  agents: () => directory.list().map((a) => ({ id: a.id, name: a.name, channels: a.channels })),
+  submitUserText: handleUserText,
+});
 
 const tts = config.elevenlabsApiKey ? new ElevenLabsVoiceProvider({ apiKey: config.elevenlabsApiKey }) : null;
 // Voice library browsing + the fixed-line audio cache (reactions, quick answers).
@@ -329,7 +341,10 @@ const toRosterEntries = (roster: UiRoster): RosterEntry[] => {
 // transcript, runs a brain turn, then persists the brain's memory.
 function handleUserText(text: string): void {
   sessionManager.appendTranscript('user', text);
-  void broker.handleUtterance(text).then(() => sessionManager.saveBrainHistory(brain.exportHistory()));
+  void broker
+    .handleUtterance(text)
+    .then(() => sessionManager.saveBrainHistory(brain.exportHistory()))
+    .finally(() => adapterHub.clearOrigin());
 }
 
 let workspaceNames: string[] = [];
@@ -628,6 +643,7 @@ broker = new Broker(
       sessionManager.appendTranscript('broker', text);
       textChannel.broadcast({ type: 'speech', text });
       broadcastSpokenAudio(text);
+      adapterHub.dispatchSpeech(text);
     },
     onRosterChange: (roster) => textChannel.broadcast({ type: 'roster', agents: toRosterEntries(roster) }),
     mintToken: (roomName) =>
@@ -649,6 +665,28 @@ const activeSession = sessionManager.init(bootWorkspaces.find((w) => w.default)?
 brain.loadHistory(activeSession.brainHistory);
 const textPort = await textChannel.start(config.textPort);
 console.log(`[broker] running — polling swarm for open meetings. Text channel on http://127.0.0.1:${textPort}. Type a line to simulate an utterance.`);
+
+// Discord attends only when a token is present — the all-local invariant:
+// nothing about Discord constructs or logs without DISCORD_TOKEN set.
+const discordToken = process.env.DISCORD_TOKEN;
+if (discordToken) {
+  const allowlist = (process.env.DISCORD_CHANNELS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (allowlist.length === 0) {
+    console.error('[discord] DISCORD_TOKEN is set but DISCORD_CHANNELS is empty — the crew would attend nowhere. Adapter not started.');
+  } else {
+    void createDiscordAdapter({
+      token: discordToken,
+      allowlist,
+      onUtterance: (u) => adapterHub.onUtterance('discord', u),
+    }).then(
+      ({ adapter }) => {
+        adapterHub.register(adapter);
+        console.log(`[discord] crew attending ${allowlist.length} channel(s)`);
+      },
+      (err) => console.error(`[discord] failed to start: ${String(err)}`),
+    );
+  }
+}
 
 const rl = createInterface({ input: process.stdin });
 rl.on('line', (line) => {

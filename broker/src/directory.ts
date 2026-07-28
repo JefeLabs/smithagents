@@ -43,6 +43,10 @@ export class AgentDirectory {
     return undefined;
   }
 
+  list(): RegistryAgent[] {
+    return [...this.agents.values()];
+  }
+
   bindTask(agentId: string, bind: { taskId: string; summary?: string; swarmName?: string }): void {
     if (!this.agents.has(agentId)) return;
     if (this.terminated.delete(bind.taskId)) return; // task already ended before we could bind — never mark busy
