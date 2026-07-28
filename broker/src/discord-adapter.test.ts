@@ -37,6 +37,35 @@ test('mention in an allowlisted channel becomes an utterance', async () => {
   assert.deepEqual(utterances, [{ text: 'hello crew', author: 'Edwin', channelRef: 'chan-1' }]);
 });
 
+test('the mention token is stripped from the text, for both <@id> and <@!id> forms', async () => {
+  const { client, handlers, message } = fakeClient();
+  const utterances: unknown[] = [];
+  await createDiscordAdapter({
+    token: 't', allowlist: ['chan-1'], onUtterance: (u) => utterances.push(u),
+    clientFactory: () => client,
+  });
+  const h = handlers.get('messageCreate')!;
+  h(message({ content: '<@bot-1> hola crew' }));
+  h(message({ content: '<@!bot-1> oye' }));
+  assert.deepEqual(utterances, [
+    { text: 'hola crew', author: 'Edwin', channelRef: 'chan-1' },
+    { text: 'oye', author: 'Edwin', channelRef: 'chan-1' },
+  ]);
+});
+
+test('a message that is only the mention token, in either form, produces no utterance', async () => {
+  const { client, handlers, message } = fakeClient();
+  const utterances: unknown[] = [];
+  await createDiscordAdapter({
+    token: 't', allowlist: ['chan-1'], onUtterance: (u) => utterances.push(u),
+    clientFactory: () => client,
+  });
+  const h = handlers.get('messageCreate')!;
+  h(message({ content: '<@bot-1>' }));
+  h(message({ content: '<@!bot-1> ' }));
+  assert.equal(utterances.length, 0);
+});
+
 test('non-allowlisted channels, unmentioned messages, bots, and webhooks are ignored', async () => {
   const { client, handlers, message } = fakeClient();
   const utterances: unknown[] = [];
