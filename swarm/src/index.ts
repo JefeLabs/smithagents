@@ -10,13 +10,6 @@ export type { ServerConfig } from './server.js';
 export { QuarantineManager } from './quarantine.js';
 export { loadConfig } from './config.js';
 export {
-  loadProjectConfig,
-  loadProjectsFromDir,
-  detectCurrentProject,
-  resolveManifest,
-  interpolatePattern,
-} from './project.js';
-export {
   AgentNamePool,
   AGENT_ROSTER,
   generateAgentName,

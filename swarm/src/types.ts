@@ -40,20 +40,8 @@ export type RuntimeType = 'tmux' | 'docker';
 export type LocationType = 'local' | 'docker' | 'remote';
 
 // ---------------------------------------------------------------------------
-// Project Configuration — defaults that every task inherits
+// Pull Request Configuration — per-task override for auto-PR creation
 // ---------------------------------------------------------------------------
-
-/**
- * Git branching strategy for worktree and PR creation.
- */
-export interface BranchingStrategy {
-  /** Base branch to create worktrees from (default: 'main') */
-  baseBranch: string;
-  /** Branch name template. Placeholders: {taskId}, {agent}, {timestamp} */
-  branchPattern: string;
-  /** Remote name for push/PR operations (default: 'origin') */
-  remote: string;
-}
 
 /**
  * Pull request configuration for automated PR creation.
@@ -73,92 +61,6 @@ export interface PullRequestConfig {
   draft: boolean;
 }
 
-/**
- * Project-level defaults loaded from .smith/project.json.
- *
- * Every task inherits these unless overridden at submit time.
- * This is the contract between your repo and the orchestrator.
- *
- * @example .smith/project.json
- * ```json
- * {
- *   "name": "skoolscout-com",
- *   "repository": "git@github.com:org/skoolscout-com.git",
- *   "localPath": "/Users/dev/repos/skoolscout-com",
- *   "branching": {
- *     "baseBranch": "develop",
- *     "branchPattern": "smith/{agent}/{taskId}",
- *     "remote": "origin"
- *   },
- *   "pullRequest": {
- *     "autoCreate": true,
- *     "targetBranch": "develop",
- *     "titlePattern": "[Smith] {prompt}",
- *     "labels": ["automated", "agent-pr"],
- *     "reviewers": ["edwincruz"],
- *     "draft": true
- *   },
- *   "defaults": {
- *     "agent": "claude",
- *     "runtime": "docker",
- *     "priority": "normal"
- *   },
- *   "context": {
- *     "include": ["src/**", "tests/**"],
- *     "exclude": ["node_modules/**", "dist/**", ".next/**"],
- *     "maxFileSize": "1MB"
- *   },
- *   "hooks": {
- *     "preTask": "pnpm install",
- *     "postTask": "pnpm test",
- *     "onSuccess": "pnpm build",
- *     "onFailure": null
- *   }
- * }
- * ```
- */
-export interface ProjectConfig {
-  /** Human-readable project name */
-  name: string;
-  /** Git remote URL (SSH or HTTPS) */
-  repository: string;
-  /** Absolute path to local clone on the host */
-  localPath: string;
-  /** Branching strategy */
-  branching: BranchingStrategy;
-  /** Pull request settings */
-  pullRequest: PullRequestConfig;
-  /** Default values for task fields */
-  defaults: {
-    agent: AgentType;
-    runtime: RuntimeType;
-    location: LocationType;
-    priority: TaskManifest['priority'];
-  };
-  /** File context settings for agents */
-  context: {
-    /** Glob patterns of files to include in agent context */
-    include: string[];
-    /** Glob patterns to exclude from agent context */
-    exclude: string[];
-    /** Max file size to pass as context (e.g., '1MB', '500KB') */
-    maxFileSize?: string;
-  };
-  /** Lifecycle hooks — shell commands run at each stage */
-  hooks?: {
-    /** Run before task dispatch (e.g., 'pnpm install') */
-    preTask?: string;
-    /** Run after task completes regardless of outcome */
-    postTask?: string;
-    /** Run only on success (exit 0) */
-    onSuccess?: string;
-    /** Run only on failure (exit 1) */
-    onFailure?: string;
-  };
-  /** Additional environment variables injected into every task */
-  env?: Record<string, string>;
-}
-
 // ---------------------------------------------------------------------------
 // Task Manifest
 // ---------------------------------------------------------------------------
@@ -166,9 +68,6 @@ export interface ProjectConfig {
 /**
  * The task manifest that enters the queue.
  * This is the contract between the pipeline and the orchestrator.
- *
- * Fields from ProjectConfig are used as defaults. Per-request overrides
- * take precedence over project defaults.
  */
 export interface TaskManifest {
   taskId: string;
@@ -178,7 +77,7 @@ export interface TaskManifest {
   agentName?: string;
   context: {
     files: string[];           // Files relevant to this task
-    repository: string;        // Git remote URL (overrides project default)
+    repository: string;        // Git remote URL
     branch: string;            // Source branch to worktree from
     workspace?: string;        // Workspace name (see workspaces.ts)
     repo?: string;             // Repo name within the workspace
@@ -189,20 +88,16 @@ export interface TaskManifest {
   /** Model the CLI should run, from the composed agent's engine. Resolved
    *  server-side; the driver spells the flag its tool understands. */
   model?: string;
-  runtime?: RuntimeType;       // Execution runtime (default from project or 'tmux')
+  runtime?: RuntimeType;       // Execution runtime (default 'tmux')
   location?: LocationType;     // Where: local, docker, or remote
   createdAt: string;           // ISO 8601
   priority: 'critical' | 'high' | 'normal' | 'low';
   metadata?: Record<string, unknown>;
-  /** Project name — resolved to ProjectConfig at dispatch time */
-  project?: string;
   /** Composed-agent profile, resolved server-side — materialized into the
    *  tool's native config in the worktree (design §5). */
   profile?: { name: string; role: string; directives: string };
   /** Override pull request settings for this task */
   pullRequest?: Partial<PullRequestConfig>;
-  /** Override branching for this task */
-  branching?: Partial<BranchingStrategy>;
 }
 
 /**
@@ -239,10 +134,6 @@ export interface OrchestratorConfig {
   teardownTimeoutMs: number;  // Max time to wait for orphan cleanup
   defaultRuntime: RuntimeType; // Default runtime when manifest doesn't specify
   docker: DockerConfig;       // Docker-specific configuration
-  /** Default project config — used when manifest has no project override */
-  defaultProject?: ProjectConfig;
-  /** Named projects — keyed by project name */
-  projects?: Record<string, ProjectConfig>;
   /** Remote workers — machines that accept task dispatch over HTTPS */
   remoteWorkers?: RemoteWorkerEntry[];
 }

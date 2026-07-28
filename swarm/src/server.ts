@@ -48,7 +48,7 @@ import type {
   RegisteredMessage,
 } from './remote-types.js';
 import { execFile } from 'node:child_process';
-import { mkdir, rename, rm } from 'node:fs/promises';
+import { mkdir, rename, rm, stat } from 'node:fs/promises';
 import { loadAgents, findAgent, saveAgent, activeAgents, type ComposedAgent } from './agents.js';
 import { QUICK_QUESTIONS, STEREOTYPES, JOB_ROLES, ENGINES, LANGUAGES, DEFAULT_LANGUAGE, findStereotype, findJobRole, findEngine, findLanguage, REACTION_LEVELS } from './personas.js';
 import { AgentSessionManager } from './agent-sessions.js';
@@ -242,6 +242,16 @@ export class OrchestratorServer {
     if (this.workspaces.length > 0) {
       this.app.log.info(`Workspaces: ${this.workspaces.map((w) => `${w.name}(${w.repos.map((r) => r.name).join(',')})`).join(' ')}`);
     }
+
+    try {
+      const legacy = await Promise.all([
+        stat(resolve(process.cwd(), '.smith/project.json')).then(() => '.smith/project.json', () => null),
+        stat(resolve(process.cwd(), '.smith/projects')).then(() => '.smith/projects/', () => null),
+      ]);
+      for (const found of legacy.filter(Boolean)) {
+        this.app.log.warn(`${found} is a legacy project config — projects were removed; use .smith/workspaces/ (see PRD §2)`);
+      }
+    } catch { /* fs races are not boot problems */ }
 
     await this.registerPlugins();
     this.registerAuthHook();
