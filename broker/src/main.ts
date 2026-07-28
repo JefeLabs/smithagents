@@ -16,7 +16,7 @@ import { AgentDirectory } from './directory.ts';
 import { LiveKitRoomBridge } from './room.ts';
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import type { RosterState, UiRoster } from './broker.ts';
+import type { RosterState, TurnOrigin, UiRoster } from './broker.ts';
 import { LocalMemory, type MemoryEntry } from './memory.ts';
 import { SessionManager, type Session } from './sessions.ts';
 import { DeepgramSttStream, type LiveLike } from './stt.ts';
@@ -339,12 +339,9 @@ const toRosterEntries = (roster: UiRoster): RosterEntry[] => {
 // Same TDZ note as the executors above — the closures run long after assignment.
 // A user line from any input (HTTP, stdin, mic) lands in the active session's
 // transcript, runs a brain turn, then persists the brain's memory.
-function handleUserText(text: string): void {
+function handleUserText(text: string, origin?: TurnOrigin): void {
   sessionManager.appendTranscript('user', text);
-  void broker
-    .handleUtterance(text)
-    .then(() => sessionManager.saveBrainHistory(brain.exportHistory()))
-    .finally(() => adapterHub.clearOrigin());
+  void broker.handleUtterance(text, origin).then(() => sessionManager.saveBrainHistory(brain.exportHistory()));
 }
 
 let workspaceNames: string[] = [];
@@ -645,6 +642,11 @@ broker = new Broker(
       broadcastSpokenAudio(text);
       adapterHub.dispatchSpeech(text);
     },
+    // Turn-scoped: activates the hub's origin for exactly the turn now
+    // running, so external delivery can never leak across turns or into a
+    // meeting-sourced turn (which passes no origin — see channels.ts).
+    onTurnStart: (origin) => adapterHub.setActiveOrigin(origin),
+    onTurnEnd: () => adapterHub.setActiveOrigin(undefined),
     onRosterChange: (roster) => textChannel.broadcast({ type: 'roster', agents: toRosterEntries(roster) }),
     mintToken: (roomName) =>
       mintRoomToken({

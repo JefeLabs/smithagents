@@ -38,6 +38,12 @@ export interface BrainLike {
   handleSystemNote(note: string, turn: BrainTurn): Promise<void>;
 }
 
+/** Where a turn came from, when it came from an external text channel (Discord, …). */
+export interface TurnOrigin {
+  kind: string;
+  channelRef: string;
+}
+
 export interface SttLike {
   start(onUtterance: (text: string) => void): void;
   sendAudio(pcm: Uint8Array): void;
@@ -66,6 +72,14 @@ export interface BrokerDeps {
    * between meetings); this callback is the free path.
    */
   onSpeechText?: (text: string) => void;
+  /**
+   * Turn-scoped origin hooks for external channel routing: fired around
+   * every `handleUtterance` turn (including meeting-STT ones, which pass no
+   * origin) so a listener can activate/deactivate exactly for the turn
+   * currently running — never longer, never shorter. See channels.ts.
+   */
+  onTurnStart?: (origin: TurnOrigin | undefined) => void;
+  onTurnEnd?: () => void;
   /** Fired with a fresh roster snapshot after every directory, squad, group, or hand change. */
   onRosterChange?: (roster: UiRoster) => void;
   /** Crew memory — durable facts recalled into every turn. Optional: without it the crew simply forgets. */
@@ -246,16 +260,26 @@ export class Broker {
     }
   }
 
-  /** Public so the stdin dev channel (and tests) can inject an utterance. */
-  handleUtterance(text: string): Promise<void> {
+  /**
+   * Public so the stdin dev channel, the meeting STT path, and tests can
+   * inject an utterance. `origin` is turn-scoped: it's only ever "active"
+   * (via onTurnStart/onTurnEnd) for the exact duration of THIS turn's brain
+   * call, inside the same serialized queue that already isolates one turn's
+   * history from the next — so a second queued turn from a different origin,
+   * or a meeting turn with no origin at all, can never inherit or clobber
+   * another turn's routing.
+   */
+  handleUtterance(text: string, origin?: TurnOrigin): Promise<void> {
     return this.enqueueTurn(async () => {
       // Light the ring the moment they are spoken to — before the model has
       // decided anything. Cleared when the turn ends, however it ends.
       this.setListening(whoIsAddressed(text, this.addressableNames()));
+      this.deps.onTurnStart?.(origin);
       try {
         await this.deps.brain.handleUtterance(text, this.makeTurn(text));
       } finally {
         this.setListening([]);
+        this.deps.onTurnEnd?.();
       }
     });
   }

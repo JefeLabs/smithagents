@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Broker, type BridgeLike, type SttLike, type SwarmClientLike } from './broker.ts';
 import { AgentDirectory } from './directory.ts';
-import type { BrainLike } from './broker.ts';
+import type { BrainLike, TurnOrigin } from './broker.ts';
 import type { RegistryAgent, SwarmEvent, SwarmMeeting, SwarmWorkspace } from './swarm-client.ts';
 
 const AGENTS: RegistryAgent[] = [
@@ -141,6 +141,94 @@ test('speech text reaches onSpeechText even with no active meeting; no PCM publi
   assert.deepEqual(transcript, ['spoken reply']);
   assert.equal(f.published.length, 0); // no bridge -> no TTS spend
   await b.stop();
+});
+
+test('turn-scoped origin: two queued turns route speech only to their own origin', async () => {
+  const f = makeFakes([]);
+  // Fake brain that emits speech distinguishable per input turn (the shared
+  // fakes' brain always emits the same 'spoken reply' string, too coarse here).
+  const brain: BrainLike = {
+    handleUtterance: async (text, turn) => void turn.onSpeech(`reply to ${text}`),
+    handleSystemNote: async () => {},
+  };
+  let active: TurnOrigin | undefined;
+  const delivered: Record<string, string[]> = {};
+  const b = new Broker({
+    swarm: f.swarm,
+    directory: new AgentDirectory(),
+    brain,
+    makeStt: () => f.stt,
+    makeBridge: () => f.bridge,
+    speak: async function* (text) {
+      yield new Uint8Array(Buffer.from(`AUDIO(${text})`));
+    },
+    mintToken: async (room) => `jwt-for-${room}`,
+    livekitUrl: 'ws://test',
+    pollMs: 999999,
+    onTurnStart: (origin) => (active = origin),
+    onTurnEnd: () => (active = undefined),
+    onSpeechText: (text) => {
+      if (!active) return; // mirrors AdapterHub.dispatchSpeech's own guard
+      (delivered[active.channelRef] ??= []).push(text);
+    },
+  });
+  try {
+    await b.start();
+    const originA: TurnOrigin = { kind: 'discord', channelRef: 'chan-A' };
+    const originB: TurnOrigin = { kind: 'discord', channelRef: 'chan-B' };
+    // Both queued back to back — turnQueue serializes them, but the OLD
+    // single-mutable-origin design let the second arrival's origin clobber
+    // the first turn's before its own speech had gone out.
+    const p1 = b.handleUtterance('first', originA);
+    const p2 = b.handleUtterance('second', originB);
+    await Promise.all([p1, p2]);
+    await new Promise((r) => setTimeout(r, 10)); // let both turns' speech chains settle
+    assert.deepEqual(delivered['chan-A'], ['reply to first']);
+    assert.deepEqual(delivered['chan-B'], ['reply to second']);
+  } finally {
+    await b.stop();
+  }
+});
+
+test('a turn with no origin (meeting-style) never reaches an adapter, even right after a prior turn had one', async () => {
+  const f = makeFakes([]);
+  const brain: BrainLike = {
+    handleUtterance: async (text, turn) => void turn.onSpeech(`reply to ${text}`),
+    handleSystemNote: async () => {},
+  };
+  let active: TurnOrigin | undefined;
+  const delivered: string[] = [];
+  const b = new Broker({
+    swarm: f.swarm,
+    directory: new AgentDirectory(),
+    brain,
+    makeStt: () => f.stt,
+    makeBridge: () => f.bridge,
+    speak: async function* (text) {
+      yield new Uint8Array(Buffer.from(`AUDIO(${text})`));
+    },
+    mintToken: async (room) => `jwt-for-${room}`,
+    livekitUrl: 'ws://test',
+    pollMs: 999999,
+    onTurnStart: (origin) => (active = origin),
+    onTurnEnd: () => (active = undefined),
+    onSpeechText: (text) => {
+      if (active) delivered.push(text);
+    },
+  });
+  try {
+    await b.start();
+    await b.handleUtterance('from discord', { kind: 'discord', channelRef: 'chan-A' });
+    await new Promise((r) => setTimeout(r, 10));
+    assert.deepEqual(delivered, ['reply to from discord']);
+    // Meeting-style: broker.ts:281's stt callback calls handleUtterance with
+    // no second argument at all — same call shape as this.
+    await b.handleUtterance('from the mic');
+    await new Promise((r) => setTimeout(r, 10));
+    assert.deepEqual(delivered, ['reply to from discord']); // unchanged — the meeting turn never had an active origin
+  } finally {
+    await b.stop();
+  }
 });
 
 test('roster notifications fire on seed and on delegation, carrying agents and squads', async () => {
