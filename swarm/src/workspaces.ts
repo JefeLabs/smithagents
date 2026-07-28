@@ -20,6 +20,8 @@ export interface Workspace {
   repos: WorkspaceRepo[];
   /** The workspace used when a delegation names none. */
   default?: boolean;
+  /** Archived in place: hidden from roster/delegation, kept for history. */
+  archived?: boolean;
 }
 
 function assertWorkspace(file: string, v: unknown): Workspace {
@@ -52,6 +54,11 @@ export async function loadWorkspacesFromDir(dir: string): Promise<Workspace[]> {
   return workspaces;
 }
 
+/** Workspaces visible to the roster, catalog, and delegation. */
+export function activeWorkspaces(workspaces: Workspace[]): Workspace[] {
+  return workspaces.filter((w) => !w.archived);
+}
+
 /**
  * Resolve a delegation's workspace/repo names to a concrete repo.
  * Omitted workspace -> the default (flagged, else first). Omitted repo -> the
@@ -62,9 +69,10 @@ export function resolveRepo(
   workspaceName?: string,
   repoName?: string,
 ): { workspace: Workspace; repo: WorkspaceRepo } | null {
+  const live = activeWorkspaces(workspaces);
   const workspace = workspaceName
-    ? workspaces.find((w) => w.name.toLowerCase() === workspaceName.toLowerCase())
-    : (workspaces.find((w) => w.default) ?? workspaces[0]);
+    ? live.find((w) => w.name.toLowerCase() === workspaceName.toLowerCase())
+    : (live.find((w) => w.default) ?? live[0]);
   if (!workspace) return null;
   const repo = repoName ? workspace.repos.find((r) => r.name.toLowerCase() === repoName.toLowerCase()) : workspace.repos[0];
   return repo ? { workspace, repo } : null;

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadAgents, findAgent } from './agents.js';
+import { loadAgents, findAgent, saveAgent, activeAgents } from './agents.js';
 
 async function seedDir(files: Record<string, unknown>): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'agents-'));
@@ -41,4 +41,14 @@ test('findAgent matches id or name case-insensitively', async () => {
   assert.equal(findAgent(agents, 'MANUEL')?.id, 'manuel');
   assert.equal(findAgent(agents, 'manuel')?.id, 'manuel');
   assert.equal(findAgent(agents, 'nobody'), undefined);
+});
+
+test('activeAgents filters archived records; loadAgents keeps them', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'agents-'));
+  const base = { id: 'x', name: 'X', role: 'r', directives: 'd', engine: { cli: 'claude' as const, model: 'claude-sonnet' } };
+  await saveAgent(dir, { ...base, id: 'alive' });
+  await saveAgent(dir, { ...base, id: 'gone', archived: true });
+  const all = await loadAgents(dir);
+  assert.equal(all.length, 2);
+  assert.deepEqual(activeAgents(all).map((a) => a.id), ['alive']);
 });

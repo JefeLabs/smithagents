@@ -45,6 +45,8 @@ export interface ComposedAgent {
   reactions?: Partial<Reactions>;
   /** Answers to the getting-to-know-you questions, cached as audio. */
   quickAnswers?: Record<string, string>;
+  /** Archived in place: hidden from roster/delegation, kept for history. */
+  archived?: boolean;
 }
 
 function assertAgent(file: string, v: unknown): ComposedAgent {
@@ -101,4 +103,9 @@ export async function saveAgent(dir: string, agent: ComposedAgent): Promise<void
 export function findAgent(agents: ComposedAgent[], nameOrId: string): ComposedAgent | undefined {
   const q = nameOrId.trim().toLowerCase();
   return agents.find((a) => a.id.toLowerCase() === q) ?? agents.find((a) => a.name.toLowerCase() === q);
+}
+
+/** Agents visible to the roster, catalog, and delegation. */
+export function activeAgents(agents: ComposedAgent[]): ComposedAgent[] {
+  return agents.filter((a) => !a.archived);
 }
