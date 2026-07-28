@@ -1,8 +1,10 @@
 // Workspaces — named groupings of one or more repos the crew can work in.
 // One JSON file per workspace under .smith/workspaces/. Delegations name a
 // workspace/repo; the dispatcher cuts the task's worktree from that repo.
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, mkdir, writeFile, rm } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
 export interface WorkspaceRepo {
   name: string;
@@ -76,4 +78,42 @@ export function resolveRepo(
   if (!workspace) return null;
   const repo = repoName ? workspace.repos.find((r) => r.name.toLowerCase() === repoName.toLowerCase()) : workspace.repos[0];
   return repo ? { workspace, repo } : null;
+}
+
+/** Write one workspace to `dir`. Mirror of agents.saveAgent. */
+export async function saveWorkspace(dir: string, ws: Workspace): Promise<void> {
+  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(ws.name)) {
+    throw new Error(`Invalid workspace name "${ws.name}": use lowercase letters, digits and dashes`);
+  }
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, `${ws.name}.json`), `${JSON.stringify(ws, null, 2)}\n`);
+}
+
+export async function removeWorkspaceFile(dir: string, name: string): Promise<void> {
+  await rm(join(dir, `${name}.json`));
+}
+
+/** True when `path` is inside a git repository (worktrees are cut from here). */
+export async function isGitRepo(path: string): Promise<boolean> {
+  try {
+    await promisify(execFile)('git', ['rev-parse', '--git-dir'], { cwd: path });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The invariant: while any OTHER active workspace exists, the default cannot
+ * be archived or deleted — the caller must crown a successor first.
+ * Returns the human-readable refusal, or null when the removal is fine.
+ */
+export function defaultViolation(all: Workspace[], removingName: string): string | null {
+  const active = activeWorkspaces(all);
+  const target = active.find((w) => w.name === removingName);
+  const isDefault = target && (Boolean(target.default) || (!active.some((w) => w.default) && active[0] === target));
+  if (isDefault && active.length > 1) {
+    return `"${removingName}" is the default workspace — set another default first`;
+  }
+  return null;
 }
