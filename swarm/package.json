@@ -19,7 +19,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "serve": "npx tsx src/server.ts",
+    "serve": "node --env-file=../.env --import tsx src/server.ts",
     "smith": "npx tsx src/cli.ts",
     "clean": "rm -rf dist",
     "test": "node --import tsx --test --test-timeout 60000 'src/*.test.ts' 'src/**/*.test.ts'"
