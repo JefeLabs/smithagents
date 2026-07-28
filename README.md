@@ -107,7 +107,7 @@ cd swarm && npm install && npm run serve
 cd broker && npm install && npm run serve
 
 # 3. the app (desktop window + vite on :1420)
-cd control-plane && npm install && npm run tauri dev
+cd control-plane && pnpm install && pnpm tauri dev
 ```
 
 Type at the crew, or hold the mic button and talk. Delegate real work
@@ -116,8 +116,8 @@ click it to see live output, steer, or cancel.
 
 ## Tests
 
-Each package: `npm test` (node:test) and `npm run typecheck`. The UI lints with
-`npx biome check src`.
+Each package: `npm test` (node:test) and `npm run typecheck`; control-plane
+uses **pnpm** (`pnpm typecheck`) and lints with `pnpm exec biome check src`.
 
 ## Ports
 
