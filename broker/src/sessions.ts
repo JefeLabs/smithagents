@@ -97,6 +97,11 @@ export class SessionManager {
       .map((s) => ({ id: s.id, title: s.title, workspace: s.workspace, updatedAt: s.updatedAt, active: s.id === this.activeId }));
   }
 
+  /** Every session with its full transcript — evidence for removal decisions. */
+  allSessions(): Session[] {
+    return [...this.sessions.values()];
+  }
+
   /**
    * Wipe every conversation and start one fresh session. The store's own
    * files are removed by the caller (it owns persistence); this resets the
