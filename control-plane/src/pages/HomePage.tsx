@@ -27,8 +27,18 @@ export function HomePage() {
   const [inspecting, setInspecting] = useState<AgentSeed | null>(null);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  /** Agent slated for removal — the outcome preview drives the confirm sheet's copy. */
-  const [removing, setRemoving] = useState<{ entry: AgentSeed; outcome: string; reasons: string[] } | null>(null);
+  /**
+   * Agent slated for removal — the outcome preview drives the confirm sheet's copy.
+   * `error` holds the last preview/removal failure text; `outcome` stays unset until
+   * a preview succeeds, so the sheet only offers to confirm once it knows what will happen.
+   */
+  const [removing, setRemoving] = useState<{
+    entry: AgentSeed;
+    outcome?: "delete" | "archive";
+    reasons: string[];
+    error?: string;
+    busy?: boolean;
+  } | null>(null);
   const { theme, setTheme } = useTheme();
   // The audio sink is a ref so useBrokerChat (which produces the frames) can be
   // declared before useSpokenReplies (which consumes them) without a cycle.
@@ -77,6 +87,30 @@ export function HomePage() {
 
   const callOn = (name: string) => send(`Go ahead, ${name} — you have the floor.`);
 
+  // A rejected fetch (broker down) and a resolved-but-{error} response (unknown agent,
+  // swarm busy-lock) both need to surface — neither can leave the sheet silently stuck.
+  const requestRemoval = async (entry: AgentSeed) => {
+    const preview = await removalPreview(entry.id).catch(
+      (err: unknown): { outcome?: "delete" | "archive"; reasons?: string[]; error?: string } => ({
+        error: String(err),
+      }),
+    );
+    setRemoving({ entry, outcome: preview.outcome, reasons: preview.reasons ?? [], error: preview.error });
+  };
+
+  const confirmRemoval = async () => {
+    if (!removing?.outcome) return; // preview never resolved to a real outcome — nothing to confirm
+    setRemoving((r) => (r ? { ...r, busy: true, error: undefined } : r));
+    const result = await removeAgent(removing.entry.id).catch((err: unknown): { outcome?: string; error?: string } => ({
+      error: String(err),
+    }));
+    if (result.error) {
+      setRemoving((r) => (r ? { ...r, busy: false, error: result.error } : r));
+      return;
+    }
+    setRemoving(null); // roster frame refresh arrives over WS
+  };
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "g" && !/input|textarea/i.test((e.target as HTMLElement).tagName)) {
@@ -110,7 +144,7 @@ export function HomePage() {
           onCall={callOn}
           onCompose={compose}
           onInspect={setInspecting}
-          onRemove={async (entry) => setRemoving({ entry, ...(await removalPreview(entry.id)) })}
+          onRemove={requestRemoval}
         />
       }
       stage={
@@ -148,13 +182,16 @@ export function HomePage() {
             body={
               removing?.outcome === "delete"
                 ? `${removing.entry.name} has never worked or spoken — this removes them permanently.`
-                : `${removing?.entry.name} has history (${removing?.reasons.join(", ")}) — they will be archived.`
+                : removing?.outcome === "archive"
+                  ? `${removing.entry.name} has history (${removing.reasons.join(", ")}) — they will be archived.`
+                  : `Could not check what happens to ${removing?.entry.name} yet.`
             }
-            confirmLabel={removing?.outcome === "delete" ? "delete" : "archive"}
-            onConfirm={async () => {
-              if (removing) await removeAgent(removing.entry.id);
-              setRemoving(null); // roster frame refresh arrives over WS
-            }}
+            confirmLabel={
+              removing?.outcome === "delete" ? "delete" : removing?.outcome === "archive" ? "archive" : undefined
+            }
+            error={removing?.error}
+            busy={removing?.busy}
+            onConfirm={() => void confirmRemoval()}
             onCancel={() => setRemoving(null)}
           />
           <SettingsPanel

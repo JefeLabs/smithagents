@@ -181,9 +181,11 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
   );
 
   const removalPreview = useCallback(
-    async (id: string): Promise<{ outcome: "delete" | "archive"; reasons: string[] }> => {
+    // 404/500 resolve with { error } and no outcome — the broker never fails to return JSON, so
+    // callers only need to guard the network layer, not the parse.
+    async (id: string): Promise<{ outcome?: "delete" | "archive"; reasons?: string[]; error?: string }> => {
       const res = await fetch(`http://${base}/agents/${encodeURIComponent(id)}/removal`);
-      return (await res.json()) as { outcome: "delete" | "archive"; reasons: string[] };
+      return (await res.json()) as { outcome?: "delete" | "archive"; reasons?: string[]; error?: string };
     },
     [base],
   );
