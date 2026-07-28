@@ -206,7 +206,11 @@ editor loop plays to someone else's strength.
   generation; existing agents can be edited or removed from the roster's edit
   mode, with the broker choosing archive-vs-delete from real evidence. Open:
   generated personas are never previewed aloud before the voice cache is
-  warmed.
+  warmed. Removal's transcript evidence (`transcriptMentions`) matches
+  speaker prefixes by the agent's current display name, and transcript lines
+  never carry an agent id — so renaming an agent weakens its history match
+  against lines spoken under the old name until transcript lines carry
+  agent ids instead of names.
 * **iOS:** the Tauri iOS target builds from this codebase but needs Xcode.app
   on the build machine; mic permission plist is in place.
 * **UI polish:** composition errors are silent in the UI (broker returns
