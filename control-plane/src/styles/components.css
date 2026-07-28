@@ -1630,7 +1630,9 @@
 .workspace-row__remove:hover {
   color: #d9534f;
 }
-.workspace-manager__form label {
+/* :not(.check) — the default-toggle row is a plain .check label and must keep
+   its own row layout; this rule would otherwise out-specificity it into a column. */
+.workspace-manager__form label:not(.check) {
   display: flex;
   flex-direction: column;
   gap: 4px;

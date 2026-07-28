@@ -46,12 +46,16 @@ export function WorkspaceManagerModal({ open, onClose, list, save, remove }: Wor
     return records;
   };
 
-  // Reset to a blank "new workspace" form every time the modal opens.
+  // Reset to a blank "new workspace" form every time the modal opens. Also
+  // drops any leftover remove-confirmation from the last time this modal was
+  // open — otherwise a stale `removing` could resurface a confirmation for a
+  // workspace the user never asked to remove this time around.
   // Deliberately keyed on `open` only — `list` is a stable-enough prop
   // function and refetching on every parent render would be pointless.
   // biome-ignore lint/correctness/useExhaustiveDependencies: see above
   useEffect(() => {
     if (!open) return;
+    setRemoving(null);
     void refresh().then((records) => {
       setSelected(null);
       setForm(blankForm(records.filter((w) => !w.archived).length === 0));
@@ -59,14 +63,19 @@ export function WorkspaceManagerModal({ open, onClose, list, save, remove }: Wor
     });
   }, [open]);
 
+  // Escape cancels an open remove-confirmation first; only closes the whole
+  // manager once no sheet is in the way, so a stray Escape can't blow past a
+  // pending confirmation and dismiss more than the user intended.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      if (removing) setRemoving(null);
+      else onClose();
     };
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [open, onClose, removing]);
 
   if (!open) return null;
 

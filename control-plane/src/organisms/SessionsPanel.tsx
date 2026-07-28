@@ -1,5 +1,5 @@
 import { Plus, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { SessionSummary } from "../hooks/useBrokerChat";
 
 interface SessionsPanelProps {
@@ -23,6 +23,13 @@ export function SessionsPanel({
   onManage,
 }: SessionsPanelProps) {
   const [wsFilter, setWsFilter] = useState<string | null>(null);
+  // The panel stays mounted across close/reopen, so a filter left pointed at a
+  // workspace that just got archived/removed would silently keep scoping the
+  // list (and if it was the last non-"all" chip, the whole row disappears
+  // with no way to clear it) — drop back to "all" the moment that happens.
+  useEffect(() => {
+    if (wsFilter && !workspaces.includes(wsFilter)) setWsFilter(null);
+  }, [wsFilter, workspaces]);
   if (!open) return null;
   const visible = wsFilter ? sessions.filter((s) => s.workspace === wsFilter) : sessions;
   return (
