@@ -44,6 +44,7 @@
     "motto": "Structure is destiny. Everything else is decoration, and decoration never woke anybody up at three a.m."
   },
   "channels": [
-    "tauri"
+    "tauri",
+    "discord"
   ]
 }

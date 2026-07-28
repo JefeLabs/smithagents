@@ -57,7 +57,10 @@ smithagents/            (git root)
   *is* speech and tool calls *are* routing decisions. Meeting etiquette is
   enforced in the prompt: every line is speaker-prefixed, only the addressed
   party answers, squads speak through their leader, and non-addressed agents
-  raise a ✋ instead of interrupting.
+  raise a ✋ instead of interrupting. External surfaces plug in behind a
+  `ChannelAdapter` port — the Tauri text channel and Discord (mention-gated,
+  per-agent webhook identity, allowlisted channels) today; Slack and voice
+  channels land behind the same port later.
 - **swarm** owns execution: a delegated task gets a git worktree cut from the
   target workspace repo (branch `smith/<taskId>`) and a real coding CLI pinned
   to a tmux session, steerable and killable mid-run.
@@ -84,6 +87,8 @@ ELEVENLABS_API_KEY=...            # agent voices (paid plan for library voices;
 LIVEKIT_URL=ws://127.0.0.1:7880   # voice meetings (livekit-server --dev)
 LIVEKIT_API_KEY=devkey
 LIVEKIT_API_SECRET=secret
+DISCORD_TOKEN=                    # blank = the Discord adapter never starts (all-local by default)
+DISCORD_CHANNELS=                 # comma-separated channel ids the crew attends; required if DISCORD_TOKEN is set
 SMITH_API_TOKEN=                  # blank = loopback-only dev mode
 ```
 

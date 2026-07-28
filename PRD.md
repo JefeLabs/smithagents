@@ -116,6 +116,14 @@ The legacy per-project config layer is gone; workspaces are the only grouping
 concept. Un-archiving a soft-removed agent or workspace is API-only (`PUT`
 with `archived:false`) — there is no UI surface for it yet.
 
+Added 2026-07-28: Discord as the first `ChannelAdapter` — mention-gated text,
+per-agent webhook identity, allowlisted channels. Origin is turn-scoped in the
+broker (`onTurnStart`/`onTurnEnd`), so a channel-sourced turn's speech can
+only ever route back to the channel that asked for it, never leak across
+turns or into a meeting. Designation is per agent (`channels` in
+`swarm/.smith/agents/*.json`); Ignacio and Wilkin both carry `"discord"`
+alongside `"tauri"`.
+
 ## 6. Roadmap / Open Items
 
 ### 6.1 Infrastructure gaps (benchmarked against Orca, 2026-07-27)
@@ -217,8 +225,13 @@ editor loop plays to someone else's strength.
   reasons; surface them); the composer's "Swarm ▾" route selector is
   decorative; brain-history persistence skips system-note turns until the
   next user turn.
-* **Discord:** deliberately out. If it returns, it enters the broker as
-  another text/voice channel, not a service. (`DISCORD_TOKEN`/`GUILD_ID` in
-  `.env` are vestigial and can be removed.)
+* **Discord (shipped):** the first `ChannelAdapter` — mention-gated text (the
+  bot must be @mentioned or replied to), per-agent identity via a managed
+  webhook per channel (each agent posts under its own username, filtered back
+  out on inbound by `webhookId` so the crew never answers itself), allowlisted
+  channels only. `DISCORD_TOKEN`/`DISCORD_CHANNELS` are live env vars again;
+  an agent attends only once `"discord"` is in its `channels` array. Still
+  open: voice channels, and Slack as a second `ChannelAdapter` behind the same
+  port.
 * **Hosted/multi-tenant tier:** Docker/microVM isolation for unattended runs,
   BYO-compute pricing posture — direction unchanged, not scheduled.
