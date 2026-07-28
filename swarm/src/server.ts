@@ -376,10 +376,13 @@ export class OrchestratorServer {
       // Resolve the composed-agent profile (broker sends composedAgentId) so
       // the dispatcher can materialize it into the worktree (design §5).
       const composedId = (body.metadata as Record<string, unknown> | undefined)?.composedAgentId;
-      const { profile, model } = enrichFromComposedAgent(
-        typeof composedId === 'string' ? await loadAgents(resolve(process.cwd(), '.smith/agents')) : [],
-        composedId,
-      );
+      let agents: ComposedAgent[] = [];
+      if (typeof composedId === 'string') {
+        agents = await loadAgents(resolve(process.cwd(), '.smith/agents'));
+        const composedAgent = agents.find((a) => a.id === composedId);
+        if (composedAgent?.archived) return reply.status(404).send({ error: `${composedAgent.name} is archived` });
+      }
+      const { profile, model } = enrichFromComposedAgent(agents, composedId);
 
       const taskId = randomUUID();
       const agentName = server.namePool.claim(taskId);
@@ -1043,6 +1046,7 @@ export class OrchestratorServer {
       const agents = await loadAgents(resolve(process.cwd(), '.smith/agents'));
       const agent = findAgent(agents, body.agent);
       if (!agent) return reply.status(404).send({ error: `Unknown agent: ${body.agent}` });
+      if (agent?.archived) return reply.status(404).send({ error: `${agent.name} is archived` });
       const resolved = resolveRepo(server.workspaces, body.workspace, body.repo);
       if ((body.workspace || body.repo) && !resolved) {
         return reply.status(400).send({ error: `Unknown workspace/repo: ${body.workspace ?? '(default)'}/${body.repo ?? '(default)'}` });
@@ -1438,6 +1442,7 @@ export class OrchestratorServer {
 
     // ── Agents registry ───────────────────────────────────────────────
     this.app.get('/agents/registry', async () => {
+      // Full registry, archived included — the broker filters for the roster and needs the rest for history.
       const agents = await loadAgents(resolve(process.cwd(), '.smith/agents'));
       return { agents };
     });
