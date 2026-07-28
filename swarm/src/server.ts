@@ -1231,6 +1231,9 @@ export class OrchestratorServer {
         default: b.default ?? existing.default,
         archived: b.archived === false ? undefined : existing.archived,
       };
+      if (merged.default && merged.archived) {
+        return reply.status(409).send({ error: `"${existing.name}" is archived — un-archive it before making it the default` });
+      }
       const problem = await workspaceProblems(merged);
       if (problem) return reply.status(400).send({ error: problem });
       if (merged.default && !existing.default) {
@@ -1253,7 +1256,7 @@ export class OrchestratorServer {
       if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
       const violation = defaultViolation(all, ws.name);
       if (violation) return reply.status(409).send({ error: violation });
-      await saveWorkspace(dir, { ...ws, archived: true });
+      await saveWorkspace(dir, { ...ws, archived: true, default: undefined });
       await server.reloadWorkspaces();
       return { ok: true, archived: ws.name };
     });
