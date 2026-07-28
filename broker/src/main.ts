@@ -18,10 +18,11 @@ import type { RosterState, UiRoster } from './broker.ts';
 import { LocalMemory, type MemoryEntry } from './memory.ts';
 import { SessionManager, type Session } from './sessions.ts';
 import { DeepgramSttStream, type LiveLike } from './stt.ts';
-import { SwarmClient, type SwarmSquad } from './swarm-client.ts';
+import { SwarmClient, type SwarmSquad, type WorkspaceBody } from './swarm-client.ts';
 import { PersonaGenerator } from './persona-generator.ts';
 import { VoiceCatalog } from './voice-catalog.ts';
 import { TextChannel, type RosterEntry } from './text-channel.ts';
+import { createRemovalService } from './removal.ts';
 import { mintRoomToken } from './token.ts';
 
 // Defense in depth: the brain-turn queue in broker.ts isolates errors from
@@ -344,6 +345,57 @@ function sessionFrame() {
   };
 }
 
+// Re-fetch workspace names (active only — archived workspaces can't host new
+// sessions) and re-push the session frame that carries them to every client.
+async function refreshWorkspaceNames(): Promise<void> {
+  workspaceNames = (await swarm.listWorkspaces().catch(() => [])).filter((w) => !w.archived).map((w) => w.name);
+  textChannel.broadcast(sessionFrame());
+}
+
+// One remove intent for agents: the broker decides archive-vs-delete from
+// cross-service evidence (transcript speech, warm sessions, running tasks),
+// then reseeds the directory and pushes a fresh roster — same refresh path
+// agent creation already drives.
+const removal = createRemovalService({
+  registry: () => swarm.registry(),
+  agentUsage: (id) => swarm.agentUsage(id),
+  deleteAgent: (id) => swarm.deleteAgent(id),
+  archiveAgent: (id) => swarm.archiveAgent(id),
+  sessions: () => sessionManager.allSessions(),
+  onChanged: () => broker.resetComposition(),
+});
+
+// Workspace CRUD for the manager UI. remove() mirrors removal.execute's
+// evidence-then-decide shape: any session parked in the workspace, or an
+// active swarm task inside it, means archive; otherwise it's safe to delete.
+const workspaces = {
+  list: () => swarm.listWorkspaces() as unknown as Promise<Record<string, unknown>[]>,
+  save: async (body: Record<string, unknown>, isNew: boolean): Promise<Record<string, unknown>> => {
+    try {
+      const result = isNew
+        ? await swarm.createWorkspace(body as unknown as WorkspaceBody)
+        : await swarm.updateWorkspace(String(body.name), body as Partial<WorkspaceBody>);
+      await refreshWorkspaceNames();
+      return result as unknown as Record<string, unknown>;
+    } catch (err) {
+      return { error: String((err as Error).message) };
+    }
+  },
+  remove: async (name: string): Promise<Record<string, unknown>> => {
+    try {
+      const inUse =
+        sessionManager.allSessions().some((s) => s.workspace === name) ||
+        (await swarm.workspaceUsage(name)).activeTasks > 0;
+      if (inUse) await swarm.archiveWorkspace(name);
+      else await swarm.deleteWorkspace(name);
+      await refreshWorkspaceNames();
+      return { outcome: inUse ? 'archived' : 'deleted' };
+    } catch (err) {
+      return { error: String((err as Error).message) };
+    }
+  },
+};
+
 const textChannel = new TextChannel(
   handleUserText,
   () => [
@@ -496,6 +548,8 @@ const textChannel = new TextChannel(
       return created;
     },
   },
+  removal,
+  workspaces,
 );
 const micSessions = new Map<number, DeepgramSttStream>();
 
@@ -588,7 +642,7 @@ broker = new Broker(
 );
 
 await broker.start();
-const bootWorkspaces = await swarm.listWorkspaces().catch(() => []);
+const bootWorkspaces = (await swarm.listWorkspaces().catch(() => [])).filter((w) => !w.archived);
 workspaceNames = bootWorkspaces.map((w) => w.name);
 const activeSession = sessionManager.init(bootWorkspaces.find((w) => w.default)?.name ?? workspaceNames[0] ?? 'default');
 brain.loadHistory(activeSession.brainHistory);

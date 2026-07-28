@@ -195,7 +195,7 @@ export class Broker {
   }
 
   async start(): Promise<void> {
-    this.deps.directory.seed(await this.deps.swarm.registry());
+    this.deps.directory.seed((await this.deps.swarm.registry()).filter((a) => !a.archived));
     this.squads = await this.fetchSquads();
     this.workspaces = await this.deps.swarm.listWorkspaces().catch(() => []);
     this.restoreRosterState();
@@ -414,7 +414,7 @@ export class Broker {
     this.raisedHands.clear();
     this.groupSeq = 0;
     this.persistRosterState();
-    this.deps.directory.seed(await this.deps.swarm.registry().catch(() => []));
+    this.deps.directory.seed((await this.deps.swarm.registry().catch(() => [])).filter((a) => !a.archived));
     this.squads = await this.fetchSquads();
     this.notifyRoster();
   }

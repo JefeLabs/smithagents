@@ -89,6 +89,17 @@ export class TextChannel {
       preview(voiceId: string, text: string): Promise<Buffer>;
       create(body: Record<string, unknown>): Promise<Record<string, unknown>>;
     },
+    /** Remove-agent decision (archive vs delete) and the confirm-sheet preview behind it. */
+    private readonly removal?: {
+      preview(id: string): Promise<Record<string, unknown>>;
+      execute(id: string): Promise<Record<string, unknown>>;
+    },
+    /** Workspace CRUD for the manager UI: list for the picker, save for create/edit, remove decides archive vs delete. */
+    private readonly workspaces?: {
+      list(): Promise<Record<string, unknown>[]>;
+      save(body: Record<string, unknown>, isNew: boolean): Promise<Record<string, unknown>>;
+      remove(name: string): Promise<Record<string, unknown>>;
+    },
   ) {}
 
   private clientSeq = 0;
@@ -218,7 +229,23 @@ export class TextChannel {
           void this.creation.records().then((agents) => json(200, { agents }), fail);
           return;
         }
+        const removalMatch = /^\/agents\/([^/]+)\/removal$/.exec(url.pathname);
+        if (req.method === 'GET' && removalMatch && this.removal) {
+          void this.removal.preview(decodeURIComponent(removalMatch[1]!)).then(
+            (r) => json('error' in r ? 404 : 200, r),
+            fail,
+          );
+          return;
+        }
+
         const editMatch = /^\/agents\/([^/]+)$/.exec(url.pathname);
+        if (req.method === 'DELETE' && editMatch && this.removal) {
+          void this.removal.execute(decodeURIComponent(editMatch[1]!)).then(
+            (r) => json('error' in r ? 409 : 200, r),
+            fail,
+          );
+          return;
+        }
         if (req.method === 'PUT' && editMatch) {
           let body = '';
           req.on('data', (c) => {
@@ -252,6 +279,54 @@ export class TextChannel {
             }
             void this.creation!.create(parsed).then((r) => json(r.error ? 400 : 201, r), fail);
           });
+          return;
+        }
+
+        if (req.method === 'GET' && url.pathname === '/workspaces' && this.workspaces) {
+          void this.workspaces.list().then((workspaces) => json(200, { workspaces }), fail);
+          return;
+        }
+        if (req.method === 'POST' && url.pathname === '/workspaces' && this.workspaces) {
+          let body = '';
+          req.on('data', (c) => {
+            body += c;
+          });
+          req.on('end', () => {
+            let parsed: Record<string, unknown> = {};
+            try {
+              parsed = JSON.parse(body || '{}') as Record<string, unknown>;
+            } catch {
+              return json(400, { error: 'body must be JSON' });
+            }
+            void this.workspaces!.save(parsed, true).then((r) => json(r.error ? 400 : 201, r), fail);
+          });
+          return;
+        }
+        const workspaceMatch = /^\/workspaces\/([^/]+)$/.exec(url.pathname);
+        if (req.method === 'PUT' && workspaceMatch && this.workspaces) {
+          let body = '';
+          req.on('data', (c) => {
+            body += c;
+          });
+          req.on('end', () => {
+            let parsed: Record<string, unknown> = {};
+            try {
+              parsed = JSON.parse(body || '{}') as Record<string, unknown>;
+            } catch {
+              return json(400, { error: 'body must be JSON' });
+            }
+            void this.workspaces!.save({ ...parsed, name: decodeURIComponent(workspaceMatch[1]!) }, false).then(
+              (r) => json(r.error ? 400 : 200, r),
+              fail,
+            );
+          });
+          return;
+        }
+        if (req.method === 'DELETE' && workspaceMatch && this.workspaces) {
+          void this.workspaces.remove(decodeURIComponent(workspaceMatch[1]!)).then(
+            (r) => json('error' in r ? 409 : 200, r),
+            fail,
+          );
           return;
         }
       }
