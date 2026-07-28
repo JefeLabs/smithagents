@@ -48,11 +48,12 @@ import type {
   RegisteredMessage,
 } from './remote-types.js';
 import { execFile } from 'node:child_process';
-import { mkdir, rename } from 'node:fs/promises';
-import { loadAgents, findAgent, saveAgent, type ComposedAgent } from './agents.js';
+import { mkdir, rename, rm } from 'node:fs/promises';
+import { loadAgents, findAgent, saveAgent, activeAgents, type ComposedAgent } from './agents.js';
 import { QUICK_QUESTIONS, STEREOTYPES, JOB_ROLES, ENGINES, LANGUAGES, DEFAULT_LANGUAGE, findStereotype, findJobRole, findEngine, findLanguage, REACTION_LEVELS } from './personas.js';
 import { AgentSessionManager } from './agent-sessions.js';
 import { SessionStore } from './session-store.js';
+import { agentUsage, isBusy } from './lifecycle.js';
 import { isValidModelId } from './drivers/model-flag.js';
 import { loadWorkspacesFromDir, resolveRepo, type Workspace } from './workspaces.js';
 import { MeetingOrchestrator } from './meetings.js';
@@ -852,7 +853,14 @@ export class OrchestratorServer {
 
       const agentsDir = resolve(process.cwd(), '.smith/agents');
       const existing = await loadAgents(agentsDir);
-      if (existing.some((a) => a.id === id)) return reply.status(409).send({ error: `Agent "${id}" already exists` });
+      const collider = existing.find((a) => a.id === id);
+      if (collider) {
+        return reply.status(409).send({
+          error: collider.archived
+            ? `The name "${id}" belongs to an archived agent — pick another`
+            : `Agent "${id}" already exists`,
+        });
+      }
 
       // The stereotype seeds; every field the wizard sent wins over it.
       const agent: ComposedAgent = {
@@ -939,6 +947,7 @@ export class OrchestratorServer {
         quickAnswers: b.quickAnswers ?? existing.quickAnswers,
         voice: b.voice?.voiceId ? { provider: 'elevenlabs', voiceId: b.voice.voiceId } : existing.voice,
         avatarRing: b.avatarRing ?? existing.avatarRing,
+        archived: b.archived === false ? undefined : existing.archived,
       };
       try {
         await saveAgent(agentsDir, updated);
@@ -949,17 +958,52 @@ export class OrchestratorServer {
       return reply.status(200).send(updated);
     });
 
+    // Reusable across the usage/archive/delete routes below — reuses the
+    // same session-manager closure the warm-session routes rely on.
+    const agentFacts = async (agent: ComposedAgent) => {
+      const records = await new SessionStore(resolve(process.cwd(), '.smith/sessions')).load();
+      const live = server.agentSessions ? (await server.agentSessions.list()).map((s) => s.agentId) : [];
+      const taskNames = [...server.activeTasks.values()]
+        .map((t) => t.manifest.profile?.name)
+        .filter((n): n is string => Boolean(n));
+      return { records, live, taskNames };
+    };
+
+    this.app.get<{ Params: { id: string } }>('/agents/:id/usage', async (req, reply) => {
+      const agents = await loadAgents(resolve(process.cwd(), '.smith/agents'));
+      const agent = agents.find((a) => a.id === req.params.id);
+      if (!agent) return reply.status(404).send({ error: `Unknown agent: ${req.params.id}` });
+      const { records, live, taskNames } = await agentFacts(agent);
+      return agentUsage(agent, records, live, taskNames);
+    });
+
+    this.app.post<{ Params: { id: string } }>('/agents/:id/archive', async (req, reply) => {
+      const agentsDir = resolve(process.cwd(), '.smith/agents');
+      const agents = await loadAgents(agentsDir);
+      const agent = agents.find((a) => a.id === req.params.id);
+      if (!agent) return reply.status(404).send({ error: `Unknown agent: ${req.params.id}` });
+      const { live, taskNames } = await agentFacts(agent);
+      if (isBusy(live, taskNames, agent)) {
+        return reply.status(409).send({ error: `${agent.name} is working — cancel their task or session first` });
+      }
+      await saveAgent(agentsDir, { ...agent, archived: true });
+      return { ok: true, archived: agent.id };
+    });
+
     this.app.delete<{ Params: { id: string } }>('/agents/:id', async (req, reply) => {
       const agentsDir = resolve(process.cwd(), '.smith/agents');
       const agents = await loadAgents(agentsDir);
       const agent = agents.find((a) => a.id === req.params.id);
       if (!agent) return reply.status(404).send({ error: `Unknown agent: ${req.params.id}` });
-      // Archived, never deleted — same contract as the settings reset.
-      await rename(
-        resolve(agentsDir, `${agent.id}.json`),
-        resolve(process.cwd(), `.smith/agent-${agent.id}-archived-${Date.now()}.json`),
-      );
-      return { ok: true, archived: agent.id };
+      // Defense in depth: the broker decides archive-vs-delete, but swarm
+      // re-checks its own facts so a buggy caller cannot erase history.
+      const { records, live, taskNames } = await agentFacts(agent);
+      const usage = agentUsage(agent, records, live, taskNames);
+      if (usage.warmSessions > 0 || usage.activeTasks > 0) {
+        return reply.status(409).send({ error: `${agent.name} has history on this machine — archive instead` });
+      }
+      await rm(resolve(agentsDir, `${agent.id}.json`));
+      return { ok: true, deleted: agent.id };
     });
 
     // ── Persistent agent sessions (warm conversational workers) ────────
