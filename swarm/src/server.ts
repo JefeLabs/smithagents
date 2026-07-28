@@ -55,10 +55,19 @@ import { AgentSessionManager } from './agent-sessions.js';
 import { SessionStore } from './session-store.js';
 import { agentUsage, isBusy } from './lifecycle.js';
 import { isValidModelId } from './drivers/model-flag.js';
-import { loadWorkspacesFromDir, resolveRepo, type Workspace } from './workspaces.js';
+import {
+  loadWorkspacesFromDir,
+  resolveRepo,
+  saveWorkspace,
+  removeWorkspaceFile,
+  isGitRepo,
+  defaultViolation,
+  activeWorkspaces,
+  type Workspace,
+} from './workspaces.js';
 import { MeetingOrchestrator } from './meetings.js';
 import { loadLiveKitConfig } from './config.js';
-import { resolve } from 'node:path';
+import { resolve, isAbsolute } from 'node:path';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -173,6 +182,11 @@ export class OrchestratorServer {
     this.dispatcher.on('session:orphan_cleanup', (e: DispatcherEvent) => this.broadcast(e));
   }
 
+  /** Reread `.smith/workspaces/*.json` — called at boot and after every mutation below. */
+  private async reloadWorkspaces(): Promise<void> {
+    this.workspaces = await loadWorkspacesFromDir(resolve(process.cwd(), '.smith/workspaces'));
+  }
+
   /**
    * Adopt warm sessions that outlived the last run. Never fatal: a swarm that
    * cannot reconcile must still boot and serve, or one bad record takes the
@@ -224,7 +238,7 @@ export class OrchestratorServer {
 
     await this.reconcileSessions();
 
-    this.workspaces = await loadWorkspacesFromDir(resolve(process.cwd(), '.smith/workspaces'));
+    await this.reloadWorkspaces();
     if (this.workspaces.length > 0) {
       this.app.log.info(`Workspaces: ${this.workspaces.map((w) => `${w.name}(${w.repos.map((r) => r.name).join(',')})`).join(' ')}`);
     }
@@ -1158,13 +1172,133 @@ export class OrchestratorServer {
       return { ok: true, scope, killed, preserved };
     });
 
+    // Shared by POST and PUT — every repo must be an absolute path to a real
+    // git checkout, since the dispatcher worktrees task branches from it.
+    const workspaceProblems = async (b: Partial<Workspace>): Promise<string | null> => {
+      if (!b.name?.trim()) return 'Missing required field: name';
+      if (!Array.isArray(b.repos) || b.repos.length === 0) return 'A workspace needs at least one repo';
+      for (const r of b.repos) {
+        if (!r?.name?.trim()) return 'Every repo needs a name';
+        if (!r.path || !isAbsolute(r.path)) return `Repo "${r.name}": path must be absolute`;
+        if (!(await isGitRepo(r.path))) return `Repo "${r.name}": ${r.path} is not a git repository`;
+      }
+      return null;
+    };
+
+    this.app.post('/workspaces', async (req, reply) => {
+      const b = req.body as Partial<Workspace>;
+      const problem = await workspaceProblems(b);
+      if (problem) return reply.status(400).send({ error: problem });
+      const dir = resolve(process.cwd(), '.smith/workspaces');
+      const name = b.name!.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      const all = await loadWorkspacesFromDir(dir);
+      const collider = all.find((w) => w.name === name);
+      if (collider) {
+        return reply.status(409).send({
+          error: collider.archived
+            ? `The name "${name}" belongs to an archived workspace — pick another`
+            : `Workspace "${name}" already exists`,
+        });
+      }
+      const ws: Workspace = {
+        name,
+        description: b.description?.trim() || undefined,
+        repos: b.repos!.map((r) => ({ name: r.name.trim(), path: r.path, repository: r.repository, branch: r.branch || 'main' })),
+        default: Boolean(b.default) || activeWorkspaces(all).length === 0,
+      };
+      try {
+        if (ws.default) for (const other of all.filter((w) => w.default)) await saveWorkspace(dir, { ...other, default: undefined });
+        await saveWorkspace(dir, ws);
+      } catch (err) {
+        return reply.status(400).send({ error: String((err as Error).message) });
+      }
+      await server.reloadWorkspaces();
+      return reply.status(201).send(ws);
+    });
+
+    this.app.put<{ Params: { name: string } }>('/workspaces/:name', async (req, reply) => {
+      const b = req.body as Partial<Workspace>;
+      const dir = resolve(process.cwd(), '.smith/workspaces');
+      const all = await loadWorkspacesFromDir(dir);
+      const existing = all.find((w) => w.name === req.params.name);
+      if (!existing) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
+      const merged: Workspace = {
+        ...existing,
+        // The name is the file key and what sessions point at — immutable.
+        name: existing.name,
+        description: b.description !== undefined ? b.description.trim() || undefined : existing.description,
+        repos: b.repos ?? existing.repos,
+        default: b.default ?? existing.default,
+        archived: b.archived === false ? undefined : existing.archived,
+      };
+      const problem = await workspaceProblems(merged);
+      if (problem) return reply.status(400).send({ error: problem });
+      if (merged.default && !existing.default) {
+        for (const other of all.filter((w) => w.default && w.name !== merged.name)) {
+          await saveWorkspace(dir, { ...other, default: undefined });
+        }
+      }
+      if (existing.default && b.default === false && activeWorkspaces(all).length > 1) {
+        return reply.status(409).send({ error: `"${existing.name}" is the default workspace — set another default first` });
+      }
+      await saveWorkspace(dir, merged);
+      await server.reloadWorkspaces();
+      return merged;
+    });
+
+    this.app.post<{ Params: { name: string } }>('/workspaces/:name/archive', async (req, reply) => {
+      const dir = resolve(process.cwd(), '.smith/workspaces');
+      const all = await loadWorkspacesFromDir(dir);
+      const ws = all.find((w) => w.name === req.params.name);
+      if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
+      const violation = defaultViolation(all, ws.name);
+      if (violation) return reply.status(409).send({ error: violation });
+      await saveWorkspace(dir, { ...ws, archived: true });
+      await server.reloadWorkspaces();
+      return { ok: true, archived: ws.name };
+    });
+
+    this.app.delete<{ Params: { name: string } }>('/workspaces/:name', async (req, reply) => {
+      const dir = resolve(process.cwd(), '.smith/workspaces');
+      const all = await loadWorkspacesFromDir(dir);
+      const ws = all.find((w) => w.name === req.params.name);
+      if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
+      const violation = defaultViolation(all, ws.name);
+      if (violation) return reply.status(409).send({ error: violation });
+      const repoPaths = new Set(ws.repos.map((r) => r.path));
+      const activeTasks = [...server.activeTasks.values()].filter((t) => {
+        const repoPath = t.manifest.context.repoPath;
+        return repoPath !== undefined && repoPaths.has(repoPath);
+      }).length;
+      if (activeTasks > 0) {
+        return reply.status(409).send({ error: `Workspace "${ws.name}" has ${activeTasks} running task(s) — archive instead` });
+      }
+      await removeWorkspaceFile(dir, ws.name);
+      await server.reloadWorkspaces();
+      return { ok: true, deleted: ws.name };
+    });
+
+    this.app.get<{ Params: { name: string } }>('/workspaces/:name/usage', async (req, reply) => {
+      const all = await loadWorkspacesFromDir(resolve(process.cwd(), '.smith/workspaces'));
+      const ws = all.find((w) => w.name === req.params.name);
+      if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
+      const repoPaths = new Set(ws.repos.map((r) => r.path));
+      const activeTasks = [...server.activeTasks.values()].filter((t) => {
+        const repoPath = t.manifest.context.repoPath;
+        return repoPath !== undefined && repoPaths.has(repoPath);
+      }).length;
+      return { activeTasks };
+    });
+
     this.app.get('/workspaces', async () => {
+      const active = activeWorkspaces(server.workspaces);
       return {
         workspaces: server.workspaces.map((w) => ({
           name: w.name,
           description: w.description,
-          default: Boolean(w.default) || (!server.workspaces.some((x) => x.default) && server.workspaces[0] === w),
-          repos: w.repos.map((r) => ({ name: r.name, repository: r.repository, branch: r.branch ?? 'main' })),
+          default: Boolean(w.default) || (!active.some((x) => x.default) && active[0] === w),
+          archived: Boolean(w.archived),
+          repos: w.repos.map((r) => ({ name: r.name, path: r.path, repository: r.repository, branch: r.branch ?? 'main' })),
         })),
       };
     });
