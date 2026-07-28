@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { resolveRepo, saveWorkspace, isGitRepo, defaultViolation, loadWorkspacesFromDir } from './workspaces.js';
+import { resolveRepo, saveWorkspace, removeWorkspaceFile, isGitRepo, defaultViolation, loadWorkspacesFromDir } from './workspaces.js';
 import type { Workspace } from './workspaces.js';
 
 test('resolveRepo never resolves into an archived workspace', () => {
@@ -40,4 +40,15 @@ test('defaultViolation blocks removing the default while other active workspaces
   assert.match(defaultViolation(all, 'a') ?? '', /default/);
   assert.equal(defaultViolation(all, 'b'), null);
   assert.equal(defaultViolation([all[0]!], 'a'), null); // last one may go
+});
+
+test('removeWorkspaceFile: rejects missing workspace with readable error, succeeds on existing file', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'rm-'));
+  await assert.rejects(
+    () => removeWorkspaceFile(dir, 'nope'),
+    /Workspace "nope" not found/,
+  );
+  await saveWorkspace(dir, { name: 'exist', repos: [{ name: 'r', path: '/tmp' }] });
+  await removeWorkspaceFile(dir, 'exist');
+  assert.equal((await loadWorkspacesFromDir(dir)).length, 0);
 });

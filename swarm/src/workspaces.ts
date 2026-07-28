@@ -90,7 +90,14 @@ export async function saveWorkspace(dir: string, ws: Workspace): Promise<void> {
 }
 
 export async function removeWorkspaceFile(dir: string, name: string): Promise<void> {
-  await rm(join(dir, `${name}.json`));
+  try {
+    await rm(join(dir, `${name}.json`));
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      throw new Error(`Workspace "${name}" not found`);
+    }
+    throw error;
+  }
 }
 
 /** True when `path` is inside a git repository (worktrees are cut from here). */
