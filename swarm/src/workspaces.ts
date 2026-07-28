@@ -61,6 +61,11 @@ export function activeWorkspaces(workspaces: Workspace[]): Workspace[] {
   return workspaces.filter((w) => !w.archived);
 }
 
+/** Default a blank/omitted branch to "main" — mirrors POST /workspaces so PUT can't persist an empty branch. */
+export function normalizeRepoBranch(repos: WorkspaceRepo[]): WorkspaceRepo[] {
+  return repos.map((r) => ({ ...r, branch: r.branch?.trim() || 'main' }));
+}
+
 /**
  * Resolve a delegation's workspace/repo names to a concrete repo.
  * Omitted workspace -> the default (flagged, else first). Omitted repo -> the

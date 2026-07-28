@@ -5,7 +5,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { resolveRepo, saveWorkspace, removeWorkspaceFile, isGitRepo, defaultViolation, loadWorkspacesFromDir } from './workspaces.js';
+import {
+  resolveRepo,
+  saveWorkspace,
+  removeWorkspaceFile,
+  isGitRepo,
+  defaultViolation,
+  loadWorkspacesFromDir,
+  normalizeRepoBranch,
+} from './workspaces.js';
 import type { Workspace } from './workspaces.js';
 
 test('resolveRepo never resolves into an archived workspace', () => {
@@ -40,6 +48,19 @@ test('defaultViolation blocks removing the default while other active workspaces
   assert.match(defaultViolation(all, 'a') ?? '', /default/);
   assert.equal(defaultViolation(all, 'b'), null);
   assert.equal(defaultViolation([all[0]!], 'a'), null); // last one may go
+});
+
+test('normalizeRepoBranch: defaults a blank or omitted branch to main, leaves a real one alone', () => {
+  const repos = normalizeRepoBranch([
+    { name: 'r1', path: '/tmp/a', branch: '' },
+    { name: 'r2', path: '/tmp/b', branch: '   ' },
+    { name: 'r3', path: '/tmp/c' },
+    { name: 'r4', path: '/tmp/d', branch: 'develop' },
+  ]);
+  assert.deepEqual(
+    repos.map((r) => r.branch),
+    ['main', 'main', 'main', 'develop'],
+  );
 });
 
 test('removeWorkspaceFile: rejects missing workspace with readable error, succeeds on existing file', async () => {

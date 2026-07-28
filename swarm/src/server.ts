@@ -63,6 +63,7 @@ import {
   isGitRepo,
   defaultViolation,
   activeWorkspaces,
+  normalizeRepoBranch,
   type Workspace,
 } from './workspaces.js';
 import { MeetingOrchestrator } from './meetings.js';
@@ -1241,7 +1242,7 @@ export class OrchestratorServer {
         // The name is the file key and what sessions point at — immutable.
         name: existing.name,
         description: b.description !== undefined ? b.description.trim() || undefined : existing.description,
-        repos: b.repos ?? existing.repos,
+        repos: b.repos ? normalizeRepoBranch(b.repos) : existing.repos,
         default: b.default ?? existing.default,
         archived: b.archived === false ? undefined : existing.archived,
       };
