@@ -83,8 +83,8 @@ sessions, never a restructure.
    (execution rosters stay fixed config) and fully real for user squads.
    The brain always sees the current arrangement.
 3. **Delegate:** ask for work. The brain picks the specialist (directives
-   define domains: Manuel — architecture/routing; Octavio — security and
-   integration boundaries; Aurelio — atomic-design UI), names the repo when
+   define domains — e.g. Ignacio — software architecture; Wilkin —
+   full-stack implementation and audit), names the repo when
    it isn't the session default, and the swarm runs it for real.
 4. **Supervise:** working agents glow; click to watch live terminal output,
    send steering mid-run, or cancel. Completion is announced in the meeting

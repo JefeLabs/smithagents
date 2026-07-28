@@ -111,7 +111,7 @@ cd control-plane && npm install && npm run tauri dev
 ```
 
 Type at the crew, or hold the mic button and talk. Delegate real work
-("have Aurelio refactor the composer") and watch the agent's ring glow —
+("have Ignacio refactor the composer") and watch the agent's ring glow —
 click it to see live output, steer, or cancel.
 
 ## Tests
