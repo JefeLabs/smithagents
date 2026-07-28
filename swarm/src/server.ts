@@ -924,6 +924,24 @@ export class OrchestratorServer {
       return reply.status(201).send(agent);
     });
 
+    // Reusable across the edit route and the usage/archive/delete routes
+    // below — reuses the same session-manager closure the warm-session
+    // routes rely on. Task refs carry both the stable composed-agent id
+    // (from metadata.composedAgentId, when the caller sent one) and the
+    // display name, so isBusy/agentUsage can match by id first and fall
+    // back to name only for tasks whose manifest predates the id.
+    const agentFacts = async (agent: ComposedAgent) => {
+      const records = await new SessionStore(resolve(process.cwd(), '.smith/sessions')).load();
+      const live = server.agentSessions ? (await server.agentSessions.list()).map((s) => s.agentId) : [];
+      const taskRefs = [...server.activeTasks.values()]
+        .map((t) => ({
+          composedAgentId: typeof t.manifest.metadata?.composedAgentId === 'string' ? t.manifest.metadata.composedAgentId : undefined,
+          profileName: t.manifest.profile?.name,
+        }))
+        .filter((ref) => ref.composedAgentId !== undefined || ref.profileName !== undefined);
+      return { records, live, taskRefs };
+    };
+
     // Editing an existing agent. Merge, don't replace: the wizard submits
     // every field it knows, but a caller that sends three fields must not
     // silently blank the rest of the persona.
@@ -933,6 +951,15 @@ export class OrchestratorServer {
       const agents = await loadAgents(agentsDir);
       const existing = agents.find((a) => a.id === req.params.id);
       if (!existing) return reply.status(404).send({ error: `Unknown agent: ${req.params.id}` });
+
+      // Renaming (or any edit) mid-task would dissolve the busy-lock and
+      // task attribution out from under a running task — block all edits
+      // while busy, matching the UI, which already locks busy agents from
+      // the edit wizard.
+      const { live, taskRefs } = await agentFacts(existing);
+      if (isBusy(live, taskRefs, existing)) {
+        return reply.status(409).send({ error: `${existing.name} is working — cancel their task or session first` });
+      }
 
       if (b.stereotype && !findStereotype(b.stereotype)) {
         return reply.status(400).send({ error: `Unknown stereotype: ${b.stereotype}` });
@@ -986,23 +1013,12 @@ export class OrchestratorServer {
       return reply.status(200).send(updated);
     });
 
-    // Reusable across the usage/archive/delete routes below — reuses the
-    // same session-manager closure the warm-session routes rely on.
-    const agentFacts = async (agent: ComposedAgent) => {
-      const records = await new SessionStore(resolve(process.cwd(), '.smith/sessions')).load();
-      const live = server.agentSessions ? (await server.agentSessions.list()).map((s) => s.agentId) : [];
-      const taskNames = [...server.activeTasks.values()]
-        .map((t) => t.manifest.profile?.name)
-        .filter((n): n is string => Boolean(n));
-      return { records, live, taskNames };
-    };
-
     this.app.get<{ Params: { id: string } }>('/agents/:id/usage', async (req, reply) => {
       const agents = await loadAgents(resolve(process.cwd(), '.smith/agents'));
       const agent = agents.find((a) => a.id === req.params.id);
       if (!agent) return reply.status(404).send({ error: `Unknown agent: ${req.params.id}` });
-      const { records, live, taskNames } = await agentFacts(agent);
-      return agentUsage(agent, records, live, taskNames);
+      const { records, live, taskRefs } = await agentFacts(agent);
+      return agentUsage(agent, records, live, taskRefs);
     });
 
     this.app.post<{ Params: { id: string } }>('/agents/:id/archive', async (req, reply) => {
@@ -1010,8 +1026,8 @@ export class OrchestratorServer {
       const agents = await loadAgents(agentsDir);
       const agent = agents.find((a) => a.id === req.params.id);
       if (!agent) return reply.status(404).send({ error: `Unknown agent: ${req.params.id}` });
-      const { live, taskNames } = await agentFacts(agent);
-      if (isBusy(live, taskNames, agent)) {
+      const { live, taskRefs } = await agentFacts(agent);
+      if (isBusy(live, taskRefs, agent)) {
         return reply.status(409).send({ error: `${agent.name} is working — cancel their task or session first` });
       }
       await saveAgent(agentsDir, { ...agent, archived: true });
@@ -1025,8 +1041,8 @@ export class OrchestratorServer {
       if (!agent) return reply.status(404).send({ error: `Unknown agent: ${req.params.id}` });
       // Defense in depth: the broker decides archive-vs-delete, but swarm
       // re-checks its own facts so a buggy caller cannot erase history.
-      const { records, live, taskNames } = await agentFacts(agent);
-      const usage = agentUsage(agent, records, live, taskNames);
+      const { records, live, taskRefs } = await agentFacts(agent);
+      const usage = agentUsage(agent, records, live, taskRefs);
       if (usage.warmSessions > 0 || usage.activeTasks > 0) {
         return reply.status(409).send({ error: `${agent.name} has history on this machine — archive instead` });
       }
