@@ -131,7 +131,10 @@ export function realReceiver(voiceReceiver: VoiceReceiver, guild: Guild): VoiceR
       voiceReceiver.speaking.on('start', (userId) => {
         void (async () => {
           // Left before we could resolve who they are — nothing to attribute to.
-          const member = await guild.members.fetch(userId).catch(() => null);
+          const member = await guild.members.fetch(userId).catch((err: unknown) => {
+            console.error(`[discord-voice] couldn't resolve guild member ${userId} for a voice speaking-start — dropping their audio: ${String(err)}`);
+            return null;
+          });
           if (!member) return;
           const opusStream = voiceReceiver.subscribe(userId, {
             end: { behavior: EndBehaviorType.AfterSilence, duration: RECEIVE_END_SILENCE_MS },

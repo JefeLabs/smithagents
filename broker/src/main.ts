@@ -14,9 +14,15 @@ import { loadBrokerConfig } from './config.ts';
 import { createDiscordAdapter } from './discord-adapter.ts';
 import { AgentDirectory } from './directory.ts';
 import { LiveKitRoomBridge } from './room.ts';
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { RosterState, TurnOrigin, UiRoster } from './broker.ts';
+// Type-only — erased at compile time, so this does NOT violate the voice
+// module's lazy-boot gate below (nothing runtime-loads unless
+// DISCORD_VOICE_CHANNELS is set; see setupDiscordVoice).
+import type { DiscordVoiceOptions, VoiceConnectionLike, VoiceGatewayLike, VoiceReceiverLike } from './discord-voice.ts';
+import type { PresenceEvent } from './voice-presence.ts';
 import { LocalMemory, type MemoryEntry } from './memory.ts';
 import { SessionManager, type Session } from './sessions.ts';
 import { DeepgramSttStream, type LiveLike } from './stt.ts';
@@ -132,7 +138,12 @@ async function* speak(text: string): AsyncIterable<Uint8Array> {
  */
 const deepgram = new DeepgramClient({ apiKey: config.deepgramApiKey });
 
-function makeDeepgramLive(): LiveLike {
+// sampleRate defaults to 48000 (mic/meeting PTT's rate) so the existing
+// `new DeepgramSttStream(makeDeepgramLive)` call sites below need no change;
+// discord-voice.ts's ear also runs at 48000 (Discord's receive rate) but
+// passes it explicitly rather than relying on the default matching by
+// coincidence — see makeVoiceStt below.
+function makeDeepgramLive(sampleRate = 48000): LiveLike {
   type Socket = Awaited<ReturnType<typeof deepgram.listen.v1.connect>>;
   let socket: Socket | null = null;
   let resultsCb: ((data?: unknown) => void) | null = null;
@@ -143,7 +154,7 @@ function makeDeepgramLive(): LiveLike {
     .connect({
       model: 'nova-3',
       encoding: 'linear16',
-      sample_rate: 48000,
+      sample_rate: sampleRate,
       channels: 1,
       interim_results: 'true',
       smart_format: 'true',
@@ -737,6 +748,213 @@ if (discordToken) {
       (err) => console.error(`[discord] failed to start: ${String(err)}`),
     );
   }
+}
+
+/**
+ * Discord voice attends only when DISCORD_VOICE_CHANNELS names at least one
+ * channel — same all-local invariant as the text adapter's DISCORD_TOKEN
+ * gate. Every voice-only module (discord-voice.ts, discord-audio.ts,
+ * discord.js, @discordjs/voice) is dynamic-imported from inside this
+ * function, so an unset/empty env var means none of it ever loads.
+ *
+ * Ear-connection reconciliation (the one genuinely tricky wiring decision):
+ * `createDiscordVoiceSurface`'s own `joinAll` always calls
+ * `gateway.join(channelId, opts.earToken)` for the ear's mouth, and
+ * `opts.receiver?.onSpeakingStart(cb)` is captured once, synchronously, at
+ * surface CONSTRUCTION time — before any real voice connection can possibly
+ * exist (the ear only ever connects in response to a human's presence, never
+ * eagerly at boot). That means the receiver can't be built ahead of time and
+ * handed in; it has to be captured at the exact moment the ear's real
+ * connection comes into being. The fix: a custom `gateway` (this function's
+ * `earAwareGateway`) that intercepts joins for `earToken` specifically —
+ * reusing the already-logged-in `earClient` (see below) instead of a second
+ * gateway session under the same bot token — and wires
+ * `discord-audio.ts`'s `realReceiver` onto that connection's `.receiver` at
+ * the same moment. A `liveReceiver` flag ties delivery to the connection's
+ * lifecycle (carry-forward from Task 4's report): flipped true right before
+ * registering, false in `destroy()`, and checked before every delivered
+ * speaking-start — so a `guild.members.fetch()` that was in flight when
+ * `leaveAll()` ran can never mint a fresh STT session off a connection
+ * that's already gone. Every OTHER token (agent mouths) still goes through
+ * the plain, already-tested `realGateway()` — this function never touches
+ * `discord-voice.ts`'s exported interfaces, only supplies its own
+ * `VoiceGatewayLike`/`VoiceReceiverLike` implementations from the outside.
+ */
+async function setupDiscordVoice(allowlist: string[]): Promise<void> {
+  const ffmpegCheck = spawnSync('ffmpeg', ['-version']);
+  if (ffmpegCheck.error || ffmpegCheck.status !== 0) {
+    console.error('[discord-voice] ffmpeg not found on PATH — voice disabled (install ffmpeg to enable Discord voice).');
+    return;
+  }
+  const earToken = process.env.DISCORD_TOKEN;
+  if (!earToken) {
+    console.error('[discord-voice] DISCORD_VOICE_CHANNELS is set but DISCORD_TOKEN is empty — the ear has no bot identity. Voice disabled.');
+    return;
+  }
+
+  const [
+    { createDiscordVoiceSurface, realGateway },
+    { realReceiver, pcm44kMonoToOpus },
+    { VoicePresence },
+    { Client: DiscordClient, GatewayIntentBits },
+    voice,
+  ] = await Promise.all([
+    import('./discord-voice.ts'),
+    import('./discord-audio.ts'),
+    import('./voice-presence.ts'),
+    import('discord.js'),
+    import('@discordjs/voice'),
+  ]);
+  const {
+    joinVoiceChannel,
+    createAudioPlayer,
+    createAudioResource,
+    entersState,
+    StreamType,
+    VoiceConnectionStatus,
+    AudioPlayerStatus,
+    NoSubscriberBehavior,
+  } = voice;
+
+  // Token map: DISCORD_TOKEN_<X> (excluding the bare ear token) -> agent id.
+  const agentTokens = new Map<string, string>();
+  for (const [key, value] of Object.entries(process.env)) {
+    if (key === 'DISCORD_TOKEN' || !key.startsWith('DISCORD_TOKEN_') || !value) continue;
+    agentTokens.set(key.slice('DISCORD_TOKEN_'.length).toLowerCase().replaceAll('_', '-'), value);
+  }
+  const designated = directory.list().filter((a) => a.channels?.includes('discord-voice'));
+  const mouths = designated.filter((a) => agentTokens.has(a.id)).map((a) => a.id);
+  const degraded = designated.filter((a) => !agentTokens.has(a.id)).map((a) => a.id);
+  console.log(`[discord-voice] ear ready — ${allowlist.length} channel(s) allowlisted`);
+  console.log(`[discord-voice] agent mouths (own bot token): ${mouths.length ? mouths.join(', ') : '(none)'}`);
+  console.log(`[discord-voice] agents degraded (share the ear): ${degraded.length ? degraded.join(', ') : '(none)'}`);
+
+  const earClient = new DiscordClient({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
+  await earClient.login(earToken);
+
+  // Receiver proxy: see the module-level doc comment above setupDiscordVoice
+  // for why this indirection exists. speakingStartCb is captured once, by
+  // createDiscordVoiceSurface's constructor, and outlives every join/leave
+  // cycle; liveReceiver gates delivery to the current connection only.
+  let liveReceiver = false;
+  let speakingStartCb: Parameters<VoiceReceiverLike['onSpeakingStart']>[0] | null = null;
+  const receiverProxy: VoiceReceiverLike = {
+    onSpeakingStart(cb) {
+      speakingStartCb = cb;
+    },
+  };
+
+  const fallbackGateway = realGateway();
+  const earAwareGateway: VoiceGatewayLike = {
+    async join(channelId: string, token: string): Promise<VoiceConnectionLike> {
+      if (token !== earToken) return fallbackGateway.join(channelId, token);
+
+      // Reuse earClient (already logged in for presence) rather than a
+      // second gateway session under the same bot token.
+      const channel = await earClient.channels.fetch(channelId);
+      if (!channel || !channel.isVoiceBased()) {
+        throw new Error(`Discord channel ${channelId} is not a voice channel`);
+      }
+      const connection = joinVoiceChannel({
+        channelId,
+        guildId: channel.guild.id,
+        adapterCreator: channel.guild.voiceAdapterCreator,
+        selfDeaf: false,
+        selfMute: false,
+      });
+      await entersState(connection, VoiceConnectionStatus.Ready, 15_000);
+      const player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play } });
+      connection.subscribe(player);
+
+      liveReceiver = true;
+      realReceiver(connection.receiver, channel.guild).onSpeakingStart((userId, displayName, isBot, pcm) => {
+        if (!liveReceiver) return; // this connection was already torn down — drop it, never mint a session for it
+        speakingStartCb?.(userId, displayName, isBot, pcm);
+      });
+
+      return {
+        async playPcm(pcm44kMono: AsyncIterable<Uint8Array>): Promise<void> {
+          const opusStream = pcm44kMonoToOpus(pcm44kMono);
+          const resource = createAudioResource(opusStream, { inputType: StreamType.Opus });
+          player.play(resource);
+          await entersState(player, AudioPlayerStatus.Idle, 120_000);
+        },
+        destroy(): void {
+          liveReceiver = false;
+          connection.destroy();
+          // earClient itself is NOT destroyed here — it's shared with presence watching and must survive leaveAll.
+        },
+      };
+    },
+  };
+
+  const surface = createDiscordVoiceSurface({
+    allowlist,
+    earToken,
+    agentTokens,
+    agents: () => directory.list().map((a) => ({ id: a.id, channels: a.channels })),
+    gateway: earAwareGateway,
+    log: (line) => console.log(line),
+    // No origin — voice turns are meeting-shaped, matching mic PTT/stdin.
+    onUtterance: (text) => handleUserText(text),
+    // Rate-parameterized: discord-voice.ts always calls this with 48000
+    // (Discord's receive rate), but the value is threaded through honestly
+    // rather than relying on makeDeepgramLive's default matching by luck.
+    makeStt: (sampleRate) => new DeepgramSttStream(() => makeDeepgramLive(sampleRate)),
+    receiver: receiverProxy,
+  } satisfies DiscordVoiceOptions);
+
+  const presence = new VoicePresence(allowlist);
+
+  function humanCountFor(channelId: string): number {
+    const channel = earClient.channels.cache.get(channelId);
+    if (!channel || !channel.isVoiceBased()) return 0;
+    return channel.members.filter((m) => !m.user.bot).size;
+  }
+
+  async function onPresenceEvent(event: PresenceEvent): Promise<void> {
+    const action = presence.handle(event, humanCountFor);
+    if (action.type === 'join-crew') {
+      // First-come-wins per broker.ts's attachVoiceSurface contract: declined
+      // (a meeting is active or joining) means log + skip + no markJoined —
+      // the next qualifying presence event retries from scratch.
+      if (!broker.attachVoiceSurface(surface)) {
+        console.log('[discord-voice] attach declined (a meeting is active or joining) — will retry on the next presence event');
+        return;
+      }
+      try {
+        await surface.joinAll(action.channelId);
+        presence.markJoined(action.channelId);
+        console.log(`[discord-voice] joined ${action.channelId} — ear + ${surface.connectedAgentIds().length} agent mouth(es)`);
+      } catch (err) {
+        console.error(`[discord-voice] join failed for ${action.channelId}: ${String(err)}`);
+        broker.detachVoiceSurface();
+        presence.handle({ type: 'join-failed', channelId: action.channelId }, humanCountFor);
+      }
+    } else if (action.type === 'leave-crew') {
+      await surface.leaveAll();
+      broker.detachVoiceSurface();
+      presence.markLeft();
+      console.log(`[discord-voice] left ${action.channelId}`);
+    }
+  }
+
+  earClient.on('voiceStateUpdate', (oldState, newState) => {
+    void (async () => {
+      const leftId = oldState.channelId;
+      const joinedId = newState.channelId;
+      if (leftId === joinedId) return; // mute/deafen-only change, not a channel join/leave
+      const member = newState.member ?? oldState.member ?? (await newState.guild.members.fetch(newState.id).catch(() => null));
+      if (!member || member.user.bot) return; // human = !member.user.bot; bots (our own mouths included) never drive presence
+      if (leftId) await onPresenceEvent({ type: 'human-left', channelId: leftId });
+      if (joinedId) await onPresenceEvent({ type: 'human-joined', channelId: joinedId });
+    })().catch((err) => console.error(`[discord-voice] presence handling failed: ${String(err)}`));
+  });
+}
+
+const voiceChannelAllowlist = (process.env.DISCORD_VOICE_CHANNELS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+if (voiceChannelAllowlist.length > 0) {
+  await setupDiscordVoice(voiceChannelAllowlist).catch((err) => console.error(`[discord-voice] failed to start: ${String(err)}`));
 }
 
 const rl = createInterface({ input: process.stdin });
