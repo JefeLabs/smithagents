@@ -127,3 +127,43 @@ test('an agent with NO channels field attends everywhere', () => {
   hub.dispatchSpeech('Nomad: present');
   assert.equal(delivered.length, 1);
 });
+
+test('attendsPolicy replaces the legacy channels-array membership check', () => {
+  const { adapter, delivered } = fakeAdapter('discord');
+  // Both agents list "discord" in their channels array — under the legacy
+  // check both would pass. attendsPolicy overrides that entirely.
+  const agents = [
+    { id: 'ignacio', name: 'Ignacio', channels: ['discord'] },
+    { id: 'wilkin', name: 'Wilkin', channels: ['discord'] },
+  ];
+  const hub = new AdapterHub({ resolveSpeaker, agents: () => agents, submitUserText: () => {} });
+  hub.register(adapter);
+  hub.attendsPolicy = (id) => id === 'ignacio';
+  hub.setActiveOrigin({ kind: 'discord', channelRef: 'chan-1' });
+  hub.dispatchSpeech('Ignacio: I attend');
+  hub.dispatchSpeech('Wilkin: channels says I should, policy says no');
+  assert.deepEqual(
+    delivered.map((d) => d.line.agentId),
+    ['ignacio'],
+  );
+});
+
+test('without attendsPolicy the legacy array check still applies', () => {
+  const { adapter, delivered } = fakeAdapter('discord');
+  const agents = [
+    { id: 'a', name: 'Aya', channels: ['discord'] },
+    { id: 'b', name: 'Beto', channels: [] },
+    { id: 'c', name: 'Caro' }, // no channels field at all
+  ];
+  const hub = new AdapterHub({ resolveSpeaker, agents: () => agents, submitUserText: () => {} });
+  hub.register(adapter);
+  hub.attendsPolicy = null;
+  hub.setActiveOrigin({ kind: 'discord', channelRef: 'chan-1' });
+  hub.dispatchSpeech('Aya: listed, delivers');
+  hub.dispatchSpeech('Beto: empty array, does not deliver');
+  hub.dispatchSpeech('Caro: no channels field, delivers (legacy-exact)');
+  assert.deepEqual(
+    delivered.map((d) => d.line.agentId),
+    ['a', 'c'],
+  );
+});

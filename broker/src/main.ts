@@ -23,7 +23,7 @@ import type { RosterState, TurnOrigin, UiRoster } from './broker.ts';
 // DISCORD_VOICE_CHANNELS is set; see setupDiscordVoice).
 import type { DiscordVoiceOptions, VoiceConnectionLike, VoiceGatewayLike, VoiceReceiverLike } from './discord-voice.ts';
 import type { PresenceEvent } from './voice-presence.ts';
-import { surfaceModes } from './surface-modes.ts';
+import { surfaceModes, SurfacePolicy } from './surface-modes.ts';
 import { LocalMemory, type MemoryEntry } from './memory.ts';
 import { SessionManager, type Session } from './sessions.ts';
 import { DeepgramSttStream, type LiveLike, deepgramLiveOptions } from './stt.ts';
@@ -47,6 +47,11 @@ const streamFactory: StreamFactory = (params) =>
 
 const swarm = new SwarmClient({ baseUrl: config.swarm.baseUrl, token: config.swarm.token });
 const directory = new AgentDirectory();
+// Shared presence policy (surface-modes): the single source of truth for
+// which surfaces each agent attends. Wired into text delivery and the tauri
+// roster below; later tasks reuse this same instance for the join endpoint
+// and mode-change enforcement.
+const policy = new SurfacePolicy(() => directory.list());
 
 // Routes external channel (Discord, …) traffic through the same turn the app
 // uses. resolveSpokenLineForChannels/handleUserText are `function`
@@ -65,6 +70,7 @@ const adapterHub = new AdapterHub({
   agents: () => directory.list().map((a) => ({ id: a.id, name: a.name, channels: a.channels })),
   submitUserText: handleUserText,
 });
+adapterHub.attendsPolicy = (agentId, kind) => policy.attends(agentId, kind);
 
 const tts = config.elevenlabsApiKey ? new ElevenLabsVoiceProvider({ apiKey: config.elevenlabsApiKey }) : null;
 // Voice library browsing + the fixed-line audio cache (reactions, quick answers).
@@ -322,7 +328,10 @@ const toRosterEntries = (roster: UiRoster): RosterEntry[] => {
   const isListening = (...names: Array<string | undefined>) =>
     names.some((n) => n !== undefined && addressed.has(n.toLowerCase())) || undefined;
   return [
-  ...roster.agents.map(
+  // Presence policy gates tauri surface attendance same as text/voice —
+  // squads/groups/freed are composite units without a single agent id, so
+  // they're left to the underlying members' own presence for now.
+  ...roster.agents.filter((p) => policy.attends(p.agent.id, 'tauri')).map(
     (p): RosterEntry => ({
       id: p.agent.id,
       name: p.agent.name,

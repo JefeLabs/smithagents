@@ -55,6 +55,10 @@ export class AdapterHub {
   private activeOrigin: TurnOrigin | undefined;
   private lastSpeaker: HubAgent | null = null;
 
+  /** Presence policy hook (surface-modes). When set, replaces the legacy
+   * channels-array membership check for external delivery. */
+  attendsPolicy: ((agentId: string, kind: string) => boolean) | null = null;
+
   constructor(private readonly deps: HubDeps) {}
 
   register(adapter: ChannelAdapter): void {
@@ -85,7 +89,10 @@ export class AdapterHub {
     }
     const agent = this.lastSpeaker;
     if (!agent) return; // narrator/unknown lines stay out of external channels
-    if (agent.channels && !agent.channels.includes(adapter.kind)) return;
+    const attends = this.attendsPolicy
+      ? this.attendsPolicy(agent.id, adapter.kind)
+      : !(agent.channels && !agent.channels.includes(adapter.kind));
+    if (!attends) return;
     void adapter
       .deliver({ agentId: agent.id, name: agent.name, text: spokenText }, this.activeOrigin.channelRef)
       .catch((err) => console.error(`[channels] delivery to ${adapter.kind} failed: ${String(err)}`));
