@@ -14,22 +14,41 @@
  * are exercised only by the live checklist (docs/MANUAL-TESTING.md), never
  * by this file's unit tests.
  *
- * Utterance-boundary design decision: `publishPcm` delivers one TTS byte
- * chunk per call, with no signal marking where one line of dialogue ends and
- * the next begins — the broker's speech chain (broker.ts's `enqueueSpeech`)
- * never interleaves two chunks bound for this surface, but it doesn't flag a
- * boundary either. Rather than guess one (an idle-gap timer would be
- * fragile; inventing a flush signal would be a contract change), this
- * module treats each `publishPcm` call as its own complete playback
- * segment: the bytes are wrapped in a one-shot `AsyncIterable` and driven
- * through exactly one `playPcm()` call, whose promise is what `publishPcm`
- * itself resolves on. A small per-connection queue (`makeMouthQueue`)
- * chains these segments so a mouth never starts segment N+1 before segment
- * N's `playPcm()` settles. Today that ordering is already guaranteed
- * end-to-end by the broker's global speech serialization (see
- * `enqueueSpeech`'s doc comment), so this queue is local hygiene for a less
- * disciplined future caller, not a fix for an active bug — exactly what the
- * task brief asked for.
+ * Segmenting rule (fix round; supersedes the original one-segment-per-call
+ * design — see task-3-report.md's fix-round section for the full history).
+ * The broker calls `publishPcm` once per TTS byte chunk, and a spoken line
+ * is streamed as MANY chunks (`for await (const bytes of speak(text))
+ * publishPcm(bytes, ...)` in broker.ts's `enqueueSpeech`). Driving each
+ * chunk through its own `playPcm()` call means a fresh ffmpeg process +
+ * Opus encoder + AudioResource per chunk in `realGateway()` — audible gaps
+ * and process churn mid-sentence. Instead, each mouth (ear or an agent's
+ * own connection) keeps at most ONE open playback segment: a push-fed
+ * `AsyncIterable` handed to a single live `playPcm()` call. `publishPcm`
+ * appends to the open segment and resolves as soon as the bytes are queued
+ * — it no longer waits for those bytes to actually play, which decouples
+ * TTS-chunk fetching from real-time playback speed (a correctness
+ * improvement over the prior design, not just a batching one).
+ *
+ * A segment CLOSES on:
+ *   (a) an inactivity gap — `SEGMENT_IDLE_GAP_MS` (default 400ms) with no
+ *       new publish to that mouth: TTS streaming has natural gaps between
+ *       ElevenLabs chunks that are well under this, but a real pause
+ *       between lines (or the end of a turn) exceeds it, so playback ends
+ *       promptly instead of hanging open forever;
+ *   (b) a persona change on that connection: only the ear ever multiplexes
+ *       more than one speaker (an agent's own mouth only ever receives that
+ *       agent's own `personaId`, by construction of the routing lookup
+ *       below), so this rule exists to stop the ear from splicing two
+ *       different degraded speakers into one continuous segment.
+ * A publish after a segment closes opens a fresh one. Segment N+1's
+ * `playPcm()` call is chained to start only after segment N's has settled
+ * (never two concurrent `playPcm()` calls on one connection), preserving
+ * the same per-connection ordering guarantee the original design had.
+ *
+ * `SEGMENT_IDLE_GAP_MS` is a local constant rather than a `DiscordVoiceOptions`
+ * field: the interfaces are pinned verbatim for Tasks 4-5, and 400ms is a
+ * reasonable default for ElevenLabs' typical inter-chunk cadence — tune the
+ * constant in place if that cadence changes.
  */
 
 export interface VoiceConnectionLike {
@@ -54,25 +73,73 @@ export interface DiscordVoiceOptions {
 
 const VOICE_DESIGNATION = 'discord-voice';
 
-async function* oneShot(bytes: Uint8Array): AsyncIterable<Uint8Array> {
-  yield bytes;
-}
+/** See the module header's "Segmenting rule" for what opens/closes a segment and why. */
+const SEGMENT_IDLE_GAP_MS = 400;
 
-/** Chains playPcm calls on one connection so segment N+1 never starts before segment N settles. */
-function makeMouthQueue(connection: VoiceConnectionLike) {
-  let tail: Promise<void> = Promise.resolve();
+/**
+ * A push-fed `AsyncIterable<Uint8Array>` backing one open playback segment.
+ * `push()` buffers a chunk and wakes the consumer if it's waiting on one;
+ * `close()` signals end-of-segment once whatever's already buffered drains.
+ * Production never blocks on consumption: bytes pushed before `playPcm()`
+ * has even started draining this iterable (see `openSegment`) are simply
+ * buffered and yielded in order once it does.
+ */
+function makeSegmentSource(): { iterable: AsyncIterable<Uint8Array>; push(bytes: Uint8Array): void; close(): void } {
+  const pending: Uint8Array[] = [];
+  let wake: (() => void) | null = null;
+  let closed = false;
+
+  async function* generate(): AsyncGenerator<Uint8Array> {
+    for (;;) {
+      if (pending.length > 0) {
+        yield pending.shift()!;
+        continue;
+      }
+      if (closed) return;
+      await new Promise<void>((resolve) => {
+        wake = resolve;
+      });
+    }
+  }
+
   return {
-    push(bytes: Uint8Array): Promise<void> {
-      const played = tail.then(() => connection.playPcm(oneShot(bytes)));
-      tail = played.catch(() => undefined); // one bad segment must not wedge the queue for the next
-      return played;
+    iterable: generate(),
+    push(bytes: Uint8Array): void {
+      pending.push(bytes);
+      wake?.();
+      wake = null;
+    },
+    close(): void {
+      closed = true;
+      wake?.();
+      wake = null;
     },
   };
 }
 
+interface MouthSegment {
+  personaId: string | undefined;
+  push(bytes: Uint8Array): void;
+  close(): void;
+}
+
 interface Mouth {
   connection: VoiceConnectionLike;
-  queue: ReturnType<typeof makeMouthQueue>;
+  segment: MouthSegment | null;
+  idleTimer: ReturnType<typeof setTimeout> | null;
+  /** Chains playPcm calls so segment N+1 never starts before segment N settles. */
+  tail: Promise<void>;
+}
+
+function openMouth(connection: VoiceConnectionLike): Mouth {
+  return { connection, segment: null, idleTimer: null, tail: Promise.resolve() };
+}
+
+function clearIdleTimer(mouth: Mouth): void {
+  if (mouth.idleTimer) {
+    clearTimeout(mouth.idleTimer);
+    mouth.idleTimer = null;
+  }
 }
 
 export function createDiscordVoiceSurface(opts: DiscordVoiceOptions): {
@@ -86,8 +153,46 @@ export function createDiscordVoiceSurface(opts: DiscordVoiceOptions): {
 
   let ear: Mouth | null = null;
   const agentMouths = new Map<string, Mouth>();
+  let currentChannelId: string | null = null;
+
+  /** Ends the mouth's open segment (if any) so its playPcm() call settles; safe to call when none is open. */
+  function closeSegment(mouth: Mouth): void {
+    clearIdleTimer(mouth);
+    if (!mouth.segment) return;
+    mouth.segment.close();
+    mouth.segment = null;
+  }
+
+  /** Opens a new segment and chains its playPcm() call after the mouth's current tail settles. */
+  function openSegment(mouth: Mouth, personaId: string | undefined): MouthSegment {
+    const source = makeSegmentSource();
+    const segment: MouthSegment = { personaId, push: source.push, close: source.close };
+    mouth.segment = segment;
+    mouth.tail = mouth.tail
+      .then(() => mouth.connection.playPcm(source.iterable))
+      .catch((err) => log(`[discord-voice] segment playback failed: ${String(err)}`)); // one bad segment must not wedge the next
+    return segment;
+  }
+
+  function scheduleIdleClose(mouth: Mouth): void {
+    clearIdleTimer(mouth);
+    mouth.idleTimer = setTimeout(() => closeSegment(mouth), SEGMENT_IDLE_GAP_MS);
+  }
+
+  function teardownMouth(mouth: Mouth): void {
+    closeSegment(mouth);
+    mouth.connection.destroy();
+  }
 
   async function joinAll(channelId: string): Promise<void> {
+    if (currentChannelId === channelId) {
+      log(`[discord-voice] joinAll no-op — already joined ${channelId}`);
+      return;
+    }
+    if (currentChannelId !== null) {
+      log(`[discord-voice] joinAll switching channels (${currentChannelId} -> ${channelId}) — leaving first`);
+      await leaveAll();
+    }
     if (allowlist.size > 0 && !allowlist.has(channelId)) {
       log(`[discord-voice] joinAll declined — channel ${channelId} is not allowlisted`);
       return;
@@ -95,7 +200,8 @@ export function createDiscordVoiceSurface(opts: DiscordVoiceOptions): {
     const gateway = opts.gateway ?? realGateway();
 
     const earConnection = await gateway.join(channelId, opts.earToken);
-    ear = { connection: earConnection, queue: makeMouthQueue(earConnection) };
+    ear = openMouth(earConnection);
+    currentChannelId = channelId;
 
     const designated = opts.agents().filter((a) => a.channels?.includes(VOICE_DESIGNATION));
     for (const agent of designated) {
@@ -106,7 +212,7 @@ export function createDiscordVoiceSurface(opts: DiscordVoiceOptions): {
       }
       try {
         const connection = await gateway.join(channelId, token);
-        agentMouths.set(agent.id, { connection, queue: makeMouthQueue(connection) });
+        agentMouths.set(agent.id, openMouth(connection));
       } catch (err) {
         log(`[discord-voice] ${agent.id}'s voice join failed — speaking through the ear (degraded): ${String(err)}`);
       }
@@ -114,16 +220,20 @@ export function createDiscordVoiceSurface(opts: DiscordVoiceOptions): {
   }
 
   async function leaveAll(): Promise<void> {
-    ear?.connection.destroy();
+    if (ear) teardownMouth(ear);
     ear = null;
-    for (const mouth of agentMouths.values()) mouth.connection.destroy();
+    for (const mouth of agentMouths.values()) teardownMouth(mouth);
     agentMouths.clear();
+    currentChannelId = null;
   }
 
   async function publishPcm(bytes: Uint8Array, _sampleRate: number, personaId?: string): Promise<void> {
     const mouth: Mouth | null = (personaId ? agentMouths.get(personaId) : undefined) ?? ear;
     if (!mouth) return; // no connection is live — nothing to play to
-    await mouth.queue.push(bytes);
+    if (mouth.segment && mouth.segment.personaId !== personaId) closeSegment(mouth); // ear must not splice speakers
+    const segment = mouth.segment ?? openSegment(mouth, personaId);
+    segment.push(bytes);
+    scheduleIdleClose(mouth);
   }
 
   return {
