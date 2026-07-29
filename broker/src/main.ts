@@ -21,9 +21,9 @@ import type { RosterState, TurnOrigin, UiRoster } from './broker.ts';
 // Type-only — erased at compile time, so this does NOT violate the voice
 // module's lazy-boot gate below (nothing runtime-loads unless
 // DISCORD_VOICE_CHANNELS is set; see setupDiscordVoice).
-import type { DiscordVoiceOptions, VoiceConnectionLike, VoiceGatewayLike, VoiceReceiverLike } from './discord-voice.ts';
-import type { PresenceEvent } from './voice-presence.ts';
-import { surfaceModes, SurfacePolicy } from './surface-modes.ts';
+import type { createDiscordVoiceSurface, DiscordVoiceOptions, VoiceConnectionLike, VoiceGatewayLike, VoiceReceiverLike } from './discord-voice.ts';
+import type { PresenceEvent, VoicePresence } from './voice-presence.ts';
+import { applyModeChange, surfaceModes, SurfacePolicy } from './surface-modes.ts';
 import { LocalMemory, type MemoryEntry } from './memory.ts';
 import { SessionManager, type Session } from './sessions.ts';
 import { DeepgramSttStream, type LiveLike, deepgramLiveOptions } from './stt.ts';
@@ -52,6 +52,12 @@ const directory = new AgentDirectory();
 // roster below; later tasks reuse this same instance for the join endpoint
 // and mode-change enforcement.
 const policy = new SurfacePolicy(() => directory.list());
+// Null until setupDiscordVoice boots (only when DISCORD_VOICE_CHANNELS is
+// set) and assigned there once the real surface/presence exist. The
+// agent-PUT wrapper below closes over these names, so a wrapper built before
+// boot still reaches the live surface/presence once they're assigned.
+let voiceSurface: ReturnType<typeof createDiscordVoiceSurface> | null = null;
+let voicePresence: VoicePresence | null = null;
 
 // Routes external channel (Discord, …) traffic through the same turn the app
 // uses. resolveSpokenLineForChannels/handleUserText are `function`
@@ -558,7 +564,28 @@ const textChannel = new TextChannel(
     // Agent creation: the swarm owns the registry, the broker owns voices.
     catalog: () => swarm.agentCatalog(),
     records: async () => (await swarm.registry()) as unknown as Record<string, unknown>[],
-    update: (id, body) => swarm.updateAgent(id, body),
+    update: async (id, body) => {
+      const before = surfaceModes((await swarm.registry()).find((a) => a.id === id) ?? {});
+      const result = await swarm.updateAgent(id, body);
+      if (!result.error) {
+        const after = surfaceModes((await swarm.registry()).find((a) => a.id === id) ?? {});
+        await applyModeChange(
+          {
+            leaveAgent: (agentId) => voiceSurface?.leaveAgent(agentId),
+            joinAgent: async (agentId) => {
+              await voiceSurface?.joinAgent(agentId);
+            },
+            roomActive: () => voiceSurface !== null && voicePresence !== null && voicePresence.joinedChannel() !== null,
+            revoke: (agentId, surface) => policy.revoke(agentId, surface),
+            log: (line) => console.log(line),
+          },
+          id,
+          before,
+          after,
+        );
+      }
+      return result;
+    },
     generate: async (body) => {
       const b = body as Record<string, string>;
       const catalog = (await swarm.agentCatalog()) as {
@@ -936,8 +963,10 @@ async function setupDiscordVoice(allowlist: string[]): Promise<void> {
     makeStt: (sampleRate) => new DeepgramSttStream(() => makeDeepgramLive(sampleRate)),
     receiver: receiverProxy,
   } satisfies DiscordVoiceOptions);
+  voiceSurface = surface;
 
   const presence = new VoicePresence(allowlist);
+  voicePresence = presence;
 
   function humanCountFor(channelId: string): number {
     const channel = earClient.channels.cache.get(channelId);
@@ -976,6 +1005,10 @@ async function setupDiscordVoice(allowlist: string[]): Promise<void> {
       }
     } else if (action.type === 'leave-crew') {
       await surface.leaveAll();
+      // On-request admissions are runtime-only for the life of one crew
+      // presence in the room — the next room join starts every on-request
+      // agent unadmitted again.
+      policy.revokeAll('discord-voice');
       broker.detachVoiceSurface();
       presence.markLeft();
       console.log(`[discord-voice] left ${action.channelId}`);
