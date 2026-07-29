@@ -365,3 +365,14 @@ blocks and there is nothing to stall.
 2. Browser: `pnpm dev` → `http://localhost:1420` — full functionality
    (roster edit, sheets, workspace manager all work; verified 2026-07-28).
 3. iOS: the Tauri iOS target builds (needs Xcode.app; mic plist present).
+
+## Spanglish STT (2026-07-29)
+
+- Broker up with no DEEPGRAM_LANGUAGE set; join a VC with the crew.
+- Speak pure English → transcript quality unchanged; agent turn-taking timing feels the same.
+- Speak pure Spanish → transcribed correctly (not English-mangled).
+- Code-switch mid-sentence ("Ignacio, revisa el broker and ship it") → both halves correct.
+- Watch for etiquette regressions: agents interrupting early/late means multi's endpointing
+  behaves differently — if so, tune `endpointing` via a follow-up, don't revert the language.
+- Repeat one Spanish utterance over the in-app PTT mic (same factory, second path).
+- Set DEEPGRAM_LANGUAGE=en, restart, confirm English-only behavior returns (the escape hatch works).
