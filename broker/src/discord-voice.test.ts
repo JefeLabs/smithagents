@@ -1,6 +1,21 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createDiscordVoiceSurface, type VoiceConnectionLike, type VoiceGatewayLike } from './discord-voice.ts';
+import type { SttLike } from './broker.ts';
+import {
+  createDiscordVoiceSurface,
+  type VoiceConnectionLike,
+  type VoiceGatewayLike,
+  type VoiceReceiverLike,
+} from './discord-voice.ts';
+
+// Every existing (mouths-only) test below is indifferent to the ear — these
+// two satisfy DiscordVoiceOptions' now-required fields without exercising
+// them; UNUSED_MAKE_STT fails loudly if a test's fake receiver ever DOES
+// trigger a speaking-start unexpectedly, instead of silently no-opting.
+const NOOP_ON_UTTERANCE = (): void => {};
+const UNUSED_MAKE_STT = (): SttLike => {
+  throw new Error('makeStt should not be called in this test');
+};
 
 interface FakeConnection extends VoiceConnectionLike {
   token: string;
@@ -92,6 +107,62 @@ function flushMicrotasks(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+/** A test-controlled `VoiceReceiverLike`: `trigger` simulates a real speaking-start event. */
+function fakeReceiver(): {
+  receiver: VoiceReceiverLike;
+  trigger: (userId: string, displayName: string, isBot: boolean, pcm48kMono: AsyncIterable<Uint8Array>) => void;
+} {
+  let cb: ((userId: string, displayName: string, isBot: boolean, pcm48kMono: AsyncIterable<Uint8Array>) => void) | null = null;
+  return {
+    receiver: {
+      onSpeakingStart(handler) {
+        cb = handler;
+      },
+    },
+    trigger(userId, displayName, isBot, pcm48kMono) {
+      cb?.(userId, displayName, isBot, pcm48kMono);
+    },
+  };
+}
+
+interface FakeStt extends SttLike {
+  sent: Uint8Array[];
+  stopped: boolean;
+  fireUtterance(text: string): void;
+}
+
+/** A fake `SttLike`: records what it's sent, and lets a test fire its utterance callback on demand. */
+function fakeStt(): FakeStt {
+  let onUtterance: ((text: string) => void) | null = null;
+  const stt: FakeStt = {
+    sent: [],
+    stopped: false,
+    start(cb) {
+      onUtterance = cb;
+    },
+    sendAudio(pcm) {
+      stt.sent.push(pcm);
+    },
+    stop() {
+      stt.stopped = true;
+    },
+    fireUtterance(text) {
+      onUtterance?.(text);
+    },
+  };
+  return stt;
+}
+
+async function* pcmChunks(...chunks: Uint8Array[]): AsyncIterable<Uint8Array> {
+  for (const chunk of chunks) yield chunk;
+}
+
+/** Yields its chunks, then throws — simulates a speaker's stream failing mid-utterance (e.g. a decode error). */
+async function* throwingPcm(...chunks: Uint8Array[]): AsyncIterable<Uint8Array> {
+  for (const chunk of chunks) yield chunk;
+  throw new Error('opus decode exploded');
+}
+
 // Shared roster: ignacio is discord-voice-designated with a token (real mouth),
 // wilkin is discord-voice-designated with NO token (degrades to the ear),
 // manuel is designated for text only (never joins voice at all).
@@ -109,6 +180,8 @@ test('joinAll connects the ear plus every discord-voice-designated agent with a 
     earToken: 'ear-token',
     agentTokens: AGENT_TOKENS(),
     agents: AGENTS,
+    onUtterance: NOOP_ON_UTTERANCE,
+    makeStt: UNUSED_MAKE_STT,
     gateway,
   });
 
@@ -129,6 +202,8 @@ test("publish with a tokened agent's persona id plays on that agent's own connec
     earToken: 'ear-token',
     agentTokens: AGENT_TOKENS(),
     agents: AGENTS,
+    onUtterance: NOOP_ON_UTTERANCE,
+    makeStt: UNUSED_MAKE_STT,
     gateway,
   });
   await surface.joinAll('chan-1');
@@ -156,6 +231,8 @@ test('publish for a designated-but-untokened agent batches into one segment on t
     earToken: 'ear-token',
     agentTokens: AGENT_TOKENS(),
     agents: AGENTS,
+    onUtterance: NOOP_ON_UTTERANCE,
+    makeStt: UNUSED_MAKE_STT,
     gateway,
     log: (line) => logs.push(line),
   });
@@ -189,6 +266,8 @@ test('publish with an unknown persona id, then a different unknown/undefined per
     earToken: 'ear-token',
     agentTokens: AGENT_TOKENS(),
     agents: AGENTS,
+    onUtterance: NOOP_ON_UTTERANCE,
+    makeStt: UNUSED_MAKE_STT,
     gateway,
   });
   await surface.joinAll('chan-1');
@@ -217,6 +296,8 @@ test('leaveAll destroys the ear and every agent connection', async () => {
     earToken: 'ear-token',
     agentTokens: AGENT_TOKENS(),
     agents: AGENTS,
+    onUtterance: NOOP_ON_UTTERANCE,
+    makeStt: UNUSED_MAKE_STT,
     gateway,
   });
   await surface.joinAll('chan-1');
@@ -235,6 +316,8 @@ test('a second joinAll after leaveAll reconnects everything fresh', async () => 
     earToken: 'ear-token',
     agentTokens: AGENT_TOKENS(),
     agents: AGENTS,
+    onUtterance: NOOP_ON_UTTERANCE,
+    makeStt: UNUSED_MAKE_STT,
     gateway,
   });
 
@@ -256,6 +339,8 @@ test('joinAll is a no-op when already joined the same channel, and leaves first 
     earToken: 'ear-token',
     agentTokens: AGENT_TOKENS(),
     agents: AGENTS,
+    onUtterance: NOOP_ON_UTTERANCE,
+    makeStt: UNUSED_MAKE_STT,
     gateway,
   });
 
@@ -289,6 +374,8 @@ test('joinAll declines a non-allowlisted channel and connects nothing', async ()
     earToken: 'ear-token',
     agentTokens: AGENT_TOKENS(),
     agents: AGENTS,
+    onUtterance: NOOP_ON_UTTERANCE,
+    makeStt: UNUSED_MAKE_STT,
     gateway,
     log: (line) => logs.push(line),
   });
@@ -308,6 +395,8 @@ test('a declined channel switch leaves the currently joined channel fully intact
     earToken: 'ear-token',
     agentTokens: AGENT_TOKENS(),
     agents: AGENTS,
+    onUtterance: NOOP_ON_UTTERANCE,
+    makeStt: UNUSED_MAKE_STT,
     gateway,
     log: (line) => logs.push(line),
   });
@@ -348,6 +437,8 @@ test("an agent whose real join rejects degrades to the ear with one log line, sa
     earToken: 'ear-token',
     agentTokens: new Map([['ignacio', 'bad-token']]),
     agents: () => [{ id: 'ignacio', channels: ['discord-voice'] }],
+    onUtterance: NOOP_ON_UTTERANCE,
+    makeStt: UNUSED_MAKE_STT,
     gateway,
     log: (line) => logs.push(line),
   });
@@ -372,6 +463,8 @@ test('N rapid publishes to one persona batch into exactly one playPcm call, with
     earToken: 'ear-token',
     agentTokens: AGENT_TOKENS(),
     agents: AGENTS,
+    onUtterance: NOOP_ON_UTTERANCE,
+    makeStt: UNUSED_MAKE_STT,
     gateway,
   });
   await surface.joinAll('chan-1');
@@ -397,6 +490,8 @@ test('an idle gap after the last publish closes the segment; the next publish op
     earToken: 'ear-token',
     agentTokens: AGENT_TOKENS(),
     agents: AGENTS,
+    onUtterance: NOOP_ON_UTTERANCE,
+    makeStt: UNUSED_MAKE_STT,
     gateway,
   });
   await surface.joinAll('chan-1');
@@ -442,6 +537,8 @@ test('per-connection ordering: a segment that opens while the previous one is st
     earToken: 'ear-token',
     agentTokens: new Map(),
     agents: () => [],
+    onUtterance: NOOP_ON_UTTERANCE,
+    makeStt: UNUSED_MAKE_STT,
     gateway,
   });
   await surface.joinAll('chan-1'); // only the ear connects — agents() is empty
@@ -473,6 +570,8 @@ test('publishPcm resolves immediately while the segment backlog stays under the 
     earToken: 'ear-token',
     agentTokens: new Map(),
     agents: () => [],
+    onUtterance: NOOP_ON_UTTERANCE,
+    makeStt: UNUSED_MAKE_STT,
     gateway,
   });
   await surface.joinAll('chan-1');
@@ -491,6 +590,8 @@ test('publishPcm pends once the segment backlog exceeds the cap, until the fake 
     earToken: 'ear-token',
     agentTokens: new Map(),
     agents: () => [],
+    onUtterance: NOOP_ON_UTTERANCE,
+    makeStt: UNUSED_MAKE_STT,
     gateway,
   });
   await surface.joinAll('chan-1');
@@ -509,4 +610,180 @@ test('publishPcm pends once the segment backlog exceeds the cap, until the fake 
 
   assert.equal(resolved, true);
   assert.deepEqual(drained, [huge]);
+});
+
+test('a human speaking-start creates a per-user STT session; its utterance callback pre-attributes the turn', async () => {
+  const { gateway } = fakeGateway();
+  const { receiver, trigger } = fakeReceiver();
+  const sttInstances: FakeStt[] = [];
+  const rates: number[] = [];
+  const utterances: string[] = [];
+  const surface = createDiscordVoiceSurface({
+    allowlist: ['chan-1'],
+    earToken: 'ear-token',
+    agentTokens: AGENT_TOKENS(),
+    agents: AGENTS,
+    onUtterance: (text) => utterances.push(text),
+    makeStt: (sampleRate) => {
+      rates.push(sampleRate);
+      const stt = fakeStt();
+      sttInstances.push(stt);
+      return stt;
+    },
+    gateway,
+    receiver,
+  });
+  await surface.joinAll('chan-1');
+
+  const chunk1 = new Uint8Array([1]);
+  const chunk2 = new Uint8Array([2]);
+  trigger('u-edwin', 'Edwin', false, pcmChunks(chunk1, chunk2));
+  await flushMicrotasks();
+
+  assert.deepEqual(rates, [48000], "the ear's STT sessions run at Discord's receive rate, not the mouths' 44.1kHz");
+  assert.equal(sttInstances.length, 1);
+  assert.deepEqual(sttInstances[0]!.sent, [chunk1, chunk2], 'chunks forwarded to the session in order');
+
+  sttInstances[0]!.fireUtterance('que lo que');
+  assert.deepEqual(utterances, ['Edwin (via discord-voice): que lo que']);
+});
+
+test("bot and webhook speakers never create an STT session, including a mouth's own bot id", async () => {
+  const { gateway } = fakeGateway();
+  const { receiver, trigger } = fakeReceiver();
+  let makeSttCalls = 0;
+  const utterances: string[] = [];
+  const surface = createDiscordVoiceSurface({
+    allowlist: ['chan-1'],
+    earToken: 'ear-token',
+    agentTokens: AGENT_TOKENS(),
+    agents: AGENTS,
+    onUtterance: (text) => utterances.push(text),
+    makeStt: () => {
+      makeSttCalls += 1;
+      return fakeStt();
+    },
+    gateway,
+    receiver,
+  });
+  await surface.joinAll('chan-1');
+
+  // "ignacio-bot-id" stands in for one of the crew's own mouths speaking in
+  // the same VC — the ear must not transcribe the crew talking to itself.
+  trigger('ignacio-bot-id', 'Ignacio', true, pcmChunks(new Uint8Array([9])));
+  await flushMicrotasks();
+
+  assert.equal(makeSttCalls, 0, 'a bot speaker must never get an STT session');
+  assert.deepEqual(utterances, []);
+});
+
+test('two humans get two independent STT sessions, keyed by userId and reused on a later speaking-start', async () => {
+  const { gateway } = fakeGateway();
+  const { receiver, trigger } = fakeReceiver();
+  const sttInstances: FakeStt[] = [];
+  const utterances: string[] = [];
+  const surface = createDiscordVoiceSurface({
+    allowlist: ['chan-1'],
+    earToken: 'ear-token',
+    agentTokens: AGENT_TOKENS(),
+    agents: AGENTS,
+    onUtterance: (text) => utterances.push(text),
+    makeStt: () => {
+      const stt = fakeStt();
+      sttInstances.push(stt);
+      return stt;
+    },
+    gateway,
+    receiver,
+  });
+  await surface.joinAll('chan-1');
+
+  const a = new Uint8Array([1]);
+  const b = new Uint8Array([2]);
+  trigger('u1', 'Edwin', false, pcmChunks(a));
+  trigger('u2', 'Maria', false, pcmChunks(b));
+  await flushMicrotasks();
+
+  assert.equal(sttInstances.length, 2, 'two independent sessions, one per speaker');
+
+  const c = new Uint8Array([3]);
+  trigger('u1', 'Edwin', false, pcmChunks(c)); // u1's SECOND speaking-start
+  await flushMicrotasks();
+
+  assert.equal(sttInstances.length, 2, 'no new session was created — u1 reused their existing one');
+  assert.deepEqual(sttInstances[0]!.sent, [a, c], "both of u1's speaking-starts fed the same underlying session");
+  assert.deepEqual(sttInstances[1]!.sent, [b], "u2's session is untouched by u1's second speaking-start");
+
+  sttInstances[0]!.fireUtterance('hola');
+  sttInstances[1]!.fireUtterance('oye');
+  assert.deepEqual(utterances, ['Edwin (via discord-voice): hola', 'Maria (via discord-voice): oye']);
+});
+
+test("a speaker's STT session error kills only that speaker's session, logged readably; other speakers keep working", async () => {
+  const { gateway } = fakeGateway();
+  const { receiver, trigger } = fakeReceiver();
+  const sttInstances: FakeStt[] = [];
+  const utterances: string[] = [];
+  const logs: string[] = [];
+  const surface = createDiscordVoiceSurface({
+    allowlist: ['chan-1'],
+    earToken: 'ear-token',
+    agentTokens: AGENT_TOKENS(),
+    agents: AGENTS,
+    onUtterance: (text) => utterances.push(text),
+    makeStt: () => {
+      const stt = fakeStt();
+      sttInstances.push(stt);
+      return stt;
+    },
+    gateway,
+    log: (line) => logs.push(line),
+    receiver,
+  });
+  await surface.joinAll('chan-1');
+
+  trigger('u1', 'Edwin', false, throwingPcm(new Uint8Array([1])));
+  trigger('u2', 'Maria', false, pcmChunks(new Uint8Array([2])));
+  await flushMicrotasks();
+
+  assert.ok(logs.some((l) => l.includes('Edwin')), 'the failure is logged readably, naming the speaker');
+  assert.ok(sttInstances[0]!.stopped, "the failed speaker's session was stopped and torn down");
+
+  sttInstances[1]!.fireUtterance('still here');
+  assert.deepEqual(utterances, ['Maria (via discord-voice): still here'], "the other speaker's session is unaffected");
+
+  // Recoverable: a later speaking-start for the SAME (previously failed) user opens a fresh session.
+  trigger('u1', 'Edwin', false, pcmChunks(new Uint8Array([3])));
+  await flushMicrotasks();
+  assert.equal(sttInstances.length, 3, "u1's next speaking-start created a brand-new session");
+});
+
+test('leaveAll stops every open STT session', async () => {
+  const { gateway } = fakeGateway();
+  const { receiver, trigger } = fakeReceiver();
+  const sttInstances: FakeStt[] = [];
+  const surface = createDiscordVoiceSurface({
+    allowlist: ['chan-1'],
+    earToken: 'ear-token',
+    agentTokens: AGENT_TOKENS(),
+    agents: AGENTS,
+    onUtterance: NOOP_ON_UTTERANCE,
+    makeStt: () => {
+      const stt = fakeStt();
+      sttInstances.push(stt);
+      return stt;
+    },
+    gateway,
+    receiver,
+  });
+  await surface.joinAll('chan-1');
+
+  trigger('u1', 'Edwin', false, pcmChunks(new Uint8Array([1])));
+  trigger('u2', 'Maria', false, pcmChunks(new Uint8Array([2])));
+  await flushMicrotasks();
+  assert.equal(sttInstances.length, 2);
+
+  await surface.leaveAll();
+
+  assert.ok(sttInstances.every((s) => s.stopped), 'every open session was stopped');
 });

@@ -68,7 +68,43 @@
  * bounded TTS chunks) fully non-blocking while restoring a hard memory
  * ceiling and rough pacing for the pathological case (a consumer that's
  * genuinely falling behind real time).
+ *
+ * The ear (design spec §4): the flip side of the mouths above — per-user
+ * RECEIVE. `opts.receiver` (a `VoiceReceiverLike`) fires once per human
+ * speaking-start with that speaker's own decoded mono PCM stream; a
+ * per-userId `Map<string, SttLike>` holds one live Deepgram-shaped session
+ * per speaker, created on the FIRST speaking-start and reused (fed via
+ * `sendAudio`) on every later one — matching the mouths' one-open-thing-
+ * per-identity shape. Bot/webhook speakers (`isBot`, which also covers the
+ * crew's own mouths — every mouth is itself a Discord bot account) never
+ * get a session: the ear must not transcribe the crew talking to itself.
+ * A session's utterance callback hands `opts.onUtterance` an already-
+ * attributed line (`"<displayName> (via discord-voice): <text>"`,
+ * matching channels.ts's own `"<author> (via <adapterKind>): <text>"`
+ * convention for the text adapter) — pre-formatted text, submitted as a
+ * turn by whoever wires this up (Task 5), same as `onUtterance` for the
+ * text channel. If a speaker's own PCM stream throws mid-iteration (a
+ * decode error, e.g.), only THAT speaker's session is torn down and
+ * removed — logged readably — so one bad stream can't take out every other
+ * open session; the next speaking-start for that same user simply opens a
+ * fresh one. `leaveAll()` stops every open session alongside tearing down
+ * the mouths.
+ *
+ * The real receiver adaptation (`discord-audio.ts`'s `realReceiver`) decodes
+ * each subscribed user's Opus packets and mixes 48kHz stereo down to 48kHz
+ * mono — Discord's receive side is always 48kHz, unlike the 44.1kHz mono
+ * the mouths speak, so the ear's Deepgram sessions run at 48000 via the
+ * rate-parameterized `makeStt` (mirrors main.ts's existing factory, which
+ * mints one `DeepgramSttStream` per `LiveLike` connection). That adapter
+ * isn't wired to a live connection this task — `VoiceGatewayLike.join()`
+ * only returns a play/destroy handle, with no receiver exposed, by design
+ * (the interface is pinned) — so it's typecheck-only scaffolding for
+ * whoever threads a real ear connection through (Task 5 / the live
+ * checklist), exactly like `realGateway()` and `pcm44kMonoToOpus` were for
+ * Task 3.
  */
+
+import type { SttLike } from './broker.ts';
 
 export interface VoiceConnectionLike {
   playPcm(pcm44kMono: AsyncIterable<Uint8Array>): Promise<void>; // resolves when the utterance finishes
@@ -80,6 +116,13 @@ export interface VoiceGatewayLike {
   join(channelId: string, token: string): Promise<VoiceConnectionLike>;
 }
 
+/** The ear's receive side: fires once per human speaking-start with that speaker's own decoded mono PCM. */
+export interface VoiceReceiverLike {
+  onSpeakingStart(
+    cb: (userId: string, displayName: string, isBot: boolean, pcm48kMono: AsyncIterable<Uint8Array>) => void,
+  ): void;
+}
+
 export interface DiscordVoiceOptions {
   allowlist: string[];
   earToken: string;
@@ -88,9 +131,18 @@ export interface DiscordVoiceOptions {
   agents: () => Array<{ id: string; channels?: string[] }>;
   gateway?: VoiceGatewayLike; // test seam; default realGateway()
   log?: (line: string) => void;
+  /** Per-user receive: called once per finished utterance, pre-formatted, submitted as a turn. */
+  onUtterance: (text: string) => void;
+  /** Mints one STT session at the given sample rate; mirrors main.ts's Deepgram factory, rate-parameterized. */
+  makeStt: (sampleRate: number) => SttLike;
+  /** Test seam on the ear connection; see the module header's "The ear" section for the real (unwired) adapter. */
+  receiver?: VoiceReceiverLike;
 }
 
 const VOICE_DESIGNATION = 'discord-voice';
+
+/** Discord's voice receive side is always 48kHz, regardless of the mouths' 44.1kHz playback rate. */
+const EAR_SAMPLE_RATE = 48000;
 
 /** See the module header's "Segmenting rule" for what opens/closes a segment and why. */
 const SEGMENT_IDLE_GAP_MS = 400;
@@ -209,6 +261,51 @@ export function createDiscordVoiceSurface(opts: DiscordVoiceOptions): {
   const agentMouths = new Map<string, Mouth>();
   let currentChannelId: string | null = null;
 
+  // The ear's receive side: one live STT session per human speaker, keyed by
+  // userId — created on their first speaking-start, reused (fed via
+  // sendAudio) on every later one. See the module header's "The ear" note.
+  const sttSessions = new Map<string, SttLike>();
+
+  /** Pumps one speaking-start's PCM stream into its speaker's session; a mid-stream failure kills only this session. */
+  async function pumpSpeakerAudio(
+    userId: string,
+    displayName: string,
+    stt: SttLike,
+    pcm48kMono: AsyncIterable<Uint8Array>,
+  ): Promise<void> {
+    try {
+      for await (const chunk of pcm48kMono) stt.sendAudio(chunk);
+    } catch (err) {
+      log(`[discord-voice] ${displayName}'s STT session failed — dropping their audio, other speakers unaffected: ${String(err)}`);
+      stt.stop();
+      // Only clear the map entry if it's still THIS session — a newer
+      // speaking-start for the same user may already have replaced it
+      // (e.g. this pump was slow to fail); don't clobber a live session.
+      if (sttSessions.get(userId) === stt) sttSessions.delete(userId);
+    }
+  }
+
+  function handleSpeakingStart(
+    userId: string,
+    displayName: string,
+    isBot: boolean,
+    pcm48kMono: AsyncIterable<Uint8Array>,
+  ): void {
+    // Bot/webhook speakers are never transcribed — this is what stops the
+    // ear from hearing the crew's own mouths (every mouth is itself a
+    // Discord bot account) talk to itself.
+    if (isBot) return;
+    let stt = sttSessions.get(userId);
+    if (!stt) {
+      stt = opts.makeStt(EAR_SAMPLE_RATE);
+      stt.start((text) => opts.onUtterance(`${displayName} (via discord-voice): ${text}`));
+      sttSessions.set(userId, stt);
+    }
+    void pumpSpeakerAudio(userId, displayName, stt, pcm48kMono);
+  }
+
+  opts.receiver?.onSpeakingStart(handleSpeakingStart);
+
   /** Ends the mouth's open segment (if any) so its playPcm() call settles; safe to call when none is open. */
   function closeSegment(mouth: Mouth): void {
     clearIdleTimer(mouth);
@@ -284,6 +381,8 @@ export function createDiscordVoiceSurface(opts: DiscordVoiceOptions): {
     for (const mouth of agentMouths.values()) teardownMouth(mouth);
     agentMouths.clear();
     currentChannelId = null;
+    for (const stt of sttSessions.values()) stt.stop();
+    sttSessions.clear();
   }
 
   async function publishPcm(bytes: Uint8Array, _sampleRate: number, personaId?: string): Promise<void> {
