@@ -172,6 +172,139 @@ broker restarted (boot log: `[discord] crew attending N channel(s)`).
    the message that asked — never crossed, never dropped (turn-scoped
    origins).
 
+## Discord voice
+
+**No live Discord verification was possible while building this feature** —
+it requires minted per-agent Discord applications and a real voice channel,
+neither of which exist in this environment. Everything below is the
+operator runbook; the live pass is Edwin's to run.
+
+### Per-agent app setup
+
+One-time, per agent that should get its own voice presence:
+
+1. https://discord.com/developers/applications → New Application, named and
+   avatared as the agent (e.g. "Ignacio").
+2. Bot tab → Add Bot. Copy the token.
+3. OAuth2 → URL Generator → scope `bot`, permissions **Connect** + **Speak**
+   (no text permissions needed — this bot only ever joins voice). Open the
+   generated invite URL, add it to the server.
+4. Root `.env`: `DISCORD_TOKEN_<AGENTID>=<token>`, where `<AGENTID>` is the
+   agent's id uppercased with hyphens mapped to underscores (`ignacio` →
+   `DISCORD_TOKEN_IGNACIO`, `luz-maria` → `DISCORD_TOKEN_LUZ_MARIA`).
+   Restart the broker.
+5. The agent's `swarm/.smith/agents/<id>.json` needs `"discord-voice"` in
+   its `channels` array — that's designation; the token itself never goes
+   in that file (tokens are secrets, agent JSONs are public).
+
+**The ear** is the existing `DISCORD_TOKEN` bot (the same one the Discord
+text adapter uses, or a bare one if voice is the only Discord surface in
+play) — no new Discord application, no new token, nothing to add to
+`.env` beyond `DISCORD_VOICE_CHANNELS` itself. It does need the **Connect**
+permission on its existing server invite, because it physically joins the
+allowlisted voice channel to receive per-user audio — the `GuildVoiceStates`
+gateway intent is already wired in code (`broker/src/main.ts`) with nothing
+to toggle in the Developer Portal, but that intent alone doesn't grant
+Connect. If the original text-adapter invite was Read/Send + Manage
+Webhooks only, add Connect via the server's bot-role permissions (or
+re-invite with the added scope) before testing voice.
+
+### Auto-join walkthrough
+
+Setup: `DISCORD_VOICE_CHANNELS=<channel id>` in root `.env`, `DISCORD_TOKEN`
+set, system `ffmpeg` on `PATH`. Restart the broker — boot log:
+`[discord-voice] ear starting — N channel(s) allowlisted`, followed by one
+line naming which designated agents have their own mouth (`agent mouths
+(own bot token): ...`) and which are degraded (`agents degraded (share the
+ear): ...`).
+
+1. Join the allowlisted voice channel as a human.
+2. **Expected:** the ear bot joins, then every `discord-voice`-designated
+   agent with a token joins under its own name/avatar — the crew appears as
+   real members in the channel's member list. Log: `[discord-voice] joined
+   <channelId> — ear + N agent mouth(es)`.
+3. Speak, addressing Ignacio by name. **Expected:** only Ignacio answers
+   (meeting etiquette, unchanged); Discord's native speaking indicator
+   lights under **his** member entry while his own ElevenLabs voice plays
+   through his own bot connection — not the ear's.
+4. Ask something that touches Wilkin's domain without addressing him.
+   **Expected:** he holds per etiquette (raises a hand — ✋ in the app
+   roster — rather than speaking), same rule as any text/Tauri meeting.
+5. Check the app (Tauri transcript). **Expected:** the whole exchange lands
+   there too — VC turns carry no channel origin, so they flow through the
+   same free `onSpeechText` path as any meeting.
+6. Leave the voice channel (last human out). **Expected:** the ear and
+   every agent mouth leave immediately; log: `[discord-voice] left
+   <channelId>`; the channel empties.
+
+### Degradation check
+
+1. Remove one designated agent's `DISCORD_TOKEN_<AGENTID>` from `.env` (or
+   never set it) and restart the broker.
+2. **Expected:** boot log lists that agent under `agents degraded (share
+   the ear)` instead of `agent mouths`; a join-time log line
+   (`[discord-voice] <agentId> has no bot token — speaking through the ear
+   (degraded)`) fires once, not per utterance. In the channel that agent
+   has no member presence of its own — its lines play through the ear
+   bot's connection instead. Etiquette and the app transcript are
+   otherwise unaffected.
+
+### Mutual exclusion (single active audio surface)
+
+1. Open a LiveKit meeting first (see [LiveKit meeting](#livekit-meeting)),
+   then join an allowlisted Discord voice channel as a human.
+   **Expected:** the VC join is declined, not queued — log:
+   `[discord-voice] attach declined (a meeting is active or joining) — will
+   retry on the next presence event`. The crew does not appear in the VC.
+   Leaving and rejoining after the meeting closes retries successfully on
+   its own (no restart needed — presence events retry automatically).
+2. Reverse the order: join the Discord VC first, then try opening a
+   LiveKit meeting. **Expected:** the meeting is declined instead — log:
+   `[meetings] declined — a Discord voice session is live`. First come
+   wins, either direction.
+
+### Watch items (live audio only)
+
+Things reviewers verified by code inspection across the fix rounds — only
+a real call can confirm them:
+
+- **Long uninterrupted turns vs. the 120s idle bound.** Playback batches an
+  agent's speech into one continuous segment, closing only on a 400ms
+  silence gap or a persona switch — a genuinely gapless multi-minute answer
+  could in principle outrun `realGateway()`'s `entersState(..., Idle,
+  120_000)` wait. Watch for an unusually long uninterrupted reply near the
+  two-minute mark.
+- **Channel-switch behavior isn't atomic.** If the crew is joined to
+  channel A and presence moves it to channel B, `joinAll` leaves A fully
+  before joining B; if joining B then fails, the surface ends up connected
+  to neither. Watch a live channel switch and confirm it either completes
+  cleanly or fails visibly (log line), never silently stranding the crew.
+- **Chunk-seam audio quality.** TTS bytes are batched per segment and
+  transcoded through ffmpeg + an Opus encoder once per segment, not once
+  per chunk — listen across a multi-sentence reply for any audible seam or
+  glitch where one `publishPcm` call's bytes meet the next inside the same
+  segment.
+- **The Opus encoder has no dedicated error listener of its own.** Errors
+  on the upstream PCM input or the ffmpeg stage cascade forward via
+  `.destroy(err)`, but an error originating in the encoder stage itself
+  relies on whatever consumes the returned stream (`realGateway()`'s
+  `createAudioResource`/`AudioPlayer` pipeline) to handle it. Watch for a
+  clean "one segment lost, queue moves on" failure rather than an uncaught
+  crash if TTS audio ever glitches mid-segment.
+- **`AfterSilence` receive-window tuning (1000ms).** Each human speaker's
+  audio subscription on the ear ends after 1s of silence and reopens fresh
+  on their next speaking-start — a judgment call, not a spec'd value. It
+  only affects how often a fresh Opus subscription/decoder spins up per
+  speaker (Deepgram's own endpointing decides utterance boundaries), so a
+  wrong value shouldn't affect correctness, but listen for choppy or
+  dropped words right at natural pauses.
+- **Dual gateway sessions under one token.** With both the Discord text
+  adapter and Discord voice enabled under the same bare `DISCORD_TOKEN`,
+  two separate discord.js gateway sessions run concurrently under that
+  token (Discord permits this; untested here). Watch for anything unusual
+  in the bot's Discord-side presence/status if both surfaces are live at
+  once.
+
 ## All-local invariant
 
 1. Comment out `DISCORD_TOKEN` in `.env`; restart the broker.

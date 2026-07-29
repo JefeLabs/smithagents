@@ -770,12 +770,16 @@ if (discordToken) {
  * reusing the already-logged-in `earClient` (see below) instead of a second
  * gateway session under the same bot token — and wires
  * `discord-audio.ts`'s `realReceiver` onto that connection's `.receiver` at
- * the same moment. A `liveReceiver` flag ties delivery to the connection's
- * lifecycle (carry-forward from Task 4's report): flipped true right before
- * registering, false in `destroy()`, and checked before every delivered
- * speaking-start — so a `guild.members.fetch()` that was in flight when
- * `leaveAll()` ran can never mint a fresh STT session off a connection
- * that's already gone. Every OTHER token (agent mouths) still goes through
+ * the same moment. A per-connection `alive` closure — declared fresh inside
+ * each `join()` call, scoped to that one connection, never shared across
+ * joins — ties delivery to that specific connection's lifecycle: `true`
+ * right before registering, `false` in that connection's own `destroy()`,
+ * checked before every delivered speaking-start. This is deliberately NOT a
+ * single flag shared across connections (that was the original design, and
+ * it was a bug: a `guild.members.fetch()` left in flight by a connection
+ * that's already been torn down could read a *later* connection's `true` and
+ * mint a stale, orphaned STT session — see task-5-report.md's fix-round-1
+ * for the exact race). Every OTHER token (agent mouths) still goes through
  * the plain, already-tested `realGateway()` — this function never touches
  * `discord-voice.ts`'s exported interfaces, only supplies its own
  * `VoiceGatewayLike`/`VoiceReceiverLike` implementations from the outside.

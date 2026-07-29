@@ -47,7 +47,8 @@ Product concepts and history live in [PRD.md](../PRD.md).
 | Feature | What it does | Manual test |
 |---|---|---|
 | Discord text adapter | The crew attends allowlisted channels, mention-gated (@everyone/roles ignored); each agent posts under its own name via webhook; turn-scoped origins guarantee replies only go to the channel that asked | [→ test](./MANUAL-TESTING.md#discord-adapter) |
-| Channel designation | `channels` array in each agent file decides which surfaces an agent attends (`tauri`, `discord`) | [→ test](./MANUAL-TESTING.md#discord-adapter) |
+| Discord voice presence | Allowlisted voice channels auto-join the crew as real members — bot-per-agent presence with per-agent ElevenLabs voices, ear STT with per-user attribution, ear-degradation rollout, single active-audio-surface shared with LiveKit meetings | [→ test](./MANUAL-TESTING.md#discord-voice) |
+| Channel designation | `channels` array in each agent file decides which surfaces an agent attends (`tauri`, `discord`, `discord-voice`) | [→ test](./MANUAL-TESTING.md#discord-adapter) |
 | All-local invariant | Without `DISCORD_TOKEN`, nothing channel-related constructs — the local product is byte-for-byte unchanged | [→ test](./MANUAL-TESTING.md#all-local-invariant) |
 
 ## Meetings (LiveKit)

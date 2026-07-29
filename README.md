@@ -59,8 +59,12 @@ smithagents/            (git root)
   party answers, squads speak through their leader, and non-addressed agents
   raise a ✋ instead of interrupting. External surfaces plug in behind a
   `ChannelAdapter` port — the Tauri text channel and Discord (mention-gated,
-  per-agent webhook identity, allowlisted channels) today; Slack and voice
-  channels land behind the same port later.
+  per-agent webhook identity, allowlisted channels) today; Slack lands behind
+  the same port later. Voice meetings plug in behind the sibling `BridgeLike`
+  seam: the LiveKit room bridge and Discord voice (bot-per-agent presence
+  auto-joining allowlisted channels, ear STT with per-user attribution,
+  ear-degradation as the rollout path) both live there, sharing one
+  active-audio-surface slot — whichever opens first wins.
 - **swarm** owns execution: a delegated task gets a git worktree cut from the
   target workspace repo (branch `smith/<taskId>`) and a real coding CLI pinned
   to a tmux session, steerable and killable mid-run.
@@ -89,6 +93,13 @@ LIVEKIT_API_KEY=devkey
 LIVEKIT_API_SECRET=secret
 DISCORD_TOKEN=                    # blank = the Discord adapter never starts (all-local by default)
 DISCORD_CHANNELS=                 # comma-separated channel ids the crew attends; required if DISCORD_TOKEN is set
+DISCORD_VOICE_CHANNELS=           # comma-separated voice channel ids the crew auto-joins when a human
+                                  # shows up (and auto-leaves once empty). Empty = voice off. Needs
+                                  # DISCORD_TOKEN (the ear's bot identity) and a system ffmpeg on PATH.
+# DISCORD_TOKEN_IGNACIO=          # per-agent bot token, so that agent speaks (and is heard) with its own
+                                  # Discord identity in voice instead of sharing the ear's. <NAME> matches
+                                  # the agent's id, uppercased with hyphens as underscores. Missing = that
+                                  # agent's voice lines play through the ear bot instead.
 SMITH_API_TOKEN=                  # blank = loopback-only dev mode
 ```
 

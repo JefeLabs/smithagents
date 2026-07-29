@@ -124,6 +124,23 @@ turns or into a meeting. Designation is per agent (`channels` in
 `swarm/.smith/agents/*.json`); Ignacio and Wilkin both carry `"discord"`
 alongside `"tauri"`.
 
+Added 2026-07-29: Discord voice — the crew joins allowlisted voice channels
+as real members. Bot-per-agent presence: each `discord-voice`-designated
+agent is its own Discord application + bot, auto-joining when a human enters
+the channel and auto-leaving when the last human leaves. The existing
+`DISCORD_TOKEN` bot doubles as the ear, running per-user Deepgram STT on
+Discord's own per-speaker audio streams with pre-attributed utterances
+(`"<DisplayName> (via discord-voice): <text>"`), filtering out every
+bot/webhook speaker so the crew never hears itself. An agent with no minted
+bot token degrades to speaking through the ear bot (one readable log line)
+— the built-in rollout path, not a separate phase; day one works with zero
+agent tokens. `DiscordVoiceBridge` shares the single active-audio-surface
+slot with LiveKit meetings (first one open wins; the other's join/open is
+declined with a readable log line), and playback batches TTS chunks into
+continuous per-mouth segments (closing on an idle gap or a persona switch)
+behind a bounded per-segment backlog, so a stalled consumer can't
+accumulate unbounded PCM in memory.
+
 ## 6. Roadmap / Open Items
 
 ### 6.1 Infrastructure gaps (benchmarked against Orca, 2026-07-27)
@@ -230,8 +247,17 @@ editor loop plays to someone else's strength.
   webhook per channel (each agent posts under its own username, filtered back
   out on inbound by `webhookId` so the crew never answers itself), allowlisted
   channels only. `DISCORD_TOKEN`/`DISCORD_CHANNELS` are live env vars again;
-  an agent attends only once `"discord"` is in its `channels` array. Still
-  open: voice channels, and Slack as a second `ChannelAdapter` behind the same
-  port.
+  an agent attends only once `"discord"` is in its `channels` array.
+* **Discord voice (shipped 2026-07-29):** the crew joins allowlisted voice
+  channels as real members — bot-per-agent presence auto-joining on a
+  human's arrival and auto-leaving on the last human's departure, ear STT
+  with per-user attribution (filtering every bot/webhook speaker so the crew
+  never hears itself), and ear-degradation as the built-in rollout path (an
+  agent with no minted bot token speaks through the ear, one log line; day
+  one works with zero agent tokens). `DiscordVoiceBridge` shares the single
+  active-audio-surface slot with LiveKit meetings — whichever opens first
+  wins, the other's join/open is declined with a readable log line. Still
+  open: Slack as a second `ChannelAdapter`; meeting recording/minutes;
+  in-app meeting UX (join/leave, who's speaking) for either voice surface.
 * **Hosted/multi-tenant tier:** Docker/microVM isolation for unattended runs,
   BYO-compute pricing posture — direction unchanged, not scheduled.
