@@ -568,35 +568,74 @@ const textChannel = new TextChannel(
       // Fail open on the BEFORE read: this registry read did not exist before
       // this wrapper, so a transient read hiccup must never block a PUT that
       // previously had zero read dependency. `before === null` means "no
-      // reliable diff possible" — enforcement is skipped for this PUT below,
-      // but the write itself still proceeds.
+      // reliable diff possible" — enforcement below falls back to
+      // restrictive-only (never guesses at a join; see the `before` branch
+      // further down) — the write itself still proceeds either way.
       let before: ReturnType<typeof surfaceModes> | null = null;
       try {
         before = surfaceModes((await swarm.registry()).find((a) => a.id === id) ?? {});
       } catch (err) {
-        console.error(`[surface-modes] pre-PUT registry read failed for ${id}; write proceeds, enforcement skipped for this PUT: ${String(err)}`);
+        console.error(`[surface-modes] pre-PUT registry read failed for ${id}; write proceeds, enforcement falls back to restrictive-only: ${String(err)}`);
       }
       const result = await swarm.updateAgent(id, body);
-      if (!result.error && before) {
-        // The write already succeeded and persisted by this point — a
-        // read-side failure here (AFTER read or enforcement itself) must
-        // never override a known-good write's response with an error.
+      if (!result.error) {
+        // The write already succeeded and persisted by this point — nothing
+        // below may reject the update promise or override `result`; every
+        // failure here is logged and swallowed, never surfaced to the client.
         try {
-          const after = surfaceModes((await swarm.registry()).find((a) => a.id === id) ?? {});
-          await applyModeChange(
-            {
-              leaveAgent: (agentId) => voiceSurface?.leaveAgent(agentId),
-              joinAgent: async (agentId) => {
-                await voiceSurface?.joinAgent(agentId);
+          let after: ReturnType<typeof surfaceModes>;
+          try {
+            after = surfaceModes((await swarm.registry()).find((a) => a.id === id) ?? {});
+          } catch (err) {
+            // Registry outage right after a successful write: fall back to
+            // deriving the after-map from the PUT body itself. Residual
+            // risk, verified against swarm's actual PUT /agents/:id handler:
+            // it merges the body into the existing record and does not
+            // thread `channels` through at all today, and no current client
+            // (control-plane's edit modal) sends a `channels` field on a
+            // PUT — so this fallback always evaluates the legacy
+            // absent-channels default (discord-voice: disabled), regardless
+            // of the agent's real, just-persisted channels. An autojoin
+            // voice agent edited (for any field) during a registry outage
+            // would get ejected here even though its mode never changed.
+            // Accepted: recoverable (the next successful read or the 2s
+            // directory poll corrects it) and strictly safer than silently
+            // skipping an actual explicit disable — but this is a real
+            // exposure today, not just a "hand-crafted partial PUT" edge
+            // case, until a future task threads `channels` through the
+            // swarm update route and the edit UI actually sends it.
+            console.error(`[surface-modes] AFTER registry read failed for ${id}; enforcement uses the PUT body as the after-map: ${String(err)}`);
+            after = surfaceModes(body);
+          }
+
+          if (before) {
+            await applyModeChange(
+              {
+                leaveAgent: (agentId) => voiceSurface?.leaveAgent(agentId),
+                joinAgent: async (agentId) => {
+                  await voiceSurface?.joinAgent(agentId);
+                },
+                roomActive: () => voiceSurface !== null && voicePresence !== null && voicePresence.joinedChannel() !== null,
+                revoke: (agentId, surface) => policy.revoke(agentId, surface),
+                log: (line) => console.log(line),
               },
-              roomActive: () => voiceSurface !== null && voicePresence !== null && voicePresence.joinedChannel() !== null,
-              revoke: (agentId, surface) => policy.revoke(agentId, surface),
-              log: (line) => console.log(line),
-            },
-            id,
-            before,
-            after,
-          );
+              id,
+              before,
+              after,
+            );
+          } else {
+            // BEFORE was unknowable (its registry read failed): no reliable
+            // diff exists, so never guess at a JOIN (the permissive side —
+            // skipping it is safe). An explicit disable must never silently
+            // no-op just because a read hiccuped, though, so run
+            // restrictive-only enforcement off the after-map alone: revoke
+            // every non-autojoin surface, and eject from voice if it's
+            // explicitly disabled.
+            for (const [surface, mode] of Object.entries(after)) {
+              if (mode !== 'autojoin') policy.revoke(id, surface);
+            }
+            if (after['discord-voice'] === 'disabled') voiceSurface?.leaveAgent(id);
+          }
         } catch (err) {
           console.error(`[surface-modes] enforcement skipped after PUT ${id}: ${String(err)}`);
         }
