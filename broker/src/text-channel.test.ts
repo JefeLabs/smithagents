@@ -33,10 +33,12 @@ const stubCreation: ConstructorParameters<typeof TextChannel>[7] = {
   create: async () => ({}),
 };
 
-/** Builds a channel with only the trailing (agent/removal/workspace) handlers under test wired in. */
+/** Builds a channel with only the trailing (agent/removal/workspace/surfaces) handlers under test wired in. */
 function channelWith(opts: {
   removal?: ConstructorParameters<typeof TextChannel>[8];
   workspaces?: ConstructorParameters<typeof TextChannel>[9];
+  creation?: ConstructorParameters<typeof TextChannel>[7];
+  surfaces?: ConstructorParameters<typeof TextChannel>[10];
 }): TextChannel {
   return new TextChannel(
     () => {},
@@ -46,9 +48,10 @@ function channelWith(opts: {
     undefined,
     undefined,
     undefined,
-    stubCreation,
+    opts.creation ?? stubCreation,
     opts.removal,
     opts.workspaces,
+    opts.surfaces,
   );
 }
 
@@ -259,6 +262,68 @@ test('PUT /workspaces/:name saves with the URL name folded into the body; DELETE
     const conflict = await fetch(`http://127.0.0.1:${port}/workspaces/busy`, { method: 'DELETE' });
     assert.equal(conflict.status, 409);
     assert.deepEqual(await conflict.json(), { error: 'workspace busy: locked' });
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('GET /agents merges presence and discord availability', async () => {
+  const agents = [
+    { id: 'ignacio', name: 'Ignacio' },
+    { id: 'wilkin', name: 'Wilkin' },
+  ];
+  const channel = channelWith({
+    creation: { ...stubCreation, records: async () => agents },
+    surfaces: {
+      presence: () => ({ ignacio: { 'discord-voice': true } }),
+      info: () => ({ configured: true, voiceReady: true }),
+      join: async () => ({ ok: true }),
+    },
+  });
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/agents`);
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { agents: Array<Record<string, unknown>>; discord: unknown };
+    assert.deepEqual(body.agents, [
+      { id: 'ignacio', name: 'Ignacio', presence: { 'discord-voice': true } },
+      { id: 'wilkin', name: 'Wilkin', presence: {} },
+    ]);
+    assert.deepEqual(body.discord, { configured: true, voiceReady: true });
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('POST /agents/:id/surfaces/:surface/join maps provider results to status codes', async () => {
+  const received: Array<{ id: string; surface: string }> = [];
+  const channel = channelWith({
+    surfaces: {
+      presence: () => ({}),
+      info: () => ({ configured: false, voiceReady: false }),
+      join: async (id, surface) => {
+        received.push({ id, surface });
+        return id === 'the wolf' ? { error: 'no active voice channel', status: 409 } : { ok: true };
+      },
+    },
+  });
+  const port = await channel.start(0);
+  try {
+    const conflict = await fetch(
+      `http://127.0.0.1:${port}/agents/${encodeURIComponent('the wolf')}/surfaces/${encodeURIComponent('discord-voice')}/join`,
+      { method: 'POST' },
+    );
+    assert.equal(conflict.status, 409);
+    assert.deepEqual(await conflict.json(), { error: 'no active voice channel' });
+
+    const ok = await fetch(`http://127.0.0.1:${port}/agents/wilkin/surfaces/discord/join`, { method: 'POST' });
+    assert.equal(ok.status, 200);
+    assert.deepEqual(await ok.json(), { ok: true });
+
+    assert.deepEqual(received, [
+      { id: 'the wolf', surface: 'discord-voice' },
+      { id: 'wilkin', surface: 'discord' },
+    ]);
   } finally {
     await channel.stop();
   }

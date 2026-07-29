@@ -100,6 +100,15 @@ export class TextChannel {
       save(body: Record<string, unknown>, isNew: boolean): Promise<Record<string, unknown>>;
       remove(name: string): Promise<Record<string, unknown>>;
     },
+    /** Surface presence/admission: live per-agent surface state, Discord availability, on-request join. */
+    private readonly surfaces?: {
+      /** Per-agent live presence, keyed agentId → surface → present. */
+      presence(): Record<string, Record<string, boolean>>;
+      /** Discord availability for the UI's grayed rows. */
+      info(): { configured: boolean; voiceReady: boolean };
+      /** On-request admission. Resolves {ok:true} or {error, status}. */
+      join(agentId: string, surface: string): Promise<{ ok: true } | { error: string; status: number }>;
+    },
   ) {}
 
   private clientSeq = 0;
@@ -224,9 +233,27 @@ export class TextChannel {
           return;
         }
         // Full records for the edit wizard — the roster frame is a view model
-        // and deliberately carries none of the persona detail.
+        // and deliberately carries none of the persona detail. Additive
+        // per-agent `presence` and top-level `discord` availability ride along
+        // for surface-aware UIs; existing consumers reading `agents` alone
+        // (e.g. AddAgentModal) are unaffected.
         if (req.method === 'GET' && url.pathname === '/agents') {
-          void this.creation.records().then((agents) => json(200, { agents }), fail);
+          void this.creation.records().then((agents) => {
+            const presence = this.surfaces?.presence() ?? {};
+            const withPresence = agents.map((a) => ({
+              ...a,
+              presence: presence[String((a as { id?: unknown }).id)] ?? {},
+            }));
+            return json(200, { agents: withPresence, discord: this.surfaces?.info() ?? { configured: false, voiceReady: false } });
+          }, fail);
+          return;
+        }
+        const joinMatch = /^\/agents\/([^/]+)\/surfaces\/([^/]+)\/join$/.exec(url.pathname);
+        if (req.method === 'POST' && joinMatch && this.surfaces) {
+          void this.surfaces.join(decodeURIComponent(joinMatch[1]!), decodeURIComponent(joinMatch[2]!)).then(
+            (r) => ('error' in r ? json(r.status, { error: r.error }) : json(200, { ok: true })),
+            fail,
+          );
           return;
         }
         const removalMatch = /^\/agents\/([^/]+)\/removal$/.exec(url.pathname);

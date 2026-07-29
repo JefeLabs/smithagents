@@ -58,6 +58,11 @@ const policy = new SurfacePolicy(() => directory.list());
 // boot still reaches the live surface/presence once they're assigned.
 let voiceSurface: ReturnType<typeof createDiscordVoiceSurface> | null = null;
 let voicePresence: VoicePresence | null = null;
+// Same all-local invariant as the adapter boot below (DISCORD_TOKEN gates
+// everything Discord-shaped): hoisted here, ahead of the textChannel surfaces
+// provider, since that `const discordToken` is declared later, right at the
+// adapter boot site.
+const discordConfigured = Boolean(process.env.DISCORD_TOKEN);
 
 // Routes external channel (Discord, …) traffic through the same turn the app
 // uses. resolveSpokenLineForChannels/handleUserText are `function`
@@ -709,6 +714,37 @@ const textChannel = new TextChannel(
   },
   removal,
   workspaces,
+  {
+    presence: () => {
+      const out: Record<string, Record<string, boolean>> = {};
+      const voiceIds = new Set(voiceSurface?.connectedAgentIds() ?? []);
+      for (const a of directory.list()) {
+        out[a.id] = {
+          tauri: policy.attends(a.id, 'tauri'),
+          discord: discordConfigured && policy.attends(a.id, 'discord'),
+          'discord-voice': voiceIds.has(a.id),
+        };
+      }
+      return out;
+    },
+    info: () => ({ configured: discordConfigured, voiceReady: voiceSurface !== null }),
+    join: async (agentId, surface) => {
+      if (surface === 'discord-voice') {
+        if (!voiceSurface) return { error: 'Discord voice is not configured', status: 409 };
+        try {
+          await voiceSurface.joinAgent(agentId);
+        } catch (err) {
+          return { error: String(err instanceof Error ? err.message : err), status: 409 };
+        }
+        policy.admit(agentId, surface);
+        return { ok: true } as const;
+      }
+      if (surface === 'discord' && !discordConfigured) return { error: 'Discord is not configured', status: 409 };
+      if (surface !== 'discord' && surface !== 'tauri') return { error: `unknown surface: ${surface}`, status: 404 };
+      policy.admit(agentId, surface);
+      return { ok: true } as const;
+    },
+  },
 );
 const micSessions = new Map<number, DeepgramSttStream>();
 
