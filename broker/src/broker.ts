@@ -135,8 +135,10 @@ export class Broker {
   /**
    * Sticky speaker for the currently-running speech chain, same lifecycle as
    * AdapterHub's `lastSpeaker` (channels.ts): a prefixed chunk sets it, an
-   * unprefixed one reuses it, and it resets to undefined wherever onTurnStart
-   * fires (handleUtterance) so a new turn never inherits the last one's voice.
+   * unprefixed one reuses it, and it resets to undefined at the top of every
+   * turn (enqueueTurn) — every entry point (handleUtterance, the system-note
+   * path), not just handleUtterance, so a new turn never inherits the last
+   * one's voice.
    */
   private currentSpeechPersonaId: string | undefined;
   /** True while a joinMeeting() call is in flight, so overlapping pollOnce ticks don't double-join. */
@@ -306,7 +308,6 @@ export class Broker {
       // unaffected — they never route through a channel, so there's nothing
       // to protect and no reason to slow them down.
       if (origin) await this.speaking;
-      this.currentSpeechPersonaId = undefined; // new turn — never inherit the last one's sticky speaker
       this.deps.onTurnStart?.(origin);
       try {
         await this.deps.brain.handleUtterance(text, this.makeTurn(text));
@@ -366,13 +367,18 @@ export class Broker {
 
   /**
    * Attach an already-connected external audio surface (e.g. Discord VC).
-   * Declines when a meeting bridge is active — the two audio surfaces are
-   * mutually exclusive, never mixed. While attached, meeting polling declines
-   * to join (see pollOnce) so the two never fight over the mic.
+   * Declines when a meeting bridge is active OR a join is still in flight
+   * (`this.joining` — between pollOnce starting joinMeeting() and it setting
+   * this.active, e.g. while awaiting mintToken/bridge.connect) — otherwise
+   * that in-flight join could still land after a "successful" attach and
+   * leave both surfaces live at once. The two audio surfaces are mutually
+   * exclusive, never mixed. While attached, meeting polling declines to join
+   * (see pollOnce) so the two never fight over the mic. First-come-wins: the
+   * caller is expected to retry on the next voice-state event.
    */
   attachVoiceSurface(surface: { publishPcm: BridgeLike['publishPcm'] }): boolean {
-    if (this.active) {
-      console.log('[voice] attachVoiceSurface declined — a meeting bridge is already active');
+    if (this.active || this.joining) {
+      console.log('[voice] attachVoiceSurface declined — a meeting is active or joining');
       return false;
     }
     this.externalSurface = surface;
@@ -656,9 +662,15 @@ export class Broker {
    * captures a roster snapshot) get a fresh one instead of a stale snapshot
    * taken at enqueue time. Mirrors `enqueueSpeech`: the chain itself never
    * rejects, so one failed turn never blocks the ones behind it.
+   *
+   * Every turn — regardless of entry point (handleUtterance's brain call,
+   * onSwarmEvent's system-note narration) — starts with a clean sticky
+   * speaker: reset here, not in handleUtterance alone, so an unprefixed
+   * system-note chunk never inherits whatever agent last had the floor.
    */
   private enqueueTurn(fn: () => Promise<void>): Promise<void> {
     const next = this.turnQueue.then(async () => {
+      this.currentSpeechPersonaId = undefined;
       try {
         await fn();
       } catch (err) {

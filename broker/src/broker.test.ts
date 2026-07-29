@@ -181,6 +181,55 @@ test("speech publishes with the speaking agent's persona id", async () => {
   }
 });
 
+test('a prefixed line with an unresolved speaker name publishes with no persona id', async () => {
+  const f = makeFakes([MEETING]);
+  const brain: BrainLike = {
+    handleUtterance: async (text, turn) => void turn.onSpeech('Ghost: nobody knows me'),
+    handleSystemNote: async () => {},
+  };
+  const b = new Broker({ ...basicDeps(f, new AgentDirectory()), brain });
+  try {
+    await b.start();
+    await b.pollOnce(); // join MEETING — active.bridge is now live
+    await b.handleUtterance('anything');
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(f.published.length, 1);
+    assert.equal(f.published[0]!.personaId, undefined); // 'Ghost' resolves to no known agent
+  } finally {
+    await b.stop();
+  }
+});
+
+test("a system-note turn (task completion narration) never inherits a prior turn's sticky persona", async () => {
+  const f = makeFakes([MEETING]);
+  f.swarm.registry = async () => [...AGENTS, IGNACIO];
+  const brain: BrainLike = {
+    handleUtterance: async (text, turn) => void turn.onSpeech('Ignacio: dime'), // sets the sticky speaker
+    handleSystemNote: async (note, turn) => void turn.onSpeech('narration'), // unprefixed — must be its own, clean turn
+  };
+  const b = new Broker({ ...basicDeps(f, new AgentDirectory()), brain });
+  try {
+    await b.start();
+    await b.pollOnce(); // join MEETING — active.bridge is now live
+
+    await b.handleUtterance('dime algo'); // sticky is now 'ignacio'
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(f.published.length, 1);
+    assert.equal(f.published[0]!.personaId, 'ignacio');
+
+    // A task-completion event queues a system-note turn through onSwarmEvent's
+    // own enqueueTurn call — a different entry point than handleUtterance's.
+    await b.executors.delegate({ agent: 'Manuel', task: 'build the thing' });
+    f.emitEvent({ type: 'task:dispatched', taskId: 't-77', sessionName: 's' });
+    f.emitEvent({ type: 'task:completed', taskId: 't-77', result: { outcome: 'completed' } });
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(f.published.length, 2);
+    assert.equal(f.published[1]!.personaId, undefined); // narration must not inherit Ignacio's sticky persona
+  } finally {
+    await b.stop();
+  }
+});
+
 test('attachVoiceSurface declines while a meeting is active, and vice versa', async () => {
   const surface = { publishPcm: async () => {} };
 
@@ -212,6 +261,42 @@ test('attachVoiceSurface declines while a meeting is active, and vice versa', as
     assert.deepEqual(f2.bridge.connected, ['jwt-for-meeting-m-1']);
   } finally {
     await b2.stop();
+  }
+});
+
+test('attachVoiceSurface declines while a meeting join is in flight, before this.active is ever set', async () => {
+  const f = makeFakes([MEETING]);
+  let releaseConnect: (() => void) | null = null;
+  const gate = new Promise<void>((resolve) => (releaseConnect = resolve));
+  const published: Array<{ bytes: Uint8Array; sampleRate: number; personaId?: string }> = [];
+  const bridge: BridgeLike & { connected: string[] } = {
+    connected: [],
+    connect: async (opts) => {
+      await gate; // holds joinMeeting() in flight — this.active stays null, this.joining stays true
+      bridge.connected.push(opts.token);
+    },
+    onRemoteAudio: () => {},
+    publishPcm: async (bytes, sampleRate, personaId) => void published.push({ bytes, sampleRate, personaId }),
+    disconnect: async () => {},
+  };
+  const b = new Broker({ ...basicDeps(f, new AgentDirectory()), makeBridge: () => bridge });
+  const surface = { publishPcm: async () => {} };
+  try {
+    await b.start();
+    const pollPromise = b.pollOnce(); // starts joinMeeting(); blocks on the gated connect()
+    await new Promise((r) => setTimeout(r, 10)); // let pollOnce reach the blocked connect() call
+    assert.equal(b.attachVoiceSurface(surface), false); // declined — a join is in flight, not yet this.active
+    assert.equal(b.voiceSurfaceAttached(), false);
+
+    releaseConnect!();
+    await pollPromise; // the in-flight join completes normally, unaffected by the declined attach
+    assert.deepEqual(bridge.connected, ['jwt-for-meeting-m-1']);
+
+    await b.handleUtterance('hi'); // publish flows to the meeting bridge only — no external surface was ever attached
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(published.length, 1);
+  } finally {
+    await b.stop();
   }
 });
 
