@@ -23,6 +23,7 @@ import type { RosterState, TurnOrigin, UiRoster } from './broker.ts';
 // DISCORD_VOICE_CHANNELS is set; see setupDiscordVoice).
 import type { DiscordVoiceOptions, VoiceConnectionLike, VoiceGatewayLike, VoiceReceiverLike } from './discord-voice.ts';
 import type { PresenceEvent } from './voice-presence.ts';
+import { surfaceModes } from './surface-modes.ts';
 import { LocalMemory, type MemoryEntry } from './memory.ts';
 import { SessionManager, type Session } from './sessions.ts';
 import { DeepgramSttStream, type LiveLike, deepgramLiveOptions } from './stt.ts';
@@ -822,7 +823,10 @@ async function setupDiscordVoice(allowlist: string[]): Promise<void> {
     if (key === 'DISCORD_TOKEN' || !key.startsWith('DISCORD_TOKEN_') || !value) continue;
     agentTokens.set(key.slice('DISCORD_TOKEN_'.length).toLowerCase().replaceAll('_', '-'), value);
   }
-  const designated = directory.list().filter((a) => a.channels?.includes('discord-voice'));
+  // Not just autojoin: an on-request agent can be summoned into a live room
+  // later (joinAgent), so it needs a bot token minted up front the same as
+  // an autojoin agent — only 'disabled' is excluded here.
+  const designated = directory.list().filter((a) => surfaceModes(a)['discord-voice'] !== 'disabled');
   const mouths = designated.filter((a) => agentTokens.has(a.id)).map((a) => a.id);
   const degraded = designated.filter((a) => !agentTokens.has(a.id)).map((a) => a.id);
   console.log(`[discord-voice] ear starting — ${allowlist.length} channel(s) allowlisted`);
@@ -950,7 +954,7 @@ async function setupDiscordVoice(allowlist: string[]): Promise<void> {
         // designated agent degrades to the ear), and a bare "ear + 0 agent
         // mouth(s)" reads as a failure without it.
         const connectedCount = surface.connectedAgentIds().length;
-        const designatedCount = directory.list().filter((a) => a.channels?.includes('discord-voice')).length;
+        const designatedCount = directory.list().filter((a) => surfaceModes(a)['discord-voice'] !== 'disabled').length;
         const degradedCount = designatedCount - connectedCount;
         console.log(
           `[discord-voice] joined ${action.channelId} — ear + ${connectedCount} agent mouth(s)` +

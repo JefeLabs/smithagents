@@ -113,6 +113,7 @@
  */
 
 import type { SttLike } from './broker.ts';
+import { surfaceModes } from './surface-modes.ts';
 
 export interface VoiceConnectionLike {
   playPcm(pcm44kMono: AsyncIterable<Uint8Array>): Promise<void>; // resolves when the utterance finishes
@@ -136,7 +137,7 @@ export interface DiscordVoiceOptions {
   earToken: string;
   /** agentId -> bot token; agents absent here degrade to the ear connection. */
   agentTokens: Map<string, string>;
-  agents: () => Array<{ id: string; channels?: string[] }>;
+  agents: () => Array<{ id: string; channels?: unknown }>;
   gateway?: VoiceGatewayLike; // test seam; default realGateway()
   log?: (line: string) => void;
   /** Per-user receive: called once per finished utterance, pre-formatted, submitted as a turn. */
@@ -260,6 +261,8 @@ export function createDiscordVoiceSurface(opts: DiscordVoiceOptions): {
   publishPcm(bytes: Uint8Array, sampleRate: number, personaId?: string): Promise<void>;
   joinAll(channelId: string): Promise<void>;
   leaveAll(): Promise<void>;
+  joinAgent(agentId: string): Promise<void>;
+  leaveAgent(agentId: string): void;
   connectedAgentIds(): string[];
 } {
   const allowlist = new Set(opts.allowlist);
@@ -379,7 +382,7 @@ export function createDiscordVoiceSurface(opts: DiscordVoiceOptions): {
     ear = openMouth(earConnection);
     currentChannelId = channelId;
 
-    const designated = opts.agents().filter((a) => a.channels?.includes(VOICE_DESIGNATION));
+    const designated = opts.agents().filter((a) => surfaceModes(a)[VOICE_DESIGNATION] === 'autojoin');
     for (const agent of designated) {
       const token = opts.agentTokens.get(agent.id);
       if (!token) {
@@ -423,6 +426,34 @@ export function createDiscordVoiceSurface(opts: DiscordVoiceOptions): {
     sttSessions.clear();
   }
 
+  /**
+   * Summons a single agent's own mouth into the currently active room. Mode
+   * gating (autojoin vs on-request vs disabled) is the CALLER's job — this
+   * is the low-level join primitive Task 4's mode-change enforcement and
+   * Task 5's join endpoint build on, not a re-check of the agent's mode.
+   */
+  async function joinAgent(agentId: string): Promise<void> {
+    if (currentChannelId === null) throw new Error('no active voice channel');
+    if (agentMouths.has(agentId)) return; // already connected — no-op
+    const token = opts.agentTokens.get(agentId);
+    if (!token) throw new Error(`${agentId} has no bot token`);
+    const gateway = opts.gateway ?? realGateway();
+    const connection = await gateway.join(currentChannelId, token);
+    agentMouths.set(agentId, openMouth(connection));
+  }
+
+  /** Ejects a single agent's mouth; a no-op if that agent isn't currently connected. */
+  function leaveAgent(agentId: string): void {
+    const mouth = agentMouths.get(agentId);
+    if (!mouth) return;
+    try {
+      teardownMouth(mouth); // destroy() throws on already-destroyed — same guard as leaveAll
+    } catch (err) {
+      log(`[discord-voice] ${agentId}'s mouth teardown failed: ${String(err)}`);
+    }
+    agentMouths.delete(agentId);
+  }
+
   async function publishPcm(bytes: Uint8Array, _sampleRate: number, personaId?: string): Promise<void> {
     const mouth: Mouth | null = (personaId ? agentMouths.get(personaId) : undefined) ?? ear;
     if (!mouth) return; // no connection is live — nothing to play to
@@ -441,6 +472,8 @@ export function createDiscordVoiceSurface(opts: DiscordVoiceOptions): {
     publishPcm,
     joinAll,
     leaveAll,
+    joinAgent,
+    leaveAgent,
     connectedAgentIds: () => [...agentMouths.keys()],
   };
 }

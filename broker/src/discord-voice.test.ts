@@ -872,3 +872,104 @@ test('leaveAll stops every open STT session', async () => {
 
   assert.ok(sttInstances.every((s) => s.stopped), 'every open session was stopped');
 });
+
+// Mode-aware voice joins (Presence Task 2): agents whose `channels` field is
+// the mode-map form (surface-modes.ts's parser output), not the legacy array
+// used by AGENTS/AGENT_TOKENS above. ignacio is autojoin, wilkin is
+// on-request (never auto-joins — only reachable via joinAgent), manuel is
+// disabled (never joins at all). All three have bot tokens, so the only
+// thing distinguishing them here is mode, not token availability.
+const MODE_AGENTS = () => [
+  { id: 'ignacio', channels: { 'discord-voice': 'autojoin' } },
+  { id: 'wilkin', channels: { 'discord-voice': 'on-request' } },
+  { id: 'manuel', channels: { 'discord-voice': 'disabled' } },
+];
+const MODE_AGENT_TOKENS = () =>
+  new Map([
+    ['ignacio', 'ignacio-token'],
+    ['wilkin', 'wilkin-token'],
+    ['manuel', 'manuel-token'],
+  ]);
+
+test('joinAll joins only discord-voice autojoin agents (map form)', async () => {
+  const { gateway } = fakeGateway();
+  const surface = createDiscordVoiceSurface({
+    allowlist: ['chan-1'],
+    earToken: 'ear-token',
+    agentTokens: MODE_AGENT_TOKENS(),
+    agents: MODE_AGENTS,
+    onUtterance: NOOP_ON_UTTERANCE,
+    makeStt: UNUSED_MAKE_STT,
+    gateway,
+  });
+
+  await surface.joinAll('chan-1');
+
+  assert.deepEqual(
+    surface.connectedAgentIds(),
+    ['ignacio'],
+    'only the autojoin agent connects — on-request and disabled agents do not, even though both have tokens',
+  );
+});
+
+test('joinAgent joins one on-request agent into the current room; throws with no room', async () => {
+  const { gateway, joins } = fakeGateway();
+  const surface = createDiscordVoiceSurface({
+    allowlist: ['chan-1'],
+    earToken: 'ear-token',
+    agentTokens: MODE_AGENT_TOKENS(),
+    agents: MODE_AGENTS,
+    onUtterance: NOOP_ON_UTTERANCE,
+    makeStt: UNUSED_MAKE_STT,
+    gateway,
+  });
+
+  await assert.rejects(surface.joinAgent('wilkin'), /no active voice channel/);
+
+  await surface.joinAll('chan-1'); // ear + ignacio
+  await surface.joinAgent('wilkin');
+  assert.deepEqual(surface.connectedAgentIds().sort(), ['ignacio', 'wilkin']);
+
+  const joinsAfterSummon = joins.length;
+  await surface.joinAgent('wilkin'); // already connected — no-op
+  assert.equal(joins.length, joinsAfterSummon, 'a second joinAgent is a no-op, not a duplicate connection');
+  assert.deepEqual(surface.connectedAgentIds().sort(), ['ignacio', 'wilkin']);
+});
+
+test('joinAgent throws when the agent has no bot token', async () => {
+  const { gateway } = fakeGateway();
+  const surface = createDiscordVoiceSurface({
+    allowlist: ['chan-1'],
+    earToken: 'ear-token',
+    agentTokens: new Map(), // nobody has a token
+    agents: MODE_AGENTS,
+    onUtterance: NOOP_ON_UTTERANCE,
+    makeStt: UNUSED_MAKE_STT,
+    gateway,
+  });
+  await surface.joinAll('chan-1');
+
+  await assert.rejects(surface.joinAgent('wilkin'), /wilkin has no bot token/);
+});
+
+test('leaveAgent disconnects exactly that agent; others stay', async () => {
+  const { gateway } = fakeGateway();
+  const surface = createDiscordVoiceSurface({
+    allowlist: ['chan-1'],
+    earToken: 'ear-token',
+    agentTokens: MODE_AGENT_TOKENS(),
+    agents: MODE_AGENTS,
+    onUtterance: NOOP_ON_UTTERANCE,
+    makeStt: UNUSED_MAKE_STT,
+    gateway,
+  });
+  await surface.joinAll('chan-1'); // ear + ignacio
+  await surface.joinAgent('wilkin');
+  assert.deepEqual(surface.connectedAgentIds().sort(), ['ignacio', 'wilkin']);
+
+  surface.leaveAgent('wilkin');
+
+  assert.deepEqual(surface.connectedAgentIds(), ['ignacio'], "only wilkin left — ignacio's own mouth is untouched");
+
+  assert.doesNotThrow(() => surface.leaveAgent('nobody-connected'), 'leaveAgent on an absent agent is a no-op, not a throw');
+});
