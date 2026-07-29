@@ -825,7 +825,7 @@ async function setupDiscordVoice(allowlist: string[]): Promise<void> {
   const designated = directory.list().filter((a) => a.channels?.includes('discord-voice'));
   const mouths = designated.filter((a) => agentTokens.has(a.id)).map((a) => a.id);
   const degraded = designated.filter((a) => !agentTokens.has(a.id)).map((a) => a.id);
-  console.log(`[discord-voice] ear ready — ${allowlist.length} channel(s) allowlisted`);
+  console.log(`[discord-voice] ear starting — ${allowlist.length} channel(s) allowlisted`);
   console.log(`[discord-voice] agent mouths (own bot token): ${mouths.length ? mouths.join(', ') : '(none)'}`);
   console.log(`[discord-voice] agents degraded (share the ear): ${degraded.length ? degraded.join(', ') : '(none)'}`);
 
@@ -835,8 +835,11 @@ async function setupDiscordVoice(allowlist: string[]): Promise<void> {
   // Receiver proxy: see the module-level doc comment above setupDiscordVoice
   // for why this indirection exists. speakingStartCb is captured once, by
   // createDiscordVoiceSurface's constructor, and outlives every join/leave
-  // cycle; liveReceiver gates delivery to the current connection only.
-  let liveReceiver = false;
+  // cycle. Liveness itself is scoped PER CONNECTION inside earAwareGateway's
+  // join() below (fix round 1) — NOT a flag shared here across joins: a
+  // shared flag let a rejoin's `true` unmask a still-in-flight speaking-start
+  // from the previous, already-destroyed connection (see task-5-report.md's
+  // fix-round section for the exact race).
   let speakingStartCb: Parameters<VoiceReceiverLike['onSpeakingStart']>[0] | null = null;
   const receiverProxy: VoiceReceiverLike = {
     onSpeakingStart(cb) {
@@ -866,9 +869,12 @@ async function setupDiscordVoice(allowlist: string[]): Promise<void> {
       const player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play } });
       connection.subscribe(player);
 
-      liveReceiver = true;
+      // Scoped to THIS connection only — a rejoin gets its own `alive`, so
+      // this connection's destroy() can never be masked by a LATER join
+      // flipping a shared flag back to true (fix round 1).
+      let alive = true;
       realReceiver(connection.receiver, channel.guild).onSpeakingStart((userId, displayName, isBot, pcm) => {
-        if (!liveReceiver) return; // this connection was already torn down — drop it, never mint a session for it
+        if (!alive) return; // this connection was already torn down — drop it, never mint a session for it
         speakingStartCb?.(userId, displayName, isBot, pcm);
       });
 
@@ -880,7 +886,7 @@ async function setupDiscordVoice(allowlist: string[]): Promise<void> {
           await entersState(player, AudioPlayerStatus.Idle, 120_000);
         },
         destroy(): void {
-          liveReceiver = false;
+          alive = false;
           connection.destroy();
           // earClient itself is NOT destroyed here — it's shared with presence watching and must survive leaveAll.
         },
@@ -944,7 +950,13 @@ async function setupDiscordVoice(allowlist: string[]): Promise<void> {
       const leftId = oldState.channelId;
       const joinedId = newState.channelId;
       if (leftId === joinedId) return; // mute/deafen-only change, not a channel join/leave
-      const member = newState.member ?? oldState.member ?? (await newState.guild.members.fetch(newState.id).catch(() => null));
+      const member =
+        newState.member ??
+        oldState.member ??
+        (await newState.guild.members.fetch(newState.id).catch((err: unknown) => {
+          console.error(`[discord-voice] couldn't resolve guild member ${newState.id} for a voice presence update — dropping it: ${String(err)}`);
+          return null;
+        }));
       if (!member || member.user.bot) return; // human = !member.user.bot; bots (our own mouths included) never drive presence
       if (leftId) await onPresenceEvent({ type: 'human-left', channelId: leftId });
       if (joinedId) await onPresenceEvent({ type: 'human-joined', channelId: joinedId });
