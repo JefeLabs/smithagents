@@ -39,10 +39,48 @@ function fakeGateway() {
   return { gateway, joins, connections };
 }
 
-// SEGMENT_IDLE_GAP_MS in discord-voice.ts — kept in lockstep with the
-// module's internal constant so tests advance fake time by exactly enough
-// to close an open segment without hardcoding a second source of truth.
+/**
+ * A connection whose iterator is pulled ONE item at a time, only when the
+ * test calls `pullOnce()` — unlike `fakeConnection`'s `for await` (which
+ * drains as fast as items are pushed), this gives backpressure tests
+ * explicit control over when "the consumer" makes progress, independent of
+ * when `publishPcm` itself resolves.
+ */
+function manualConnection(): {
+  connection: VoiceConnectionLike;
+  drained: Uint8Array[];
+  pullOnce(): Promise<IteratorResult<Uint8Array>>;
+} {
+  const drained: Uint8Array[] = [];
+  let iterator: AsyncIterator<Uint8Array> | null = null;
+  let resolvePlayPcm: (() => void) | null = null;
+  const connection: VoiceConnectionLike = {
+    playPcm(pcm) {
+      iterator = pcm[Symbol.asyncIterator]();
+      return new Promise<void>((resolve) => {
+        resolvePlayPcm = resolve;
+      });
+    },
+    destroy() {},
+  };
+  return {
+    connection,
+    drained,
+    async pullOnce() {
+      const result = await iterator!.next();
+      if (result.done) resolvePlayPcm?.();
+      else drained.push(result.value);
+      return result;
+    },
+  };
+}
+
+// SEGMENT_IDLE_GAP_MS / SEGMENT_BACKLOG_CAP_BYTES in discord-voice.ts — kept
+// in lockstep with the module's internal constants so tests advance fake
+// time / size buffers by exactly enough, without hardcoding a second source
+// of truth.
 const SEGMENT_IDLE_GAP_MS = 400;
+const SEGMENT_BACKLOG_CAP_BYTES = 882_000;
 
 /**
  * Real macrotask boundary: guarantees any pending microtask chain inside the
@@ -262,6 +300,37 @@ test('joinAll declines a non-allowlisted channel and connects nothing', async ()
   assert.ok(logs.some((l) => l.includes('some-other-channel')));
 });
 
+test('a declined channel switch leaves the currently joined channel fully intact', async () => {
+  const { gateway, joins, connections } = fakeGateway();
+  const logs: string[] = [];
+  const surface = createDiscordVoiceSurface({
+    allowlist: ['chan-1'], // chan-2 is deliberately NOT allowlisted
+    earToken: 'ear-token',
+    agentTokens: AGENT_TOKENS(),
+    agents: AGENTS,
+    gateway,
+    log: (line) => logs.push(line),
+  });
+
+  await surface.joinAll('chan-1');
+  const joinedConnections = [...connections];
+
+  await surface.joinAll('chan-2'); // declined — must NOT tear down chan-1 first
+
+  assert.equal(joins.length, 2, 'no join attempt was made for the declined channel');
+  assert.ok(logs.some((l) => l.includes('chan-2')), 'the decline was logged');
+  assert.ok(
+    joinedConnections.every((c) => !c.destroyed),
+    'chan-1 connections were never torn down',
+  );
+  assert.deepEqual(surface.connectedAgentIds(), ['ignacio'], 'still fully joined to chan-1');
+
+  // chan-1 is still live: a publish still reaches ignacio's own connection.
+  const [, ignacioConn] = connections;
+  await surface.publishPcm(new Uint8Array([1]), 44100, 'ignacio');
+  assert.ok(ignacioConn === joinedConnections[1], 'still the original chan-1 connection, not a fresh one');
+});
+
 test("an agent whose real join rejects degrades to the ear with one log line, same as an untokened agent", async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const earConn = fakeConnection('ear-token');
@@ -394,4 +463,50 @@ test('per-connection ordering: a segment that opens while the previous one is st
   await flushMicrotasks();
 
   assert.deepEqual(order, ['first-start', 'first-end', 'second-start', 'second-end']);
+});
+
+test('publishPcm resolves immediately while the segment backlog stays under the cap', async () => {
+  const { connection, drained } = manualConnection();
+  const gateway: VoiceGatewayLike = { join: async () => connection };
+  const surface = createDiscordVoiceSurface({
+    allowlist: ['chan-1'],
+    earToken: 'ear-token',
+    agentTokens: new Map(),
+    agents: () => [],
+    gateway,
+  });
+  await surface.joinAll('chan-1');
+
+  const small = new Uint8Array(1000); // well under SEGMENT_BACKLOG_CAP_BYTES
+  await surface.publishPcm(small, 44100); // must resolve with nobody pulling from the iterable
+
+  assert.deepEqual(drained, [], 'no playback progress happened — publishPcm resolved on enqueue alone');
+});
+
+test('publishPcm pends once the segment backlog exceeds the cap, until the fake consumer drains it', async () => {
+  const { connection, drained, pullOnce } = manualConnection();
+  const gateway: VoiceGatewayLike = { join: async () => connection };
+  const surface = createDiscordVoiceSurface({
+    allowlist: ['chan-1'],
+    earToken: 'ear-token',
+    agentTokens: new Map(),
+    agents: () => [],
+    gateway,
+  });
+  await surface.joinAll('chan-1');
+
+  const huge = new Uint8Array(SEGMENT_BACKLOG_CAP_BYTES + 1); // a single push that alone crosses the cap
+  let resolved = false;
+  const publish = surface.publishPcm(huge, 44100).then(() => {
+    resolved = true;
+  });
+
+  await flushMicrotasks(); // let the chained playPcm() call attach; the push is now gated on the backlog
+  assert.equal(resolved, false, 'an over-cap push must not resolve before the consumer drains it');
+
+  await pullOnce(); // the fake consumer pulls the one buffered chunk, dropping the backlog back under the cap
+  await publish;
+
+  assert.equal(resolved, true);
+  assert.deepEqual(drained, [huge]);
 });

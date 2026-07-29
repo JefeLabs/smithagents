@@ -15,7 +15,7 @@
  * by this file's unit tests.
  *
  * Segmenting rule (fix round; supersedes the original one-segment-per-call
- * design — see task-3-report.md's fix-round section for the full history).
+ * design — see task-3-report.md's fix-round sections for the full history).
  * The broker calls `publishPcm` once per TTS byte chunk, and a spoken line
  * is streamed as MANY chunks (`for await (const bytes of speak(text))
  * publishPcm(bytes, ...)` in broker.ts's `enqueueSpeech`). Driving each
@@ -24,8 +24,9 @@
  * and process churn mid-sentence. Instead, each mouth (ear or an agent's
  * own connection) keeps at most ONE open playback segment: a push-fed
  * `AsyncIterable` handed to a single live `playPcm()` call. `publishPcm`
- * appends to the open segment and resolves as soon as the bytes are queued
- * — it no longer waits for those bytes to actually play, which decouples
+ * appends to the open segment and, while the segment's backlog stays under
+ * the cap (see "Bounded backlog" below), resolves as soon as the bytes are
+ * queued — it doesn't wait for those bytes to actually play, which decouples
  * TTS-chunk fetching from real-time playback speed (a correctness
  * improvement over the prior design, not just a batching one).
  *
@@ -34,7 +35,10 @@
  *       new publish to that mouth: TTS streaming has natural gaps between
  *       ElevenLabs chunks that are well under this, but a real pause
  *       between lines (or the end of a turn) exceeds it, so playback ends
- *       promptly instead of hanging open forever;
+ *       promptly instead of hanging open forever. Idle detection is
+ *       suspended for the duration of an in-flight push (see "Bounded
+ *       backlog") so a push throttled on the backlog cap can never be
+ *       mistaken for an idle gap;
  *   (b) a persona change on that connection: only the ear ever multiplexes
  *       more than one speaker (an agent's own mouth only ever receives that
  *       agent's own `personaId`, by construction of the routing lookup
@@ -49,6 +53,21 @@
  * field: the interfaces are pinned verbatim for Tasks 4-5, and 400ms is a
  * reasonable default for ElevenLabs' typical inter-chunk cadence — tune the
  * constant in place if that cadence changes.
+ *
+ * Bounded backlog: resolving `publishPcm` on enqueue (rather than on
+ * playback) removes the only pacing that used to exist between TTS
+ * synthesis and real-time Discord playback — with nothing else bounding it
+ * (the meeting/voice STT path has origin-less turns with no other rate
+ * limit), a sustained conversation could accumulate unplayed PCM in memory
+ * without limit. Each segment tracks its own backlog (bytes pushed but not
+ * yet pulled by the connection's `playPcm()`); `publishPcm` resolves
+ * immediately while that backlog stays under `SEGMENT_BACKLOG_CAP_BYTES`
+ * (~10s of 44.1kHz mono s16le audio) and pends — gated on the backlog
+ * draining back under the cap as the connection consumes more of the
+ * iterable — once a push crosses it. This keeps the common case (bursty but
+ * bounded TTS chunks) fully non-blocking while restoring a hard memory
+ * ceiling and rough pacing for the pathological case (a consumer that's
+ * genuinely falling behind real time).
  */
 
 export interface VoiceConnectionLike {
@@ -77,22 +96,49 @@ const VOICE_DESIGNATION = 'discord-voice';
 const SEGMENT_IDLE_GAP_MS = 400;
 
 /**
- * A push-fed `AsyncIterable<Uint8Array>` backing one open playback segment.
- * `push()` buffers a chunk and wakes the consumer if it's waiting on one;
- * `close()` signals end-of-segment once whatever's already buffered drains.
- * Production never blocks on consumption: bytes pushed before `playPcm()`
- * has even started draining this iterable (see `openSegment`) are simply
- * buffered and yielded in order once it does.
+ * Per-segment backlog cap, in bytes of queued-but-unconsumed 44.1kHz mono
+ * s16le PCM: 44_100 samples/sec * 2 bytes/sample * 10 sec ≈ 882_000. See the
+ * module header's "Bounded backlog" note for why this exists and what it
+ * trades off.
  */
-function makeSegmentSource(): { iterable: AsyncIterable<Uint8Array>; push(bytes: Uint8Array): void; close(): void } {
+const SEGMENT_BACKLOG_CAP_BYTES = 882_000;
+
+/**
+ * A push-fed `AsyncIterable<Uint8Array>` backing one open playback segment.
+ * `push()` buffers a chunk, wakes the consumer if it's waiting on one, and
+ * returns a promise: resolved immediately while the segment's backlog
+ * (bytes pushed but not yet pulled by the connection's `playPcm()`) stays
+ * under `SEGMENT_BACKLOG_CAP_BYTES`, or left pending — gated on the backlog
+ * draining back under the cap — once a push crosses it. `close()` signals
+ * end-of-segment once whatever's already buffered drains, and releases any
+ * still-pending backpressure waiters so a segment being torn down mid-push
+ * (a persona switch, `leaveAll()`) can never leave a caller awaiting forever.
+ */
+function makeSegmentSource(): {
+  iterable: AsyncIterable<Uint8Array>;
+  push(bytes: Uint8Array): Promise<void>;
+  close(): void;
+} {
   const pending: Uint8Array[] = [];
+  let backlogBytes = 0;
   let wake: (() => void) | null = null;
   let closed = false;
+  let drainWaiters: Array<() => void> = [];
+
+  function releaseDrainWaitersIfUnderCap(): void {
+    if (backlogBytes >= SEGMENT_BACKLOG_CAP_BYTES || drainWaiters.length === 0) return;
+    const waiters = drainWaiters;
+    drainWaiters = [];
+    for (const resolve of waiters) resolve();
+  }
 
   async function* generate(): AsyncGenerator<Uint8Array> {
     for (;;) {
       if (pending.length > 0) {
-        yield pending.shift()!;
+        const chunk = pending.shift()!;
+        backlogBytes -= chunk.byteLength;
+        releaseDrainWaitersIfUnderCap();
+        yield chunk;
         continue;
       }
       if (closed) return;
@@ -104,22 +150,30 @@ function makeSegmentSource(): { iterable: AsyncIterable<Uint8Array>; push(bytes:
 
   return {
     iterable: generate(),
-    push(bytes: Uint8Array): void {
+    push(bytes: Uint8Array): Promise<void> {
       pending.push(bytes);
+      backlogBytes += bytes.byteLength;
       wake?.();
       wake = null;
+      if (backlogBytes < SEGMENT_BACKLOG_CAP_BYTES) return Promise.resolve();
+      return new Promise<void>((resolve) => drainWaiters.push(resolve));
     },
     close(): void {
       closed = true;
       wake?.();
       wake = null;
+      // Unconditionally release, cap or no cap — don't strand an in-flight
+      // push awaiting a drain that will now never come from this segment.
+      const waiters = drainWaiters;
+      drainWaiters = [];
+      for (const resolve of waiters) resolve();
     },
   };
 }
 
 interface MouthSegment {
   personaId: string | undefined;
-  push(bytes: Uint8Array): void;
+  push(bytes: Uint8Array): Promise<void>;
   close(): void;
 }
 
@@ -189,13 +243,18 @@ export function createDiscordVoiceSurface(opts: DiscordVoiceOptions): {
       log(`[discord-voice] joinAll no-op — already joined ${channelId}`);
       return;
     }
-    if (currentChannelId !== null) {
-      log(`[discord-voice] joinAll switching channels (${currentChannelId} -> ${channelId}) — leaving first`);
-      await leaveAll();
-    }
+    // Decline BEFORE any teardown: a rejected join (including a rejected
+    // channel switch) must leave whatever's currently connected untouched —
+    // fail-unsafe, not fail-disconnected. This is what makes `allowlist` a
+    // real defense-in-depth check rather than one that can strand the
+    // surface mid-switch if Task 5's own gating is ever wrong or racy.
     if (allowlist.size > 0 && !allowlist.has(channelId)) {
       log(`[discord-voice] joinAll declined — channel ${channelId} is not allowlisted`);
       return;
+    }
+    if (currentChannelId !== null) {
+      log(`[discord-voice] joinAll switching channels (${currentChannelId} -> ${channelId}) — leaving first`);
+      await leaveAll();
     }
     const gateway = opts.gateway ?? realGateway();
 
@@ -232,7 +291,12 @@ export function createDiscordVoiceSurface(opts: DiscordVoiceOptions): {
     if (!mouth) return; // no connection is live — nothing to play to
     if (mouth.segment && mouth.segment.personaId !== personaId) closeSegment(mouth); // ear must not splice speakers
     const segment = mouth.segment ?? openSegment(mouth, personaId);
-    segment.push(bytes);
+    // Suspend idle detection for the duration of this push, including any
+    // backpressure wait below — a push that's throttled on the backlog cap
+    // is still active, not an idle gap, so the timer from the PREVIOUS push
+    // must not be allowed to close this segment out from under it.
+    clearIdleTimer(mouth);
+    await segment.push(bytes);
     scheduleIdleClose(mouth);
   }
 
