@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 const BASE = "127.0.0.1:7790";
 
@@ -65,52 +65,88 @@ interface AgentsResponse {
 
 export function useSurfacePolicy(agentId: string) {
   const [loading, setLoading] = useState(true);
-  const [record, setRecord] = useState<StoredAgent | null>(null);
-  const [modes, setModes] = useState<Record<string, SurfaceMode>>({});
+  const [modes, setModesState] = useState<Record<string, SurfaceMode>>({});
   const [presence, setPresence] = useState<Record<string, boolean>>({});
   const [discord, setDiscord] = useState({ configured: false, voiceReady: false });
   const [errors, setErrors] = useState<Record<string, string>>({});
 
+  // Mirrors of state that an in-flight request's continuation needs to read
+  // synchronously, i.e. without waiting on a re-render. Every write goes
+  // through these too, so a promise callback always sees the truth as of
+  // right now — never a value captured (and now stale) at dispatch time.
+  const modesRef = useRef<Record<string, SurfaceMode>>({});
+  const recordRef = useRef<StoredAgent | null>(null);
+  const agentIdRef = useRef(agentId);
+  agentIdRef.current = agentId;
+
+  const setModes = useCallback((next: Record<string, SurfaceMode>) => {
+    modesRef.current = next;
+    setModesState(next);
+  }, []);
+
+  // Each refresh() takes the next generation ticket; a response only applies
+  // if its ticket is still the newest one issued. A slower GET for an agent
+  // id we've since navigated away from (or a plain double-refresh) is
+  // discarded instead of clobbering whatever the newer request already set.
+  const generationRef = useRef(0);
+
   const refresh = useCallback(async () => {
-    const res = await fetch(`http://${BASE}/agents`).then((r) => r.json() as Promise<AgentsResponse>);
+    const generation = ++generationRef.current;
+    const res = (await fetch(`http://${BASE}/agents`).then((r) => r.json())) as AgentsResponse;
+    if (generationRef.current !== generation) return; // superseded by a newer refresh
     const found = res.agents?.find((a) => a.id === agentId);
     if (found) {
       const { presence: foundPresence, ...stored } = found;
-      setRecord(stored);
+      recordRef.current = stored;
       setModes(modesFrom(stored));
       setPresence(foundPresence ?? {});
     }
     setDiscord(res.discord ?? { configured: false, voiceReady: false });
     setLoading(false);
-  }, [agentId]);
+  }, [agentId, setModes]);
 
   useEffect(() => {
     setLoading(true);
     void refresh();
   }, [refresh]);
 
+  // Per-surface request tickets: the same idea as generationRef, scoped to
+  // one surface. A setMode's continuation only reverts/records an error if
+  // no newer setMode for that exact surface (on this exact agent) has been
+  // dispatched since — otherwise it's a straggler for a change the user has
+  // already moved past, and applying it would clobber the newer one.
+  const requestSeqRef = useRef<Record<string, number>>({});
+
   const setMode = useCallback(
     (surface: string, mode: SurfaceMode) => {
+      const record = recordRef.current;
       if (!record) return;
-      const previous = modes[surface] ?? "disabled";
-      const channels = { ...modes, [surface]: mode };
+      const dispatchedForAgent = agentIdRef.current;
+      const seq = (requestSeqRef.current[surface] ?? 0) + 1;
+      requestSeqRef.current[surface] = seq;
+
+      const previous = modesRef.current[surface] ?? "disabled";
+      const channels = { ...modesRef.current, [surface]: mode };
       setModes(channels);
       setErrors((e) => {
         const { [surface]: _dropped, ...rest } = e;
         return rest;
       });
+
       void fetch(`http://${BASE}/agents/${encodeURIComponent(agentId)}`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ ...record, channels }),
       }).then(async (res) => {
+        const stale = requestSeqRef.current[surface] !== seq || agentIdRef.current !== dispatchedForAgent;
+        if (stale) return;
         if (res.ok) return;
         const body = (await res.json().catch(() => ({}))) as { error?: string };
-        setModes((m) => ({ ...m, [surface]: previous }));
+        setModes({ ...modesRef.current, [surface]: previous });
         setErrors((e) => ({ ...e, [surface]: body.error ?? `HTTP ${res.status}` }));
       });
     },
-    [agentId, record, modes],
+    [agentId, setModes],
   );
 
   const joinNow = useCallback(
