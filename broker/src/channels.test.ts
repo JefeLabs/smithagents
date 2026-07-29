@@ -167,3 +167,21 @@ test('without attendsPolicy the legacy array check still applies', () => {
     ['a', 'c'],
   );
 });
+
+test('without attendsPolicy, a map-shaped channels (now reachable — swarm persists it) neither throws nor blocks delivery', () => {
+  // main.ts wires attendsPolicy synchronously today, so this legacy branch
+  // never sees a map in production — but swarm's PUT /agents/:id now
+  // round-trips `channels` as a mode map, so any caller that constructs an
+  // AdapterHub without wiring attendsPolicy must not crash on `.includes`.
+  const { adapter, delivered } = fakeAdapter('discord');
+  const agents = [{ id: 'd', name: 'Dana', channels: { tauri: 'autojoin', discord: 'on-request' } }];
+  const hub = new AdapterHub({ resolveSpeaker, agents: () => agents, submitUserText: () => {} });
+  hub.register(adapter);
+  hub.attendsPolicy = null;
+  hub.setActiveOrigin({ kind: 'discord', channelRef: 'chan-1' });
+  assert.doesNotThrow(() => hub.dispatchSpeech('Dana: map-shaped channels, no policy wired'));
+  assert.deepEqual(
+    delivered.map((d) => d.line.agentId),
+    ['d'],
+  );
+});

@@ -22,8 +22,8 @@ export interface RegistryAgent {
   voice?: { provider: string; voiceId?: string; speech?: SpeechProfile };
   avatarRing?: string;
   archived?: boolean;
-  /** Channel adapter kinds this agent may speak on (e.g. "discord"); undefined = all. */
-  channels?: string[];
+  /** Legacy array of adapter kinds this agent may speak on (e.g. "discord"), or a per-surface mode map; undefined = all. */
+  channels?: string[] | Record<string, string>;
 }
 
 export interface SwarmSquad {

@@ -41,7 +41,8 @@ export interface ChannelAdapter {
 export interface HubAgent {
   id: string;
   name: string;
-  channels?: string[];
+  /** Legacy array (listed = designated) or a per-surface mode map — swarm persists either; only the array form is legacy-membership-checked below. */
+  channels?: string[] | Record<string, string>;
 }
 
 interface HubDeps {
@@ -89,9 +90,13 @@ export class AdapterHub {
     }
     const agent = this.lastSpeaker;
     if (!agent) return; // narrator/unknown lines stay out of external channels
+    // Legacy fallback only understands the array form (listed = designated).
+    // A map-shaped channels (reachable now that swarm persists it) is not
+    // this check's business — surfaceModes/attendsPolicy owns that — so
+    // treat it like an absent field rather than crashing on `.includes`.
     const attends = this.attendsPolicy
       ? this.attendsPolicy(agent.id, adapter.kind)
-      : !(agent.channels && !agent.channels.includes(adapter.kind));
+      : !(Array.isArray(agent.channels) && !agent.channels.includes(adapter.kind));
     if (!attends) return;
     void adapter
       .deliver({ agentId: agent.id, name: agent.name, text: spokenText }, this.activeOrigin.channelRef)
