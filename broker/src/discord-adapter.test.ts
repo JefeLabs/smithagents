@@ -81,6 +81,24 @@ test('non-allowlisted channels, unmentioned messages, bots, and webhooks are ign
   assert.equal(utterances.length, 0);
 });
 
+test('an @everyone/@here ping (or a role the bot holds) does not wake the crew', async () => {
+  const { client, handlers, message } = fakeClient();
+  const utterances: unknown[] = [];
+  await createDiscordAdapter({
+    token: 't', allowlist: ['chan-1'], onUtterance: (u) => utterances.push(u),
+    clientFactory: () => client,
+  });
+  const h = handlers.get('messageCreate')!;
+  // Models discord.js's own has(): true for a bare @everyone/@here/role ping
+  // when the caller doesn't ask it to be ignored, false once it is —
+  // i.e. exactly what a broadcast ping (not a real mention) looks like.
+  h(message({
+    content: '@everyone heads up',
+    mentions: { users: new Map(), repliedUser: null, has: (_id: string, opts?: { ignoreEveryone?: boolean }) => !opts?.ignoreEveryone },
+  }));
+  assert.equal(utterances.length, 0);
+});
+
 test('deliver posts through the channel webhook under the agent name', async () => {
   const { client, sent } = fakeClient();
   const { adapter } = await createDiscordAdapter({

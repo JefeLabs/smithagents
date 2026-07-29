@@ -42,11 +42,19 @@ const swarm = new SwarmClient({ baseUrl: config.swarm.baseUrl, token: config.swa
 const directory = new AgentDirectory();
 
 // Routes external channel (Discord, …) traffic through the same turn the app
-// uses. resolveSpokenLine/handleUserText are `function` declarations further
-// down this file — hoisted, so referencing them here ahead of their textual
-// definition is safe.
+// uses. resolveSpokenLineForChannels/handleUserText are `function`
+// declarations further down this file — hoisted, so referencing them here
+// ahead of their textual definition is safe.
+//
+// The hub gets its OWN pure resolver, not the stateful resolveSpokenLine used
+// for TTS voice picking. resolveSpokenLine's `lastSpokenSpeaker` is a
+// module-global that persists across every turn (meeting, system-note,
+// Tauri, Discord alike); the hub already resets its own sticky speaker on
+// every setActiveOrigin call (channels.ts), so feeding it a resolver with
+// its own cross-turn memory would defeat that reset — an unprefixed first
+// chunk of a new turn could resolve to whoever last spoke in ANY prior turn.
 const adapterHub = new AdapterHub({
-  resolveSpeaker: resolveSpokenLine,
+  resolveSpeaker: resolveSpokenLineForChannels,
   agents: () => directory.list().map((a) => ({ id: a.id, name: a.name, channels: a.channels })),
   submitUserText: handleUserText,
 });
@@ -260,6 +268,16 @@ function resolveSpokenLine(text: string): { speaker?: string; spokenText: string
   return { speaker, spokenText: parsed?.[2] ?? text };
 }
 
+// Pure, stateless counterpart for the AdapterHub: parses the same "Name: …"
+// prefix but carries no memory between calls. The hub owns its own per-turn
+// sticky speaker (channels.ts's `lastSpeaker`, reset on every
+// setActiveOrigin) — this resolver must never supply state of its own, or
+// that reset is defeated.
+function resolveSpokenLineForChannels(text: string): { speaker?: string; spokenText: string } {
+  const parsed = SPEAKER_RE.exec(text);
+  return { speaker: parsed?.[1], spokenText: parsed?.[2] ?? text };
+}
+
 function elevenVoiceFor(speaker?: string): string {
   return (speaker && (directory.resolve(speaker)?.voice?.voiceId ?? SQUAD_VOICES[speaker])) ?? DEFAULT_ELEVEN_VOICE;
 }
@@ -340,6 +358,12 @@ const toRosterEntries = (roster: UiRoster): RosterEntry[] => {
 // A user line from any input (HTTP, stdin, mic) lands in the active session's
 // transcript, runs a brain turn, then persists the brain's memory.
 function handleUserText(text: string, origin?: TurnOrigin): void {
+  // Every other inbound path (HTTP /utterance, mic PTT, stdin) already
+  // broadcasts the utterance frame at its own entry point before reaching
+  // here. Channel-originated text (Discord, …) has no such entry point of
+  // its own — the hub calls straight into this function — so this is the
+  // one place to do it for that path, matching the existing frame shape.
+  if (origin) textChannel.broadcast({ type: 'utterance', text });
   sessionManager.appendTranscript('user', text);
   void broker.handleUtterance(text, origin).then(() => sessionManager.saveBrainHistory(brain.exportHistory()));
 }

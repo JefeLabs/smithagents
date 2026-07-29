@@ -32,7 +32,7 @@ export interface DiscordMessageLike {
   content: string;
   author: { id: string; username: string; bot: boolean };
   webhookId: string | null;
-  mentions: { has(id: string): boolean };
+  mentions: { has(id: string, opts?: { ignoreEveryone?: boolean; ignoreRoles?: boolean }): boolean };
 }
 
 export interface DiscordAdapterOptions {
@@ -81,7 +81,10 @@ export async function createDiscordAdapter(
     if (!allowed.has(message.channelId)) return;
     if (message.author.bot || message.webhookId) return;
     const botId = client.user?.id;
-    if (!botId || !message.mentions.has(botId)) return;
+    // ignoreEveryone/ignoreRoles: discord.js's `has()` otherwise returns true
+    // for a bare @everyone/@here or any role the bot holds, waking the crew
+    // on every broadcast in an allowlisted channel rather than a real mention.
+    if (!botId || !message.mentions.has(botId, { ignoreEveryone: true, ignoreRoles: true })) return;
     const text = message.content.replace(new RegExp(`<@!?${botId}>`, 'g'), '').trim();
     if (!text) return;
     opts.onUtterance({ text, author: message.author.username, channelRef: message.channelId });

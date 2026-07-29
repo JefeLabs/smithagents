@@ -231,6 +231,69 @@ test('a turn with no origin (meeting-style) never reaches an adapter, even right
   }
 });
 
+test("Finding 3 fix: a prior turn's still-draining speech chain is drained before a Discord turn activates its origin, so a late chunk never leaks into the wrong channel", async () => {
+  const f = makeFakes([MEETING]);
+  const brain: BrainLike = {
+    handleUtterance: async (text, turn) => {
+      if (text === 'meeting line') {
+        turn.onSpeech('Manuel: first chunk, slow to speak');
+        turn.onSpeech('second chunk, no prefix — sticky to Manuel');
+      } else {
+        turn.onSpeech(`reply to ${text}`);
+      }
+    },
+    handleSystemNote: async () => {},
+  };
+  let active: TurnOrigin | undefined;
+  const delivered: Record<string, string[]> = {};
+  let releaseSlowChunk: (() => void) | null = null;
+  const slow = new Promise<void>((resolve) => (releaseSlowChunk = resolve));
+  const b = new Broker({
+    swarm: f.swarm,
+    directory: new AgentDirectory(),
+    brain,
+    makeStt: () => f.stt,
+    makeBridge: () => f.bridge,
+    speak: async function* (text) {
+      if (text.startsWith('Manuel: first chunk')) await slow; // holds the speaking chain open
+      yield new Uint8Array(Buffer.from(`AUDIO(${text})`));
+    },
+    mintToken: async (room) => `jwt-for-${room}`,
+    livekitUrl: 'ws://test',
+    pollMs: 999999,
+    onTurnStart: (origin) => (active = origin),
+    onTurnEnd: () => (active = undefined),
+    onSpeechText: (text) => {
+      if (!active) return; // mirrors AdapterHub.dispatchSpeech's own guard
+      (delivered[active.channelRef] ??= []).push(text);
+    },
+  });
+  try {
+    await b.start();
+    await b.pollOnce(); // join MEETING — with no active bridge, enqueueSpeech's run() never calls speak() at all
+
+    // Turn A: no origin (meeting-style). Its brain call resolves immediately —
+    // handleUtterance never awaits the speaking chain for origin-less turns —
+    // but its second chunk is still stuck behind the still-draining first one.
+    const turnA = b.handleUtterance('meeting line');
+    // Turn B: Discord-origined, queued right behind A.
+    const turnB = b.handleUtterance('from discord', { kind: 'discord', channelRef: 'chan-1' });
+    await new Promise((r) => setTimeout(r, 10)); // let A's brain call finish and B attempt to start
+    // B must be blocked draining A's chain — its origin must not be active yet.
+    assert.equal(active, undefined);
+
+    releaseSlowChunk!();
+    await Promise.all([turnA, turnB]);
+    await new Promise((r) => setTimeout(r, 10)); // let both speaking chains fully settle
+
+    // A's chunks went out with no origin active (dropped, like any meeting
+    // speech) — none of them ever reached chan-1, which carries only B's own reply.
+    assert.deepEqual(delivered['chan-1'], ['reply to from discord']);
+  } finally {
+    await b.stop();
+  }
+});
+
 test('roster notifications fire on seed and on delegation, carrying agents and squads', async () => {
   const f = makeFakes([]);
   const rosters: Array<{ agents: Array<{ status: string }>; squads: unknown[] }> = [];

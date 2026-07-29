@@ -274,10 +274,24 @@ export class Broker {
       // Light the ring the moment they are spoken to — before the model has
       // decided anything. Cleared when the turn ends, however it ends.
       this.setListening(whoIsAddressed(text, this.addressableNames()));
+      // The TTS/speech chain (this.speaking, driven by enqueueSpeech) runs
+      // unawaited and can lag behind the turn queue — a prior turn's chunks
+      // may still be draining when this turn starts. For channel-origined
+      // turns only, drain it before activating this turn's origin so a
+      // straggling chunk from an earlier (possibly origin-less/meeting) turn
+      // can't dispatch under the wrong origin. Meeting/unorigined turns are
+      // unaffected — they never route through a channel, so there's nothing
+      // to protect and no reason to slow them down.
+      if (origin) await this.speaking;
       this.deps.onTurnStart?.(origin);
       try {
         await this.deps.brain.handleUtterance(text, this.makeTurn(text));
       } finally {
+        // Same reasoning in reverse: let THIS turn's own speech chunks finish
+        // dispatching under its own origin before deactivating it, instead of
+        // racing onTurnEnd and either dropping them or leaking them into
+        // whatever turn activates next.
+        if (origin) await this.speaking;
         this.setListening([]);
         this.deps.onTurnEnd?.();
       }
