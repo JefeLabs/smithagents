@@ -4,6 +4,7 @@ import { mkdtemp, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadAgents, findAgent, saveAgent, activeAgents, type ComposedAgent } from './agents.js';
+import { buildAgentUpdate } from './server.js';
 
 async function seedDir(files: Record<string, unknown>): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'agents-'));
@@ -55,12 +56,14 @@ test('activeAgents filters archived records; loadAgents keeps them', async () =>
 
 // `channels` covers both the legacy `string[]` (listed = designated) form and
 // the newer per-surface mode map (`{ tauri: 'autojoin', discord: 'on-request' }`)
-// the control-plane presence popover PUTs. There is no route-level test
-// harness in this package (registerRoutes() only runs behind the full
-// OrchestratorServer constructor + start(), which has real filesystem side
-// effects tied to process.cwd()) — so this exercises the same saveAgent/
-// loadAgents round-trip PUT /agents/:id relies on, and mirrors PUT's exact
-// merge expression (`b.channels ?? existing.channels`) to guard its semantics.
+// the control-plane presence popover PUTs. There is no route-level (fastify
+// inject) test harness in this package — registerRoutes() only runs behind
+// the full OrchestratorServer constructor, which has real filesystem side
+// effects tied to process.cwd() (loadConfig() mkdirSyncs under .smith/) — so
+// this exercises the same saveAgent/loadAgents round-trip PUT /agents/:id
+// relies on, and calls the PUT handler's own exported `buildAgentUpdate`
+// (server.ts) directly rather than mirroring its merge expression, so a
+// regression to that function fails these tests too.
 test('saveAgent/loadAgents round-trip channels as a per-surface mode map, not just the legacy array', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'agents-'));
   const base = { id: 'mapped', name: 'Mapped', role: 'r', directives: 'd', engine: { cli: 'claude' as const, model: 'claude-sonnet' } };
@@ -70,7 +73,7 @@ test('saveAgent/loadAgents round-trip channels as a per-surface mode map, not ju
   assert.deepEqual(reloaded.channels, channels);
 });
 
-test('PUT-style merge: a channels map in the body replaces legacy array channels', async () => {
+test('buildAgentUpdate: a channels map in the body replaces legacy array channels', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'agents-'));
   const existing: ComposedAgent = {
     id: 'wilkin', name: 'Wilkin', role: 'r', directives: 'd',
@@ -80,14 +83,14 @@ test('PUT-style merge: a channels map in the body replaces legacy array channels
   await saveAgent(dir, existing);
 
   const body: Partial<ComposedAgent> = { channels: { tauri: 'autojoin', discord: 'disabled' } };
-  const updated: ComposedAgent = { ...existing, channels: body.channels ?? existing.channels };
+  const updated = buildAgentUpdate(existing, body);
   await saveAgent(dir, updated);
 
   const [reloaded] = await loadAgents(dir);
   assert.deepEqual(reloaded.channels, { tauri: 'autojoin', discord: 'disabled' });
 });
 
-test('PUT-style merge: omitting channels from the body preserves the existing value', async () => {
+test('buildAgentUpdate: omitting channels from the body preserves the existing value', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'agents-'));
   const existing: ComposedAgent = {
     id: 'aurelio', name: 'Aurelio', role: 'r', directives: 'd',
@@ -97,9 +100,10 @@ test('PUT-style merge: omitting channels from the body preserves the existing va
   await saveAgent(dir, existing);
 
   const body: Partial<ComposedAgent> = { name: 'Aurelio the Second' }; // no channels field sent
-  const updated: ComposedAgent = { ...existing, name: body.name ?? existing.name, channels: body.channels ?? existing.channels };
+  const updated = buildAgentUpdate(existing, body);
   await saveAgent(dir, updated);
 
   const [reloaded] = await loadAgents(dir);
+  assert.equal(updated.name, 'Aurelio the Second'); // sanity: the merge did apply the body
   assert.deepEqual(reloaded.channels, { tauri: 'autojoin' });
 });

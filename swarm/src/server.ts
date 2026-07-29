@@ -980,31 +980,7 @@ export class OrchestratorServer {
         });
       }
 
-      const updated: ComposedAgent = {
-        ...existing,
-        // The id is the file key and the handle other records point at, so a
-        // rename changes the display name only.
-        id: existing.id,
-        name: b.name?.trim() || existing.name,
-        role: b.role?.trim() || existing.role,
-        directives: b.directives?.trim() || existing.directives,
-        engine: {
-          cli: b.engine?.cli ?? existing.engine.cli,
-          model: nextModel || existing.engine.model,
-        },
-        persona: b.persona?.style !== undefined ? { style: b.persona.style.trim() } : existing.persona,
-        stereotype: b.stereotype ?? existing.stereotype,
-        jobRole: b.jobRole ?? existing.jobRole,
-        gender: b.gender ?? existing.gender,
-        backstory: b.backstory !== undefined ? b.backstory.trim() || undefined : existing.backstory,
-        language: b.language ?? existing.language,
-        reactions: b.reactions ?? existing.reactions,
-        quickAnswers: b.quickAnswers ?? existing.quickAnswers,
-        voice: b.voice?.voiceId ? { provider: 'elevenlabs', voiceId: b.voice.voiceId } : existing.voice,
-        avatarRing: b.avatarRing ?? existing.avatarRing,
-        channels: b.channels ?? existing.channels,
-        archived: b.archived === false ? undefined : existing.archived,
-      };
+      const updated = buildAgentUpdate(existing, b);
       try {
         await saveAgent(agentsDir, updated);
       } catch (err) {
@@ -1710,5 +1686,45 @@ export function enrichFromComposedAgent(
   return {
     profile: { name: composed.name, role: composed.role, directives: composed.directives },
     model: composed.engine?.model,
+  };
+}
+
+/**
+ * PUT /agents/:id merge: the wizard submits every field it knows, but a
+ * caller that sends three fields must not silently blank the rest of the
+ * persona — every field either takes the body's value or falls back to the
+ * existing one. Pulled out of the route handler so it's unit-testable
+ * without booting the server (model-id validation stays in the route; this
+ * only merges).
+ */
+export function buildAgentUpdate(
+  existing: ComposedAgent,
+  b: Partial<ComposedAgent> & { stereotype?: string; jobRole?: string },
+): ComposedAgent {
+  const nextModel = b.engine?.model?.trim();
+  return {
+    ...existing,
+    // The id is the file key and the handle other records point at, so a
+    // rename changes the display name only.
+    id: existing.id,
+    name: b.name?.trim() || existing.name,
+    role: b.role?.trim() || existing.role,
+    directives: b.directives?.trim() || existing.directives,
+    engine: {
+      cli: b.engine?.cli ?? existing.engine.cli,
+      model: nextModel || existing.engine.model,
+    },
+    persona: b.persona?.style !== undefined ? { style: b.persona.style.trim() } : existing.persona,
+    stereotype: b.stereotype ?? existing.stereotype,
+    jobRole: b.jobRole ?? existing.jobRole,
+    gender: b.gender ?? existing.gender,
+    backstory: b.backstory !== undefined ? b.backstory.trim() || undefined : existing.backstory,
+    language: b.language ?? existing.language,
+    reactions: b.reactions ?? existing.reactions,
+    quickAnswers: b.quickAnswers ?? existing.quickAnswers,
+    voice: b.voice?.voiceId ? { provider: 'elevenlabs', voiceId: b.voice.voiceId } : existing.voice,
+    avatarRing: b.avatarRing ?? existing.avatarRing,
+    channels: b.channels ?? existing.channels,
+    archived: b.archived === false ? undefined : existing.archived,
   };
 }
