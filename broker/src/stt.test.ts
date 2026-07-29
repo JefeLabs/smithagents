@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { test } from 'node:test';
-import { DeepgramSttStream, type LiveLike } from './stt.ts';
+import { DeepgramSttStream, type LiveLike, deepgramLiveOptions } from './stt.ts';
 
 function fakeLive(): { live: LiveLike & EventEmitter; sent: Uint8Array[]; closed: boolean[] } {
   const sent: Uint8Array[] = [];
@@ -58,4 +58,21 @@ test('sendAudio before start is a safe no-op', () => {
   const { live } = fakeLive();
   const stt = new DeepgramSttStream(() => live);
   stt.sendAudio(new Uint8Array([9])); // must not throw
+});
+
+test('deepgramLiveOptions defaults to multi and preserves the load-bearing options', () => {
+  const opts = deepgramLiveOptions(48000, {});
+  assert.equal(opts.language, 'multi');
+  assert.equal(opts.model, 'nova-3');
+  assert.equal(opts.encoding, 'linear16');
+  assert.equal(opts.sample_rate, 48000);
+  assert.equal(opts.channels, 1);
+  assert.equal(opts.interim_results, 'true');
+  assert.equal(opts.smart_format, 'true');
+  assert.equal(opts.endpointing, 300);
+});
+
+test('DEEPGRAM_LANGUAGE env overrides the language', () => {
+  assert.equal(deepgramLiveOptions(24000, { DEEPGRAM_LANGUAGE: 'es-419' }).language, 'es-419');
+  assert.equal(deepgramLiveOptions(24000, { DEEPGRAM_LANGUAGE: 'es-419' }).sample_rate, 24000);
 });

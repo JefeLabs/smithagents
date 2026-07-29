@@ -81,3 +81,23 @@ export class DeepgramSttStream {
     this.open = true;
   }
 }
+
+/** Deepgram live-session options shared by every hearing path (PTT mic, Discord ear).
+ * `language` defaults to 'multi' — nova-3's code-switching mode (Spanish+English in
+ * one utterance); pin DEEPGRAM_LANGUAGE=en or es-419 to override. `endpointing: 300`
+ * is load-bearing for meeting etiquette — do not change it here. */
+export function deepgramLiveOptions(
+  sampleRate: number,
+  env: NodeJS.ProcessEnv = process.env,
+): Record<string, unknown> {
+  return {
+    model: 'nova-3',
+    language: env.DEEPGRAM_LANGUAGE ?? 'multi',
+    encoding: 'linear16',
+    sample_rate: sampleRate,
+    channels: 1,
+    interim_results: 'true',
+    smart_format: 'true',
+    endpointing: 300,
+  };
+}

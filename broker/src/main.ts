@@ -25,7 +25,7 @@ import type { DiscordVoiceOptions, VoiceConnectionLike, VoiceGatewayLike, VoiceR
 import type { PresenceEvent } from './voice-presence.ts';
 import { LocalMemory, type MemoryEntry } from './memory.ts';
 import { SessionManager, type Session } from './sessions.ts';
-import { DeepgramSttStream, type LiveLike } from './stt.ts';
+import { DeepgramSttStream, type LiveLike, deepgramLiveOptions } from './stt.ts';
 import { SwarmClient, type SwarmSquad, type WorkspaceBody } from './swarm-client.ts';
 import { PersonaGenerator } from './persona-generator.ts';
 import { VoiceCatalog } from './voice-catalog.ts';
@@ -151,15 +151,7 @@ function makeDeepgramLive(sampleRate = 48000): LiveLike {
   let closed = false;
 
   const ready: Promise<Socket | null> = deepgram.listen.v1
-    .connect({
-      model: 'nova-3',
-      encoding: 'linear16',
-      sample_rate: sampleRate,
-      channels: 1,
-      interim_results: 'true',
-      smart_format: 'true',
-      endpointing: 300,
-    })
+    .connect(deepgramLiveOptions(sampleRate) as any)
     .then(async (s) => {
       if (closed) {
         s.close();
