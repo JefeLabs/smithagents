@@ -194,21 +194,25 @@ Setup: `livekit-server --dev` (port 7880; dev keys already in `.env`).
 ## TTS stall chaos
 
 Purpose: demonstrate the known follow-up (unbounded TTS latency inside the
-turn queue) and verify the fix once landed. Requires a live meeting bridge
+turn queue) and verify the fix (`speak()` now bounds every TTS request with
+`AbortSignal.timeout(TTS_TIMEOUT_MS)`). Requires a live meeting bridge
 (see [LiveKit meeting](#livekit-meeting)) — without one, speech never
 blocks and there is nothing to stall.
 
 1. Temp fault injection — first line of `speak()` in `broker/src/main.ts`:
    `if (process.env.SMITH_TTS_HANG_MS) await new Promise((r) => setTimeout(r, Number(process.env.SMITH_TTS_HANG_MS)));`
-2. Restart broker with `SMITH_TTS_HANG_MS=120000`; open a meeting; then
-   @mention the crew in Discord.
-3. **Pre-fix expected (the risk):** the reply's speech chunk hangs; a
-   second Discord message AND a Tauri message both freeze until the delay
-   elapses — the whole turn queue is parked.
-4. **Post-fix expected (bounded TTS timeout):** the hung call aborts after
-   its bound with a readable log line; the messages from step 3 answer
-   within seconds; only one audio chunk is lost.
-5. Revert the patch (or keep it env-gated as a chaos knob).
+2. Restart broker with `SMITH_TTS_HANG_MS=120000` and a short
+   `TTS_TIMEOUT_MS=5000` (so the bound below doesn't take the full 30s
+   default); open a meeting; then @mention the crew in Discord.
+3. **Without the fault injection reverted, pre-fix behavior (the risk) would
+   look like:** the reply's speech chunk hangs; a second Discord message AND
+   a Tauri message both freeze until the delay elapses — the whole turn
+   queue is parked.
+4. **Actual (bounded TTS timeout) expected:** ~5s after the mention, the
+   broker logs `[broker] speech chunk failed: Error: TTS timed out after
+   5000ms — skipping this chunk`; the messages from step 3 answer within
+   seconds; only one audio chunk is lost.
+5. Revert the fault injection (or keep it env-gated as a chaos knob).
 
 ## Settings reset
 

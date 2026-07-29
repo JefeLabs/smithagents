@@ -64,6 +64,21 @@ const tts = config.elevenlabsApiKey ? new ElevenLabsVoiceProvider({ apiKey: conf
 const voiceCatalog = config.elevenlabsApiKey
   ? new VoiceCatalog(config.elevenlabsApiKey, process.env.BROKER_VOICE_CACHE_DIR ?? '.smith/voice-cache')
   : null;
+// Bound on a single TTS request. speak() runs inside the serialized turn
+// queue (broker.ts's enqueueSpeech chain) — a hung ElevenLabs call with no
+// deadline would park every subsequent turn, voice or text, until Node's
+// underlying socket timeout finally gives up (minutes). 30s covers any
+// legitimate sentence-length synthesis.
+const TTS_TIMEOUT_MS = Number(process.env.TTS_TIMEOUT_MS ?? 30_000);
+
+// AbortSignal.timeout()'s firing surfaces as a `TimeoutError` DOMException
+// (or, depending on where fetch/undici observes the abort, a generic
+// `AbortError`) whose message is the unhelpful "The operation was aborted."
+// Recognize either by name so the caller can rethrow something readable.
+function isTtsTimeout(err: unknown): boolean {
+  const name = (err as { name?: string } | undefined)?.name;
+  return name === 'TimeoutError' || name === 'AbortError';
+}
 
 // Meeting TTS speaks with the per-agent cast — same voices as the app's audio
 // frames. Falls back to a premade stand-in when a library voice is plan-gated.
@@ -72,6 +87,9 @@ async function* speak(text: string): AsyncIterable<Uint8Array> {
     return; // no TTS configured — onSpeechText already surfaced the text
   }
   const { speaker, spokenText } = resolveSpokenLine(text);
+  // Fresh AbortSignal.timeout(...) per call: the 402-fallback retry below
+  // invokes attempt() a second time and must get its OWN timeout window, not
+  // the first attempt's (already fired-or-consumed) signal.
   const attempt = (voiceId: string) =>
     tts.stream({
       text: spokenText,
@@ -79,14 +97,21 @@ async function* speak(text: string): AsyncIterable<Uint8Array> {
       format: 'pcm_s16le',
       sampleRate: 44100,
       voice: { provider: 'elevenlabs', voiceId },
+      signal: AbortSignal.timeout(TTS_TIMEOUT_MS),
     });
   const voiceId = elevenVoiceFor(speaker);
   try {
     for await (const chunk of attempt(voiceId)) yield chunk.data;
   } catch (err) {
+    if (isTtsTimeout(err)) throw new Error(`TTS timed out after ${TTS_TIMEOUT_MS}ms — skipping this chunk`);
     const standIn = (speaker && PREMADE_STANDINS[speaker]) ?? PREMADE_DEFAULT;
     if (!/402|payment_required|paid_plan_required/.test(String(err)) || standIn === voiceId) throw err;
-    for await (const chunk of attempt(standIn)) yield chunk.data;
+    try {
+      for await (const chunk of attempt(standIn)) yield chunk.data;
+    } catch (err2) {
+      if (isTtsTimeout(err2)) throw new Error(`TTS timed out after ${TTS_TIMEOUT_MS}ms — skipping this chunk`);
+      throw err2;
+    }
   }
 }
 
