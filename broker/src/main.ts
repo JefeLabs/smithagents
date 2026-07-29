@@ -150,6 +150,7 @@ function makeDeepgramLive(sampleRate = 48000): LiveLike {
   const pending: Uint8Array[] = [];
   let closed = false;
 
+  // Record<string, unknown> can't structurally satisfy the SDK's ConnectArgs; the payload shape is pinned by stt.test.ts.
   const ready: Promise<Socket | null> = deepgram.listen.v1
     .connect(deepgramLiveOptions(sampleRate) as any)
     .then(async (s) => {

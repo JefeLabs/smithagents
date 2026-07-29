@@ -92,7 +92,7 @@ export function deepgramLiveOptions(
 ): Record<string, unknown> {
   return {
     model: 'nova-3',
-    language: env.DEEPGRAM_LANGUAGE ?? 'multi',
+    language: env.DEEPGRAM_LANGUAGE || 'multi',
     encoding: 'linear16',
     sample_rate: sampleRate,
     channels: 1,

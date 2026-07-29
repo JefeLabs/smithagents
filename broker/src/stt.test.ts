@@ -76,3 +76,7 @@ test('DEEPGRAM_LANGUAGE env overrides the language', () => {
   assert.equal(deepgramLiveOptions(24000, { DEEPGRAM_LANGUAGE: 'es-419' }).language, 'es-419');
   assert.equal(deepgramLiveOptions(24000, { DEEPGRAM_LANGUAGE: 'es-419' }).sample_rate, 24000);
 });
+
+test('blank DEEPGRAM_LANGUAGE falls back to multi', () => {
+  assert.equal(deepgramLiveOptions(48000, { DEEPGRAM_LANGUAGE: '' }).language, 'multi');
+});
