@@ -73,6 +73,21 @@ export class SurfacePolicy {
   }
 }
 
+/** Pure gate for the join endpoint's mode check, shared by every surface (not
+ * just voice): 'disabled' rejects outright — no join is attempted and no
+ * admission is recorded; 'on-request' proceeds and needs an admission so
+ * `attends()` honors it going forward; 'autojoin' proceeds too (the caller
+ * still performs the actual join/no-op), but records no admission — an
+ * autojoin surface doesn't need one, and revoking it later would wrongly gate
+ * an agent that was never on-request to begin with. */
+export type JoinDecision = { type: 'reject'; status: number; error: string } | { type: 'admit' } | { type: 'allow' };
+
+export function decideJoin(agentId: string, surface: string, mode: SurfaceMode): JoinDecision {
+  if (mode === 'disabled') return { type: 'reject', status: 409, error: `${agentId} is disabled on ${surface}` };
+  if (mode === 'on-request') return { type: 'admit' };
+  return { type: 'allow' };
+}
+
 /** Enforce a mode change's immediate effects. Voice: disabled ejects now;
  * autojoin joins now if a room is active. Every changed surface clears any
  * on-request admission (mode changes never smuggle an old admission along). */

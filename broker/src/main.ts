@@ -23,7 +23,7 @@ import type { RosterState, TurnOrigin, UiRoster } from './broker.ts';
 // DISCORD_VOICE_CHANNELS is set; see setupDiscordVoice).
 import type { createDiscordVoiceSurface, DiscordVoiceOptions, VoiceConnectionLike, VoiceGatewayLike, VoiceReceiverLike } from './discord-voice.ts';
 import type { PresenceEvent, VoicePresence } from './voice-presence.ts';
-import { applyModeChange, surfaceModes, SurfacePolicy } from './surface-modes.ts';
+import { applyModeChange, decideJoin, surfaceModes, SurfacePolicy } from './surface-modes.ts';
 import { LocalMemory, type MemoryEntry } from './memory.ts';
 import { SessionManager, type Session } from './sessions.ts';
 import { DeepgramSttStream, type LiveLike, deepgramLiveOptions } from './stt.ts';
@@ -590,25 +590,37 @@ const textChannel = new TextChannel(
         try {
           let after: ReturnType<typeof surfaceModes>;
           try {
-            after = surfaceModes((await swarm.registry()).find((a) => a.id === id) ?? {});
+            const registryAfterPut = await swarm.registry();
+            after = surfaceModes(registryAfterPut.find((a) => a.id === id) ?? {});
+            // directory is otherwise seeded only at broker start() and
+            // resetComposition() (broker.ts) — never on an individual PUT,
+            // and the 2s poll timer doesn't touch it either. Reusing the
+            // registry read this PUT already made to re-seed here (same
+            // archived filter as those two call sites) is what keeps
+            // SurfacePolicy (which reads directory.list()) from enforcing a
+            // STALE pre-PUT mode: without this, Discord text would keep
+            // relaying a disabled agent, a tauri-disabled agent would never
+            // leave the roster, and the next crew VC join would use stale
+            // designation (an ejected agent comes back when the crew
+            // rejoins). Broadcast afterward matches every other
+            // roster-changing path's own frame.
+            directory.seed(registryAfterPut.filter((a) => !a.archived));
+            textChannel.broadcast({ type: 'roster', agents: toRosterEntries(broker.uiRoster()) });
           } catch (err) {
             // Registry outage right after a successful write: fall back to
-            // deriving the after-map from the PUT body itself. Residual
-            // risk, verified against swarm's actual PUT /agents/:id handler:
-            // it merges the body into the existing record and does not
-            // thread `channels` through at all today, and no current client
-            // (control-plane's edit modal) sends a `channels` field on a
-            // PUT — so this fallback always evaluates the legacy
-            // absent-channels default (discord-voice: disabled), regardless
-            // of the agent's real, just-persisted channels. An autojoin
-            // voice agent edited (for any field) during a registry outage
-            // would get ejected here even though its mode never changed.
-            // Accepted: recoverable (the next successful read or the 2s
-            // directory poll corrects it) and strictly safer than silently
-            // skipping an actual explicit disable — but this is a real
-            // exposure today, not just a "hand-crafted partial PUT" edge
-            // case, until a future task threads `channels` through the
-            // swarm update route and the edit UI actually sends it.
+            // deriving the after-map from the PUT body itself. This is
+            // genuinely correct for the SurfacePolicyPopover's PUT
+            // (useSurfacePolicy.ts's setMode sends the full stored record
+            // plus the updated channels) and for swarm's own merge
+            // (buildAgentUpdate: channels: b.channels ?? existing.channels).
+            // The remaining exposure is narrower: a client that omits
+            // `channels` on its PUT body — today, the edit wizard
+            // (AddAgentModal.tsx) — hits the legacy absent-channels default
+            // (discord-voice: disabled) here instead of its real persisted
+            // channels, if this exact read fails. Also: the directory.seed()
+            // above did NOT run on this path (no fresh registry list to seed
+            // from), so it stays stale until some other PUT's AFTER read
+            // succeeds — there is no poll that corrects this on its own.
             console.error(`[surface-modes] AFTER registry read failed for ${id}; enforcement uses the PUT body as the after-map: ${String(err)}`);
             after = surfaceModes(body);
           }
@@ -730,18 +742,26 @@ const textChannel = new TextChannel(
     info: () => ({ configured: discordConfigured, voiceReady: voiceSurface !== null }),
     join: async (agentId, surface) => {
       if (surface === 'discord-voice') {
+        // Mode check first: an explicitly disabled agent must never end up
+        // in the VC just because it holds a minted bot token.
+        const decision = decideJoin(agentId, surface, policy.modeFor(agentId, surface));
+        if (decision.type === 'reject') return { error: decision.error, status: decision.status };
         if (!voiceSurface) return { error: 'Discord voice is not configured', status: 409 };
         try {
           await voiceSurface.joinAgent(agentId);
         } catch (err) {
           return { error: String(err instanceof Error ? err.message : err), status: 409 };
         }
-        policy.admit(agentId, surface);
+        // autojoin needs no admission (it already attends by mode alone);
+        // only on-request records one.
+        if (decision.type === 'admit') policy.admit(agentId, surface);
         return { ok: true } as const;
       }
-      if (surface === 'discord' && !discordConfigured) return { error: 'Discord is not configured', status: 409 };
       if (surface !== 'discord' && surface !== 'tauri') return { error: `unknown surface: ${surface}`, status: 404 };
-      policy.admit(agentId, surface);
+      const decision = decideJoin(agentId, surface, policy.modeFor(agentId, surface));
+      if (decision.type === 'reject') return { error: decision.error, status: decision.status };
+      if (surface === 'discord' && !discordConfigured) return { error: 'Discord is not configured', status: 409 };
+      if (decision.type === 'admit') policy.admit(agentId, surface);
       return { ok: true } as const;
     },
   },

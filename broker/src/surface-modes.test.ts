@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { applyModeChange, SurfacePolicy, surfaceModes } from './surface-modes.ts';
+import { applyModeChange, decideJoin, SurfacePolicy, surfaceModes } from './surface-modes.ts';
 
 test('legacy array: listed surfaces autojoin, unlisted disabled', () => {
   assert.deepEqual(surfaceModes({ channels: ['tauri', 'discord'] }), {
@@ -77,4 +77,20 @@ test('applyModeChange: voice disable ejects; autojoin flip joins only with a roo
   calls.length = 0;
   await applyModeChange(deps, 'ignacio', { discord: 'on-request' }, { discord: 'disabled' });
   assert.deepEqual(calls, ['revoke:ignacio:discord']); // non-voice surfaces: revoke only
+});
+
+test('decideJoin: disabled rejects outright; on-request needs an admission; autojoin proceeds without one', () => {
+  assert.deepEqual(decideJoin('ignacio', 'discord-voice', 'disabled'), {
+    type: 'reject',
+    status: 409,
+    error: 'ignacio is disabled on discord-voice',
+  });
+  assert.deepEqual(decideJoin('ignacio', 'discord-voice', 'on-request'), { type: 'admit' });
+  assert.deepEqual(decideJoin('ignacio', 'discord-voice', 'autojoin'), { type: 'allow' });
+  // Surface-agnostic: the same three outcomes apply to every surface, not just voice.
+  assert.deepEqual(decideJoin('ignacio', 'discord', 'disabled'), {
+    type: 'reject',
+    status: 409,
+    error: 'ignacio is disabled on discord',
+  });
 });
