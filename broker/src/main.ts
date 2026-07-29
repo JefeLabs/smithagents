@@ -8,7 +8,7 @@ import { DeepgramClient } from '@deepgram/sdk';
 import { createInterface } from 'node:readline';
 import { ElevenLabsVoiceProvider } from '@smithagents/voice';
 import { BrokerBrain, type StreamFactory } from './brain.ts';
-import { Broker } from './broker.ts';
+import { Broker, TTS_SAMPLE_RATE } from './broker.ts';
 import { AdapterHub } from './channels.ts';
 import { loadBrokerConfig } from './config.ts';
 import { createDiscordAdapter } from './discord-adapter.ts';
@@ -101,7 +101,7 @@ async function* speak(text: string): AsyncIterable<Uint8Array> {
       text: spokenText,
       personaId: speaker ?? 'broker',
       format: 'pcm_s16le',
-      sampleRate: 44100,
+      sampleRate: TTS_SAMPLE_RATE,
       voice: { provider: 'elevenlabs', voiceId },
       signal: AbortSignal.timeout(TTS_TIMEOUT_MS),
     });

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { Broker, type BridgeLike, type SttLike, type SwarmClientLike } from './broker.ts';
+import { Broker, type BridgeLike, type SttLike, type SwarmClientLike, TTS_SAMPLE_RATE } from './broker.ts';
 import { AgentDirectory } from './directory.ts';
 import type { BrainLike, TurnOrigin } from './broker.ts';
 import type { RegistryAgent, SwarmEvent, SwarmMeeting, SwarmWorkspace } from './swarm-client.ts';
@@ -120,7 +120,7 @@ test('pollOnce joins an open meeting: token minted, bridge connected, mic wired 
   await b.stop();
 });
 
-test('utterance flows: stt -> brain -> speak -> publishPcm at 44100', async () => {
+test('utterance flows: stt -> brain -> speak -> publishPcm at the TTS rate', async () => {
   const f = makeFakes([MEETING]);
   const b = makeBroker(f);
   await b.start();
@@ -129,7 +129,7 @@ test('utterance flows: stt -> brain -> speak -> publishPcm at 44100', async () =
   await new Promise((r) => setTimeout(r, 10)); // let the async turn settle
   assert.deepEqual(f.heard, ['hello manuel']);
   assert.equal(f.published.length, 1);
-  assert.equal(f.published[0]!.sampleRate, 44100);
+  assert.equal(f.published[0]!.sampleRate, TTS_SAMPLE_RATE);
   assert.match(Buffer.from(f.published[0]!.bytes).toString(), /AUDIO\(spoken reply\)/);
   await b.stop();
 });
@@ -319,7 +319,7 @@ test('while a voice surface is attached, speech publishes to it', async () => {
     await b.handleUtterance('hi');
     await new Promise((r) => setTimeout(r, 10));
     assert.equal(published.length, 1);
-    assert.equal(published[0]!.sampleRate, 44100);
+    assert.equal(published[0]!.sampleRate, TTS_SAMPLE_RATE);
     assert.equal(published[0]!.personaId, 'ignacio');
     assert.equal(f.published.length, 0); // never touched the meeting bridge
   } finally {

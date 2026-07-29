@@ -40,6 +40,9 @@ import prism from 'prism-media';
 import type { VoiceReceiverLike } from './discord-voice.ts';
 
 const DISCORD_SAMPLE_RATE = 48000;
+// Rate of the incoming TTS PCM — mirrors broker.ts's TTS_SAMPLE_RATE (same env,
+// same default); read directly here to keep this leaf module import-free.
+const TTS_INPUT_RATE = Number(process.env.TTS_SAMPLE_RATE ?? 24000);
 const DISCORD_CHANNELS = 2;
 const OPUS_FRAME_SIZE = 960; // 20ms at 48kHz, the frame size @discordjs/voice expects
 
@@ -62,7 +65,9 @@ function toReadable(pcm44kMono: AsyncIterable<Uint8Array>): Readable {
 export function pcm44kMonoToOpus(pcm44kMono: AsyncIterable<Uint8Array>): Readable {
   const ffmpeg = new prism.FFmpeg({
     args: [
-      '-f', 's16le', '-ar', '44100', '-ac', '1', '-i', '-',
+      // Input rate MUST match the broker's TTS output (broker.ts TTS_SAMPLE_RATE,
+      // same env + default) or the voice plays back pitch-shifted.
+      '-f', 's16le', '-ar', String(TTS_INPUT_RATE), '-ac', '1', '-i', '-',
       '-f', 's16le', '-ar', String(DISCORD_SAMPLE_RATE), '-ac', String(DISCORD_CHANNELS),
     ],
   });

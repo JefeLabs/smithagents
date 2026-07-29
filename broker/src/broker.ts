@@ -94,7 +94,11 @@ export interface BrokerDeps {
   pollMs?: number;
 }
 
-const TTS_SAMPLE_RATE = 44100;
+// ElevenLabs gates pcm_44100 behind the Pro tier; 24000 is available on every
+// tier and both downstream audio surfaces (LiveKit, Discord voice) resample
+// anyway. Env-overridable so a Pro key can restore 44100. NOTE: discord-audio's
+// ffmpeg input rate reads the same env var — keep the default in sync.
+export const TTS_SAMPLE_RATE = Number(process.env.TTS_SAMPLE_RATE ?? 24000);
 /** A speaker prefix on a speech chunk, e.g. "Ignacio: dime" — shared by hand-lowering and persona-tagged publish. */
 const SPEAKER_RE = /^([A-Z][\w-]{1,24}):\s/;
 
