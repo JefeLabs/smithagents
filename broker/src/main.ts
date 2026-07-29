@@ -565,24 +565,41 @@ const textChannel = new TextChannel(
     catalog: () => swarm.agentCatalog(),
     records: async () => (await swarm.registry()) as unknown as Record<string, unknown>[],
     update: async (id, body) => {
-      const before = surfaceModes((await swarm.registry()).find((a) => a.id === id) ?? {});
+      // Fail open on the BEFORE read: this registry read did not exist before
+      // this wrapper, so a transient read hiccup must never block a PUT that
+      // previously had zero read dependency. `before === null` means "no
+      // reliable diff possible" — enforcement is skipped for this PUT below,
+      // but the write itself still proceeds.
+      let before: ReturnType<typeof surfaceModes> | null = null;
+      try {
+        before = surfaceModes((await swarm.registry()).find((a) => a.id === id) ?? {});
+      } catch (err) {
+        console.error(`[surface-modes] pre-PUT registry read failed for ${id}; write proceeds, enforcement skipped for this PUT: ${String(err)}`);
+      }
       const result = await swarm.updateAgent(id, body);
-      if (!result.error) {
-        const after = surfaceModes((await swarm.registry()).find((a) => a.id === id) ?? {});
-        await applyModeChange(
-          {
-            leaveAgent: (agentId) => voiceSurface?.leaveAgent(agentId),
-            joinAgent: async (agentId) => {
-              await voiceSurface?.joinAgent(agentId);
+      if (!result.error && before) {
+        // The write already succeeded and persisted by this point — a
+        // read-side failure here (AFTER read or enforcement itself) must
+        // never override a known-good write's response with an error.
+        try {
+          const after = surfaceModes((await swarm.registry()).find((a) => a.id === id) ?? {});
+          await applyModeChange(
+            {
+              leaveAgent: (agentId) => voiceSurface?.leaveAgent(agentId),
+              joinAgent: async (agentId) => {
+                await voiceSurface?.joinAgent(agentId);
+              },
+              roomActive: () => voiceSurface !== null && voicePresence !== null && voicePresence.joinedChannel() !== null,
+              revoke: (agentId, surface) => policy.revoke(agentId, surface),
+              log: (line) => console.log(line),
             },
-            roomActive: () => voiceSurface !== null && voicePresence !== null && voicePresence.joinedChannel() !== null,
-            revoke: (agentId, surface) => policy.revoke(agentId, surface),
-            log: (line) => console.log(line),
-          },
-          id,
-          before,
-          after,
-        );
+            id,
+            before,
+            after,
+          );
+        } catch (err) {
+          console.error(`[surface-modes] enforcement skipped after PUT ${id}: ${String(err)}`);
+        }
       }
       return result;
     },
