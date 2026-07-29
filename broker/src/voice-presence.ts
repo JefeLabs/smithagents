@@ -5,6 +5,8 @@
  * channels are rejected. Discord voice-state events (human-joined, human-left)
  * drive the state machine. join-failed signals a transient retry condition
  * (keep state unjoined so the next human-joined attempt retries).
+ *
+ * Caller contract: markJoined is called at most once per join-crew action.
  */
 
 export type PresenceEvent =
@@ -37,7 +39,8 @@ export class VoicePresence {
         return { type: 'none' };
       }
 
-      // First human in an allowlisted channel: join
+      // Join decision is transition-based (unjoined + allowlisted → join), not count-gated.
+      // humanCountFor is only consulted on human-left.
       return { type: 'join-crew', channelId: e.channelId };
     }
 

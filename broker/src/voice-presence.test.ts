@@ -135,3 +135,12 @@ test('join-failed from non-joined channel → none', () => {
   );
   assert.deepEqual(action, { type: 'none' });
 });
+
+test('human-left for a different allowlisted channel while joined elsewhere → none', () => {
+  const vp = new VoicePresence(['allowed-1', 'allowed-2']);
+  vp.handle({ type: 'human-joined', channelId: 'allowed-1' }, () => 1);
+  vp.markJoined('allowed-1');
+  const action = vp.handle({ type: 'human-left', channelId: 'allowed-2' }, () => 0);
+  assert.deepEqual(action, { type: 'none' });
+  assert.equal(vp.joinedChannel(), 'allowed-1');
+});
