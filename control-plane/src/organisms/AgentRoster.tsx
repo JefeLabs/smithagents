@@ -95,6 +95,8 @@ function RosterItem(props: {
         onCall={editMode ? undefined : props.onCallWhenHand}
         group={entry.kind === "squad" && (entry.members?.length ?? 0) >= 2}
         listening={!editMode && entry.listening}
+        // Squad circles skip this — per-member surface config belongs to the member avatars in the expanded view.
+        agentId={entry.kind === "squad" ? undefined : entry.id}
       />
       {editMode && entry.kind !== "squad" && !busy && props.onRemove && (
         <button
