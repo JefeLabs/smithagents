@@ -31,7 +31,8 @@ export interface ComposedAgent {
   persona?: AgentPersona;
   voice?: AgentVoice;
   avatarRing?: string;
-  channels?: string[];
+  /** Legacy array (listed = designated) or a per-surface mode map (`{tauri: 'autojoin', ...}`); broker enforces semantics, swarm just persists. */
+  channels?: string[] | Record<string, string>;
   /** Stereotype the persona was seeded from (wizard provenance). */
   stereotype?: string;
   /** Job role picked in the wizard — kept so editing can restore the choice. */

@@ -1002,6 +1002,7 @@ export class OrchestratorServer {
         quickAnswers: b.quickAnswers ?? existing.quickAnswers,
         voice: b.voice?.voiceId ? { provider: 'elevenlabs', voiceId: b.voice.voiceId } : existing.voice,
         avatarRing: b.avatarRing ?? existing.avatarRing,
+        channels: b.channels ?? existing.channels,
         archived: b.archived === false ? undefined : existing.archived,
       };
       try {

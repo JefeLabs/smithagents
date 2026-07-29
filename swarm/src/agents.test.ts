@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadAgents, findAgent, saveAgent, activeAgents } from './agents.js';
+import { loadAgents, findAgent, saveAgent, activeAgents, type ComposedAgent } from './agents.js';
 
 async function seedDir(files: Record<string, unknown>): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'agents-'));
@@ -51,4 +51,55 @@ test('activeAgents filters archived records; loadAgents keeps them', async () =>
   const all = await loadAgents(dir);
   assert.equal(all.length, 2);
   assert.deepEqual(activeAgents(all).map((a) => a.id), ['alive']);
+});
+
+// `channels` covers both the legacy `string[]` (listed = designated) form and
+// the newer per-surface mode map (`{ tauri: 'autojoin', discord: 'on-request' }`)
+// the control-plane presence popover PUTs. There is no route-level test
+// harness in this package (registerRoutes() only runs behind the full
+// OrchestratorServer constructor + start(), which has real filesystem side
+// effects tied to process.cwd()) — so this exercises the same saveAgent/
+// loadAgents round-trip PUT /agents/:id relies on, and mirrors PUT's exact
+// merge expression (`b.channels ?? existing.channels`) to guard its semantics.
+test('saveAgent/loadAgents round-trip channels as a per-surface mode map, not just the legacy array', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'agents-'));
+  const base = { id: 'mapped', name: 'Mapped', role: 'r', directives: 'd', engine: { cli: 'claude' as const, model: 'claude-sonnet' } };
+  const channels = { tauri: 'autojoin', discord: 'on-request', 'discord-voice': 'disabled' };
+  await saveAgent(dir, { ...base, channels });
+  const [reloaded] = await loadAgents(dir);
+  assert.deepEqual(reloaded.channels, channels);
+});
+
+test('PUT-style merge: a channels map in the body replaces legacy array channels', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'agents-'));
+  const existing: ComposedAgent = {
+    id: 'wilkin', name: 'Wilkin', role: 'r', directives: 'd',
+    engine: { cli: 'claude', model: 'claude-sonnet' },
+    channels: ['tauri'],
+  };
+  await saveAgent(dir, existing);
+
+  const body: Partial<ComposedAgent> = { channels: { tauri: 'autojoin', discord: 'disabled' } };
+  const updated: ComposedAgent = { ...existing, channels: body.channels ?? existing.channels };
+  await saveAgent(dir, updated);
+
+  const [reloaded] = await loadAgents(dir);
+  assert.deepEqual(reloaded.channels, { tauri: 'autojoin', discord: 'disabled' });
+});
+
+test('PUT-style merge: omitting channels from the body preserves the existing value', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'agents-'));
+  const existing: ComposedAgent = {
+    id: 'aurelio', name: 'Aurelio', role: 'r', directives: 'd',
+    engine: { cli: 'claude', model: 'claude-sonnet' },
+    channels: { tauri: 'autojoin' },
+  };
+  await saveAgent(dir, existing);
+
+  const body: Partial<ComposedAgent> = { name: 'Aurelio the Second' }; // no channels field sent
+  const updated: ComposedAgent = { ...existing, name: body.name ?? existing.name, channels: body.channels ?? existing.channels };
+  await saveAgent(dir, updated);
+
+  const [reloaded] = await loadAgents(dir);
+  assert.deepEqual(reloaded.channels, { tauri: 'autojoin' });
 });
