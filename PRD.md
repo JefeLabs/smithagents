@@ -134,9 +134,10 @@ Discord's own per-speaker audio streams with pre-attributed utterances
 bot/webhook speaker so the crew never hears itself. An agent with no minted
 bot token degrades to speaking through the ear bot (one readable log line)
 — the built-in rollout path, not a separate phase; day one works with zero
-agent tokens. `DiscordVoiceBridge` shares the single active-audio-surface
-slot with LiveKit meetings (first one open wins; the other's join/open is
-declined with a readable log line), and playback batches TTS chunks into
+agent tokens. The voice surface (`createDiscordVoiceSurface`) shares the
+broker's single external-voice-surface slot with LiveKit meetings (first one
+open wins; the other's join/open is declined with a readable log line), and
+playback batches TTS chunks into
 continuous per-mouth segments (closing on an idle gap or a persona switch)
 behind a bounded per-segment backlog, so a stalled consumer can't
 accumulate unbounded PCM in memory.
@@ -254,8 +255,9 @@ editor loop plays to someone else's strength.
   with per-user attribution (filtering every bot/webhook speaker so the crew
   never hears itself), and ear-degradation as the built-in rollout path (an
   agent with no minted bot token speaks through the ear, one log line; day
-  one works with zero agent tokens). `DiscordVoiceBridge` shares the single
-  active-audio-surface slot with LiveKit meetings — whichever opens first
+  one works with zero agent tokens). The voice surface
+  (`createDiscordVoiceSurface`) shares the broker's single
+  external-voice-surface slot with LiveKit meetings — whichever opens first
   wins, the other's join/open is declined with a readable log line. Still
   open: Slack as a second `ChannelAdapter`; meeting recording/minutes;
   in-app meeting UX (join/leave, who's speaking) for either voice surface.

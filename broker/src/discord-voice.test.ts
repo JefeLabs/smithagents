@@ -309,6 +309,39 @@ test('leaveAll destroys the ear and every agent connection', async () => {
   assert.deepEqual(surface.connectedAgentIds(), []);
 });
 
+test("leaveAll tears down every connection even when one connection's destroy() throws", async () => {
+  // Regression: @discordjs/voice's VoiceConnection.destroy() THROWS on an
+  // already-destroyed connection ("Cannot destroy VoiceConnection - it has
+  // already been destroyed"). Before each teardown was isolated, one
+  // mouth's throw aborted leaveAll partway — the caller's leave-crew path
+  // (main.ts) never reached detachVoiceSurface/markLeft, wedging the
+  // surface attached until restart. leaveAll must finish tearing down
+  // every OTHER connection and STT session regardless.
+  const { gateway, connections } = fakeGateway();
+  const logs: string[] = [];
+  const surface = createDiscordVoiceSurface({
+    allowlist: ['chan-1'],
+    earToken: 'ear-token',
+    agentTokens: AGENT_TOKENS(),
+    agents: AGENTS,
+    onUtterance: NOOP_ON_UTTERANCE,
+    makeStt: UNUSED_MAKE_STT,
+    gateway,
+    log: (line) => logs.push(line),
+  });
+  await surface.joinAll('chan-1');
+  const [earConn, ignacioConn] = connections;
+  earConn!.destroy = () => {
+    throw new Error('Cannot destroy VoiceConnection - it has already been destroyed');
+  };
+
+  await assert.doesNotReject(surface.leaveAll());
+
+  assert.ok(ignacioConn!.destroyed, "ignacio's connection was torn down despite the ear's destroy() throwing");
+  assert.deepEqual(surface.connectedAgentIds(), []);
+  assert.ok(logs.some((l) => l.includes('ear teardown failed')), 'the ear failure was logged readably, not swallowed silently');
+});
+
 test('a second joinAll after leaveAll reconnects everything fresh', async () => {
   const { gateway, joins, connections } = fakeGateway();
   const surface = createDiscordVoiceSurface({
@@ -610,6 +643,58 @@ test('publishPcm pends once the segment backlog exceeds the cap, until the fake 
 
   assert.equal(resolved, true);
   assert.deepEqual(drained, [huge]);
+});
+
+test('a settled (rejected) playPcm closes its segment: a parked over-cap push resolves, and the next publish opens a fresh segment', async () => {
+  // Regression: before openSegment's tail chain closed the segment on
+  // playPcm() settling, a connection whose playPcm() finished (resolved,
+  // rejected, or timed out) WITHOUT the segment ever idling out or a
+  // persona switch left mouth.segment pointed at a segment nobody was
+  // pulling from anymore. Any further push to that mouth was silently lost
+  // below the backlog cap, and a push that crossed the cap pended forever
+  // — nothing left to drain it — wedging every later publishPcm on this
+  // mouth (and, transitively, the broker's serialized speech chain).
+  let playCalls = 0;
+  const connection: VoiceConnectionLike = {
+    async playPcm(_pcm) {
+      playCalls += 1;
+      // Rejects WITHOUT ever touching the iterable — simulates a connection
+      // failure mid-segment (e.g. the underlying player erroring out) that
+      // leaves whatever was already queued in the segment unpulled.
+      throw new Error('connection died mid-segment');
+    },
+    destroy() {},
+  };
+  const gateway: VoiceGatewayLike = { join: async () => connection };
+  const surface = createDiscordVoiceSurface({
+    allowlist: ['chan-1'],
+    earToken: 'ear-token',
+    agentTokens: new Map(),
+    agents: () => [],
+    onUtterance: NOOP_ON_UTTERANCE,
+    makeStt: UNUSED_MAKE_STT,
+    gateway,
+  });
+  await surface.joinAll('chan-1');
+
+  // A push that alone crosses the backlog cap: with the segment held open
+  // by a dead (already-settled) playPcm() call, this would pend forever.
+  const huge = new Uint8Array(SEGMENT_BACKLOG_CAP_BYTES + 1);
+  let resolved = false;
+  const publish = surface.publishPcm(huge, 44100).then(() => {
+    resolved = true;
+  });
+
+  await flushMicrotasks(); // let the chained playPcm() call attach and reject
+  assert.equal(playCalls, 1, 'the segment opened and called playPcm once');
+  await publish; // must resolve — the settled playPcm closes the segment and releases the parked push
+  assert.equal(resolved, true, 'the parked push was released once the segment closed on playPcm settling');
+
+  // A subsequent publish must open a FRESH segment (a second playPcm call),
+  // not silently write into the dead one nobody's pulling from.
+  await surface.publishPcm(new Uint8Array([1]), 44100);
+  await flushMicrotasks();
+  assert.equal(playCalls, 2, 'the next publish opened a new segment instead of reusing the dead one');
 });
 
 test('a human speaking-start creates a per-user STT session; its utterance callback pre-attributes the turn', async () => {

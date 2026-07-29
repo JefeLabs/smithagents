@@ -43,7 +43,15 @@
  *       more than one speaker (an agent's own mouth only ever receives that
  *       agent's own `personaId`, by construction of the routing lookup
  *       below), so this rule exists to stop the ear from splicing two
- *       different degraded speakers into one continuous segment.
+ *       different degraded speakers into one continuous segment;
+ *   (c) its own `playPcm()` call settling — resolving, rejecting, or timing
+ *       out — even with no idle gap or persona change: once that call has
+ *       returned, nothing is left pulling from the segment's iterable, so
+ *       leaving it "open" would silently drop any further buffered PCM (and
+ *       permanently wedge a push that crosses the backlog cap, since nothing
+ *       drains it). `openSegment`'s tail chain closes the segment in a
+ *       `.finally()` after the `playPcm()` call settles, guarded so it never
+ *       clobbers a newer segment that's since replaced it.
  * A publish after a segment closes opens a fresh one. Segment N+1's
  * `playPcm()` call is chained to start only after segment N's has settled
  * (never two concurrent `playPcm()` calls on one connection), preserving
@@ -321,7 +329,19 @@ export function createDiscordVoiceSurface(opts: DiscordVoiceOptions): {
     mouth.segment = segment;
     mouth.tail = mouth.tail
       .then(() => mouth.connection.playPcm(source.iterable))
-      .catch((err) => log(`[discord-voice] segment playback failed: ${String(err)}`)); // one bad segment must not wedge the next
+      .catch((err) => log(`[discord-voice] segment playback failed: ${String(err)}`)) // one bad segment must not wedge the next
+      .finally(() => {
+        // playPcm() has now settled (resolved, rejected, or timed out) —
+        // without this, the segment stays "open" (mouth.segment still points
+        // at it) with nobody left pulling from its iterable: buffered PCM
+        // below the backlog cap is silently lost, and a push that crosses
+        // the cap pends forever (nothing left to drain it), wedging every
+        // later publishPcm on this mouth. Only close if this is STILL the
+        // mouth's current segment — a persona switch or idle-gap close that
+        // already happened in the meantime already nulled it out, and this
+        // must not clobber a NEWER segment opened since.
+        if (mouth.segment === segment) closeSegment(mouth);
+      });
     return segment;
   }
 
@@ -376,9 +396,27 @@ export function createDiscordVoiceSurface(opts: DiscordVoiceOptions): {
   }
 
   async function leaveAll(): Promise<void> {
-    if (ear) teardownMouth(ear);
+    // Each teardown is isolated: @discordjs/voice's VoiceConnection.destroy()
+    // THROWS on an already-destroyed connection ("Cannot destroy
+    // VoiceConnection - it has already been destroyed"), and a shared guild
+    // registry (see realGateway's `group` note) used to make that the common
+    // case. One mouth's throw must never abort the rest of the teardown —
+    // that's what stranded the surface attached with no way to detach.
+    if (ear) {
+      try {
+        teardownMouth(ear);
+      } catch (err) {
+        log(`[discord-voice] ear teardown failed: ${String(err)}`);
+      }
+    }
     ear = null;
-    for (const mouth of agentMouths.values()) teardownMouth(mouth);
+    for (const [agentId, mouth] of agentMouths) {
+      try {
+        teardownMouth(mouth);
+      } catch (err) {
+        log(`[discord-voice] ${agentId}'s mouth teardown failed: ${String(err)}`);
+      }
+    }
     agentMouths.clear();
     currentChannelId = null;
     for (const stt of sttSessions.values()) stt.stop();
@@ -444,16 +482,32 @@ export function realGateway(): VoiceGatewayLike {
         throw new Error(`Discord channel ${channelId} is not a voice channel`);
       }
 
+      const identity = client.user!.id;
+      // @discordjs/voice keys its process-wide connection registry by
+      // (group, guildId), defaulting group to 'default' — every mouth in the
+      // same guild would otherwise collide on that one 'default' entry and
+      // joinVoiceChannel would just hand back the FIRST connection created
+      // for this guild (dist src/joinVoiceChannel.ts's createVoiceConnection:
+      // `getVoiceConnection(joinConfig.guildId, joinConfig.group)`), so no
+      // agent bot would ever actually appear in the VC. Scoping the group to
+      // this bot's own user id gives each identity its own registry slot.
       const connection = joinVoiceChannel({
         channelId,
         guildId: channel.guild.id,
+        group: identity,
         adapterCreator: channel.guild.voiceAdapterCreator,
         selfDeaf: false,
         selfMute: false,
       });
       await entersState(connection, VoiceConnectionStatus.Ready, 15_000);
-
+      // Neither AudioPlayer nor VoiceConnection is otherwise listened for
+      // 'error' — Node's EventEmitter throws (uncaughtException) on an
+      // unlistened 'error' event, which would take the whole broker process
+      // down. Both fire it for routine conditions (a stream error mid-play,
+      // ordinary voice-networking hiccups), not just fatal ones.
       const player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play } });
+      player.on('error', (err) => console.error(`[discord-voice] ${identity} audio player error: ${String(err)}`));
+      connection.on('error', (err) => console.error(`[discord-voice] ${identity} voice connection error: ${String(err)}`));
       connection.subscribe(player);
 
       return {

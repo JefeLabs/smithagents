@@ -821,6 +821,9 @@ async function setupDiscordVoice(allowlist: string[]): Promise<void> {
   } = voice;
 
   // Token map: DISCORD_TOKEN_<X> (excluding the bare ear token) -> agent id.
+  // The underscore->dash mapping below assumes agent ids are kebab-case only
+  // (true today) — an agent id containing a literal underscore would collide
+  // with one whose id uses a dash in the same spot.
   const agentTokens = new Map<string, string>();
   for (const [key, value] of Object.entries(process.env)) {
     if (key === 'DISCORD_TOKEN' || !key.startsWith('DISCORD_TOKEN_') || !value) continue;
@@ -862,15 +865,29 @@ async function setupDiscordVoice(allowlist: string[]): Promise<void> {
       if (!channel || !channel.isVoiceBased()) {
         throw new Error(`Discord channel ${channelId} is not a voice channel`);
       }
+      // Own `group` so the ear's connection gets its own slot in
+      // @discordjs/voice's process-wide (group, guildId) registry, distinct
+      // from every agent mouth's own token-scoped group in realGateway() —
+      // sharing the default group would collide on one guild-wide entry and
+      // joinVoiceChannel would just hand back whichever connection claimed
+      // it first (see discord-voice.ts's realGateway() for the full dist
+      // citation of this behavior).
       const connection = joinVoiceChannel({
         channelId,
         guildId: channel.guild.id,
+        group: 'ear',
         adapterCreator: channel.guild.voiceAdapterCreator,
         selfDeaf: false,
         selfMute: false,
       });
       await entersState(connection, VoiceConnectionStatus.Ready, 15_000);
+      // See discord-voice.ts's realGateway() for why both listeners exist:
+      // an unlistened EventEmitter 'error' is an uncaughtException, and
+      // both AudioPlayer and VoiceConnection fire 'error' for routine,
+      // non-fatal conditions.
       const player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play } });
+      player.on('error', (err) => console.error(`[discord-voice] ear audio player error: ${String(err)}`));
+      connection.on('error', (err) => console.error(`[discord-voice] ear voice connection error: ${String(err)}`));
       connection.subscribe(player);
 
       // Scoped to THIS connection only — a rejoin gets its own `alive`, so
@@ -935,7 +952,17 @@ async function setupDiscordVoice(allowlist: string[]): Promise<void> {
       try {
         await surface.joinAll(action.channelId);
         presence.markJoined(action.channelId);
-        console.log(`[discord-voice] joined ${action.channelId} — ear + ${surface.connectedAgentIds().length} agent mouth(es)`);
+        // Degraded count called out explicitly — a rollout with zero minted
+        // agent tokens joins with 0 connected mouths by design (every
+        // designated agent degrades to the ear), and a bare "ear + 0 agent
+        // mouth(s)" reads as a failure without it.
+        const connectedCount = surface.connectedAgentIds().length;
+        const designatedCount = directory.list().filter((a) => a.channels?.includes('discord-voice')).length;
+        const degradedCount = designatedCount - connectedCount;
+        console.log(
+          `[discord-voice] joined ${action.channelId} — ear + ${connectedCount} agent mouth(s)` +
+            (degradedCount > 0 ? `, ${degradedCount} degraded` : ''),
+        );
       } catch (err) {
         console.error(`[discord-voice] join failed for ${action.channelId}: ${String(err)}`);
         broker.detachVoiceSurface();
@@ -949,22 +976,35 @@ async function setupDiscordVoice(allowlist: string[]): Promise<void> {
     }
   }
 
+  // Serialized: an independent async handler per voiceStateUpdate event (the
+  // original shape) races. Two humans joining together spawn two concurrent
+  // join-crew actions — two overlapping joinAll runs, leaking a duplicate
+  // set of mouth Clients. A human leaving mid-joinAll can have its
+  // human-left evaluated (and discarded, since presence isn't 'joined' yet)
+  // before the in-flight join-crew's markJoined lands, leaving the crew
+  // attached and squatting in a now-empty channel. Chaining every event's
+  // FULL action (attach/joinAll/markJoined or leaveAll/detach/markLeft)
+  // through one serial promise settles each before the next is evaluated —
+  // mirrors broker.ts's `speaking` serial-chain pattern.
+  let presenceChain: Promise<void> = Promise.resolve();
   earClient.on('voiceStateUpdate', (oldState, newState) => {
-    void (async () => {
-      const leftId = oldState.channelId;
-      const joinedId = newState.channelId;
-      if (leftId === joinedId) return; // mute/deafen-only change, not a channel join/leave
-      const member =
-        newState.member ??
-        oldState.member ??
-        (await newState.guild.members.fetch(newState.id).catch((err: unknown) => {
-          console.error(`[discord-voice] couldn't resolve guild member ${newState.id} for a voice presence update — dropping it: ${String(err)}`);
-          return null;
-        }));
-      if (!member || member.user.bot) return; // human = !member.user.bot; bots (our own mouths included) never drive presence
-      if (leftId) await onPresenceEvent({ type: 'human-left', channelId: leftId });
-      if (joinedId) await onPresenceEvent({ type: 'human-joined', channelId: joinedId });
-    })().catch((err) => console.error(`[discord-voice] presence handling failed: ${String(err)}`));
+    presenceChain = presenceChain
+      .then(async () => {
+        const leftId = oldState.channelId;
+        const joinedId = newState.channelId;
+        if (leftId === joinedId) return; // mute/deafen-only change, not a channel join/leave
+        const member =
+          newState.member ??
+          oldState.member ??
+          (await newState.guild.members.fetch(newState.id).catch((err: unknown) => {
+            console.error(`[discord-voice] couldn't resolve guild member ${newState.id} for a voice presence update — dropping it: ${String(err)}`);
+            return null;
+          }));
+        if (!member || member.user.bot) return; // human = !member.user.bot; bots (our own mouths included) never drive presence
+        if (leftId) await onPresenceEvent({ type: 'human-left', channelId: leftId });
+        if (joinedId) await onPresenceEvent({ type: 'human-joined', channelId: joinedId });
+      })
+      .catch((err) => console.error(`[discord-voice] presence handling failed: ${String(err)}`)); // one bad event must not wedge the chain
   });
 }
 
