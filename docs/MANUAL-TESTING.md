@@ -376,3 +376,16 @@ blocks and there is nothing to stall.
   behaves differently — if so, tune `endpointing` via a follow-up, don't revert the language.
 - Repeat one Spanish utterance over the in-app PTT mic (same factory, second path).
 - Set DEEPGRAM_LANGUAGE=en, restart, confirm English-only behavior returns (the escape hatch works).
+
+## Surface presence modes (2026-07-29)
+
+- Hover an agent's avatar (desktop) → popover lists Tauri app / Discord text / Discord voice with modes.
+- Long-press the avatar (touch) → same popover.
+- With the crew in a VC: flip an agent's Discord voice to **disabled** → their bot leaves the VC member list within a beat; others stay.
+- Flip it back to **autojoin** while the crew is still in the VC → the bot rejoins.
+- Set an agent to **on request**, have the crew join a VC → that agent stays out; press **Join now** → they join.
+- Press **Join now** when the crew is NOT in a VC → inline "the crew isn't in a voice channel yet" error, button still enabled.
+- Everyone leaves the VC and a human rejoins → the on-request agent stays out (admission cleared), autojoin agents return.
+- Restart the broker mid-admission → the admitted on-request agent does not auto-return.
+- Unset DISCORD_TOKEN and restart → both Discord rows render grayed with the "not configured" note.
+- Hand-edit an agent file back to the legacy array form → behavior matches the pre-feature suite (text delivered, voice only when designated).
