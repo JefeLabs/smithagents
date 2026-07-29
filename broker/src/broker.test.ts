@@ -9,6 +9,10 @@ const AGENTS: RegistryAgent[] = [
   { id: 'manuel', name: 'Manuel', role: 'lead', directives: 'Be Manuel.', engine: { cli: 'claude', model: 'claude-sonnet-5' } },
 ];
 
+const IGNACIO: RegistryAgent = {
+  id: 'ignacio', name: 'Ignacio', role: 'specialist', directives: 'Be Ignacio.', engine: { cli: 'claude', model: 'claude-sonnet-5' },
+};
+
 function makeFakes(meetings: SwarmMeeting[]) {
   const submitted: unknown[] = [];
   let eventSink: ((e: SwarmEvent) => void) | null = null;
@@ -45,13 +49,13 @@ function makeFakes(meetings: SwarmMeeting[]) {
     stop: () => void sttStops.push(1),
   };
 
-  const published: Array<{ bytes: Uint8Array; sampleRate: number }> = [];
+  const published: Array<{ bytes: Uint8Array; sampleRate: number; personaId?: string }> = [];
   const bridge: BridgeLike & { remoteCb: ((b: Uint8Array) => void) | null; connected: string[] } = {
     remoteCb: null,
     connected: [],
     connect: async (opts) => void bridge.connected.push(opts.token),
     onRemoteAudio: (cb) => (bridge.remoteCb = cb),
-    publishPcm: async (bytes, sampleRate) => void published.push({ bytes, sampleRate }),
+    publishPcm: async (bytes, sampleRate, personaId) => void published.push({ bytes, sampleRate, personaId }),
     disconnect: async () => {},
   };
 
@@ -141,6 +145,101 @@ test('speech text reaches onSpeechText even with no active meeting; no PCM publi
   assert.deepEqual(transcript, ['spoken reply']);
   assert.equal(f.published.length, 0); // no bridge -> no TTS spend
   await b.stop();
+});
+
+test("speech publishes with the speaking agent's persona id", async () => {
+  const f = makeFakes([MEETING]);
+  f.swarm.registry = async () => [...AGENTS, IGNACIO];
+  const brain: BrainLike = {
+    handleUtterance: async (text, turn) => {
+      if (text === 'dime algo') {
+        turn.onSpeech('Ignacio: dime'); // prefixed — sets the sticky speaker
+        turn.onSpeech('algo mas'); // unprefixed continuation — reuses the sticky speaker
+      } else {
+        turn.onSpeech('a narrator line'); // fresh turn, never prefixed — no persona
+      }
+    },
+    handleSystemNote: async () => {},
+  };
+  const b = new Broker({ ...basicDeps(f, new AgentDirectory()), brain });
+  try {
+    await b.start();
+    await b.pollOnce(); // join MEETING — active.bridge is now live
+
+    await b.handleUtterance('dime algo');
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(f.published.length, 2);
+    assert.equal(f.published[0]!.personaId, 'ignacio');
+    assert.equal(f.published[1]!.personaId, 'ignacio'); // sticky — no prefix on the second chunk
+
+    await b.handleUtterance('narrate'); // new turn -> sticky resets at onTurnStart
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(f.published.length, 3);
+    assert.equal(f.published[2]!.personaId, undefined); // narrator line, no speaker prefix
+  } finally {
+    await b.stop();
+  }
+});
+
+test('attachVoiceSurface declines while a meeting is active, and vice versa', async () => {
+  const surface = { publishPcm: async () => {} };
+
+  // 1. A meeting is already active — attaching an external voice surface is declined.
+  const f1 = makeFakes([MEETING]);
+  const b1 = makeBroker(f1);
+  try {
+    await b1.start();
+    await b1.pollOnce();
+    assert.equal(b1.attachVoiceSurface(surface), false);
+  } finally {
+    await b1.stop();
+  }
+
+  // 2. Fresh broker: attach first -> the next pollOnce declines to join the open meeting.
+  const f2 = makeFakes([MEETING]);
+  const b2 = makeBroker(f2);
+  try {
+    await b2.start();
+    assert.equal(b2.attachVoiceSurface(surface), true);
+    assert.equal(b2.voiceSurfaceAttached(), true);
+    await b2.pollOnce();
+    assert.deepEqual(f2.bridge.connected, []); // meeting join declined — surface is live
+
+    // 3. Detaching releases the slot; the next pollOnce joins normally.
+    b2.detachVoiceSurface();
+    assert.equal(b2.voiceSurfaceAttached(), false);
+    await b2.pollOnce();
+    assert.deepEqual(f2.bridge.connected, ['jwt-for-meeting-m-1']);
+  } finally {
+    await b2.stop();
+  }
+});
+
+test('while a voice surface is attached, speech publishes to it', async () => {
+  const f = makeFakes([]); // no meetings at all
+  f.swarm.registry = async () => [...AGENTS, IGNACIO];
+  const brain: BrainLike = {
+    handleUtterance: async (text, turn) => void turn.onSpeech('Ignacio: hola'),
+    handleSystemNote: async () => {},
+  };
+  const b = new Broker({ ...basicDeps(f, new AgentDirectory()), brain });
+  const published: Array<{ bytes: Uint8Array; sampleRate: number; personaId?: string }> = [];
+  const surface = {
+    publishPcm: async (bytes: Uint8Array, sampleRate: number, personaId?: string) =>
+      void published.push({ bytes, sampleRate, personaId }),
+  };
+  try {
+    await b.start();
+    assert.equal(b.attachVoiceSurface(surface), true);
+    await b.handleUtterance('hi');
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(published.length, 1);
+    assert.equal(published[0]!.sampleRate, 44100);
+    assert.equal(published[0]!.personaId, 'ignacio');
+    assert.equal(f.published.length, 0); // never touched the meeting bridge
+  } finally {
+    await b.stop();
+  }
 });
 
 test('turn-scoped origin: two queued turns route speech only to their own origin', async () => {

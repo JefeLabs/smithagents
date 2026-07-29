@@ -53,7 +53,8 @@ export interface SttLike {
 export interface BridgeLike {
   connect(opts: { url: string; token: string }): Promise<void>;
   onRemoteAudio(cb: (pcmBytes: Uint8Array) => void): void;
-  publishPcm(bytes: Uint8Array, sampleRate: number): Promise<void>;
+  /** `personaId` tags the audio with the speaking agent (see enqueueSpeech's sticky-speaker resolution); the LiveKit impl ignores it. */
+  publishPcm(bytes: Uint8Array, sampleRate: number, personaId?: string): Promise<void>;
   disconnect(): Promise<void>;
 }
 
@@ -94,6 +95,8 @@ export interface BrokerDeps {
 }
 
 const TTS_SAMPLE_RATE = 44100;
+/** A speaker prefix on a speech chunk, e.g. "Ignacio: dime" — shared by hand-lowering and persona-tagged publish. */
+const SPEAKER_RE = /^([A-Z][\w-]{1,24}):\s/;
 
 /** Roster composition state that survives broker restarts. */
 export interface RosterState {
@@ -122,9 +125,20 @@ interface ActiveMeeting {
 
 export class Broker {
   private active: ActiveMeeting | null = null;
+  /** An already-connected external audio surface (e.g. Discord VC) — see attachVoiceSurface. */
+  private externalSurface: { publishPcm: BridgeLike['publishPcm'] } | null = null;
+  /** Meeting id already logged as declined for the attached external surface — logs once per meeting, not once per poll tick. */
+  private declinedMeetingId: string | null = null;
   private unsubscribe: (() => void) | null = null;
   private pollTimer: NodeJS.Timeout | null = null;
   private speaking = Promise.resolve();
+  /**
+   * Sticky speaker for the currently-running speech chain, same lifecycle as
+   * AdapterHub's `lastSpeaker` (channels.ts): a prefixed chunk sets it, an
+   * unprefixed one reuses it, and it resets to undefined wherever onTurnStart
+   * fires (handleUtterance) so a new turn never inherits the last one's voice.
+   */
+  private currentSpeechPersonaId: string | undefined;
   /** True while a joinMeeting() call is in flight, so overlapping pollOnce ticks don't double-join. */
   private joining = false;
   /**
@@ -251,11 +265,20 @@ export class Broker {
     const open = meetings.find((m) => m.status === 'open');
     if (this.active && (!open || open.id !== this.active.meeting.id)) await this.leaveMeeting();
     if (open && !this.active) {
-      this.joining = true;
-      try {
-        await this.joinMeeting(open);
-      } finally {
-        this.joining = false;
+      if (this.externalSurface) {
+        // A Discord voice session owns the mic — decline the meeting bridge.
+        // Logged once per meeting (not once per poll tick) to avoid log spam.
+        if (this.declinedMeetingId !== open.id) {
+          this.declinedMeetingId = open.id;
+          console.log('[meetings] declined — a Discord voice session is live');
+        }
+      } else {
+        this.joining = true;
+        try {
+          await this.joinMeeting(open);
+        } finally {
+          this.joining = false;
+        }
       }
     }
   }
@@ -283,6 +306,7 @@ export class Broker {
       // unaffected — they never route through a channel, so there's nothing
       // to protect and no reason to slow them down.
       if (origin) await this.speaking;
+      this.currentSpeechPersonaId = undefined; // new turn — never inherit the last one's sticky speaker
       this.deps.onTurnStart?.(origin);
       try {
         await this.deps.brain.handleUtterance(text, this.makeTurn(text));
@@ -338,6 +362,30 @@ export class Broker {
     this.active = null;
     this.deps.directory.clearMeeting();
     this.notifyRoster();
+  }
+
+  /**
+   * Attach an already-connected external audio surface (e.g. Discord VC).
+   * Declines when a meeting bridge is active — the two audio surfaces are
+   * mutually exclusive, never mixed. While attached, meeting polling declines
+   * to join (see pollOnce) so the two never fight over the mic.
+   */
+  attachVoiceSurface(surface: { publishPcm: BridgeLike['publishPcm'] }): boolean {
+    if (this.active) {
+      console.log('[voice] attachVoiceSurface declined — a meeting bridge is already active');
+      return false;
+    }
+    this.externalSurface = surface;
+    this.declinedMeetingId = null; // fresh attach — a still-open meeting should log again if declined
+    return true;
+  }
+
+  detachVoiceSurface(): void {
+    this.externalSurface = null;
+  }
+
+  voiceSurfaceAttached(): boolean {
+    return this.externalSurface !== null;
   }
 
   private onSwarmEvent(e: SwarmEvent): void {
@@ -709,19 +757,26 @@ export class Broker {
    */
   /** A speaker taking the floor lowers their own hand. */
   private lowerHandFor(chunk: string): void {
-    const m = /^([A-Z][\w-]{1,24}):\s/.exec(chunk);
+    const m = SPEAKER_RE.exec(chunk);
     if (m?.[1] && this.raisedHands.delete(m[1])) this.notifyRoster();
   }
 
   private enqueueSpeech(text: string): void {
     this.lowerHandFor(text);
+    // Resolve (and update) the sticky speaker before scheduling run() —
+    // captured into `personaId` now, not read from `this` inside run(), since
+    // the speech chain lags the turn queue and a later turn could otherwise
+    // overwrite the sticky before this chunk's publish actually happens.
+    const speaker = SPEAKER_RE.exec(text);
+    if (speaker?.[1]) this.currentSpeechPersonaId = this.deps.directory.resolve(speaker[1])?.id;
+    const personaId = this.currentSpeechPersonaId;
     const run = async (): Promise<void> => {
       try {
         this.deps.onSpeechText?.(text);
-        const bridge = this.active?.bridge;
-        if (!bridge) return;
+        const surface = this.active?.bridge ?? this.externalSurface;
+        if (!surface) return;
         for await (const bytes of this.deps.speak(text)) {
-          await bridge.publishPcm(bytes, TTS_SAMPLE_RATE);
+          await surface.publishPcm(bytes, TTS_SAMPLE_RATE, personaId);
         }
       } catch (err) {
         console.error('[broker] speech chunk failed:', err);

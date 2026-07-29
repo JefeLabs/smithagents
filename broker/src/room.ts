@@ -51,7 +51,8 @@ export class LiveKitRoomBridge {
     this.remoteAudioCb = cb;
   }
 
-  async publishPcm(bytes: Uint8Array, sampleRate: number): Promise<void> {
+  /** `personaId` is ignored — LiveKit publishes to one shared room track regardless of speaker. */
+  async publishPcm(bytes: Uint8Array, sampleRate: number, _personaId?: string): Promise<void> {
     if (!this.room) return;
     if (!this.source) {
       this.source = new AudioSource(sampleRate, 1);
