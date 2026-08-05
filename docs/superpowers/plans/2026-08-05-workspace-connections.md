@@ -15,7 +15,7 @@
 - Any file holding a credential stays untracked: `swarm/.smith/users/*.json` relies on the existing blanket `swarm/.smith/*` `.gitignore` rule — do NOT add a `!swarm/.smith/users/` override.
 - API responses never round-trip a raw secret: redact to `hasAtlassianToken`/`hasGithubToken` booleans.
 - Agent privilege ceiling = the requesting user's own token — no separate agent- or workspace-level credential anywhere.
-- Swarm tests: `node --import tsx --test --test-timeout 60000 'src/*.test.ts' 'src/**/*.test.ts'` (run via `pnpm test` from `swarm/`).
+- Swarm tests: `node --import tsx --test --test-timeout 60000 'src/*.test.ts' 'src/**/*.test.ts'` (run via `npm test` from `swarm/`).
 - Broker tests: `node --import tsx --test src/*.test.ts` (run via `npm test` from `broker/`).
 - Control-plane tests: `vitest run` (run via `npm run test` from `control-plane/`); typecheck via `npm run typecheck` (`tsc --noEmit`); lint via `npm run lint` (`biome check .`).
 - Fastify route error convention: `reply.status(<code>).send({ error: '<message>' })` — not `reply.code(...)`.
@@ -57,7 +57,7 @@ test('atlassian and github config round-trip through save/load', async () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run (from `swarm/`): `pnpm test -- --test-name-pattern="atlassian and github config round-trip"`
+Run (from `swarm/`): `npm test -- --test-name-pattern="atlassian and github config round-trip"`
 Expected: FAIL — TypeScript error, `atlassian`/`github` don't exist on the type (or a runtime `undefined` mismatch if `tsx` doesn't type-check at test time).
 
 - [ ] **Step 3: Add the fields**
@@ -92,7 +92,7 @@ No change needed to `assertWorkspace` — both new fields are optional and untyp
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `pnpm test -- --test-name-pattern="atlassian and github config round-trip"`
+Run: `npm test -- --test-name-pattern="atlassian and github config round-trip"`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -159,7 +159,7 @@ test('loadUsersFromDir returns [] for a missing dir', async () => {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `pnpm test -- --test-name-pattern="resolveCurrentUser|saveUser|loadUsersFromDir"`
+Run: `npm test -- --test-name-pattern="resolveCurrentUser|saveUser|loadUsersFromDir"`
 Expected: FAIL — `Cannot find module './users.js'`
 
 - [ ] **Step 3: Implement `users.ts`** (mirrors `workspaces.ts` structurally)
@@ -228,7 +228,7 @@ export function resolveCurrentUser(users: User[]): User | null {
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `pnpm test -- --test-name-pattern="resolveCurrentUser|saveUser|loadUsersFromDir"`
+Run: `npm test -- --test-name-pattern="resolveCurrentUser|saveUser|loadUsersFromDir"`
 Expected: PASS
 
 - [ ] **Step 5: Confirm the untracked-storage invariant, then commit**
@@ -330,7 +330,7 @@ test('verifyGithubRepo: not ok on 404, checks the specific repo path', async () 
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `pnpm test -- --test-name-pattern="verifyAtlassian|verifyGithub"`
+Run: `npm test -- --test-name-pattern="verifyAtlassian|verifyGithub"`
 Expected: FAIL — modules don't exist yet.
 
 - [ ] **Step 3: Implement the two verify modules**
@@ -405,7 +405,7 @@ export async function verifyGithubRepo(
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `pnpm test -- --test-name-pattern="verifyAtlassian|verifyGithub"`
+Run: `npm test -- --test-name-pattern="verifyAtlassian|verifyGithub"`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -492,7 +492,7 @@ The `PUT /me` merge is partial-per-credential-block (matching the spec's redacti
 - [ ] **Step 2: Manual verification**
 
 ```bash
-cd swarm && pnpm serve &
+cd swarm && npm run serve &
 curl -s http://localhost:7777/me | jq   # {"id":"me","name":"You","hasAtlassianToken":false,"hasGithubToken":false}
 curl -s -X PUT http://localhost:7777/me -H 'content-type: application/json' \
   -d '{"name":"Edwin","github":{"token":"ghp_test"}}' | jq   # hasGithubToken: true, token itself absent
@@ -558,7 +558,7 @@ this.app.post<{ Params: { name: string; repoName: string } }>(
 - [ ] **Step 2: Manual verification**
 
 ```bash
-cd swarm && pnpm serve &
+cd swarm && npm run serve &
 # assumes the 'jefelabs' workspace from .smith/workspaces/jefelabs.json exists
 curl -s -X POST http://localhost:7777/workspaces/jefelabs/verify-atlassian | jq
 # -> {"error":"Workspace \"jefelabs\" has no Jira/Confluence site configured"} until Task 8 UI sets one
@@ -1348,7 +1348,7 @@ This test requires a real `tmux` binary on the runner (same as every other `Tmux
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run (from `swarm/`): `pnpm test -- --test-name-pattern="env vars are exported"`
+Run (from `swarm/`): `npm test -- --test-name-pattern="env vars are exported"`
 Expected: FAIL — `launch` doesn't accept a 4th argument (or the file `$SMITH_TEST_TOKEN` is empty since nothing exports it).
 
 - [ ] **Step 3: Add the param to the interface and every implementation**
@@ -1456,7 +1456,7 @@ async launch(sessionName: string, command: string, cwd: string, env?: Record<str
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `pnpm test -- --test-name-pattern="env vars are exported"`
+Run: `npm test -- --test-name-pattern="env vars are exported"`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -1524,7 +1524,7 @@ test('materialize: with atlassian config, also writes .mcp.json referencing env 
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run (from `swarm/`): `pnpm test -- --test-name-pattern="materialize:"`
+Run (from `swarm/`): `npm test -- --test-name-pattern="materialize:"`
 Expected: FAIL — `materialize` doesn't accept a 3rd argument; `.mcp.json` is never written.
 
 - [ ] **Step 3: Extend the interface and the Claude driver**
@@ -1607,7 +1607,7 @@ async materialize(
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `pnpm test -- --test-name-pattern="materialize:"`
+Run: `npm test -- --test-name-pattern="materialize:"`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -1693,7 +1693,7 @@ test('resolveConnections: missing workspace atlassian config or missing user cre
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run (from `swarm/`): `pnpm test -- --test-name-pattern="resolveConnections"`
+Run (from `swarm/`): `npm test -- --test-name-pattern="resolveConnections"`
 Expected: FAIL — `resolveConnections` doesn't exist.
 
 - [ ] **Step 3: Implement `resolveConnections` and wire it into `dispatch()`/`prepareWorktree()`**
@@ -1808,7 +1808,7 @@ The existing exclude-file write in `prepareWorktree()` already sweeps up everyth
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `pnpm test -- --test-name-pattern="resolveConnections"`
+Run: `npm test -- --test-name-pattern="resolveConnections"`
 Expected: PASS
 
 - [ ] **Step 6: Commit**
@@ -1852,7 +1852,7 @@ const body = [
 No dedicated automated test — `openPullRequest()` shells out to a real `gh` CLI and isn't currently under test in this codebase (confirmed: no existing coverage of PR-body construction). Verify by hand: dispatch a task with `metadata: { ticketKey: 'PROJ-123' }` against a scratch repo with a `gh`-authenticated remote, and confirm the opened PR's body contains a `Closes PROJ-123` line.
 
 ```bash
-cd swarm && pnpm serve &
+cd swarm && npm run serve &
 curl -s -X POST http://localhost:7777/tasks -H 'content-type: application/json' -d '{
   "prompt": "add a comment to README.md",
   "agent": "claude",
@@ -2057,7 +2057,7 @@ test('searchDocs: scopes CQL to configured space keys and returns title/url pair
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run (from `swarm/`): `pnpm test -- --test-name-pattern="lookupTicket|searchDocs"`
+Run (from `swarm/`): `npm test -- --test-name-pattern="lookupTicket|searchDocs"`
 Expected: FAIL — module doesn't exist.
 
 - [ ] **Step 3: Implement**
@@ -2131,7 +2131,7 @@ export async function searchDocs(
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `pnpm test -- --test-name-pattern="lookupTicket|searchDocs"`
+Run: `npm test -- --test-name-pattern="lookupTicket|searchDocs"`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -2196,7 +2196,7 @@ this.app.post<{ Params: { name: string }; Body: { query?: string } }>(
 - [ ] **Step 2: Manual verification**
 
 ```bash
-cd swarm && pnpm serve &
+cd swarm && npm run serve &
 curl -s -X POST http://localhost:7777/workspaces/jefelabs/atlassian/lookup-ticket \
   -H 'content-type: application/json' -d '{"ticketKey":"PROJ-1"}' | jq
 # -> {"error":"Workspace \"jefelabs\" has no Jira/Confluence site configured"} until an atlassian block is saved on it
@@ -2453,7 +2453,7 @@ git commit -m "feat(broker): lookup_ticket/search_docs conversational tools"
 
 ## Final Verification
 
-- [ ] **Full swarm suite:** `cd swarm && pnpm test` → all green, including every test added in Tasks 1–3, 10–13, 15–16.
+- [ ] **Full swarm suite:** `cd swarm && npm test` → all green, including every test added in Tasks 1–3, 10–13, 15–16.
 - [ ] **Full broker suite:** `cd broker && npm test` → all green, including every test added in Tasks 6–7, 14, 17–18.
 - [ ] **Full control-plane suite + typecheck + lint:** `cd control-plane && npm run test && npm run typecheck && npm run lint` → all green, including `AccountPanel.test.tsx` from Task 9.
 - [ ] **Manual e2e** (spec §5, restated as a checklist):
