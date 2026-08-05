@@ -38,6 +38,8 @@ function makeFakes(meetings: SwarmMeeting[]) {
     getOutput: async () => ({ taskId: 't-77', output: 'line1\nline2\nDONE building the thing' }),
     steer: async () => {},
     killTask: async () => {},
+    lookupTicket: async () => ({ ok: true }),
+    searchDocs: async () => ({ ok: true }),
   };
 
   const sttAudio: Uint8Array[] = [];

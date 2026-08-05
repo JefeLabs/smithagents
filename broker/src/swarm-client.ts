@@ -58,6 +58,19 @@ export interface VerifyResult {
   detail: string;
 }
 
+export interface TicketResult {
+  key: string;
+  summary: string;
+  status: string;
+  url: string;
+}
+
+export interface DocResult {
+  title: string;
+  excerpt: string;
+  url: string;
+}
+
 export interface SwarmMeeting {
   id: string;
   roomName: string;
@@ -214,6 +227,22 @@ export class SwarmClient {
   async listWorkspaces(): Promise<SwarmWorkspace[]> {
     const r = await this.http('GET', '/workspaces');
     return (r.workspaces as SwarmWorkspace[]) ?? [];
+  }
+
+  async lookupTicket(workspace: string, ticketKey: string): Promise<{ ok: boolean; ticket?: TicketResult; detail?: string }> {
+    return this.http('POST', `/workspaces/${encodeURIComponent(workspace)}/atlassian/lookup-ticket`, { ticketKey }) as unknown as Promise<{
+      ok: boolean;
+      ticket?: TicketResult;
+      detail?: string;
+    }>;
+  }
+
+  async searchDocs(workspace: string, query: string): Promise<{ ok: boolean; docs?: DocResult[]; detail?: string }> {
+    return this.http('POST', `/workspaces/${encodeURIComponent(workspace)}/atlassian/search-docs`, { query }) as unknown as Promise<{
+      ok: boolean;
+      docs?: DocResult[];
+      detail?: string;
+    }>;
   }
 
   async getMe(): Promise<MeRecord> {

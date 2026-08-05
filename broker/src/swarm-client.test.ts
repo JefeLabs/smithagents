@@ -135,3 +135,20 @@ test('me/verify methods hit the right swarm routes', async () => {
     'POST /workspaces/acme/repos/web/verify-github',
   ]);
 });
+
+test('lookupTicket and search-docs routes', async () => {
+  const calls: string[] = [];
+  const client = new SwarmClient({
+    baseUrl: 'http://s',
+    fetchImpl: (async (url: unknown, init?: RequestInit) => {
+      calls.push(`${init?.method} ${String(url).replace('http://s', '')}`);
+      return new Response(JSON.stringify({ ok: true, ticket: { key: 'P-1', summary: 's', status: 'Open', url: 'https://x' }, docs: [] }));
+    }) as typeof fetch,
+  });
+  await client.lookupTicket('acme', 'P-1');
+  await client.searchDocs('acme', 'onboarding');
+  assert.deepEqual(calls, [
+    'POST /workspaces/acme/atlassian/lookup-ticket',
+    'POST /workspaces/acme/atlassian/search-docs',
+  ]);
+});
