@@ -94,11 +94,13 @@ export class TextChannel {
       preview(id: string): Promise<Record<string, unknown>>;
       execute(id: string): Promise<Record<string, unknown>>;
     },
-    /** Workspace CRUD for the manager UI: list for the picker, save for create/edit, remove decides archive vs delete. */
+    /** Workspace CRUD for the manager UI: list for the picker, save for create/edit, remove decides archive vs delete; verify checks a saved connection live. */
     private readonly workspaces?: {
       list(): Promise<Record<string, unknown>[]>;
       save(body: Record<string, unknown>, isNew: boolean): Promise<Record<string, unknown>>;
       remove(name: string): Promise<Record<string, unknown>>;
+      verifyAtlassian(name: string): Promise<Record<string, unknown>>;
+      verifyGithubRepo(name: string, repoName: string): Promise<Record<string, unknown>>;
     },
     /** Surface presence/admission: live per-agent surface state, Discord availability, on-request join. */
     private readonly surfaces?: {
@@ -108,6 +110,12 @@ export class TextChannel {
       info(): { configured: boolean; voiceReady: boolean };
       /** On-request admission. Resolves {ok:true} or {error, status}. */
       join(agentId: string, surface: string): Promise<{ ok: true } | { error: string; status: number }>;
+    },
+    /** The current operator's profile + credentials (account panel). */
+    private readonly me?: {
+      get(): Promise<Record<string, unknown>>;
+      update(body: Record<string, unknown>): Promise<Record<string, unknown>>;
+      verifyGithub(): Promise<Record<string, unknown>>;
     },
   ) {}
 
@@ -354,6 +362,44 @@ export class TextChannel {
             (r) => json('error' in r ? 409 : 200, r),
             fail,
           );
+          return;
+        }
+        if (req.method === 'GET' && url.pathname === '/me' && this.me) {
+          void this.me.get().then((me) => json(200, me), fail);
+          return;
+        }
+        if (req.method === 'PUT' && url.pathname === '/me' && this.me) {
+          let body = '';
+          req.on('data', (c) => {
+            body += c;
+          });
+          req.on('end', () => {
+            let parsed: Record<string, unknown> = {};
+            try {
+              parsed = JSON.parse(body || '{}') as Record<string, unknown>;
+            } catch {
+              return json(400, { error: 'body must be JSON' });
+            }
+            void this.me!.update(parsed).then((r) => json((r as { error?: string }).error ? 400 : 200, r), fail);
+          });
+          return;
+        }
+        if (req.method === 'POST' && url.pathname === '/me/verify-github' && this.me) {
+          void this.me.verifyGithub().then((r) => json((r as { error?: string }).error ? 400 : 200, r), fail);
+          return;
+        }
+        const wsAtlassianMatch = /^\/workspaces\/([^/]+)\/verify-atlassian$/.exec(url.pathname);
+        if (req.method === 'POST' && wsAtlassianMatch && this.workspaces) {
+          void this.workspaces
+            .verifyAtlassian(decodeURIComponent(wsAtlassianMatch[1]!))
+            .then((r) => json((r as { error?: string }).error ? 400 : 200, r), fail);
+          return;
+        }
+        const repoGithubMatch = /^\/workspaces\/([^/]+)\/repos\/([^/]+)\/verify-github$/.exec(url.pathname);
+        if (req.method === 'POST' && repoGithubMatch && this.workspaces) {
+          void this.workspaces
+            .verifyGithubRepo(decodeURIComponent(repoGithubMatch[1]!), decodeURIComponent(repoGithubMatch[2]!))
+            .then((r) => json((r as { error?: string }).error ? 400 : 200, r), fail);
           return;
         }
       }

@@ -481,6 +481,21 @@ const workspaces = {
       return { error: String((err as Error).message) };
     }
   },
+  verifyAtlassian: (name: string) => swarm.verifyWorkspaceAtlassian(name) as unknown as Promise<Record<string, unknown>>,
+  verifyGithubRepo: (name: string, repoName: string) =>
+    swarm.verifyRepoGithub(name, repoName) as unknown as Promise<Record<string, unknown>>,
+};
+
+// The current operator's profile + credentials (account panel): swarm holds
+// the record (redacted on read — tokens never round-trip to the UI), this is
+// a thin passthrough matching every other TextChannel dependency's shape.
+const me = {
+  get: () => swarm.getMe() as unknown as Promise<Record<string, unknown>>,
+  update: (body: Record<string, unknown>) =>
+    swarm.updateMe(body as { name?: string; atlassian?: { email: string; apiToken: string }; github?: { token: string } }) as unknown as Promise<
+      Record<string, unknown>
+    >,
+  verifyGithub: () => swarm.verifyGithubToken() as unknown as Promise<Record<string, unknown>>,
 };
 
 const textChannel = new TextChannel(
@@ -765,6 +780,7 @@ const textChannel = new TextChannel(
       return { ok: true } as const;
     },
   },
+  me,
 );
 const micSessions = new Map<number, DeepgramSttStream>();
 

@@ -33,12 +33,21 @@ const stubCreation: ConstructorParameters<typeof TextChannel>[7] = {
   create: async () => ({}),
 };
 
+// verifyAtlassian/verifyGithubRepo go unused by tests that only exercise the
+// workspace CRUD routes — spread this in so those tests don't need to repeat
+// stubs the constructor type now requires.
+const stubWorkspaceVerify = {
+  verifyAtlassian: async () => ({}),
+  verifyGithubRepo: async () => ({}),
+};
+
 /** Builds a channel with only the trailing (agent/removal/workspace/surfaces) handlers under test wired in. */
 function channelWith(opts: {
   removal?: ConstructorParameters<typeof TextChannel>[8];
   workspaces?: ConstructorParameters<typeof TextChannel>[9];
   creation?: ConstructorParameters<typeof TextChannel>[7];
   surfaces?: ConstructorParameters<typeof TextChannel>[10];
+  me?: ConstructorParameters<typeof TextChannel>[11];
 }): TextChannel {
   return new TextChannel(
     () => {},
@@ -52,6 +61,7 @@ function channelWith(opts: {
     opts.removal,
     opts.workspaces,
     opts.surfaces,
+    opts.me,
   );
 }
 
@@ -182,7 +192,7 @@ test('DELETE /agents/:id executes removal and returns the outcome; a swarm error
 test('GET /workspaces lists full workspace records', async () => {
   const records = [{ name: 'jefelabs', default: true, archived: false, repos: [] }];
   const channel = channelWith({
-    workspaces: { list: async () => records, save: async () => ({}), remove: async () => ({}) },
+    workspaces: { list: async () => records, save: async () => ({}), remove: async () => ({}), ...stubWorkspaceVerify },
   });
   const port = await channel.start(0);
   try {
@@ -204,6 +214,7 @@ test('POST /workspaces passes the handler answer through: 201 on success, 400 on
         return name === 'bad' ? { error: 'workspace name taken' } : { name, default: false, repos: [] };
       },
       remove: async () => ({}),
+      ...stubWorkspaceVerify,
     },
   });
   const port = await channel.start(0);
@@ -239,6 +250,7 @@ test('PUT /workspaces/:name saves with the URL name folded into the body; DELETE
       },
       remove: async (name) =>
         name === 'busy' ? { error: 'workspace busy: locked' } : { outcome: name === 'archiveme' ? 'archived' : 'deleted' },
+      ...stubWorkspaceVerify,
     },
   });
   const port = await channel.start(0);
@@ -324,6 +336,42 @@ test('POST /agents/:id/surfaces/:surface/join maps provider results to status co
       { id: 'the wolf', surface: 'discord-voice' },
       { id: 'wilkin', surface: 'discord' },
     ]);
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('GET /me returns the redacted profile; PUT /me forwards the body', async () => {
+  const calls: Array<{ method?: string; url?: string }> = [];
+  const channel = channelWith({
+    me: {
+      get: async () => {
+        calls.push({ method: 'GET' });
+        return { id: 'me', name: 'You', hasAtlassianToken: false, hasGithubToken: false };
+      },
+      update: async (body) => {
+        calls.push({ method: 'PUT' });
+        return { id: 'me', name: (body as { name?: string }).name ?? 'You', hasAtlassianToken: false, hasGithubToken: false };
+      },
+      verifyGithub: async () => ({ ok: true, detail: 'Authenticated as edwincruz' }),
+    },
+  });
+  const port = await channel.start(0);
+  try {
+    const get = await fetch(`http://127.0.0.1:${port}/me`);
+    assert.equal(get.status, 200);
+    assert.deepEqual(await get.json(), { id: 'me', name: 'You', hasAtlassianToken: false, hasGithubToken: false });
+
+    const put = await fetch(`http://127.0.0.1:${port}/me`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Edwin' }),
+    });
+    assert.equal(((await put.json()) as { name?: string }).name, 'Edwin');
+    assert.deepEqual(calls, [{ method: 'GET' }, { method: 'PUT' }]);
+
+    const verify = await fetch(`http://127.0.0.1:${port}/me/verify-github`, { method: 'POST' });
+    assert.equal(((await verify.json()) as { ok?: boolean }).ok, true);
   } finally {
     await channel.stop();
   }
