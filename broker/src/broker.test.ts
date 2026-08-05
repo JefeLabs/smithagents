@@ -526,6 +526,17 @@ test('delegate executor resolves agent, prefixes directives, binds task in direc
   await b.stop();
 });
 
+test('delegate forwards ticketKey into task metadata when given', async () => {
+  const f = makeFakes([MEETING]);
+  const b = makeBroker(f);
+  await b.start();
+  await b.pollOnce();
+  await b.executors.delegate({ agent: 'Manuel', task: 'build the thing', ticketKey: 'PROJ-123' });
+  const sent = f.submitted[0] as { metadata: Record<string, unknown> };
+  assert.equal(sent.metadata.ticketKey, 'PROJ-123');
+  await b.stop();
+});
+
 test('delegate on unknown agent returns an error string (brain speaks it, no throw)', async () => {
   const f = makeFakes([MEETING]);
   const b = makeBroker(f);

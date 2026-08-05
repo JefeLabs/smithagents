@@ -12,7 +12,7 @@ import { SpeechChunker } from './chunker.ts';
 
 export interface ToolExecutors {
   remember(input: { key: string; text: string; scope: string }): Promise<string>;
-  delegate(input: { agent: string; task: string; workspace?: string; repo?: string }): Promise<string>;
+  delegate(input: { agent: string; task: string; workspace?: string; repo?: string; ticketKey?: string }): Promise<string>;
   check_status(input: { agent: string }): Promise<string>;
   raise_hand(input: { agent: string; reason: string }): Promise<string>;
 }
@@ -51,6 +51,10 @@ const TOOLS = [
         task: { type: 'string' as const, description: 'Complete, self-contained task description' },
         repo: { type: 'string' as const, description: 'Repo name from the workspaces list. Omit for the default repo.' },
         workspace: { type: 'string' as const, description: 'Workspace name. Omit for the default workspace.' },
+        ticketKey: {
+          type: 'string' as const,
+          description: 'Jira ticket key, only when the human explicitly names one (e.g. "PROJ-123"). Omit otherwise.',
+        },
       },
       required: ['agent', 'task'],
     },
@@ -223,7 +227,8 @@ export class BrokerBrain {
 
   private async execute(name: string, input: unknown): Promise<string> {
     try {
-      if (name === 'delegate') return await this.executors.delegate(input as { agent: string; task: string; workspace?: string; repo?: string });
+      if (name === 'delegate')
+        return await this.executors.delegate(input as { agent: string; task: string; workspace?: string; repo?: string; ticketKey?: string });
       if (name === 'check_status') return await this.executors.check_status(input as { agent: string });
       if (name === 'raise_hand') return await this.executors.raise_hand(input as { agent: string; reason: string });
       if (name === 'remember') return await this.executors.remember(input as { key: string; text: string; scope: string });

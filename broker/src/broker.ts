@@ -159,7 +159,7 @@ export class Broker {
 
   /** Tool executors handed to the brain; public for tests + reuse. */
   readonly executors = {
-    delegate: async (input: { agent: string; task: string; workspace?: string; repo?: string }): Promise<string> => {
+    delegate: async (input: { agent: string; task: string; workspace?: string; repo?: string; ticketKey?: string }): Promise<string> => {
       const agent = this.deps.directory.resolve(input.agent);
       if (!agent) return `There is no agent named "${input.agent}". Offer one from the roster.`;
       const busy = this.deps.directory.snapshot().find((p) => p.agent.id === agent.id && p.status === 'busy');
@@ -170,7 +170,7 @@ export class Broker {
         repository: this.repository,
         workspace: input.workspace,
         repo: input.repo,
-        metadata: { source: 'broker-meeting', composedAgentId: agent.id },
+        metadata: { source: 'broker-meeting', composedAgentId: agent.id, ticketKey: input.ticketKey },
       });
       this.deps.directory.bindTask(agent.id, {
         taskId,
