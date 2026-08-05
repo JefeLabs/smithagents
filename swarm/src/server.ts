@@ -69,6 +69,7 @@ import {
 import { loadUsersFromDir, saveUser, resolveCurrentUser, type User } from './users.js';
 import { verifyGithubToken, verifyGithubRepo } from './verify-github.js';
 import { verifyAtlassian } from './verify-atlassian.js';
+import { lookupTicket, searchDocs } from './atlassian-client.js';
 import { MeetingOrchestrator } from './meetings.js';
 import { loadLiveKitConfig } from './config.js';
 import { resolve, isAbsolute } from 'node:path';
@@ -1385,6 +1386,38 @@ export class OrchestratorServer {
         const user = resolveCurrentUser(users);
         if (!user?.github) return reply.status(400).send({ error: 'You have not added your GitHub token in account settings' });
         return verifyGithubRepo(repo.github.owner, repo.github.repo, user.github.token);
+      },
+    );
+
+    this.app.post<{ Params: { name: string }; Body: { ticketKey?: string } }>(
+      '/workspaces/:name/atlassian/lookup-ticket',
+      async (req, reply) => {
+        const ws = server.workspaces.find((w) => w.name === req.params.name);
+        if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
+        if (!ws.atlassian) return reply.status(400).send({ error: `Workspace "${ws.name}" has no Jira/Confluence site configured` });
+        const ticketKey = req.body?.ticketKey;
+        if (!ticketKey) return reply.status(400).send({ error: 'Missing required field: ticketKey' });
+        const users = await loadUsersFromDir(resolve(process.cwd(), '.smith/users'));
+        const user = resolveCurrentUser(users);
+        if (!user?.atlassian) return reply.status(400).send({ error: 'You have not added your Atlassian credential in account settings' });
+        return lookupTicket(ws.atlassian.siteUrl, user.atlassian.email, user.atlassian.apiToken, ticketKey);
+      },
+    );
+
+    this.app.post<{ Params: { name: string }; Body: { query?: string } }>(
+      '/workspaces/:name/atlassian/search-docs',
+      async (req, reply) => {
+        const ws = server.workspaces.find((w) => w.name === req.params.name);
+        if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
+        if (!ws.atlassian) return reply.status(400).send({ error: `Workspace "${ws.name}" has no Jira/Confluence site configured` });
+        const query = req.body?.query;
+        if (!query) return reply.status(400).send({ error: 'Missing required field: query' });
+        const users = await loadUsersFromDir(resolve(process.cwd(), '.smith/users'));
+        const user = resolveCurrentUser(users);
+        if (!user?.atlassian) return reply.status(400).send({ error: 'You have not added your Atlassian credential in account settings' });
+        return searchDocs(ws.atlassian.siteUrl, user.atlassian.email, user.atlassian.apiToken, query, {
+          spaceKeys: ws.atlassian.confluenceSpaceKeys,
+        });
       },
     );
 
