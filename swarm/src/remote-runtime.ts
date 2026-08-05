@@ -159,13 +159,15 @@ export class WorkerPool {
       throw new Error('No remote workers available with capacity');
     }
 
+    // env carries secrets (Atlassian/GitHub tokens) — smith-worker doesn't consume
+    // this field yet, so don't transmit it until it does. Re-add once the worker
+    // protocol actually reads and injects it.
     const msg: TaskDispatchMessage = {
       type: 'task:dispatch',
       taskId: sessionName, // session name is the task identity
       sessionName,
       command,
       cwd,
-      env,
     };
 
     worker.ws.send(JSON.stringify(msg));

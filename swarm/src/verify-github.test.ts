@@ -21,3 +21,21 @@ test('verifyGithubRepo: not ok on 404, checks the specific repo path', async () 
   assert.equal(r.ok, false);
   assert.match(r.detail, /404|Not Found/);
 });
+
+test('verifyGithubToken: a network failure resolves to {ok:false, detail}, never rejects', async () => {
+  const f = (async () => {
+    throw new TypeError('fetch failed');
+  }) as typeof fetch;
+  const r = await verifyGithubToken('ghp_tok', f);
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /fetch failed/);
+});
+
+test('verifyGithubRepo: a network failure resolves to {ok:false, detail}, never rejects', async () => {
+  const f = (async () => {
+    throw new TypeError('fetch failed');
+  }) as typeof fetch;
+  const r = await verifyGithubRepo('acme', 'web', 'ghp_tok', f);
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /fetch failed/);
+});

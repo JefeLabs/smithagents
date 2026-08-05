@@ -376,3 +376,31 @@ test('GET /me returns the redacted profile; PUT /me forwards the body', async ()
     await channel.stop();
   }
 });
+
+test('GET /me blocks a disallowed browser Origin, allows the control-plane dev origin', async () => {
+  const channel = channelWith({
+    me: {
+      get: async () => ({ id: 'me', name: 'You', hasAtlassianToken: false, hasGithubToken: false }),
+      update: async () => ({ id: 'me', name: 'You', hasAtlassianToken: false, hasGithubToken: false }),
+      verifyGithub: async () => ({ ok: true, detail: 'Authenticated as edwincruz' }),
+    },
+  });
+  const port = await channel.start(0);
+  try {
+    const blocked = await fetch(`http://127.0.0.1:${port}/me`, {
+      headers: { origin: 'http://evil.example' },
+    });
+    assert.equal(blocked.status, 403);
+    assert.deepEqual(await blocked.json(), { error: 'origin not allowed' });
+    assert.equal(blocked.headers.get('access-control-allow-origin'), null);
+
+    const allowed = await fetch(`http://127.0.0.1:${port}/me`, {
+      headers: { origin: 'http://localhost:1420' },
+    });
+    assert.equal(allowed.status, 200);
+    assert.deepEqual(await allowed.json(), { id: 'me', name: 'You', hasAtlassianToken: false, hasGithubToken: false });
+    assert.equal(allowed.headers.get('access-control-allow-origin'), 'http://localhost:1420');
+  } finally {
+    await channel.stop();
+  }
+});

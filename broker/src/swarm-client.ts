@@ -37,8 +37,9 @@ export interface SwarmSquad {
 export interface WorkspaceBody {
   name: string;
   description?: string;
-  repos: Array<{ name: string; path: string; repository?: string; branch?: string }>;
+  repos: Array<{ name: string; path: string; repository?: string; branch?: string; github?: { owner: string; repo: string } }>;
   default?: boolean;
+  atlassian?: { siteUrl: string; jiraProjectKeys?: string[]; confluenceSpaceKeys?: string[] };
 }
 
 export interface SwarmWorkspace extends WorkspaceBody {

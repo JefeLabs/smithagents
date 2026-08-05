@@ -1184,19 +1184,6 @@ export class OrchestratorServer {
       return { ok: true, scope, killed, preserved };
     });
 
-    // Shared by POST and PUT — every repo must be an absolute path to a real
-    // git checkout, since the dispatcher worktrees task branches from it.
-    const workspaceProblems = async (b: Partial<Workspace>): Promise<string | null> => {
-      if (!b.name?.trim()) return 'Missing required field: name';
-      if (!Array.isArray(b.repos) || b.repos.length === 0) return 'A workspace needs at least one repo';
-      for (const r of b.repos) {
-        if (!r?.name?.trim()) return 'Every repo needs a name';
-        if (!r.path || !isAbsolute(r.path)) return `Repo "${r.name}": path must be absolute`;
-        if (!(await isGitRepo(r.path))) return `Repo "${r.name}": ${r.path} is not a git repository`;
-      }
-      return null;
-    };
-
     this.app.post('/workspaces', async (req, reply) => {
       const b = req.body as Partial<Workspace>;
       const problem = await workspaceProblems(b);
@@ -1332,6 +1319,7 @@ export class OrchestratorServer {
       name: u?.name ?? 'You',
       hasAtlassianToken: Boolean(u?.atlassian?.apiToken),
       hasGithubToken: Boolean(u?.github?.token),
+      atlassianEmail: u?.atlassian?.email,
     });
 
     this.app.get('/me', async () => {
@@ -1344,18 +1332,7 @@ export class OrchestratorServer {
       const dir = resolve(process.cwd(), '.smith/users');
       const users = await loadUsersFromDir(dir);
       const existing = resolveCurrentUser(users);
-      const merged: User = {
-        id: existing?.id ?? 'me',
-        name: b.name?.trim() || existing?.name || 'You',
-        default: true,
-        atlassian: b.atlassian
-          ? {
-              email: b.atlassian.email ?? existing?.atlassian?.email ?? '',
-              apiToken: b.atlassian.apiToken ?? existing?.atlassian?.apiToken ?? '',
-            }
-          : existing?.atlassian,
-        github: b.github ? { token: b.github.token ?? existing?.github?.token ?? '' } : existing?.github,
-      };
+      const merged = buildUserUpdate(existing, b);
       try {
         await saveUser(dir, merged);
       } catch (err) {
@@ -1842,5 +1819,56 @@ export function buildAgentUpdate(
     avatarRing: b.avatarRing ?? existing.avatarRing,
     channels: b.channels ?? existing.channels,
     archived: b.archived === false ? undefined : existing.archived,
+  };
+}
+
+/**
+ * Shared by POST and PUT /workspaces — every repo must be an absolute path
+ * to a real git checkout (the dispatcher worktrees task branches from it),
+ * and a half-filled atlassian/github block must be rejected rather than
+ * silently treated as "configured" by every downstream consumer that only
+ * checks the object's truthiness. Pulled out of the route handler so it's
+ * unit-testable without booting the server.
+ */
+export async function workspaceProblems(b: Partial<Workspace>): Promise<string | null> {
+  if (!b.name?.trim()) return 'Missing required field: name';
+  if (!Array.isArray(b.repos) || b.repos.length === 0) return 'A workspace needs at least one repo';
+  for (const r of b.repos) {
+    if (!r?.name?.trim()) return 'Every repo needs a name';
+    if (!r.path || !isAbsolute(r.path)) return `Repo "${r.name}": path must be absolute`;
+    if (!(await isGitRepo(r.path))) return `Repo "${r.name}": ${r.path} is not a git repository`;
+  }
+  if (b.atlassian && !b.atlassian.siteUrl?.trim()) {
+    return 'Atlassian: site URL is required';
+  }
+  for (const r of b.repos ?? []) {
+    if (r.github && (!r.github.owner?.trim() || !r.github.repo?.trim())) {
+      return `Repo "${r.name}": GitHub owner and repo are both required when configuring GitHub`;
+    }
+  }
+  return null;
+}
+
+/**
+ * PUT /me merge: a caller may send only the field it changed (e.g. just a
+ * rotated apiToken) — an empty/whitespace value for the other field of a
+ * credential pair must fall through to the existing saved value instead of
+ * blanking it (the AccountPanel form resets its email input to "" on every
+ * open, so "rotate just the token" submits `{email: '', apiToken: 'new'}`).
+ * Pulled out of the route handler so it's unit-testable without booting the
+ * server.
+ */
+export function buildUserUpdate(existing: User | null, b: Partial<User>): User {
+  return {
+    id: existing?.id ?? 'me',
+    name: b.name?.trim() || existing?.name || 'You',
+    default: true,
+    atlassian: b.atlassian
+      ? {
+          email: (b.atlassian.email ?? '').trim() || existing?.atlassian?.email || '',
+          apiToken: (b.atlassian.apiToken ?? '').trim() || existing?.atlassian?.apiToken || '',
+        }
+      : existing?.atlassian,
+    github: b.github ? { token: b.github.token ?? existing?.github?.token ?? '' } : existing?.github,
   };
 }

@@ -136,7 +136,19 @@ export function WorkspaceManagerModal({
     setBusy(true);
     setError(null);
     const isNew = selected === null;
-    const result = await save(form, isNew).catch((err: unknown): { error?: string } => ({ error: String(err) }));
+    // A half-filled atlassian/github block (project key typed before site URL,
+    // or one of owner/repo left blank) must never be submitted as if it were
+    // configured — normalize to undefined here rather than fighting each
+    // onChange handler, so typing in any order never appears to drop a field.
+    const normalized: WorkspaceRecord = {
+      ...form,
+      atlassian: form.atlassian?.siteUrl?.trim() ? form.atlassian : undefined,
+      repos: form.repos.map((r) => ({
+        ...r,
+        github: r.github?.owner?.trim() && r.github?.repo?.trim() ? r.github : undefined,
+      })),
+    };
+    const result = await save(normalized, isNew).catch((err: unknown): { error?: string } => ({ error: String(err) }));
     setBusy(false);
     if (result.error) {
       setError(result.error);

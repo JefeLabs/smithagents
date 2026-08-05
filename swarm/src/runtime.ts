@@ -33,9 +33,13 @@ export interface RuntimeAdapter {
    * Launch a new isolated session that runs `command` inside `cwd`.
    * The session is identified by `sessionName` for subsequent operations.
    *
-   * `env`, when given, is exported inside the session before `command` runs
-   * — never interpolated into the command string, so a secret value never
-   * appears in a process listing or shell history.
+   * `env`, when given, is passed as `tmux new-session -e KEY=VALUE` arguments
+   * (TmuxRuntime) — kept out of the wrapped command string entirely, so a
+   * secret value never appears in *the task's own process* argv or shell
+   * history. It remains visible in `tmux`'s own short-lived launch invocation
+   * and `ps` output for that one moment — an intrinsic property of
+   * process-based env passing on POSIX systems, not avoidable here without a
+   * different IPC mechanism.
    */
   launch(sessionName: string, command: string, cwd: string, env?: Record<string, string>): Promise<void>;
 
@@ -123,21 +127,19 @@ export class TmuxRuntime implements RuntimeAdapter {
 
     const exitFile = this.exitFilePath(sessionName);
     const channel = `${sessionName}-done`;
-    const exports = env
-      ? `${Object.entries(env)
-          .map(([k, v]) => `export ${k}=${this.shellEscape(v)}`)
-          .join('; ')}; `
-      : '';
 
     const wrappedCommand = [
-      `${exports}${command}`,
+      command,
       `; echo $? > ${this.shellEscape(exitFile)}`,
       `; tmux wait-for -S ${channel}`,
     ].join(' ');
 
+    const envArgs = env ? Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]) : [];
+
     await this.tmux([
       'new-session',
       '-d',
+      ...envArgs,
       '-s', sessionName,
       '-c', cwd,
       wrappedCommand,

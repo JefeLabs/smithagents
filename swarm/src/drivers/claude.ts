@@ -7,12 +7,24 @@
 // type 'user' | 'assistant' with a `message` payload. The final assistant
 // message of a turn carries a terminal stop_reason — that, and only that, is
 // the turn-completion signal (never process exit, never screen state).
+import { execFile } from 'node:child_process';
 import { readdir, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { SessionParseError } from './errors.js';
 import { modelFlag } from './model-flag.js';
 import type { AgentProfile, NormalizedMessage, ToolDriver } from './types.js';
+
+/** True when `path` (relative to `cwd`) is already tracked by the repo's git index. Mirrors isGitRepo()'s "call git, interpret exit code" pattern in workspaces.ts. */
+async function isTracked(cwd: string, path: string): Promise<boolean> {
+  try {
+    await promisify(execFile)('git', ['ls-files', '--error-unmatch', path], { cwd });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** stop_reason values that end a turn; 'tool_use' and null are mid-turn. */
 const TERMINAL_STOP_REASONS = new Set(['end_turn', 'stop_sequence', 'max_tokens', 'refusal']);
@@ -122,6 +134,14 @@ export class ClaudeDriver implements ToolDriver {
     const written = ['CLAUDE.md'];
 
     if (atlassian) {
+      const alreadyTracked = await isTracked(worktreePath, '.mcp.json');
+      if (alreadyTracked) {
+        // The repo has its own committed .mcp.json — never overwrite a tracked file
+        // with injected config (it would get swept into the task's commit). Skip
+        // Atlassian MCP injection for this task rather than clobber the repo's own
+        // config.
+        return written;
+      }
       // mcp-atlassian (community server, API-token auth — no OAuth) is
       // configured via env vars it reads at startup. JIRA_PROJECTS_FILTER and
       // CONFLUENCE_SPACES_FILTER scope it to the workspace's configured

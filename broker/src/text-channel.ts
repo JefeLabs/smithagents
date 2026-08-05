@@ -5,7 +5,7 @@
  * transcript ({type:'utterance'|'speech', text}) to every connected client.
  * Loopback-only; CORS is wide open because the bind address is the gate.
  */
-import { createServer, type Server } from 'node:http';
+import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
 
 export interface RosterEntry {
@@ -48,6 +48,34 @@ const CORS = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'content-type',
 };
+
+// Routes that touch credential-presence data need a real origin check, unlike the
+// rest of this file's intentionally-open CORS (loopback bind is the gate there).
+const ALLOWED_ORIGINS = new Set(['http://localhost:1420']); // control-plane's Vite dev origin (see control-plane/vite.config.ts, tauri.conf.json devUrl)
+// TODO: the packaged (non-dev) Tauri app's webview origin is NOT verified against a
+// real built app in this environment. It's commonly `tauri://localhost` on macOS or
+// `http://tauri.localhost` on Windows, but guessing wrong here would silently lock the
+// packaged app out of its own account/workspace-verify routes — confirm the actual
+// origin against a real packaged build (e.g. log `window.location.origin` from the
+// built app, or check Tauri's own docs for the installed tauri.conf.json's config) and
+// add it to this set before shipping a packaged build that depends on these routes.
+
+function isAllowedOrigin(req: IncomingMessage): boolean {
+  const origin = req.headers.origin;
+  if (!origin) return true; // non-browser callers (curl, no Origin header) — same trust model as the rest of this file
+  return ALLOWED_ORIGINS.has(origin);
+}
+
+/** CORS headers for the credential-adjacent routes only: echo the matched origin, never '*'. */
+function credentialCors(req: IncomingMessage): Record<string, string> {
+  const origin = req.headers.origin;
+  const headers: Record<string, string> = {
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
+    'Access-Control-Allow-Headers': 'content-type',
+  };
+  if (origin && ALLOWED_ORIGINS.has(origin)) headers['Access-Control-Allow-Origin'] = origin;
+  return headers;
+}
 
 export class TextChannel {
   private server: Server | null = null;
@@ -194,6 +222,20 @@ export class TextChannel {
         const json = (status: number, payload: unknown) =>
           res.writeHead(status, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify(payload));
         const fail = (err: unknown) => json(500, { error: String((err as Error).message ?? err) });
+
+        // /me and the verify-* routes return credential-presence data (or, for
+        // verify-github, the operator's real GitHub identity) — unlike the rest of
+        // this block, their CORS response must name the actual allowed origin (or
+        // omit the header) instead of '*', and they refuse to do any work at all
+        // for a disallowed Origin.
+        const credJson = (status: number, payload: unknown) =>
+          res.writeHead(status, { ...credentialCors(req), 'content-type': 'application/json' }).end(JSON.stringify(payload));
+        const credFail = (err: unknown) => credJson(500, { error: String((err as Error).message ?? err) });
+        const originBlocked = (): boolean => {
+          if (isAllowedOrigin(req)) return false;
+          credJson(403, { error: 'origin not allowed' });
+          return true;
+        };
 
         if (req.method === 'GET' && url.pathname === '/agent-catalog') {
           void this.creation.catalog().then((c) => json(200, c), fail);
@@ -365,10 +407,12 @@ export class TextChannel {
           return;
         }
         if (req.method === 'GET' && url.pathname === '/me' && this.me) {
-          void this.me.get().then((me) => json(200, me), fail);
+          if (originBlocked()) return;
+          void this.me.get().then((me) => credJson(200, me), credFail);
           return;
         }
         if (req.method === 'PUT' && url.pathname === '/me' && this.me) {
+          if (originBlocked()) return;
           let body = '';
           req.on('data', (c) => {
             body += c;
@@ -378,28 +422,31 @@ export class TextChannel {
             try {
               parsed = JSON.parse(body || '{}') as Record<string, unknown>;
             } catch {
-              return json(400, { error: 'body must be JSON' });
+              return credJson(400, { error: 'body must be JSON' });
             }
-            void this.me!.update(parsed).then((r) => json((r as { error?: string }).error ? 400 : 200, r), fail);
+            void this.me!.update(parsed).then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
           });
           return;
         }
         if (req.method === 'POST' && url.pathname === '/me/verify-github' && this.me) {
-          void this.me.verifyGithub().then((r) => json((r as { error?: string }).error ? 400 : 200, r), fail);
+          if (originBlocked()) return;
+          void this.me.verifyGithub().then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
           return;
         }
         const wsAtlassianMatch = /^\/workspaces\/([^/]+)\/verify-atlassian$/.exec(url.pathname);
         if (req.method === 'POST' && wsAtlassianMatch && this.workspaces) {
+          if (originBlocked()) return;
           void this.workspaces
             .verifyAtlassian(decodeURIComponent(wsAtlassianMatch[1]!))
-            .then((r) => json((r as { error?: string }).error ? 400 : 200, r), fail);
+            .then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
           return;
         }
         const repoGithubMatch = /^\/workspaces\/([^/]+)\/repos\/([^/]+)\/verify-github$/.exec(url.pathname);
         if (req.method === 'POST' && repoGithubMatch && this.workspaces) {
+          if (originBlocked()) return;
           void this.workspaces
             .verifyGithubRepo(decodeURIComponent(repoGithubMatch[1]!), decodeURIComponent(repoGithubMatch[2]!))
-            .then((r) => json((r as { error?: string }).error ? 400 : 200, r), fail);
+            .then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
           return;
         }
       }

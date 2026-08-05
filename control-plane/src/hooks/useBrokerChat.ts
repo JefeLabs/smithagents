@@ -66,6 +66,7 @@ export interface MeRecord {
   name: string;
   hasAtlassianToken: boolean;
   hasGithubToken: boolean;
+  atlassianEmail?: string;
 }
 
 const DEFAULT_BASE = "127.0.0.1:7790";

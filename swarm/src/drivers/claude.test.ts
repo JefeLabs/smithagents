@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { ClaudeDriver, encodeProjectDir } from './claude.js';
 import { SessionParseError } from './errors.js';
+
+const git = promisify(execFile);
 
 const driver = new ClaudeDriver('/tmp/fake-claude-home');
 
@@ -122,6 +126,29 @@ test('materialize: with atlassian config, also writes .mcp.json referencing env 
     assert.equal(mcp.mcpServers.atlassian.env.JIRA_URL, 'https://acme.atlassian.net');
     assert.equal(mcp.mcpServers.atlassian.env.JIRA_API_TOKEN, '${SMITH_ATLASSIAN_TOKEN}');
     assert.doesNotMatch(JSON.stringify(mcp), /secret|tok-[a-z0-9]+/); // no literal credential ever lands here
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('materialize: never overwrites a .mcp.json the repo already tracks', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'mat-tracked-'));
+  try {
+    const original = `${JSON.stringify({ mcpServers: { own: { command: 'own-server' } } }, null, 2)}\n`;
+    await git('git', ['init', '-q', '-b', 'main'], { cwd: dir });
+    await writeFile(join(dir, '.mcp.json'), original);
+    await git('git', ['add', '.mcp.json'], { cwd: dir });
+    await git('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'own mcp config'], { cwd: dir });
+
+    const testDriver = new ClaudeDriver();
+    const written = await testDriver.materialize(
+      { name: 'Wilkin', role: 'dev', directives: 'ship it' },
+      dir,
+      { siteUrl: 'https://acme.atlassian.net', jiraProjectKeys: ['ACME'] },
+    );
+
+    assert.deepEqual(written, ['CLAUDE.md']); // .mcp.json injection was skipped
+    assert.equal(await readFile(join(dir, '.mcp.json'), 'utf8'), original); // and left untouched
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

@@ -35,7 +35,7 @@ export function AccountPanel({ open, onClose, getMe, updateMe, verifyGithubToken
     void getMe().then((record) => {
       setMe(record);
       setName(record.name);
-      setAtlassianEmail("");
+      setAtlassianEmail(record.atlassianEmail ?? "");
       setAtlassianToken("");
       setGithubToken("");
     });

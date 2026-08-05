@@ -35,3 +35,12 @@ test('verifyAtlassian: sends Basic auth of email:apiToken', async () => {
   await verifyAtlassian('https://acme.atlassian.net', 'e@acme.com', 'tok', undefined, f);
   assert.equal(sentAuth, `Basic ${Buffer.from('e@acme.com:tok').toString('base64')}`);
 });
+
+test('verifyAtlassian: a network failure resolves to {ok:false, detail}, never rejects', async () => {
+  const f = (async () => {
+    throw new TypeError('fetch failed');
+  }) as typeof fetch;
+  const r = await verifyAtlassian('https://acme.atlassian.net', 'e@acme.com', 'tok', undefined, f);
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /fetch failed/);
+});

@@ -38,3 +38,21 @@ test('searchDocs: scopes CQL to configured space keys and returns title/url pair
   assert.equal(r.ok, true);
   assert.deepEqual(r.docs, [{ title: 'Onboarding', excerpt: '', url: 'https://acme.atlassian.net/wiki/spaces/DOCS/pages/1/Onboarding' }]);
 });
+
+test('lookupTicket: a network failure resolves to {ok:false, detail}, never rejects', async () => {
+  const f = (async () => {
+    throw new TypeError('fetch failed');
+  }) as typeof fetch;
+  const r = await lookupTicket('https://acme.atlassian.net', 'e@acme.com', 'tok', 'PROJ-123', f);
+  assert.equal(r.ok, false);
+  assert.match(r.detail ?? '', /fetch failed/);
+});
+
+test('searchDocs: a network failure resolves to {ok:false, detail}, never rejects', async () => {
+  const f = (async () => {
+    throw new TypeError('fetch failed');
+  }) as typeof fetch;
+  const r = await searchDocs('https://acme.atlassian.net', 'e@acme.com', 'tok', 'onboarding', undefined, f);
+  assert.equal(r.ok, false);
+  assert.match(r.detail ?? '', /fetch failed/);
+});
