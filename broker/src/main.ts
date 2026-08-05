@@ -13,6 +13,7 @@ import { AdapterHub } from './channels.ts';
 import { loadBrokerConfig } from './config.ts';
 import { createDiscordTextLifecycle } from './discord-text-lifecycle.ts';
 import { createDiscordVoiceLifecycle } from './discord-voice-lifecycle.ts';
+import { createDiscordWorkspaceSwitcher } from './discord-workspace-switcher.ts';
 import { AgentDirectory } from './directory.ts';
 import { LiveKitRoomBridge } from './room.ts';
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -58,10 +59,10 @@ const policy = new SurfacePolicy(() => directory.list());
 // boot still reaches the live surface/presence once they're assigned.
 let voiceSurface: ReturnType<typeof createDiscordVoiceSurface> | null = null;
 let voicePresence: VoicePresence | null = null;
-// Same all-local invariant as the adapter boot below (DISCORD_TOKEN gates
-// everything Discord-shaped): hoisted here, ahead of the textChannel surfaces
-// provider, since that `const discordToken` is declared later, right at the
-// adapter boot site.
+// NOT workspace-aware yet — still reads the retired DISCORD_TOKEN env var
+// directly rather than reflecting whichever workspace is currently active.
+// Discord boot itself is workspace-driven as of Task 9 (discordWorkspaceSwitcher,
+// below); Task 10 makes this flag (and presence/join) workspace-aware too.
 const discordConfigured = Boolean(process.env.DISCORD_TOKEN);
 
 // Routes external channel (Discord, …) traffic through the same turn the app
@@ -556,6 +557,9 @@ const textChannel = new TextChannel(
       if (workspace && !workspaceNames.includes(workspace)) return `unknown workspace: ${workspace}`;
       const s = sessionManager.create(workspace ?? sessionManager.active().workspace, title);
       brain.loadHistory(s.brainHistory);
+      void discordWorkspaceSwitcher
+        .switchDiscordForWorkspace(s.workspace)
+        .catch((err: unknown) => console.error(`[discord] workspace switch failed for "${s.workspace}": ${String(err)}`));
       textChannel.broadcast(sessionFrame());
       return null;
     },
@@ -563,6 +567,9 @@ const textChannel = new TextChannel(
       const s = sessionManager.activate(id);
       if (!s) return `unknown session: ${id}`;
       brain.loadHistory(s.brainHistory);
+      void discordWorkspaceSwitcher
+        .switchDiscordForWorkspace(s.workspace)
+        .catch((err: unknown) => console.error(`[discord] workspace switch failed for "${s.workspace}": ${String(err)}`));
       textChannel.broadcast(sessionFrame());
       return null;
     },
@@ -901,31 +908,20 @@ brain.loadHistory(activeSession.brainHistory);
 const textPort = await textChannel.start(config.textPort);
 console.log(`[broker] running — polling swarm for open meetings. Text channel on http://127.0.0.1:${textPort}. Type a line to simulate an utterance.`);
 
-// Discord attends only when a token is present — the all-local invariant:
-// nothing about Discord constructs or logs without DISCORD_TOKEN set.
-// TEMPORARY bridge: boots once at startup from env vars, same as before this
-// extraction. Task 9 replaces this call site with a workspace-driven one,
-// wired through session activation instead of a one-shot startup boot.
+// Discord attends only when a workspace has its own bot token configured (via
+// the Task 6 channels manager UI) — the all-local invariant now flows through
+// swarm.getWorkspaceDiscordConfig() per workspace rather than a single
+// process-wide DISCORD_TOKEN. discordTextLifecycle/discordVoiceLifecycle hold
+// the per-surface boot/teardown logic (Tasks 7-8); discordWorkspaceSwitcher
+// (Task 9) is what actually decides WHEN each fires — once at boot, and again
+// on every session activation/create below, since switching the active
+// session can switch the active workspace.
 const discordTextLifecycle = createDiscordTextLifecycle({ hub: adapterHub });
-const discordToken = process.env.DISCORD_TOKEN;
-if (discordToken) {
-  const allowlist = (process.env.DISCORD_CHANNELS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-  void discordTextLifecycle
-    .bootDiscordText(discordToken, allowlist)
-    .catch((err: unknown) => console.error(`[discord] failed to start: ${String(err)}`));
-}
-
-// Discord voice attends only when DISCORD_VOICE_CHANNELS names at least one
-// channel and DISCORD_TOKEN is present — same all-local invariant as the
-// text adapter's gate above. setupDiscordVoice's full body (the earAwareGateway
-// reconciliation, presence-driven join/leave, and now a real teardown
-// closure) lives in discord-voice-lifecycle.ts — see that module's header for
-// why, and its exported bootDiscordVoice's own doc comment for the
-// ear-connection reconciliation this extraction did NOT touch, only
-// relocated. TEMPORARY bridge, same as the text lifecycle above: boots once
-// at startup from env vars. Task 9 replaces this call site with a
-// workspace-driven one, wired through session activation instead of a
-// one-shot startup boot.
+// setupDiscordVoice's full body (the earAwareGateway reconciliation,
+// presence-driven join/leave, and its teardown closure) lives in
+// discord-voice-lifecycle.ts — see that module's header for why, and its
+// exported bootDiscordVoice's own doc comment for the ear-connection
+// reconciliation.
 const discordVoiceLifecycle = createDiscordVoiceLifecycle({
   directory,
   policy,
@@ -940,12 +936,10 @@ const discordVoiceLifecycle = createDiscordVoiceLifecycle({
     voicePresence = presence;
   },
 });
-const voiceChannelAllowlist = (process.env.DISCORD_VOICE_CHANNELS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-if (voiceChannelAllowlist.length > 0) {
-  await discordVoiceLifecycle
-    .bootDiscordVoice(discordToken, voiceChannelAllowlist)
-    .catch((err: unknown) => console.error(`[discord-voice] failed to start: ${String(err)}`));
-}
+const discordWorkspaceSwitcher = createDiscordWorkspaceSwitcher({ swarm, discordTextLifecycle, discordVoiceLifecycle });
+void discordWorkspaceSwitcher
+  .switchDiscordForWorkspace(activeSession.workspace)
+  .catch((err: unknown) => console.error(`[discord] initial workspace connect failed: ${String(err)}`));
 
 const rl = createInterface({ input: process.stdin });
 rl.on('line', (line) => {
