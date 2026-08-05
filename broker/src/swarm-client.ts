@@ -46,6 +46,18 @@ export interface SwarmWorkspace extends WorkspaceBody {
   archived?: boolean;
 }
 
+export interface MeRecord {
+  id: string;
+  name: string;
+  hasAtlassianToken: boolean;
+  hasGithubToken: boolean;
+}
+
+export interface VerifyResult {
+  ok: boolean;
+  detail: string;
+}
+
 export interface SwarmMeeting {
   id: string;
   roomName: string;
@@ -202,6 +214,34 @@ export class SwarmClient {
   async listWorkspaces(): Promise<SwarmWorkspace[]> {
     const r = await this.http('GET', '/workspaces');
     return (r.workspaces as SwarmWorkspace[]) ?? [];
+  }
+
+  async getMe(): Promise<MeRecord> {
+    return this.http('GET', '/me') as unknown as Promise<MeRecord>;
+  }
+
+  async updateMe(body: {
+    name?: string;
+    atlassian?: { email: string; apiToken: string };
+    github?: { token: string };
+  }): Promise<MeRecord> {
+    return this.http('PUT', '/me', body) as unknown as Promise<MeRecord>;
+  }
+
+  async verifyGithubToken(): Promise<VerifyResult> {
+    return this.http('POST', '/me/verify-github', {}) as unknown as Promise<VerifyResult>;
+  }
+
+  async verifyWorkspaceAtlassian(name: string): Promise<VerifyResult> {
+    return this.http('POST', `/workspaces/${encodeURIComponent(name)}/verify-atlassian`, {}) as unknown as Promise<VerifyResult>;
+  }
+
+  async verifyRepoGithub(name: string, repoName: string): Promise<VerifyResult> {
+    return this.http(
+      'POST',
+      `/workspaces/${encodeURIComponent(name)}/repos/${encodeURIComponent(repoName)}/verify-github`,
+      {},
+    ) as unknown as Promise<VerifyResult>;
   }
 
   /** Subscribe to /ws events. Reconnects every 2s until the returned fn is called. */

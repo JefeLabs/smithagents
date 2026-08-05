@@ -112,3 +112,26 @@ test('deleteAgent/deleteWorkspace send no body and no content-type header', asyn
     assert.equal((call.init?.headers as Record<string, string> | undefined)?.['content-type'], undefined);
   }
 });
+
+test('me/verify methods hit the right swarm routes', async () => {
+  const calls: string[] = [];
+  const client = new SwarmClient({
+    baseUrl: 'http://s',
+    fetchImpl: (async (url: unknown, init?: RequestInit) => {
+      calls.push(`${init?.method ?? 'GET'} ${String(url).replace('http://s', '')}`);
+      return new Response(JSON.stringify({ ok: true, id: 'me', name: 'You', hasAtlassianToken: false, hasGithubToken: false, detail: 'x' }));
+    }) as typeof fetch,
+  });
+  await client.getMe();
+  await client.updateMe({ name: 'Edwin' });
+  await client.verifyGithubToken();
+  await client.verifyWorkspaceAtlassian('acme');
+  await client.verifyRepoGithub('acme', 'web');
+  assert.deepEqual(calls, [
+    'GET /me',
+    'PUT /me',
+    'POST /me/verify-github',
+    'POST /workspaces/acme/verify-atlassian',
+    'POST /workspaces/acme/repos/web/verify-github',
+  ]);
+});
