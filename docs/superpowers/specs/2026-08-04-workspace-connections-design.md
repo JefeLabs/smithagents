@@ -2,146 +2,173 @@
 
 **Date:** 2026-08-04
 **Status:** Approved (Edwin, 2026-08-04)
-**Scope:** Let a Workspace connect to Jira/Confluence (one Atlassian connection) and
-a WorkspaceRepo connect to GitHub (per-repo), then let the crew actually use those
-connections — both from delegated coding work (swarm) and live in conversation
-(broker). Three phases in one spec.
+**Scope:** Let a Workspace point at a Jira/Confluence site and a WorkspaceRepo
+point at a GitHub repo, then let the crew actually use those — both from
+delegated coding work (swarm) and live in conversation (broker) — always
+authenticated as the requesting user, never as a separate agent or workspace
+identity. Three phases in one spec.
 
 ## Goal
 
 A workspace today groups local repos and scopes sessions
-(`swarm/.smith/workspaces/*.json`) but has no notion of the external systems that
-work in it actually references — Jira tickets, Confluence docs, a GitHub repo's
-issues/PRs beyond the local git remote. This spec adds reusable, named connection
-records that workspaces/repos reference, then wires them into both the delegated
-coding CLI and the meeting brain.
+(`swarm/.smith/workspaces/*.json`) but has no notion of the external systems
+work in it actually references — Jira tickets, Confluence docs, a GitHub
+repo's issues/PRs beyond the local git remote. This spec adds that pointer at
+the workspace/repo level, and pairs it at request time with the credential of
+whoever is actually asking — so the crew never has more access than the human
+they're acting for.
 
 ## Settled decisions
 
 - **No new "project" layer.** PRD.md closed that door on 2026-07-26 ("project"
-  means workspace); the 2026-07-28 lifecycle spec spent its effort *removing* the
-  old separate project layer. This spec extends `Workspace`/`WorkspaceRepo`, it
-  does not reopen that decision.
-- **One shared token per connection — not per agent, not per human.** A
-  Jira/GitHub PAT is inherently tied to one real account; this spec doesn't
-  try to avoid that, but it also doesn't provision one per agent persona (no
-  functional gain, real operational cost — rotating N tokens per workspace
-  per system) or one per human operator (this system is single-operator
-  today; if the hosted-switchboard multi-tenant future arrives, each
-  subscriber gets their own workspaces, and workspace-scoped connections
-  already give each subscriber their own credential for free). At the
-  API level, actions land under the connection's one identity; the agent is
-  identifiable by content, not login — `dispatcher.ts` already makes this
-  same tradeoff for git commits (`-c user.name=${agent} (smith)`, so
-  authorship is per-agent in git history) without needing any credential per
-  agent. Phase 2/3's ticket comments and PR bodies extend that same
-  content-level attribution ("posted by Wilkin via smithagents") rather than
-  inventing distinct logins.
-- **Connections are their own reusable registry**, referenced by name — not
-  embedded inline in a workspace. Mirrors the `device` affinity field already
-  planned in the hosted-switchboard design (a workspace field pointing at an
-  external registry entry by id). This is what makes "shared across workspaces"
-  free: multiple workspaces/repos can name the same connection record.
-- **One Atlassian connection, not two.** Jira and Confluence are normally the
-  same Atlassian Cloud site and credential, so they're one connection type
-  (site + email + API token) with independent optional scopes — Jira project
-  key(s), Confluence space key(s) — rather than two parallel connection types.
-- **Atlassian connection attaches to the Workspace; GitHub connection attaches
-  per-repo.** `WorkspaceRepo` already models repo-level granularity (path,
+  means workspace); the 2026-07-28 lifecycle spec spent its effort *removing*
+  the old separate project layer. This spec extends `Workspace`/
+  `WorkspaceRepo`, it does not reopen that decision.
+- **Config and credential are different axes, stored separately.** *Where*
+  work lives — a Jira site + project key, a Confluence space, a GitHub
+  owner/repo — is workspace/repo config: shared, not secret, safe to keep
+  alongside the existing `repos[]` shape. *Who's allowed in* is a personal
+  credential — a Jira/Confluence API token, a GitHub PAT — and belongs to the
+  human making the request, not to the workspace. A workspace-owned "service"
+  credential was considered and rejected: it would let the crew act with more
+  privilege than the person who typed the request actually has.
+- **Agent privilege ceiling = the requesting user's own token.** There is no
+  separate agent-level or workspace-level credential anywhere in this design
+  — every Jira/Confluence/GitHub action the crew takes runs under the
+  resolved user's own PAT. A 403 from the connected resource is expected
+  behavior, not a bug to route around: if the user can't do it, the agent
+  acting for them can't either. Tool executors (Phases 2/3) surface
+  permission errors as plain text ("your Atlassian token doesn't have access
+  to that") rather than masking them.
+- **"Current user" resolves trivially today.** This system is single-operator
+  (`all-local` mode has auth off, loopback-only); there's exactly one
+  implicit user. The data model is user-shaped now so nothing has to be
+  restructured when real auth lands — same "trivially resolved now, real
+  later" move this codebase already made for device affinity in the
+  hosted-switchboard design. **User management (add/remove/switch users) is
+  out of scope** — Phase 1 exposes the current user's credentials as a single
+  `/me` record, not a manageable list.
+- **Atlassian config lives on the Workspace; GitHub config lives on the
+  repo.** `WorkspaceRepo` already models repo-level granularity (path,
   branch, remote URL); a workspace's repos can span more than one GitHub
-  org/credential, so GitHub connection follows that existing per-repo grain.
-  A ticket tracker/doc space, by contrast, naturally spans the whole workspace.
-- **Connection records are untracked (gitignored).** Agents and workspaces are
-  git-tracked JSON (`swarm/.smith/agents/*.json`, `.../workspaces/*.json`,
-  explicit `!` overrides in `.gitignore`) but neither has ever held a secret.
-  Connections hold API tokens, so they stay under the existing blanket
-  `swarm/.smith/*` ignore rule — no tracking override is added. Same trust
-  model this app already applies to `.env` (ANTHROPIC_API_KEY et al.).
-- **Three phases, one spec, not three:** connection CRUD/verify (plumbing) →
-  swarm-side delegated-work access (the payoff that matters most, since the
-  crew already writes code and opens PRs unattended) → broker-side
-  conversational lookups (read-only, lower-risk given it's a lightweight
-  per-turn model call, not a supervised task).
+  org, so GitHub config follows that existing per-repo grain. A ticket
+  tracker/doc space naturally spans the whole workspace instead.
+- **Anything holding a credential is untracked (gitignored).** Agents and
+  workspaces are git-tracked JSON (explicit `!` overrides in `.gitignore`)
+  but neither has ever held a secret. `User` records will, so they stay under
+  the existing blanket `swarm/.smith/*` ignore rule — no tracking override
+  added. Same trust model this app already applies to `.env`.
+- **Three phases, one spec, not three:** config plumbing (Phase 1) → swarm-
+  side delegated-work access (Phase 2, the payoff that matters most, since
+  the crew already writes code and opens PRs unattended) → broker-side
+  conversational lookups (Phase 3, read-only, lower-risk given it's a
+  lightweight per-turn model call rather than a supervised task).
 
 ## 1. Data model
 
-`swarm/.smith/connections/atlassian/*.json` (untracked):
-
-```ts
-interface AtlassianConnection {
-  name: string;                     // slug, referenced by Workspace
-  siteUrl: string;                  // https://your-org.atlassian.net
-  email: string;                    // paired with the API token for Basic auth
-  apiToken: string;                 // secret
-  jiraProjectKeys?: string[];       // scopes lookups/writes; omitted = whole site
-  confluenceSpaceKeys?: string[];   // same idea for Confluence
-}
-```
-
-`swarm/.smith/connections/github/*.json` (untracked):
-
-```ts
-interface GithubConnection {
-  name: string;    // slug, referenced by WorkspaceRepo
-  owner: string;    // org or user
-  repo: string;
-  token: string;     // secret — PAT or GitHub App installation token
-}
-```
-
-`Workspace`/`WorkspaceRepo` gain optional name-references (both optional — a
-workspace with none behaves exactly as today):
+**`Workspace` gains an inline, non-secret Atlassian pointer:**
 
 ```ts
 export interface Workspace {
   // ...existing fields...
-  atlassianConnection?: string;   // name of an AtlassianConnection
-}
-
-export interface WorkspaceRepo {
-  // ...existing fields...
-  githubConnection?: string;      // name of a GithubConnection
+  atlassian?: {
+    siteUrl: string;                  // https://your-org.atlassian.net
+    jiraProjectKeys?: string[];       // scopes lookups/writes; omitted = whole site
+    confluenceSpaceKeys?: string[];   // same idea for Confluence
+  };
 }
 ```
 
-**API responses never round-trip the secret.** List/get routes return
-`hasToken: true` in place of `apiToken`/`token`; the update route only touches
-the stored token when the caller explicitly supplies a new one.
+**`WorkspaceRepo` gains an inline, non-secret GitHub pointer** (explicit
+`owner`/`repo` rather than parsing the existing informational `repository`
+remote-URL string, which keeps its current PR/prompt-display purpose
+unchanged):
 
-## 2. API, proxy & UI (Phase 1)
+```ts
+export interface WorkspaceRepo {
+  // ...existing fields...
+  github?: { owner: string; repo: string };
+}
+```
 
-Mirrors the shipped `/workspaces` CRUD surface exactly — same layers, same
-idioms.
+**New `User` entity** (`swarm/.smith/users/*.json`, untracked — holds
+credentials):
 
-**Swarm (`swarm/src/server.ts`, alongside the existing `/workspaces` block):**
-- `POST/PUT/DELETE /connections/atlassian/:name`,
-  `POST/PUT/DELETE /connections/github/:name`
-- `GET /connections/atlassian`, `GET /connections/github` — list, token-redacted
-- `POST /connections/atlassian/:name/verify`,
-  `POST /connections/github/:name/verify` — live check (Jira:
-  `GET /rest/api/3/myself`; Confluence: space lookup if a space key is set;
-  GitHub: `GET /repos/:owner/:repo`). Returns `{ ok, detail }`, same
-  readable-400 pattern as `workspaceProblems()`.
-- New `swarm/src/connections.ts` (mirrors `workspaces.ts`):
-  `loadConnectionsFromDir`, `saveConnection`, `removeConnectionFile`, plus
-  `referencedBy(connections, workspaces)` so delete can warn/block while a
-  workspace still points at the connection (same spirit as
-  `defaultViolation`).
+```ts
+export interface User {
+  id: string;
+  name: string;
+  default?: boolean;   // mirrors Workspace's default-invariant pattern
+  atlassian?: { email: string; apiToken: string };  // secret
+  github?: { token: string };                        // secret — PAT or App installation token
+}
+```
 
-**Broker proxy (`broker/src/swarm-client.ts` + `text-channel.ts`):** identical
-passthrough-method pattern as `createWorkspace`/`updateWorkspace` — thin calls
-through the existing `http()` helper — plus local `/connections/...` routes on
-`text-channel.ts` next to the existing `/workspaces` block, same manual
-body-parse + `{error}` → status-code translation.
+**`resolveCurrentUser(users)`** — a pure function returning the `default`-
+flagged user, falling back to the sole file present, exactly mirroring how
+`resolveRepo` already falls back to `live.find(w => w.default) ?? live[0]`
+for workspaces. This is the one seam a real auth system replaces later.
 
-**Control-plane UI:** extend `WorkspaceManagerModal.tsx`'s form — an
-"Atlassian connection" picker (select existing by name, or "+ new" inline)
-next to `default`, and a "GitHub connection" picker per repo row next to
-`path`/`branch`. "+ new" opens a small `ConnectionForm` (site/owner+repo
-fields, token input, a "Test connection" button hitting `verify`) — same
-`canSave` client-gate + server-error-surface pattern as the existing form. No
-standalone "Manage connections" screen for V1; connections are created/edited
-in the context of the workspace/repo that needs them.
+**A connection, at use time, is the pairing of the two:** the resolved
+user's `atlassian`/`github` credential + the current workspace's `atlassian`
+config or the current repo's `github` config. Nothing stores that pairing —
+it's computed fresh per request, so a credential update or a config change
+takes effect immediately everywhere.
+
+**API responses never round-trip the secret.** `GET /me` returns
+`hasAtlassianToken`/`hasGithubToken` booleans in place of the actual
+`apiToken`/`token`; `PUT /me` only touches a credential when the caller
+explicitly supplies a new value for it.
+
+## 2. API & UI (Phase 1)
+
+**Swarm (`swarm/src/server.ts`):**
+- `PUT /workspaces/:name` already accepts the full workspace body — it now
+  also accepts/persists the optional `atlassian` block (validated the same
+  way `workspaceProblems()` validates everything else: readable 400s, no new
+  route needed).
+- Repo rows already round-trip through the same PUT — the optional `github`
+  block on each repo rides along.
+- `GET /me`, `PUT /me` — the current user's profile + credential
+  (redacted per above).
+- `POST /me/verify-github` — the one credential-only check that's meaningful
+  without extra context (`GET /user`), for a quick "is my PAT valid at all"
+  in the account panel.
+- **Verifying Atlassian, and verifying GitHub against a specific repo, both
+  need config that only a workspace/repo has** (a site URL; an owner/repo),
+  so those routes are workspace-scoped, not `/me`-scoped:
+  `POST /workspaces/:name/verify-atlassian` (resolves current user's
+  credential + this workspace's `atlassian` config, calls Jira
+  `GET /rest/api/3/myself`, plus a Confluence space lookup when a space key
+  is set) and `POST /workspaces/:name/repos/:repoName/verify-github`
+  (resolves current user's token + this repo's `github` config, calls
+  `GET /repos/:owner/:repo` — more precise than the account-panel check,
+  confirms access to *this* repo specifically). Both return `{ ok, detail }`,
+  same shape as other validation responses.
+- New `swarm/src/users.ts` (mirrors `workspaces.ts` structurally):
+  `loadUsersFromDir`, `saveUser`, `resolveCurrentUser`.
+
+**Broker proxy (`broker/src/swarm-client.ts` + `text-channel.ts`):** thin
+passthrough methods (`getMe`, `updateMe`, `verifyAtlassian`, `verifyGithub`)
+through the existing `http()` helper, plus local `/me/...` routes on
+`text-channel.ts`, same manual body-parse + `{error}` → status-code
+translation as the adjacent `/workspaces` block.
+
+**Control-plane UI:**
+- `WorkspaceManagerModal.tsx`'s form gains an "Atlassian" fieldset (site URL,
+  Jira project key, Confluence space key — no token field, this is shared
+  config) with its own "Test connection" button calling
+  `verify-atlassian` (meaningful here because this is where the site URL
+  lives, paired implicitly with the signed-in user's saved credential).
+  Each repo row gains GitHub owner/repo fields alongside `path`/`branch`,
+  with its own "Test connection" calling that repo's `verify-github`.
+- A new, small **account panel** (not a management screen — there's one
+  implicit user) where the operator enters their own Atlassian email+token
+  and GitHub PAT. Only the GitHub field gets a "Test connection" button here
+  (`POST /me/verify-github` needs no repo context); Atlassian's test lives on
+  the workspace form instead, since a token can't be verified without a site
+  to call. Lives wherever session/profile-level settings already sit in the
+  control-plane nav; out of scope to invent a new nav concept for it.
 
 ## 3. Phase 2 — swarm-side (delegated work)
 
@@ -152,37 +179,43 @@ task today: `driver.materialize()` (writes files into the worktree, e.g.
 `RuntimeAdapter.launch(sessionName, command, cwd)` has no env parameter at
 all — this phase adds both.
 
+- **Resolution, per task:** `dispatcher.ts` resolves `resolveCurrentUser()`
+  and the task's workspace (`atlassian` config) / repo (`github` config),
+  then pairs them. Missing config or missing credential both mean "skip
+  injection for that system" — the task still runs, just without that
+  tool available, same as today.
 - **Atlassian → MCP config file.** Claude's `materialize()` gains a second
-  write alongside `CLAUDE.md`: an `.mcp.json` scoped to the resolved
-  workspace's `atlassianConnection` (site URL + project/space scopes), with
-  the credential referenced as `${SMITH_ATLASSIAN_TOKEN}` rather than
-  embedded literally.
+  write alongside `CLAUDE.md`: an `.mcp.json` built from the workspace's
+  `atlassian` config, with the credential referenced as
+  `${SMITH_ATLASSIAN_TOKEN}` rather than embedded literally.
 - **GitHub → env var, no MCP needed.** `gh` (already how `dispatcher.ts`
-  creates PRs) honors a `GH_TOKEN` env override. The repo's
-  `githubConnection` token is injected as `GH_TOKEN` for that task's process
-  — no new tool surface; the agent's existing `gh issue view`/`gh pr comment`
-  calls start using the connection's identity instead of the operator's
-  personal `gh auth`.
+  creates PRs) honors a `GH_TOKEN` env override. The current user's GitHub
+  token is injected as `GH_TOKEN` for that task's process — no new tool
+  surface; the agent's existing `gh issue view`/`gh pr comment` calls start
+  using the requesting user's identity instead of whatever `gh auth` happens
+  to be active on the host.
 - **New capability: env passthrough on launch.** `RuntimeAdapter.launch()`
-  gains an optional `env` param, threaded from `dispatcher.ts` (which
-  resolves the task's connections and their secrets) down to the tmux
-  session. Secrets exist only as that task's process environment — never
-  written to a worktree file.
+  gains an optional `env` param, threaded from `dispatcher.ts` down to the
+  tmux session. Secrets exist only as that task's process environment —
+  never written to a worktree file.
 - **Hard requirement: the `.mcp.json` must never reach the branch.** It lives
   inside the worktree the agent commits from, so `prepareWorktree()` adds it
   to that worktree's local `.git/info/exclude` *before* the agent's first
   commit — not the repo's tracked `.gitignore`, and not left to the agent's
-  discretion. Same leak Section 1 avoided for the connection registry,
-  reappearing one stage downstream if not closed here too.
+  discretion.
 - **Deterministic PR↔ticket link.** `delegate`'s tool schema
   (`broker/src/brain.ts`) gains an optional `ticketKey`, filled in when the
   human names one ("Ignacio, implement PROJ-123"). Threaded through the task
   manifest into `dispatcher.ts`'s existing `gh pr create` call as a body
-  footer (`Closes PROJ-123`) — guaranteed traceability independent of whether
-  the agent itself calls any Atlassian tool. Further ticket interaction
-  (comments, status transitions, reading acceptance criteria mid-task) is the
-  agent's own discretionary use of the Atlassian MCP tools — same autonomy
-  model as its existing commit/push/PR behavior.
+  footer (`Closes PROJ-123`) — guaranteed traceability independent of
+  whether the agent itself calls any Atlassian tool. Further ticket
+  interaction (comments, status transitions, reading acceptance criteria
+  mid-task) is the agent's own discretionary use of the Atlassian MCP tools,
+  bounded by the same user's-own-privilege ceiling as everything else here.
+- **Git commit authorship stays exactly as it is today** —
+  `-c user.name=${agent} (smith)` — unaffected by any of this. It already
+  gives per-agent attribution in git history for free, without needing a
+  credential; this spec doesn't touch it.
 
 ## 4. Phase 3 — broker-side (conversational, read-only)
 
@@ -196,10 +229,12 @@ Two additions to the `TOOLS` array in `broker/src/brain.ts`:
 tool executors are plain async functions).
 
 **Resolution:** a session is already workspace-scoped, so the executor
-resolves session → workspace → `atlassianConnection` → connection record +
-secret. No connection configured → a friendly string ("this workspace has no
-Jira/Confluence connection configured"), matching the existing convention
-that a failing tool always yields brain-visible text rather than throwing.
+resolves session → workspace (`atlassian` config) and pairs it with
+`resolveCurrentUser()`'s credential. Two distinct friendly-fallback strings,
+not one generic failure: "this workspace has no Jira/Confluence site
+configured" vs. "you haven't added your Atlassian token in account
+settings" — matching the existing convention that a failing tool always
+yields brain-visible text rather than throwing.
 
 Read-only for V1: no ticket writes from the meeting loop. A lightweight
 per-turn Haiku call taking an unreviewed write action ("Ignacio, close
@@ -209,30 +244,38 @@ here.
 
 ## 5. Testing
 
-- **Registry:** `connections.ts` load/save/remove, token redaction,
-  `referencedBy` guard.
-- **Routes:** validation 400s, verify-endpoint success/failure paths
-  (stubbed HTTP).
+- **Users:** `resolveCurrentUser` default/fallback logic, credential
+  redaction on `GET /me`, partial-update semantics on `PUT /me` (updating
+  one credential doesn't clear the other).
+- **Workspace/repo validation:** `atlassian`/`github` blocks accepted by the
+  existing `workspaceProblems()` path, readable 400s.
+- **Routes:** verify-endpoint success/failure paths (stubbed HTTP).
 - **Broker executors:** `lookup_ticket`/`search_docs` against a stubbed
-  Atlassian client (found / not-found / no-connection-configured).
-- **Dispatcher:** `.mcp.json` materialization content, worktree-exclude
-  write, env passthrough into `launch()`, ticketKey → PR-footer formatting —
-  unit-testable without a live tmux/CLI process, same style as
-  `buildAgentUpdate`.
-- **Manual e2e:** create an Atlassian + GitHub connection, attach to a
-  workspace, delegate "implement PROJ-123" → verify the PR body contains the
-  ticket link and the agent's `gh`/Atlassian calls used the connection's
-  identity; ask the brain about a ticket in conversation with no delegation.
+  Atlassian client, covering all three failure modes (no workspace config /
+  no user credential / permission-denied from the API) plus the success
+  path.
+- **Dispatcher:** resolution of user × workspace/repo config, `.mcp.json`
+  materialization content, worktree-exclude write, env passthrough into
+  `launch()`, ticketKey → PR-footer formatting — unit-testable without a
+  live tmux/CLI process, same style as `buildAgentUpdate`.
+- **Manual e2e:** add Atlassian/GitHub credentials to the account panel,
+  configure a workspace's Jira site and a repo's GitHub pointer, delegate
+  "implement PROJ-123" → verify the PR body contains the ticket link and the
+  agent's `gh`/Atlassian calls authenticate as the operator; revoke/blank a
+  credential and confirm the task still runs with that tool simply
+  unavailable; ask the brain about a ticket in conversation with no
+  delegation.
 
 ## Out of scope (recorded)
 
 - OAuth flows for Atlassian/GitHub — V1 is API token / PAT only.
-- Multiple Atlassian connections per workspace (one at a time).
+- Multi-user management — add/remove/switch users, per-user auth. The data
+  model is user-shaped; the product surface is not, yet.
 - Webhook-driven ticket transitions (PR merged → ticket auto-closed) — only
   agent-initiated writes during a Phase 2 task.
-- Cloud/ECS secret storage (Secrets Manager) — same `.env`-shaped contract
-  philosophy as the hosted-switchboard design, but not designed here since
-  this spec assumes `all-local` mode.
+- Cloud/ECS credential storage (Secrets Manager) — same `.env`-shaped
+  contract philosophy as the hosted-switchboard design, but not designed
+  here since this spec assumes `all-local` mode.
 - Broker write actions (Section-4 decision: read-only for V1).
-- Standalone "Manage connections" screen (Section-2 decision: inline-only
-  for V1).
+- Multiple Atlassian sites per workspace, or multiple GitHub identities per
+  repo — one of each for V1.
