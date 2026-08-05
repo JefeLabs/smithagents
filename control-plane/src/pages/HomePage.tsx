@@ -67,6 +67,8 @@ export function HomePage() {
     listWorkspaceRecords,
     saveWorkspace,
     removeWorkspace,
+    verifyWorkspaceAtlassian,
+    verifyRepoGithub,
   } = useBrokerChat({ onAudio: (frame) => audioSink.current(frame) });
   const { soundOn, toggleSound, playAudioFrame } = useSpokenReplies(messages, roster, !audioMode);
   audioSink.current = (frame) => void playAudioFrame(frame);
@@ -221,6 +223,8 @@ export function HomePage() {
             list={listWorkspaceRecords}
             save={saveWorkspace}
             remove={removeWorkspace}
+            verifyAtlassian={verifyWorkspaceAtlassian}
+            verifyRepoGithub={verifyRepoGithub}
           />
           <DotGridTuner
             open={tunerOpen}

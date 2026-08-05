@@ -10,9 +10,16 @@ interface WorkspaceManagerModalProps {
   list: () => Promise<WorkspaceRecord[]>;
   save: (ws: WorkspaceRecord, isNew: boolean) => Promise<{ error?: string }>;
   remove: (name: string) => Promise<{ outcome?: string; error?: string }>;
+  verifyAtlassian: (name: string) => Promise<{ ok?: boolean; detail?: string; error?: string }>;
+  verifyRepoGithub: (name: string, repoName: string) => Promise<{ ok?: boolean; detail?: string; error?: string }>;
 }
 
-const emptyRepo = () => ({ name: "", path: "", branch: "main" });
+const emptyRepo = () => ({
+  name: "",
+  path: "",
+  branch: "main",
+  github: undefined as { owner: string; repo: string } | undefined,
+});
 
 /** The "new workspace" starting point — first-ever workspace defaults itself in, mirroring swarm's own rule. */
 function blankForm(noWorkspacesYet: boolean): WorkspaceRecord {
@@ -24,7 +31,15 @@ function blankForm(noWorkspacesYet: boolean): WorkspaceRecord {
  * (archived ones are hidden here, not deletable — they're history); the
  * right column is the form, reused for both create and edit.
  */
-export function WorkspaceManagerModal({ open, onClose, list, save, remove }: WorkspaceManagerModalProps) {
+export function WorkspaceManagerModal({
+  open,
+  onClose,
+  list,
+  save,
+  remove,
+  verifyAtlassian,
+  verifyRepoGithub,
+}: WorkspaceManagerModalProps) {
   const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   /** Workspace name being edited; null means the form is building a new one. */
@@ -33,6 +48,8 @@ export function WorkspaceManagerModal({ open, onClose, list, save, remove }: Wor
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [removing, setRemoving] = useState<{ name: string; busy?: boolean; error?: string } | null>(null);
+  const [testResult, setTestResult] = useState<{ target: string; ok: boolean; detail: string } | null>(null);
+  const [testing, setTesting] = useState<string | null>(null);
 
   const active = workspaces.filter((w) => !w.archived);
 
@@ -83,12 +100,14 @@ export function WorkspaceManagerModal({ open, onClose, list, save, remove }: Wor
     setSelected(null);
     setForm(blankForm(active.length === 0));
     setError(null);
+    setTestResult(null);
   };
 
   const selectWorkspace = (ws: WorkspaceRecord) => {
     setSelected(ws.name);
     setForm({ ...ws, repos: ws.repos.map((r) => ({ ...r })) });
     setError(null);
+    setTestResult(null);
   };
 
   const updateRepo = (index: number, patch: Partial<WorkspaceRecord["repos"][number]>) => {
@@ -96,6 +115,22 @@ export function WorkspaceManagerModal({ open, onClose, list, save, remove }: Wor
   };
   const addRepo = () => setForm((f) => ({ ...f, repos: [...f.repos, emptyRepo()] }));
   const removeRepo = (index: number) => setForm((f) => ({ ...f, repos: f.repos.filter((_, i) => i !== index) }));
+
+  const testAtlassian = async () => {
+    if (!selected) return;
+    setTesting("atlassian");
+    const r = await verifyAtlassian(selected);
+    setTesting(null);
+    setTestResult({ target: "atlassian", ok: Boolean(r.ok), detail: r.detail ?? r.error ?? "unknown" });
+  };
+
+  const testRepoGithub = async (repoName: string) => {
+    if (!selected) return;
+    setTesting(repoName);
+    const r = await verifyRepoGithub(selected, repoName);
+    setTesting(null);
+    setTestResult({ target: repoName, ok: Boolean(r.ok), detail: r.detail ?? r.error ?? "unknown" });
+  };
 
   const submit = async () => {
     setBusy(true);
@@ -224,6 +259,56 @@ export function WorkspaceManagerModal({ open, onClose, list, save, remove }: Wor
                 default workspace — used when a delegation names none
               </label>
 
+              <div className="workspace-manager__atlassian">
+                <span className="wizard__hint">Atlassian (Jira / Confluence)</span>
+                <input
+                  value={form.atlassian?.siteUrl ?? ""}
+                  onChange={(e) => setForm((f) => ({ ...f, atlassian: { ...f.atlassian, siteUrl: e.target.value } }))}
+                  placeholder="https://acme.atlassian.net"
+                />
+                <input
+                  value={form.atlassian?.jiraProjectKeys?.[0] ?? ""}
+                  onChange={(e) =>
+                    setForm((f) => ({
+                      ...f,
+                      atlassian: {
+                        siteUrl: f.atlassian?.siteUrl ?? "",
+                        ...f.atlassian,
+                        jiraProjectKeys: e.target.value ? [e.target.value] : undefined,
+                      },
+                    }))
+                  }
+                  placeholder="Jira project key (ACME)"
+                />
+                <input
+                  value={form.atlassian?.confluenceSpaceKeys?.[0] ?? ""}
+                  onChange={(e) =>
+                    setForm((f) => ({
+                      ...f,
+                      atlassian: {
+                        siteUrl: f.atlassian?.siteUrl ?? "",
+                        ...f.atlassian,
+                        confluenceSpaceKeys: e.target.value ? [e.target.value] : undefined,
+                      },
+                    }))
+                  }
+                  placeholder="Confluence space key (DOCS)"
+                />
+                {selected && form.atlassian?.siteUrl && (
+                  <button
+                    type="button"
+                    className="settings-btn"
+                    onClick={() => void testAtlassian()}
+                    disabled={testing === "atlassian"}
+                  >
+                    {testing === "atlassian" ? "testing…" : "Test connection"}
+                  </button>
+                )}
+                {testResult?.target === "atlassian" && (
+                  <p className={testResult.ok ? "wizard__hint" : "wizard__error"}>{testResult.detail}</p>
+                )}
+              </div>
+
               <div className="workspace-manager__repos">
                 <span className="wizard__hint">Repos</span>
                 {form.repos.map((repo, i) => (
@@ -244,6 +329,30 @@ export function WorkspaceManagerModal({ open, onClose, list, save, remove }: Wor
                       onChange={(e) => updateRepo(i, { branch: e.target.value })}
                       placeholder="main"
                     />
+                    <input
+                      value={repo.github?.owner ?? ""}
+                      onChange={(e) =>
+                        updateRepo(i, { github: { owner: e.target.value, repo: repo.github?.repo ?? "" } })
+                      }
+                      placeholder="GitHub owner"
+                    />
+                    <input
+                      value={repo.github?.repo ?? ""}
+                      onChange={(e) =>
+                        updateRepo(i, { github: { owner: repo.github?.owner ?? "", repo: e.target.value } })
+                      }
+                      placeholder="GitHub repo"
+                    />
+                    {selected && repo.github?.owner && repo.github?.repo && (
+                      <button
+                        type="button"
+                        className="settings-btn"
+                        onClick={() => void testRepoGithub(repo.name)}
+                        disabled={testing === repo.name}
+                      >
+                        {testing === repo.name ? "testing…" : "Test"}
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="repo-row__remove"

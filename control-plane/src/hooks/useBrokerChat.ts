@@ -56,7 +56,8 @@ export interface WorkspaceRecord {
   description?: string;
   default: boolean;
   archived?: boolean;
-  repos: Array<{ name: string; path: string; branch: string }>;
+  repos: Array<{ name: string; path: string; branch: string; github?: { owner: string; repo: string } }>;
+  atlassian?: { siteUrl: string; jiraProjectKeys?: string[]; confluenceSpaceKeys?: string[] };
 }
 
 const DEFAULT_BASE = "127.0.0.1:7790";
@@ -233,6 +234,27 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
     [base],
   );
 
+  const verifyWorkspaceAtlassian = useCallback(
+    async (name: string): Promise<{ ok?: boolean; detail?: string; error?: string }> => {
+      const res = await fetch(`http://${base}/workspaces/${encodeURIComponent(name)}/verify-atlassian`, {
+        method: "POST",
+      });
+      return (await res.json()) as { ok?: boolean; detail?: string; error?: string };
+    },
+    [base],
+  );
+
+  const verifyRepoGithub = useCallback(
+    async (name: string, repoName: string): Promise<{ ok?: boolean; detail?: string; error?: string }> => {
+      const res = await fetch(
+        `http://${base}/workspaces/${encodeURIComponent(name)}/repos/${encodeURIComponent(repoName)}/verify-github`,
+        { method: "POST" },
+      );
+      return (await res.json()) as { ok?: boolean; detail?: string; error?: string };
+    },
+    [base],
+  );
+
   const workAction = useCallback(
     async (name: string, action: "steer" | "cancel", message?: string): Promise<string | null> => {
       const res = await fetch(`http://${base}/activity/${encodeURIComponent(name)}/${action}`, {
@@ -295,5 +317,7 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
     listWorkspaceRecords,
     saveWorkspace,
     removeWorkspace,
+    verifyWorkspaceAtlassian,
+    verifyRepoGithub,
   };
 }
