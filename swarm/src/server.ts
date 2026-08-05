@@ -66,6 +66,8 @@ import {
   normalizeRepoBranch,
   type Workspace,
 } from './workspaces.js';
+import { loadUsersFromDir, saveUser, resolveCurrentUser, type User } from './users.js';
+import { verifyGithubToken } from './verify-github.js';
 import { MeetingOrchestrator } from './meetings.js';
 import { loadLiveKitConfig } from './config.js';
 import { resolve, isAbsolute } from 'node:path';
@@ -1312,6 +1314,45 @@ export class OrchestratorServer {
           repos: w.repos.map((r) => ({ name: r.name, path: r.path, repository: r.repository, branch: r.branch ?? 'main' })),
         })),
       };
+    });
+
+    const redactUser = (u: User | null) => ({
+      id: u?.id ?? 'me',
+      name: u?.name ?? 'You',
+      hasAtlassianToken: Boolean(u?.atlassian?.apiToken),
+      hasGithubToken: Boolean(u?.github?.token),
+    });
+
+    this.app.get('/me', async () => {
+      const users = await loadUsersFromDir(resolve(process.cwd(), '.smith/users'));
+      return redactUser(resolveCurrentUser(users));
+    });
+
+    this.app.put('/me', async (req, reply) => {
+      const b = req.body as Partial<User>;
+      const dir = resolve(process.cwd(), '.smith/users');
+      const users = await loadUsersFromDir(dir);
+      const existing = resolveCurrentUser(users);
+      const merged: User = {
+        id: existing?.id ?? 'me',
+        name: b.name?.trim() || existing?.name || 'You',
+        default: true,
+        atlassian: b.atlassian ? { email: b.atlassian.email, apiToken: b.atlassian.apiToken } : existing?.atlassian,
+        github: b.github ? { token: b.github.token } : existing?.github,
+      };
+      try {
+        await saveUser(dir, merged);
+      } catch (err) {
+        return reply.status(400).send({ error: String((err as Error).message) });
+      }
+      return redactUser(merged);
+    });
+
+    this.app.post('/me/verify-github', async (req, reply) => {
+      const users = await loadUsersFromDir(resolve(process.cwd(), '.smith/users'));
+      const user = resolveCurrentUser(users);
+      if (!user?.github?.token) return reply.status(400).send({ error: 'No GitHub token saved yet — add one first.' });
+      return verifyGithubToken(user.github.token);
     });
 
     this.app.get('/squads', async () => {
