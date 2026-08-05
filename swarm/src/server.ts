@@ -1337,8 +1337,13 @@ export class OrchestratorServer {
         id: existing?.id ?? 'me',
         name: b.name?.trim() || existing?.name || 'You',
         default: true,
-        atlassian: b.atlassian ? { email: b.atlassian.email, apiToken: b.atlassian.apiToken } : existing?.atlassian,
-        github: b.github ? { token: b.github.token } : existing?.github,
+        atlassian: b.atlassian
+          ? {
+              email: b.atlassian.email ?? existing?.atlassian?.email ?? '',
+              apiToken: b.atlassian.apiToken ?? existing?.atlassian?.apiToken ?? '',
+            }
+          : existing?.atlassian,
+        github: b.github ? { token: b.github.token ?? existing?.github?.token ?? '' } : existing?.github,
       };
       try {
         await saveUser(dir, merged);
