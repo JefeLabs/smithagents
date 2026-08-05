@@ -6,6 +6,7 @@ import { usePushToTalk } from "../hooks/usePushToTalk";
 import { useSpokenReplies } from "../hooks/useSpokenReplies";
 import { useTheme } from "../hooks/useTheme";
 import { ConfirmSheet } from "../molecules/ConfirmSheet";
+import { AccountPanel } from "../organisms/AccountPanel";
 import { AddAgentModal } from "../organisms/AddAgentModal";
 import { AgentRoster } from "../organisms/AgentRoster";
 import { DotGridCanvas } from "../organisms/DotGridCanvas";
@@ -29,6 +30,7 @@ export function HomePage() {
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [workspacesOpen, setWorkspacesOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
   /**
    * Agent slated for removal — the outcome preview drives the confirm sheet's copy.
    * `error` holds the last preview/removal failure text; `outcome` stays unset until
@@ -69,6 +71,9 @@ export function HomePage() {
     removeWorkspace,
     verifyWorkspaceAtlassian,
     verifyRepoGithub,
+    getMe,
+    updateMe,
+    verifyGithubToken,
   } = useBrokerChat({ onAudio: (frame) => audioSink.current(frame) });
   const { soundOn, toggleSound, playAudioFrame } = useSpokenReplies(messages, roster, !audioMode);
   audioSink.current = (frame) => void playAudioFrame(frame);
@@ -135,6 +140,7 @@ export function HomePage() {
         <ToolRail
           onSessions={() => setSessionsOpen((open) => !open)}
           onSettings={() => setSettingsOpen((open) => !open)}
+          onAccount={() => setAccountOpen(true)}
         />
       }
       rightRail={
@@ -225,6 +231,13 @@ export function HomePage() {
             remove={removeWorkspace}
             verifyAtlassian={verifyWorkspaceAtlassian}
             verifyRepoGithub={verifyRepoGithub}
+          />
+          <AccountPanel
+            open={accountOpen}
+            onClose={() => setAccountOpen(false)}
+            getMe={getMe}
+            updateMe={updateMe}
+            verifyGithubToken={verifyGithubToken}
           />
           <DotGridTuner
             open={tunerOpen}

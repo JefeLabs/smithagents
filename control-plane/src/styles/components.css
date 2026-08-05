@@ -1523,6 +1523,43 @@
 }
 
 /* ---- workspace manager ---- */
+.account-panel {
+  width: min(420px, 94vw);
+  max-height: 86vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px;
+  border-radius: 18px;
+  background: var(--pill);
+  border: 1px solid var(--pill-br);
+  backdrop-filter: blur(20px) saturate(1.3);
+  -webkit-backdrop-filter: blur(20px) saturate(1.3);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.5);
+  animation: rise 0.28s ease both;
+}
+.account-panel__form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.account-panel__form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+.account-panel__form input {
+  padding: 7px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--pill-br);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
 .workspace-manager {
   width: min(720px, 94vw);
   max-height: 86vh;

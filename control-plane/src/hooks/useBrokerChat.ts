@@ -60,6 +60,14 @@ export interface WorkspaceRecord {
   atlassian?: { siteUrl: string; jiraProjectKeys?: string[]; confluenceSpaceKeys?: string[] };
 }
 
+/** The operator's own profile — credentials read back as booleans, never the secret itself. */
+export interface MeRecord {
+  id: string;
+  name: string;
+  hasAtlassianToken: boolean;
+  hasGithubToken: boolean;
+}
+
 const DEFAULT_BASE = "127.0.0.1:7790";
 const RECONNECT_MS = 2000;
 
@@ -255,6 +263,32 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
     [base],
   );
 
+  const getMe = useCallback(async (): Promise<MeRecord> => {
+    const res = await fetch(`http://${base}/me`);
+    return (await res.json()) as MeRecord;
+  }, [base]);
+
+  const updateMe = useCallback(
+    async (body: {
+      name?: string;
+      atlassian?: { email: string; apiToken: string };
+      github?: { token: string };
+    }): Promise<MeRecord & { error?: string }> => {
+      const res = await fetch(`http://${base}/me`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      return (await res.json()) as MeRecord & { error?: string };
+    },
+    [base],
+  );
+
+  const verifyGithubToken = useCallback(async (): Promise<{ ok?: boolean; detail?: string; error?: string }> => {
+    const res = await fetch(`http://${base}/me/verify-github`, { method: "POST" });
+    return (await res.json()) as { ok?: boolean; detail?: string; error?: string };
+  }, [base]);
+
   const workAction = useCallback(
     async (name: string, action: "steer" | "cancel", message?: string): Promise<string | null> => {
       const res = await fetch(`http://${base}/activity/${encodeURIComponent(name)}/${action}`, {
@@ -319,5 +353,8 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
     removeWorkspace,
     verifyWorkspaceAtlassian,
     verifyRepoGithub,
+    getMe,
+    updateMe,
+    verifyGithubToken,
   };
 }
