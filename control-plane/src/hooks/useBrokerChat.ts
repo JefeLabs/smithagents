@@ -69,6 +69,13 @@ export interface MeRecord {
   atlassianEmail?: string;
 }
 
+/** Per-workspace channel config — Discord token read back as a boolean, never the secret itself. */
+export interface ChannelsRecord {
+  hasDiscordToken: boolean;
+  textChannels: string[];
+  voiceChannels: string[];
+}
+
 const DEFAULT_BASE = "127.0.0.1:7790";
 const RECONNECT_MS = 2000;
 
@@ -264,6 +271,39 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
     [base],
   );
 
+  const getWorkspaceChannels = useCallback(
+    async (name: string): Promise<ChannelsRecord> => {
+      const res = await fetch(`http://${base}/workspaces/${encodeURIComponent(name)}/channels`);
+      return (await res.json()) as ChannelsRecord;
+    },
+    [base],
+  );
+
+  const saveWorkspaceChannels = useCallback(
+    async (
+      name: string,
+      body: { discord?: { botToken: string; textChannels: string[]; voiceChannels: string[] } },
+    ): Promise<ChannelsRecord & { error?: string }> => {
+      const res = await fetch(`http://${base}/workspaces/${encodeURIComponent(name)}/channels`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      return (await res.json()) as ChannelsRecord & { error?: string };
+    },
+    [base],
+  );
+
+  const verifyWorkspaceDiscord = useCallback(
+    async (name: string): Promise<{ ok?: boolean; detail?: string; error?: string }> => {
+      const res = await fetch(`http://${base}/workspaces/${encodeURIComponent(name)}/channels/verify-discord`, {
+        method: "POST",
+      });
+      return (await res.json()) as { ok?: boolean; detail?: string; error?: string };
+    },
+    [base],
+  );
+
   const getMe = useCallback(async (): Promise<MeRecord> => {
     const res = await fetch(`http://${base}/me`);
     return (await res.json()) as MeRecord;
@@ -354,6 +394,9 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
     removeWorkspace,
     verifyWorkspaceAtlassian,
     verifyRepoGithub,
+    getWorkspaceChannels,
+    saveWorkspaceChannels,
+    verifyWorkspaceDiscord,
     getMe,
     updateMe,
     verifyGithubToken,
