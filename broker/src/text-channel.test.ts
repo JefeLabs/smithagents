@@ -48,6 +48,7 @@ function channelWith(opts: {
   creation?: ConstructorParameters<typeof TextChannel>[7];
   surfaces?: ConstructorParameters<typeof TextChannel>[10];
   me?: ConstructorParameters<typeof TextChannel>[11];
+  channels?: ConstructorParameters<typeof TextChannel>[12];
 }): TextChannel {
   return new TextChannel(
     () => {},
@@ -62,6 +63,7 @@ function channelWith(opts: {
     opts.workspaces,
     opts.surfaces,
     opts.me,
+    opts.channels,
   );
 }
 
@@ -419,6 +421,46 @@ test('GET /me blocks a disallowed browser Origin, allows the control-plane dev o
     assert.equal(allowed.status, 200);
     assert.deepEqual(await allowed.json(), { id: 'me', name: 'You', hasAtlassianToken: false, hasGithubToken: false });
     assert.equal(allowed.headers.get('access-control-allow-origin'), 'http://localhost:1420');
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('GET /workspaces/:name/channels is origin-restricted like /me; PUT round-trips through', async () => {
+  const calls: string[] = [];
+  const channel = channelWith({
+    channels: {
+      get: async (name: string) => {
+        calls.push(`get ${name}`);
+        return { hasDiscordToken: false, textChannels: [], voiceChannels: [] };
+      },
+      save: async (name: string, body: unknown) => {
+        calls.push(`save ${name}`);
+        return { hasDiscordToken: true, textChannels: [], voiceChannels: [] };
+      },
+      verifyDiscord: async (name: string) => ({ ok: true, detail: 'Bot authenticated as crew' }),
+    },
+  });
+  const port = await channel.start(0);
+  try {
+    const blocked = await fetch(`http://127.0.0.1:${port}/workspaces/acme/channels`, {
+      headers: { Origin: 'http://evil.example' },
+    });
+    assert.equal(blocked.status, 403);
+
+    const get = await fetch(`http://127.0.0.1:${port}/workspaces/acme/channels`, {
+      headers: { Origin: 'http://localhost:1420' },
+    });
+    assert.equal(get.status, 200);
+    assert.deepEqual(await get.json(), { hasDiscordToken: false, textChannels: [], voiceChannels: [] });
+
+    const put = await fetch(`http://127.0.0.1:${port}/workspaces/acme/channels`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', Origin: 'http://localhost:1420' },
+      body: JSON.stringify({ discord: { botToken: 'tok', textChannels: [], voiceChannels: [] } }),
+    });
+    assert.equal(((await put.json()) as { hasDiscordToken?: boolean }).hasDiscordToken, true);
+    assert.deepEqual(calls, ['get acme', 'save acme']);
   } finally {
     await channel.stop();
   }

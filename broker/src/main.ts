@@ -501,6 +501,17 @@ const me = {
   verifyGithub: () => swarm.verifyGithubToken() as unknown as Promise<Record<string, unknown>>,
 };
 
+// Per-workspace Discord channel config (channels manager UI): same thin
+// passthrough shape as `me`, origin-restricted the same way.
+const channels = {
+  get: (name: string) => swarm.getWorkspaceChannels(name) as unknown as Promise<Record<string, unknown>>,
+  save: (name: string, body: Record<string, unknown>) =>
+    swarm.saveWorkspaceChannels(name, body as { discord?: { botToken: string; textChannels: string[]; voiceChannels: string[] } }) as unknown as Promise<
+      Record<string, unknown>
+    >,
+  verifyDiscord: (name: string) => swarm.verifyWorkspaceDiscord(name) as unknown as Promise<Record<string, unknown>>,
+};
+
 const textChannel = new TextChannel(
   handleUserText,
   () => [
@@ -784,6 +795,7 @@ const textChannel = new TextChannel(
     },
   },
   me,
+  channels,
 );
 const micSessions = new Map<number, DeepgramSttStream>();
 

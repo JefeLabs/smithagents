@@ -153,6 +153,12 @@ export class TextChannel {
       update(body: Record<string, unknown>): Promise<Record<string, unknown>>;
       verifyGithub(): Promise<Record<string, unknown>>;
     },
+    /** Per-workspace Discord channel config (channels manager UI). Origin-restricted like /me. */
+    private readonly channels?: {
+      get(name: string): Promise<Record<string, unknown>>;
+      save(name: string, body: Record<string, unknown>): Promise<Record<string, unknown>>;
+      verifyDiscord(name: string): Promise<Record<string, unknown>>;
+    },
   ) {}
 
   private clientSeq = 0;
@@ -455,6 +461,41 @@ export class TextChannel {
           void this.workspaces
             .verifyGithubRepo(decodeURIComponent(repoGithubMatch[1]!), decodeURIComponent(repoGithubMatch[2]!))
             .then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
+          return;
+        }
+        const wsChannelsMatch = /^\/workspaces\/([^/]+)\/channels$/.exec(url.pathname);
+        if (req.method === 'GET' && wsChannelsMatch && this.channels) {
+          if (originBlocked()) return;
+          void this.channels.get(decodeURIComponent(wsChannelsMatch[1]!)).then((r) => credJson(200, r), credFail);
+          return;
+        }
+        if (req.method === 'PUT' && wsChannelsMatch && this.channels) {
+          if (originBlocked()) return;
+          let body = '';
+          req.on('data', (c) => {
+            body += c;
+          });
+          req.on('end', () => {
+            let parsed: Record<string, unknown> = {};
+            try {
+              parsed = JSON.parse(body || '{}') as Record<string, unknown>;
+            } catch {
+              return credJson(400, { error: 'body must be JSON' });
+            }
+            void this.channels!.save(decodeURIComponent(wsChannelsMatch[1]!), parsed).then(
+              (r) => credJson((r as { error?: string }).error ? 400 : 200, r),
+              credFail,
+            );
+          });
+          return;
+        }
+        const verifyDiscordMatch = /^\/workspaces\/([^/]+)\/channels\/verify-discord$/.exec(url.pathname);
+        if (req.method === 'POST' && verifyDiscordMatch && this.channels) {
+          if (originBlocked()) return;
+          void this.channels.verifyDiscord(decodeURIComponent(verifyDiscordMatch[1]!)).then(
+            (r) => credJson((r as { error?: string }).error ? 400 : 200, r),
+            credFail,
+          );
           return;
         }
       }
