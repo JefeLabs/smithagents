@@ -220,6 +220,9 @@ const brain = new BrokerBrain(streamFactory, {
   check_status: (input) => broker.executors.check_status(input),
   raise_hand: (input) => broker.executors.raise_hand(input),
   remember: (input) => broker.executors.remember(input),
+  // Scoped to the current conversation's workspace only — never model-choosable, unlike delegate's optional workspace.
+  lookup_ticket: (input) => broker.executors.lookup_ticket({ ...input, workspace: sessionManager.active().workspace }),
+  search_docs: (input) => broker.executors.search_docs({ ...input, workspace: sessionManager.active().workspace }),
 });
 
 // Sessions — workspace-scoped conversations persisted under .smith/sessions/.

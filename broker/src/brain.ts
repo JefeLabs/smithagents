@@ -15,6 +15,8 @@ export interface ToolExecutors {
   delegate(input: { agent: string; task: string; workspace?: string; repo?: string; ticketKey?: string }): Promise<string>;
   check_status(input: { agent: string }): Promise<string>;
   raise_hand(input: { agent: string; reason: string }): Promise<string>;
+  lookup_ticket(input: { ticketKey: string; workspace: string }): Promise<string>;
+  search_docs(input: { query: string; workspace: string }): Promise<string>;
 }
 
 export interface BrainTurn {
@@ -99,6 +101,29 @@ const TOOLS = [
         reason: { type: 'string' as const, description: 'One short line: what they want to add' },
       },
       required: ['agent', 'reason'],
+    },
+  },
+  {
+    name: 'lookup_ticket',
+    description:
+      "Look up a Jira ticket's summary and status to answer a question in conversation. Read-only — never comments or changes status.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        ticketKey: { type: 'string' as const, description: 'Jira ticket key, e.g. "PROJ-123"' },
+      },
+      required: ['ticketKey'],
+    },
+  },
+  {
+    name: 'search_docs',
+    description: 'Search Confluence for docs relevant to a question in conversation. Read-only.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        query: { type: 'string' as const, description: 'Search text' },
+      },
+      required: ['query'],
     },
   },
 ];
@@ -232,6 +257,8 @@ export class BrokerBrain {
       if (name === 'check_status') return await this.executors.check_status(input as { agent: string });
       if (name === 'raise_hand') return await this.executors.raise_hand(input as { agent: string; reason: string });
       if (name === 'remember') return await this.executors.remember(input as { key: string; text: string; scope: string });
+      if (name === 'lookup_ticket') return await this.executors.lookup_ticket(input as { ticketKey: string; workspace: string });
+      if (name === 'search_docs') return await this.executors.search_docs(input as { query: string; workspace: string });
       return `unknown tool: ${name}`;
     } catch (err) {
       return `tool ${name} failed: ${err instanceof Error ? err.message : String(err)}`;

@@ -845,6 +845,37 @@ test('roster composition persists: a second broker restores groups and edits, dr
   await b.stop();
 });
 
+test('lookup_ticket returns a one-line summary on success', async () => {
+  const f = makeFakes([]);
+  f.swarm.lookupTicket = async () => ({
+    ok: true,
+    ticket: { key: 'PROJ-1', summary: 'Fix the thing', status: 'In Progress', url: 'https://x/browse/PROJ-1' },
+  });
+  const b = makeBroker(f);
+  const out = await b.executors.lookup_ticket({ ticketKey: 'PROJ-1', workspace: 'acme' });
+  assert.equal(out, 'PROJ-1 (In Progress): Fix the thing — https://x/browse/PROJ-1');
+});
+
+test('lookup_ticket surfaces a Jira-level not-found without throwing', async () => {
+  const f = makeFakes([]);
+  f.swarm.lookupTicket = async () => ({ ok: false, detail: 'Jira 404: Issue does not exist' });
+  const b = makeBroker(f);
+  const out = await b.executors.lookup_ticket({ ticketKey: 'NOPE-1', workspace: 'acme' });
+  assert.equal(out, 'Jira 404: Issue does not exist');
+});
+
+test('search_docs lists title/url pairs, or a no-results line', async () => {
+  const f = makeFakes([]);
+  f.swarm.searchDocs = async () => ({ ok: true, docs: [{ title: 'Onboarding', excerpt: '', url: 'https://x/wiki/1' }] });
+  const b = makeBroker(f);
+  assert.equal(await b.executors.search_docs({ query: 'onboarding', workspace: 'acme' }), 'Onboarding — https://x/wiki/1');
+
+  const f2 = makeFakes([]);
+  f2.swarm.searchDocs = async () => ({ ok: true, docs: [] });
+  const b2 = makeBroker(f2);
+  assert.equal(await b2.executors.search_docs({ query: 'nothing', workspace: 'acme' }), 'No Confluence docs found for "nothing".');
+});
+
 function basicDeps(f: ReturnType<typeof makeFakes>, directory: AgentDirectory) {
   return {
     swarm: f.swarm,

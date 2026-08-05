@@ -208,6 +208,17 @@ export class Broker {
       const tail = output.split('\n').slice(-25).join('\n');
       return `Live terminal tail for ${agent.name} (summarize for speech, do not read verbatim):\n${tail}`;
     },
+    lookup_ticket: async (input: { ticketKey: string; workspace: string }): Promise<string> => {
+      const r = await this.deps.swarm.lookupTicket(input.workspace, input.ticketKey);
+      if (!r.ok || !r.ticket) return r.detail ?? `Could not look up ${input.ticketKey}.`;
+      return `${r.ticket.key} (${r.ticket.status}): ${r.ticket.summary} — ${r.ticket.url}`;
+    },
+    search_docs: async (input: { query: string; workspace: string }): Promise<string> => {
+      const r = await this.deps.swarm.searchDocs(input.workspace, input.query);
+      if (!r.ok) return r.detail ?? 'Could not search docs.';
+      if (!r.docs?.length) return `No Confluence docs found for "${input.query}".`;
+      return r.docs.map((d) => `${d.title} — ${d.url}`).join('\n');
+    },
   };
 
   private repository = '';
