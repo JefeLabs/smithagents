@@ -152,3 +152,32 @@ test('lookupTicket and search-docs routes', async () => {
     'POST /workspaces/acme/atlassian/search-docs',
   ]);
 });
+
+test('channels methods hit the right swarm routes', async () => {
+  const calls: string[] = [];
+  const client = new SwarmClient({
+    baseUrl: 'http://s',
+    fetchImpl: (async (url: unknown, init?: RequestInit) => {
+      calls.push(`${init?.method ?? 'GET'} ${String(url).replace('http://s', '')}`);
+      return new Response(JSON.stringify({ hasDiscordToken: false, textChannels: [], voiceChannels: [], ok: true, detail: 'x' }));
+    }) as typeof fetch,
+  });
+  await client.getWorkspaceChannels('acme');
+  await client.saveWorkspaceChannels('acme', { discord: { botToken: 'tok', textChannels: [], voiceChannels: [] } });
+  await client.verifyWorkspaceDiscord('acme');
+  await client.getWorkspaceDiscordConfig('acme');
+  assert.deepEqual(calls, [
+    'GET /workspaces/acme/channels',
+    'PUT /workspaces/acme/channels',
+    'POST /workspaces/acme/channels/verify-discord',
+    'GET /workspaces/acme/channels/discord-token',
+  ]);
+});
+
+test('getWorkspaceDiscordConfig returns null when the workspace has no Discord config (404), instead of throwing', async () => {
+  const client = new SwarmClient({
+    baseUrl: 'http://s',
+    fetchImpl: (async () => new Response(JSON.stringify({ error: 'no Discord config' }), { status: 404 })) as typeof fetch,
+  });
+  assert.equal(await client.getWorkspaceDiscordConfig('acme'), null);
+});

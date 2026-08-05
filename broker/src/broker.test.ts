@@ -40,6 +40,9 @@ function makeFakes(meetings: SwarmMeeting[]) {
     killTask: async () => {},
     lookupTicket: async () => ({ ok: true }),
     searchDocs: async () => ({ ok: true }),
+    getWorkspaceChannels: async () => ({ hasDiscordToken: false, textChannels: [], voiceChannels: [] }),
+    saveWorkspaceChannels: async () => ({ hasDiscordToken: false, textChannels: [], voiceChannels: [] }),
+    verifyWorkspaceDiscord: async () => ({ ok: true, detail: 'verified' }),
   };
 
   const sttAudio: Uint8Array[] = [];

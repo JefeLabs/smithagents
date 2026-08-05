@@ -59,6 +59,19 @@ export interface VerifyResult {
   detail: string;
 }
 
+export interface ChannelsRecord {
+  hasDiscordToken: boolean;
+  textChannels: string[];
+  voiceChannels: string[];
+}
+
+/** Raw shape — holds the actual bot token. Only getWorkspaceDiscordConfig returns this. */
+export interface DiscordChannelsConfig {
+  botToken: string;
+  textChannels: string[];
+  voiceChannels: string[];
+}
+
 export interface TicketResult {
   key: string;
   summary: string;
@@ -272,6 +285,39 @@ export class SwarmClient {
       `/workspaces/${encodeURIComponent(name)}/repos/${encodeURIComponent(repoName)}/verify-github`,
       {},
     ) as unknown as Promise<VerifyResult>;
+  }
+
+  async getWorkspaceChannels(name: string): Promise<ChannelsRecord> {
+    return this.http('GET', `/workspaces/${encodeURIComponent(name)}/channels`) as unknown as Promise<ChannelsRecord>;
+  }
+
+  async saveWorkspaceChannels(
+    name: string,
+    body: { discord?: { botToken: string; textChannels: string[]; voiceChannels: string[] } },
+  ): Promise<ChannelsRecord> {
+    return this.http('PUT', `/workspaces/${encodeURIComponent(name)}/channels`, body) as unknown as Promise<ChannelsRecord>;
+  }
+
+  async verifyWorkspaceDiscord(name: string): Promise<VerifyResult> {
+    return this.http('POST', `/workspaces/${encodeURIComponent(name)}/channels/verify-discord`, {}) as unknown as Promise<VerifyResult>;
+  }
+
+  /**
+   * The one method in this class that returns a raw secret — used only by
+   * main.ts's Discord connection lifecycle (Task 9), never through
+   * BrokerDeps/Broker. `http()` throws on any non-2xx (including the expected,
+   * routine "this workspace has no Discord config" 404) — that's a normal
+   * outcome here, not a failure worth surfacing, so it's swallowed into `null`
+   * rather than propagated. A swarm-down/network failure collapses into the
+   * same `null` — the lifecycle hook's correct response to "can't reach swarm"
+   * is identical to "no Discord configured": skip Discord for this workspace.
+   */
+  async getWorkspaceDiscordConfig(name: string): Promise<DiscordChannelsConfig | null> {
+    try {
+      return (await this.http('GET', `/workspaces/${encodeURIComponent(name)}/channels/discord-token`)) as unknown as DiscordChannelsConfig;
+    } catch {
+      return null;
+    }
   }
 
   /** Subscribe to /ws events. Reconnects every 2s until the returned fn is called. */

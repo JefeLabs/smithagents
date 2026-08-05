@@ -10,7 +10,7 @@ import type { AgentDirectory, AgentPresence } from './directory.ts';
 import type { BrainTurn } from './brain.ts';
 import type { MemoryPort, MemoryScope } from './memory.ts';
 import { whoIsAddressed } from './addressing.ts';
-import type { RegistryAgent, SwarmEvent, SwarmMeeting, SwarmSquad, SwarmWorkspace, TicketResult, DocResult } from './swarm-client.ts';
+import type { ChannelsRecord, RegistryAgent, SwarmEvent, SwarmMeeting, SwarmSquad, SwarmWorkspace, TicketResult, DocResult, VerifyResult } from './swarm-client.ts';
 
 export interface SwarmClientLike {
   listMeetings(): Promise<SwarmMeeting[]>;
@@ -33,6 +33,9 @@ export interface SwarmClientLike {
   killTask(taskIdOrName: string): Promise<void>;
   lookupTicket(workspace: string, ticketKey: string): Promise<{ ok: boolean; ticket?: TicketResult; detail?: string }>;
   searchDocs(workspace: string, query: string): Promise<{ ok: boolean; docs?: DocResult[]; detail?: string }>;
+  getWorkspaceChannels(name: string): Promise<ChannelsRecord>;
+  saveWorkspaceChannels(name: string, body: { discord?: { botToken: string; textChannels: string[]; voiceChannels: string[] } }): Promise<ChannelsRecord>;
+  verifyWorkspaceDiscord(name: string): Promise<VerifyResult>;
 }
 
 export interface BrainLike {
