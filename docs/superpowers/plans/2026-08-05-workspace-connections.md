@@ -1666,9 +1666,8 @@ async function fixture() {
   return { root, repoPath };
 }
 
-test('resolveConnections: pairs the current user credential with the repo-matched workspace config', async (t) => {
+test('resolveConnections: pairs the current user credential with the repo-matched workspace config', async () => {
   const { root, repoPath } = await fixture();
-  t.after(() => process.chdir(process.cwd())); // no-op placeholder if chdir isn't used — see note below
   const dispatcher = new Dispatcher({} as OrchestratorConfig);
   const manifest = { context: { repoPath } } as TaskManifest;
   const resolved = await dispatcher.resolveConnections(manifest, root);
