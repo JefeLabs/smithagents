@@ -18,6 +18,17 @@
  * discord.js network I/O or a real `ffmpeg` binary on PATH, mirroring
  * discord-adapter.ts's own `clientFactory` seam one level up.
  *
+ * Fix round 1 (post-review): `bootDiscordVoice`'s returned teardown closure
+ * is also tracked internally as `activeVoiceTeardown`, reachable through the
+ * idempotent `teardownDiscordVoice()`, mirroring discord-text-lifecycle.ts's
+ * `activeDiscordText`/`teardownDiscordText()` shape so Task 9 has one
+ * consistent mental model for both surfaces. Teardown itself now quiesces
+ * any in-flight presence handling (a `tornDown` guard, checked at the top of
+ * `onPresenceEvent`, plus awaiting the current `presenceChain`) before
+ * touching the surface/client, and unconditionally revokes/detaches even
+ * when `leaveAll()` itself throws — see `bootDiscordVoice`'s own teardown
+ * closure for the full reasoning on both.
+ *
  * Task 9 wires this into session-activation lifecycle, alongside
  * discord-text-lifecycle.ts's equivalent; today main.ts still boots it once
  * at startup from DISCORD_VOICE_CHANNELS, same as before this extraction.
@@ -126,7 +137,10 @@ export interface DiscordVoiceLifecycle {
    * it ever loads. Returns null when voice doesn't start (missing ffmpeg,
    * missing token) — otherwise a teardown closure bound to THIS invocation's
    * earClient/surface/presence, safe to call once to cleanly tear the whole
-   * thing back down.
+   * thing back down. Also tracked as `activeVoiceTeardown`, so a subsequent
+   * boot's own teardown is reachable via `teardownDiscordVoice()` without the
+   * caller having to hold onto the returned closure itself (mirrors
+   * discord-text-lifecycle.ts's `activeDiscordText`/`teardownDiscordText`).
    *
    * Ear-connection reconciliation (the one genuinely tricky wiring decision):
    * `createDiscordVoiceSurface`'s own `joinAll` always calls
@@ -156,9 +170,18 @@ export interface DiscordVoiceLifecycle {
    * `VoiceGatewayLike`/`VoiceReceiverLike` implementations from the outside.
    */
   bootDiscordVoice(token: string | undefined, allowlist: string[]): Promise<(() => Promise<void>) | null>;
+  /** Tears down the active connection (if any) via its own returned closure,
+   * and clears `activeVoiceTeardown`. Safe to call when nothing is active
+   * (no-op) or repeatedly (idempotent after the first call clears state).
+   * Mirrors discord-text-lifecycle.ts's `teardownDiscordText()`. */
+  teardownDiscordVoice(): Promise<void>;
+  /** The currently-active boot's teardown closure, or null if none is active. */
+  readonly activeVoiceTeardown: (() => Promise<void>) | null;
 }
 
 export function createDiscordVoiceLifecycle(deps: DiscordVoiceLifecycleDeps): DiscordVoiceLifecycle {
+  let activeVoiceTeardown: (() => Promise<void>) | null = null;
+
   async function bootDiscordVoice(token: string | undefined, allowlist: string[]): Promise<(() => Promise<void>) | null> {
     const ffmpegAvailable = deps.checkFfmpeg ?? realFfmpegAvailable;
     if (!ffmpegAvailable()) {
@@ -318,7 +341,18 @@ export function createDiscordVoiceLifecycle(deps: DiscordVoiceLifecycleDeps): Di
       return channel.members.filter((m) => !m.user.bot).size;
     }
 
+    // Set by teardown, checked here so a presence event already queued on
+    // presenceChain when teardown begins — or one that arrives in the narrow
+    // window between teardown starting and earClient.destroy() actually
+    // closing the gateway socket — can never start a NEW join/leave once
+    // teardown is underway (fix round 1: this closure's own surface/presence
+    // are about to be torn down regardless; letting a late join-crew action
+    // still run would set `ear`/call markJoined on a surface nothing holds a
+    // reference to afterward, orphaning a live voice connection).
+    let tornDown = false;
+
     async function onPresenceEvent(event: PresenceEvent): Promise<void> {
+      if (tornDown) return;
       const action = presence.handle(event, humanCountFor);
       if (action.type === 'join-crew') {
         // First-come-wins per broker.ts's attachVoiceSurface contract: declined
@@ -391,20 +425,62 @@ export function createDiscordVoiceLifecycle(deps: DiscordVoiceLifecycleDeps): Di
     });
 
     const teardown = async (): Promise<void> => {
+      tornDown = true;
+      // Quiesce: wait for any in-flight presence handling before touching
+      // the surface/client. A join-crew action can take up to entersState's
+      // 15s ceiling to settle; without this, leaveAll() below could run
+      // while `ear` is still null (the join hasn't assigned it yet), and the
+      // join's own completion — landing AFTER destroy()/onSurfaceChange(null,
+      // null) below — would set `ear` and call markJoined on a surface
+      // nothing holds a reference to anymore, orphaning a live voice
+      // connection with nothing left to leave it. presenceChain's own
+      // `.catch()` (below) already converts any rejection into a resolved
+      // promise, so this never throws; the `tornDown` guard above (checked
+      // at the top of onPresenceEvent) is what actually stops a NEW join
+      // from starting, either from an event already queued behind this one
+      // or one that arrives while this await is pending — awaiting the
+      // chain by itself only guarantees an ALREADY-STARTED action finishes
+      // before leaveAll() runs, not that no later event can sneak in.
+      await presenceChain;
       try {
         await surface.leaveAll();
-        deps.policy.revokeAll('discord-voice');
-        deps.broker.detachVoiceSurface();
       } catch (err) {
-        // Nothing was joined, or leaveAll itself failed — either way, still tear
-        // down the client below rather than leaving a half-torn-down connection.
+        // Nothing was joined, or leaveAll itself failed — either way, still
+        // revoke/detach and tear down the client below rather than leaving
+        // broker attached to a surface that's gone, or a half-torn-down
+        // connection.
         console.error(`[discord-voice] leaveAll during teardown: ${String(err)}`);
       }
+      // Unconditional — must run even when leaveAll() above threw, so a
+      // failed leaveAll can never leave broker still attached to a surface
+      // this function is about to destroy, or leave an on-request admission
+      // behind for a room the crew is no longer in.
+      deps.policy.revokeAll('discord-voice');
+      deps.broker.detachVoiceSurface();
       await earClient.destroy();
       deps.onSurfaceChange(null, null);
+      // Only clear if this is STILL the tracked active one — a caller that
+      // invokes this returned closure directly (bypassing
+      // teardownDiscordVoice()) must never clobber a NEWER boot's own
+      // activeVoiceTeardown.
+      if (activeVoiceTeardown === teardown) activeVoiceTeardown = null;
     };
+    activeVoiceTeardown = teardown;
     return teardown;
   }
 
-  return { bootDiscordVoice };
+  async function teardownDiscordVoice(): Promise<void> {
+    if (!activeVoiceTeardown) return;
+    const current = activeVoiceTeardown;
+    activeVoiceTeardown = null;
+    await current().catch((err) => console.error(`[discord-voice] teardown failed: ${String(err)}`));
+  }
+
+  return {
+    bootDiscordVoice,
+    teardownDiscordVoice,
+    get activeVoiceTeardown() {
+      return activeVoiceTeardown;
+    },
+  };
 }

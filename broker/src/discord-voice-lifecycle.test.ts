@@ -171,3 +171,123 @@ test('two independent lifecycles do not share state', async () => {
   assert.equal(a.surfaceChanges.length, 1);
   assert.equal(b.surfaceChanges.length, 0);
 });
+
+test('activeVoiceTeardown tracks the active boot; teardownDiscordVoice() tears it down and is idempotent', async () => {
+  const fakeClient = fakeEarClient();
+  const { deps } = fakeDeps({ createEarClient: () => fakeClient.client });
+  const lifecycle = createDiscordVoiceLifecycle(deps);
+
+  assert.equal(lifecycle.activeVoiceTeardown, null);
+  const teardown = await lifecycle.bootDiscordVoice('tok', ['chan-1']);
+  assert.equal(lifecycle.activeVoiceTeardown, teardown);
+
+  await lifecycle.teardownDiscordVoice();
+  assert.equal(fakeClient.destroyCalls(), 1);
+  assert.equal(lifecycle.activeVoiceTeardown, null);
+
+  // Idempotent: a second teardownDiscordVoice with nothing active is a no-op, not a second destroy().
+  await lifecycle.teardownDiscordVoice();
+  assert.equal(fakeClient.destroyCalls(), 1);
+});
+
+test('calling the returned teardown closure directly (bypassing teardownDiscordVoice) also clears activeVoiceTeardown', async () => {
+  const fakeClient = fakeEarClient();
+  const { deps } = fakeDeps({ createEarClient: () => fakeClient.client });
+  const lifecycle = createDiscordVoiceLifecycle(deps);
+
+  const teardown = await lifecycle.bootDiscordVoice('tok', ['chan-1']);
+  await teardown!();
+  assert.equal(lifecycle.activeVoiceTeardown, null);
+  // teardownDiscordVoice must not re-destroy an already-destroyed client, since activeVoiceTeardown is already cleared.
+  await lifecycle.teardownDiscordVoice();
+  assert.equal(fakeClient.destroyCalls(), 1);
+});
+
+/** Flushes every microtask queued so far (a macrotask boundary), more robust than guessing a fixed number of `await Promise.resolve()` ticks. */
+function flushMicrotasks(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+test('teardown quiesces in-flight presence handling: lets an already-started join finish (even if it ultimately fails) before leaving/destroying, and the torn-down guard stops a later-queued event from starting a new one', async () => {
+  const fakeClient = fakeEarClient();
+  let resolveFetchGate: (() => void) | undefined;
+  const fetchGate = new Promise<void>((resolve) => {
+    resolveFetchGate = resolve;
+  });
+  let attachCount = 0;
+  let detachCount = 0;
+  const { deps } = fakeDeps({
+    createEarClient: () => ({
+      ...fakeClient.client,
+      channels: {
+        // Gated: earAwareGateway.join() (this module's own code) calls this
+        // as the FIRST thing it does for the ear's token, so gating it here
+        // — rather than needing a working @discordjs/voice connection —
+        // keeps surface.joinAll() genuinely "in flight" without ever
+        // reaching the real gateway/joinVoiceChannel.
+        fetch: async () => {
+          await fetchGate;
+          throw new Error('simulated channel fetch failure — ends the in-flight join without touching the real gateway');
+        },
+        cache: fakeClient.client.channels.cache,
+      },
+    }),
+    broker: {
+      attachVoiceSurface: () => {
+        attachCount += 1;
+        return true;
+      },
+      detachVoiceSurface: () => {
+        detachCount += 1;
+      },
+    },
+  });
+  const lifecycle = createDiscordVoiceLifecycle(deps);
+  const teardown = await lifecycle.bootDiscordVoice('tok', ['chan-1']);
+  const onVoiceStateUpdate = fakeClient.voiceStateHandlers[0]!;
+  const human = { user: { bot: false } };
+
+  // Event 1: immediate member resolution (member already present, so
+  // guild.members.fetch is never even called) reaches onPresenceEvent right
+  // away — tornDown is still false, so it calls attachVoiceSurface and starts
+  // surface.joinAll(), which blocks inside earAwareGateway.join() on the
+  // gated channels.fetch above. This join is genuinely in flight by the time
+  // teardown() is called below.
+  onVoiceStateUpdate(
+    { channelId: null, id: 'user-1', member: human, guild: { members: { fetch: async () => human } } },
+    { channelId: 'chan-1', id: 'user-1', member: human, guild: { members: { fetch: async () => human } } },
+  );
+  await flushMicrotasks(); // let event 1 run synchronously up through attachVoiceSurface and into the gated fetch
+  assert.equal(attachCount, 1); // confirms the join genuinely started BEFORE teardown begins below
+
+  const teardownPromise = teardown!();
+
+  // Event 2 arrives WHILE teardown is already quiescing — tornDown was set
+  // synchronously by teardown(), before it awaits presenceChain. Its own
+  // member resolution is immediate too, but it's still queued behind event
+  // 1 on the serial chain, so it only runs once event 1's join settles.
+  onVoiceStateUpdate(
+    { channelId: null, id: 'user-2', member: human, guild: { members: { fetch: async () => human } } },
+    { channelId: 'chan-1', id: 'user-2', member: human, guild: { members: { fetch: async () => human } } },
+  );
+
+  await flushMicrotasks();
+  assert.equal(fakeClient.destroyCalls(), 0); // teardown is still awaiting presenceChain — event 1's join hasn't settled yet
+  assert.equal(attachCount, 1); // still just the one call — event 1 hasn't failed yet, event 2 hasn't run yet
+
+  resolveFetchGate!();
+  await teardownPromise;
+  await flushMicrotasks(); // let event 2's own (now-unblocked) chain link fully settle before asserting
+
+  // Event 1's join was allowed to finish — it fails (the gated fetch
+  // rejects), and its own catch handling ran (detachVoiceSurface called once
+  // from the join failure), rather than being abandoned mid-flight. Event 2
+  // never called attachVoiceSurface a second time: it hit the torn-down
+  // guard in onPresenceEvent instead of starting a new join after teardown
+  // had already begun. detachVoiceSurface ends up called TWICE: once from
+  // event 1's own join-failure catch, once more from teardown's own
+  // unconditional detach — both legitimate, independent calls.
+  assert.equal(attachCount, 1);
+  assert.equal(detachCount, 2);
+  assert.equal(fakeClient.destroyCalls(), 1);
+});
