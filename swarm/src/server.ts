@@ -69,6 +69,8 @@ import {
 import { loadUsersFromDir, saveUser, resolveCurrentUser, type User } from './users.js';
 import { verifyGithubToken, verifyGithubRepo } from './verify-github.js';
 import { verifyAtlassian } from './verify-atlassian.js';
+import { loadChannelsFor, saveChannels, type WorkspaceChannels } from './channels.js';
+import { verifyDiscordToken } from './verify-discord.js';
 import { lookupTicket, searchDocs } from './atlassian-client.js';
 import { MeetingOrchestrator } from './meetings.js';
 import { loadLiveKitConfig } from './config.js';
@@ -1360,6 +1362,58 @@ export class OrchestratorServer {
       });
     });
 
+    const redactChannels = (c: WorkspaceChannels | null) => ({
+      hasDiscordToken: Boolean(c?.discord?.botToken),
+      textChannels: c?.discord?.textChannels ?? [],
+      voiceChannels: c?.discord?.voiceChannels ?? [],
+    });
+
+    this.app.get<{ Params: { name: string } }>('/workspaces/:name/channels', async (req, reply) => {
+      const ws = server.workspaces.find((w) => w.name === req.params.name);
+      if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
+      const channels = await loadChannelsFor(resolve(process.cwd(), '.smith/channels'), req.params.name);
+      return redactChannels(channels);
+    });
+
+    this.app.put<{ Params: { name: string } }>('/workspaces/:name/channels', async (req, reply) => {
+      const ws = server.workspaces.find((w) => w.name === req.params.name);
+      if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
+      const dir = resolve(process.cwd(), '.smith/channels');
+      const existing = await loadChannelsFor(dir, req.params.name);
+      const b = req.body as Partial<WorkspaceChannels>;
+      const merged = buildChannelsUpdate(existing, b);
+      try {
+        await saveChannels(dir, req.params.name, merged);
+      } catch (err) {
+        return reply.status(400).send({ error: String((err as Error).message) });
+      }
+      return redactChannels(merged);
+    });
+
+    this.app.post<{ Params: { name: string } }>('/workspaces/:name/channels/verify-discord', async (req, reply) => {
+      const ws = server.workspaces.find((w) => w.name === req.params.name);
+      if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
+      const channels = await loadChannelsFor(resolve(process.cwd(), '.smith/channels'), req.params.name);
+      if (!channels?.discord?.botToken) {
+        return reply.status(400).send({ error: `Workspace "${ws.name}" has no Discord bot token saved yet` });
+      }
+      return verifyDiscordToken(channels.discord.botToken);
+    });
+
+    // Internal-only — returns the RAW bot token, unlike every other route in this
+    // block. Never proxied through broker's browser-facing text-channel.ts
+    // surface (see this task's header note for why this route has to exist at
+    // all). broker's SwarmClient calls it directly, server-to-server, on the
+    // same loopback-bound, no-separate-auth trust boundary broker and swarm
+    // already share for every other request between them in all-local mode.
+    this.app.get<{ Params: { name: string } }>('/workspaces/:name/channels/discord-token', async (req, reply) => {
+      const ws = server.workspaces.find((w) => w.name === req.params.name);
+      if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
+      const channels = await loadChannelsFor(resolve(process.cwd(), '.smith/channels'), req.params.name);
+      if (!channels?.discord) return reply.status(404).send({ error: `Workspace "${ws.name}" has no Discord config` });
+      return channels.discord;
+    });
+
     this.app.post<{ Params: { name: string; repoName: string } }>(
       '/workspaces/:name/repos/:repoName/verify-github',
       async (req, reply) => {
@@ -1871,4 +1925,19 @@ export function buildUserUpdate(existing: User | null, b: Partial<User>): User {
       : existing?.atlassian,
     github: b.github ? { token: b.github.token ?? existing?.github?.token ?? '' } : existing?.github,
   };
+}
+
+/**
+ * PUT /workspaces/:name/channels merge: a submitted `discord` block replaces
+ * the existing one wholesale — unlike User.atlassian's two-field credential
+ * pair (email/apiToken, where a partial submission could blank one field
+ * while updating the other), WorkspaceChannels.discord has exactly one
+ * credential field (botToken) alongside two plain lists, so there's no
+ * sibling-field-blanking risk the way there was for PUT /me — see that
+ * route's fix history. Pulled out of the route handler so it's unit-testable
+ * without booting the server.
+ */
+export function buildChannelsUpdate(existing: WorkspaceChannels | null, b: Partial<WorkspaceChannels>): WorkspaceChannels {
+  const discord = b.discord ?? existing?.discord;
+  return discord ? { discord } : {};
 }

@@ -9,7 +9,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { buildUserUpdate, workspaceProblems } from './server.js';
+import { buildUserUpdate, buildChannelsUpdate, workspaceProblems } from './server.js';
 import { saveUser, loadUsersFromDir } from './users.js';
 import type { User } from './users.js';
 import type { Workspace } from './workspaces.js';
@@ -70,6 +70,22 @@ test('workspaceProblems: rejects an atlassian block with no site URL, accepts on
 
   const ok = await workspaceProblems({ ...base, atlassian: { siteUrl: 'https://acme.atlassian.net' } });
   assert.equal(ok, null);
+});
+
+test('buildChannelsUpdate: a submitted discord block replaces the existing one wholesale (no partial-field merge needed — unlike User.atlassian, there is only one credential field, botToken, so there is no sibling-field-blanking risk to guard against)', () => {
+  const existing = { discord: { botToken: 'old-tok', textChannels: ['1'], voiceChannels: [] } };
+  const merged = buildChannelsUpdate(existing, { discord: { botToken: 'new-tok', textChannels: ['1', '2'], voiceChannels: ['9'] } });
+  assert.deepEqual(merged, { discord: { botToken: 'new-tok', textChannels: ['1', '2'], voiceChannels: ['9'] } });
+});
+
+test('buildChannelsUpdate: omitting discord in the submitted body preserves the existing config', () => {
+  const existing = { discord: { botToken: 'old-tok', textChannels: ['1'], voiceChannels: [] } };
+  const merged = buildChannelsUpdate(existing, {});
+  assert.deepEqual(merged, existing);
+});
+
+test('buildChannelsUpdate: no existing config and no submitted discord block yields an empty config', () => {
+  assert.deepEqual(buildChannelsUpdate(null, {}), {});
 });
 
 test('workspaceProblems: rejects a repo github block missing owner or repo, accepts a complete one', async () => {
