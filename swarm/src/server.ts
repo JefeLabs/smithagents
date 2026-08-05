@@ -67,7 +67,8 @@ import {
   type Workspace,
 } from './workspaces.js';
 import { loadUsersFromDir, saveUser, resolveCurrentUser, type User } from './users.js';
-import { verifyGithubToken } from './verify-github.js';
+import { verifyGithubToken, verifyGithubRepo } from './verify-github.js';
+import { verifyAtlassian } from './verify-atlassian.js';
 import { MeetingOrchestrator } from './meetings.js';
 import { loadLiveKitConfig } from './config.js';
 import { resolve, isAbsolute } from 'node:path';
@@ -1359,6 +1360,33 @@ export class OrchestratorServer {
       if (!user?.github?.token) return reply.status(400).send({ error: 'No GitHub token saved yet — add one first.' });
       return verifyGithubToken(user.github.token);
     });
+
+    this.app.post<{ Params: { name: string } }>('/workspaces/:name/verify-atlassian', async (req, reply) => {
+      const ws = server.workspaces.find((w) => w.name === req.params.name);
+      if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
+      if (!ws.atlassian) return reply.status(400).send({ error: `Workspace "${ws.name}" has no Jira/Confluence site configured` });
+      const users = await loadUsersFromDir(resolve(process.cwd(), '.smith/users'));
+      const user = resolveCurrentUser(users);
+      if (!user?.atlassian) return reply.status(400).send({ error: 'You have not added your Atlassian credential in account settings' });
+      return verifyAtlassian(ws.atlassian.siteUrl, user.atlassian.email, user.atlassian.apiToken, {
+        confluenceSpaceKey: ws.atlassian.confluenceSpaceKeys?.[0],
+      });
+    });
+
+    this.app.post<{ Params: { name: string; repoName: string } }>(
+      '/workspaces/:name/repos/:repoName/verify-github',
+      async (req, reply) => {
+        const ws = server.workspaces.find((w) => w.name === req.params.name);
+        if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
+        const repo = ws.repos.find((r) => r.name === req.params.repoName);
+        if (!repo) return reply.status(404).send({ error: `Unknown repo: ${req.params.repoName}` });
+        if (!repo.github) return reply.status(400).send({ error: `Repo "${repo.name}" has no GitHub owner/repo configured` });
+        const users = await loadUsersFromDir(resolve(process.cwd(), '.smith/users'));
+        const user = resolveCurrentUser(users);
+        if (!user?.github) return reply.status(400).send({ error: 'You have not added your GitHub token in account settings' });
+        return verifyGithubRepo(repo.github.owner, repo.github.repo, user.github.token);
+      },
+    );
 
     this.app.get('/squads', async () => {
       const all = SQUAD_ROSTER.map(s => {
