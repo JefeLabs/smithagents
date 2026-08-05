@@ -67,8 +67,17 @@ export interface ToolDriver {
 
   /**
    * Render the agent profile into the tool's native config surfaces inside
-   * the worktree (design §5). Returns the created paths relative to the
-   * worktree so callers can keep them out of task commits.
+   * the worktree (design §5). `atlassian`, when given, additionally wires an
+   * MCP server for that workspace's Jira/Confluence site — credentials are
+   * referenced as `${SMITH_ATLASSIAN_EMAIL}`/`${SMITH_ATLASSIAN_TOKEN}` env
+   * placeholders, never embedded literally (design: agent privilege ceiling
+   * = the requesting user's own token, injected by the dispatcher at launch,
+   * not written to any file in the worktree). Returns the created paths
+   * relative to the worktree so callers can keep them out of task commits.
    */
-  materialize(agent: AgentProfile, worktreePath: string): Promise<string[]>;
+  materialize(
+    agent: AgentProfile,
+    worktreePath: string,
+    atlassian?: { siteUrl: string; jiraProjectKeys?: string[]; confluenceSpaceKeys?: string[] },
+  ): Promise<string[]>;
 }

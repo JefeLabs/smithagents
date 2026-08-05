@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { ClaudeDriver, encodeProjectDir } from './claude.js';
 import { SessionParseError } from './errors.js';
 
@@ -91,4 +94,35 @@ test('no model, or "default", emits no flag rather than an invalid one', () => {
   assert.equal(driver.interactiveCommand('claude'), 'claude');
   assert.equal(driver.interactiveCommand('claude', '  '), 'claude');
   assert.equal(driver.interactiveCommand('claude', 'default'), 'claude');
+});
+
+test('materialize: without atlassian config, only CLAUDE.md is written', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'mat-'));
+  try {
+    const testDriver = new ClaudeDriver();
+    const written = await testDriver.materialize({ name: 'Wilkin', role: 'dev', directives: 'ship it' }, dir);
+    assert.deepEqual(written, ['CLAUDE.md']);
+    await assert.rejects(() => readFile(join(dir, '.mcp.json')));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('materialize: with atlassian config, also writes .mcp.json referencing env placeholders, never a literal secret', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'mat-'));
+  try {
+    const testDriver = new ClaudeDriver();
+    const written = await testDriver.materialize(
+      { name: 'Wilkin', role: 'dev', directives: 'ship it' },
+      dir,
+      { siteUrl: 'https://acme.atlassian.net', jiraProjectKeys: ['ACME'] },
+    );
+    assert.deepEqual(written.sort(), ['.mcp.json', 'CLAUDE.md']);
+    const mcp = JSON.parse(await readFile(join(dir, '.mcp.json'), 'utf8'));
+    assert.equal(mcp.mcpServers.atlassian.env.JIRA_URL, 'https://acme.atlassian.net');
+    assert.equal(mcp.mcpServers.atlassian.env.JIRA_API_TOKEN, '${SMITH_ATLASSIAN_TOKEN}');
+    assert.doesNotMatch(JSON.stringify(mcp), /secret|tok-[a-z0-9]+/); // no literal credential ever lands here
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

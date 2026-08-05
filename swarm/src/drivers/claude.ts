@@ -102,7 +102,11 @@ export class ClaudeDriver implements ToolDriver {
     );
   }
 
-  async materialize(agent: AgentProfile, worktreePath: string): Promise<string[]> {
+  async materialize(
+    agent: AgentProfile,
+    worktreePath: string,
+    atlassian?: { siteUrl: string; jiraProjectKeys?: string[]; confluenceSpaceKeys?: string[] },
+  ): Promise<string[]> {
     // CLAUDE.md is claude's native instruction surface — by the time the TUI
     // starts, the agent already is this persona (design §5). Meeting-only
     // fields (voice, persona.style) are deliberately not rendered.
@@ -115,7 +119,39 @@ export class ClaudeDriver implements ToolDriver {
       '',
     ];
     await writeFile(join(worktreePath, 'CLAUDE.md'), lines.join('\n'));
-    return ['CLAUDE.md'];
+    const written = ['CLAUDE.md'];
+
+    if (atlassian) {
+      // mcp-atlassian (community server, API-token auth — no OAuth) is
+      // configured via env vars it reads at startup. JIRA_PROJECTS_FILTER and
+      // CONFLUENCE_SPACES_FILTER scope it to the workspace's configured
+      // project/space keys when set; omitted = whole site, matching the
+      // Workspace.atlassian type's own "omitted = whole site" semantics.
+      const mcpConfig = {
+        mcpServers: {
+          atlassian: {
+            command: 'uvx',
+            args: ['mcp-atlassian'],
+            env: {
+              JIRA_URL: atlassian.siteUrl,
+              JIRA_USERNAME: '${SMITH_ATLASSIAN_EMAIL}',
+              JIRA_API_TOKEN: '${SMITH_ATLASSIAN_TOKEN}',
+              CONFLUENCE_URL: `${atlassian.siteUrl.replace(/\/$/, '')}/wiki`,
+              CONFLUENCE_USERNAME: '${SMITH_ATLASSIAN_EMAIL}',
+              CONFLUENCE_API_TOKEN: '${SMITH_ATLASSIAN_TOKEN}',
+              ...(atlassian.jiraProjectKeys?.length ? { JIRA_PROJECTS_FILTER: atlassian.jiraProjectKeys.join(',') } : {}),
+              ...(atlassian.confluenceSpaceKeys?.length
+                ? { CONFLUENCE_SPACES_FILTER: atlassian.confluenceSpaceKeys.join(',') }
+                : {}),
+            },
+          },
+        },
+      };
+      await writeFile(join(worktreePath, '.mcp.json'), `${JSON.stringify(mcpConfig, null, 2)}\n`);
+      written.push('.mcp.json');
+    }
+
+    return written;
   }
 }
 
