@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadUsersFromDir, saveUser, resolveCurrentUser } from './users.js';
@@ -34,4 +34,16 @@ test('saveUser rejects a bad slug and round-trips a good one, including credenti
 
 test('loadUsersFromDir returns [] for a missing dir', async () => {
   assert.deepEqual(await loadUsersFromDir('/tmp/does-not-exist-users-dir'), []);
+});
+
+test('saveUser writes credential files with owner-only permissions (0o600)', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'users-'));
+  await saveUser(dir, {
+    id: 'secure-user',
+    name: 'Secure User',
+    github: { token: 'ghp_secret' },
+  });
+  const filePath = join(dir, 'secure-user.json');
+  const stats = await stat(filePath);
+  assert.equal(stats.mode & 0o777, 0o600, 'credential file must be owner-only readable/writable');
 });

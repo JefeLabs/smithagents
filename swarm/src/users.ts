@@ -1,7 +1,7 @@
 // Users — the current-operator record credentials live on (design
 // §"Settled decisions": config/credential split). One JSON file per user
 // under .smith/users/, untracked (holds secrets) unlike agents/workspaces.
-import { readdir, readFile, mkdir, writeFile } from 'node:fs/promises';
+import { readdir, readFile, mkdir, open } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export interface User {
@@ -38,13 +38,19 @@ export async function loadUsersFromDir(dir: string): Promise<User[]> {
   return users;
 }
 
-/** Write one user to `dir`. Mirror of workspaces.saveWorkspace. */
+/** Write one user to `dir`. Mirror of workspaces.saveWorkspace. Writes credentials with owner-only permissions (0o600). */
 export async function saveUser(dir: string, user: User): Promise<void> {
   if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(user.id)) {
     throw new Error(`Invalid user id "${user.id}": use lowercase letters, digits and dashes`);
   }
-  await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, `${user.id}.json`), `${JSON.stringify(user, null, 2)}\n`);
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  const filePath = join(dir, `${user.id}.json`);
+  const fh = await open(filePath, 'w', 0o600);
+  try {
+    await fh.writeFile(`${JSON.stringify(user, null, 2)}\n`);
+  } finally {
+    await fh.close();
+  }
 }
 
 /**
