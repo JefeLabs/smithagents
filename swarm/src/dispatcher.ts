@@ -29,6 +29,8 @@ import type { RuntimeAdapter } from './runtime.js';
 import { getDriver } from './drivers/index.js';
 import { createRuntime } from './runtime.js';
 import { QuarantineManager } from './quarantine.js';
+import { loadWorkspacesFromDir } from './workspaces.js';
+import { loadUsersFromDir, resolveCurrentUser } from './users.js';
 
 /**
  * Fire-and-Forget Dispatcher.
@@ -99,11 +101,16 @@ export class Dispatcher extends EventEmitter {
       manifest.runtime ?? this.config.defaultRuntime;
     const runtime = createRuntime(runtimeType, this.config.docker);
 
+    // Resolve once: pairs this user's credentials with the workspace/repo
+    // config for this task, feeding both prepareWorktree (Atlassian MCP
+    // materialization) and runtime.launch (env injection) below.
+    const connections = await this.resolveConnections(manifest);
+
     let worktreePath = '';
 
     try {
       // Phase 1: Prepare the isolated worktree environment
-      worktreePath = await this.prepareWorktree(manifest);
+      worktreePath = await this.prepareWorktree(manifest, connections);
 
       // Phase 2: Build the full CLI command for the Alpha agent
       const command = this.buildAgentCommand(manifest, worktreePath);
@@ -115,7 +122,7 @@ export class Dispatcher extends EventEmitter {
         sessionName,
       });
 
-      await runtime.launch(sessionName, command, worktreePath);
+      await runtime.launch(sessionName, command, worktreePath, connections.env);
 
       // Phase 4: THE WAIT STATE — block until the Alpha session exits
       // This is the "Fire-and-Forget" core. We sit here doing nothing
@@ -173,6 +180,48 @@ export class Dispatcher extends EventEmitter {
   // -------------------------------------------------------------------------
 
   /**
+   * Pair the current user's credential with the workspace/repo config that
+   * matches this task's already-resolved repoPath. Missing config or missing
+   * credential both mean "skip injection for that system" — the task still
+   * runs, just without that tool available (design §3).
+   */
+  async resolveConnections(
+    manifest: TaskManifest,
+    root: string = process.cwd(),
+  ): Promise<{
+    atlassian?: { siteUrl: string; jiraProjectKeys?: string[]; confluenceSpaceKeys?: string[] };
+    env: Record<string, string>;
+  }> {
+    const env: Record<string, string> = {};
+    if (!manifest.context.repoPath) return { env };
+
+    const workspaces = await loadWorkspacesFromDir(resolve(root, '.smith/workspaces'));
+    const workspace = workspaces.find((w) => w.repos.some((r) => r.path === manifest.context.repoPath));
+    // repoPath is server-resolved from the workspace registry (see
+    // prepareWorktree), so failing to find a match here means this task
+    // isn't workspace-routed at all — nothing to pair a credential with.
+    if (!workspace) return { env };
+    const repo = workspace.repos.find((r) => r.path === manifest.context.repoPath);
+
+    const users = await loadUsersFromDir(resolve(root, '.smith/users'));
+    const user = resolveCurrentUser(users);
+
+    const atlassian = workspace.atlassian && user?.atlassian ? workspace.atlassian : undefined;
+    if (atlassian && user?.atlassian) {
+      env.SMITH_ATLASSIAN_EMAIL = user.atlassian.email;
+      env.SMITH_ATLASSIAN_TOKEN = user.atlassian.apiToken;
+    }
+    // GH_TOKEN gates purely on the user having a token — gh infers the repo
+    // from the worktree's git remote, so repo.github config isn't required
+    // for this (it exists for the precise per-repo verify check in Task 5,
+    // not as a gate here).
+    if (user?.github?.token) {
+      env.GH_TOKEN = user.github.token;
+    }
+    return { atlassian, env };
+  }
+
+  /**
    * Prepare the git worktree and inject delegation tools.
    *
    * Creates: .smith/worktrees/<taskId>/
@@ -180,7 +229,10 @@ export class Dispatcher extends EventEmitter {
    *
    * @returns Absolute path to the worktree directory
    */
-  private async prepareWorktree(manifest: TaskManifest): Promise<string> {
+  private async prepareWorktree(
+    manifest: TaskManifest,
+    connections: { atlassian?: { siteUrl: string; jiraProjectKeys?: string[]; confluenceSpaceKeys?: string[] } },
+  ): Promise<string> {
     // Workspace-routed tasks worktree from their repo's clone; otherwise from
     // the server's own repo (legacy behavior). repoPath is server-resolved
     // from the workspace registry — never a client-supplied path.
@@ -222,7 +274,7 @@ export class Dispatcher extends EventEmitter {
     const injected = ['bin/smith-delegate'];
     const driver = getDriver(manifest.agent);
     if (driver && manifest.profile) {
-      injected.push(...(await driver.materialize(manifest.profile, worktreePath)));
+      injected.push(...(await driver.materialize(manifest.profile, worktreePath, connections.atlassian)));
     }
 
     // Injected artifacts are plumbing, not work product — exclude them locally
