@@ -153,7 +153,7 @@ export class WorkerPool {
   /**
    * Dispatch a task to the least-loaded worker.
    */
-  async launch(sessionName: string, command: string, cwd: string): Promise<void> {
+  async launch(sessionName: string, command: string, cwd: string, env?: Record<string, string>): Promise<void> {
     const worker = this.pickWorker();
     if (!worker) {
       throw new Error('No remote workers available with capacity');
@@ -165,6 +165,7 @@ export class WorkerPool {
       sessionName,
       command,
       cwd,
+      env,
     };
 
     worker.ws.send(JSON.stringify(msg));
@@ -317,8 +318,8 @@ export class WorkerPool {
 export class RemoteRuntime implements RuntimeAdapter {
   constructor(private readonly pool: WorkerPool) {}
 
-  launch(sessionName: string, command: string, cwd: string): Promise<void> {
-    return this.pool.launch(sessionName, command, cwd);
+  launch(sessionName: string, command: string, cwd: string, env?: Record<string, string>): Promise<void> {
+    return this.pool.launch(sessionName, command, cwd, env);
   }
   waitFor(sessionName: string): Promise<number> {
     return this.pool.waitFor(sessionName);

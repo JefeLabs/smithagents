@@ -32,8 +32,12 @@ export interface RuntimeAdapter {
   /**
    * Launch a new isolated session that runs `command` inside `cwd`.
    * The session is identified by `sessionName` for subsequent operations.
+   *
+   * `env`, when given, is exported inside the session before `command` runs
+   * — never interpolated into the command string, so a secret value never
+   * appears in a process listing or shell history.
    */
-  launch(sessionName: string, command: string, cwd: string): Promise<void>;
+  launch(sessionName: string, command: string, cwd: string, env?: Record<string, string>): Promise<void>;
 
   /**
    * Block until the named session exits and return its exit code.
@@ -113,14 +117,20 @@ export class TmuxRuntime implements RuntimeAdapter {
     sessionName: string,
     command: string,
     cwd: string,
+    env?: Record<string, string>,
   ): Promise<void> {
     await mkdir(this.exitDir, { recursive: true });
 
     const exitFile = this.exitFilePath(sessionName);
     const channel = `${sessionName}-done`;
+    const exports = env
+      ? `${Object.entries(env)
+          .map(([k, v]) => `export ${k}=${this.shellEscape(v)}`)
+          .join('; ')}; `
+      : '';
 
     const wrappedCommand = [
-      command,
+      `${exports}${command}`,
       `; echo $? > ${this.shellEscape(exitFile)}`,
       `; tmux wait-for -S ${channel}`,
     ].join(' ');
@@ -296,6 +306,7 @@ export class DockerRuntime implements RuntimeAdapter {
     sessionName: string,
     command: string,
     cwd: string,
+    env?: Record<string, string>,
   ): Promise<void> {
     const {
       image,
@@ -347,6 +358,11 @@ export class DockerRuntime implements RuntimeAdapter {
     // Extra environment variables
     if (extraEnv) {
       for (const [key, value] of Object.entries(extraEnv)) {
+        args.push('-e', `${key}=${value}`);
+      }
+    }
+    if (env) {
+      for (const [key, value] of Object.entries(env)) {
         args.push('-e', `${key}=${value}`);
       }
     }
