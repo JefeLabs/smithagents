@@ -88,6 +88,17 @@ test('buildChannelsUpdate: no existing config and no submitted discord block yie
   assert.deepEqual(buildChannelsUpdate(null, {}), {});
 });
 
+test('buildChannelsUpdate: an empty submitted botToken preserves the existing token, only channel lists update', () => {
+  const existing = { discord: { botToken: 'saved-tok', textChannels: ['1'], voiceChannels: [] } };
+  const merged = buildChannelsUpdate(existing, { discord: { botToken: '', textChannels: ['1', '2'], voiceChannels: ['9'] } });
+  assert.deepEqual(merged, { discord: { botToken: 'saved-tok', textChannels: ['1', '2'], voiceChannels: ['9'] } });
+});
+
+test('buildChannelsUpdate: no existing token and an empty submitted botToken yields an empty-string token, not a crash', () => {
+  const merged = buildChannelsUpdate(null, { discord: { botToken: '', textChannels: ['1'], voiceChannels: [] } });
+  assert.deepEqual(merged, { discord: { botToken: '', textChannels: ['1'], voiceChannels: [] } });
+});
+
 test('workspaceProblems: rejects a repo github block missing owner or repo, accepts a complete one', async () => {
   const repoDir = await mkdtemp(join(tmpdir(), 'ws-git-'));
   await git('git', ['init', '-q'], { cwd: repoDir });

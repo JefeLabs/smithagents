@@ -1929,15 +1929,16 @@ export function buildUserUpdate(existing: User | null, b: Partial<User>): User {
 
 /**
  * PUT /workspaces/:name/channels merge: a submitted `discord` block replaces
- * the existing one wholesale — unlike User.atlassian's two-field credential
- * pair (email/apiToken, where a partial submission could blank one field
- * while updating the other), WorkspaceChannels.discord has exactly one
- * credential field (botToken) alongside two plain lists, so there's no
- * sibling-field-blanking risk the way there was for PUT /me — see that
- * route's fix history. Pulled out of the route handler so it's unit-testable
- * without booting the server.
+ * textChannels/voiceChannels wholesale, but botToken falls back to the
+ * existing saved value when the submission's own botToken is blank — the
+ * account-panel-style UI convention (ChannelsManagerModal) never re-sends a
+ * saved secret, so "edit only the channel lists" submits {botToken: "", ...}
+ * on every ordinary save; without this fallback that would silently wipe the
+ * token. Same fix shape as buildUserUpdate's PUT /me email-wipe fix — see
+ * that function's doc comment for the original incident.
  */
 export function buildChannelsUpdate(existing: WorkspaceChannels | null, b: Partial<WorkspaceChannels>): WorkspaceChannels {
-  const discord = b.discord ?? existing?.discord;
-  return discord ? { discord } : {};
+  if (!b.discord) return existing?.discord ? { discord: existing.discord } : {};
+  const botToken = b.discord.botToken?.trim() || existing?.discord?.botToken || '';
+  return { discord: { botToken, textChannels: b.discord.textChannels, voiceChannels: b.discord.voiceChannels } };
 }
