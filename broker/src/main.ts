@@ -59,11 +59,10 @@ const policy = new SurfacePolicy(() => directory.list());
 // boot still reaches the live surface/presence once they're assigned.
 let voiceSurface: ReturnType<typeof createDiscordVoiceSurface> | null = null;
 let voicePresence: VoicePresence | null = null;
-// NOT workspace-aware yet — still reads the retired DISCORD_TOKEN env var
-// directly rather than reflecting whichever workspace is currently active.
+// workspace-aware as of Task 10: reflects active Discord connection state via
+// discordTextLifecycle.activeDiscordText rather than a global env var.
 // Discord boot itself is workspace-driven as of Task 9 (discordWorkspaceSwitcher,
-// below); Task 10 makes this flag (and presence/join) workspace-aware too.
-const discordConfigured = Boolean(process.env.DISCORD_TOKEN);
+// below); this flag is now workspace-aware too.
 
 // Routes external channel (Discord, …) traffic through the same turn the app
 // uses. resolveSpokenLineForChannels/handleUserText are `function`
@@ -769,13 +768,13 @@ const textChannel = new TextChannel(
       for (const a of directory.list()) {
         out[a.id] = {
           tauri: policy.attends(a.id, 'tauri'),
-          discord: discordConfigured && policy.attends(a.id, 'discord'),
+          discord: discordTextLifecycle.activeDiscordText !== null && policy.attends(a.id, 'discord'),
           'discord-voice': voiceIds.has(a.id),
         };
       }
       return out;
     },
-    info: () => ({ configured: discordConfigured, voiceReady: voiceSurface !== null }),
+    info: () => ({ configured: discordTextLifecycle.activeDiscordText !== null, voiceReady: voiceSurface !== null }),
     join: async (agentId, surface) => {
       if (surface === 'discord-voice') {
         // Mode check first: an explicitly disabled agent must never end up
@@ -796,7 +795,7 @@ const textChannel = new TextChannel(
       if (surface !== 'discord' && surface !== 'tauri') return { error: `unknown surface: ${surface}`, status: 404 };
       const decision = decideJoin(agentId, surface, policy.modeFor(agentId, surface));
       if (decision.type === 'reject') return { error: decision.error, status: decision.status };
-      if (surface === 'discord' && !discordConfigured) return { error: 'Discord is not configured', status: 409 };
+      if (surface === 'discord' && discordTextLifecycle.activeDiscordText === null) return { error: 'Discord is not configured', status: 409 };
       if (decision.type === 'admit') policy.admit(agentId, surface);
       return { ok: true } as const;
     },
