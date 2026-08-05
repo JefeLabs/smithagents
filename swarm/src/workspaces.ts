@@ -14,6 +14,8 @@ export interface WorkspaceRepo {
   repository?: string;
   /** Base branch for task worktrees. Default: main. */
   branch?: string;
+  /** GitHub API pointer — separate from `repository` (informational remote URL, used for PR/prompt display). */
+  github?: { owner: string; repo: string };
 }
 
 export interface Workspace {
@@ -24,6 +26,12 @@ export interface Workspace {
   default?: boolean;
   /** Archived in place: hidden from roster/delegation, kept for history. */
   archived?: boolean;
+  /** Non-secret Jira/Confluence pointer. Credentials live on User, never here. */
+  atlassian?: {
+    siteUrl: string;
+    jiraProjectKeys?: string[];
+    confluenceSpaceKeys?: string[];
+  };
 }
 
 function assertWorkspace(file: string, v: unknown): Workspace {

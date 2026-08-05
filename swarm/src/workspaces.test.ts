@@ -73,3 +73,16 @@ test('removeWorkspaceFile: rejects missing workspace with readable error, succee
   await removeWorkspaceFile(dir, 'exist');
   assert.equal((await loadWorkspacesFromDir(dir)).length, 0);
 });
+
+test('atlassian and github config round-trip through save/load', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'ws-'));
+  const ws: Workspace = {
+    name: 'acme',
+    repos: [{ name: 'web', path: '/tmp', branch: 'main', github: { owner: 'acme', repo: 'web' } }],
+    atlassian: { siteUrl: 'https://acme.atlassian.net', jiraProjectKeys: ['ACME'], confluenceSpaceKeys: ['DOCS'] },
+  };
+  await saveWorkspace(dir, ws);
+  const [loaded] = await loadWorkspacesFromDir(dir);
+  assert.deepEqual(loaded?.atlassian, ws.atlassian);
+  assert.deepEqual(loaded?.repos[0]?.github, { owner: 'acme', repo: 'web' });
+});
