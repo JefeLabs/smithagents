@@ -45,7 +45,15 @@ export type ChannelFrame =
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  // PUT and DELETE aren't CORS-safelisted methods — a real browser/webview fetch
+  // preflights them first and blocks the actual request if the method isn't listed
+  // here. This file has always routed PUT (/me, /workspaces/:name, /agents/:id) and
+  // DELETE (/workspaces/:name, /agents/:id) requests, but the preflight response
+  // never advertised them, so those calls never reached this server from a real
+  // CORS-enforcing client — only from tests, since Node's fetch doesn't enforce
+  // preflight. GET is CORS-safelisted for simple requests but listed anyway for any
+  // GET that ever adds a custom header (e.g. an Authorization header) later.
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'content-type',
 };
 

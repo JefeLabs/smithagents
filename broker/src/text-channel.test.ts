@@ -146,6 +146,25 @@ test('OPTIONS preflight returns CORS headers', async () => {
   }
 });
 
+// PUT (e.g. /me, /workspaces/:name) and DELETE (e.g. /workspaces/:name, /agents/:id)
+// aren't CORS-safelisted methods — a real browser/webview preflights them and blocks
+// the real request if the method isn't advertised here. This was a pre-existing gap
+// (predates the credential routes) that only showed up because Node's fetch, used by
+// every test in this file, doesn't enforce CORS preflight the way a real client does.
+test('OPTIONS preflight advertises PUT and DELETE, not just POST', async () => {
+  const channel = new TextChannel(() => {});
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/workspaces/acme`, { method: 'OPTIONS' });
+    assert.equal(res.status, 204);
+    const allowed = res.headers.get('access-control-allow-methods') ?? '';
+    assert.match(allowed, /\bPUT\b/);
+    assert.match(allowed, /\bDELETE\b/);
+  } finally {
+    await channel.stop();
+  }
+});
+
 test('GET /agents/:id/removal returns the preview; an unknown agent 404s', async () => {
   const channel = channelWith({
     removal: {
