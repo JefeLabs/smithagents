@@ -555,12 +555,14 @@ export class Dispatcher extends EventEmitter {
             .replace('{prompt}', firstSubject ?? '')
         : (firstSubject ?? `task ${manifest.taskId}`);
       const taskText = manifest.prompt.split('Task from the live meeting:').pop()?.trim() ?? manifest.prompt;
+      const ticketKey = typeof manifest.metadata?.ticketKey === 'string' ? manifest.metadata.ticketKey : undefined;
       const body = [
         `Delegated task \`${manifest.taskId}\`, completed by **${agent}**.`,
         '',
         '## Task',
         '',
         taskText,
+        ...(ticketKey ? ['', `Closes ${ticketKey}`] : []),
         '',
         '---',
         '🤖 Delegated to the crew via smithagents',
