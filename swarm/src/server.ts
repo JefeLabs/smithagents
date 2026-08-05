@@ -1215,8 +1215,15 @@ export class OrchestratorServer {
       const ws: Workspace = {
         name,
         description: b.description?.trim() || undefined,
-        repos: b.repos!.map((r) => ({ name: r.name.trim(), path: r.path, repository: r.repository, branch: r.branch || 'main' })),
+        repos: b.repos!.map((r) => ({
+          name: r.name.trim(),
+          path: r.path,
+          repository: r.repository,
+          branch: r.branch || 'main',
+          github: r.github,
+        })),
         default: Boolean(b.default) || activeWorkspaces(all).length === 0,
+        atlassian: b.atlassian,
       };
       try {
         if (ws.default) for (const other of all.filter((w) => w.default)) await saveWorkspace(dir, { ...other, default: undefined });
@@ -1242,6 +1249,7 @@ export class OrchestratorServer {
         repos: b.repos ? normalizeRepoBranch(b.repos) : existing.repos,
         default: b.default ?? existing.default,
         archived: b.archived === false ? undefined : existing.archived,
+        atlassian: b.atlassian !== undefined ? b.atlassian : existing.atlassian,
       };
       if (merged.default && merged.archived) {
         return reply.status(409).send({ error: `"${existing.name}" is archived — un-archive it before making it the default` });
@@ -1313,7 +1321,8 @@ export class OrchestratorServer {
           description: w.description,
           default: Boolean(w.default) || (!active.some((x) => x.default) && active[0] === w),
           archived: Boolean(w.archived),
-          repos: w.repos.map((r) => ({ name: r.name, path: r.path, repository: r.repository, branch: r.branch ?? 'main' })),
+          repos: w.repos.map((r) => ({ name: r.name, path: r.path, repository: r.repository, branch: r.branch ?? 'main', github: r.github })),
+          atlassian: w.atlassian,
         })),
       };
     });
