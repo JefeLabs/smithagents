@@ -168,6 +168,23 @@ test('without attendsPolicy the legacy array check still applies', () => {
   );
 });
 
+test('unregister removes the adapter of that kind; dispatchSpeech no longer reaches it', () => {
+  const { adapter, delivered } = fakeAdapter('discord');
+  const hub = new AdapterHub({ resolveSpeaker, agents: () => AGENTS, submitUserText: () => {} });
+  hub.register(adapter);
+  hub.setActiveOrigin({ kind: 'discord', channelRef: 'chan-1' });
+  hub.dispatchSpeech('Ignacio: before unregister');
+  assert.equal(delivered.length, 1);
+  hub.unregister('discord');
+  hub.dispatchSpeech('Ignacio: after unregister');
+  assert.equal(delivered.length, 1); // unchanged — no adapter left to deliver through
+});
+
+test('unregister on a kind that was never registered is a no-op, not a throw', () => {
+  const hub = new AdapterHub({ resolveSpeaker, agents: () => AGENTS, submitUserText: () => {} });
+  assert.doesNotThrow(() => hub.unregister('discord'));
+});
+
 test('without attendsPolicy, a map-shaped channels (now reachable — swarm persists it) neither throws nor blocks delivery', () => {
   // main.ts wires attendsPolicy synchronously today, so this legacy branch
   // never sees a map in production — but swarm's PUT /agents/:id now

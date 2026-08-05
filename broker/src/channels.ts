@@ -66,6 +66,13 @@ export class AdapterHub {
     this.adapters.set(adapter.kind, adapter);
   }
 
+  /** Removes the adapter of `kind`, if any — the register() counterpart a
+   * lifecycle teardown needs so a stop()-ed adapter is never left reachable
+   * by dispatchSpeech (which would try to deliver() through a dead connection). */
+  unregister(kind: string): void {
+    this.adapters.delete(kind);
+  }
+
   /** Formats the line and forwards it with its origin — never touches hub state directly. */
   onUtterance(adapterKind: string, u: ChannelUtterance): void {
     const origin: TurnOrigin = { kind: adapterKind, channelRef: u.channelRef };

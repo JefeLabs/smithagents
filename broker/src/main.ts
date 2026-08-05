@@ -11,7 +11,7 @@ import { BrokerBrain, type StreamFactory } from './brain.ts';
 import { Broker, TTS_SAMPLE_RATE } from './broker.ts';
 import { AdapterHub } from './channels.ts';
 import { loadBrokerConfig } from './config.ts';
-import { createDiscordAdapter } from './discord-adapter.ts';
+import { createDiscordTextLifecycle } from './discord-text-lifecycle.ts';
 import { AgentDirectory } from './directory.ts';
 import { LiveKitRoomBridge } from './room.ts';
 import { spawnSync } from 'node:child_process';
@@ -903,24 +903,16 @@ console.log(`[broker] running — polling swarm for open meetings. Text channel 
 
 // Discord attends only when a token is present — the all-local invariant:
 // nothing about Discord constructs or logs without DISCORD_TOKEN set.
+// TEMPORARY bridge: boots once at startup from env vars, same as before this
+// extraction. Task 9 replaces this call site with a workspace-driven one,
+// wired through session activation instead of a one-shot startup boot.
+const discordTextLifecycle = createDiscordTextLifecycle({ hub: adapterHub });
 const discordToken = process.env.DISCORD_TOKEN;
 if (discordToken) {
   const allowlist = (process.env.DISCORD_CHANNELS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-  if (allowlist.length === 0) {
-    console.error('[discord] DISCORD_TOKEN is set but DISCORD_CHANNELS is empty — the crew would attend nowhere. Adapter not started.');
-  } else {
-    void createDiscordAdapter({
-      token: discordToken,
-      allowlist,
-      onUtterance: (u) => adapterHub.onUtterance('discord', u),
-    }).then(
-      ({ adapter }) => {
-        adapterHub.register(adapter);
-        console.log(`[discord] crew attending ${allowlist.length} channel(s)`);
-      },
-      (err) => console.error(`[discord] failed to start: ${String(err)}`),
-    );
-  }
+  void discordTextLifecycle
+    .bootDiscordText(discordToken, allowlist)
+    .catch((err: unknown) => console.error(`[discord] failed to start: ${String(err)}`));
 }
 
 /**
