@@ -86,6 +86,26 @@ describe("ConnectorFormModal", () => {
     );
   });
 
+  it("typing into a verifyExtraFields input and then saving excludes it from onSave's fields, even though both were filled in the same interaction", async () => {
+    const onSave = vi.fn(async () => ({}));
+    render(<ConnectorFormModal open vendor={ATLASSIAN_VENDOR} onClose={() => {}} onSave={onSave} />);
+    await userEvent.type(screen.getByPlaceholderText(/label/i), "default");
+    await userEvent.type(screen.getByPlaceholderText(/atlassian account email/i), "e@x.com");
+    await userEvent.type(screen.getByPlaceholderText(/^api token/i), "atl-tok");
+    await userEvent.type(screen.getByPlaceholderText(/site url/i), "https://acme.atlassian.net");
+    await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith({
+        vendorId: "atlassian",
+        label: "default",
+        // Exact deep-equality: if a regression merged `extra` into `fields`, this object would
+        // gain a `testSiteUrl` key and fail the match below, even though it was typed and the
+        // form was saved in the very same interaction.
+        fields: { email: "e@x.com", apiToken: "atl-tok" },
+      }),
+    );
+  });
+
   it("Re-check on an existing instance calls onVerify with the transient extra fields, not onSave", async () => {
     const onVerify = vi.fn(async () => ({ ok: true, detail: "Jira: authenticated" }));
     render(
