@@ -1,3 +1,20 @@
+/* Audio blocked by the webview autoplay policy — any click/keypress clears it. */
+.audio-blocked-hint {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--pill-br);
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(8px);
+  font-size: 12px;
+  opacity: 0.85;
+  pointer-events: none;
+}
+
 /* Host tile: the broker's own identity, above and apart from the crew. */
 .identity-tile {
   padding-bottom: 12px;

@@ -47,6 +47,9 @@ function gapFor(speaker: string | undefined, last: string | undefined): number {
  */
 export function useSpokenReplies(messages: ChatMessage[], roster: RosterAgent[], webSpeechEnabled: boolean) {
   const [soundOn, setSoundOn] = useState(() => localStorage.getItem(STORE_KEY) !== "off");
+  /** True while the AudioContext is blocked by the autoplay policy (WKWebView) — a user gesture will unblock it. */
+  const [audioBlocked, setAudioBlocked] = useState(false);
+  const gestureArmed = useRef(false);
   const soundOnRef = useRef(soundOn);
   soundOnRef.current = soundOn;
   const lastConsumed = useRef(-1);
@@ -67,8 +70,42 @@ export function useSpokenReplies(messages: ChatMessage[], roster: RosterAgent[],
     profiles.current = new Map(roster.filter((a) => a.speech).map((a) => [a.name, a.speech as SpeechProfile]));
   }, [roster]);
 
+  /** One-shot: the next click/key resumes the blocked context and drains the queue. */
+  const armGestureResume = () => {
+    if (gestureArmed.current) return;
+    gestureArmed.current = true;
+    const onGesture = () => {
+      gestureArmed.current = false;
+      window.removeEventListener("pointerdown", onGesture, true);
+      window.removeEventListener("keydown", onGesture, true);
+      const audioCtx = ctx.current;
+      if (!audioCtx) return;
+      audioCtx.resume().then(
+        () => {
+          setAudioBlocked(false);
+          pumpAudio();
+        },
+        // Still not allowed — re-arm and wait for the next gesture.
+        () => armGestureResume(),
+      );
+    };
+    window.addEventListener("pointerdown", onGesture, true);
+    window.addEventListener("keydown", onGesture, true);
+  };
+
   const pumpAudio = () => {
-    if (speaking.current || !ctx.current) return;
+    const audioCtx = ctx.current;
+    if (speaking.current || !audioCtx) return;
+    // A non-running context can't fire onended — a source started on it would
+    // wedge this queue forever (speaking stuck true). Hold frames instead and
+    // let a user gesture resume playback.
+    if (audioCtx.state !== "running") {
+      if (audioQueue.current.length > 0) {
+        setAudioBlocked(true);
+        armGestureResume();
+      }
+      return;
+    }
     const next = audioQueue.current.shift();
     if (!next) return;
     speaking.current = true;
@@ -76,14 +113,22 @@ export function useSpokenReplies(messages: ChatMessage[], roster: RosterAgent[],
     lastSpeaker.current = next.speaker ?? lastSpeaker.current;
     gapTimer.current = setTimeout(() => {
       gapTimer.current = null;
-      const audioCtx = ctx.current;
-      if (!audioCtx) {
+      const liveCtx = ctx.current;
+      if (!liveCtx) {
         speaking.current = false;
         return;
       }
-      const source = audioCtx.createBufferSource();
+      if (liveCtx.state !== "running") {
+        // Context got suspended during the gap — put the frame back and hold.
+        audioQueue.current.unshift(next);
+        speaking.current = false;
+        setAudioBlocked(true);
+        armGestureResume();
+        return;
+      }
+      const source = liveCtx.createBufferSource();
       source.buffer = next.buffer;
-      source.connect(audioCtx.destination);
+      source.connect(liveCtx.destination);
       source.onended = () => {
         currentSource.current = null;
         speaking.current = false;
@@ -97,10 +142,22 @@ export function useSpokenReplies(messages: ChatMessage[], roster: RosterAgent[],
   const playAudioFrame = async (frame: AudioFrame) => {
     if (!soundOnRef.current) return;
     ctx.current ??= new AudioContext();
-    void ctx.current.resume();
+    const audioCtx = ctx.current;
+    if (audioCtx.state !== "running") {
+      audioCtx.resume().then(
+        () => {
+          setAudioBlocked(false);
+          pumpAudio();
+        },
+        () => {
+          setAudioBlocked(true);
+          armGestureResume();
+        },
+      );
+    }
     const bytes = Uint8Array.from(atob(frame.dataB64), (c) => c.charCodeAt(0));
     try {
-      const buffer = await ctx.current.decodeAudioData(bytes.buffer);
+      const buffer = await audioCtx.decodeAudioData(bytes.buffer);
       audioQueue.current.push({ buffer, speaker: frame.speaker });
       pumpAudio();
     } catch {
@@ -164,5 +221,5 @@ export function useSpokenReplies(messages: ChatMessage[], roster: RosterAgent[],
     });
   };
 
-  return { soundOn, toggleSound, playAudioFrame };
+  return { soundOn, toggleSound, playAudioFrame, audioBlocked };
 }

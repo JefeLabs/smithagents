@@ -84,7 +84,7 @@ export function HomePage() {
     saveWorkspaceChannels,
     verifyWorkspaceDiscord,
   } = useBrokerChat({ onAudio: (frame) => audioSink.current(frame) });
-  const { soundOn, toggleSound, playAudioFrame } = useSpokenReplies(messages, roster, !audioMode);
+  const { soundOn, toggleSound, playAudioFrame, audioBlocked } = useSpokenReplies(messages, roster, !audioMode);
   audioSink.current = (frame) => void playAudioFrame(frame);
   const { micLive, toggleMic } = usePushToTalk({
     begin: () => micControl("mic-start"),
@@ -189,6 +189,9 @@ export function HomePage() {
       }
       overlays={
         <>
+          {audioBlocked && soundOn && (
+            <div className="audio-blocked-hint">audio is blocked — click anywhere to enable sound</div>
+          )}
           <ConfirmSheet
             open={removing !== null}
             title={`Remove ${removing?.entry.name}?`}
