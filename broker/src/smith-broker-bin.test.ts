@@ -62,3 +62,70 @@ test('smith-broker-send exits 2 with no prd-path argument', async () => {
     return true;
   });
 });
+
+// Constructs a TextChannel with only the `tasks` handler wired in — mirrors
+// text-channel.test.ts's channelWith helper, kept local since this file
+// doesn't need any of the other 13 optional constructor slots.
+function channelWithTasks(get: (taskId: string) => Promise<Record<string, unknown> | null>) {
+  return new TextChannel(
+    () => {},
+    () => [],
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    { get },
+  );
+}
+
+test('smith-broker-check prints status and prUrl for a completed task, exits 0', async () => {
+  const channel = channelWithTasks(async (taskId) =>
+    taskId === 't-1' ? { taskId: 't-1', status: 'completed', result: { pullRequestUrl: 'https://github.com/x/y/pull/1' } } : null,
+  );
+  const port = await channel.start(0);
+  try {
+    const { stdout } = await execFileAsync('node', [join(BIN_DIR, 'smith-broker-check.mjs'), 't-1'], {
+      env: { ...process.env, SMITH_BROKER_URL: `http://127.0.0.1:${port}` },
+    });
+    assert.deepEqual(JSON.parse(stdout), {
+      status: 'completed',
+      prUrl: 'https://github.com/x/y/pull/1',
+      raw: { taskId: 't-1', status: 'completed', result: { pullRequestUrl: 'https://github.com/x/y/pull/1' } },
+    });
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('smith-broker-check exits non-zero on an unknown taskId', async () => {
+  const channel = channelWithTasks(async () => null);
+  const port = await channel.start(0);
+  try {
+    await assert.rejects(
+      execFileAsync('node', [join(BIN_DIR, 'smith-broker-check.mjs'), 'nope'], {
+        env: { ...process.env, SMITH_BROKER_URL: `http://127.0.0.1:${port}` },
+      }),
+      (err: unknown) => {
+        assert.equal((err as ExecFailure).code, 1);
+        return true;
+      },
+    );
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('smith-broker-check exits 2 with no taskId argument', async () => {
+  await assert.rejects(execFileAsync('node', [join(BIN_DIR, 'smith-broker-check.mjs')]), (err: unknown) => {
+    assert.equal((err as ExecFailure).code, 2);
+    return true;
+  });
+});
