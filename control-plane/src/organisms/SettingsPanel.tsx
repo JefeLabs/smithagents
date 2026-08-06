@@ -1,18 +1,20 @@
-import { ArrowLeft, Blocks, MessageSquare, Palette, Settings as SettingsIcon } from "lucide-react";
+import { ArrowLeft, Blocks, MessageSquare, Palette, Settings as SettingsIcon, Terminal } from "lucide-react";
 import { useEffect, useState } from "react";
 import type {
   ChannelsRecord,
+  CliToolListing,
   ConnectorInstanceRecord,
   ConnectorVendorMeta,
   WorkspaceRecord,
 } from "../hooks/useBrokerChat";
 import type { ThemeId } from "../hooks/useTheme";
 import { ChannelsGroup } from "./settings/ChannelsGroup";
+import { CliToolsGroup } from "./settings/CliToolsGroup";
 import { GeneralGroup, type ResetScope } from "./settings/GeneralGroup";
 import { IntegrationsGroup } from "./settings/IntegrationsGroup";
 import { ThemesGroup } from "./settings/ThemesGroup";
 
-export type SettingsGroupId = "general" | "integrations" | "channels" | "themes";
+export type SettingsGroupId = "general" | "integrations" | "cli-tools" | "channels" | "themes";
 
 interface SettingsPanelProps {
   open: boolean;
@@ -37,6 +39,9 @@ interface SettingsPanelProps {
     id: string,
     extra?: Record<string, string>,
   ) => Promise<{ ok?: boolean; detail?: string; error?: string }>;
+  listCliTools?: () => Promise<CliToolListing[]>;
+  refreshCliTools?: (tool?: string) => Promise<CliToolListing[]>;
+  setCliToolEnabled?: (id: string, enabled: boolean) => Promise<CliToolListing[] | { error: string }>;
   listWorkspaceRecords?: () => Promise<WorkspaceRecord[]>;
   getWorkspaceChannels?: (name: string) => Promise<ChannelsRecord>;
   saveWorkspaceChannels?: (
@@ -49,6 +54,7 @@ interface SettingsPanelProps {
 const GROUPS: Array<{ id: SettingsGroupId; label: string; icon: typeof SettingsIcon }> = [
   { id: "general", label: "General", icon: SettingsIcon },
   { id: "integrations", label: "Integrations", icon: Blocks },
+  { id: "cli-tools", label: "CLI Tools", icon: Terminal },
   { id: "channels", label: "Channels", icon: MessageSquare },
   { id: "themes", label: "Themes", icon: Palette },
 ];
@@ -67,6 +73,9 @@ export function SettingsPanel({
   updateConnector,
   deleteConnector,
   verifyConnector,
+  listCliTools,
+  refreshCliTools,
+  setCliToolEnabled,
   listWorkspaceRecords,
   getWorkspaceChannels,
   saveWorkspaceChannels,
@@ -123,6 +132,16 @@ export function SettingsPanel({
             />
           ) : (
             <p className="wizard__hint">Integrations — not wired up yet.</p>
+          ))}
+        {active === "cli-tools" &&
+          (listCliTools && refreshCliTools && setCliToolEnabled ? (
+            <CliToolsGroup
+              listCliTools={listCliTools}
+              refreshCliTools={refreshCliTools}
+              setCliToolEnabled={setCliToolEnabled}
+            />
+          ) : (
+            <p className="wizard__hint">CLI Tools — not wired up yet.</p>
           ))}
         {active === "channels" &&
           (listWorkspaceRecords && getWorkspaceChannels && saveWorkspaceChannels && verifyWorkspaceDiscord ? (

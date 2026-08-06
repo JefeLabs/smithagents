@@ -78,6 +78,9 @@ export function HomePage() {
     updateConnector,
     deleteConnector,
     verifyConnector,
+    listCliTools,
+    refreshCliTools,
+    setCliToolEnabled,
     getWorkspaceChannels,
     saveWorkspaceChannels,
     verifyWorkspaceDiscord,
@@ -214,6 +217,9 @@ export function HomePage() {
             updateConnector={updateConnector}
             deleteConnector={deleteConnector}
             verifyConnector={verifyConnector}
+            listCliTools={listCliTools}
+            refreshCliTools={refreshCliTools}
+            setCliToolEnabled={setCliToolEnabled}
             listWorkspaceRecords={listWorkspaceRecords}
             getWorkspaceChannels={getWorkspaceChannels}
             saveWorkspaceChannels={saveWorkspaceChannels}
