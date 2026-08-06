@@ -17,9 +17,11 @@ import {
   resolveAtlassianConnector,
   resolveConnector,
   workspaceProblems,
+  gitInitRequestedRepos,
 } from './server.js';
 import { saveUser, loadUsersFromDir } from './users.js';
 import type { ConnectorInstance, User } from './users.js';
+import { isGitRepo } from './workspaces.js';
 import type { Workspace } from './workspaces.js';
 import type { WorkspaceChannels } from './channels.js';
 
@@ -279,3 +281,21 @@ test('workspaceProblems: accepts tmux/docker/remote runtimes, rejects anything e
 // new harness for this task alone, the two branches were verified by direct
 // code inspection against the brief's specified "after" snippet (exact
 // match) instead. Flagged here for visibility rather than silently omitted.
+
+test('gitInitRequestedRepos: inits only flagged non-repo paths, leaves existing repos alone, reports unusable paths', async () => {
+  const fresh = await mkdtemp(join(tmpdir(), 'nw-fresh-'));
+  const existing = await mkdtemp(join(tmpdir(), 'nw-existing-'));
+  await git('git', ['init'], { cwd: existing });
+  assert.equal(
+    await gitInitRequestedRepos([
+      { name: 'a', path: fresh, initGit: true },
+      { name: 'b', path: existing, initGit: true },
+      { name: 'c', path: join(fresh, 'never-flagged') },
+    ]),
+    null,
+  );
+  assert.equal(await isGitRepo(fresh), true);
+  assert.equal(await isGitRepo(existing), true);
+  const missing = join(fresh, 'no-such-dir', 'deeper');
+  assert.match((await gitInitRequestedRepos([{ name: 'x', path: missing, initGit: true }]))!, /git init failed/);
+});

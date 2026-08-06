@@ -64,7 +64,9 @@ import {
   defaultViolation,
   activeWorkspaces,
   normalizeRepoBranch,
+  initGitRepo,
   type Workspace,
+  type WorkspaceRepo,
 } from './workspaces.js';
 import { loadUsersFromDir, saveUser, resolveCurrentUser, type User, type ConnectorInstance } from './users.js';
 import { verifyGithubRepo } from './verify-github.js';
@@ -1188,7 +1190,9 @@ export class OrchestratorServer {
     });
 
     this.app.post('/workspaces', async (req, reply) => {
-      const b = req.body as Partial<Workspace>;
+      const b = req.body as Partial<Workspace> & { repos?: Array<WorkspaceRepo & { initGit?: boolean }> };
+      const initProblem = await gitInitRequestedRepos(b.repos);
+      if (initProblem) return reply.status(400).send({ error: initProblem });
       const problem = await workspaceProblems(b);
       if (problem) return reply.status(400).send({ error: problem });
       const dir = resolve(process.cwd(), '.smith/workspaces');
@@ -1962,6 +1966,27 @@ export function buildAgentUpdate(
     channels: b.channels ?? existing.channels,
     archived: b.archived === false ? undefined : existing.archived,
   };
+}
+
+/**
+ * POST /workspaces' one creation side effect: repos submitted with the
+ * transient `initGit` flag become git repos before workspaceProblems'
+ * isGitRepo validation runs. The flag is never persisted — the route's
+ * explicit repo-field mapping drops it.
+ */
+export async function gitInitRequestedRepos(
+  repos: Array<Partial<WorkspaceRepo> & { initGit?: boolean }> | undefined,
+): Promise<string | null> {
+  for (const r of repos ?? []) {
+    if (!r?.initGit || !r.path || !isAbsolute(r.path)) continue;
+    if (await isGitRepo(r.path)) continue;
+    try {
+      await initGitRepo(r.path);
+    } catch (err) {
+      return `Repo "${r.name ?? r.path}": git init failed — ${String((err as Error).message)}`;
+    }
+  }
+  return null;
 }
 
 /**

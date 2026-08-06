@@ -126,6 +126,11 @@ export async function isGitRepo(path: string): Promise<boolean> {
   }
 }
 
+/** `git init` an existing directory — the one case where workspace creation may create the repo instead of rejecting the path (creation-time `initGit` flag). */
+export async function initGitRepo(path: string): Promise<void> {
+  await promisify(execFile)('git', ['init'], { cwd: path });
+}
+
 /**
  * The invariant: while any OTHER active workspace exists, the default cannot
  * be archived or deleted — the caller must crown a successor first.

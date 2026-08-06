@@ -13,6 +13,7 @@ import {
   defaultViolation,
   loadWorkspacesFromDir,
   normalizeRepoBranch,
+  initGitRepo,
 } from './workspaces.js';
 import type { Workspace } from './workspaces.js';
 
@@ -141,4 +142,11 @@ test('saveWorkspace/loadWorkspacesFromDir round-trips the optional runtime field
   await saveWorkspace(dir, { name: 'plain', repos: [{ name: 'web', path: dir }] });
   const plain = (await loadWorkspacesFromDir(dir)).find((w) => w.name === 'plain');
   assert.equal(plain!.runtime, undefined);
+});
+
+test('initGitRepo: turns a plain directory into a git repository', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'initgit-'));
+  assert.equal(await isGitRepo(dir), false);
+  await initGitRepo(dir);
+  assert.equal(await isGitRepo(dir), true);
 });
