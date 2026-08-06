@@ -41,7 +41,9 @@ export type ChannelFrame =
       sessions: Array<{ id: string; title: string; workspace: string; updatedAt: string; active: boolean }>;
       transcript: Array<{ role: 'user' | 'broker'; text: string }>;
       workspaces: string[];
-    };
+    }
+  /** A delegated task was just bound to an agent — the deterministic handle an external bridge (broker/bin) correlates against, since the brain's own spoken confirmation is free-form prose. */
+  | { type: 'task-dispatched'; taskId: string; agent: string; task: string };
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -167,6 +169,10 @@ export class TextChannel {
       remove(id: string): Promise<Record<string, unknown>>;
       verify(id: string, extra?: Record<string, string>): Promise<Record<string, unknown>>;
     },
+    /** Task status passthrough for the external bridge (Copilot/Claude, see broker/bin). Read-only, loopback-trusted like the rest of this file. */
+    private readonly tasks?: {
+      get(taskId: string): Promise<Record<string, unknown> | null>;
+    },
   ) {}
 
   private clientSeq = 0;
@@ -238,6 +244,21 @@ export class TextChannel {
             );
         });
         return;
+      }
+      if (req.method === 'GET' && this.tasks) {
+        const m = /^\/tasks\/([^/]+)$/.exec(new URL(req.url ?? '/', 'http://localhost').pathname);
+        if (m) {
+          const taskId = decodeURIComponent(m[1]!);
+          void this.tasks.get(taskId).then(
+            (t) =>
+              t
+                ? res.writeHead(200, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify(t))
+                : res.writeHead(404, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify({ error: `task ${taskId} not found` })),
+            (err: unknown) =>
+              res.writeHead(500, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify({ error: String((err as Error).message ?? err) })),
+          );
+          return;
+        }
       }
       if (this.creation) {
         const url = new URL(req.url ?? '/', 'http://localhost');

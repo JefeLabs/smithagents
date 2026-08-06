@@ -534,6 +534,11 @@ const connectors = {
     swarm.verifyConnector(id, extra) as unknown as Promise<Record<string, unknown>>,
 };
 
+// Task status passthrough for the external bridge (broker/bin/smith-broker-check.mjs).
+const tasks = {
+  get: (taskId: string) => swarm.getTask(taskId) as unknown as Promise<Record<string, unknown> | null>,
+};
+
 const textChannel = new TextChannel(
   handleUserText,
   () => [
@@ -833,6 +838,7 @@ const textChannel = new TextChannel(
   me,
   channels,
   connectors,
+  tasks,
 );
 const micSessions = new Map<number, DeepgramSttStream>();
 
@@ -918,6 +924,7 @@ broker = new Broker(
     onTurnStart: (origin) => adapterHub.setActiveOrigin(origin),
     onTurnEnd: () => adapterHub.setActiveOrigin(undefined),
     onRosterChange: (roster) => textChannel.broadcast({ type: 'roster', agents: toRosterEntries(roster) }),
+    onTaskDispatched: (d) => textChannel.broadcast({ type: 'task-dispatched', taskId: d.taskId, agent: d.agent, task: d.task }),
     mintToken: (roomName) =>
       mintRoomToken({
         apiKey: config.livekit.apiKey,

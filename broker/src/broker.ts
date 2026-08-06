@@ -88,6 +88,8 @@ export interface BrokerDeps {
   onTurnEnd?: () => void;
   /** Fired with a fresh roster snapshot after every directory, squad, group, or hand change. */
   onRosterChange?: (roster: UiRoster) => void;
+  /** Fired the moment a delegated task is bound in the directory — before any narration. Lets an external bridge (e.g. Copilot/Claude, see broker/bin) correlate its own utterance to the resulting taskId. */
+  onTaskDispatched?: (d: { taskId: string; agent: string; task: string }) => void;
   /** Crew memory — durable facts recalled into every turn. Optional: without it the crew simply forgets. */
   memory?: MemoryPort;
   /** Scope for memory reads/writes: the active session and its workspace. */
@@ -182,6 +184,7 @@ export class Broker {
         summary: input.task.slice(0, 80),
         swarmName: agentName ?? undefined,
       });
+      this.deps.onTaskDispatched?.({ taskId, agent: agent.name, task: input.task });
       this.notifyRoster();
       return `Delegated to ${agent.name}: task ${taskId} queued. They will work asynchronously; you will be notified on completion.`;
     },

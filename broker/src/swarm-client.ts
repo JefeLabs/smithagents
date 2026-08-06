@@ -190,6 +190,29 @@ export class SwarmClient {
     await this.http('POST', `/tasks/${encodeURIComponent(taskIdOrName)}/kill`, {});
   }
 
+  /**
+   * Task status passthrough for the external bridge (Copilot/Claude, see
+   * broker/bin/smith-broker-check.mjs) — unlike every other method here,
+   * this one must tell a genuine "task not found" (404) apart from a real
+   * failure (network, 5xx), so it can't reuse the shared `http()` helper,
+   * which flattens every non-2xx into a single thrown Error with no status
+   * code attached.
+   */
+  async getTask(taskId: string): Promise<{ taskId: string; status: string; result?: unknown } | null> {
+    const headers: Record<string, string> = {};
+    if (this.token) headers.authorization = `Bearer ${this.token}`;
+    const res = await this.fetchImpl(`${this.baseUrl}/tasks/${encodeURIComponent(taskId)}`, { method: 'GET', headers });
+    if (res.status === 404) return null;
+    if (!res.ok) {
+      const detail = await res
+        .json()
+        .then((b) => (b as { error?: string }).error)
+        .catch(() => undefined);
+      throw new Error(detail ?? `swarm GET /tasks/${taskId} -> ${res.status}`);
+    }
+    return (await res.json()) as { taskId: string; status: string; result?: unknown };
+  }
+
   async registry(): Promise<RegistryAgent[]> {
     const r = await this.http('GET', '/agents/registry');
     return r.agents as RegistryAgent[];

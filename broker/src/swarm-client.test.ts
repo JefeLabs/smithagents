@@ -220,3 +220,33 @@ test('getMe/updateMe still hit /me — updateMe body is name-only now', async ()
   await client.updateMe({ name: 'Edwin' });
   assert.deepEqual(calls, [{ path: '/me', body: undefined }, { path: '/me', body: { name: 'Edwin' } }]);
 });
+
+test('getTask hits GET /tasks/:taskId and returns the parsed record', async () => {
+  const calls: string[] = [];
+  const client = new SwarmClient({
+    baseUrl: 'http://s',
+    fetchImpl: (async (url: unknown, init?: RequestInit) => {
+      calls.push(`${init?.method ?? 'GET'} ${String(url).replace('http://s', '')}`);
+      return new Response(JSON.stringify({ taskId: 't-1', status: 'completed', result: { pullRequestUrl: 'https://github.com/x/y/pull/1' } }));
+    }) as typeof fetch,
+  });
+  const task = await client.getTask('t-1');
+  assert.deepEqual(calls, ['GET /tasks/t-1']);
+  assert.deepEqual(task, { taskId: 't-1', status: 'completed', result: { pullRequestUrl: 'https://github.com/x/y/pull/1' } });
+});
+
+test('getTask returns null on 404 (unknown task) instead of throwing', async () => {
+  const client = new SwarmClient({
+    baseUrl: 'http://s',
+    fetchImpl: (async () => new Response(JSON.stringify({ error: 'Task t-9 not found' }), { status: 404 })) as typeof fetch,
+  });
+  assert.equal(await client.getTask('t-9'), null);
+});
+
+test('getTask throws on a genuine 500, unlike the 404 case', async () => {
+  const client = new SwarmClient({
+    baseUrl: 'http://s',
+    fetchImpl: (async () => new Response(JSON.stringify({ error: 'swarm on fire' }), { status: 500 })) as typeof fetch,
+  });
+  await assert.rejects(client.getTask('t-1'), /swarm on fire/);
+});
