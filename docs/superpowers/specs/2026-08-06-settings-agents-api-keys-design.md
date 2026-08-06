@@ -25,19 +25,26 @@ Keys) read as one group.
 
 - **Subscription-first (Edwin, 2026-08-06).** All agent work routes
   through subscription CLIs whenever one can do the job; API-key engines
-  exist only for work subscriptions can't cover (ECS-runnable thinker
-  roles, modality gaps like image generation). This page is the exception
-  path, not a parallel default — and the rule binds the api-runtime when
-  it lands: given a role both kinds could fill, the catalog prefers the
-  `cli` kind.
+  exist only for what subscriptions can't cover (ECS-runnable thinker
+  roles) or as an explicit speed upgrade where the subscription path is
+  too slow (avatar generation, below). This page is the exception path,
+  not a parallel default — and the rule binds the api-runtime when it
+  lands: given a role both kinds could fill, the catalog prefers the
+  `cli` kind. Verified 2026-08-06: image generation is NOT a hard
+  modality gap — headless `agy -p` produced a house-style portrait via
+  its native Nano Banana integration on subscription auth alone.
 - **Engine/provider keys, not service keys.** This page manages keys that
   let *agents* run via provider APIs (Anthropic, OpenAI, Google). Broker
-  service keys (ElevenLabs, Deepgram, LiveKit, Gemini avatars) stay in
-  `.env` — different consumers, different lifecycle.
-- **Store + verify only in v1.** Keys are saved, verified, and displayed.
-  No catalog changes, no wizard changes, no launch-path changes. The
-  api-runtime lands later and reads this store; its absence must not
-  block shipping the registry.
+  service keys (ElevenLabs, Deepgram, LiveKit) stay in `.env` — different
+  consumers, different lifecycle. Avatar generation is the amended
+  exception: it prefers the agy subscription path and reads this page's
+  `google` entry as its accelerator, so it needs no `.env` key at all.
+- **Store + verify, one consumer (amended 2026-08-06).** Keys are saved,
+  verified, and displayed. No catalog changes, no wizard changes, no
+  launch-path changes. The api-runtime lands later and reads this store.
+  One deliberate exception: the broker's avatar generator reads the
+  `google` entry as its speed accelerator (see "Avatar generation"
+  below) — replacing the `.env` Gemini key it briefly required.
 - **Machine-scoped, one untracked file.** Keys are machine facts like CLI
   auth, so they live in `swarm/.smith/api-keys.json` (0600, dir 0700 —
   exact `saveCliToolsFile` idiom), not on the `User` record and not as
@@ -48,9 +55,11 @@ Keys) read as one group.
   UI card grid. Adding a provider is adding an entry — no new routes,
   fields, or redaction logic (same rule as connector vendors and
   personas).
-- **Redact everywhere.** No API response ever contains a raw key.
-  Listings expose `hasKey`, `last4`, and verify state only. There is no
-  "show key" affordance; replacing a key is typing a new one.
+- **Redact everywhere.** No client-facing response ever contains a raw
+  key. Listings expose `hasKey`, `last4`, and verify state only. There
+  is no "show key" affordance; replacing a key is typing a new one. The
+  single exception is the swarm's localhost-only credential route for
+  the broker (see "Avatar generation"), which never transits 7790.
 - **Block only confirmed negatives.** HTTP 401/403 from the provider →
   `verified: false`. Network failure, timeout, or 5xx → `'unknown'` with
   a human detail — a flaky network never marks a key bad. Same rule the
@@ -165,6 +174,41 @@ new styles beyond the nav heading. Card states by pill:
 into `SettingsPanel` like the CLI tools trio; group renders the
 "not wired up yet" hint when absent.
 
+## Avatar generation: agy-first, key-accelerated (amended 2026-08-06)
+
+Empirically verified twice on 2026-08-06 (Claude scratchpad probe + Edwin's
+own test): headless `agy -p` generates images through Antigravity's native
+Nano Banana integration on Google-account subscription auth — no API key.
+Observed characteristics: ~60–90s per image, imperfect path discipline
+(one run wrote to `$HOME` despite a cwd instruction), and JPEG output
+mislabeled `.png` at 1024×1024 — all absorbed by the wrapper below.
+
+Engine selection in `broker/src/main.ts` when building the
+`AvatarGenerator`:
+
+1. **Verified `google` key in `api-keys.json`** → Gemini API path
+   (existing `@google/genai` client, ~3–5s). The broker never reads
+   `swarm/.smith/` itself, and the redacted `/api-keys` listings never
+   carry raw keys. Instead the swarm exposes
+   `GET /api-keys/google/credential` — localhost-only, guarded like its
+   other privileged routes — and the broker fetches the key at
+   generation time. Invariant: a raw key crosses exactly one hop
+   (swarm → broker, same machine) and is never exposed on the broker's
+   own 7790 surface. The plan pins the exact route guard.
+2. **No verified key, agy active in the CLI registry** → `AgyImagesClient`:
+   subprocess `agy -p <house prompt + explicit output path>` in a fresh
+   contained temp dir (`--add-dir` scoped), then collect the newest image
+   file from that dir regardless of claimed name/format, base64 it, and
+   let the existing sharp normalization (512×512 PNG) fix size and format.
+   Timeout 3 minutes; UI shows an async "portrait brewing" state instead
+   of a spinner.
+3. **Neither** → the current clear error ("no image engine available —
+   add a Google key in Settings → API Keys or install Antigravity").
+
+The `ImagesClient` seam is unchanged — `AgyImagesClient` implements the
+same minimal interface the Gemini client does, so `AvatarGenerator`,
+its prompt, and its normalization stay untouched.
+
 ## Error handling
 
 - Store load never throws; corrupt file regenerates empty.
@@ -191,13 +235,20 @@ TDD throughout, mirroring the CLI registry's test layout:
 - `control-plane` — `ApiKeysGroup.test.tsx` (pill states, save/verify/
   remove flows, error surface) and `SettingsPanel.test.tsx` additions
   (section headings render, API Keys tab mounts the group, tab order).
+- Avatar engine selection — `broker` tests for the three-way pick
+  (verified key → API; agy active → `AgyImagesClient`; neither → clear
+  error), the credential route guard (localhost-only, never via 7790),
+  and `AgyImagesClient` with a stubbed runner: contained-dir collection
+  of a misnamed/mislocated image, timeout → typed failure the wizard can
+  show, output fed through the existing sharp normalization.
 
 ## Out of scope (v1)
 
-- No consumer of the keys: engine catalog, agent wizard, and launch path
-  are untouched. The api-runtime (one swarm, two engine kinds) reads
-  `api-keys.json` when it lands; this file's shape is that contract, and
-  the subscription-first rule above governs how it may use these keys.
+- Engine catalog, agent wizard, and launch path are untouched — the only
+  key consumer is avatar acceleration (above). The api-runtime (one
+  swarm, two engine kinds) reads `api-keys.json` when it lands; this
+  file's shape is that contract, and the subscription-first rule above
+  governs how it may use these keys.
 - No broker service keys (ElevenLabs/Deepgram/LiveKit/Gemini stay in
   `.env`).
 - No per-key usage metering, no multiple keys per provider, no
