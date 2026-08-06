@@ -918,3 +918,150 @@ Kill only the vite process started here (Ctrl-C / kill its PID — never an unsc
 - Spec coverage: states/trigger → Task 4; two-row composer + send/disabled rules → Task 1; hero relabel + shared `AudioLines` icon → Task 2 (hero) + Task 1 (composer); no-scrollbar + top fade → Task 3; motion package + choreography + reduced-motion → Tasks 3–4; testing section → Tasks 1, 2, 4 (split per component to match repo idiom — SurfacePolicyPopover precedent — instead of one monolithic VoiceStage.test.tsx; same behaviors covered); WorkStage untouched → enforced by new-class-only CSS.
 - Reverse transition (chat → empty on session switch) is exercised by the same `AnimatePresence` code path; jsdom can't meaningfully assert mid-flight animation, so it is covered by the Step-1/Step-2 state tests plus the Task 5 smoke check.
 - Type consistency: `Composer` optional props appear identically in Tasks 1 and 4; `MicHero`/`Transcript`/`VoiceStage` public props are unchanged everywhere; accessible names are exact strings reused across Tasks 1, 2, 4.
+
+---
+
+### Task 6: Hold-to-talk mic button in the composer
+
+**Files:**
+- Modify: `control-plane/src/molecules/Composer.tsx`
+- Test: `control-plane/src/molecules/Composer.test.tsx` (extend)
+
+**Interfaces:**
+- Consumes: existing Composer props `micLive?: boolean`, `onMicToggle?: () => void` — no new props, no VoiceStage/HomePage changes.
+- Produces: a "Hold to talk" button (lucide `Mic`) rendered immediately BEFORE the "Always listening" toggle, only when `onMicToggle` is provided.
+
+Behavior contract (walkie-talkie):
+- Pointer down while mic is off: start listening (`onMicToggle()`), mark holding.
+- Pointer up / leave / cancel while holding: stop listening (`onMicToggle()` again), clear holding.
+- If `micLive` is already true when pressed (always-listening latched), the button is inert — no calls.
+- Keyboard: Space/Enter keydown (non-repeat) starts the hold, keyup releases it.
+- While holding, the button shows the same live styling as the always-listening toggle (`voice-toggle live` classes — no new CSS).
+
+- [ ] **Step 1: Write the failing tests**
+
+Add to `control-plane/src/molecules/Composer.test.tsx` (add `fireEvent` to the existing @testing-library/react import):
+
+```tsx
+  it("hold-to-talk renders only when onMicToggle is wired", () => {
+    render(<Composer onSend={() => {}} />);
+    expect(screen.queryByRole("button", { name: "Hold to talk" })).toBeNull();
+  });
+
+  it("hold-to-talk: press starts listening, release stops it", () => {
+    const onMicToggle = vi.fn();
+    render(<Composer onSend={() => {}} micLive={false} onMicToggle={onMicToggle} />);
+    const hold = screen.getByRole("button", { name: "Hold to talk" });
+    fireEvent.pointerDown(hold);
+    expect(onMicToggle).toHaveBeenCalledTimes(1);
+    fireEvent.pointerUp(hold);
+    expect(onMicToggle).toHaveBeenCalledTimes(2);
+  });
+
+  it("hold-to-talk: pointer leaving while held also stops it", () => {
+    const onMicToggle = vi.fn();
+    render(<Composer onSend={() => {}} micLive={false} onMicToggle={onMicToggle} />);
+    const hold = screen.getByRole("button", { name: "Hold to talk" });
+    fireEvent.pointerDown(hold);
+    fireEvent.pointerLeave(hold);
+    expect(onMicToggle).toHaveBeenCalledTimes(2);
+    fireEvent.pointerUp(hold);
+    expect(onMicToggle).toHaveBeenCalledTimes(2);
+  });
+
+  it("hold-to-talk is inert while always-listening is latched", () => {
+    const onMicToggle = vi.fn();
+    render(<Composer onSend={() => {}} micLive={true} onMicToggle={onMicToggle} />);
+    const hold = screen.getByRole("button", { name: "Hold to talk" });
+    fireEvent.pointerDown(hold);
+    fireEvent.pointerUp(hold);
+    expect(onMicToggle).not.toHaveBeenCalled();
+  });
+```
+
+- [ ] **Step 2: Run tests to verify the new ones fail**
+
+Run: `cd control-plane && pnpm exec vitest run src/molecules/Composer.test.tsx`
+Expected: the 4 new tests FAIL ("Unable to find an accessible element with the role button and name Hold to talk"); the existing 6 still pass.
+
+- [ ] **Step 3: Implement the hold-to-talk button**
+
+In `Composer.tsx`:
+1. Add `Mic` to the lucide import: `import { ArrowUp, AudioLines, ChevronDown, Mic, Plus, Volume2, VolumeX } from "lucide-react";`
+2. Add holding state next to the draft state: `const [holding, setHolding] = useState(false);`
+3. Add the handlers above `submit`:
+
+```tsx
+  const startHold = () => {
+    if (micLive || holding || !onMicToggle) return;
+    setHolding(true);
+    onMicToggle();
+  };
+  const endHold = () => {
+    if (!holding || !onMicToggle) return;
+    setHolding(false);
+    onMicToggle();
+  };
+```
+
+4. Render the button inside `.composer__actions`, immediately BEFORE the always-listening button (inside the same `{onMicToggle && (...)}` gate — wrap both buttons in one fragment):
+
+```tsx
+          {onMicToggle && (
+            <>
+              <button
+                type="button"
+                className={holding ? "voice-toggle live" : "voice-toggle"}
+                title="Hold to talk"
+                aria-label="Hold to talk"
+                aria-pressed={holding}
+                onPointerDown={startHold}
+                onPointerUp={endHold}
+                onPointerLeave={endHold}
+                onPointerCancel={endHold}
+                onKeyDown={(e) => {
+                  if ((e.key === " " || e.key === "Enter") && !e.repeat) {
+                    e.preventDefault();
+                    startHold();
+                  }
+                }}
+                onKeyUp={(e) => {
+                  if (e.key === " " || e.key === "Enter") endHold();
+                }}
+              >
+                <Mic strokeWidth={1.7} />
+              </button>
+              <button
+                type="button"
+                className={micLive ? "voice-toggle live" : "voice-toggle"}
+                title="Always listening"
+                aria-label="Always listening"
+                aria-pressed={micLive}
+                onClick={onMicToggle}
+              >
+                <AudioLines strokeWidth={1.7} />
+              </button>
+            </>
+          )}
+```
+
+(The existing standalone always-listening button block is replaced by this fragment. No CSS changes — `.voice-toggle` rules cover both.)
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `cd control-plane && pnpm exec vitest run src/molecules/Composer.test.tsx`
+Expected: PASS (10 tests).
+
+- [ ] **Step 5: Typecheck + lint**
+
+Run: `cd control-plane && pnpm typecheck && pnpm exec biome check src`
+Expected: clean (5 pre-existing warnings in IntegrationsGroup.test.tsx are known).
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add control-plane/src/molecules/Composer.tsx control-plane/src/molecules/Composer.test.tsx
+git commit -m "feat(control-plane): hold-to-talk mic button beside the always-listening toggle
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+```

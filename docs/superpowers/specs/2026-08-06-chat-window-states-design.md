@@ -41,7 +41,10 @@ The control-plane stage renders one fixed layout: centered greeting, 84px mic he
 - **Row 2 left**: `+` add-context button (links, files — remains a stub wired
   like today's attach button).
 - **Row 2 right**, in order: `Swarm ▾` routing selector (relocated from the
-  input row) · **always-listening** toggle (lucide `AudioLines`, matching the
+  input row) · **hold-to-talk** button (lucide `Mic`; walkie-talkie: pointer
+  down starts listening via `onMicToggle`, release/leave/cancel stops it;
+  inert while always-listening is already latched; label "Hold to talk") ·
+  **always-listening** toggle (lucide `AudioLines`, matching the
   hero; accent + pulse when live; calls the same `onMicToggle`) · **speaker**
   toggle (TTS on/off; the current
   stage-tools sound toggle moves here, and the floating stage-tools row is
