@@ -94,6 +94,10 @@ const LEVEL_LABELS: Record<string, string> = {
 
 const STEPS = ["Setup", "Persona", "Voice", "Reactions", "Answers"] as const;
 
+/** Prefer the first CLI the tool registry marked active; fall back to the catalog's first when none are. */
+const defaultEngine = (c: Catalog | null): EngineOption | null =>
+  c?.engines?.find((e) => e.active !== false) ?? c?.engines?.[0] ?? null;
+
 /**
  * Agent creation wizard: setup → persona → voice → reactions → answers.
  *
@@ -154,7 +158,7 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
     setVoiceId("");
     setStereotype(null);
     setJobRole(null);
-    const first = catalog?.engines?.[0] ?? null;
+    const first = defaultEngine(catalog);
     setEngine(first);
     setModel(first?.models[0] ?? "");
     setGeneratedStyle(undefined);
@@ -196,7 +200,7 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
       .then((r) => r.json())
       .then((c: Catalog) => {
         setCatalog(c);
-        const first = c.engines?.find((e) => e.active !== false) ?? c.engines?.[0];
+        const first = defaultEngine(c);
         if (first) {
           setEngine(first);
           setModel(first.models[0] ?? "");

@@ -167,6 +167,31 @@ describe("AddAgentModal chooser", () => {
     expect((screen.getByLabelText(/backstory/i) as HTMLTextAreaElement).value).toBe("");
   });
 
+  it("wizard reset defaults the CLI to the first active engine, not catalog.engines[0]", async () => {
+    stubFetch({
+      catalog: {
+        ...CATALOG,
+        engines: [
+          { cli: "codex", label: "Codex", models: ["codex-1"], warmSessions: false, active: false },
+          { cli: "claude", label: "Claude Code", models: ["claude-opus"], warmSessions: true },
+        ],
+      },
+    });
+    const onClose = vi.fn();
+    const { rerender } = render(<AddAgentModal open onClose={onClose} />);
+    await userEvent.click(await screen.findByText("Minerva"));
+    await userEvent.click(screen.getByRole("button", { name: /customize/i }));
+    await screen.findByLabelText(/^cli$/i); // Setup step, mid-customize
+
+    // Close without submitting, reopen — resetWizardFields runs again on Create custom below.
+    rerender(<AddAgentModal open={false} onClose={onClose} />);
+    rerender(<AddAgentModal open onClose={onClose} />);
+
+    await userEvent.click(await screen.findByText(/create custom/i));
+    const cliSelect = (await screen.findByLabelText(/^cli$/i)) as HTMLSelectElement;
+    expect(cliSelect.value).toBe("claude");
+  });
+
   it("customize and Create custom are disabled while a join is in flight", async () => {
     stubFetch({ deferJoin: true });
     render(<AddAgentModal open onClose={vi.fn()} />);
