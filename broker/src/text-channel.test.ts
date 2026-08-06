@@ -50,6 +50,7 @@ function channelWith(opts: {
   me?: ConstructorParameters<typeof TextChannel>[11];
   channels?: ConstructorParameters<typeof TextChannel>[12];
   connectors?: ConstructorParameters<typeof TextChannel>[13];
+  tasks?: ConstructorParameters<typeof TextChannel>[14];
 }): TextChannel {
   return new TextChannel(
     () => {},
@@ -66,6 +67,7 @@ function channelWith(opts: {
     opts.me,
     opts.channels,
     opts.connectors,
+    opts.tasks,
   );
 }
 
@@ -200,6 +202,29 @@ test('GET /agents/:id/removal returns the preview; an unknown agent 404s', async
     const missing = await fetch(`http://127.0.0.1:${port}/agents/nobody/removal`);
     assert.equal(missing.status, 404);
     assert.deepEqual(await missing.json(), { error: 'Unknown agent: nobody' });
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('GET /tasks/:taskId returns the status; an unknown task 404s', async () => {
+  const channel = channelWith({
+    tasks: {
+      get: async (taskId) =>
+        taskId === 't-77'
+          ? { taskId: 't-77', status: 'completed', result: { pullRequestUrl: 'https://github.com/x/y/pull/1' } }
+          : null,
+    },
+  });
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/tasks/t-77`);
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { taskId: 't-77', status: 'completed', result: { pullRequestUrl: 'https://github.com/x/y/pull/1' } });
+
+    const missing = await fetch(`http://127.0.0.1:${port}/tasks/nope`);
+    assert.equal(missing.status, 404);
+    assert.deepEqual(await missing.json(), { error: 'task nope not found' });
   } finally {
     await channel.stop();
   }
