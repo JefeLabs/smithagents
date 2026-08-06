@@ -3,7 +3,6 @@
 // under .smith/users/, untracked (holds secrets) unlike agents/workspaces.
 import { readdir, readFile, mkdir, open } from 'node:fs/promises';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
 
 export interface ConnectorInstance {
   id: string;
@@ -35,16 +34,24 @@ interface LegacyUserFields {
  * is saved — existing tokens survive untouched, no re-entry required (design
  * §1). An already-migrated user (has `connectors`) is returned as-is, with
  * any stray legacy keys stripped defensively rather than re-merged.
+ *
+ * Ids are derived deterministically from the user's own id and the vendor
+ * (`legacy-<userId>-<vendor>`), not randomUUID(): every swarm route calls
+ * loadUsersFromDir fresh per request (no caching), so a random id would mint
+ * a NEW id on every single load — a workspace's saved connectorId would
+ * never match again after the request that returned it. Determinism keeps
+ * loadUsersFromDir a pure function of the file's contents, with no need to
+ * write the migrated shape back to disk just to stabilize ids.
  */
 function upgradeLegacyConnectors(raw: User & LegacyUserFields): User {
   const { atlassian, github, ...rest } = raw;
   if (rest.connectors) return rest;
   const connectors: ConnectorInstance[] = [];
   if (atlassian) {
-    connectors.push({ id: randomUUID(), vendorId: 'atlassian', label: 'default', fields: { ...atlassian } });
+    connectors.push({ id: `legacy-${rest.id}-atlassian`, vendorId: 'atlassian', label: 'default', fields: { ...atlassian } });
   }
   if (github) {
-    connectors.push({ id: randomUUID(), vendorId: 'github', label: 'default', fields: { ...github } });
+    connectors.push({ id: `legacy-${rest.id}-github`, vendorId: 'github', label: 'default', fields: { ...github } });
   }
   return connectors.length ? { ...rest, connectors } : rest;
 }

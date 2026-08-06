@@ -1374,10 +1374,14 @@ export class OrchestratorServer {
         id: randomUUID(),
         vendorId: b.vendorId,
         label: b.label.trim(),
-        fields: b.fields ?? {},
+        fields: buildConnectorFields(b.vendorId, b.fields),
       };
       const merged: User = { ...existing, connectors: [...(existing.connectors ?? []), instance] };
-      await saveUser(dir, merged);
+      try {
+        await saveUser(dir, merged);
+      } catch (err) {
+        return reply.status(400).send({ error: String((err as Error).message) });
+      }
       return reply.status(201).send(redactConnector(instance));
     });
 
@@ -1393,7 +1397,11 @@ export class OrchestratorServer {
         ...existing!,
         connectors: existing!.connectors!.map((c) => (c.id === current.id ? updated : c)),
       };
-      await saveUser(dir, merged);
+      try {
+        await saveUser(dir, merged);
+      } catch (err) {
+        return reply.status(400).send({ error: String((err as Error).message) });
+      }
       return redactConnector(updated);
     });
 
@@ -1405,7 +1413,11 @@ export class OrchestratorServer {
         return reply.status(404).send({ error: `Unknown connector: ${req.params.id}` });
       }
       const merged: User = { ...existing, connectors: existing.connectors.filter((c) => c.id !== req.params.id) };
-      await saveUser(dir, merged);
+      try {
+        await saveUser(dir, merged);
+      } catch (err) {
+        return reply.status(400).send({ error: String((err as Error).message) });
+      }
       return { ok: true };
     });
 
@@ -2045,6 +2057,24 @@ export function resolveAtlassianConnector(
 }
 
 /**
+ * POST /me/connectors field filter: keeps only the keys the matched vendor
+ * actually declares, mirroring buildConnectorUpdate's PUT-side filtering
+ * below — unlike PUT, there's no `existing` to fall back to on create, so
+ * this just drops any key the registry doesn't know about rather than
+ * merging. Without it, a create request could persist arbitrary/garbage
+ * keys that redaction (which only ever emits registry-declared keys) can
+ * never surface again, or persist zero fields silently.
+ */
+export function buildConnectorFields(vendorId: string, fields: Record<string, string> | undefined): Record<string, string> {
+  const vendor = findVendor(vendorId);
+  const result: Record<string, string> = {};
+  for (const f of vendor?.fields ?? []) {
+    if (fields?.[f.key] !== undefined) result[f.key] = fields[f.key]!;
+  }
+  return result;
+}
+
+/**
  * PUT /me/connectors/:id merge: every field (secret or not) trims a
  * submitted value and falls back to the existing stored value on blank —
  * applied uniformly, unlike the old buildUserUpdate, which only did this for
@@ -2071,8 +2101,8 @@ export function buildConnectorUpdate(
  * PUT /workspaces/:name/channels merge: a submitted `discord` block replaces
  * textChannels/voiceChannels wholesale, but botToken falls back to the
  * existing saved value when the submission's own botToken is blank — the
- * account-panel-style UI convention (ChannelsManagerModal) never re-sends a
- * saved secret, so "edit only the channel lists" submits {botToken: "", ...}
+ * settings-group UI convention (ChannelsGroup) never re-sends a saved
+ * secret, so "edit only the channel lists" submits {botToken: "", ...}
  * on every ordinary save; without this fallback that would silently wipe the
  * token. Same fix shape as buildConnectorUpdate's blank-submission fallback —
  * see that function's doc comment for the original incident this pattern

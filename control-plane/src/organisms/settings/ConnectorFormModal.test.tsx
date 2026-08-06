@@ -135,4 +135,49 @@ describe("ConnectorFormModal", () => {
     );
     expect(container.firstChild).toBeNull();
   });
+
+  it("editing an existing instance displays the real saved value of a select field, not the select's first option", () => {
+    // Saved as 'eu1' — a controlled <select> can never render "blank" the way a text input can,
+    // so a naive open-effect that blanks all fields would silently display 'US1' (the first
+    // option) here instead of the real saved value.
+    render(
+      <ConnectorFormModal
+        open
+        vendor={DATADOG_VENDOR}
+        existing={{
+          id: "c1",
+          vendorId: "datadog",
+          label: "acme",
+          fields: { site: "eu1", hasApiKey: true, hasAppKey: true },
+        }}
+        onClose={() => {}}
+        onSave={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("combobox")).toHaveProperty("value", "eu1");
+  });
+
+  it("reopening the SAME modal instance on a different existing/vendor re-seeds the form instead of keeping the previous instance's values", () => {
+    const { rerender } = render(
+      <ConnectorFormModal
+        open
+        vendor={GITHUB_VENDOR}
+        existing={{ id: "c1", vendorId: "github", label: "personal", fields: { hasToken: true } }}
+        onClose={() => {}}
+        onSave={vi.fn()}
+      />,
+    );
+    expect(screen.getByPlaceholderText(/label/i)).toHaveProperty("value", "personal");
+
+    rerender(
+      <ConnectorFormModal
+        open
+        vendor={GITHUB_VENDOR}
+        existing={{ id: "c2", vendorId: "github", label: "acme-corp", fields: { hasToken: true } }}
+        onClose={() => {}}
+        onSave={vi.fn()}
+      />,
+    );
+    expect(screen.getByPlaceholderText(/label/i)).toHaveProperty("value", "acme-corp");
+  });
 });

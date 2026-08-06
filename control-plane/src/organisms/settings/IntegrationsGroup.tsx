@@ -39,11 +39,15 @@ export function IntegrationsGroup({
   const [connectors, setConnectors] = useState<ConnectorInstanceRecord[]>([]);
   const [formVendor, setFormVendor] = useState<ConnectorVendorMeta | null>(null);
   const [formExisting, setFormExisting] = useState<ConnectorInstanceRecord | undefined>(undefined);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-once load, same convention as ChannelsManagerModal's open-effect
+  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-once load, same convention as ChannelsGroup's own mount effect
   useEffect(() => {
-    void listVendors().then(setVendors);
-    void listConnectors().then(setConnectors);
+    void listVendors().then(setVendors, (err: unknown) => setLoadError(`Could not load vendors — ${String(err)}`));
+    void listConnectors().then(setConnectors, (err: unknown) =>
+      setLoadError(`Could not load connectors — ${String(err)}`),
+    );
   }, []);
 
   const openConnect = (vendor: ConnectorVendorMeta, existing?: ConnectorInstanceRecord) => {
@@ -67,7 +71,11 @@ export function IntegrationsGroup({
         id: result.id,
         vendorId: result.vendorId ?? body.vendorId,
         label: result.label ?? body.label,
-        fields: result.fields ?? body.fields,
+        // Never fall back to the raw submitted `body.fields` — those can carry plaintext
+        // secrets straight from the form. The real backend always echoes a redacted `fields`
+        // back, so this path is unreachable today; an empty object is the safe fallback if a
+        // future response shape ever omits it, not a plaintext round-trip into client state.
+        fields: result.fields ?? {},
       };
       setConnectors((cs) =>
         cs.some((c) => c.id === saved.id) ? cs.map((c) => (c.id === saved.id ? saved : c)) : [...cs, saved],
@@ -78,12 +86,32 @@ export function IntegrationsGroup({
 
   const handleRemove = async (id: string) => {
     const result = await deleteConnector(id);
-    if (!result.error) setConnectors((cs) => cs.filter((c) => c.id !== id));
+    if (result.error) {
+      setRemoveError(result.error);
+      return;
+    }
+    setRemoveError(null);
+    setConnectors((cs) => cs.filter((c) => c.id !== id));
+  };
+
+  // Mirrors server.ts's redactConnector key-naming (has<Field>) so a saved secret's presence
+  // flag can be looked up here without re-deriving the convention differently on each side.
+  const hasFieldKey = (key: string) => `has${key.charAt(0).toUpperCase()}${key.slice(1)}`;
+
+  // "Connected" means verify would actually succeed on credential-completeness grounds: every
+  // secret field the vendor declares is present, not just any one of them (some(v === true)
+  // would call a Datadog connector "connected" with an apiKey but no appKey).
+  const isConnected = (vendor: ConnectorVendorMeta, inst: ConnectorInstanceRecord): boolean => {
+    const secretFields = vendor.fields.filter((f) => f.secret);
+    if (secretFields.length === 0) return false;
+    return secretFields.every((f) => inst.fields[hasFieldKey(f.key)] === true);
   };
 
   return (
     <>
       <h1>integrations</h1>
+      {loadError && <p className="wizard__error">{loadError}</p>}
+      {removeError && <p className="wizard__error">{removeError}</p>}
       <div className="connector-grid">
         {vendors.map((vendor) => {
           const instances = connectors.filter((c) => c.vendorId === vendor.id);
@@ -96,9 +124,9 @@ export function IntegrationsGroup({
               {instances.map((inst) => (
                 <div key={inst.id} className="connector-instance">
                   <span
-                    className={`connector-status ${Object.values(inst.fields).some((v) => v === true) ? "connector-status--connected" : "connector-status--unconnected"}`}
+                    className={`connector-status ${isConnected(vendor, inst) ? "connector-status--connected" : "connector-status--unconnected"}`}
                   >
-                    {Object.values(inst.fields).some((v) => v === true) ? "connected" : "not connected"}
+                    {isConnected(vendor, inst) ? "connected" : "not connected"}
                   </span>
                   <span>{inst.label}</span>
                   <button type="button" className="settings-btn" onClick={() => openConnect(vendor, inst)}>

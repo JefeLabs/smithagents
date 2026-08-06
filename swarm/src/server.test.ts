@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import {
   buildChannelsUpdate,
+  buildConnectorFields,
   buildConnectorUpdate,
   redactConnector,
   resolveAtlassianConnector,
@@ -57,6 +58,21 @@ test('redactConnector: secret fields become has<Field> booleans, non-secret fiel
   // Secret field: boolean presence flag, never the raw token.
   assert.equal((redacted.fields as Record<string, unknown>).hasApiToken, true);
   assert.equal(JSON.stringify(redacted).includes('super-secret-token'), false);
+});
+
+test('buildConnectorFields: POST /me/connectors — an unknown/extra field key is dropped, only registry-declared keys persist', () => {
+  const result = buildConnectorFields('github', { token: 'gh-tok', notARealField: 'garbage' });
+  assert.deepEqual(result, { token: 'gh-tok' });
+});
+
+test('buildConnectorFields: an unknown vendorId (already rejected upstream by the route, but defensively) yields no fields', () => {
+  const result = buildConnectorFields('not-a-real-vendor', { token: 'x' });
+  assert.deepEqual(result, {});
+});
+
+test('buildConnectorFields: fields undefined (nothing submitted) yields an empty object, not a crash', () => {
+  const result = buildConnectorFields('github', undefined);
+  assert.deepEqual(result, {});
 });
 
 test('buildConnectorUpdate: a blank submitted secret field falls back to the existing stored value', () => {

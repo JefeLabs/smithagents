@@ -31,6 +31,28 @@ test('loadUsersFromDir: a legacy user file (atlassian + github fields, no connec
   assert.equal((user as unknown as { atlassian?: unknown }).atlassian, undefined);
 });
 
+test('loadUsersFromDir: a legacy user\'s connector ids are stable across repeated loads of the same file (no re-migration drift)', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'users-legacy-stable-'));
+  await writeFile(
+    join(dir, 'me.json'),
+    JSON.stringify({
+      id: 'me',
+      name: 'Edwin',
+      default: true,
+      atlassian: { email: 'edwin@example.com', apiToken: 'atl-tok' },
+      github: { token: 'gh-tok' },
+    }),
+  );
+  const [first] = await loadUsersFromDir(dir);
+  const [second] = await loadUsersFromDir(dir);
+  const firstAtlassian = first!.connectors!.find((c) => c.vendorId === 'atlassian')!;
+  const firstGithub = first!.connectors!.find((c) => c.vendorId === 'github')!;
+  const secondAtlassian = second!.connectors!.find((c) => c.vendorId === 'atlassian')!;
+  const secondGithub = second!.connectors!.find((c) => c.vendorId === 'github')!;
+  assert.equal(firstAtlassian.id, secondAtlassian.id, 'atlassian connector id must be identical across separate loads');
+  assert.equal(firstGithub.id, secondGithub.id, 'github connector id must be identical across separate loads');
+});
+
 test('loadUsersFromDir: a legacy user with only atlassian (no github) upgrades to exactly one connector', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'users-legacy-partial-'));
   await writeFile(

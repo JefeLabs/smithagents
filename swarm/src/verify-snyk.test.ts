@@ -18,8 +18,10 @@ test('verifySnyk: success hits the region-correct host with a token header and a
 });
 
 test('verifySnyk: 401 surfaces Snyk\'s error detail', async () => {
+  // Snyk's REST API follows JSON:API and names this field `detail` (singular) — a mock using
+  // the wrong plural `details` would stay green while the source code's real read fails silently.
   const fetchImpl = (async () =>
-    new Response(JSON.stringify({ errors: [{ details: 'Unauthorized' }] }), { status: 401 })) as typeof fetch;
+    new Response(JSON.stringify({ errors: [{ detail: 'Unauthorized' }] }), { status: 401 })) as typeof fetch;
   const result = await verifySnyk('us-01', 'bad', fetchImpl);
   assert.equal(result.ok, false);
   assert.match(result.detail, /401.*Unauthorized/);

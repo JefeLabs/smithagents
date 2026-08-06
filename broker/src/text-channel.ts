@@ -245,11 +245,13 @@ export class TextChannel {
           res.writeHead(status, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify(payload));
         const fail = (err: unknown) => json(500, { error: String((err as Error).message ?? err) });
 
-        // /me and the verify-* routes return credential-presence data (or, for
-        // verify-github, the operator's real GitHub identity) — unlike the rest of
-        // this block, their CORS response must name the actual allowed origin (or
-        // omit the header) instead of '*', and they refuse to do any work at all
-        // for a disallowed Origin.
+        // /me, workspace channels, and the connector registry (vendors list, CRUD,
+        // verify) all return credential-presence data — GET/PUT /me, GET/PUT
+        // /workspaces/:name/channels, /workspaces/:name/verify-atlassian,
+        // /workspaces/:name/repos/:repo/verify-github, and every /me/connectors*
+        // route — unlike the rest of this block, their CORS response must name the
+        // actual allowed origin (or omit the header) instead of '*', and they
+        // refuse to do any work at all for a disallowed Origin.
         const credJson = (status: number, payload: unknown) =>
           res.writeHead(status, { ...credentialCors(req), 'content-type': 'application/json' }).end(JSON.stringify(payload));
         const credFail = (err: unknown) => credJson(500, { error: String((err as Error).message ?? err) });

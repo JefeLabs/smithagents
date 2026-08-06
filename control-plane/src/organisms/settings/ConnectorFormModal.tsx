@@ -26,7 +26,18 @@ export function ConnectorFormModal({ open, vendor, existing, onClose, onSave, on
   useEffect(() => {
     if (!open) return;
     setLabel(existing?.label ?? "");
-    setFields({}); // secrets never round-trip — always start blank, same discipline as AccountPanel/ChannelsManagerModal
+    // Secrets never round-trip — always start blank, same discipline as ChannelsGroup's
+    // botToken. But a controlled <select> (Datadog's site, Snyk's region) can't render
+    // "blank": it always resolves to its first option, so blanking those too would silently
+    // display the wrong saved value on every edit-open. Seed non-secret fields from the saved
+    // instance instead; only secrets start blank.
+    setFields(
+      existing
+        ? Object.fromEntries(
+            (vendor?.fields ?? []).filter((f) => !f.secret).map((f) => [f.key, String(existing.fields[f.key] ?? "")]),
+          )
+        : {},
+    );
     setExtra({});
     setError(null);
     setTestResult(null);
@@ -63,7 +74,7 @@ export function ConnectorFormModal({ open, vendor, existing, onClose, onSave, on
   };
 
   return (
-    // biome-ignore lint/a11y/useKeyWithClickEvents: click-outside dismiss, same pattern as WorkspaceManagerModal/AccountPanel
+    // biome-ignore lint/a11y/useKeyWithClickEvents: click-outside dismiss, same pattern as WorkspaceManagerModal
     <div
       className="scrim"
       data-open="true"

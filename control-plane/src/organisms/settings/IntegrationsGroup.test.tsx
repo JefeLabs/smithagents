@@ -116,4 +116,67 @@ describe("IntegrationsGroup", () => {
     await waitFor(() => expect(deleteConnector).toHaveBeenCalledWith("c1"));
     await waitFor(() => expect(screen.queryByText("personal")).toBeNull());
   });
+
+  it("a listVendors/listConnectors rejection surfaces a visible load error instead of an unhandled rejection and a silently empty grid", async () => {
+    render(
+      <IntegrationsGroup
+        listVendors={vi.fn(async () => {
+          throw new Error("broker unreachable");
+        })}
+        listConnectors={vi.fn(async () => [])}
+        addConnector={vi.fn()}
+        updateConnector={vi.fn()}
+        deleteConnector={vi.fn()}
+        verifyConnector={vi.fn()}
+      />,
+    );
+    expect(await screen.findByText(/broker unreachable/i)).toBeDefined();
+  });
+
+  it("a failed delete surfaces the error and leaves the row in place, instead of discarding result.error", async () => {
+    const deleteConnector = vi.fn(async () => ({ error: "delete forbidden" }));
+    render(
+      <IntegrationsGroup
+        listVendors={vi.fn(async () => VENDORS)}
+        listConnectors={vi.fn(async () => [
+          { id: "c1", vendorId: "github", label: "personal", fields: { hasToken: true } },
+        ])}
+        addConnector={vi.fn()}
+        updateConnector={vi.fn()}
+        deleteConnector={deleteConnector}
+        verifyConnector={vi.fn()}
+      />,
+    );
+    await userEvent.click(await screen.findByRole("button", { name: /remove personal/i }));
+    expect(await screen.findByText(/delete forbidden/i)).toBeDefined();
+    expect(screen.getByText("personal")).toBeDefined();
+  });
+
+  it("a connector with only one of two declared secret fields present shows 'not connected', not a false-positive 'connected'", async () => {
+    const DATADOG_TWO_SECRETS = {
+      id: "datadog",
+      label: "Datadog",
+      description: "Monitors.",
+      fields: [
+        { key: "apiKey", label: "API key", secret: true },
+        { key: "appKey", label: "Application key", secret: true },
+      ],
+      verifyExtraFields: [],
+    };
+    render(
+      <IntegrationsGroup
+        listVendors={vi.fn(async () => [DATADOG_TWO_SECRETS])}
+        listConnectors={vi.fn(async () => [
+          // hasApiKey saved, hasAppKey never set — partially configured
+          { id: "c1", vendorId: "datadog", label: "acme", fields: { hasApiKey: true } },
+        ])}
+        addConnector={vi.fn()}
+        updateConnector={vi.fn()}
+        deleteConnector={vi.fn()}
+        verifyConnector={vi.fn()}
+      />,
+    );
+    expect(await screen.findByText(/not connected/i)).toBeDefined();
+    expect(screen.queryByText(/^connected$/i)).toBeNull();
+  });
 });

@@ -30,9 +30,9 @@ export async function verifySnyk(
     });
     const body = (await res.json().catch(() => ({}))) as {
       data?: { type?: string };
-      errors?: Array<{ details?: string }>;
+      errors?: Array<{ detail?: string }>;
     };
-    if (!res.ok) return { ok: false, detail: `Snyk ${res.status}: ${body.errors?.[0]?.details ?? 'unauthorized'}` };
+    if (!res.ok) return { ok: false, detail: `Snyk ${res.status}: ${body.errors?.[0]?.detail ?? 'unauthorized'}` };
     return { ok: true, detail: `Snyk: authenticated as ${body.data?.type ?? 'user'}` };
   } catch (err) {
     return { ok: false, detail: `Could not reach Snyk: ${err instanceof Error ? err.message : String(err)}` };

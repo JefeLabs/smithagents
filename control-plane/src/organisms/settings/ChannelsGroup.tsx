@@ -21,7 +21,7 @@ interface FormState {
 
 const blankForm = (): FormState => ({ hasDiscordToken: false, botToken: "", textChannels: [""], voiceChannels: [""] });
 
-/** Discord channel config, now a Settings group — same behavior as the old standalone ChannelsManagerModal, just re-parented. */
+/** Discord channel config, as a Settings group — same behavior as when this lived in its own standalone modal, just re-parented. */
 export function ChannelsGroup({ listWorkspaces, getChannels, saveChannels, verifyDiscord }: ChannelsGroupProps) {
   const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
