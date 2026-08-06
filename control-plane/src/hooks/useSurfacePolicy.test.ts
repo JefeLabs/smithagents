@@ -4,16 +4,20 @@ import { joinNowVisible, modesFrom, useSurfacePolicy } from "./useSurfacePolicy"
 
 describe("modesFrom", () => {
   it("parses map form with retired tauri skipped", () => {
-    expect(modesFrom({ channels: { tauri: "autojoin", discord: "autojoin" } })).toMatchObject({
+    const result = modesFrom({ channels: { tauri: "autojoin", discord: "autojoin" } });
+    expect(result).toMatchObject({
       discord: "autojoin",
       "discord-voice": "disabled",
     });
+    expect("tauri" in result).toBe(false);
   });
   it("parses legacy array: listed autojoin, unlisted disabled, retired tauri skipped", () => {
-    expect(modesFrom({ channels: ["discord", "tauri"] })).toMatchObject({
+    const result = modesFrom({ channels: ["discord", "tauri"] });
+    expect(result).toMatchObject({
       discord: "autojoin",
       "discord-voice": "disabled",
     });
+    expect("tauri" in result).toBe(false);
   });
   it("absent field: text autojoin, voice disabled", () => {
     expect(modesFrom({})).toMatchObject({
