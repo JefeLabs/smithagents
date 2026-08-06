@@ -1,3 +1,10 @@
+/* Host tile: the broker's own identity, above and apart from the crew. */
+.identity-tile {
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--pill-br);
+}
+
 /* ---- shared rails ---- */
 .rail {
   position: fixed;
