@@ -206,17 +206,24 @@ export class Dispatcher extends EventEmitter {
     const users = await loadUsersFromDir(resolve(root, '.smith/users'));
     const user = resolveCurrentUser(users);
 
-    const atlassian = workspace.atlassian && user?.atlassian ? workspace.atlassian : undefined;
-    if (atlassian && user?.atlassian) {
-      env.SMITH_ATLASSIAN_EMAIL = user.atlassian.email;
-      env.SMITH_ATLASSIAN_TOKEN = user.atlassian.apiToken;
+    const atlassianConnector = workspace.atlassian?.connectorId
+      ? user?.connectors?.find((c) => c.id === workspace.atlassian!.connectorId && c.vendorId === 'atlassian')
+      : undefined;
+    const atlassian = workspace.atlassian && atlassianConnector ? workspace.atlassian : undefined;
+    if (atlassian && atlassianConnector) {
+      env.SMITH_ATLASSIAN_EMAIL = atlassianConnector.fields.email ?? '';
+      env.SMITH_ATLASSIAN_TOKEN = atlassianConnector.fields.apiToken ?? '';
     }
-    // GH_TOKEN gates purely on the user having a token — gh infers the repo
-    // from the worktree's git remote, so repo.github config isn't required
-    // for this (it exists for the precise per-repo verify check in Task 5,
-    // not as a gate here).
-    if (user?.github?.token) {
-      env.GH_TOKEN = user.github.token;
+
+    // GH_TOKEN now resolves per-repo through repo.github.connectorId — a real
+    // gate, unlike before this task (which granted GH_TOKEN from "any github
+    // token the user has", ignoring repo config). Two repos in the same
+    // workspace can legitimately resolve to two different tokens.
+    const githubConnector = repo?.github?.connectorId
+      ? user?.connectors?.find((c) => c.id === repo.github!.connectorId && c.vendorId === 'github')
+      : undefined;
+    if (githubConnector?.fields.token) {
+      env.GH_TOKEN = githubConnector.fields.token;
     }
     return { atlassian, env };
   }
