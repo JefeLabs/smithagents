@@ -10,7 +10,6 @@ interface SessionsPanelProps {
   onActivate: (id: string) => void;
   onCreate: (workspace?: string) => void;
   onManage?: () => void;
-  onManageChannels?: () => void;
 }
 
 /** Session switcher: every conversation lives inside a workspace. */
@@ -22,7 +21,6 @@ export function SessionsPanel({
   onActivate,
   onCreate,
   onManage,
-  onManageChannels,
 }: SessionsPanelProps) {
   const [wsFilter, setWsFilter] = useState<string | null>(null);
   // The panel stays mounted across close/reopen, so a filter left pointed at a
@@ -96,18 +94,6 @@ export function SessionsPanel({
             }}
           >
             manage workspaces…
-          </button>
-        )}
-        {onManageChannels && (
-          <button
-            type="button"
-            className="session-row session-row--manage"
-            onClick={() => {
-              onManageChannels();
-              onClose();
-            }}
-          >
-            manage channels…
           </button>
         )}
       </footer>

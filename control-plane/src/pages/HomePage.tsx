@@ -28,9 +28,6 @@ export function HomePage() {
   const [inspecting, setInspecting] = useState<AgentSeed | null>(null);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsInitialGroup, setSettingsInitialGroup] = useState<"general" | "integrations" | "channels" | "themes">(
-    "general",
-  );
   const [workspacesOpen, setWorkspacesOpen] = useState(false);
   /**
    * Agent slated for removal — the outcome preview drives the confirm sheet's copy.
@@ -144,17 +141,7 @@ export function HomePage() {
     <ControlPlaneLayout
       background={<DotGridCanvas params={gridParams} />}
       leftRail={
-        <ToolRail
-          onSessions={() => setSessionsOpen((open) => !open)}
-          onSettings={() => {
-            setSettingsInitialGroup("general");
-            setSettingsOpen(true);
-          }}
-          onAccount={() => {
-            setSettingsInitialGroup("integrations");
-            setSettingsOpen(true);
-          }}
-        />
+        <ToolRail onSessions={() => setSessionsOpen((open) => !open)} onSettings={() => setSettingsOpen(true)} />
       }
       rightRail={
         <AgentRoster
@@ -226,7 +213,6 @@ export function HomePage() {
             onReset={resetSetup}
             theme={theme}
             onThemeChange={setTheme}
-            initialGroup={settingsInitialGroup}
             listConnectorVendors={listConnectorVendors}
             listMyConnectors={listMyConnectors}
             addConnector={addConnector}

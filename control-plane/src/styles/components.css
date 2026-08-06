@@ -1123,7 +1123,7 @@
   inset: 0;
   z-index: 200;
   display: flex;
-  background: var(--bg);
+  background: var(--ground);
 }
 .settings-screen__nav {
   width: 220px;
