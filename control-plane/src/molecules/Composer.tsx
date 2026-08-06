@@ -1,4 +1,4 @@
-import { ArrowUp, AudioLines, ChevronDown, Plus, Volume2, VolumeX } from "lucide-react";
+import { ArrowUp, AudioLines, ChevronDown, Mic, Plus, Volume2, VolumeX } from "lucide-react";
 import { useRef, useState } from "react";
 
 interface ComposerProps {
@@ -21,7 +21,19 @@ export function Composer({
   onSoundToggle,
 }: ComposerProps) {
   const [draft, setDraft] = useState("");
+  const [holding, setHolding] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const startHold = () => {
+    if (micLive || holding || !onMicToggle) return;
+    setHolding(true);
+    onMicToggle();
+  };
+  const endHold = () => {
+    if (!holding || !onMicToggle) return;
+    setHolding(false);
+    onMicToggle();
+  };
 
   const submit = () => {
     const text = draft.trim();
@@ -77,16 +89,40 @@ export function Composer({
             <ChevronDown strokeWidth={2} />
           </div>
           {onMicToggle && (
-            <button
-              type="button"
-              className={micLive ? "voice-toggle live" : "voice-toggle"}
-              title="Always listening"
-              aria-label="Always listening"
-              aria-pressed={micLive}
-              onClick={onMicToggle}
-            >
-              <AudioLines strokeWidth={1.7} />
-            </button>
+            <>
+              <button
+                type="button"
+                className={holding ? "voice-toggle live" : "voice-toggle"}
+                title="Hold to talk"
+                aria-label="Hold to talk"
+                aria-pressed={holding}
+                onPointerDown={startHold}
+                onPointerUp={endHold}
+                onPointerLeave={endHold}
+                onPointerCancel={endHold}
+                onKeyDown={(e) => {
+                  if ((e.key === " " || e.key === "Enter") && !e.repeat) {
+                    e.preventDefault();
+                    startHold();
+                  }
+                }}
+                onKeyUp={(e) => {
+                  if (e.key === " " || e.key === "Enter") endHold();
+                }}
+              >
+                <Mic strokeWidth={1.7} />
+              </button>
+              <button
+                type="button"
+                className={micLive ? "voice-toggle live" : "voice-toggle"}
+                title="Always listening"
+                aria-label="Always listening"
+                aria-pressed={micLive}
+                onClick={onMicToggle}
+              >
+                <AudioLines strokeWidth={1.7} />
+              </button>
+            </>
           )}
           {onSoundToggle && (
             <button

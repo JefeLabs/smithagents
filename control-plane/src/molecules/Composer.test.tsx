@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Composer } from "./Composer";
@@ -80,5 +80,40 @@ describe("Composer", () => {
     await userEvent.type(box, "{Enter}");
     expect(onSend).toHaveBeenCalledWith("line1\nline2");
     expect(box.style.height).toBe("auto");
+  });
+
+  it("hold-to-talk renders only when onMicToggle is wired", () => {
+    render(<Composer onSend={() => {}} />);
+    expect(screen.queryByRole("button", { name: "Hold to talk" })).toBeNull();
+  });
+
+  it("hold-to-talk: press starts listening, release stops it", () => {
+    const onMicToggle = vi.fn();
+    render(<Composer onSend={() => {}} micLive={false} onMicToggle={onMicToggle} />);
+    const hold = screen.getByRole("button", { name: "Hold to talk" });
+    fireEvent.pointerDown(hold);
+    expect(onMicToggle).toHaveBeenCalledTimes(1);
+    fireEvent.pointerUp(hold);
+    expect(onMicToggle).toHaveBeenCalledTimes(2);
+  });
+
+  it("hold-to-talk: pointer leaving while held also stops it", () => {
+    const onMicToggle = vi.fn();
+    render(<Composer onSend={() => {}} micLive={false} onMicToggle={onMicToggle} />);
+    const hold = screen.getByRole("button", { name: "Hold to talk" });
+    fireEvent.pointerDown(hold);
+    fireEvent.pointerLeave(hold);
+    expect(onMicToggle).toHaveBeenCalledTimes(2);
+    fireEvent.pointerUp(hold);
+    expect(onMicToggle).toHaveBeenCalledTimes(2);
+  });
+
+  it("hold-to-talk is inert while always-listening is latched", () => {
+    const onMicToggle = vi.fn();
+    render(<Composer onSend={() => {}} micLive={true} onMicToggle={onMicToggle} />);
+    const hold = screen.getByRole("button", { name: "Hold to talk" });
+    fireEvent.pointerDown(hold);
+    fireEvent.pointerUp(hold);
+    expect(onMicToggle).not.toHaveBeenCalled();
   });
 });
