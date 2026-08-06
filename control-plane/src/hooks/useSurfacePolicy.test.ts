@@ -20,10 +20,16 @@ describe("modesFrom", () => {
     expect("tauri" in result).toBe(false);
   });
   it("absent field: text autojoin, voice disabled", () => {
-    expect(modesFrom({})).toMatchObject({
+    const result = modesFrom({});
+    expect(result).toMatchObject({
       discord: "autojoin",
       "discord-voice": "disabled",
     });
+    expect("tauri" in result).toBe(false);
+  });
+  it("garbage channels value: all disabled, no tauri key", () => {
+    const result = modesFrom({ channels: "discord" });
+    expect(result).toEqual({ discord: "disabled", "discord-voice": "disabled" });
   });
 });
 
