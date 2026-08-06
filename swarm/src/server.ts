@@ -1424,11 +1424,11 @@ export class OrchestratorServer {
       const ws = server.workspaces.find((w) => w.name === req.params.name);
       if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
       if (!ws.atlassian) return reply.status(400).send({ error: `Workspace "${ws.name}" has no Jira/Confluence site configured` });
-      if (!ws.atlassian.connectorId) return reply.status(400).send({ error: 'Pick an Atlassian connector for this workspace first' });
       const users = await loadUsersFromDir(resolve(process.cwd(), '.smith/users'));
       const user = resolveCurrentUser(users);
-      const instance = user?.connectors?.find((c) => c.id === ws.atlassian!.connectorId && c.vendorId === 'atlassian');
-      if (!instance) return reply.status(400).send({ error: 'The connector picked for this workspace no longer exists — pick another' });
+      const resolved = resolveConnector(ws.atlassian.connectorId, 'atlassian', 'an Atlassian', 'workspace', user);
+      if ('error' in resolved) return reply.status(400).send({ error: resolved.error });
+      const { instance } = resolved;
       return verifyAtlassian(ws.atlassian.siteUrl, instance.fields.email ?? '', instance.fields.apiToken ?? '', {
         confluenceSpaceKey: ws.atlassian.confluenceSpaceKeys?.[0],
       });
@@ -1494,12 +1494,11 @@ export class OrchestratorServer {
         const repo = ws.repos.find((r) => r.name === req.params.repoName);
         if (!repo) return reply.status(404).send({ error: `Unknown repo: ${req.params.repoName}` });
         if (!repo.github) return reply.status(400).send({ error: `Repo "${repo.name}" has no GitHub owner/repo configured` });
-        if (!repo.github.connectorId) return reply.status(400).send({ error: 'Pick a GitHub connector for this repo first' });
         const users = await loadUsersFromDir(resolve(process.cwd(), '.smith/users'));
         const user = resolveCurrentUser(users);
-        const instance = user?.connectors?.find((c) => c.id === repo.github!.connectorId && c.vendorId === 'github');
-        if (!instance) return reply.status(400).send({ error: 'The connector picked for this repo no longer exists — pick another' });
-        return verifyGithubRepo(repo.github.owner, repo.github.repo, instance.fields.token ?? '');
+        const resolved = resolveConnector(repo.github.connectorId, 'github', 'a GitHub', 'repo', user);
+        if ('error' in resolved) return reply.status(400).send({ error: resolved.error });
+        return verifyGithubRepo(repo.github.owner, repo.github.repo, resolved.instance.fields.token ?? '');
       },
     );
 
@@ -1509,13 +1508,13 @@ export class OrchestratorServer {
         const ws = server.workspaces.find((w) => w.name === req.params.name);
         if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
         if (!ws.atlassian) return reply.status(400).send({ error: `Workspace "${ws.name}" has no Jira/Confluence site configured` });
-        if (!ws.atlassian.connectorId) return reply.status(400).send({ error: 'Pick an Atlassian connector for this workspace first' });
         const ticketKey = req.body?.ticketKey;
         if (!ticketKey) return reply.status(400).send({ error: 'Missing required field: ticketKey' });
         const users = await loadUsersFromDir(resolve(process.cwd(), '.smith/users'));
         const user = resolveCurrentUser(users);
-        const instance = user?.connectors?.find((c) => c.id === ws.atlassian!.connectorId && c.vendorId === 'atlassian');
-        if (!instance) return reply.status(400).send({ error: 'The connector picked for this workspace no longer exists — pick another' });
+        const resolved = resolveConnector(ws.atlassian.connectorId, 'atlassian', 'an Atlassian', 'workspace', user);
+        if ('error' in resolved) return reply.status(400).send({ error: resolved.error });
+        const { instance } = resolved;
         return lookupTicket(ws.atlassian.siteUrl, instance.fields.email ?? '', instance.fields.apiToken ?? '', ticketKey);
       },
     );
@@ -1526,13 +1525,13 @@ export class OrchestratorServer {
         const ws = server.workspaces.find((w) => w.name === req.params.name);
         if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
         if (!ws.atlassian) return reply.status(400).send({ error: `Workspace "${ws.name}" has no Jira/Confluence site configured` });
-        if (!ws.atlassian.connectorId) return reply.status(400).send({ error: 'Pick an Atlassian connector for this workspace first' });
         const query = req.body?.query;
         if (!query) return reply.status(400).send({ error: 'Missing required field: query' });
         const users = await loadUsersFromDir(resolve(process.cwd(), '.smith/users'));
         const user = resolveCurrentUser(users);
-        const instance = user?.connectors?.find((c) => c.id === ws.atlassian!.connectorId && c.vendorId === 'atlassian');
-        if (!instance) return reply.status(400).send({ error: 'The connector picked for this workspace no longer exists — pick another' });
+        const resolved = resolveConnector(ws.atlassian.connectorId, 'atlassian', 'an Atlassian', 'workspace', user);
+        if ('error' in resolved) return reply.status(400).send({ error: resolved.error });
+        const { instance } = resolved;
         return searchDocs(ws.atlassian.siteUrl, instance.fields.email ?? '', instance.fields.apiToken ?? '', query, {
           spaceKeys: ws.atlassian.confluenceSpaceKeys,
         });
@@ -1998,6 +1997,31 @@ export function redactConnector(instance: ConnectorInstance): Record<string, unk
     else fields[f.key] = v ?? '';
   }
   return { id: instance.id, vendorId: instance.vendorId, label: instance.label, fields };
+}
+
+/**
+ * Resolves a workspace/repo's connectorId to the actual saved
+ * ConnectorInstance, scoped to the expected vendor. Centralizes the guard
+ * logic that used to be duplicated inline across verify-atlassian,
+ * verify-github, lookup-ticket, and search-docs (each reimplementing "no
+ * connectorId set" / "connectorId set but no matching same-vendor instance"
+ * with identical shape) — pulled out here so those guard paths are
+ * unit-testable without booting the server, matching this file's other
+ * extracted-helper convention. `vendorLabel`/`scope` exist only to keep each
+ * call site's existing user-facing error text unchanged (e.g. "an Atlassian
+ * connector for this workspace" vs "a GitHub connector for this repo").
+ */
+export function resolveConnector(
+  connectorId: string | undefined,
+  vendorId: string,
+  vendorLabel: string,
+  scope: string,
+  user: User | null,
+): { instance: ConnectorInstance } | { error: string } {
+  if (!connectorId) return { error: `Pick ${vendorLabel} connector for this ${scope} first` };
+  const instance = user?.connectors?.find((c) => c.id === connectorId && c.vendorId === vendorId);
+  if (!instance) return { error: `The connector picked for this ${scope} no longer exists — pick another` };
+  return { instance };
 }
 
 /**

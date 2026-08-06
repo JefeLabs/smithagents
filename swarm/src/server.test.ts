@@ -9,9 +9,9 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { buildChannelsUpdate, buildConnectorUpdate, redactConnector, workspaceProblems } from './server.js';
+import { buildChannelsUpdate, buildConnectorUpdate, redactConnector, resolveConnector, workspaceProblems } from './server.js';
 import { saveUser, loadUsersFromDir } from './users.js';
-import type { ConnectorInstance } from './users.js';
+import type { ConnectorInstance, User } from './users.js';
 import type { Workspace } from './workspaces.js';
 import type { WorkspaceChannels } from './channels.js';
 
@@ -88,6 +88,37 @@ test('buildConnectorUpdate: applies trim-then-fallback uniformly to a non-secret
   const existing: ConnectorInstance = { id: 'c1', vendorId: 'datadog', label: 'x', fields: { site: 'us1', apiKey: 'k', appKey: 'a' } };
   const merged = buildConnectorUpdate(existing, { fields: { site: '  ', apiKey: 'k', appKey: 'a' } });
   assert.equal(merged.fields.site, 'us1'); // blank (whitespace-only) submission falls back, doesn't wipe
+});
+
+test('resolveConnector: no connectorId set (undefined) returns the "pick a connector first" error, not a match', () => {
+  const user: User = { id: 'edwin', name: 'Edwin', connectors: [{ id: 'c1', vendorId: 'atlassian', label: 'x', fields: {} }] };
+  const resolved = resolveConnector(undefined, 'atlassian', 'an Atlassian', 'workspace', user);
+  assert.deepEqual(resolved, { error: 'Pick an Atlassian connector for this workspace first' });
+});
+
+test('resolveConnector: a connectorId with no matching instance at all returns the "no longer exists" error', () => {
+  const user: User = { id: 'edwin', name: 'Edwin', connectors: [{ id: 'c1', vendorId: 'atlassian', label: 'x', fields: {} }] };
+  const resolved = resolveConnector('does-not-exist', 'atlassian', 'an Atlassian', 'workspace', user);
+  assert.deepEqual(resolved, { error: 'The connector picked for this workspace no longer exists — pick another' });
+});
+
+test('resolveConnector: a connectorId matching an instance of the WRONG vendor is treated as not found, not returned', () => {
+  const user: User = { id: 'edwin', name: 'Edwin', connectors: [{ id: 'c1', vendorId: 'github', label: 'x', fields: { token: 't' } }] };
+  // c1 exists, but as a github connector — asking for it scoped to 'atlassian' must not cross-match.
+  const resolved = resolveConnector('c1', 'atlassian', 'an Atlassian', 'workspace', user);
+  assert.deepEqual(resolved, { error: 'The connector picked for this workspace no longer exists — pick another' });
+});
+
+test('resolveConnector: a connectorId matching a same-vendor instance returns it', () => {
+  const instance: ConnectorInstance = { id: 'c1', vendorId: 'atlassian', label: 'acme', fields: { email: 'e', apiToken: 't' } };
+  const user: User = { id: 'edwin', name: 'Edwin', connectors: [instance] };
+  const resolved = resolveConnector('c1', 'atlassian', 'an Atlassian', 'workspace', user);
+  assert.deepEqual(resolved, { instance });
+});
+
+test('resolveConnector: a null user (no current user resolved at all) is treated the same as no matching connector', () => {
+  const resolved = resolveConnector('c1', 'atlassian', 'an Atlassian', 'workspace', null);
+  assert.deepEqual(resolved, { error: 'The connector picked for this workspace no longer exists — pick another' });
 });
 
 test('workspaceProblems: rejects an atlassian block with no site URL, accepts one with', async () => {
