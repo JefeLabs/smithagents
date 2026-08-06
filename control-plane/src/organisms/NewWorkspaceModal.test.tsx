@@ -134,14 +134,10 @@ describe("NewWorkspaceModal", () => {
     render(<NewWorkspaceModal {...props({ save })} />);
     await fillOneValidRepo();
     await userEvent.click(screen.getByRole("button", { name: /create workspace/i }));
-    await waitFor(() =>
-      expect(save).toHaveBeenCalledWith(
-        expect.objectContaining({
-          repos: expect.arrayContaining([expect.not.objectContaining({ initGit: expect.anything() })]),
-        }),
-        true,
-      ),
-    );
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    // biome-ignore lint/style/noNonNullAssertion: save was called per waitFor above
+    const submitted = (save.mock.calls[0]![0] as { repos: Array<Record<string, unknown>> }).repos[0]!;
+    expect("initGit" in submitted).toBe(false);
   });
 
   it("without a native picker the Browse button is absent; a typed path still works in new-folder mode", async () => {
