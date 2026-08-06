@@ -151,7 +151,13 @@ export function HomePage() {
   return (
     <ControlPlaneLayout
       background={<DotGridCanvas params={gridParams} />}
-      leftRail={<ToolRail onNewWorkspace={() => setNewWorkspaceOpen(true)} onSettings={() => setSettingsOpen(true)} />}
+      leftRail={
+        <ToolRail
+          onNewWorkspace={() => setNewWorkspaceOpen(true)}
+          onSessions={() => setSessionsOpen((open) => !open)}
+          onSettings={() => setSettingsOpen(true)}
+        />
+      }
       rightRail={
         <>
           {identity && <IdentityTile {...identity} />}
