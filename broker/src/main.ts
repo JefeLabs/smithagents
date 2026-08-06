@@ -667,9 +667,8 @@ const textChannel = new TextChannel(
             // archived filter as those two call sites) is what keeps
             // SurfacePolicy (which reads directory.list()) from enforcing a
             // STALE pre-PUT mode: without this, Discord text would keep
-            // relaying a disabled agent, a tauri-disabled agent would never
-            // leave the roster, and the next crew VC join would use stale
-            // designation (an ejected agent comes back when the crew
+            // relaying a disabled agent, and the next crew VC join would use
+            // stale designation (an ejected agent comes back when the crew
             // rejoins). Broadcast afterward matches every other
             // roster-changing path's own frame.
             directory.seed(registryAfterPut.filter((a) => !a.archived));
