@@ -1,4 +1,4 @@
-import { Mic } from "lucide-react";
+import { AudioLines } from "lucide-react";
 
 interface MicHeroProps {
   live: boolean;
@@ -11,12 +11,12 @@ export function MicHero({ live, onToggle }: MicHeroProps) {
       <button
         type="button"
         className={live ? "mic-hero live" : "mic-hero"}
-        title="Push to talk"
-        aria-label="Push to talk"
+        title="Activate always listening"
+        aria-label="Activate always listening"
         aria-pressed={live}
         onClick={onToggle}
       >
-        <Mic strokeWidth={1.7} />
+        <AudioLines strokeWidth={1.7} />
       </button>
       <div className="mic-caption">
         {live ? (
@@ -24,9 +24,7 @@ export function MicHero({ live, onToggle }: MicHeroProps) {
             <b style={{ color: "var(--accent)" }}>Listening…</b> tap to stop
           </>
         ) : (
-          <>
-            <b>Push to talk</b> — or type below
-          </>
+          <b>Activate always listening</b>
         )}
       </div>
     </div>
