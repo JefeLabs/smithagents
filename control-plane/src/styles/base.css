@@ -85,15 +85,3 @@ main {
     opacity: 0;
   }
 }
-@media (prefers-reduced-motion: reduce) {
-  .greeting,
-  .voice {
-    animation: none;
-  }
-  .mic-hero::after {
-    animation: none;
-  }
-  .voice-toggle.live {
-    animation: none;
-  }
-}

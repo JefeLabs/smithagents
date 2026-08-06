@@ -45,18 +45,19 @@ export function VoiceStage({
             <MicHero live={micLive} onToggle={onMicToggle} />
           </motion.div>
         )}
+        {chatActive && (
+          <motion.div
+            key="log"
+            className="chat-log"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={spring}
+          >
+            <Transcript messages={messages} />
+          </motion.div>
+        )}
       </AnimatePresence>
-      {chatActive && (
-        <motion.div
-          key="log"
-          className="chat-log"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={spring}
-        >
-          <Transcript messages={messages} />
-        </motion.div>
-      )}
       <motion.div layout className="composer-dock" transition={spring}>
         <Composer
           onSend={onSend}

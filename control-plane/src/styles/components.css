@@ -2086,3 +2086,14 @@ main.chat-active .composer-dock {
   align-items: center;
   gap: 30px;
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .greeting,
+  .voice,
+  .voice-toggle.live {
+    animation: none !important;
+  }
+  .mic-hero::after {
+    animation: none !important;
+  }
+}
