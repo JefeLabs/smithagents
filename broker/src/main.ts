@@ -34,6 +34,7 @@ import { VoiceCatalog } from './voice-catalog.ts';
 import { TextChannel, type RosterEntry } from './text-channel.ts';
 import { createRemovalService } from './removal.ts';
 import { mintRoomToken } from './token.ts';
+import { isDiscordTextActive } from './discord-state.ts';
 
 // Defense in depth: the brain-turn queue in broker.ts isolates errors from
 // every turn it runs, but this catches anything outside that queue so a
@@ -768,13 +769,13 @@ const textChannel = new TextChannel(
       for (const a of directory.list()) {
         out[a.id] = {
           tauri: policy.attends(a.id, 'tauri'),
-          discord: discordTextLifecycle.activeDiscordText !== null && policy.attends(a.id, 'discord'),
+          discord: isDiscordTextActive(discordTextLifecycle) && policy.attends(a.id, 'discord'),
           'discord-voice': voiceIds.has(a.id),
         };
       }
       return out;
     },
-    info: () => ({ configured: discordTextLifecycle.activeDiscordText !== null, voiceReady: voiceSurface !== null }),
+    info: () => ({ configured: isDiscordTextActive(discordTextLifecycle), voiceReady: voiceSurface !== null }),
     join: async (agentId, surface) => {
       if (surface === 'discord-voice') {
         // Mode check first: an explicitly disabled agent must never end up
@@ -795,7 +796,7 @@ const textChannel = new TextChannel(
       if (surface !== 'discord' && surface !== 'tauri') return { error: `unknown surface: ${surface}`, status: 404 };
       const decision = decideJoin(agentId, surface, policy.modeFor(agentId, surface));
       if (decision.type === 'reject') return { error: decision.error, status: decision.status };
-      if (surface === 'discord' && discordTextLifecycle.activeDiscordText === null) return { error: 'Discord is not configured', status: 409 };
+      if (surface === 'discord' && !isDiscordTextActive(discordTextLifecycle)) return { error: 'Discord is not configured', status: 409 };
       if (decision.type === 'admit') policy.admit(agentId, surface);
       return { ok: true } as const;
     },
