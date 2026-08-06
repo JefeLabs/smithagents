@@ -189,6 +189,9 @@ export class OrchestratorServer {
 
     // Create Fastify instance
     this.app = Fastify({
+      // Fastify's 1 MiB default rejects a base64-encoded 2 MB avatar (needs ~2.8 MB with
+      // JSON overhead) before decodeAvatarData's friendly 400 can fire. 4 MB gives headroom.
+      bodyLimit: 4 * 1024 * 1024,
       logger: {
         level: 'info',
         transport: {
