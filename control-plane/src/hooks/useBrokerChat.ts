@@ -84,8 +84,11 @@ export interface WorkspaceRecord {
     path: string;
     branch: string;
     github?: { owner: string; repo: string; connectorId?: string };
+    initGit?: boolean;
   }>;
   atlassian?: { siteUrl: string; jiraProjectKeys?: string[]; confluenceSpaceKeys?: string[]; connectorId?: string };
+  /** Execution environment for this workspace's tasks; unset = swarm's server default. */
+  runtime?: "tmux" | "docker" | "remote";
 }
 
 /** The operator's own profile — connector credentials read back redacted, never the secret itself. */
@@ -257,13 +260,13 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
   }, [base]);
 
   const saveWorkspace = useCallback(
-    async (body: WorkspaceRecord, isNew: boolean): Promise<{ error?: string }> => {
+    async (body: WorkspaceRecord, isNew: boolean): Promise<{ error?: string; name?: string }> => {
       const res = await fetch(`http://${base}/workspaces${isNew ? "" : `/${encodeURIComponent(body.name)}`}`, {
         method: isNew ? "POST" : "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       });
-      return (await res.json()) as { error?: string };
+      return (await res.json()) as { error?: string; name?: string };
     },
     [base],
   );
