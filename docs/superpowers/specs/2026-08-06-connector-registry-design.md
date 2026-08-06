@@ -160,11 +160,14 @@ account tokens identically (the response's `data.type` distinguishes them).
 
 ## 3. Workspace-side resolution (multi-credential)
 
-`Workspace.atlassian` (`swarm/src/workspaces.ts`) gains a required
-`connectorId: string` once at least one Atlassian connector instance exists
-for the current user. Each entry in `WorkspaceRepo.github[]` gains its own
-`connectorId: string` — repos can belong to different orgs needing
-different PATs, so the connector choice is per-repo, not per-workspace.
+`Workspace.atlassian` (`swarm/src/workspaces.ts`) gains an *optional*
+`connectorId?: string`. Each entry in `WorkspaceRepo.github[]` gains its own
+optional `connectorId?: string` — repos can belong to different orgs
+needing different PATs, so the connector choice is per-repo, not
+per-workspace. Optional, not required, for the same reason a `Workspace`
+can already exist with no Atlassian/GitHub config at all: the UI can't force
+a pick if the current user hasn't created any connector instance for that
+vendor yet, and workspace creation shouldn't be blocked on that.
 
 `WorkspaceManagerModal`'s Atlassian fieldset and per-repo GitHub rows
 replace their inline email/token inputs with a dropdown listing the current
@@ -172,9 +175,15 @@ user's connector instances for that vendor, by label.
 
 `dispatcher.ts`'s `resolveConnections()` and `drivers/claude.ts`'s
 `materialize()` (MCP env var injection) resolve through `workspace.atlassian
-.connectorId` / `repo.github.connectorId` — look up that id among the
+?.connectorId` / `repo.github?.connectorId` — look up that id among the
 current user's `connectors` filtered to the matching `vendorId`, and use its
-`fields` — instead of reading `user.atlassian`/`user.github` directly.
+`fields` — instead of reading `user.atlassian`/`user.github` directly. An
+unset `connectorId`, or one that no longer matches any of the current
+user's instances (e.g. it was deleted), resolves to "no credential for this
+vendor" — the same soft-fail-not-crash behavior every other optional
+connection in this codebase already follows (a workspace with no Discord
+config just leaves the crew unreachable there; this is the same pattern
+applied to Atlassian/GitHub tool access).
 
 ## 4. API (swarm + broker proxy)
 
@@ -187,13 +196,21 @@ current user's `connectors` filtered to the matching `vendorId`, and use its
   pass through as-is).
 - `POST /me/connectors` — add an instance: `{vendorId, label, fields}` ->
   redacted instance.
-- `PUT /me/connectors/:id` — update label and/or fields. Same
-  partial-update-preserves-existing-secret convention already established
-  for `PUT /me` and `PUT /workspaces/:name/channels`: a blank secret field
-  in the submission falls back to the existing stored value, never wipes it.
+- `PUT /me/connectors/:id` — update `label` and/or `fields`. `vendorId` is
+  immutable once created — the request body doesn't include it, and the
+  route ignores it if sent. Same partial-update-preserves-existing-secret
+  convention already established for `PUT /me` and `PUT /workspaces/:name
+  /channels`: a blank secret field in the submission falls back to the
+  existing stored value, never wipes it.
 - `DELETE /me/connectors/:id` — remove an instance.
 - `POST /me/connectors/:id/verify` — runs that instance's vendor `verify`
   function against its stored fields.
+
+Redaction on every response is derived directly from the registry, not
+hand-maintained per vendor: a field with `secret: true` becomes
+`has<Key-capitalized>: boolean` (e.g. `apiKey` -> `hasApiKey`); a
+non-secret field (e.g. `site`, `region`) passes through under its own
+`key` with its actual value, since those aren't credentials.
 
 **Broker proxy:** thin passthrough methods on `SwarmClient`, local routes on
 `text-channel.ts`, with the same origin-allowlist CORS treatment already
