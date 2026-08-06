@@ -80,6 +80,16 @@ import { lookupTicket, searchDocs } from './atlassian-client.js';
 import { MeetingOrchestrator } from './meetings.js';
 import { loadLiveKitConfig } from './config.js';
 import { resolve, isAbsolute } from 'node:path';
+import {
+  buildCliToolListings,
+  gateReason,
+  inactiveDetail,
+  isActive,
+  loadCliToolsFile,
+  saveCliToolsFile,
+  sweepCliTools,
+  type SweepDeps,
+} from './cli-tools.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -272,6 +282,20 @@ export class OrchestratorServer {
     this.startQueueWorker();
 
     await this.app.listen({ port: this.config.port, host: this.config.host });
+
+    // CLI tool registry: probe machine reality in the background — the cached
+    // file serves until fresh results land (spec: startup + manual +
+    // on-failure; never a boot gate, never periodic).
+    void sweepCliTools(resolve(process.cwd(), '.smith/cli-tools.json'), {
+      agentCommands: this.orchConfig.agentCommands,
+      clis: ENGINES.map((e) => e.cli),
+    }).then(
+      (f) =>
+        this.app.log.info(
+          `CLI tools: ${ENGINES.map((e) => `${e.cli}=${isActive(f.tools[e.cli]) ? 'active' : 'inactive'}`).join(' ')}`,
+        ),
+      (err) => this.app.log.warn(`CLI tool sweep failed: ${(err as Error).message}`),
+    );
 
     this.app.log.info(
       `Orchestrator server running on http://${this.config.host}:${this.config.port}`,
@@ -855,10 +879,17 @@ export class OrchestratorServer {
 
     // ── Agent creation catalog + registry writes ───────────────────────
     this.app.get('/agents/catalog', async () => {
+      // Annotate, don't filter (spec): the wizard grays out inactive engines
+      // with the reason instead of hiding them.
+      const cliFile = await loadCliToolsFile(resolve(process.cwd(), '.smith/cli-tools.json'));
       return {
         stereotypes: STEREOTYPES,
         jobRoles: JOB_ROLES,
-        engines: ENGINES,
+        engines: ENGINES.map((e) => ({
+          ...e,
+          active: isActive(cliFile.tools[e.cli]),
+          statusDetail: inactiveDetail(cliFile.tools[e.cli]) || undefined,
+        })),
         languages: LANGUAGES,
         quickQuestions: QUICK_QUESTIONS,
         reactionLevels: REACTION_LEVELS,
@@ -1440,6 +1471,41 @@ export class OrchestratorServer {
       const vendor = findVendor(instance.vendorId);
       if (!vendor) return reply.status(400).send({ error: `Unknown vendor: ${instance.vendorId}` });
       return vendor.verify(instance.fields, b.extra ?? {});
+    });
+
+    // ── CLI tool registry (machine-level; spec 2026-08-06) ─────────────
+    const cliToolsPath = () => resolve(process.cwd(), '.smith/cli-tools.json');
+    const cliSweepDeps = (): SweepDeps => ({
+      agentCommands: server.orchConfig.agentCommands,
+      clis: ENGINES.map((e) => e.cli),
+    });
+
+    this.app.get('/cli-tools', async () => {
+      let file = await loadCliToolsFile(cliToolsPath());
+      // Lazy first sweep: a fresh install that opens Settings before the
+      // startup sweep lands still gets real statuses, not blanks.
+      if (Object.keys(file.tools).length === 0) {
+        file = await sweepCliTools(cliToolsPath(), cliSweepDeps());
+      }
+      return { tools: buildCliToolListings(ENGINES, file) };
+    });
+
+    this.app.post('/cli-tools/refresh', async (req) => {
+      const tool = (req.query as { tool?: string }).tool;
+      const file = await sweepCliTools(cliToolsPath(), cliSweepDeps(), tool);
+      return { tools: buildCliToolListings(ENGINES, file) };
+    });
+
+    this.app.put<{ Params: { id: string } }>('/cli-tools/:id', async (req, reply) => {
+      const b = req.body as { enabled?: boolean };
+      if (typeof b?.enabled !== 'boolean') return reply.status(400).send({ error: 'body must be { enabled: boolean }' });
+      if (!findEngine(req.params.id)) return reply.status(404).send({ error: `Unknown CLI tool: ${req.params.id}` });
+      const file = await loadCliToolsFile(cliToolsPath());
+      const current = file.tools[req.params.id];
+      if (!current) return reply.status(409).send({ error: 'Tool not probed yet — refresh first' });
+      file.tools[req.params.id] = { ...current, enabled: b.enabled };
+      await saveCliToolsFile(cliToolsPath(), file);
+      return { tools: buildCliToolListings(ENGINES, file) };
     });
 
     this.app.post<{ Params: { name: string } }>('/workspaces/:name/verify-atlassian', async (req, reply) => {
