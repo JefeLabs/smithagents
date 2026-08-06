@@ -774,6 +774,94 @@
   outline-offset: 2px;
 }
 
+/* Two-row composer (VoiceStage). WorkStage keeps the single-row base .composer. */
+.composer--stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 12px 12px 8px 16px;
+  border-radius: 22px;
+}
+.composer--stacked textarea {
+  width: 100%;
+  resize: none;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  line-height: 22px;
+  max-height: 132px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.composer--stacked textarea::-webkit-scrollbar {
+  display: none;
+}
+.composer--stacked textarea::placeholder {
+  color: var(--text-dim);
+}
+.composer__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.composer__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.composer--stacked .voice-toggle,
+.composer--stacked .sound-toggle {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  color: var(--text-2);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.composer--stacked .voice-toggle:hover,
+.composer--stacked .sound-toggle:hover {
+  color: var(--text);
+}
+.composer--stacked .voice-toggle.live {
+  color: var(--accent);
+  animation: voice-pulse 1.6s ease-in-out infinite;
+}
+@keyframes voice-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+.composer--stacked .sound-toggle.off {
+  color: var(--text-dim);
+}
+.composer--stacked .send {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+}
+.composer--stacked .send:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 /* tiny hidden tuner (press g) */
 .tuner {
   position: fixed;

@@ -93,4 +93,7 @@ main {
   .mic-hero::after {
     animation: none;
   }
+  .voice-toggle.live {
+    animation: none;
+  }
 }
