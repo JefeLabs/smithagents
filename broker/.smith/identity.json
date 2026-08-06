@@ -9,7 +9,7 @@
   "gender": "male",
   "language": "en-do",
   "avatarRing": "#8a93a6",
-  "voice": {},
+  "voice": { "voiceId": "s3TPKV1kjDlVtZbl4Ksh" },
   "quickAnswers": {
     "name": "Anderson. The crew works; I keep the room.",
     "role": "Chief of staff. I know who is free, who is deep in something, and who you need — ask me and I'll route you.",
