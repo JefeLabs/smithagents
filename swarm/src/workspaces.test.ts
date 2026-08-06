@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -15,6 +15,8 @@ import {
   normalizeRepoBranch,
 } from './workspaces.js';
 import type { Workspace } from './workspaces.js';
+
+const execFileAsync = promisify(execFile);
 
 test('resolveRepo never resolves into an archived workspace', () => {
   const ws: Workspace[] = [
@@ -85,4 +87,48 @@ test('atlassian and github config round-trip through save/load', async () => {
   const [loaded] = await loadWorkspacesFromDir(dir);
   assert.deepEqual(loaded?.atlassian, ws.atlassian);
   assert.deepEqual(loaded?.repos[0]?.github, { owner: 'acme', repo: 'web' });
+});
+
+test('a workspace atlassian block with connectorId round-trips through save/load unchanged', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'workspaces-connectorid-'));
+  const repoDir = join(dir, 'repo');
+  await mkdir(repoDir, { recursive: true });
+  await execFileAsync('git', ['init', '-q'], { cwd: repoDir });
+  const ws: Workspace = {
+    name: 'acme',
+    repos: [{ name: 'web', path: repoDir }],
+    atlassian: { siteUrl: 'https://acme.atlassian.net', connectorId: 'conn-1' },
+  };
+  await saveWorkspace(dir, ws);
+  const [reloaded] = await loadWorkspacesFromDir(dir);
+  assert.equal(reloaded!.atlassian?.connectorId, 'conn-1');
+});
+
+test('a repo github block with connectorId round-trips through save/load unchanged', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'workspaces-repo-connectorid-'));
+  const repoDir = join(dir, 'repo');
+  await mkdir(repoDir, { recursive: true });
+  await execFileAsync('git', ['init', '-q'], { cwd: repoDir });
+  const ws: Workspace = {
+    name: 'acme',
+    repos: [{ name: 'web', path: repoDir, github: { owner: 'acme', repo: 'web', connectorId: 'conn-2' } }],
+  };
+  await saveWorkspace(dir, ws);
+  const [reloaded] = await loadWorkspacesFromDir(dir);
+  assert.equal(reloaded!.repos[0]!.github?.connectorId, 'conn-2');
+});
+
+test('workspaceProblems does not require or validate connectorId — an unset one is fine', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'workspaces-noconnid-'));
+  const repoDir = join(dir, 'repo');
+  await mkdir(repoDir, { recursive: true });
+  await execFileAsync('git', ['init', '-q'], { cwd: repoDir });
+  const ws: Workspace = {
+    name: 'acme',
+    repos: [{ name: 'web', path: repoDir, github: { owner: 'acme', repo: 'web' } }],
+  };
+  await saveWorkspace(dir, ws);
+  const [reloaded] = await loadWorkspacesFromDir(dir);
+  assert.equal(reloaded?.atlassian?.connectorId, undefined);
+  assert.equal(reloaded?.repos[0]?.github?.connectorId, undefined);
 });

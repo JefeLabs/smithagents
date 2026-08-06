@@ -4,22 +4,65 @@
 import { readdir, readFile, mkdir, open } from 'node:fs/promises';
 import { join } from 'node:path';
 
+export interface ConnectorInstance {
+  id: string;
+  vendorId: string;
+  /** User-chosen: "personal", "acme-corp" — how workspaces reference which one to use. */
+  label: string;
+  /** Raw values, including secrets — this file is already untracked + 0600. */
+  fields: Record<string, string>;
+}
+
 export interface User {
   id: string;
   name: string;
   /** Mirrors Workspace's default-invariant pattern; single default user today. */
   default?: boolean;
+  connectors?: ConnectorInstance[];
+}
+
+/** On-disk shape before migration — legacy files may still have these instead of `connectors`. */
+interface LegacyUserFields {
   atlassian?: { email: string; apiToken: string };
   github?: { token: string };
 }
 
+/**
+ * Lazy migration, no one-time script: a legacy `{atlassian, github}` file is
+ * upgraded in memory to `connectors` the moment it's loaded. The file itself
+ * is only rewritten in the new shape the next time anything about that user
+ * is saved — existing tokens survive untouched, no re-entry required (design
+ * §1). An already-migrated user (has `connectors`) is returned as-is, with
+ * any stray legacy keys stripped defensively rather than re-merged.
+ *
+ * Ids are derived deterministically from the user's own id and the vendor
+ * (`legacy-<userId>-<vendor>`), not randomUUID(): every swarm route calls
+ * loadUsersFromDir fresh per request (no caching), so a random id would mint
+ * a NEW id on every single load — a workspace's saved connectorId would
+ * never match again after the request that returned it. Determinism keeps
+ * loadUsersFromDir a pure function of the file's contents, with no need to
+ * write the migrated shape back to disk just to stabilize ids.
+ */
+function upgradeLegacyConnectors(raw: User & LegacyUserFields): User {
+  const { atlassian, github, ...rest } = raw;
+  if (rest.connectors) return rest;
+  const connectors: ConnectorInstance[] = [];
+  if (atlassian) {
+    connectors.push({ id: `legacy-${rest.id}-atlassian`, vendorId: 'atlassian', label: 'default', fields: { ...atlassian } });
+  }
+  if (github) {
+    connectors.push({ id: `legacy-${rest.id}-github`, vendorId: 'github', label: 'default', fields: { ...github } });
+  }
+  return connectors.length ? { ...rest, connectors } : rest;
+}
+
 function assertUser(file: string, v: unknown): User {
-  const o = v as Partial<User>;
+  const o = v as Partial<User> & LegacyUserFields;
   const ok = o && typeof o.id === 'string' && typeof o.name === 'string';
   if (!ok) {
     throw new Error(`Invalid user file ${file}: requires id and name`);
   }
-  return o as User;
+  return upgradeLegacyConnectors(o as User & LegacyUserFields);
 }
 
 /** Load every *.json in `dir` as a User. Throws (naming the file) on malformed input. */

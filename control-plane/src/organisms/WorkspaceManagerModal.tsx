@@ -1,7 +1,7 @@
 import { Plus, X } from "lucide-react";
 import type { MouseEvent } from "react";
 import { useEffect, useState } from "react";
-import type { WorkspaceRecord } from "../hooks/useBrokerChat";
+import type { ConnectorInstanceRecord, WorkspaceRecord } from "../hooks/useBrokerChat";
 import { ConfirmSheet } from "../molecules/ConfirmSheet";
 
 interface WorkspaceManagerModalProps {
@@ -12,6 +12,9 @@ interface WorkspaceManagerModalProps {
   remove: (name: string) => Promise<{ outcome?: string; error?: string }>;
   verifyAtlassian: (name: string) => Promise<{ ok?: boolean; detail?: string; error?: string }>;
   verifyRepoGithub: (name: string, repoName: string) => Promise<{ ok?: boolean; detail?: string; error?: string }>;
+  // Optional so HomePage.tsx (wired up in a later task) isn't forced to pass it before
+  // it has a real implementation to hand over — defaults to an empty roster below.
+  listMyConnectors?: () => Promise<ConnectorInstanceRecord[]>;
 }
 
 const emptyRepo = () => ({
@@ -39,8 +42,10 @@ export function WorkspaceManagerModal({
   remove,
   verifyAtlassian,
   verifyRepoGithub,
+  listMyConnectors = async () => [],
 }: WorkspaceManagerModalProps) {
   const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([]);
+  const [connectors, setConnectors] = useState<ConnectorInstanceRecord[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   /** Workspace name being edited; null means the form is building a new one. */
   const [selected, setSelected] = useState<string | null>(null);
@@ -78,6 +83,12 @@ export function WorkspaceManagerModal({
       setForm(blankForm(records.filter((w) => !w.archived).length === 0));
       setError(null);
     });
+  }, [open]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: see the existing open-effect above this one for the same reasoning
+  useEffect(() => {
+    if (!open) return;
+    void listMyConnectors().then(setConnectors);
   }, [open]);
 
   // Escape cancels an open remove-confirmation first; only closes the whole
@@ -278,6 +289,33 @@ export function WorkspaceManagerModal({
                   onChange={(e) => setForm((f) => ({ ...f, atlassian: { ...f.atlassian, siteUrl: e.target.value } }))}
                   placeholder="https://acme.atlassian.net"
                 />
+                <label htmlFor="atlassian-connector">
+                  Atlassian connector
+                  <select
+                    id="atlassian-connector"
+                    aria-label="Atlassian connector"
+                    value={form.atlassian?.connectorId ?? ""}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        atlassian: {
+                          siteUrl: f.atlassian?.siteUrl ?? "",
+                          ...f.atlassian,
+                          connectorId: e.target.value || undefined,
+                        },
+                      }))
+                    }
+                  >
+                    <option value="">— none picked —</option>
+                    {connectors
+                      .filter((c) => c.vendorId === "atlassian")
+                      .map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.label}
+                        </option>
+                      ))}
+                  </select>
+                </label>
                 <input
                   value={form.atlassian?.jiraProjectKeys?.[0] ?? ""}
                   onChange={(e) =>
@@ -344,17 +382,43 @@ export function WorkspaceManagerModal({
                     <input
                       value={repo.github?.owner ?? ""}
                       onChange={(e) =>
-                        updateRepo(i, { github: { owner: e.target.value, repo: repo.github?.repo ?? "" } })
+                        updateRepo(i, {
+                          github: { ...repo.github, owner: e.target.value, repo: repo.github?.repo ?? "" },
+                        })
                       }
                       placeholder="GitHub owner"
                     />
                     <input
                       value={repo.github?.repo ?? ""}
                       onChange={(e) =>
-                        updateRepo(i, { github: { owner: repo.github?.owner ?? "", repo: e.target.value } })
+                        updateRepo(i, {
+                          github: { ...repo.github, owner: repo.github?.owner ?? "", repo: e.target.value },
+                        })
                       }
                       placeholder="GitHub repo"
                     />
+                    <select
+                      aria-label="GitHub connector"
+                      value={repo.github?.connectorId ?? ""}
+                      onChange={(e) =>
+                        updateRepo(i, {
+                          github: {
+                            owner: repo.github?.owner ?? "",
+                            repo: repo.github?.repo ?? "",
+                            connectorId: e.target.value || undefined,
+                          },
+                        })
+                      }
+                    >
+                      <option value="">— none picked —</option>
+                      {connectors
+                        .filter((c) => c.vendorId === "github")
+                        .map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.label}
+                          </option>
+                        ))}
+                    </select>
                     {selected && repo.github?.owner && repo.github?.repo && (
                       <button
                         type="button"

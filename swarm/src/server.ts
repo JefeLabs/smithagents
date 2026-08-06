@@ -66,9 +66,10 @@ import {
   normalizeRepoBranch,
   type Workspace,
 } from './workspaces.js';
-import { loadUsersFromDir, saveUser, resolveCurrentUser, type User } from './users.js';
-import { verifyGithubToken, verifyGithubRepo } from './verify-github.js';
+import { loadUsersFromDir, saveUser, resolveCurrentUser, type User, type ConnectorInstance } from './users.js';
+import { verifyGithubRepo } from './verify-github.js';
 import { verifyAtlassian } from './verify-atlassian.js';
+import { VENDORS, findVendor } from './connectors.js';
 import { loadChannelsFor, saveChannels, type WorkspaceChannels } from './channels.js';
 import { verifyDiscordToken } from './verify-discord.js';
 import { lookupTicket, searchDocs } from './atlassian-client.js';
@@ -1319,9 +1320,7 @@ export class OrchestratorServer {
     const redactUser = (u: User | null) => ({
       id: u?.id ?? 'me',
       name: u?.name ?? 'You',
-      hasAtlassianToken: Boolean(u?.atlassian?.apiToken),
-      hasGithubToken: Boolean(u?.github?.token),
-      atlassianEmail: u?.atlassian?.email,
+      connectors: (u?.connectors ?? []).map(redactConnector),
     });
 
     this.app.get('/me', async () => {
@@ -1330,11 +1329,16 @@ export class OrchestratorServer {
     });
 
     this.app.put('/me', async (req, reply) => {
-      const b = req.body as Partial<User>;
+      const b = req.body as { name?: string };
       const dir = resolve(process.cwd(), '.smith/users');
       const users = await loadUsersFromDir(dir);
       const existing = resolveCurrentUser(users);
-      const merged = buildUserUpdate(existing, b);
+      const merged: User = {
+        id: existing?.id ?? 'me',
+        name: b.name?.trim() || existing?.name || 'You',
+        default: true,
+        connectors: existing?.connectors,
+      };
       try {
         await saveUser(dir, merged);
       } catch (err) {
@@ -1343,11 +1347,89 @@ export class OrchestratorServer {
       return redactUser(merged);
     });
 
-    this.app.post('/me/verify-github', async (req, reply) => {
+    this.app.get('/connectors/vendors', async () => {
+      return VENDORS.map((v) => ({
+        id: v.id,
+        label: v.label,
+        description: v.description,
+        fields: v.fields,
+        verifyExtraFields: v.verifyExtraFields ?? [],
+      }));
+    });
+
+    this.app.get('/me/connectors', async () => {
       const users = await loadUsersFromDir(resolve(process.cwd(), '.smith/users'));
       const user = resolveCurrentUser(users);
-      if (!user?.github?.token) return reply.status(400).send({ error: 'No GitHub token saved yet — add one first.' });
-      return verifyGithubToken(user.github.token);
+      return (user?.connectors ?? []).map(redactConnector);
+    });
+
+    this.app.post('/me/connectors', async (req, reply) => {
+      const b = req.body as { vendorId?: string; label?: string; fields?: Record<string, string> };
+      if (!b.vendorId || !findVendor(b.vendorId)) return reply.status(400).send({ error: `Unknown vendor: ${b.vendorId}` });
+      if (!b.label?.trim()) return reply.status(400).send({ error: 'A label is required' });
+      const dir = resolve(process.cwd(), '.smith/users');
+      const users = await loadUsersFromDir(dir);
+      const existing = resolveCurrentUser(users) ?? { id: 'me', name: 'You', default: true, connectors: [] };
+      const instance: ConnectorInstance = {
+        id: randomUUID(),
+        vendorId: b.vendorId,
+        label: b.label.trim(),
+        fields: buildConnectorFields(b.vendorId, b.fields),
+      };
+      const merged: User = { ...existing, connectors: [...(existing.connectors ?? []), instance] };
+      try {
+        await saveUser(dir, merged);
+      } catch (err) {
+        return reply.status(400).send({ error: String((err as Error).message) });
+      }
+      return reply.status(201).send(redactConnector(instance));
+    });
+
+    this.app.put<{ Params: { id: string } }>('/me/connectors/:id', async (req, reply) => {
+      const b = req.body as { label?: string; fields?: Record<string, string> };
+      const dir = resolve(process.cwd(), '.smith/users');
+      const users = await loadUsersFromDir(dir);
+      const existing = resolveCurrentUser(users);
+      const current = existing?.connectors?.find((c) => c.id === req.params.id);
+      if (!current) return reply.status(404).send({ error: `Unknown connector: ${req.params.id}` });
+      const updated = buildConnectorUpdate(current, b);
+      const merged: User = {
+        ...existing!,
+        connectors: existing!.connectors!.map((c) => (c.id === current.id ? updated : c)),
+      };
+      try {
+        await saveUser(dir, merged);
+      } catch (err) {
+        return reply.status(400).send({ error: String((err as Error).message) });
+      }
+      return redactConnector(updated);
+    });
+
+    this.app.delete<{ Params: { id: string } }>('/me/connectors/:id', async (req, reply) => {
+      const dir = resolve(process.cwd(), '.smith/users');
+      const users = await loadUsersFromDir(dir);
+      const existing = resolveCurrentUser(users);
+      if (!existing?.connectors?.some((c) => c.id === req.params.id)) {
+        return reply.status(404).send({ error: `Unknown connector: ${req.params.id}` });
+      }
+      const merged: User = { ...existing, connectors: existing.connectors.filter((c) => c.id !== req.params.id) };
+      try {
+        await saveUser(dir, merged);
+      } catch (err) {
+        return reply.status(400).send({ error: String((err as Error).message) });
+      }
+      return { ok: true };
+    });
+
+    this.app.post<{ Params: { id: string } }>('/me/connectors/:id/verify', async (req, reply) => {
+      const b = (req.body as { extra?: Record<string, string> } | undefined) ?? {};
+      const users = await loadUsersFromDir(resolve(process.cwd(), '.smith/users'));
+      const user = resolveCurrentUser(users);
+      const instance = user?.connectors?.find((c) => c.id === req.params.id);
+      if (!instance) return reply.status(404).send({ error: `Unknown connector: ${req.params.id}` });
+      const vendor = findVendor(instance.vendorId);
+      if (!vendor) return reply.status(400).send({ error: `Unknown vendor: ${instance.vendorId}` });
+      return vendor.verify(instance.fields, b.extra ?? {});
     });
 
     this.app.post<{ Params: { name: string } }>('/workspaces/:name/verify-atlassian', async (req, reply) => {
@@ -1356,8 +1438,10 @@ export class OrchestratorServer {
       if (!ws.atlassian) return reply.status(400).send({ error: `Workspace "${ws.name}" has no Jira/Confluence site configured` });
       const users = await loadUsersFromDir(resolve(process.cwd(), '.smith/users'));
       const user = resolveCurrentUser(users);
-      if (!user?.atlassian) return reply.status(400).send({ error: 'You have not added your Atlassian credential in account settings' });
-      return verifyAtlassian(ws.atlassian.siteUrl, user.atlassian.email, user.atlassian.apiToken, {
+      const resolved = resolveConnector(ws.atlassian.connectorId, 'atlassian', 'an Atlassian', 'workspace', user);
+      if ('error' in resolved) return reply.status(400).send({ error: resolved.error });
+      const { instance } = resolved;
+      return verifyAtlassian(ws.atlassian.siteUrl, instance.fields.email ?? '', instance.fields.apiToken ?? '', {
         confluenceSpaceKey: ws.atlassian.confluenceSpaceKeys?.[0],
       });
     });
@@ -1424,8 +1508,9 @@ export class OrchestratorServer {
         if (!repo.github) return reply.status(400).send({ error: `Repo "${repo.name}" has no GitHub owner/repo configured` });
         const users = await loadUsersFromDir(resolve(process.cwd(), '.smith/users'));
         const user = resolveCurrentUser(users);
-        if (!user?.github) return reply.status(400).send({ error: 'You have not added your GitHub token in account settings' });
-        return verifyGithubRepo(repo.github.owner, repo.github.repo, user.github.token);
+        const resolved = resolveConnector(repo.github.connectorId, 'github', 'a GitHub', 'repo', user);
+        if ('error' in resolved) return reply.status(400).send({ error: resolved.error });
+        return verifyGithubRepo(repo.github.owner, repo.github.repo, resolved.instance.fields.token ?? '');
       },
     );
 
@@ -1435,12 +1520,12 @@ export class OrchestratorServer {
         const ws = server.workspaces.find((w) => w.name === req.params.name);
         if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
         if (!ws.atlassian) return reply.status(400).send({ error: `Workspace "${ws.name}" has no Jira/Confluence site configured` });
-        const ticketKey = req.body?.ticketKey;
-        if (!ticketKey) return reply.status(400).send({ error: 'Missing required field: ticketKey' });
         const users = await loadUsersFromDir(resolve(process.cwd(), '.smith/users'));
         const user = resolveCurrentUser(users);
-        if (!user?.atlassian) return reply.status(400).send({ error: 'You have not added your Atlassian credential in account settings' });
-        return lookupTicket(ws.atlassian.siteUrl, user.atlassian.email, user.atlassian.apiToken, ticketKey);
+        const ticketKey = req.body?.ticketKey;
+        const resolved = resolveAtlassianConnector(ws.atlassian.connectorId, user, { name: 'ticketKey', value: ticketKey });
+        if ('error' in resolved) return reply.status(400).send({ error: resolved.error });
+        return lookupTicket(ws.atlassian.siteUrl, resolved.instance.fields.email ?? '', resolved.instance.fields.apiToken ?? '', ticketKey!);
       },
     );
 
@@ -1450,12 +1535,12 @@ export class OrchestratorServer {
         const ws = server.workspaces.find((w) => w.name === req.params.name);
         if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
         if (!ws.atlassian) return reply.status(400).send({ error: `Workspace "${ws.name}" has no Jira/Confluence site configured` });
-        const query = req.body?.query;
-        if (!query) return reply.status(400).send({ error: 'Missing required field: query' });
         const users = await loadUsersFromDir(resolve(process.cwd(), '.smith/users'));
         const user = resolveCurrentUser(users);
-        if (!user?.atlassian) return reply.status(400).send({ error: 'You have not added your Atlassian credential in account settings' });
-        return searchDocs(ws.atlassian.siteUrl, user.atlassian.email, user.atlassian.apiToken, query, {
+        const query = req.body?.query;
+        const resolved = resolveAtlassianConnector(ws.atlassian.connectorId, user, { name: 'query', value: query });
+        if ('error' in resolved) return reply.status(400).send({ error: resolved.error });
+        return searchDocs(ws.atlassian.siteUrl, resolved.instance.fields.email ?? '', resolved.instance.fields.apiToken ?? '', query!, {
           spaceKeys: ws.atlassian.confluenceSpaceKeys,
         });
       },
@@ -1904,44 +1989,130 @@ export async function workspaceProblems(b: Partial<Workspace>): Promise<string |
 }
 
 /**
- * PUT /me merge: a caller may send only the field it changed (e.g. just a
- * rotated apiToken) — an empty/whitespace value for the other field of a
- * credential pair must fall through to the existing saved value instead of
- * blanking it (the AccountPanel form resets its email input to "" on every
- * open, so "rotate just the token" submits `{email: '', apiToken: 'new'}`).
- * Pulled out of the route handler so it's unit-testable without booting the
- * server.
+ * Redaction for one saved connector: secret fields become `has<Field>`
+ * booleans (never the raw value), non-secret fields pass through as-is.
+ * Pulled out to module level (rather than nested in registerRoutes, where
+ * the routes above still call it via `redactUser`) so it's unit-testable
+ * without booting the server, matching workspaceProblems/buildConnectorUpdate's
+ * convention — also the shape Task 7's broker swarm-client.ts mirrors.
  */
-export function buildUserUpdate(existing: User | null, b: Partial<User>): User {
-  return {
-    id: existing?.id ?? 'me',
-    name: b.name?.trim() || existing?.name || 'You',
-    default: true,
-    atlassian: b.atlassian
-      ? {
-          email: (b.atlassian.email ?? '').trim() || existing?.atlassian?.email || '',
-          apiToken: (b.atlassian.apiToken ?? '').trim() || existing?.atlassian?.apiToken || '',
-        }
-      : existing?.atlassian,
-    github: b.github ? { token: b.github.token ?? existing?.github?.token ?? '' } : existing?.github,
-  };
+export function redactConnector(instance: ConnectorInstance): Record<string, unknown> {
+  const vendor = findVendor(instance.vendorId);
+  const fields: Record<string, string | boolean> = {};
+  for (const f of vendor?.fields ?? []) {
+    const v = instance.fields[f.key];
+    if (f.secret) fields[`has${f.key[0]!.toUpperCase()}${f.key.slice(1)}`] = Boolean(v);
+    else fields[f.key] = v ?? '';
+  }
+  return { id: instance.id, vendorId: instance.vendorId, label: instance.label, fields };
+}
+
+/**
+ * Resolves a workspace/repo's connectorId to the actual saved
+ * ConnectorInstance, scoped to the expected vendor. Centralizes the guard
+ * logic that used to be duplicated inline across verify-atlassian,
+ * verify-github, lookup-ticket, and search-docs (each reimplementing "no
+ * connectorId set" / "connectorId set but no matching same-vendor instance"
+ * with identical shape) — pulled out here so those guard paths are
+ * unit-testable without booting the server, matching this file's other
+ * extracted-helper convention. `vendorLabel`/`scope` exist only to keep each
+ * call site's existing user-facing error text unchanged (e.g. "an Atlassian
+ * connector for this workspace" vs "a GitHub connector for this repo").
+ */
+export function resolveConnector(
+  connectorId: string | undefined,
+  vendorId: string,
+  vendorLabel: string,
+  scope: string,
+  user: User | null,
+): { instance: ConnectorInstance } | { error: string } {
+  if (!connectorId) return { error: `Pick ${vendorLabel} connector for this ${scope} first` };
+  const instance = user?.connectors?.find((c) => c.id === connectorId && c.vendorId === vendorId);
+  if (!instance) return { error: `The connector picked for this ${scope} no longer exists — pick another` };
+  return { instance };
+}
+
+/**
+ * Shared precondition order for lookup-ticket/search-docs: the connector
+ * guard (resolveConnector) must be checked BEFORE the route's own required
+ * body field, so a request invalid on both axes reports "pick a connector"
+ * first, not "missing field" — this is precedence-sensitive, not just an
+ * internal-shape choice. Pulled out to module level, distinct from
+ * resolveConnector itself, specifically so that ordering is unit-testable:
+ * fix round 2 caught that the resolveConnector extraction had accidentally
+ * swapped this order in both routes (the connector-guard call moved to
+ * after the ticketKey/query check), found only by manual review, not a
+ * test — this closes that gap for good rather than trusting call-site
+ * ordering discipline again.
+ */
+export function resolveAtlassianConnector(
+  connectorId: string | undefined,
+  user: User | null,
+  requiredField: { name: string; value: string | undefined },
+): { instance: ConnectorInstance } | { error: string } {
+  const resolved = resolveConnector(connectorId, 'atlassian', 'an Atlassian', 'workspace', user);
+  if ('error' in resolved) return resolved;
+  if (!requiredField.value) return { error: `Missing required field: ${requiredField.name}` };
+  return resolved;
+}
+
+/**
+ * POST /me/connectors field filter: keeps only the keys the matched vendor
+ * actually declares, mirroring buildConnectorUpdate's PUT-side filtering
+ * below — unlike PUT, there's no `existing` to fall back to on create, so
+ * this just drops any key the registry doesn't know about rather than
+ * merging. Without it, a create request could persist arbitrary/garbage
+ * keys that redaction (which only ever emits registry-declared keys) can
+ * never surface again, or persist zero fields silently.
+ */
+export function buildConnectorFields(vendorId: string, fields: Record<string, string> | undefined): Record<string, string> {
+  const vendor = findVendor(vendorId);
+  const result: Record<string, string> = {};
+  for (const f of vendor?.fields ?? []) {
+    if (fields?.[f.key] !== undefined) result[f.key] = fields[f.key]!;
+  }
+  return result;
+}
+
+/**
+ * PUT /me/connectors/:id merge: every field (secret or not) trims a
+ * submitted value and falls back to the existing stored value on blank —
+ * applied uniformly, unlike the old buildUserUpdate, which only did this for
+ * Atlassian's two fields and used a plain `??` (no trim, no fallback-on-
+ * blank-string) for GitHub's single field. `vendorId` is immutable — never
+ * read from `b`, even if a caller sends one.
+ */
+export function buildConnectorUpdate(
+  existing: ConnectorInstance,
+  b: { label?: string; fields?: Record<string, string> },
+): ConnectorInstance {
+  const vendor = findVendor(existing.vendorId);
+  const fields = { ...existing.fields };
+  if (b.fields) {
+    for (const f of vendor?.fields ?? []) {
+      const submitted = (b.fields[f.key] ?? '').trim();
+      fields[f.key] = submitted || existing.fields[f.key] || '';
+    }
+  }
+  return { id: existing.id, vendorId: existing.vendorId, label: b.label?.trim() || existing.label, fields };
 }
 
 /**
  * PUT /workspaces/:name/channels merge: a submitted `discord` block replaces
  * textChannels/voiceChannels wholesale, but botToken falls back to the
  * existing saved value when the submission's own botToken is blank — the
- * account-panel-style UI convention (ChannelsManagerModal) never re-sends a
- * saved secret, so "edit only the channel lists" submits {botToken: "", ...}
+ * settings-group UI convention (ChannelsGroup) never re-sends a saved
+ * secret, so "edit only the channel lists" submits {botToken: "", ...}
  * on every ordinary save; without this fallback that would silently wipe the
- * token. Same fix shape as buildUserUpdate's PUT /me email-wipe fix — see
- * that function's doc comment for the original incident.
+ * token. Same fix shape as buildConnectorUpdate's blank-submission fallback —
+ * see that function's doc comment for the original incident this pattern
+ * traces back to (PUT /me's now-deleted email-wipe bug).
  */
 export function buildChannelsUpdate(existing: WorkspaceChannels | null, b: Partial<WorkspaceChannels>): WorkspaceChannels {
   if (!b.discord) return existing?.discord ? { discord: existing.discord } : {};
   const botToken = b.discord.botToken?.trim() || existing?.discord?.botToken || '';
-  // Defended the same way buildUserUpdate defends its own optional fields
-  // above: a submission that omits one or both lists entirely (e.g.
+  // Defended the same way buildConnectorUpdate defends its own optional
+  // fields above: a submission that omits one or both lists entirely (e.g.
   // {"discord":{"botToken":"x"}}) must fall back rather than persist
   // `undefined` — broker does an unguarded `config.textChannels.length` /
   // `config.voiceChannels.length` downstream (discord-text-lifecycle.ts,

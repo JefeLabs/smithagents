@@ -12,6 +12,29 @@ export interface SpeechProfile {
   rate?: number;
 }
 
+export interface ConnectorFieldDef {
+  key: string;
+  label: string;
+  secret: boolean;
+  type?: 'text' | 'select';
+  options?: { value: string; label: string }[];
+}
+
+export interface ConnectorVendorMeta {
+  id: string;
+  label: string;
+  description: string;
+  fields: ConnectorFieldDef[];
+  verifyExtraFields: ConnectorFieldDef[];
+}
+
+export interface ConnectorInstanceRecord {
+  id: string;
+  vendorId: string;
+  label: string;
+  fields: Record<string, string | boolean>;
+}
+
 export interface RegistryAgent {
   id: string;
   name: string;
@@ -37,9 +60,15 @@ export interface SwarmSquad {
 export interface WorkspaceBody {
   name: string;
   description?: string;
-  repos: Array<{ name: string; path: string; repository?: string; branch?: string; github?: { owner: string; repo: string } }>;
+  repos: Array<{
+    name: string;
+    path: string;
+    repository?: string;
+    branch?: string;
+    github?: { owner: string; repo: string; connectorId?: string };
+  }>;
   default?: boolean;
-  atlassian?: { siteUrl: string; jiraProjectKeys?: string[]; confluenceSpaceKeys?: string[] };
+  atlassian?: { siteUrl: string; jiraProjectKeys?: string[]; confluenceSpaceKeys?: string[]; connectorId?: string };
 }
 
 export interface SwarmWorkspace extends WorkspaceBody {
@@ -50,8 +79,7 @@ export interface SwarmWorkspace extends WorkspaceBody {
 export interface MeRecord {
   id: string;
   name: string;
-  hasAtlassianToken: boolean;
-  hasGithubToken: boolean;
+  connectors: ConnectorInstanceRecord[];
 }
 
 export interface VerifyResult {
@@ -263,16 +291,32 @@ export class SwarmClient {
     return this.http('GET', '/me') as unknown as Promise<MeRecord>;
   }
 
-  async updateMe(body: {
-    name?: string;
-    atlassian?: { email: string; apiToken: string };
-    github?: { token: string };
-  }): Promise<MeRecord> {
+  async updateMe(body: { name?: string }): Promise<MeRecord> {
     return this.http('PUT', '/me', body) as unknown as Promise<MeRecord>;
   }
 
-  async verifyGithubToken(): Promise<VerifyResult> {
-    return this.http('POST', '/me/verify-github', {}) as unknown as Promise<VerifyResult>;
+  async getConnectorVendors(): Promise<ConnectorVendorMeta[]> {
+    return this.http('GET', '/connectors/vendors') as unknown as Promise<ConnectorVendorMeta[]>;
+  }
+
+  async getMyConnectors(): Promise<ConnectorInstanceRecord[]> {
+    return this.http('GET', '/me/connectors') as unknown as Promise<ConnectorInstanceRecord[]>;
+  }
+
+  async addConnector(body: { vendorId: string; label: string; fields: Record<string, string> }): Promise<ConnectorInstanceRecord> {
+    return this.http('POST', '/me/connectors', body) as unknown as Promise<ConnectorInstanceRecord>;
+  }
+
+  async updateConnector(id: string, body: { label?: string; fields?: Record<string, string> }): Promise<ConnectorInstanceRecord> {
+    return this.http('PUT', `/me/connectors/${encodeURIComponent(id)}`, body) as unknown as Promise<ConnectorInstanceRecord>;
+  }
+
+  async deleteConnector(id: string): Promise<{ ok: boolean }> {
+    return this.http('DELETE', `/me/connectors/${encodeURIComponent(id)}`) as unknown as Promise<{ ok: boolean }>;
+  }
+
+  async verifyConnector(id: string, extra?: Record<string, string>): Promise<VerifyResult> {
+    return this.http('POST', `/me/connectors/${encodeURIComponent(id)}/verify`, { extra }) as unknown as Promise<VerifyResult>;
   }
 
   async verifyWorkspaceAtlassian(name: string): Promise<VerifyResult> {

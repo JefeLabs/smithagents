@@ -151,13 +151,21 @@ export class TextChannel {
     private readonly me?: {
       get(): Promise<Record<string, unknown>>;
       update(body: Record<string, unknown>): Promise<Record<string, unknown>>;
-      verifyGithub(): Promise<Record<string, unknown>>;
     },
     /** Per-workspace Discord channel config (channels manager UI). Origin-restricted like /me. */
     private readonly channels?: {
       get(name: string): Promise<Record<string, unknown>>;
       save(name: string, body: Record<string, unknown>): Promise<Record<string, unknown>>;
       verifyDiscord(name: string): Promise<Record<string, unknown>>;
+    },
+    /** Connector registry (Integrations settings group): vendor metadata, CRUD, and verify. Origin-restricted like /me and channels. */
+    private readonly connectors?: {
+      vendors(): Promise<Record<string, unknown>[]>;
+      list(): Promise<Record<string, unknown>[]>;
+      add(body: Record<string, unknown>): Promise<Record<string, unknown>>;
+      update(id: string, body: Record<string, unknown>): Promise<Record<string, unknown>>;
+      remove(id: string): Promise<Record<string, unknown>>;
+      verify(id: string, extra?: Record<string, string>): Promise<Record<string, unknown>>;
     },
   ) {}
 
@@ -237,11 +245,13 @@ export class TextChannel {
           res.writeHead(status, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify(payload));
         const fail = (err: unknown) => json(500, { error: String((err as Error).message ?? err) });
 
-        // /me and the verify-* routes return credential-presence data (or, for
-        // verify-github, the operator's real GitHub identity) — unlike the rest of
-        // this block, their CORS response must name the actual allowed origin (or
-        // omit the header) instead of '*', and they refuse to do any work at all
-        // for a disallowed Origin.
+        // /me, workspace channels, and the connector registry (vendors list, CRUD,
+        // verify) all return credential-presence data — GET/PUT /me, GET/PUT
+        // /workspaces/:name/channels, /workspaces/:name/verify-atlassian,
+        // /workspaces/:name/repos/:repo/verify-github, and every /me/connectors*
+        // route — unlike the rest of this block, their CORS response must name the
+        // actual allowed origin (or omit the header) instead of '*', and they
+        // refuse to do any work at all for a disallowed Origin.
         const credJson = (status: number, payload: unknown) =>
           res.writeHead(status, { ...credentialCors(req), 'content-type': 'application/json' }).end(JSON.stringify(payload));
         const credFail = (err: unknown) => credJson(500, { error: String((err as Error).message ?? err) });
@@ -442,11 +452,6 @@ export class TextChannel {
           });
           return;
         }
-        if (req.method === 'POST' && url.pathname === '/me/verify-github' && this.me) {
-          if (originBlocked()) return;
-          void this.me.verifyGithub().then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
-          return;
-        }
         const wsAtlassianMatch = /^\/workspaces\/([^/]+)\/verify-atlassian$/.exec(url.pathname);
         if (req.method === 'POST' && wsAtlassianMatch && this.workspaces) {
           if (originBlocked()) return;
@@ -496,6 +501,80 @@ export class TextChannel {
             (r) => credJson((r as { error?: string }).error ? 400 : 200, r),
             credFail,
           );
+          return;
+        }
+        if (req.method === 'GET' && url.pathname === '/connectors/vendors' && this.connectors) {
+          if (originBlocked()) return;
+          void this.connectors.vendors().then((r) => credJson(200, r), credFail);
+          return;
+        }
+        if (req.method === 'GET' && url.pathname === '/me/connectors' && this.connectors) {
+          if (originBlocked()) return;
+          void this.connectors.list().then((r) => credJson(200, r), credFail);
+          return;
+        }
+        if (req.method === 'POST' && url.pathname === '/me/connectors' && this.connectors) {
+          if (originBlocked()) return;
+          let body = '';
+          req.on('data', (c) => {
+            body += c;
+          });
+          req.on('end', () => {
+            let parsed: Record<string, unknown> = {};
+            try {
+              parsed = JSON.parse(body || '{}') as Record<string, unknown>;
+            } catch {
+              return credJson(400, { error: 'body must be JSON' });
+            }
+            void this.connectors!.add(parsed).then((r) => credJson((r as { error?: string }).error ? 400 : 201, r), credFail);
+          });
+          return;
+        }
+        const connectorIdMatch = /^\/me\/connectors\/([^/]+)$/.exec(url.pathname);
+        if (req.method === 'PUT' && connectorIdMatch && this.connectors) {
+          if (originBlocked()) return;
+          let body = '';
+          req.on('data', (c) => {
+            body += c;
+          });
+          req.on('end', () => {
+            let parsed: Record<string, unknown> = {};
+            try {
+              parsed = JSON.parse(body || '{}') as Record<string, unknown>;
+            } catch {
+              return credJson(400, { error: 'body must be JSON' });
+            }
+            void this.connectors!
+              .update(decodeURIComponent(connectorIdMatch[1]!), parsed)
+              .then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
+          });
+          return;
+        }
+        if (req.method === 'DELETE' && connectorIdMatch && this.connectors) {
+          if (originBlocked()) return;
+          void this.connectors
+            .remove(decodeURIComponent(connectorIdMatch[1]!))
+            .then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
+          return;
+        }
+        const connectorVerifyMatch = /^\/me\/connectors\/([^/]+)\/verify$/.exec(url.pathname);
+        if (req.method === 'POST' && connectorVerifyMatch && this.connectors) {
+          if (originBlocked()) return;
+          let body = '';
+          req.on('data', (c) => {
+            body += c;
+          });
+          req.on('end', () => {
+            let parsed: { extra?: Record<string, string> } = {};
+            try {
+              parsed = body ? (JSON.parse(body) as { extra?: Record<string, string> }) : {};
+            } catch {
+              return credJson(400, { error: 'body must be JSON' });
+            }
+            void this.connectors!
+              .verify(decodeURIComponent(connectorVerifyMatch[1]!), parsed.extra)
+              .then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
+          });
           return;
         }
       }

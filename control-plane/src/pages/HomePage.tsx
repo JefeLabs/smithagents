@@ -6,10 +6,8 @@ import { usePushToTalk } from "../hooks/usePushToTalk";
 import { useSpokenReplies } from "../hooks/useSpokenReplies";
 import { useTheme } from "../hooks/useTheme";
 import { ConfirmSheet } from "../molecules/ConfirmSheet";
-import { AccountPanel } from "../organisms/AccountPanel";
 import { AddAgentModal } from "../organisms/AddAgentModal";
 import { AgentRoster } from "../organisms/AgentRoster";
-import { ChannelsManagerModal } from "../organisms/ChannelsManagerModal";
 import { DotGridCanvas } from "../organisms/DotGridCanvas";
 import { DotGridTuner } from "../organisms/DotGridTuner";
 import { SessionsPanel } from "../organisms/SessionsPanel";
@@ -30,9 +28,10 @@ export function HomePage() {
   const [inspecting, setInspecting] = useState<AgentSeed | null>(null);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsInitialGroup, setSettingsInitialGroup] = useState<"general" | "integrations" | "channels" | "themes">(
+    "general",
+  );
   const [workspacesOpen, setWorkspacesOpen] = useState(false);
-  const [channelsOpen, setChannelsOpen] = useState(false);
-  const [accountOpen, setAccountOpen] = useState(false);
   /**
    * Agent slated for removal — the outcome preview drives the confirm sheet's copy.
    * `error` holds the last preview/removal failure text; `outcome` stays unset until
@@ -73,12 +72,15 @@ export function HomePage() {
     removeWorkspace,
     verifyWorkspaceAtlassian,
     verifyRepoGithub,
+    listConnectorVendors,
+    listMyConnectors,
+    addConnector,
+    updateConnector,
+    deleteConnector,
+    verifyConnector,
     getWorkspaceChannels,
     saveWorkspaceChannels,
     verifyWorkspaceDiscord,
-    getMe,
-    updateMe,
-    verifyGithubToken,
   } = useBrokerChat({ onAudio: (frame) => audioSink.current(frame) });
   const { soundOn, toggleSound, playAudioFrame } = useSpokenReplies(messages, roster, !audioMode);
   audioSink.current = (frame) => void playAudioFrame(frame);
@@ -144,8 +146,14 @@ export function HomePage() {
       leftRail={
         <ToolRail
           onSessions={() => setSessionsOpen((open) => !open)}
-          onSettings={() => setSettingsOpen((open) => !open)}
-          onAccount={() => setAccountOpen(true)}
+          onSettings={() => {
+            setSettingsInitialGroup("general");
+            setSettingsOpen(true);
+          }}
+          onAccount={() => {
+            setSettingsInitialGroup("integrations");
+            setSettingsOpen(true);
+          }}
         />
       }
       rightRail={
@@ -218,6 +226,17 @@ export function HomePage() {
             onReset={resetSetup}
             theme={theme}
             onThemeChange={setTheme}
+            initialGroup={settingsInitialGroup}
+            listConnectorVendors={listConnectorVendors}
+            listMyConnectors={listMyConnectors}
+            addConnector={addConnector}
+            updateConnector={updateConnector}
+            deleteConnector={deleteConnector}
+            verifyConnector={verifyConnector}
+            listWorkspaceRecords={listWorkspaceRecords}
+            getWorkspaceChannels={getWorkspaceChannels}
+            saveWorkspaceChannels={saveWorkspaceChannels}
+            verifyWorkspaceDiscord={verifyWorkspaceDiscord}
           />
           <SessionsPanel
             open={sessionsOpen}
@@ -227,7 +246,6 @@ export function HomePage() {
             onActivate={activateSession}
             onCreate={createSession}
             onManage={() => setWorkspacesOpen(true)}
-            onManageChannels={() => setChannelsOpen(true)}
           />
           <WorkspaceManagerModal
             open={workspacesOpen}
@@ -237,21 +255,7 @@ export function HomePage() {
             remove={removeWorkspace}
             verifyAtlassian={verifyWorkspaceAtlassian}
             verifyRepoGithub={verifyRepoGithub}
-          />
-          <ChannelsManagerModal
-            open={channelsOpen}
-            onClose={() => setChannelsOpen(false)}
-            listWorkspaces={listWorkspaceRecords}
-            getChannels={getWorkspaceChannels}
-            saveChannels={saveWorkspaceChannels}
-            verifyDiscord={verifyWorkspaceDiscord}
-          />
-          <AccountPanel
-            open={accountOpen}
-            onClose={() => setAccountOpen(false)}
-            getMe={getMe}
-            updateMe={updateMe}
-            verifyGithubToken={verifyGithubToken}
+            listMyConnectors={listMyConnectors}
           />
           <DotGridTuner
             open={tunerOpen}
