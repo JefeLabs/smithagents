@@ -23,6 +23,13 @@ Keys) read as one group.
 
 ## Settled decisions
 
+- **Subscription-first (Edwin, 2026-08-06).** All agent work routes
+  through subscription CLIs whenever one can do the job; API-key engines
+  exist only for work subscriptions can't cover (ECS-runnable thinker
+  roles, modality gaps like image generation). This page is the exception
+  path, not a parallel default — and the rule binds the api-runtime when
+  it lands: given a role both kinds could fill, the catalog prefers the
+  `cli` kind.
 - **Engine/provider keys, not service keys.** This page manages keys that
   let *agents* run via provider APIs (Anthropic, OpenAI, Google). Broker
   service keys (ElevenLabs, Deepgram, LiveKit, Gemini avatars) stay in
@@ -189,7 +196,8 @@ TDD throughout, mirroring the CLI registry's test layout:
 
 - No consumer of the keys: engine catalog, agent wizard, and launch path
   are untouched. The api-runtime (one swarm, two engine kinds) reads
-  `api-keys.json` when it lands; this file's shape is that contract.
+  `api-keys.json` when it lands; this file's shape is that contract, and
+  the subscription-first rule above governs how it may use these keys.
 - No broker service keys (ElevenLabs/Deepgram/LiveKit/Gemini stay in
   `.env`).
 - No per-key usage metering, no multiple keys per provider, no
