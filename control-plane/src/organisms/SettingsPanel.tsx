@@ -1,12 +1,14 @@
 import { ArrowLeft, Blocks, MessageSquare, Palette, Settings as SettingsIcon } from "lucide-react";
 import { useState } from "react";
+import type { ConnectorInstanceRecord, ConnectorVendorMeta } from "../hooks/useBrokerChat";
 import type { ThemeId } from "../hooks/useTheme";
 import { GeneralGroup, type ResetScope } from "./settings/GeneralGroup";
+import { IntegrationsGroup } from "./settings/IntegrationsGroup";
 import { ThemesGroup } from "./settings/ThemesGroup";
-// IntegrationsGroup/ChannelsGroup: wired in Tasks 11-13. Import + render them
-// the same way once those files exist — do not stub with placeholder JSX,
-// this task ends with General/Themes fully working and Integrations/Channels
-// left as the NEXT task's job, not a fake placeholder shipped in between.
+// ChannelsGroup: wired in Task 13. Import + render it the same way once that
+// file exists — do not stub with placeholder JSX, this task ends with
+// General/Themes/Integrations fully working and Channels left as the NEXT
+// task's job, not a fake placeholder shipped in between.
 
 export type SettingsGroupId = "general" | "integrations" | "channels" | "themes";
 
@@ -17,6 +19,22 @@ interface SettingsPanelProps {
   theme: ThemeId;
   onThemeChange: (theme: ThemeId) => void;
   initialGroup?: SettingsGroupId;
+  listConnectorVendors?: () => Promise<ConnectorVendorMeta[]>;
+  listMyConnectors?: () => Promise<ConnectorInstanceRecord[]>;
+  addConnector?: (body: {
+    vendorId: string;
+    label: string;
+    fields: Record<string, string>;
+  }) => Promise<{ error?: string }>;
+  updateConnector?: (
+    id: string,
+    body: { label?: string; fields?: Record<string, string> },
+  ) => Promise<{ error?: string }>;
+  deleteConnector?: (id: string) => Promise<{ ok?: boolean; error?: string }>;
+  verifyConnector?: (
+    id: string,
+    extra?: Record<string, string>,
+  ) => Promise<{ ok?: boolean; detail?: string; error?: string }>;
 }
 
 const GROUPS: Array<{ id: SettingsGroupId; label: string; icon: typeof SettingsIcon }> = [
@@ -34,6 +52,12 @@ export function SettingsPanel({
   theme,
   onThemeChange,
   initialGroup = "general",
+  listConnectorVendors,
+  listMyConnectors,
+  addConnector,
+  updateConnector,
+  deleteConnector,
+  verifyConnector,
 }: SettingsPanelProps) {
   const [active, setActive] = useState<SettingsGroupId>(initialGroup);
 
@@ -60,7 +84,24 @@ export function SettingsPanel({
       <div className="settings-screen__content">
         {active === "general" && <GeneralGroup onReset={onReset} />}
         {active === "themes" && <ThemesGroup theme={theme} onThemeChange={onThemeChange} />}
-        {active === "integrations" && <p className="wizard__hint">Integrations — coming in the next task.</p>}
+        {active === "integrations" &&
+          (listConnectorVendors &&
+          listMyConnectors &&
+          addConnector &&
+          updateConnector &&
+          deleteConnector &&
+          verifyConnector ? (
+            <IntegrationsGroup
+              listVendors={listConnectorVendors}
+              listConnectors={listMyConnectors}
+              addConnector={addConnector}
+              updateConnector={updateConnector}
+              deleteConnector={deleteConnector}
+              verifyConnector={verifyConnector}
+            />
+          ) : (
+            <p className="wizard__hint">Integrations — not wired up yet.</p>
+          ))}
         {active === "channels" && <p className="wizard__hint">Channels — coming in the next task.</p>}
       </div>
     </div>

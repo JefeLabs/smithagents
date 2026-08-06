@@ -25,7 +25,7 @@ describe("SettingsPanel", () => {
         initialGroup="integrations"
       />,
     );
-    expect(screen.getByText(/coming in the next task/i)).toBeDefined();
+    expect(screen.getByText(/not wired up yet/i)).toBeDefined();
   });
 
   it("clicking a nav group switches the visible content", async () => {
