@@ -1,5 +1,5 @@
 import { ArrowLeft, Blocks, MessageSquare, Palette, Settings as SettingsIcon } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type {
   ChannelsRecord,
   ConnectorInstanceRecord,
@@ -73,6 +73,15 @@ export function SettingsPanel({
   verifyWorkspaceDiscord,
 }: SettingsPanelProps) {
   const [active, setActive] = useState<SettingsGroupId>(initialGroup);
+
+  // HomePage.tsx keeps this component always mounted (`if (!open) return null` below just
+  // skips rendering, same convention as every other overlay) and reuses the same instance
+  // across opens — so `useState(initialGroup)` alone only ever sees the FIRST open's value.
+  // Resync `active` to whatever group this particular open was asked for (avatar ->
+  // integrations, rail settings button -> general) every time it transitions to open.
+  useEffect(() => {
+    if (open) setActive(initialGroup);
+  }, [open, initialGroup]);
 
   if (!open) return null;
 

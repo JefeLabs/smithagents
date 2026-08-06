@@ -41,6 +41,35 @@ describe("SettingsPanel", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it("re-opening the SAME instance with a different initialGroup switches groups (avatar deep-link, after Settings was opened via the rail button first)", async () => {
+    // HomePage.tsx keeps SettingsPanel always mounted (open just toggles rendering, same
+    // convention as every other overlay), so it never remounts between opens — a stale
+    // `useState(initialGroup)` would only ever honor the FIRST open's value and silently
+    // ignore every later one. This is the "rail Settings, then avatar" sequence exactly.
+    const { rerender } = render(
+      <SettingsPanel
+        open={false}
+        onClose={() => {}}
+        onReset={vi.fn()}
+        theme="dark"
+        onThemeChange={vi.fn()}
+        initialGroup="general"
+      />,
+    );
+    rerender(
+      <SettingsPanel
+        open
+        onClose={() => {}}
+        onReset={vi.fn()}
+        theme="dark"
+        onThemeChange={vi.fn()}
+        initialGroup="integrations"
+      />,
+    );
+    expect(await screen.findByText(/not wired up yet/i)).toBeDefined();
+    expect(screen.queryByText(/kill running instances/i)).toBeNull(); // not stuck on General
+  });
+
   it("renders nothing when closed", () => {
     const { container } = render(
       <SettingsPanel open={false} onClose={() => {}} onReset={vi.fn()} theme="dark" onThemeChange={vi.fn()} />,
