@@ -1581,6 +1581,27 @@
   opacity: 0.5;
   cursor: default;
 }
+.avatar-gen {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.avatar-gen__preview {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 2px solid var(--ring, var(--pill-br));
+  overflow: hidden;
+  flex: none;
+  color: var(--text-2);
+}
+.avatar-gen__preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
 .voice-browser {
   display: flex;
   flex-direction: column;

@@ -1,6 +1,7 @@
 import { Check, ChevronLeft, ChevronRight, Play, Search, Sparkles } from "lucide-react";
 import type { MouseEvent } from "react";
 import { useEffect, useState } from "react";
+import { AvatarGeneratorBlock } from "../molecules/AvatarGeneratorBlock";
 import { AddAgentChooser, type PresetCard } from "./AddAgentChooser";
 
 const BASE = "127.0.0.1:7790";
@@ -130,6 +131,10 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
   /** Preset whose committed art the new agent should copy (customize keeps it until a reroll replaces it). */
   const [avatarPresetRef, setAvatarPresetRef] = useState<string | null>(null);
   const [presetRing, setPresetRing] = useState<string | null>(null);
+  /** Fresh portrait from Gemini — a data URI, submitted as base64 and never touching disk until create/save. */
+  const [avatarData, setAvatarData] = useState<string | null>(null);
+  /** The stored agent's existing portrait filename, prefilled when editing. */
+  const [editingAvatar, setEditingAvatar] = useState<string | null>(null);
 
   /**
    * Every wizard field back to blank/catalog-default. The modal stays mounted
@@ -154,6 +159,8 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
     setAnswers({});
     setHint("");
     setError(null);
+    setAvatarData(null);
+    setEditingAvatar(null);
   };
 
   // Reset-on-open only: deliberately excludes resetWizardFields (and thus
@@ -213,6 +220,9 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
         setGender((a.gender as "male" | "female" | "neutral") ?? "neutral");
         setLanguage(a.language ?? catalog.languages?.[0]?.id ?? "");
         setVoiceId(a.voice?.voiceId ?? "");
+        setAvatarPresetRef(null);
+        setAvatarData(null);
+        setEditingAvatar(a.avatar ?? null);
         setStereotype(catalog.stereotypes.find((x) => x.id === a.stereotype) ?? null);
         // Agents created before jobRole was stored have only their free-text
         // title; recover the dropdown by matching it against the catalog.
@@ -343,6 +353,9 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
         voice: voiceId ? { voiceId } : undefined,
         reactions: Object.fromEntries(Object.entries(reactions).map(([k, v]) => [k, [v]])),
         quickAnswers: answers,
+        avatarData: avatarData ? avatarData.replace(/^data:image\/png;base64,/, "") : undefined,
+        avatarPreset: !avatarData && avatarPresetRef ? avatarPresetRef : undefined,
+        avatarRing: presetRing ?? undefined,
       }),
     }).then((r) => r.json())) as { error?: string; name?: string };
     setBusy(false);
@@ -645,6 +658,28 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
                       </button>
                     ))}
                   </div>
+                  <AvatarGeneratorBlock
+                    base={BASE}
+                    enabled={catalog?.avatarGen ?? false}
+                    name={name}
+                    gender={gender}
+                    role={role}
+                    backstory={backstory}
+                    stereotype={stereotype?.id}
+                    ring={presetRing ?? undefined}
+                    value={
+                      avatarData ??
+                      (avatarPresetRef
+                        ? `http://${BASE}/avatars/${avatarPresetRef}.png`
+                        : editingAvatar
+                          ? `http://${BASE}/avatars/${editingAvatar}`
+                          : undefined)
+                    }
+                    onGenerated={(uri) => {
+                      setAvatarData(uri);
+                      setAvatarPresetRef(null); // a reroll replaces preset art
+                    }}
+                  />
                   <label>
                     Backstory
                     <textarea

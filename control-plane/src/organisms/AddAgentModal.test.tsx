@@ -180,3 +180,70 @@ describe("AddAgentModal chooser", () => {
     expect(createCustom.disabled).toBe(true);
   });
 });
+
+describe("AddAgentModal avatar generator", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  async function openBlankWizardAtPersona() {
+    render(<AddAgentModal open onClose={vi.fn()} />);
+    await userEvent.click(await screen.findByText(/create custom/i));
+    await userEvent.click(await screen.findByRole("button", { name: /next/i })); // Setup -> Persona
+  }
+
+  it("generates a portrait, flips to reroll, and submits avatarData without the data-uri prefix", async () => {
+    const { posted } = stubFetch();
+    await openBlankWizardAtPersona();
+    await userEvent.type(screen.getByLabelText(/^name$/i), "Nena");
+    await userEvent.click(screen.getByRole("button", { name: /generate a portrait/i }));
+    expect(await screen.findByRole("button", { name: /reroll the portrait/i })).toBeTruthy();
+    // walk to the last step and create
+    await userEvent.click(screen.getByRole("button", { name: /next/i })); // Voice
+    await userEvent.click(screen.getByRole("button", { name: /next/i })); // Reactions
+    await userEvent.click(screen.getByRole("button", { name: /next/i })); // Answers
+    await userEvent.click(screen.getByRole("button", { name: /create agent/i }));
+    await waitFor(() => expect(posted.length).toBe(1));
+    expect(posted[0].avatarData).toBe("QUJD");
+    expect(posted[0].avatarPreset).toBeUndefined();
+  });
+
+  it("generation failure shows the error and never blocks saving", async () => {
+    const { posted } = stubFetch({ generated: { error: "Gemini returned no image — try again" } });
+    await openBlankWizardAtPersona();
+    await userEvent.type(screen.getByLabelText(/^name$/i), "Nena");
+    await userEvent.click(screen.getByRole("button", { name: /generate a portrait/i }));
+    expect(await screen.findByText(/no image/i)).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: /next/i }));
+    await userEvent.click(screen.getByRole("button", { name: /next/i }));
+    await userEvent.click(screen.getByRole("button", { name: /next/i }));
+    await userEvent.click(screen.getByRole("button", { name: /create agent/i }));
+    await waitFor(() => expect(posted.length).toBe(1));
+    expect(posted[0].avatarData).toBeUndefined();
+  });
+
+  it("avatarGen false hides the generate button", async () => {
+    stubFetch({ catalog: { ...CATALOG, avatarGen: false } });
+    await openBlankWizardAtPersona();
+    expect(screen.queryByRole("button", { name: /generate a portrait/i })).toBeNull();
+  });
+
+  it("customized preset keeps its committed art: submit carries avatarPreset, not avatarData", async () => {
+    const { posted } = stubFetch();
+    render(<AddAgentModal open onClose={vi.fn()} />);
+    await userEvent.click(await screen.findByText("Minerva"));
+    await userEvent.click(screen.getByRole("button", { name: /customize/i }));
+    await userEvent.click(screen.getByRole("button", { name: /next/i })); // -> Persona
+    await userEvent.clear(screen.getByLabelText(/^name$/i));
+    await userEvent.type(screen.getByLabelText(/^name$/i), "Minerva Dos");
+    await userEvent.click(screen.getByRole("button", { name: /next/i }));
+    await userEvent.click(screen.getByRole("button", { name: /next/i }));
+    await userEvent.click(screen.getByRole("button", { name: /next/i }));
+    await userEvent.click(screen.getByRole("button", { name: /create agent/i }));
+    await waitFor(() => expect(posted.length).toBe(1));
+    expect(posted[0].avatarPreset).toBe("minerva");
+    expect(posted[0].avatarRing).toBe("#5fd0b0");
+    expect(posted[0].avatarData).toBeUndefined();
+  });
+});
