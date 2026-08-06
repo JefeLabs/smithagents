@@ -14,8 +14,8 @@ export interface WorkspaceRepo {
   repository?: string;
   /** Base branch for task worktrees. Default: main. */
   branch?: string;
-  /** GitHub API pointer — separate from `repository` (informational remote URL, used for PR/prompt display). */
-  github?: { owner: string; repo: string };
+  /** GitHub API pointer — separate from `repository` (informational remote URL). connectorId is optional: unset means "no GitHub tool access resolved for this repo" (soft-fail, not a required field). */
+  github?: { owner: string; repo: string; connectorId?: string };
 }
 
 export interface Workspace {
@@ -26,11 +26,12 @@ export interface Workspace {
   default?: boolean;
   /** Archived in place: hidden from roster/delegation, kept for history. */
   archived?: boolean;
-  /** Non-secret Jira/Confluence pointer. Credentials live on User, never here. */
+  /** Non-secret Jira/Confluence pointer. Credentials live on User.connectors, never here. connectorId is optional: unset means "no Atlassian tool access resolved for this workspace" (soft-fail). */
   atlassian?: {
     siteUrl: string;
     jiraProjectKeys?: string[];
     confluenceSpaceKeys?: string[];
+    connectorId?: string;
   };
 }
 
