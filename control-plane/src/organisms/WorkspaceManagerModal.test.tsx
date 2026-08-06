@@ -84,4 +84,42 @@ describe("WorkspaceManagerModal — connector pickers", () => {
       ),
     );
   });
+
+  it("editing owner/repo after picking a connector does not wipe the picked connectorId", async () => {
+    const save = vi.fn(async () => ({}));
+    render(
+      <WorkspaceManagerModal
+        open
+        onClose={() => {}}
+        list={vi.fn(async () => [])}
+        save={save}
+        remove={vi.fn()}
+        verifyAtlassian={vi.fn()}
+        verifyRepoGithub={vi.fn()}
+        listMyConnectors={vi.fn(async () => CONNECTORS)}
+      />,
+    );
+    await userEvent.type(screen.getByPlaceholderText("acme-web"), "web");
+    await userEvent.type(screen.getByPlaceholderText("web"), "web");
+    await userEvent.type(screen.getByPlaceholderText(/Users\/me\/code/i), "/tmp/web");
+    await userEvent.type(screen.getByPlaceholderText("GitHub owner"), "acme");
+    await userEvent.type(screen.getByPlaceholderText("GitHub repo"), "web");
+    const repoSelect = (await screen.findAllByLabelText(/github connector/i))[0]!;
+    await userEvent.selectOptions(repoSelect, "conn-b");
+    // Edit owner AFTER the connector is already picked — this must not wipe connectorId.
+    await userEvent.type(screen.getByPlaceholderText("GitHub owner"), "2");
+    await userEvent.click(screen.getByRole("button", { name: /create workspace/i }));
+    await waitFor(() =>
+      expect(save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          repos: [
+            expect.objectContaining({
+              github: expect.objectContaining({ owner: "acme2", connectorId: "conn-b" }),
+            }),
+          ],
+        }),
+        true,
+      ),
+    );
+  });
 });
