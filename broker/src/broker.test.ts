@@ -91,11 +91,13 @@ function makeBroker(
   opts?: {
     onSpeechText?: (text: string) => void;
     onRosterChange?: (roster: { agents: Array<{ status: string }>; squads: unknown[] }) => void;
+    onTaskDispatched?: (d: { taskId: string; agent: string; task: string }) => void;
   },
 ) {
   const directory = new AgentDirectory();
   return new Broker({
     onRosterChange: opts?.onRosterChange,
+    onTaskDispatched: opts?.onTaskDispatched,
     swarm: f.swarm,
     directory,
     brain: f.brain,
@@ -494,6 +496,20 @@ test('roster notifications fire on seed and on delegation, carrying agents and s
   assert.equal(rosters.length, 2); // busy snapshot after bindTask
   assert.equal(rosters.at(-1)!.agents[0]!.status, 'busy');
   await b.stop();
+});
+
+test('delegate fires onTaskDispatched with the taskId, agent name, and task text', async () => {
+  const f = makeFakes([MEETING]);
+  const dispatched: Array<{ taskId: string; agent: string; task: string }> = [];
+  const b = makeBroker(f, { onTaskDispatched: (d) => dispatched.push(d) });
+  await b.start();
+  await b.pollOnce();
+  try {
+    await b.executors.delegate({ agent: 'Manuel', task: 'build the thing' });
+    assert.deepEqual(dispatched, [{ taskId: 't-77', agent: 'Manuel', task: 'build the thing' }]);
+  } finally {
+    await b.stop();
+  }
 });
 
 test('refreshWorkspaces drops an archived workspace from the brain roster; start() already filters', async () => {
