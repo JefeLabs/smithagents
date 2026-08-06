@@ -170,6 +170,23 @@
     transform: rotate(14deg);
   }
 }
+.avatar .engine-warning {
+  position: absolute;
+  right: -5px;
+  top: -5px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #e05a5a;
+  color: #fff;
+  border: 2px solid var(--ground);
+}
+.avatar .engine-warning svg {
+  width: 10px;
+  height: 10px;
+}
 .avatar .tip {
   position: absolute;
   right: 56px;
