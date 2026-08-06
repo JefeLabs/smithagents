@@ -213,3 +213,31 @@ test('round boundary flushes speech: pre-tool text never merges with next round'
   await brain.handleUtterance('alpha: go', { roster: 'r', onSpeech: (c) => spoken.push(c) });
   assert.deepEqual(spoken, ['Gabriel: Let me scan for pain points.', 'Gabriel: Aurelio is on it now.']);
 });
+
+test('system prompt carries the host identity: name, role, style, host rules', async () => {
+  const { factory, calls } = scripted([
+    { textDeltas: ['Anderson: Aquí estamos.'], final: { content: [{ type: 'text', text: 'Anderson: Aquí estamos.' }], stop_reason: 'end_turn' } },
+  ]);
+  const brain = new BrokerBrain(factory, NOOP_EXEC);
+  await brain.handleUtterance('hey anderson', { roster: 'Manuel — idle', onSpeech: () => {} });
+  const system = String(calls[0]!.system);
+  assert.match(system, /Anderson \(Chief of Staff\)/);
+  assert.match(system, /never takes delegated work/i);
+  assert.match(system, /session-open greeting/i);
+  assert.match(system, /"Hey team" \/ "everyone" addresses the crew/);
+  assert.match(system, /Manuel — idle/); // roster still appended after the persona
+});
+
+test('a custom identity replaces Anderson throughout the prompt', async () => {
+  const { factory, calls } = scripted([
+    { textDeltas: ['x'], final: { content: [{ type: 'text', text: 'x' }], stop_reason: 'end_turn' } },
+  ]);
+  const brain = new BrokerBrain(factory, NOOP_EXEC, {
+    identity: { name: 'Smith', role: 'Concierge', style: 'Clipped.' },
+  });
+  await brain.handleUtterance('hi', { roster: 'r', onSpeech: () => {} });
+  const system = String(calls[0]!.system);
+  assert.match(system, /Smith \(Concierge\)/);
+  assert.match(system, /Clipped\./);
+  assert.doesNotMatch(system, /Anderson/);
+});
