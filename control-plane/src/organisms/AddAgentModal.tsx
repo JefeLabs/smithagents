@@ -138,6 +138,14 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
   const [takenIds, setTakenIds] = useState<Set<string>>(new Set());
   /** Preset whose committed art the new agent should copy (customize keeps it until a reroll replaces it). */
   const [avatarPresetRef, setAvatarPresetRef] = useState<string | null>(null);
+  /**
+   * The preset a Customize started from, id + name as they were at that moment. Lets
+   * submit() send the canonical preset id instead of re-slugging a name unchanged since
+   * customize (e.g. "Radhamés" -> "radham-s", shadowing the real "radhames" preset).
+   * Independent of avatarPresetRef, which a portrait reroll clears — a reroll shouldn't
+   * revive the slug-mismatch bug.
+   */
+  const [customizedPresetOrigin, setCustomizedPresetOrigin] = useState<{ id: string; name: string } | null>(null);
   const [presetRing, setPresetRing] = useState<string | null>(null);
   /** Fresh portrait from Gemini — a data URI, submitted as base64 and never touching disk until create/save. */
   const [avatarData, setAvatarData] = useState<string | null>(null);
@@ -169,6 +177,7 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
     setError(null);
     setAvatarData(null);
     setEditingAvatar(null);
+    setCustomizedPresetOrigin(null);
   };
 
   // Reset-on-open only: deliberately excludes resetWizardFields (and thus
@@ -339,10 +348,18 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
   const submit = async () => {
     setBusy(true);
     setError(null);
+    // Customize-without-rename: the name still matches the preset it came from, so send its
+    // canonical id — otherwise the server slugs the (possibly accented) name fresh and this
+    // agent shadows the real preset as a near-duplicate instead of being recognized as it.
+    const idOverride =
+      !editing && customizedPresetOrigin && name === customizedPresetOrigin.name
+        ? customizedPresetOrigin.id
+        : undefined;
     const res = (await fetch(`http://${BASE}/agents${editingId ? `/${encodeURIComponent(editingId)}` : ""}`, {
       method: editing ? "PUT" : "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
+        id: idOverride,
         name,
         role,
         gender,
@@ -379,6 +396,7 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
     setRole("");
     setBackstory("");
     setVoiceId("");
+    setCustomizedPresetOrigin(null);
   };
 
   const joinPreset = async (p: PresetCard) => {
@@ -437,6 +455,7 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
     if (p.quickAnswers) setAnswers(p.quickAnswers);
     setAvatarPresetRef(p.id);
     setPresetRing(p.ring);
+    setCustomizedPresetOrigin({ id: p.id, name: p.name });
     setMode("wizard");
     setStep(0);
   };

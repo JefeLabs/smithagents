@@ -192,6 +192,36 @@ describe("AddAgentModal chooser", () => {
     expect(cliSelect.value).toBe("claude");
   });
 
+  it("customize without a rename posts the preset's canonical id", async () => {
+    const { posted } = stubFetch();
+    render(<AddAgentModal open onClose={vi.fn()} />);
+    await userEvent.click(await screen.findByText("Minerva"));
+    await userEvent.click(screen.getByRole("button", { name: /customize/i }));
+    await userEvent.click(screen.getByRole("button", { name: /next/i })); // Setup -> Persona
+    await userEvent.click(screen.getByRole("button", { name: /next/i })); // Persona -> Voice
+    await userEvent.click(screen.getByRole("button", { name: /next/i })); // Voice -> Reactions
+    await userEvent.click(screen.getByRole("button", { name: /next/i })); // Reactions -> Answers
+    await userEvent.click(screen.getByRole("button", { name: /create agent/i }));
+    await waitFor(() => expect(posted.length).toBe(1));
+    expect(posted[0].id).toBe("minerva");
+  });
+
+  it("customize with a rename does not send an id — the server slugs the new name", async () => {
+    const { posted } = stubFetch();
+    render(<AddAgentModal open onClose={vi.fn()} />);
+    await userEvent.click(await screen.findByText("Minerva"));
+    await userEvent.click(screen.getByRole("button", { name: /customize/i }));
+    await userEvent.click(screen.getByRole("button", { name: /next/i })); // -> Persona
+    await userEvent.clear(screen.getByLabelText(/^name$/i));
+    await userEvent.type(screen.getByLabelText(/^name$/i), "Minerva Dos");
+    await userEvent.click(screen.getByRole("button", { name: /next/i }));
+    await userEvent.click(screen.getByRole("button", { name: /next/i }));
+    await userEvent.click(screen.getByRole("button", { name: /next/i }));
+    await userEvent.click(screen.getByRole("button", { name: /create agent/i }));
+    await waitFor(() => expect(posted.length).toBe(1));
+    expect(posted[0].id).toBeUndefined();
+  });
+
   it("customize and Create custom are disabled while a join is in flight", async () => {
     stubFetch({ deferJoin: true });
     render(<AddAgentModal open onClose={vi.fn()} />);
