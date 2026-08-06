@@ -51,9 +51,8 @@ const streamFactory: StreamFactory = (params) =>
 const swarm = new SwarmClient({ baseUrl: config.swarm.baseUrl, token: config.swarm.token });
 const directory = new AgentDirectory();
 // Shared presence policy (surface-modes): the single source of truth for
-// which surfaces each agent attends. Wired into text delivery and the tauri
-// roster below; later tasks reuse this same instance for the join endpoint
-// and mode-change enforcement.
+// which external surfaces each agent attends. Wired into adapter text
+// delivery and the Discord join endpoint; the tauri roster is never gated.
 const policy = new SurfacePolicy(() => directory.list());
 // Null until discordWorkspaceSwitcher (below) boots voice for the active
 // workspace's own Discord config, and assigned there once the real
@@ -347,10 +346,9 @@ const toRosterEntries = (roster: UiRoster): RosterEntry[] => {
   const isListening = (...names: Array<string | undefined>) =>
     names.some((n) => n !== undefined && addressed.has(n.toLowerCase())) || undefined;
   return [
-  // Presence policy gates tauri surface attendance same as text/voice —
-  // squads/groups/freed are composite units without a single agent id, so
-  // they're left to the underlying members' own presence for now.
-  ...roster.agents.filter((p) => policy.attends(p.agent.id, 'tauri')).map(
+  // The tauri app is the management console: every agent always appears in
+  // its roster. Surface attendance (SurfacePolicy) gates Discord only.
+  ...roster.agents.map(
     (p): RosterEntry => ({
       id: p.agent.id,
       name: p.agent.name,
@@ -802,7 +800,6 @@ const textChannel = new TextChannel(
       const voiceIds = new Set(voiceSurface?.connectedAgentIds() ?? []);
       for (const a of directory.list()) {
         out[a.id] = {
-          tauri: policy.attends(a.id, 'tauri'),
           discord: isDiscordTextActive(discordTextLifecycle) && policy.attends(a.id, 'discord'),
           'discord-voice': voiceIds.has(a.id),
         };
@@ -827,7 +824,7 @@ const textChannel = new TextChannel(
         if (decision.type === 'admit') policy.admit(agentId, surface);
         return { ok: true } as const;
       }
-      if (surface !== 'discord' && surface !== 'tauri') return { error: `unknown surface: ${surface}`, status: 404 };
+      if (surface !== 'discord') return { error: `unknown surface: ${surface}`, status: 404 };
       const decision = decideJoin(agentId, surface, policy.modeFor(agentId, surface));
       if (decision.type === 'reject') return { error: decision.error, status: decision.status };
       if (surface === 'discord' && !isDiscordTextActive(discordTextLifecycle)) return { error: 'Discord is not configured', status: 409 };
