@@ -119,6 +119,20 @@ test('broadcast fans speech frames out to connected clients', async () => {
   }
 });
 
+test('broadcast fans a task-dispatched frame out to connected clients', async () => {
+  const channel = new TextChannel(() => {});
+  const port = await channel.start(0);
+  try {
+    const ws = await connect(port);
+    const frame = nextFrame(ws);
+    channel.broadcast({ type: 'task-dispatched', taskId: 't-1', agent: 'Manuel', task: 'build the thing' });
+    assert.deepEqual(await frame, { type: 'task-dispatched', taskId: 't-1', agent: 'Manuel', task: 'build the thing' });
+    ws.close();
+  } finally {
+    await channel.stop();
+  }
+});
+
 test('hello frames (roster snapshot) are sent to each client on connect', async () => {
   const roster = [{ id: 'manuel', name: 'Manuel', role: 'lead', status: 'idle' as const, kind: 'agent' as const }];
   const channel = new TextChannel(

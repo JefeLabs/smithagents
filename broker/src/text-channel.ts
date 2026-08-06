@@ -41,7 +41,9 @@ export type ChannelFrame =
       sessions: Array<{ id: string; title: string; workspace: string; updatedAt: string; active: boolean }>;
       transcript: Array<{ role: 'user' | 'broker'; text: string }>;
       workspaces: string[];
-    };
+    }
+  /** A delegated task was just bound to an agent — the deterministic handle an external bridge (broker/bin) correlates against, since the brain's own spoken confirmation is free-form prose. */
+  | { type: 'task-dispatched'; taskId: string; agent: string; task: string };
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',

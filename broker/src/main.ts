@@ -918,6 +918,7 @@ broker = new Broker(
     onTurnStart: (origin) => adapterHub.setActiveOrigin(origin),
     onTurnEnd: () => adapterHub.setActiveOrigin(undefined),
     onRosterChange: (roster) => textChannel.broadcast({ type: 'roster', agents: toRosterEntries(roster) }),
+    onTaskDispatched: (d) => textChannel.broadcast({ type: 'task-dispatched', taskId: d.taskId, agent: d.agent, task: d.task }),
     mintToken: (roomName) =>
       mintRoomToken({
         apiKey: config.livekit.apiKey,
