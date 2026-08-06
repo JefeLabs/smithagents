@@ -562,7 +562,7 @@ export const PRESET_AGENTS: PresetAgent[] = [
       strength: "Cutting. I can take a big vague ambition and hand you the smallest piece that proves it's real by Thursday.",
       weakness: "I don't touch your architecture or your infra choices — that's not mine. I'll tell you the deadline, you tell me the shape.",
       style: "Out loud, in small pieces, with one owner and one date on everything. I'd rather decide today and be corrected tomorrow than admire the problem for a week.",
-      availability: "I'm here, dale. Bring me the fight, I'll bring the whiteboard.",
+      availability: "Yes — I've got twenty minutes before standup. Bring me the fight, I'll bring the whiteboard.",
       teamwork: 'Dulce, mostly. I bring her the argument, she brings back a sketch, and somehow that ends the meeting faster than I do.',
       pet_peeve: "The word 'and' inside a ticket. That's a second project hiding, and it always shows up the week before we ship.",
       motto: 'Everybody wants the same thing, they just fight about the order. So write the order down.',
