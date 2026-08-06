@@ -52,7 +52,7 @@ import type {
 import { execFile } from 'node:child_process';
 import { mkdir, rename, rm, stat } from 'node:fs/promises';
 import { loadAgents, findAgent, saveAgent, activeAgents, type ComposedAgent } from './agents.js';
-import { QUICK_QUESTIONS, STEREOTYPES, JOB_ROLES, ENGINES, LANGUAGES, DEFAULT_LANGUAGE, findStereotype, findJobRole, findEngine, findLanguage, REACTION_LEVELS } from './personas.js';
+import { QUICK_QUESTIONS, STEREOTYPES, JOB_ROLES, ENGINES, LANGUAGES, DEFAULT_LANGUAGE, findStereotype, findJobRole, findEngine, findLanguage, REACTION_LEVELS, PRESET_AGENTS } from './personas.js';
 import { AgentSessionManager } from './agent-sessions.js';
 import { SessionStore } from './session-store.js';
 import { agentUsage, isBusy } from './lifecycle.js';
@@ -862,6 +862,7 @@ export class OrchestratorServer {
         languages: LANGUAGES,
         quickQuestions: QUICK_QUESTIONS,
         reactionLevels: REACTION_LEVELS,
+        presets: PRESET_AGENTS,
       };
     });
 
