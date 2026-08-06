@@ -1,9 +1,11 @@
-import type { CSSProperties, ReactNode } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useState } from "react";
 
 interface AvatarProps {
   initial: string;
   label: string;
   ring?: string;
+  /** Full portrait URL; the initial is the automatic fallback when absent or broken. */
+  image?: string;
   style?: CSSProperties;
   onClick?: () => void;
   children?: ReactNode;
@@ -16,7 +18,11 @@ interface AvatarProps {
 }
 
 /** Circular identity button; ring color arrives via the --ring custom property. */
-export function Avatar({ initial, label, ring, style, onClick, children, state }: AvatarProps) {
+export function Avatar({ initial, label, ring, image, style, onClick, children, state }: AvatarProps) {
+  const [broken, setBroken] = useState(false);
+  // A reroll or edit swaps the URL under us — give the new image a fresh chance.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: image is a prop, must be tracked
+  useEffect(() => setBroken(false), [image]);
   const ringStyle = { ...(ring ? { "--ring": ring } : {}), ...style } as CSSProperties;
   return (
     <button
@@ -28,7 +34,7 @@ export function Avatar({ initial, label, ring, style, onClick, children, state }
       aria-label={label}
       onClick={onClick}
     >
-      {initial}
+      {image && !broken ? <img className="avatar__img" src={image} alt="" onError={() => setBroken(true)} /> : initial}
       {children}
     </button>
   );

@@ -101,6 +101,7 @@ export function HomePage() {
       listening: a.listening,
       kind: a.kind,
       members: a.members,
+      avatar: a.avatar,
     })),
   ];
 

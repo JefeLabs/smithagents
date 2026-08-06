@@ -12,6 +12,8 @@ export interface AgentSeed {
   kind?: "agent" | "squad";
   /** Squad entries: member display names for the edit-mode expansion. */
   members?: string[];
+  /** Portrait filename from the roster frame. */
+  avatar?: string;
 }
 
 // Mirrors the personas module: agents are data, never a hardcoded enum.

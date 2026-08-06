@@ -30,6 +30,7 @@ export interface RosterAgent {
   name: string;
   role: string;
   ring?: string;
+  avatar?: string;
   status: "idle" | "busy" | "in-meeting" | "offline";
   taskSummary?: string;
   kind: "agent" | "squad";
