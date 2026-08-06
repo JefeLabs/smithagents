@@ -72,9 +72,14 @@ export function activeWorkspaces(workspaces: Workspace[]): Workspace[] {
   return workspaces.filter((w) => !w.archived);
 }
 
-/** Default a blank/omitted branch to "main" — mirrors POST /workspaces so PUT can't persist an empty branch. */
-export function normalizeRepoBranch(repos: WorkspaceRepo[]): WorkspaceRepo[] {
-  return repos.map((r) => ({ ...r, branch: r.branch?.trim() || 'main' }));
+/**
+ * Default a blank/omitted branch to "main" — mirrors POST /workspaces so PUT can't
+ * persist an empty branch. Also drops the transient creation-time `initGit` flag
+ * (POST strips it via explicit field mapping; PUT has no such mapping, so without
+ * this it would round-trip straight to disk).
+ */
+export function normalizeRepoBranch(repos: Array<WorkspaceRepo & { initGit?: boolean }>): WorkspaceRepo[] {
+  return repos.map(({ initGit: _initGit, ...r }) => ({ ...r, branch: r.branch?.trim() || 'main' }));
 }
 
 /**

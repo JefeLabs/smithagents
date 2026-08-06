@@ -66,6 +66,10 @@ test('normalizeRepoBranch: defaults a blank or omitted branch to main, leaves a 
   );
 });
 
+test('normalizeRepoBranch: drops the transient initGit flag so PUT can\'t persist it', () => {
+  assert.equal('initGit' in normalizeRepoBranch([{ name: 'web', path: '/x', initGit: true } as never])[0]!, false);
+});
+
 test('removeWorkspaceFile: rejects missing workspace with readable error, succeeds on existing file', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'rm-'));
   await assert.rejects(

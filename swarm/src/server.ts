@@ -1743,6 +1743,9 @@ export class OrchestratorServer {
    * Runs in the background — does not block the queue worker.
    */
   private dispatchTask(manifest: TaskManifest): void {
+    // manifest.runtime is always baked by POST /tasks (resolveTaskRuntime); a future
+    // enqueuer that omits it would make this tracking adapter diverge from
+    // dispatcher.dispatch's workspace-aware resolution.
     const runtimeType = manifest.runtime ?? this.orchConfig.defaultRuntime;
     const agentName = (manifest.agentName as AgentName | undefined) ?? this.namePool.getNameForTask(manifest.taskId) ?? null;
     const sessionName = agentName?.toLowerCase() ?? `task-${manifest.taskId}`;
