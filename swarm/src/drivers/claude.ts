@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { SessionParseError } from './errors.js';
 import { modelFlag } from './model-flag.js';
-import type { AgentProfile, NormalizedMessage, ToolDriver } from './types.js';
+import type { AgentProfile, CommandRunner, NormalizedMessage, ToolDriver } from './types.js';
 
 /** True when `path` (relative to `cwd`) is already tracked by the repo's git index. Mirrors isGitRepo()'s "call git, interpret exit code" pattern in workspaces.ts. */
 async function isTracked(cwd: string, path: string): Promise<boolean> {
@@ -172,6 +172,25 @@ export class ClaudeDriver implements ToolDriver {
     }
 
     return written;
+  }
+
+  async verifyAuth(
+    binary: string,
+    run: CommandRunner,
+    timeoutMs: number,
+  ): Promise<{ ok: boolean | 'unknown'; detail: string }> {
+    // `claude auth status` prints JSON: {"loggedIn":true,"authMethod":"claude.ai","email":…}.
+    const res = await run([binary, 'auth', 'status'], timeoutMs);
+    try {
+      const parsed = JSON.parse(res.stdout.trim()) as { loggedIn?: boolean; email?: string };
+      if (parsed.loggedIn === true) {
+        return { ok: true, detail: `logged in${parsed.email ? ` as ${parsed.email}` : ''}` };
+      }
+      if (parsed.loggedIn === false) return { ok: false, detail: 'not logged in — run `claude /login`' };
+    } catch {
+      /* not JSON — older CLI or unexpected output: not a confirmed negative */
+    }
+    return { ok: 'unknown', detail: 'auth status unrecognized' };
   }
 }
 

@@ -5,6 +5,20 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Dispatcher } from './dispatcher.js';
 import type { TaskManifest, OrchestratorConfig } from './types.js';
+import { loadConfig } from './config.js';
+import { emptyCliToolsFile, saveCliToolsFile } from './cli-tools.js';
+import { ToolLaunchError } from './drivers/errors.js';
+
+// A binary guaranteed not to resolve on PATH, so refreshCliTool's re-probe
+// (fired fire-and-forget by both the gate and the catch block) fails fast on
+// detection instead of hanging or touching a real installed CLI.
+const NO_SUCH_BINARY: Record<TaskManifest['agent'], string> = {
+  agy: 'definitely-not-a-real-binary-xyz',
+  claude: 'definitely-not-a-real-binary-xyz',
+  codex: 'definitely-not-a-real-binary-xyz',
+  opencode: 'definitely-not-a-real-binary-xyz',
+  copilot: 'definitely-not-a-real-binary-xyz',
+};
 
 // resolveConnections is exercised through the Dispatcher instance rather than
 // exported standalone, since it reads from the same `.smith/workspaces` and
@@ -234,3 +248,50 @@ test('resolveConnections: a repo with no github.connectorId set resolves no GH_T
   const resolved = await dispatcher.resolveConnections({ context: { repoPath } } as TaskManifest, root);
   assert.equal(resolved.env.GH_TOKEN, undefined);
 });
+
+// ---------------------------------------------------------------------------
+// dispatch(): CLI tool registry gate — the first await in dispatch(), before
+// resolveConnections and before the try block, so a confirmed negative blocks
+// with nothing else (git, tmux, worktrees) touched.
+// ---------------------------------------------------------------------------
+
+test('dispatch: rejects with a subscription-inactive ToolLaunchError when the registry has a confirmed negative for the manifest agent', async () => {
+  const smithRoot = await mkdtemp(join(tmpdir(), 'dispatch-gate-'));
+  const file = emptyCliToolsFile();
+  file.tools.claude = {
+    detected: true,
+    authOk: false,
+    enabled: true,
+    detail: 'not logged in — run `claude /login`',
+    lastCheckedAt: '2026-08-06T00:00:00.000Z',
+  };
+  await saveCliToolsFile(join(smithRoot, 'cli-tools.json'), file);
+
+  const config = loadConfig({ smithRoot, agentCommands: NO_SUCH_BINARY });
+  const dispatcher = new Dispatcher(config);
+  const manifest: TaskManifest = {
+    taskId: 'gate-blocked-task',
+    prompt: 'irrelevant — the gate blocks before this matters',
+    context: { files: [], repository: 'https://github.com/acme/repo', branch: 'main' },
+    agent: 'claude',
+    createdAt: new Date().toISOString(),
+    priority: 'normal',
+  };
+
+  await assert.rejects(
+    () => dispatcher.dispatch(manifest),
+    (err: unknown) => {
+      assert.ok(err instanceof ToolLaunchError);
+      assert.match((err as Error).message, /subscription-inactive: not logged in/);
+      return true;
+    },
+  );
+});
+
+// No dispatch()-level fail-open test on purpose: letting dispatch() run past
+// the gate reaches the real teardown(), whose killPattern('sub-') sweeps the
+// HOST tmux server — a live-session hazard from a unit test. Fail-open
+// semantics (absent file/entry never blocks) are pinned at the primitive
+// level in cli-tools.test.ts (gateReason/isActive), and the gate's wiring is
+// proven by the confirmed-negative test above, which throws before the try
+// block so teardown never runs.

@@ -16,7 +16,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { SessionParseError } from './errors.js';
 import { modelFlag } from './model-flag.js';
-import type { AgentProfile, NormalizedMessage, ToolDriver } from './types.js';
+import type { AgentProfile, CommandRunner, NormalizedMessage, ToolDriver } from './types.js';
 
 interface CodexLine {
   timestamp?: string;
@@ -124,6 +124,19 @@ export class CodexDriver implements ToolDriver {
       [`# ${agent.name} — ${agent.role}`, '', agent.directives, '', `You are ${agent.name}. Stay within your role's domain.`, ''].join('\n'),
     );
     return ['AGENTS.md'];
+  }
+
+  async verifyAuth(
+    binary: string,
+    run: CommandRunner,
+    timeoutMs: number,
+  ): Promise<{ ok: boolean | 'unknown'; detail: string }> {
+    // `codex login status` -> exit 0 "Logged in using ChatGPT" when authed.
+    const res = await run([binary, 'login', 'status'], timeoutMs);
+    const out = `${res.stdout}\n${res.stderr}`.trim();
+    if (res.code === 0) return { ok: true, detail: out.split('\n')[0] || 'logged in' };
+    if (/not logged in/i.test(out)) return { ok: false, detail: 'not logged in — run `codex login`' };
+    return { ok: 'unknown', detail: out.split('\n')[0] || 'login status unrecognized' };
   }
 }
 

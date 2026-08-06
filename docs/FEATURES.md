@@ -13,6 +13,8 @@ Product concepts and history live in [PRD.md](../PRD.md).
 | Push-to-talk | Hold the mic; audio streams to Deepgram, transcript lands in the meeting, the crew answers | [→ test](./MANUAL-TESTING.md#push-to-talk) |
 | Raise-hand etiquette | Non-addressed agents with something to add raise a ✋; clicking gives them the floor; speaking lowers the hand | [→ test](./MANUAL-TESTING.md#raise-hand) |
 | Crew memory | Scoped facts remembered on request, recalled across sessions and conversations | [→ test](./MANUAL-TESTING.md#crew-memory) |
+| Broker host identity (Anderson) | Data-driven host persona (`broker/.smith/identity.json`): addressable by name, greets new sessions roster-aware, owns meta/status answers and system announcements, defers to specialists; own ElevenLabs voice and a tile above — never inside — the crew grid; structurally un-delegable | [→ test](./MANUAL-TESTING.md#host-identity-anderson) |
+| Blocked-audio recovery | When the webview's autoplay policy suspends audio, replies hold instead of being lost; a pill says so and any click/keypress resumes playback in order | [→ test](./MANUAL-TESTING.md#blocked-audio-recovery) |
 
 ## Roster & composition
 
@@ -21,6 +23,7 @@ Product concepts and history live in [PRD.md](../PRD.md).
 | iPhone-style edit mode | 3s long-press → jiggle; drag to reorder; drag agent onto agent/squad to form/join squads; drag member out to free | [→ test](./MANUAL-TESTING.md#roster-edit-mode) |
 | Avatar states | Listening pulse when addressed, glowing ring while working, group badge on squads, ✋ badge on raised hands | [→ test](./MANUAL-TESTING.md#avatar-states) |
 | Agent creation wizard | Stereotype, job role, engine/model, voice catalog, reactions, quick answers, one-call AI persona generation | [→ test](./MANUAL-TESTING.md#agent-creation) |
+| Voice-driven agent creation | "Anderson, create an architect agent" → full persona draft pitched aloud; persists only on your explicit yes (confirm-first); fallback voice until cast in the wizard | [→ test](./MANUAL-TESTING.md#voice-agent-creation) |
 | Agent editing | Reopen any agent in the wizard from edit mode; busy agents locked (UI + server) | [→ test](./MANUAL-TESTING.md#agent-editing) |
 | Agent removal (archive vs delete) | One remove intent; the broker decides from evidence — never used → deleted, any history → archived in place; outcome stated before you confirm | [→ test](./MANUAL-TESTING.md#agent-removal) |
 
@@ -48,7 +51,7 @@ Product concepts and history live in [PRD.md](../PRD.md).
 |---|---|---|
 | Discord text adapter | The crew attends allowlisted channels, mention-gated (@everyone/roles ignored); each agent posts under its own name via webhook; turn-scoped origins guarantee replies only go to the channel that asked | [→ test](./MANUAL-TESTING.md#discord-adapter) |
 | Discord voice presence | Allowlisted voice channels auto-join the crew as real members — bot-per-agent presence with per-agent ElevenLabs voices, ear STT with per-user attribution, ear-degradation rollout, single active-audio-surface shared with LiveKit meetings | [→ test](./MANUAL-TESTING.md#discord-voice) |
-| Channel designation | `channels` array in each agent file decides which surfaces an agent attends (`tauri`, `discord`, `discord-voice`) | [→ test](./MANUAL-TESTING.md#discord-adapter) |
+| Channel designation | `channels` map in each agent file decides which external surfaces an agent attends (`discord`, `discord-voice`); the tauri app is the management console and always shows every agent | [→ test](./MANUAL-TESTING.md#discord-adapter) |
 | All-local invariant | Without `DISCORD_TOKEN`, nothing channel-related constructs — the local product is byte-for-byte unchanged | [→ test](./MANUAL-TESTING.md#all-local-invariant) |
 
 ## Meetings (LiveKit)

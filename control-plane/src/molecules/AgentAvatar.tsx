@@ -1,4 +1,4 @@
-import { Hand, Users } from "lucide-react";
+import { Hand, TriangleAlert, Users } from "lucide-react";
 import { useRef, useState } from "react";
 import { Avatar } from "../atoms/Avatar";
 import { useLongPress } from "../hooks/useLongPress";
@@ -33,6 +33,8 @@ interface AgentAvatarProps {
   agentId?: string;
   /** Portrait filename from the roster frame. */
   avatar?: string;
+  /** Engine-tool warning ("codex: not logged in…") — shows the badge + tooltip line. */
+  engineWarning?: string;
 }
 
 export function AgentAvatar({
@@ -46,6 +48,7 @@ export function AgentAvatar({
   listening = false,
   agentId,
   avatar,
+  engineWarning,
 }: AgentAvatarProps) {
   const [popoverOpen, setPopoverOpen] = useState(false);
   const openTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -80,13 +83,16 @@ export function AgentAvatar({
   };
   const longPress = useLongPress(() => setPopoverOpen(true));
 
-  const label = hand
-    ? `${name} has a hand raised: ${hand} — click to give them the floor`
-    : listening
-      ? `${name} is being addressed`
-      : status === "busy"
-        ? `${name} is working — click to watch and steer`
-        : `${name}, ${role} — ${status}`;
+  const label =
+    engineWarning && !hand
+      ? `${name}, ${role} — engine unavailable: ${engineWarning}`
+      : hand
+        ? `${name} has a hand raised: ${hand} — click to give them the floor`
+        : listening
+          ? `${name} is being addressed`
+          : status === "busy"
+            ? `${name} is working — click to watch and steer`
+            : `${name}, ${role} — ${status}`;
 
   return (
     <span
@@ -112,11 +118,17 @@ export function AgentAvatar({
             <Hand strokeWidth={2.2} />
           </span>
         )}
+        {engineWarning && !hand && (
+          <span className="engine-warning" aria-hidden="true">
+            <TriangleAlert strokeWidth={2.2} />
+          </span>
+        )}
         <span className="tip">
           <b>{name}</b>
           <span>
             {hand ? `✋ ${hand}` : listening ? "listening…" : status === "idle" ? role : `${role} — ${status}`}
           </span>
+          {engineWarning && <span>⚠ {engineWarning}</span>}
         </span>
       </Avatar>
       {agentId && popoverOpen && (

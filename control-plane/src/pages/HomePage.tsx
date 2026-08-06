@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { type AgentSeed, ringForIndex } from "../data/agents";
 import { type AudioFrame, useBrokerChat } from "../hooks/useBrokerChat";
+import { useCliToolHealth } from "../hooks/useCliToolHealth";
 import { GRID_DEFAULTS, type GridParams } from "../hooks/useDotGrid";
 import { usePushToTalk } from "../hooks/usePushToTalk";
 import { useSpokenReplies } from "../hooks/useSpokenReplies";
 import { useTheme } from "../hooks/useTheme";
 import { ConfirmSheet } from "../molecules/ConfirmSheet";
+import { IdentityTile } from "../molecules/IdentityTile";
 import { AddAgentModal } from "../organisms/AddAgentModal";
 import { AgentRoster } from "../organisms/AgentRoster";
 import { DotGridCanvas } from "../organisms/DotGridCanvas";
@@ -51,6 +53,7 @@ export function HomePage() {
   const {
     messages,
     roster,
+    identity,
     connected,
     audioMode,
     session,
@@ -78,17 +81,21 @@ export function HomePage() {
     updateConnector,
     deleteConnector,
     verifyConnector,
+    listCliTools,
+    refreshCliTools,
+    setCliToolEnabled,
     getWorkspaceChannels,
     saveWorkspaceChannels,
     verifyWorkspaceDiscord,
   } = useBrokerChat({ onAudio: (frame) => audioSink.current(frame) });
-  const { soundOn, toggleSound, playAudioFrame } = useSpokenReplies(messages, roster, !audioMode);
+  const { soundOn, toggleSound, playAudioFrame, audioBlocked } = useSpokenReplies(messages, roster, !audioMode);
   audioSink.current = (frame) => void playAudioFrame(frame);
   const { micLive, toggleMic } = usePushToTalk({
     begin: () => micControl("mic-start"),
     audio: micAudio,
     end: () => micControl("mic-stop"),
   });
+  const { warnings: engineWarnings, refresh: refreshEngineWarnings } = useCliToolHealth();
 
   const agents: AgentSeed[] = [
     ...roster.map((a, i) => ({
@@ -102,6 +109,7 @@ export function HomePage() {
       kind: a.kind,
       members: a.members,
       avatar: a.avatar,
+      engineWarning: engineWarnings[a.id],
     })),
   ];
 
@@ -144,23 +152,32 @@ export function HomePage() {
   return (
     <ControlPlaneLayout
       background={<DotGridCanvas params={gridParams} />}
-      leftRail={<ToolRail onNewWorkspace={() => setNewWorkspaceOpen(true)} onSettings={() => setSettingsOpen(true)} />}
-      rightRail={
-        <AgentRoster
-          onEdit={(entry) => {
-            setEditingId(entry.id);
-            setModalOpen(true);
-          }}
-          agents={agents}
-          onAdd={() => {
-            setEditingId(null); // the + button always creates
-            setModalOpen(true);
-          }}
-          onCall={callOn}
-          onCompose={compose}
-          onInspect={setInspecting}
-          onRemove={requestRemoval}
+      leftRail={
+        <ToolRail
+          onNewWorkspace={() => setNewWorkspaceOpen(true)}
+          onSessions={() => setSessionsOpen((open) => !open)}
+          onSettings={() => setSettingsOpen(true)}
         />
+      }
+      rightRail={
+        <>
+          {identity && <IdentityTile {...identity} />}
+          <AgentRoster
+            onEdit={(entry) => {
+              setEditingId(entry.id);
+              setModalOpen(true);
+            }}
+            agents={agents}
+            onAdd={() => {
+              setEditingId(null); // the + button always creates
+              setModalOpen(true);
+            }}
+            onCall={callOn}
+            onCompose={compose}
+            onInspect={setInspecting}
+            onRemove={requestRemoval}
+          />
+        </>
       }
       stage={
         inspecting ? (
@@ -185,6 +202,9 @@ export function HomePage() {
       }
       overlays={
         <>
+          {audioBlocked && soundOn && (
+            <div className="audio-blocked-hint">audio is blocked — click anywhere to enable sound</div>
+          )}
           <ConfirmSheet
             open={removing !== null}
             title={`Remove ${removing?.entry.name}?`}
@@ -205,7 +225,10 @@ export function HomePage() {
           />
           <SettingsPanel
             open={settingsOpen}
-            onClose={() => setSettingsOpen(false)}
+            onClose={() => {
+              setSettingsOpen(false);
+              void refreshEngineWarnings();
+            }}
             onReset={resetSetup}
             theme={theme}
             onThemeChange={setTheme}
@@ -215,6 +238,9 @@ export function HomePage() {
             updateConnector={updateConnector}
             deleteConnector={deleteConnector}
             verifyConnector={verifyConnector}
+            listCliTools={listCliTools}
+            refreshCliTools={refreshCliTools}
+            setCliToolEnabled={setCliToolEnabled}
             listWorkspaceRecords={listWorkspaceRecords}
             getWorkspaceChannels={getWorkspaceChannels}
             saveWorkspaceChannels={saveWorkspaceChannels}
@@ -261,6 +287,7 @@ export function HomePage() {
             onClose={() => {
               setModalOpen(false);
               setEditingId(null);
+              void refreshEngineWarnings();
             }}
             onCreated={(n) =>
               editingId ? undefined : send(`${n} just joined the crew — welcome them in one short line.`)

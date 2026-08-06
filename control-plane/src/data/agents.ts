@@ -14,6 +14,8 @@ export interface AgentSeed {
   members?: string[];
   /** Portrait filename from the roster frame. */
   avatar?: string;
+  /** Set when this agent's engine CLI is confirmed inactive — drives the rail warning badge. */
+  engineWarning?: string;
 }
 
 // Mirrors the personas module: agents are data, never a hardcoded enum.

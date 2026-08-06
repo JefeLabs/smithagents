@@ -35,6 +35,25 @@ export interface ConnectorInstanceRecord {
   fields: Record<string, string | boolean>;
 }
 
+export interface CliToolStatusRecord {
+  detected: boolean;
+  authOk: boolean | 'unknown';
+  enabled: boolean;
+  detail: string;
+  version?: string;
+  lastCheckedAt: string;
+}
+
+export interface CliToolListing {
+  cli: string;
+  label: string;
+  models: string[];
+  warmSessions: boolean;
+  note?: string;
+  status: CliToolStatusRecord | null;
+  active: boolean;
+}
+
 export interface RegistryAgent {
   id: string;
   name: string;
@@ -363,6 +382,22 @@ export class SwarmClient {
 
   async verifyConnector(id: string, extra?: Record<string, string>): Promise<VerifyResult> {
     return this.http('POST', `/me/connectors/${encodeURIComponent(id)}/verify`, { extra }) as unknown as Promise<VerifyResult>;
+  }
+
+  async listCliTools(): Promise<{ tools: CliToolListing[] }> {
+    return this.http('GET', '/cli-tools') as unknown as Promise<{ tools: CliToolListing[] }>;
+  }
+
+  async refreshCliTools(tool?: string): Promise<{ tools: CliToolListing[] }> {
+    return this.http('POST', `/cli-tools/refresh${tool ? `?tool=${encodeURIComponent(tool)}` : ''}`) as unknown as Promise<{
+      tools: CliToolListing[];
+    }>;
+  }
+
+  async setCliToolEnabled(id: string, enabled: boolean): Promise<{ tools: CliToolListing[] }> {
+    return this.http('PUT', `/cli-tools/${encodeURIComponent(id)}`, { enabled }) as unknown as Promise<{
+      tools: CliToolListing[];
+    }>;
   }
 
   async verifyWorkspaceAtlassian(name: string): Promise<VerifyResult> {

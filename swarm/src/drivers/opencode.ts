@@ -18,7 +18,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { query } from './sqlite.js';
 import { modelFlag } from './model-flag.js';
-import type { AgentProfile, NormalizedMessage, ToolDriver } from './types.js';
+import type { AgentProfile, CommandRunner, NormalizedMessage, ToolDriver } from './types.js';
 
 interface MessageEnvelope {
   role?: string;
@@ -104,6 +104,19 @@ export class OpencodeDriver implements ToolDriver {
       [`# ${agent.name} — ${agent.role}`, '', agent.directives, '', `You are ${agent.name}. Stay within your role's domain.`, ''].join('\n'),
     );
     return ['AGENTS.md'];
+  }
+
+  async verifyAuth(
+    binary: string,
+    run: CommandRunner,
+    timeoutMs: number,
+  ): Promise<{ ok: boolean | 'unknown'; detail: string }> {
+    // `opencode auth list` exits 0 and prints the credential store. opencode
+    // also runs local models, so this probe never confirms a negative — a
+    // working auth store is ok, anything else is unknown.
+    const res = await run([binary, 'auth', 'list'], timeoutMs);
+    if (res.code === 0) return { ok: true, detail: 'auth store accessible' };
+    return { ok: 'unknown', detail: 'auth list unavailable' };
   }
 }
 

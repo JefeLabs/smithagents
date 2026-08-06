@@ -49,6 +49,29 @@ the same UI in a browser at `http://localhost:1420`.
 2. Ask a question that needs the fact. **Expected:** the crew recalls it in
    the fresh session — memory crosses sessions, transcript does not.
 
+## Host identity (Anderson)
+
+1. Say "Hey Anderson, who's free?" **Expected:** his tile (above the crew
+   grid, visually separated) shows the listening ring while you speak; ONLY
+   Anderson answers, roster-aware, in his own voice — not the fallback.
+2. Create a **new session**. **Expected:** exactly one spoken roster-aware
+   greeting from Anderson. Switch back to an older session: silence.
+3. Say "Hey team". **Expected:** the crew replies; Anderson stays quiet.
+4. Ask Wilkin something in his own domain. **Expected:** Wilkin answers;
+   Anderson never butts in (deference is the load-bearing rule).
+5. Rename or restyle the host: edit `broker/.smith/identity.json`, restart
+   the broker. **Expected:** the new name is addressable and on the tile —
+   identity is data, not code.
+
+## Blocked audio recovery
+
+1. Quit and reopen the Tauri app; **without clicking anything**, wait for a
+   broker reply (e.g. have someone else / curl trigger an utterance).
+2. **Expected:** if the webview blocks autoplay, a pill appears — "audio is
+   blocked — click anywhere to enable sound" — instead of silent loss.
+3. Click anywhere. **Expected:** the held replies play in order; the pill
+   disappears; later replies play normally.
+
 ## Roster edit mode
 
 1. Long-press (3s) any roster circle. **Expected:** jiggle mode; "done"
@@ -74,6 +97,17 @@ the same UI in a browser at `http://localhost:1420`.
 2. **Expected:** the new agent joins the roster, is greeted in the meeting,
    and `swarm/.smith/agents/<id>.json` exists with everything you chose.
 3. Invalid inputs (bad model id, unknown CLI) → readable 400 copy inline.
+
+## Voice agent creation
+
+1. Say "Anderson, create an architect agent — grumpy veteran."
+2. **Expected:** Anderson pitches a complete draft aloud (name, role,
+   flavor) and asks whether to add them. NOTHING is persisted yet.
+3. Say yes ("dale" / "add him"). **Expected:** the agent joins the roster,
+   `swarm/.smith/agents/<id>.json` exists (engine claude/claude-opus,
+   fallback voice until cast in the wizard).
+4. Repeat with a decline. **Expected:** draft discarded, no file, no roster
+   change. A second draft before answering replaces the first.
 
 ## Agent editing
 
