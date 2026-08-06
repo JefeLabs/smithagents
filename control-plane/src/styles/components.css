@@ -645,11 +645,6 @@
   position: relative;
 }
 
-.stage-tools {
-  width: min(560px, 90%);
-  display: flex;
-  justify-content: flex-end;
-}
 .sound-toggle {
   width: 34px;
   height: 34px;

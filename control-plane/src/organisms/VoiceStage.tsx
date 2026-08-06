@@ -1,4 +1,4 @@
-import { Volume2, VolumeX } from "lucide-react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type { ChatMessage } from "../hooks/useBrokerChat";
 import { Composer } from "../molecules/Composer";
 import { MicHero } from "../molecules/MicHero";
@@ -23,26 +23,50 @@ export function VoiceStage({
   soundOn,
   onSoundToggle,
 }: VoiceStageProps) {
+  const chatActive = messages.length > 0;
+  const reduceMotion = useReducedMotion();
+  const spring = reduceMotion ? { duration: 0 } : { type: "spring" as const, duration: 0.5, bounce: 0 };
+
   return (
-    <main>
-      <h1 className="greeting">
-        The mic is yours, <em>Edwin</em>
-      </h1>
-      <MicHero live={micLive} onToggle={onMicToggle} />
-      <div className="stage-tools">
-        <button
-          type="button"
-          className={soundOn ? "sound-toggle" : "sound-toggle off"}
-          onClick={onSoundToggle}
-          title={soundOn ? "Mute agent voices" : "Unmute agent voices"}
-          aria-label={soundOn ? "Mute agent voices" : "Unmute agent voices"}
-          aria-pressed={soundOn}
+    <main className={chatActive ? "chat-active" : undefined}>
+      <AnimatePresence mode="popLayout" initial={false}>
+        {!chatActive && (
+          <motion.div
+            key="hero"
+            className="hero-intro"
+            initial={{ opacity: 0, scale: 0.92, y: 24 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.92, y: -24 }}
+            transition={spring}
+          >
+            <h1 className="greeting">
+              The mic is yours, <em>Edwin</em>
+            </h1>
+            <MicHero live={micLive} onToggle={onMicToggle} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+      {chatActive && (
+        <motion.div
+          key="log"
+          className="chat-log"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={spring}
         >
-          {soundOn ? <Volume2 strokeWidth={1.7} /> : <VolumeX strokeWidth={1.7} />}
-        </button>
-      </div>
-      <Transcript messages={messages} />
-      <Composer onSend={onSend} disabled={!brokerConnected} />
+          <Transcript messages={messages} />
+        </motion.div>
+      )}
+      <motion.div layout className="composer-dock" transition={spring}>
+        <Composer
+          onSend={onSend}
+          disabled={!brokerConnected}
+          micLive={micLive}
+          onMicToggle={onMicToggle}
+          soundOn={soundOn}
+          onSoundToggle={onSoundToggle}
+        />
+      </motion.div>
     </main>
   );
 }
