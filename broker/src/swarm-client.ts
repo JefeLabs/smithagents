@@ -66,8 +66,12 @@ export interface WorkspaceBody {
     repository?: string;
     branch?: string;
     github?: { owner: string; repo: string; connectorId?: string };
+    /** Creation-time only: git init the path if it isn't a repo yet. Never persisted by swarm. */
+    initGit?: boolean;
   }>;
   default?: boolean;
+  /** Execution environment for this workspace's tasks; unset = swarm's server default. */
+  runtime?: 'tmux' | 'docker' | 'remote';
   atlassian?: { siteUrl: string; jiraProjectKeys?: string[]; confluenceSpaceKeys?: string[]; connectorId?: string };
 }
 
