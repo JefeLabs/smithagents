@@ -5,13 +5,14 @@ const BASE = "127.0.0.1:7790";
 export type SurfaceMode = "autojoin" | "on-request" | "disabled";
 
 export const SURFACES = [
-  { key: "tauri", label: "Tauri app" },
   { key: "discord", label: "Discord text" },
   { key: "discord-voice", label: "Discord voice" },
 ] as const;
 
-const KNOWN_SURFACES = ["tauri", "discord", "discord-voice"] as const;
+const KNOWN_SURFACES = ["discord", "discord-voice"] as const;
 const MODES: ReadonlySet<string> = new Set(["autojoin", "on-request", "disabled"]);
+/** Retired surface keys: skipped in every branch, mirroring the broker parser. */
+const RETIRED_SURFACES: ReadonlySet<string> = new Set(["tauri"]);
 
 /**
  * Pure: agent record → mode map. Mirrors the broker's surface-modes.ts parser
@@ -19,12 +20,13 @@ const MODES: ReadonlySet<string> = new Set(["autojoin", "on-request", "disabled"
  * absent-field default) so a control-plane popover and the broker never
  * disagree about what an agent's `channels` field means. Kept dependency-free
  * on purpose — no cross-package import — so the two copies must be updated
- * in lockstep if the semantics ever change.
+ * in lockstep if the semantics ever change. The tauri app is not a surface — a
+ * `tauri` key is retired and parsed away.
  */
 export function modesFrom(record: { channels?: unknown }): Record<string, SurfaceMode> {
   const channels = record.channels;
   if (channels === undefined || channels === null) {
-    return { tauri: "autojoin", discord: "autojoin", "discord-voice": "disabled" };
+    return { discord: "autojoin", "discord-voice": "disabled" };
   }
   if (Array.isArray(channels)) {
     const out: Record<string, SurfaceMode> = {};
@@ -32,7 +34,9 @@ export function modesFrom(record: { channels?: unknown }): Record<string, Surfac
       out[surface] = channels.includes(surface) ? "autojoin" : "disabled";
     }
     for (const surface of channels) {
-      if (typeof surface === "string" && !(surface in out)) out[surface] = "autojoin";
+      if (typeof surface === "string" && !RETIRED_SURFACES.has(surface) && !(surface in out)) {
+        out[surface] = "autojoin";
+      }
     }
     return out;
   }
@@ -40,11 +44,12 @@ export function modesFrom(record: { channels?: unknown }): Record<string, Surfac
     const out: Record<string, SurfaceMode> = {};
     for (const surface of KNOWN_SURFACES) out[surface] = "disabled";
     for (const [surface, mode] of Object.entries(channels as Record<string, unknown>)) {
+      if (RETIRED_SURFACES.has(surface)) continue;
       out[surface] = typeof mode === "string" && MODES.has(mode) ? (mode as SurfaceMode) : "disabled";
     }
     return out;
   }
-  return { tauri: "disabled", discord: "disabled", "discord-voice": "disabled" };
+  return { discord: "disabled", "discord-voice": "disabled" };
 }
 
 /** Pure: Join now renders only for on-request agents not currently present. */

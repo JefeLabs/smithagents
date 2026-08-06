@@ -2,44 +2,41 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { applyModeChange, decideJoin, SurfacePolicy, surfaceModes } from './surface-modes.ts';
 
-test('legacy array: listed surfaces autojoin, unlisted disabled', () => {
+test('legacy array: listed surfaces autojoin, unlisted disabled, tauri retired', () => {
   assert.deepEqual(surfaceModes({ channels: ['tauri', 'discord'] }), {
-    tauri: 'autojoin',
     discord: 'autojoin',
     'discord-voice': 'disabled',
   });
 });
 
-test('absent channels field: text surfaces autojoin, voice disabled (legacy-exact)', () => {
+test('absent channels field: discord autojoin, voice disabled, no tauri key', () => {
   assert.deepEqual(surfaceModes({}), {
-    tauri: 'autojoin',
     discord: 'autojoin',
     'discord-voice': 'disabled',
   });
 });
 
-test('map form: absent key disabled, unknown surfaces preserved, bad values fail closed', () => {
+test('map form: tauri key dropped, absent key disabled, unknown surfaces preserved, bad values fail closed', () => {
   const modes = surfaceModes({
-    channels: { tauri: 'autojoin', 'discord-voice': 'on-request', matrix: 'autojoin', discord: 'sometimes' },
+    channels: { tauri: 'on-request', 'discord-voice': 'on-request', matrix: 'autojoin', discord: 'sometimes' },
   });
-  assert.equal(modes.tauri, 'autojoin');
+  assert.equal('tauri' in modes, false); // retired: parsed away even when present
   assert.equal(modes['discord-voice'], 'on-request');
   assert.equal(modes.matrix, 'autojoin'); // unknown surface passes through
   assert.equal(modes.discord, 'disabled'); // unrecognized value fails closed
 });
 
-test('non-object, non-array channels: all disabled', () => {
+test('non-object, non-array channels: all disabled, no tauri key', () => {
   assert.deepEqual(surfaceModes({ channels: 'discord' }), {
-    tauri: 'disabled',
     discord: 'disabled',
     'discord-voice': 'disabled',
   });
 });
 
-test('policy: attends = autojoin, or on-request + admitted; revoked on demand', () => {
+test('policy: attends = autojoin, or on-request + admitted; tauri never attends; revoked on demand', () => {
   const agents = [{ id: 'ignacio', channels: { discord: 'on-request', tauri: 'autojoin' } }];
   const policy = new SurfacePolicy(() => agents);
-  assert.equal(policy.attends('ignacio', 'tauri'), true);
+  assert.equal(policy.attends('ignacio', 'tauri'), false); // retired surface: no mode, no attendance
   assert.equal(policy.attends('ignacio', 'discord'), false);
   policy.admit('ignacio', 'discord');
   assert.equal(policy.attends('ignacio', 'discord'), true);
@@ -48,7 +45,7 @@ test('policy: attends = autojoin, or on-request + admitted; revoked on demand', 
   policy.admit('ignacio', 'discord');
   policy.revokeAll('discord');
   assert.equal(policy.attends('ignacio', 'discord'), false);
-  assert.equal(policy.attends('ghost', 'tauri'), false); // unknown agent: disabled
+  assert.equal(policy.attends('ghost', 'discord'), false); // unknown agent: disabled
 });
 
 test('applyModeChange: voice disable ejects; autojoin flip joins only with a room', async () => {

@@ -43,8 +43,8 @@
     "pet_peeve": "A green button over a failed write. And types that claim things nobody validated — that's a lie with syntax.",
     "motto": "The seam is where it breaks. Check the seam. Tranquilo, then check it again."
   },
-  "channels": [
-    "tauri",
-    "discord"
-  ]
+  "channels": {
+    "discord": "autojoin",
+    "discord-voice": "disabled"
+  }
 }

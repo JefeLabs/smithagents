@@ -3,26 +3,33 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { joinNowVisible, modesFrom, useSurfacePolicy } from "./useSurfacePolicy";
 
 describe("modesFrom", () => {
-  it("parses map form with absent keys disabled", () => {
-    expect(modesFrom({ channels: { tauri: "autojoin" } })).toMatchObject({
-      tauri: "autojoin",
-      discord: "disabled",
-      "discord-voice": "disabled",
-    });
-  });
-  it("parses legacy array: listed autojoin, unlisted disabled", () => {
-    expect(modesFrom({ channels: ["discord"] })).toMatchObject({
-      tauri: "disabled",
+  it("parses map form with retired tauri skipped", () => {
+    const result = modesFrom({ channels: { tauri: "autojoin", discord: "autojoin" } });
+    expect(result).toMatchObject({
       discord: "autojoin",
       "discord-voice": "disabled",
     });
+    expect("tauri" in result).toBe(false);
+  });
+  it("parses legacy array: listed autojoin, unlisted disabled, retired tauri skipped", () => {
+    const result = modesFrom({ channels: ["discord", "tauri"] });
+    expect(result).toMatchObject({
+      discord: "autojoin",
+      "discord-voice": "disabled",
+    });
+    expect("tauri" in result).toBe(false);
   });
   it("absent field: text autojoin, voice disabled", () => {
-    expect(modesFrom({})).toMatchObject({
-      tauri: "autojoin",
+    const result = modesFrom({});
+    expect(result).toMatchObject({
       discord: "autojoin",
       "discord-voice": "disabled",
     });
+    expect("tauri" in result).toBe(false);
+  });
+  it("garbage channels value: all disabled, no tauri key", () => {
+    const result = modesFrom({ channels: "discord" });
+    expect(result).toEqual({ discord: "disabled", "discord-voice": "disabled" });
   });
 });
 

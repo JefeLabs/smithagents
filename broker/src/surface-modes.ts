@@ -1,21 +1,26 @@
 /** Per-agent, per-surface presence modes parsed from the agent file's `channels`
  * field, plus the runtime admission state for on-request surfaces.
  *
- * Legacy compatibility is behavior-exact per call site: an ARRAY means listed →
- * autojoin, unlisted → disabled. An ABSENT field historically passed the text
- * delivery filter (channels.ts) but failed the voice designation
- * (discord-voice.ts), so it parses as text-autojoin + voice-disabled.
+ * The tauri app is NOT a surface: it is the management console, every agent
+ * always appears there, and any `tauri` key lingering in an agent file is
+ * parsed away (retired). Legacy compatibility is behavior-exact per call
+ * site: an ARRAY means listed → autojoin, unlisted → disabled. An ABSENT
+ * field historically passed the text delivery filter (channels.ts) but
+ * failed the voice designation (discord-voice.ts), so it parses as
+ * text-autojoin + voice-disabled.
  */
 export type SurfaceMode = 'autojoin' | 'on-request' | 'disabled';
 export type SurfaceModeMap = Record<string, SurfaceMode>;
-export const KNOWN_SURFACES = ['tauri', 'discord', 'discord-voice'] as const;
+export const KNOWN_SURFACES = ['discord', 'discord-voice'] as const;
 
 const MODES: ReadonlySet<string> = new Set(['autojoin', 'on-request', 'disabled']);
+/** Retired surface keys: skipped in every branch so old agent files stay valid. */
+const RETIRED_SURFACES: ReadonlySet<string> = new Set(['tauri']);
 
 export function surfaceModes(agent: { channels?: unknown }): SurfaceModeMap {
   const channels = agent.channels;
   if (channels === undefined || channels === null) {
-    return { tauri: 'autojoin', discord: 'autojoin', 'discord-voice': 'disabled' };
+    return { discord: 'autojoin', 'discord-voice': 'disabled' };
   }
   if (Array.isArray(channels)) {
     const out: SurfaceModeMap = {};
@@ -23,7 +28,9 @@ export function surfaceModes(agent: { channels?: unknown }): SurfaceModeMap {
       out[surface] = channels.includes(surface) ? 'autojoin' : 'disabled';
     }
     for (const surface of channels) {
-      if (typeof surface === 'string' && !(surface in out)) out[surface] = 'autojoin';
+      if (typeof surface === 'string' && !RETIRED_SURFACES.has(surface) && !(surface in out)) {
+        out[surface] = 'autojoin';
+      }
     }
     return out;
   }
@@ -31,11 +38,12 @@ export function surfaceModes(agent: { channels?: unknown }): SurfaceModeMap {
     const out: SurfaceModeMap = {};
     for (const surface of KNOWN_SURFACES) out[surface] = 'disabled';
     for (const [surface, mode] of Object.entries(channels as Record<string, unknown>)) {
+      if (RETIRED_SURFACES.has(surface)) continue;
       out[surface] = typeof mode === 'string' && MODES.has(mode) ? (mode as SurfaceMode) : 'disabled';
     }
     return out;
   }
-  return { tauri: 'disabled', discord: 'disabled', 'discord-voice': 'disabled' };
+  return { discord: 'disabled', 'discord-voice': 'disabled' };
 }
 
 export class SurfacePolicy {
