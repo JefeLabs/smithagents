@@ -227,6 +227,8 @@ const brain = new BrokerBrain(streamFactory, {
   // Scoped to the current conversation's workspace only — never model-choosable, unlike delegate's optional workspace.
   lookup_ticket: (input) => broker.executors.lookup_ticket({ ...input, workspace: sessionManager.active().workspace }),
   search_docs: (input) => broker.executors.search_docs({ ...input, workspace: sessionManager.active().workspace }),
+  draft_agent: async () => 'not wired yet',
+  confirm_agent: async () => 'not wired yet',
 });
 
 // Sessions — workspace-scoped conversations persisted under .smith/sessions/.

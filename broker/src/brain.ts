@@ -18,6 +18,8 @@ export interface ToolExecutors {
   raise_hand(input: { agent: string; reason: string }): Promise<string>;
   lookup_ticket(input: { ticketKey: string; workspace: string }): Promise<string>;
   search_docs(input: { query: string; workspace: string }): Promise<string>;
+  draft_agent(input: { spec: string }): Promise<string>;
+  confirm_agent(input: { accept: boolean }): Promise<string>;
 }
 
 export interface BrainTurn {
@@ -114,6 +116,33 @@ const TOOLS = [
         ticketKey: { type: 'string' as const, description: 'Jira ticket key, e.g. "PROJ-123"' },
       },
       required: ['ticketKey'],
+    },
+  },
+  {
+    name: 'draft_agent',
+    description:
+      "Generate a complete draft teammate from the human's request (name, role, backstory, style). Does NOT create anything — pitch the draft aloud and ask for confirmation, then use confirm_agent. A new call replaces any unconfirmed draft.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        spec: {
+          type: 'string' as const,
+          description: "The human's words describing the teammate they want, e.g. 'an Architect agent, grumpy veteran'",
+        },
+      },
+      required: ['spec'],
+    },
+  },
+  {
+    name: 'confirm_agent',
+    description:
+      'Resolve the pending draft teammate after the human answered the pitch: accept=true persists them to the crew, accept=false discards the draft. Only call AFTER the human clearly answered.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        accept: { type: 'boolean' as const, description: 'true = the human said yes; false = they declined' },
+      },
+      required: ['accept'],
     },
   },
   {
@@ -277,6 +306,8 @@ export class BrokerBrain {
       if (name === 'remember') return await this.executors.remember(input as { key: string; text: string; scope: string });
       if (name === 'lookup_ticket') return await this.executors.lookup_ticket(input as { ticketKey: string; workspace: string });
       if (name === 'search_docs') return await this.executors.search_docs(input as { query: string; workspace: string });
+      if (name === 'draft_agent') return await this.executors.draft_agent(input as { spec: string });
+      if (name === 'confirm_agent') return await this.executors.confirm_agent(input as { accept: boolean });
       return `unknown tool: ${name}`;
     } catch (err) {
       return `tool ${name} failed: ${err instanceof Error ? err.message : String(err)}`;
