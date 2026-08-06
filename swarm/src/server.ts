@@ -1508,14 +1508,12 @@ export class OrchestratorServer {
         const ws = server.workspaces.find((w) => w.name === req.params.name);
         if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
         if (!ws.atlassian) return reply.status(400).send({ error: `Workspace "${ws.name}" has no Jira/Confluence site configured` });
-        const ticketKey = req.body?.ticketKey;
-        if (!ticketKey) return reply.status(400).send({ error: 'Missing required field: ticketKey' });
         const users = await loadUsersFromDir(resolve(process.cwd(), '.smith/users'));
         const user = resolveCurrentUser(users);
-        const resolved = resolveConnector(ws.atlassian.connectorId, 'atlassian', 'an Atlassian', 'workspace', user);
+        const ticketKey = req.body?.ticketKey;
+        const resolved = resolveAtlassianConnector(ws.atlassian.connectorId, user, { name: 'ticketKey', value: ticketKey });
         if ('error' in resolved) return reply.status(400).send({ error: resolved.error });
-        const { instance } = resolved;
-        return lookupTicket(ws.atlassian.siteUrl, instance.fields.email ?? '', instance.fields.apiToken ?? '', ticketKey);
+        return lookupTicket(ws.atlassian.siteUrl, resolved.instance.fields.email ?? '', resolved.instance.fields.apiToken ?? '', ticketKey!);
       },
     );
 
@@ -1525,14 +1523,12 @@ export class OrchestratorServer {
         const ws = server.workspaces.find((w) => w.name === req.params.name);
         if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
         if (!ws.atlassian) return reply.status(400).send({ error: `Workspace "${ws.name}" has no Jira/Confluence site configured` });
-        const query = req.body?.query;
-        if (!query) return reply.status(400).send({ error: 'Missing required field: query' });
         const users = await loadUsersFromDir(resolve(process.cwd(), '.smith/users'));
         const user = resolveCurrentUser(users);
-        const resolved = resolveConnector(ws.atlassian.connectorId, 'atlassian', 'an Atlassian', 'workspace', user);
+        const query = req.body?.query;
+        const resolved = resolveAtlassianConnector(ws.atlassian.connectorId, user, { name: 'query', value: query });
         if ('error' in resolved) return reply.status(400).send({ error: resolved.error });
-        const { instance } = resolved;
-        return searchDocs(ws.atlassian.siteUrl, instance.fields.email ?? '', instance.fields.apiToken ?? '', query, {
+        return searchDocs(ws.atlassian.siteUrl, resolved.instance.fields.email ?? '', resolved.instance.fields.apiToken ?? '', query!, {
           spaceKeys: ws.atlassian.confluenceSpaceKeys,
         });
       },
@@ -2022,6 +2018,30 @@ export function resolveConnector(
   const instance = user?.connectors?.find((c) => c.id === connectorId && c.vendorId === vendorId);
   if (!instance) return { error: `The connector picked for this ${scope} no longer exists — pick another` };
   return { instance };
+}
+
+/**
+ * Shared precondition order for lookup-ticket/search-docs: the connector
+ * guard (resolveConnector) must be checked BEFORE the route's own required
+ * body field, so a request invalid on both axes reports "pick a connector"
+ * first, not "missing field" — this is precedence-sensitive, not just an
+ * internal-shape choice. Pulled out to module level, distinct from
+ * resolveConnector itself, specifically so that ordering is unit-testable:
+ * fix round 2 caught that the resolveConnector extraction had accidentally
+ * swapped this order in both routes (the connector-guard call moved to
+ * after the ticketKey/query check), found only by manual review, not a
+ * test — this closes that gap for good rather than trusting call-site
+ * ordering discipline again.
+ */
+export function resolveAtlassianConnector(
+  connectorId: string | undefined,
+  user: User | null,
+  requiredField: { name: string; value: string | undefined },
+): { instance: ConnectorInstance } | { error: string } {
+  const resolved = resolveConnector(connectorId, 'atlassian', 'an Atlassian', 'workspace', user);
+  if ('error' in resolved) return resolved;
+  if (!requiredField.value) return { error: `Missing required field: ${requiredField.name}` };
+  return resolved;
 }
 
 /**

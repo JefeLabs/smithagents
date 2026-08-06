@@ -9,7 +9,14 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { buildChannelsUpdate, buildConnectorUpdate, redactConnector, resolveConnector, workspaceProblems } from './server.js';
+import {
+  buildChannelsUpdate,
+  buildConnectorUpdate,
+  redactConnector,
+  resolveAtlassianConnector,
+  resolveConnector,
+  workspaceProblems,
+} from './server.js';
 import { saveUser, loadUsersFromDir } from './users.js';
 import type { ConnectorInstance, User } from './users.js';
 import type { Workspace } from './workspaces.js';
@@ -119,6 +126,30 @@ test('resolveConnector: a connectorId matching a same-vendor instance returns it
 test('resolveConnector: a null user (no current user resolved at all) is treated the same as no matching connector', () => {
   const resolved = resolveConnector('c1', 'atlassian', 'an Atlassian', 'workspace', null);
   assert.deepEqual(resolved, { error: 'The connector picked for this workspace no longer exists — pick another' });
+});
+
+// Regression coverage for fix round 2: resolveAtlassianConnector backs both
+// lookup-ticket and search-docs, and its whole reason to exist is enforcing
+// that the connector guard is checked BEFORE the route's own required-field
+// check — the exact order the resolveConnector extraction accidentally
+// inverted in both routes (caught only by manual review, not a test).
+test('resolveAtlassianConnector: invalid on BOTH axes at once (no connectorId AND missing required field) returns the connector error, not the missing-field error', () => {
+  const resolved = resolveAtlassianConnector(undefined, null, { name: 'ticketKey', value: undefined });
+  assert.deepEqual(resolved, { error: 'Pick an Atlassian connector for this workspace first' });
+});
+
+test('resolveAtlassianConnector: a resolvable connector but a missing required field still reports the missing-field error', () => {
+  const instance: ConnectorInstance = { id: 'c1', vendorId: 'atlassian', label: 'acme', fields: { email: 'e', apiToken: 't' } };
+  const user: User = { id: 'edwin', name: 'Edwin', connectors: [instance] };
+  const resolved = resolveAtlassianConnector('c1', user, { name: 'ticketKey', value: undefined });
+  assert.deepEqual(resolved, { error: 'Missing required field: ticketKey' });
+});
+
+test('resolveAtlassianConnector: both a resolvable connector and a present required field returns the instance', () => {
+  const instance: ConnectorInstance = { id: 'c1', vendorId: 'atlassian', label: 'acme', fields: { email: 'e', apiToken: 't' } };
+  const user: User = { id: 'edwin', name: 'Edwin', connectors: [instance] };
+  const resolved = resolveAtlassianConnector('c1', user, { name: 'ticketKey', value: 'PROJ-123' });
+  assert.deepEqual(resolved, { instance });
 });
 
 test('workspaceProblems: rejects an atlassian block with no site URL, accepts one with', async () => {
