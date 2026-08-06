@@ -10,12 +10,14 @@ import { AddAgentModal } from "../organisms/AddAgentModal";
 import { AgentRoster } from "../organisms/AgentRoster";
 import { DotGridCanvas } from "../organisms/DotGridCanvas";
 import { DotGridTuner } from "../organisms/DotGridTuner";
+import { NewWorkspaceModal } from "../organisms/NewWorkspaceModal";
 import { SessionsPanel } from "../organisms/SessionsPanel";
 import { SettingsPanel } from "../organisms/SettingsPanel";
 import { ToolRail } from "../organisms/ToolRail";
 import { VoiceStage } from "../organisms/VoiceStage";
 import { WorkStage } from "../organisms/WorkStage";
 import { WorkspaceManagerModal } from "../organisms/WorkspaceManagerModal";
+import { hasNativeFolderPicker, pickFolder } from "../services/nativeDialog";
 import { ControlPlaneLayout } from "../templates/ControlPlaneLayout";
 
 export function HomePage() {
@@ -29,6 +31,7 @@ export function HomePage() {
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [workspacesOpen, setWorkspacesOpen] = useState(false);
+  const [newWorkspaceOpen, setNewWorkspaceOpen] = useState(false);
   /**
    * Agent slated for removal — the outcome preview drives the confirm sheet's copy.
    * `error` holds the last preview/removal failure text; `outcome` stays unset until
@@ -140,9 +143,7 @@ export function HomePage() {
   return (
     <ControlPlaneLayout
       background={<DotGridCanvas params={gridParams} />}
-      leftRail={
-        <ToolRail onSessions={() => setSessionsOpen((open) => !open)} onSettings={() => setSettingsOpen(true)} />
-      }
+      leftRail={<ToolRail onNewWorkspace={() => setNewWorkspaceOpen(true)} onSettings={() => setSettingsOpen(true)} />}
       rightRail={
         <AgentRoster
           onEdit={(entry) => {
@@ -183,8 +184,16 @@ export function HomePage() {
       }
       hint={
         <>
-          {session ? `${session.title} · ${session.workspace} — ` : ""}agents raise ✋ when they have something to add —
-          click their circle to give them the floor · press <kbd>g</kbd> to tune the grid
+          {session && (
+            <>
+              <button type="button" className="subhint__session" onClick={() => setSessionsOpen((open) => !open)}>
+                {session.title} · {session.workspace}
+              </button>
+              {" — "}
+            </>
+          )}
+          agents raise ✋ when they have something to add — click their circle to give them the floor · press{" "}
+          <kbd>g</kbd> to tune the grid
         </>
       }
       overlays={
@@ -242,6 +251,16 @@ export function HomePage() {
             verifyAtlassian={verifyWorkspaceAtlassian}
             verifyRepoGithub={verifyRepoGithub}
             listMyConnectors={listMyConnectors}
+          />
+          <NewWorkspaceModal
+            open={newWorkspaceOpen}
+            onClose={() => setNewWorkspaceOpen(false)}
+            save={saveWorkspace}
+            list={listWorkspaceRecords}
+            listMyConnectors={listMyConnectors}
+            activeWorkspace={session?.workspace}
+            pickFolder={hasNativeFolderPicker() ? pickFolder : undefined}
+            onCreated={(name) => createSession(name)}
           />
           <DotGridTuner
             open={tunerOpen}

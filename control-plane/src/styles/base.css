@@ -52,6 +52,18 @@ main {
   font-family: ui-monospace, monospace;
   color: var(--text-2);
 }
+.subhint__session {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  letter-spacing: inherit;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.subhint__session:hover {
+  text-decoration: underline;
+}
 
 @keyframes rise {
   from {
