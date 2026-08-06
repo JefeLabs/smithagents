@@ -288,30 +288,10 @@ test('dispatch: rejects with a subscription-inactive ToolLaunchError when the re
   );
 });
 
-test('dispatch: with no cli-tools.json present, the gate does not block — dispatch proceeds past it (any later failure is unrelated to the gate)', async () => {
-  const smithRoot = await mkdtemp(join(tmpdir(), 'dispatch-gate-'));
-  // Deliberately not a git repo, so prepareWorktree fails fast right after the
-  // gate — proof dispatch got past the gate without a real worktree/session.
-  const fakeRepoPath = join(smithRoot, 'fake-repo');
-  await mkdir(fakeRepoPath, { recursive: true });
-
-  const config = loadConfig({ smithRoot, agentCommands: NO_SUCH_BINARY });
-  const dispatcher = new Dispatcher(config);
-  const manifest: TaskManifest = {
-    taskId: 'gate-fail-open-task',
-    prompt: 'irrelevant',
-    context: { files: [], repository: 'https://github.com/acme/repo', branch: 'main', repoPath: fakeRepoPath },
-    agent: 'claude',
-    createdAt: new Date().toISOString(),
-    priority: 'normal',
-  };
-
-  await assert.rejects(
-    () => dispatcher.dispatch(manifest),
-    (err: unknown) => {
-      assert.ok(err instanceof Error);
-      assert.doesNotMatch((err as Error).message, /subscription-inactive/);
-      return true;
-    },
-  );
-});
+// No dispatch()-level fail-open test on purpose: letting dispatch() run past
+// the gate reaches the real teardown(), whose killPattern('sub-') sweeps the
+// HOST tmux server — a live-session hazard from a unit test. Fail-open
+// semantics (absent file/entry never blocks) are pinned at the primitive
+// level in cli-tools.test.ts (gateReason/isActive), and the gate's wiring is
+// proven by the confirmed-negative test above, which throws before the try
+// block so teardown never runs.
