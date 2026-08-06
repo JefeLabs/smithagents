@@ -820,14 +820,14 @@ Run:
 ```bash
 cd swarm && npm test   # full suite still green first
 ```
-Then boot briefly and curl. `npm run serve` runs the server with cwd `swarm/`, so this reads/writes the REAL `swarm/.smith/cli-tools.json` — that's fine (it's the file this feature owns; agents/users are untouched):
+Then boot briefly and curl. `npm run serve` runs the server with cwd `swarm/`, so this reads/writes THIS worktree's `swarm/.smith/cli-tools.json` — that's fine (it's the file this feature owns; agents/users are untouched). The LIVE swarm occupies 7777, so bind an alternate port via the server's `--port` flag (server.ts:1887):
 ```bash
-cd swarm && (npm run serve &) && sleep 6 \
-  && curl -s http://127.0.0.1:7777/cli-tools | head -c 600 && echo \
-  && curl -s http://127.0.0.1:7777/agents/catalog | python3 -c "import json,sys; print([{k: e.get(k) for k in ('cli','active','statusDetail')} for e in json.load(sys.stdin)['engines']])" \
-  && curl -s -X POST 'http://127.0.0.1:7777/cli-tools/refresh?tool=claude' | head -c 300 && echo
+cd swarm && (npm run serve -- --port 7877 &) && sleep 6 \
+  && curl -s http://127.0.0.1:7877/cli-tools | head -c 600 && echo \
+  && curl -s http://127.0.0.1:7877/agents/catalog | python3 -c "import json,sys; print([{k: e.get(k) for k in ('cli','active','statusDetail')} for e in json.load(sys.stdin)['engines']])" \
+  && curl -s -X POST 'http://127.0.0.1:7877/cli-tools/refresh?tool=claude' | head -c 300 && echo
 ```
-Expected: `/cli-tools` lists 5 tools with real statuses; catalog engines carry `active: true` for claude/codex/opencode/copilot/agy on this machine. Kill the dev server afterwards (foreground it or `kill %1` in the same shell — NEVER an unscoped `pkill`).
+Expected: `/cli-tools` lists 5 tools with real statuses; catalog engines carry `active: true` for claude/codex/opencode/copilot/agy on this machine. Kill the server afterwards by PID (`kill <pid of the npm run serve you started>` — NEVER an unscoped `pkill`).
 
 - [ ] **Step 5: Commit**
 
