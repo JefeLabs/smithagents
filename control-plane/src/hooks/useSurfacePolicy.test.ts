@@ -3,23 +3,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { joinNowVisible, modesFrom, useSurfacePolicy } from "./useSurfacePolicy";
 
 describe("modesFrom", () => {
-  it("parses map form with absent keys disabled", () => {
-    expect(modesFrom({ channels: { tauri: "autojoin" } })).toMatchObject({
-      tauri: "autojoin",
-      discord: "disabled",
+  it("parses map form with retired tauri skipped", () => {
+    expect(modesFrom({ channels: { tauri: "autojoin", discord: "autojoin" } })).toMatchObject({
+      discord: "autojoin",
       "discord-voice": "disabled",
     });
   });
-  it("parses legacy array: listed autojoin, unlisted disabled", () => {
-    expect(modesFrom({ channels: ["discord"] })).toMatchObject({
-      tauri: "disabled",
+  it("parses legacy array: listed autojoin, unlisted disabled, retired tauri skipped", () => {
+    expect(modesFrom({ channels: ["discord", "tauri"] })).toMatchObject({
       discord: "autojoin",
       "discord-voice": "disabled",
     });
   });
   it("absent field: text autojoin, voice disabled", () => {
     expect(modesFrom({})).toMatchObject({
-      tauri: "autojoin",
       discord: "autojoin",
       "discord-voice": "disabled",
     });

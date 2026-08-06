@@ -48,8 +48,8 @@ export function SurfacePolicyPopover({
         <p className="note">Loading…</p>
       ) : (
         SURFACES.map((surface) => {
-          // Discord's two surfaces go inert together when the broker has no Discord identity configured.
-          const grayed = surface.key !== "tauri" && !discord.configured;
+          // Both Discord surfaces go inert together when the broker has no Discord identity configured.
+          const grayed = !discord.configured;
           const mode = modes[surface.key] ?? "disabled";
           const present = presence[surface.key] ?? false;
           return (
