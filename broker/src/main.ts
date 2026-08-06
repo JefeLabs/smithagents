@@ -30,9 +30,10 @@ import { LocalMemory, type MemoryEntry } from './memory.ts';
 import { SessionManager, type Session } from './sessions.ts';
 import { DeepgramSttStream, type LiveLike, deepgramLiveOptions } from './stt.ts';
 import { SwarmClient, type SwarmSquad, type WorkspaceBody } from './swarm-client.ts';
-import { PersonaGenerator } from './persona-generator.ts';
+import { PersonaGenerator, draftToAgentBody, type PersonaDraft } from './persona-generator.ts';
+import { loadIdentity, promptInfo } from './identity.ts';
 import { VoiceCatalog } from './voice-catalog.ts';
-import { TextChannel, type RosterEntry } from './text-channel.ts';
+import { TextChannel, type ChannelFrame, type RosterEntry } from './text-channel.ts';
 import { createRemovalService } from './removal.ts';
 import { mintRoomToken } from './token.ts';
 import { isDiscordTextActive } from './discord-state.ts';
@@ -213,23 +214,50 @@ function makeDeepgramLive(sampleRate = 48000): LiveLike {
   };
 }
 
-// TDZ: the brain's executors close over `broker`, which this same statement
-// group constructs. Declared first and assigned after — the closures only
-// run per-turn, long after startup, by which time `broker` is assigned.
-let broker: Broker;
+// The broker's own identity (host persona, default Anderson) — data, not code.
+const identityFile = process.env.BROKER_IDENTITY_FILE ?? '.smith/identity.json';
+const identity = loadIdentity(() => readFileSync(identityFile, 'utf8'));
 
-const brain = new BrokerBrain(streamFactory, {
-  // Delegations land in the active session's workspace unless the brain names one.
-  delegate: (input) => broker.executors.delegate({ ...input, workspace: input.workspace ?? sessionManager.active().workspace }),
-  check_status: (input) => broker.executors.check_status(input),
-  raise_hand: (input) => broker.executors.raise_hand(input),
-  remember: (input) => broker.executors.remember(input),
-  // Scoped to the current conversation's workspace only — never model-choosable, unlike delegate's optional workspace.
-  lookup_ticket: (input) => broker.executors.lookup_ticket({ ...input, workspace: sessionManager.active().workspace }),
-  search_docs: (input) => broker.executors.search_docs({ ...input, workspace: sessionManager.active().workspace }),
-  draft_agent: async () => 'not wired yet',
-  confirm_agent: async () => 'not wired yet',
-});
+// TDZ: the brain's executors close over `broker` and `creation`, which this
+// same statement group constructs. Declared first and assigned after — the
+// closures only run per-turn, long after startup, by which time both are
+// assigned.
+let broker: Broker;
+// The single unconfirmed teammate draft (voice-driven creation): draft_agent
+// sets it, confirm_agent consumes it, a new draft replaces it.
+let pendingDraft: PersonaDraft | null = null;
+
+const brain = new BrokerBrain(
+  streamFactory,
+  {
+    // Delegations land in the active session's workspace unless the brain names one.
+    delegate: (input) => broker.executors.delegate({ ...input, workspace: input.workspace ?? sessionManager.active().workspace }),
+    check_status: (input) => broker.executors.check_status(input),
+    raise_hand: (input) => broker.executors.raise_hand(input),
+    remember: (input) => broker.executors.remember(input),
+    // Scoped to the current conversation's workspace only — never model-choosable, unlike delegate's optional workspace.
+    lookup_ticket: (input) => broker.executors.lookup_ticket({ ...input, workspace: sessionManager.active().workspace }),
+    search_docs: (input) => broker.executors.search_docs({ ...input, workspace: sessionManager.active().workspace }),
+    // Voice-driven agent creation: draft under the host's control, persist
+    // only on the human's explicit yes.
+    draft_agent: async ({ spec }) => {
+      const draft = (await creation.generate({ hint: spec })) as unknown as PersonaDraft;
+      pendingDraft = draft;
+      return `Draft ready — pitch it and ask before creating. Name: ${draft.name}. Role: ${draft.role}. Backstory: ${draft.backstory}`;
+    },
+    confirm_agent: async ({ accept }) => {
+      const draft = pendingDraft;
+      pendingDraft = null;
+      if (!draft) return 'no pending draft — call draft_agent first';
+      if (!accept) return `discarded the draft for ${draft.name}`;
+      const created = (await creation.create(
+        draftToAgentBody(draft, { language: 'en-do', voiceId: DEFAULT_ELEVEN_VOICE }),
+      )) as { error?: string };
+      return created.error ? `creation failed: ${created.error}` : `${draft.name} is on the crew — their real voice still needs casting in the wizard`;
+    },
+  },
+  { identity: promptInfo(identity) },
+);
 
 // Sessions — workspace-scoped conversations persisted under .smith/sessions/.
 const sessionsDir = process.env.BROKER_SESSIONS_DIR ?? '.smith/sessions';
@@ -335,6 +363,8 @@ function resolveSpokenLineForChannels(text: string): { speaker?: string; spokenT
 }
 
 function elevenVoiceFor(speaker?: string): string {
+  // The host identity resolves first — it lives in identity.json, not the registry.
+  if (speaker && identity.voice.voiceId && speaker.toLowerCase() === identity.name.toLowerCase()) return identity.voice.voiceId;
   return (speaker && (directory.resolve(speaker)?.voice?.voiceId ?? SQUAD_VOICES[speaker])) ?? DEFAULT_ELEVEN_VOICE;
 }
 
@@ -409,6 +439,18 @@ const toRosterEntries = (roster: UiRoster): RosterEntry[] => {
   ),
   ];
 };
+
+/** The full roster frame: crew entries plus the host identity — the host is never in `agents`. */
+const rosterFrame = (roster: UiRoster): ChannelFrame => ({
+  type: 'roster',
+  agents: toRosterEntries(roster),
+  identity: {
+    name: identity.name,
+    role: identity.role,
+    ring: identity.avatarRing,
+    listening: roster.listening.some((n) => n.toLowerCase() === identity.name.toLowerCase()) || undefined,
+  },
+});
 
 // Text I/O for UIs (Tauri control plane): POST /utterance in, WS transcript +
 // live roster out. New clients get capabilities + a roster snapshot on connect.
@@ -539,107 +581,14 @@ const tasks = {
   get: (taskId: string) => swarm.getTask(taskId) as unknown as Promise<Record<string, unknown> | null>,
 };
 
-const textChannel = new TextChannel(
-  handleUserText,
-  () => [
-    { type: 'config', audio: Boolean(tts) },
-    { type: 'roster', agents: toRosterEntries(broker.uiRoster()) },
-    sessionFrame(),
-  ],
-  (body) => {
-    const op = body as { op?: string; agents?: unknown; target?: unknown; agent?: unknown };
-    if (op.op === 'form' && Array.isArray(op.agents) && op.agents.every((a) => typeof a === 'string')) {
-      return broker.compose({ op: 'form', agents: op.agents as string[] });
-    }
-    if ((op.op === 'add' || op.op === 'remove') && typeof op.target === 'string' && typeof op.agent === 'string') {
-      return broker.compose({ op: op.op, target: op.target, agent: op.agent });
-    }
-    return 'body must be {op:"form",agents:[..]} or {op:"add"|"remove",target,agent}';
-  },
-  {
-    activity: (name) => broker.activity(name),
-    steer: (name, message) => (message.trim() ? broker.steerWork(name, message) : Promise.resolve('steering message is empty')),
-    cancel: (name) => broker.cancelWork(name),
-  },
-  {
-    // Push-to-talk from UIs: one Deepgram session per client while the mic is held.
-    start: (clientId) => {
-      if (micSessions.has(clientId)) return;
-      const stt = new DeepgramSttStream(makeDeepgramLive);
-      stt.start((utterance) => {
-        textChannel.broadcast({ type: 'utterance', text: utterance });
-        handleUserText(utterance);
-      });
-      micSessions.set(clientId, stt);
-    },
-    audio: (clientId, pcm) => micSessions.get(clientId)?.sendAudio(pcm),
-    stop: (clientId) => {
-      micSessions.get(clientId)?.stop();
-      micSessions.delete(clientId);
-    },
-  },
-  {
-    create: (title, workspace) => {
-      if (workspace && !workspaceNames.includes(workspace)) return `unknown workspace: ${workspace}`;
-      const s = sessionManager.create(workspace ?? sessionManager.active().workspace, title);
-      brain.loadHistory(s.brainHistory);
-      void discordWorkspaceSwitcher
-        .switchDiscordForWorkspace(s.workspace)
-        .catch((err: unknown) => console.error(`[discord] workspace switch failed for "${s.workspace}": ${String(err)}`));
-      textChannel.broadcast(sessionFrame());
-      return null;
-    },
-    activate: (id) => {
-      const s = sessionManager.activate(id);
-      if (!s) return `unknown session: ${id}`;
-      brain.loadHistory(s.brainHistory);
-      void discordWorkspaceSwitcher
-        .switchDiscordForWorkspace(s.workspace)
-        .catch((err: unknown) => console.error(`[discord] workspace switch failed for "${s.workspace}": ${String(err)}`));
-      textChannel.broadcast(sessionFrame());
-      return null;
-    },
-  },
-  // Reset (settings): tiered and explicit. Runtime is killed on the swarm side
-  // (remote workers are never touched); conversations and roster arrangements
-  // are cleared here. Committed work — branches and PRs — always survives.
-  // (reset handler)
-  async (scope) => {
-    const wants = {
-      runtime: scope.runtime !== false,
-      conversations: scope.conversations !== false,
-      worktrees: Boolean(scope.worktrees),
-      agents: Boolean(scope.agents),
-    };
-    const swarmReport = await swarm
-      .reset({ runtime: wants.runtime, worktrees: wants.worktrees, agents: wants.agents })
-      .catch((err: unknown) => ({ error: `swarm reset failed: ${String(err)}` }));
-
-    if (wants.conversations) {
-      for (const file of readdirSync(sessionsDir).filter((f) => f.endsWith('.json'))) {
-        rmSync(join(sessionsDir, file), { force: true });
-      }
-      const fresh = sessionManager.resetAll(workspaceNames[0] ?? 'default');
-      brain.loadHistory(fresh.brainHistory);
-      // Reset can change the active workspace (falls back to workspaceNames[0])
-      // — matches every other place that changes it (create/activate above,
-      // boot-time init below): without this, a reset out of a workspace with
-      // Discord configured would leave that connection live, still routing
-      // into whatever session is now active.
-      void discordWorkspaceSwitcher
-        .switchDiscordForWorkspace(fresh.workspace)
-        .catch((err: unknown) => console.error(`[discord] workspace switch failed after reset: ${String(err)}`));
-    }
-    await broker.resetComposition();
-    textChannel.broadcast(sessionFrame());
-    textChannel.broadcast({ type: 'roster', agents: toRosterEntries(broker.uiRoster()) });
-    return { ok: true, scope: wants, swarm: swarmReport };
-  },
-  {
-    // Agent creation: the swarm owns the registry, the broker owns voices.
+// Agent creation: the swarm owns the registry, the broker owns voices. A
+// named const (not an inline TextChannel argument) because the brain's
+// draft_agent/confirm_agent executors drive the same generate/create path
+// the wizard uses.
+const creation = {
     catalog: () => swarm.agentCatalog(),
     records: async () => (await swarm.registry()) as unknown as Record<string, unknown>[],
-    update: async (id, body) => {
+    update: async (id: string, body: Record<string, unknown>) => {
       // Fail open on the BEFORE read: this registry read did not exist before
       // this wrapper, so a transient read hiccup must never block a PUT that
       // previously had zero read dependency. `before === null` means "no
@@ -674,7 +623,7 @@ const textChannel = new TextChannel(
             // rejoins). Broadcast afterward matches every other
             // roster-changing path's own frame.
             directory.seed(registryAfterPut.filter((a) => !a.archived));
-            textChannel.broadcast({ type: 'roster', agents: toRosterEntries(broker.uiRoster()) });
+            textChannel.broadcast(rosterFrame(broker.uiRoster()));
           } catch (err) {
             // Registry outage right after a successful write: fall back to
             // deriving the after-map from the PUT body itself. This is
@@ -728,7 +677,7 @@ const textChannel = new TextChannel(
       }
       return result;
     },
-    generate: async (body) => {
+    generate: async (body: Record<string, unknown>) => {
       const b = body as Record<string, string>;
       const catalog = (await swarm.agentCatalog()) as {
         stereotypes?: Array<{ id: string; label: string; style: string }>;
@@ -756,7 +705,7 @@ const textChannel = new TextChannel(
       });
       return draft as unknown as Record<string, unknown>;
     },
-    voices: async (query) => {
+    voices: async (query: Record<string, string>) => {
       if (!voiceCatalog) return { voices: [], hasMore: false, error: 'no ElevenLabs key configured' };
       return voiceCatalog.browse({
         search: query.search,
@@ -765,11 +714,11 @@ const textChannel = new TextChannel(
         page: query.page ? Number(query.page) : undefined,
       });
     },
-    preview: async (voiceId, text) => {
+    preview: async (voiceId: string, text: string) => {
       if (!voiceCatalog) throw new Error('no ElevenLabs key configured');
       return voiceCatalog.synthesize(voiceId, text);
     },
-    create: async (body) => {
+    create: async (body: Record<string, unknown>) => {
       const created = await swarm.createAgent(body);
       // Warm the cache so the new agent's fixed lines play instantly. Best
       // effort: a partial cache still beats none, and never blocks creation.
@@ -792,7 +741,109 @@ const textChannel = new TextChannel(
       await broker.resetComposition().catch(() => {});
       return created;
     },
+};
+
+const textChannel = new TextChannel(
+  handleUserText,
+  () => [
+    { type: 'config', audio: Boolean(tts) },
+    rosterFrame(broker.uiRoster()),
+    sessionFrame(),
+  ],
+  (body) => {
+    const op = body as { op?: string; agents?: unknown; target?: unknown; agent?: unknown };
+    if (op.op === 'form' && Array.isArray(op.agents) && op.agents.every((a) => typeof a === 'string')) {
+      return broker.compose({ op: 'form', agents: op.agents as string[] });
+    }
+    if ((op.op === 'add' || op.op === 'remove') && typeof op.target === 'string' && typeof op.agent === 'string') {
+      return broker.compose({ op: op.op, target: op.target, agent: op.agent });
+    }
+    return 'body must be {op:"form",agents:[..]} or {op:"add"|"remove",target,agent}';
   },
+  {
+    activity: (name) => broker.activity(name),
+    steer: (name, message) => (message.trim() ? broker.steerWork(name, message) : Promise.resolve('steering message is empty')),
+    cancel: (name) => broker.cancelWork(name),
+  },
+  {
+    // Push-to-talk from UIs: one Deepgram session per client while the mic is held.
+    start: (clientId) => {
+      if (micSessions.has(clientId)) return;
+      const stt = new DeepgramSttStream(makeDeepgramLive);
+      stt.start((utterance) => {
+        textChannel.broadcast({ type: 'utterance', text: utterance });
+        handleUserText(utterance);
+      });
+      micSessions.set(clientId, stt);
+    },
+    audio: (clientId, pcm) => micSessions.get(clientId)?.sendAudio(pcm),
+    stop: (clientId) => {
+      micSessions.get(clientId)?.stop();
+      micSessions.delete(clientId);
+    },
+  },
+  {
+    create: (title, workspace) => {
+      if (workspace && !workspaceNames.includes(workspace)) return `unknown workspace: ${workspace}`;
+      const s = sessionManager.create(workspace ?? sessionManager.active().workspace, title);
+      brain.loadHistory(s.brainHistory);
+      void discordWorkspaceSwitcher
+        .switchDiscordForWorkspace(s.workspace)
+        .catch((err: unknown) => console.error(`[discord] workspace switch failed for "${s.workspace}": ${String(err)}`));
+      textChannel.broadcast(sessionFrame());
+      // The host greets a NEW session once — activation replays silently.
+      void broker.announce(
+        `a new session just started in workspace "${s.workspace}". As ${identity.name}, greet the human in one or two sentences — roster-aware (who is idle, who is busy on what). Do not delegate.`,
+      );
+      return null;
+    },
+    activate: (id) => {
+      const s = sessionManager.activate(id);
+      if (!s) return `unknown session: ${id}`;
+      brain.loadHistory(s.brainHistory);
+      void discordWorkspaceSwitcher
+        .switchDiscordForWorkspace(s.workspace)
+        .catch((err: unknown) => console.error(`[discord] workspace switch failed for "${s.workspace}": ${String(err)}`));
+      textChannel.broadcast(sessionFrame());
+      return null;
+    },
+  },
+  // Reset (settings): tiered and explicit. Runtime is killed on the swarm side
+  // (remote workers are never touched); conversations and roster arrangements
+  // are cleared here. Committed work — branches and PRs — always survives.
+  // (reset handler)
+  async (scope) => {
+    const wants = {
+      runtime: scope.runtime !== false,
+      conversations: scope.conversations !== false,
+      worktrees: Boolean(scope.worktrees),
+      agents: Boolean(scope.agents),
+    };
+    const swarmReport = await swarm
+      .reset({ runtime: wants.runtime, worktrees: wants.worktrees, agents: wants.agents })
+      .catch((err: unknown) => ({ error: `swarm reset failed: ${String(err)}` }));
+
+    if (wants.conversations) {
+      for (const file of readdirSync(sessionsDir).filter((f) => f.endsWith('.json'))) {
+        rmSync(join(sessionsDir, file), { force: true });
+      }
+      const fresh = sessionManager.resetAll(workspaceNames[0] ?? 'default');
+      brain.loadHistory(fresh.brainHistory);
+      // Reset can change the active workspace (falls back to workspaceNames[0])
+      // — matches every other place that changes it (create/activate above,
+      // boot-time init below): without this, a reset out of a workspace with
+      // Discord configured would leave that connection live, still routing
+      // into whatever session is now active.
+      void discordWorkspaceSwitcher
+        .switchDiscordForWorkspace(fresh.workspace)
+        .catch((err: unknown) => console.error(`[discord] workspace switch failed after reset: ${String(err)}`));
+    }
+    await broker.resetComposition();
+    textChannel.broadcast(sessionFrame());
+    textChannel.broadcast(rosterFrame(broker.uiRoster()));
+    return { ok: true, scope: wants, swarm: swarmReport };
+  },
+  creation,
   removal,
   workspaces,
   {
@@ -921,7 +972,7 @@ broker = new Broker(
     // meeting-sourced turn (which passes no origin — see channels.ts).
     onTurnStart: (origin) => adapterHub.setActiveOrigin(origin),
     onTurnEnd: () => adapterHub.setActiveOrigin(undefined),
-    onRosterChange: (roster) => textChannel.broadcast({ type: 'roster', agents: toRosterEntries(roster) }),
+    onRosterChange: (roster) => textChannel.broadcast(rosterFrame(roster)),
     onTaskDispatched: (d) => textChannel.broadcast({ type: 'task-dispatched', taskId: d.taskId, agent: d.agent, task: d.task }),
     mintToken: (roomName) =>
       mintRoomToken({
@@ -931,6 +982,7 @@ broker = new Broker(
         identity: 'smith-broker',
       }),
     livekitUrl: config.livekit.url,
+    identityName: identity.name,
   },
   { repository: config.swarm.repository },
 );
