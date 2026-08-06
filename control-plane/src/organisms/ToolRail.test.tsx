@@ -8,12 +8,19 @@ describe("ToolRail", () => {
     cleanup();
   });
 
-  it("the rail's single tool is New workspace and clicking it fires onNewWorkspace", async () => {
+  it("New workspace tool fires onNewWorkspace", async () => {
     const onNewWorkspace = vi.fn();
     render(<ToolRail onNewWorkspace={onNewWorkspace} />);
     expect(screen.queryByRole("button", { name: /new session/i })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: /new workspace/i }));
     expect(onNewWorkspace).toHaveBeenCalledTimes(1);
+  });
+
+  it("sessions tool fires onSessions", async () => {
+    const onSessions = vi.fn();
+    render(<ToolRail onSessions={onSessions} />);
+    await userEvent.click(screen.getByRole("button", { name: /sessions/i }));
+    expect(onSessions).toHaveBeenCalledTimes(1);
   });
 
   it("settings button still fires onSettings", async () => {

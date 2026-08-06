@@ -1,20 +1,25 @@
-import { Plus, Settings } from "lucide-react";
+import { History, Plus, Settings } from "lucide-react";
 import { useState } from "react";
 import { Logo } from "../atoms/Logo";
 import { ToolButton } from "../atoms/ToolButton";
 
-const TOOLS = [{ icon: Plus, label: "New workspace" }];
+const TOOLS = [
+  { icon: Plus, label: "New workspace" },
+  { icon: History, label: "Sessions" },
+];
 
 interface ToolRailProps {
   /** "New workspace" tool — opens the create-workspace flow directly (design §5). */
   onNewWorkspace?: () => void;
+  /** "Sessions" tool — toggles the sessions panel. */
+  onSessions?: () => void;
   /** Settings — the reset surface. */
   onSettings?: () => void;
 }
 
 // No operator avatar: there's no "account" concept in an all-local, single-operator
 // app — reintroduce it when cloud hosting makes identity meaningful.
-export function ToolRail({ onNewWorkspace, onSettings }: ToolRailProps) {
+export function ToolRail({ onNewWorkspace, onSessions, onSettings }: ToolRailProps) {
   const [active, setActive] = useState(0);
   return (
     <nav className="rail rail--left" aria-label="Tools and activity">
@@ -30,6 +35,7 @@ export function ToolRail({ onNewWorkspace, onSettings }: ToolRailProps) {
           onClick={() => {
             setActive(i);
             if (tool.label === "New workspace") onNewWorkspace?.();
+            if (tool.label === "Sessions") onSessions?.();
           }}
         />
       ))}
