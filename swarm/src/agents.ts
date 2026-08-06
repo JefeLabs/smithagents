@@ -31,6 +31,8 @@ export interface ComposedAgent {
   persona?: AgentPersona;
   voice?: AgentVoice;
   avatarRing?: string;
+  /** Portrait filename under .smith/avatars/ (assets/avatars/ for presets). */
+  avatar?: string;
   /** Legacy array (listed = designated) or a per-surface mode map (`{tauri: 'autojoin', ...}`); broker enforces semantics, swarm just persists. */
   channels?: string[] | Record<string, string>;
   /** Stereotype the persona was seeded from (wizard provenance). */

@@ -52,6 +52,7 @@ import type {
 import { execFile } from 'node:child_process';
 import { mkdir, rename, rm, stat } from 'node:fs/promises';
 import { loadAgents, findAgent, saveAgent, activeAgents, type ComposedAgent } from './agents.js';
+import { readAvatar, stageAvatar } from './avatars.js';
 import { QUICK_QUESTIONS, STEREOTYPES, JOB_ROLES, ENGINES, LANGUAGES, DEFAULT_LANGUAGE, findStereotype, findJobRole, findEngine, findLanguage, REACTION_LEVELS, PRESET_AGENTS } from './personas.js';
 import { AgentSessionManager } from './agent-sessions.js';
 import { SessionStore } from './session-store.js';
@@ -866,6 +867,19 @@ export class OrchestratorServer {
       };
     });
 
+    // Portrait bytes. Live agents' art first, committed preset art second —
+    // one URL shape for roster avatars and chooser cards alike. The filename
+    // regex inside readAvatar doubles as the traversal guard.
+    this.app.get<{ Params: { file: string } }>('/avatars/:file', async (req, reply) => {
+      const buf = await readAvatar(
+        req.params.file,
+        resolve(process.cwd(), '.smith/avatars'),
+        resolve(process.cwd(), 'assets/avatars'),
+      );
+      if (!buf) return reply.status(404).send({ error: `Unknown avatar: ${req.params.file}` });
+      return reply.type('image/png').send(buf);
+    });
+
     this.app.post('/agents', async (req, reply) => {
       const b = req.body as Partial<ComposedAgent> & { stereotype?: string };
       if (!b.name?.trim()) return reply.status(400).send({ error: 'Missing required field: name' });
@@ -903,6 +917,20 @@ export class OrchestratorServer {
         });
       }
 
+      const withAvatar = b as typeof b & { avatarData?: string; avatarPreset?: string };
+      let avatar: string | undefined;
+      try {
+        avatar = await stageAvatar({
+          agentId: id,
+          liveDir: resolve(process.cwd(), '.smith/avatars'),
+          presetDir: resolve(process.cwd(), 'assets/avatars'),
+          avatarData: withAvatar.avatarData,
+          avatarPreset: withAvatar.avatarPreset,
+        });
+      } catch (err) {
+        return reply.status(400).send({ error: `avatar: ${String((err as Error).message)}` });
+      }
+
       // The stereotype seeds; every field the wizard sent wins over it.
       const agent: ComposedAgent = {
         id,
@@ -926,6 +954,7 @@ export class OrchestratorServer {
         quickAnswers: b.quickAnswers,
         voice: b.voice?.voiceId ? { provider: 'elevenlabs', voiceId: b.voice.voiceId } : undefined,
         avatarRing: b.avatarRing,
+        avatar,
         channels: ['tauri'],
       };
       try {
@@ -994,6 +1023,19 @@ export class OrchestratorServer {
       }
 
       const updated = buildAgentUpdate(existing, b);
+      const withAvatar = b as typeof b & { avatarData?: string };
+      if (withAvatar.avatarData) {
+        try {
+          updated.avatar = await stageAvatar({
+            agentId: existing.id,
+            liveDir: resolve(process.cwd(), '.smith/avatars'),
+            presetDir: resolve(process.cwd(), 'assets/avatars'),
+            avatarData: withAvatar.avatarData,
+          });
+        } catch (err) {
+          return reply.status(400).send({ error: `avatar: ${String((err as Error).message)}` });
+        }
+      }
       try {
         await saveAgent(agentsDir, updated);
       } catch (err) {
@@ -1176,6 +1218,11 @@ export class OrchestratorServer {
           await mkdir(agentsDir, { recursive: true }).catch(() => {});
           killed.agents = existing.length;
         }
+        // Portraits ride with the roster: archived beside it, never deleted.
+        await rename(
+          resolve(process.cwd(), '.smith/avatars'),
+          resolve(process.cwd(), `.smith/avatars-archived-${stamp}`),
+        ).catch(() => {});
         const squadsDir = resolve(process.cwd(), '.smith/squads');
         killed.squads = SQUAD_ROSTER.length;
         await rename(squadsDir, resolve(process.cwd(), `.smith/squads-archived-${stamp}`)).catch(() => {});

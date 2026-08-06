@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { enrichFromComposedAgent } from './server.js';
+import { enrichFromComposedAgent, buildAgentUpdate } from './server.js';
 import type { ComposedAgent } from './agents.js';
 
 const AGENTS = [
@@ -23,4 +23,12 @@ test('a delegated task inherits the addressed agent persona AND its model', () =
 test('an unknown or absent agent id yields no persona and no model, never a partial', () => {
   assert.deepEqual(enrichFromComposedAgent(AGENTS, 'nobody'), { profile: undefined, model: undefined });
   assert.deepEqual(enrichFromComposedAgent(AGENTS, undefined), { profile: undefined, model: undefined });
+});
+
+test('buildAgentUpdate: avatar survives an update that does not mention it', () => {
+  const existing: ComposedAgent = {
+    id: 'nena', name: 'Nena', role: 'QA', directives: 'test', engine: { cli: 'claude', model: 'claude-opus' },
+    avatar: 'nena.png',
+  };
+  assert.equal(buildAgentUpdate(existing, { name: 'Nena Dos' }).avatar, 'nena.png');
 });
