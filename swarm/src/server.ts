@@ -1214,6 +1214,7 @@ export class OrchestratorServer {
         })),
         default: Boolean(b.default) || activeWorkspaces(all).length === 0,
         atlassian: b.atlassian,
+        runtime: b.runtime,
       };
       try {
         if (ws.default) for (const other of all.filter((w) => w.default)) await saveWorkspace(dir, { ...other, default: undefined });
@@ -1240,6 +1241,7 @@ export class OrchestratorServer {
         default: b.default ?? existing.default,
         archived: b.archived === false ? undefined : existing.archived,
         atlassian: b.atlassian !== undefined ? b.atlassian : existing.atlassian,
+        runtime: b.runtime !== undefined ? b.runtime : existing.runtime,
       };
       if (merged.default && merged.archived) {
         return reply.status(409).send({ error: `"${existing.name}" is archived — un-archive it before making it the default` });
@@ -1313,6 +1315,7 @@ export class OrchestratorServer {
           archived: Boolean(w.archived),
           repos: w.repos.map((r) => ({ name: r.name, path: r.path, repository: r.repository, branch: r.branch ?? 'main', github: r.github })),
           atlassian: w.atlassian,
+          runtime: w.runtime,
         })),
       };
     });
@@ -1976,6 +1979,9 @@ export async function workspaceProblems(b: Partial<Workspace>): Promise<string |
     if (!r?.name?.trim()) return 'Every repo needs a name';
     if (!r.path || !isAbsolute(r.path)) return `Repo "${r.name}": path must be absolute`;
     if (!(await isGitRepo(r.path))) return `Repo "${r.name}": ${r.path} is not a git repository`;
+  }
+  if (b.runtime !== undefined && !['tmux', 'docker', 'remote'].includes(b.runtime)) {
+    return `runtime must be one of tmux, docker, remote — got "${b.runtime}"`;
   }
   if (b.atlassian && !b.atlassian.siteUrl?.trim()) {
     return 'Atlassian: site URL is required';

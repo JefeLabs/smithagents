@@ -253,6 +253,17 @@ test('workspaceProblems: a connectorId on atlassian or repo.github is ignored en
   assert.equal(ok, null);
 });
 
+test('workspaceProblems: accepts tmux/docker/remote runtimes, rejects anything else, allows unset', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'ws-rt-'));
+  await git('git', ['init'], { cwd: dir });
+  const base = { name: 'acme', repos: [{ name: 'web', path: dir }] } as Partial<Workspace>;
+  assert.equal(await workspaceProblems(base), null);
+  assert.equal(await workspaceProblems({ ...base, runtime: 'tmux' }), null);
+  assert.equal(await workspaceProblems({ ...base, runtime: 'docker' }), null);
+  assert.equal(await workspaceProblems({ ...base, runtime: 'remote' }), null);
+  assert.match((await workspaceProblems({ ...base, runtime: 'warp' as never }))!, /runtime/);
+});
+
 // POST /workspaces/:name/verify-atlassian's two new 400-guard branches (no
 // connectorId set; connectorId set but no matching connector in
 // user.connectors) are NOT covered by a route-level test here. Every other

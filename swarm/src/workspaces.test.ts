@@ -132,3 +132,13 @@ test('workspaceProblems does not require or validate connectorId — an unset on
   assert.equal(reloaded?.atlassian?.connectorId, undefined);
   assert.equal(reloaded?.repos[0]?.github?.connectorId, undefined);
 });
+
+test('saveWorkspace/loadWorkspacesFromDir round-trips the optional runtime field', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'ws-runtime-'));
+  await saveWorkspace(dir, { name: 'acme', repos: [{ name: 'web', path: dir }], runtime: 'docker' });
+  const [ws] = await loadWorkspacesFromDir(dir);
+  assert.equal(ws!.runtime, 'docker');
+  await saveWorkspace(dir, { name: 'plain', repos: [{ name: 'web', path: dir }] });
+  const plain = (await loadWorkspacesFromDir(dir)).find((w) => w.name === 'plain');
+  assert.equal(plain!.runtime, undefined);
+});
