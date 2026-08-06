@@ -1489,6 +1489,94 @@
   line-height: 1.35;
   color: var(--text-dim);
 }
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.preset-card {
+  position: relative;
+  border-radius: 12px;
+  border: 1px solid var(--pill-br);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+}
+.preset-card__pick {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  width: 100%;
+  padding: 10px 12px;
+  text-align: left;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  border-radius: inherit;
+}
+.preset-card.is-picked {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.preset-card.is-taken {
+  opacity: 0.55;
+}
+.preset-card.is-taken .preset-card__pick {
+  cursor: default;
+}
+.preset-card__portrait {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid var(--ring, var(--pill-br));
+  margin-bottom: 4px;
+}
+.preset-card b {
+  font-size: 13px;
+}
+.preset-card__role {
+  font-size: 11px;
+  color: var(--text-2);
+}
+.preset-card__stereo {
+  font-size: 10px;
+  color: var(--accent);
+}
+.preset-card__hook {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+.preset-card__taken {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font-size: 9.5px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--pill-br);
+  color: var(--text-dim);
+}
+.preset-card__play {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+}
+.preset-card--custom {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 4px;
+  padding: 10px 12px;
+  text-align: left;
+  border-style: dashed;
+  cursor: pointer;
+  font: inherit;
+}
 .voice-browser {
   display: flex;
   flex-direction: column;

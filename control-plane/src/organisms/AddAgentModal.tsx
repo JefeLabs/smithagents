@@ -1,6 +1,7 @@
 import { Check, ChevronLeft, ChevronRight, Play, Search, Sparkles } from "lucide-react";
 import type { MouseEvent } from "react";
 import { useEffect, useState } from "react";
+import { AddAgentChooser, type PresetCard } from "./AddAgentChooser";
 
 const BASE = "127.0.0.1:7790";
 
@@ -47,6 +48,8 @@ interface Catalog {
   languages: LanguageOption[];
   quickQuestions: Array<{ id: string; question: string }>;
   reactionLevels: string[];
+  presets?: PresetCard[];
+  avatarGen?: boolean;
 }
 
 /** The stored agent record, as the registry returns it. */
@@ -63,6 +66,8 @@ interface StoredAgent {
   voice?: { voiceId?: string };
   reactions?: Record<string, string[]>;
   quickAnswers?: Record<string, string>;
+  archived?: boolean;
+  avatar?: string;
 }
 
 interface AddAgentModalProps {
@@ -119,6 +124,30 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
   const [generatedDirectives, setGeneratedDirectives] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mode, setMode] = useState<"choose" | "wizard">("choose");
+  const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
+  const [takenIds, setTakenIds] = useState<Set<string>>(new Set());
+  /** Preset whose committed art the new agent should copy (customize keeps it until a reroll replaces it). */
+  const [avatarPresetRef, setAvatarPresetRef] = useState<string | null>(null);
+  const [presetRing, setPresetRing] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setMode(editingId ? "wizard" : "choose");
+    setSelectedPresetId(null);
+    setAvatarPresetRef(null);
+    setPresetRing(null);
+  }, [open, editingId]);
+
+  useEffect(() => {
+    if (!open || editingId) return;
+    void fetch(`http://${BASE}/agents`)
+      .then((r) => r.json())
+      .then((res: { agents?: StoredAgent[] }) =>
+        setTakenIds(new Set((res.agents ?? []).filter((a) => !a.archived).map((a) => a.id))),
+      )
+      .catch(() => setTakenIds(new Set()));
+  }, [open, editingId]);
 
   useEffect(() => {
     if (!open || catalog) return;
@@ -301,6 +330,65 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
     setVoiceId("");
   };
 
+  const joinPreset = async (p: PresetCard) => {
+    setBusy(true);
+    setError(null);
+    const res = (await fetch(`http://${BASE}/agents`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        // Explicit id: the server slugs names and would mangle diacritics
+        // ("Radhamés" -> "radham-s"); the preset id is the canonical slug.
+        id: p.id,
+        name: p.name,
+        role: p.role,
+        gender: p.gender,
+        backstory: p.backstory,
+        stereotype: p.stereotype,
+        jobRole: p.jobRole,
+        language: p.language,
+        persona: p.persona,
+        engine: p.engine,
+        voice: p.voiceId ? { voiceId: p.voiceId } : undefined,
+        reactions: p.reactions,
+        quickAnswers: p.quickAnswers,
+        avatarRing: p.ring,
+        avatarPreset: p.id,
+      }),
+    })
+      .then((r) => r.json())
+      .catch((err: unknown) => ({ error: String(err) }))) as { error?: string };
+    setBusy(false);
+    if (res.error) {
+      setError(res.error);
+      return;
+    }
+    onCreated?.(p.name);
+    onClose();
+  };
+
+  /** Refine-via-custom: the preset seeds every wizard field, then it's the normal flow. */
+  const customizePreset = (p: PresetCard) => {
+    setName(p.name);
+    setRole(p.role);
+    setGender((p.gender as "male" | "female" | "neutral") ?? "neutral");
+    setBackstory(p.backstory);
+    setLanguage(p.language);
+    setVoiceId(p.voiceId);
+    setStereotype(catalog?.stereotypes.find((s) => s.id === p.stereotype) ?? null);
+    setJobRole(catalog?.jobRoles.find((r) => r.id === p.jobRole) ?? null);
+    const eng = catalog?.engines.find((e) => e.cli === p.engine.cli) ?? null;
+    setEngine(eng);
+    setModel(p.engine.model);
+    setGeneratedStyle(p.persona.style);
+    if (p.reactions) setReactions(Object.fromEntries(Object.entries(p.reactions).map(([k, v]) => [k, v?.[0] ?? ""])));
+    if (p.quickAnswers) setAnswers(p.quickAnswers);
+    setAvatarPresetRef(p.id);
+    setPresetRing(p.ring);
+    setMode("wizard");
+    setStep(0);
+  };
+
   // Setup is the only step whose fields decide what actually gets launched, so
   // it is the only one that gates. Persona needs a name to create the agent.
   const canAdvance =
@@ -320,269 +408,333 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
       onClick={onScrimClick}
     >
       <section className="wizard">
-        <header className="wizard__head">
-          {STEPS.map((label, i) => (
-            <span key={label} className={`wizard__step${i === step ? " is-active" : ""}${i < step ? " is-done" : ""}`}>
-              {i < step ? <Check size={10} strokeWidth={3} /> : `${i + 1}`} {label}
-            </span>
-          ))}
-        </header>
-
-        <div className="wizard__body">
-          {step === 0 && (
-            <div className="wizard__form">
-              <p className="wizard__hint">
-                These decide what actually gets launched: the job they own, the CLI process they live in, and the
-                language they speak. Everything after this is flavor.
-              </p>
-              <label>
-                Job role
-                <select
-                  value={jobRole?.id ?? ""}
-                  onChange={(e) => setJobRole(catalog?.jobRoles.find((r) => r.id === e.target.value) ?? null)}
-                >
-                  <option value="">— pick a role —</option>
-                  {(catalog?.jobRoles ?? []).map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                CLI
-                <select
-                  value={engine?.cli ?? ""}
-                  onChange={(e) => {
-                    const picked = catalog?.engines.find((x) => x.cli === e.target.value) ?? null;
-                    setEngine(picked);
-                    setModel(picked?.models[0] ?? "");
-                  }}
-                >
-                  {(catalog?.engines ?? []).map((e) => (
-                    <option key={e.cli} value={e.cli}>
-                      {e.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Model
-                <select value={model} onChange={(e) => setModel(e.target.value)}>
-                  {(engine?.models ?? []).map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                  {model && !(engine?.models ?? []).includes(model) && <option value={model}>{model} (custom)</option>}
-                </select>
-              </label>
-              <label>
-                Or type any model id {engine?.label ?? "this CLI"} accepts
-                <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="claude-opus" />
-              </label>
-              {engine && (
-                <p className="wizard__hint">
-                  {engine.warmSessions
-                    ? "Supports warm sessions — this agent can hold context across turns."
-                    : (engine.note ?? "Task work and steering only.")}
-                </p>
-              )}
-              <label>
-                Personality
-                <select
-                  value={stereotype?.id ?? ""}
-                  onChange={(e) => pickStereotype(catalog?.stereotypes.find((x) => x.id === e.target.value) ?? null)}
-                >
-                  <option value="">— pick an archetype —</option>
-                  {(catalog?.stereotypes ?? []).map((x) => (
-                    <option key={x.id} value={x.id}>
-                      {x.label} — {x.style}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Primary language
-                <select value={language} onChange={(e) => setLanguage(e.target.value)}>
-                  {(catalog?.languages ?? []).map((l) => (
-                    <option key={l.id} value={l.id}>
-                      {l.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
+        {mode === "choose" ? (
+          <>
+            <header className="wizard__head">
+              <span className="wizard__step is-active">Choose your agent</span>
+            </header>
+            <div className="wizard__body">
+              <AddAgentChooser
+                presets={catalog?.presets ?? []}
+                takenIds={takenIds}
+                selectedId={selectedPresetId}
+                onSelect={setSelectedPresetId}
+                onCustom={() => {
+                  setSelectedPresetId(null);
+                  setMode("wizard");
+                  setStep(0);
+                }}
+                onPreview={(id) => void preview(id)}
+                stereotypeLabels={Object.fromEntries((catalog?.stereotypes ?? []).map((s) => [s.id, s.label]))}
+                base={BASE}
+              />
               {!catalog && <p className="wizard__hint">Loading the catalog…</p>}
             </div>
-          )}
-
-          {step === 1 && (
-            <div className="wizard__form">
-              <p className="wizard__hint">
-                Write this yourself, or let AI fill every remaining field from your setup — name, backstory, reactions
-                and answers included. Everything stays editable after.
-              </p>
-              <label>
-                Anything specific? (optional)
-                <input
-                  value={hint}
-                  onChange={(e) => setHint(e.target.value)}
-                  placeholder="veteran who has seen three failed launches"
-                />
-              </label>
+            {error && <p className="wizard__error">{error}</p>}
+            <footer className="wizard__foot">
               <button
                 type="button"
-                className="settings-btn settings-btn--primary settings-btn--wide"
-                onClick={() => void generate()}
-                disabled={generating}
+                className="settings-btn"
+                disabled={!selectedPresetId}
+                onClick={() => {
+                  const p = catalog?.presets?.find((x) => x.id === selectedPresetId);
+                  if (p) customizePreset(p);
+                }}
               >
-                <Sparkles size={12} strokeWidth={2} />{" "}
-                {generating
-                  ? "writing the persona…"
-                  : editing
-                    ? "rewrite the persona with AI"
-                    : "generate the rest with AI"}
+                customize
               </button>
-              <label>
-                Name
-                <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Fabian" />
-              </label>
-              <label>
-                Title
-                <input value={role} onChange={(e) => setRole(e.target.value)} placeholder="The Architect" />
-              </label>
-              <div className="wizard__genders">
-                <span>Voice gender</span>
-                {(["male", "female", "neutral"] as const).map((g) => (
-                  <button
-                    key={g}
-                    type="button"
-                    className={`chip${gender === g ? " is-picked" : ""}`}
-                    onClick={() => setGender(g)}
-                  >
-                    {g}
-                  </button>
-                ))}
-              </div>
-              <label>
-                Backstory
-                <textarea
-                  value={backstory}
-                  onChange={(e) => setBackstory(e.target.value)}
-                  rows={3}
-                  placeholder="Grew up debugging his father's POS system in Santiago; believes every outage is a design smell."
-                />
-              </label>
-            </div>
-          )}
+              <button
+                type="button"
+                className="settings-btn settings-btn--primary"
+                disabled={!selectedPresetId || busy}
+                onClick={() => {
+                  const p = catalog?.presets?.find((x) => x.id === selectedPresetId);
+                  if (p) void joinPreset(p);
+                }}
+              >
+                {busy ? "joining…" : "join team"}
+              </button>
+            </footer>
+          </>
+        ) : (
+          <>
+            <header className="wizard__head">
+              {STEPS.map((label, i) => (
+                <span
+                  key={label}
+                  className={`wizard__step${i === step ? " is-active" : ""}${i < step ? " is-done" : ""}`}
+                >
+                  {i < step ? <Check size={10} strokeWidth={3} /> : `${i + 1}`} {label}
+                </span>
+              ))}
+            </header>
 
-          {step === 2 && (
-            <div className="voice-browser">
-              <div className="voice-browser__search">
-                <Search size={13} strokeWidth={2} />
-                <input
-                  value={voiceSearch}
-                  onChange={(e) => setVoiceSearch(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") void loadVoices(voiceSearch, gender);
-                  }}
-                  placeholder="Search the ElevenLabs catalog — latin, warm, deep…"
-                />
-              </div>
-              {voiceError && <p className="wizard__error">{voiceError}</p>}
-              <div className="voice-list">
-                {voices.map((v) => (
-                  <div key={v.voiceId} className={`voice-row${voiceId === v.voiceId ? " is-picked" : ""}`}>
-                    <button type="button" className="voice-row__pick" onClick={() => setVoiceId(v.voiceId)}>
-                      <b>{v.name}</b>
-                      <span>{[v.gender, v.accent, v.description].filter(Boolean).join(" · ").slice(0, 70)}</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="voice-row__play"
-                      onClick={() => void preview(v.voiceId)}
-                      aria-label={`Preview ${v.name}`}
+            <div className="wizard__body">
+              {step === 0 && (
+                <div className="wizard__form">
+                  <p className="wizard__hint">
+                    These decide what actually gets launched: the job they own, the CLI process they live in, and the
+                    language they speak. Everything after this is flavor.
+                  </p>
+                  <label>
+                    Job role
+                    <select
+                      value={jobRole?.id ?? ""}
+                      onChange={(e) => setJobRole(catalog?.jobRoles.find((r) => r.id === e.target.value) ?? null)}
                     >
-                      <Play size={12} strokeWidth={2} />
-                    </button>
+                      <option value="">— pick a role —</option>
+                      {(catalog?.jobRoles ?? []).map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {r.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    CLI
+                    <select
+                      value={engine?.cli ?? ""}
+                      onChange={(e) => {
+                        const picked = catalog?.engines.find((x) => x.cli === e.target.value) ?? null;
+                        setEngine(picked);
+                        setModel(picked?.models[0] ?? "");
+                      }}
+                    >
+                      {(catalog?.engines ?? []).map((e) => (
+                        <option key={e.cli} value={e.cli}>
+                          {e.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Model
+                    <select value={model} onChange={(e) => setModel(e.target.value)}>
+                      {(engine?.models ?? []).map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                      {model && !(engine?.models ?? []).includes(model) && (
+                        <option value={model}>{model} (custom)</option>
+                      )}
+                    </select>
+                  </label>
+                  <label>
+                    Or type any model id {engine?.label ?? "this CLI"} accepts
+                    <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="claude-opus" />
+                  </label>
+                  {engine && (
+                    <p className="wizard__hint">
+                      {engine.warmSessions
+                        ? "Supports warm sessions — this agent can hold context across turns."
+                        : (engine.note ?? "Task work and steering only.")}
+                    </p>
+                  )}
+                  <label>
+                    Personality
+                    <select
+                      value={stereotype?.id ?? ""}
+                      onChange={(e) =>
+                        pickStereotype(catalog?.stereotypes.find((x) => x.id === e.target.value) ?? null)
+                      }
+                    >
+                      <option value="">— pick an archetype —</option>
+                      {(catalog?.stereotypes ?? []).map((x) => (
+                        <option key={x.id} value={x.id}>
+                          {x.label} — {x.style}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Primary language
+                    <select value={language} onChange={(e) => setLanguage(e.target.value)}>
+                      {(catalog?.languages ?? []).map((l) => (
+                        <option key={l.id} value={l.id}>
+                          {l.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {!catalog && <p className="wizard__hint">Loading the catalog…</p>}
+                </div>
+              )}
+
+              {step === 1 && (
+                <div className="wizard__form">
+                  <p className="wizard__hint">
+                    Write this yourself, or let AI fill every remaining field from your setup — name, backstory,
+                    reactions and answers included. Everything stays editable after.
+                  </p>
+                  <label>
+                    Anything specific? (optional)
+                    <input
+                      value={hint}
+                      onChange={(e) => setHint(e.target.value)}
+                      placeholder="veteran who has seen three failed launches"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="settings-btn settings-btn--primary settings-btn--wide"
+                    onClick={() => void generate()}
+                    disabled={generating}
+                  >
+                    <Sparkles size={12} strokeWidth={2} />{" "}
+                    {generating
+                      ? "writing the persona…"
+                      : editing
+                        ? "rewrite the persona with AI"
+                        : "generate the rest with AI"}
+                  </button>
+                  <label>
+                    Name
+                    <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Fabian" />
+                  </label>
+                  <label>
+                    Title
+                    <input value={role} onChange={(e) => setRole(e.target.value)} placeholder="The Architect" />
+                  </label>
+                  <div className="wizard__genders">
+                    <span>Voice gender</span>
+                    {(["male", "female", "neutral"] as const).map((g) => (
+                      <button
+                        key={g}
+                        type="button"
+                        className={`chip${gender === g ? " is-picked" : ""}`}
+                        onClick={() => setGender(g)}
+                      >
+                        {g}
+                      </button>
+                    ))}
                   </div>
-                ))}
-                {voices.length === 0 && !voiceError && (
-                  <p className="wizard__hint">Search the catalog above to audition voices.</p>
-                )}
-              </div>
-              <label>
-                Or paste a voice id
-                <input
-                  value={voiceId}
-                  onChange={(e) => setVoiceId(e.target.value)}
-                  placeholder="bnes5tb6xZ5GxqUjhUSq"
-                />
-              </label>
+                  <label>
+                    Backstory
+                    <textarea
+                      value={backstory}
+                      onChange={(e) => setBackstory(e.target.value)}
+                      rows={3}
+                      placeholder="Grew up debugging his father's POS system in Santiago; believes every outage is a design smell."
+                    />
+                  </label>
+                </div>
+              )}
+
+              {step === 2 && (
+                <div className="voice-browser">
+                  <div className="voice-browser__search">
+                    <Search size={13} strokeWidth={2} />
+                    <input
+                      value={voiceSearch}
+                      onChange={(e) => setVoiceSearch(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") void loadVoices(voiceSearch, gender);
+                      }}
+                      placeholder="Search the ElevenLabs catalog — latin, warm, deep…"
+                    />
+                  </div>
+                  {voiceError && <p className="wizard__error">{voiceError}</p>}
+                  <div className="voice-list">
+                    {voices.map((v) => (
+                      <div key={v.voiceId} className={`voice-row${voiceId === v.voiceId ? " is-picked" : ""}`}>
+                        <button type="button" className="voice-row__pick" onClick={() => setVoiceId(v.voiceId)}>
+                          <b>{v.name}</b>
+                          <span>{[v.gender, v.accent, v.description].filter(Boolean).join(" · ").slice(0, 70)}</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="voice-row__play"
+                          onClick={() => void preview(v.voiceId)}
+                          aria-label={`Preview ${v.name}`}
+                        >
+                          <Play size={12} strokeWidth={2} />
+                        </button>
+                      </div>
+                    ))}
+                    {voices.length === 0 && !voiceError && (
+                      <p className="wizard__hint">Search the catalog above to audition voices.</p>
+                    )}
+                  </div>
+                  <label>
+                    Or paste a voice id
+                    <input
+                      value={voiceId}
+                      onChange={(e) => setVoiceId(e.target.value)}
+                      placeholder="bnes5tb6xZ5GxqUjhUSq"
+                    />
+                  </label>
+                </div>
+              )}
+
+              {step === 3 && (
+                <div className="wizard__form">
+                  <p className="wizard__hint">
+                    What they say across the agreement spectrum. Cached as audio on create, so they fire instantly.
+                  </p>
+                  {(catalog?.reactionLevels ?? []).map((level) => (
+                    <label key={level}>
+                      {LEVEL_LABELS[level] ?? level}
+                      <input
+                        value={reactions[level] ?? ""}
+                        onChange={(e) => setReactions((r) => ({ ...r, [level]: e.target.value }))}
+                      />
+                    </label>
+                  ))}
+                </div>
+              )}
+
+              {step === 4 && (
+                <div className="wizard__form">
+                  <p className="wizard__hint">
+                    First-meeting answers — pre-synthesized so they never wait on a model. Blank = skip.
+                  </p>
+                  {(catalog?.quickQuestions ?? []).map((q) => (
+                    <label key={q.id}>
+                      {q.question}
+                      <input
+                        value={answers[q.id] ?? ""}
+                        onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: e.target.value }))}
+                      />
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
-          )}
 
-          {step === 3 && (
-            <div className="wizard__form">
-              <p className="wizard__hint">
-                What they say across the agreement spectrum. Cached as audio on create, so they fire instantly.
-              </p>
-              {(catalog?.reactionLevels ?? []).map((level) => (
-                <label key={level}>
-                  {LEVEL_LABELS[level] ?? level}
-                  <input
-                    value={reactions[level] ?? ""}
-                    onChange={(e) => setReactions((r) => ({ ...r, [level]: e.target.value }))}
-                  />
-                </label>
-              ))}
-            </div>
-          )}
+            {error && <p className="wizard__error">{error}</p>}
 
-          {step === 4 && (
-            <div className="wizard__form">
-              <p className="wizard__hint">
-                First-meeting answers — pre-synthesized so they never wait on a model. Blank = skip.
-              </p>
-              {(catalog?.quickQuestions ?? []).map((q) => (
-                <label key={q.id}>
-                  {q.question}
-                  <input
-                    value={answers[q.id] ?? ""}
-                    onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: e.target.value }))}
-                  />
-                </label>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {error && <p className="wizard__error">{error}</p>}
-
-        <footer className="wizard__foot">
-          <button
-            type="button"
-            className="settings-btn"
-            onClick={() => setStep((s) => Math.max(0, s - 1))}
-            disabled={step === 0}
-          >
-            <ChevronLeft size={12} strokeWidth={2} /> back
-          </button>
-          {step < STEPS.length - 1 ? (
-            <button type="button" className="settings-btn" onClick={() => setStep((s) => s + 1)} disabled={!canAdvance}>
-              next <ChevronRight size={12} strokeWidth={2} />
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="settings-btn settings-btn--primary"
-              onClick={() => void submit()}
-              disabled={busy || !name.trim()}
-            >
-              {busy ? (editing ? "saving…" : "creating…") : editing ? "save changes" : "create agent"}
-            </button>
-          )}
-        </footer>
+            <footer className="wizard__foot">
+              <button
+                type="button"
+                className="settings-btn"
+                onClick={() => setStep((s) => Math.max(0, s - 1))}
+                disabled={step === 0}
+              >
+                <ChevronLeft size={12} strokeWidth={2} /> back
+              </button>
+              {step < STEPS.length - 1 ? (
+                <button
+                  type="button"
+                  className="settings-btn"
+                  onClick={() => setStep((s) => s + 1)}
+                  disabled={!canAdvance}
+                >
+                  next <ChevronRight size={12} strokeWidth={2} />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="settings-btn settings-btn--primary"
+                  onClick={() => void submit()}
+                  disabled={busy || !name.trim()}
+                >
+                  {busy ? (editing ? "saving…" : "creating…") : editing ? "save changes" : "create agent"}
+                </button>
+              )}
+            </footer>
+          </>
+        )}
       </section>
     </div>
   );
