@@ -173,6 +173,12 @@ export class TextChannel {
     private readonly tasks?: {
       get(taskId: string): Promise<Record<string, unknown> | null>;
     },
+    /** CLI tool registry (CLI Tools settings group + rail badge): machine-level tool statuses, re-probe, enable toggle. Origin-restricted like connectors. */
+    private readonly cliTools?: {
+      list(): Promise<Record<string, unknown>>;
+      refresh(tool?: string): Promise<Record<string, unknown>>;
+      setEnabled(id: string, enabled: boolean): Promise<Record<string, unknown>>;
+    },
   ) {}
 
   private clientSeq = 0;
@@ -594,6 +600,39 @@ export class TextChannel {
             }
             void this.connectors!
               .verify(decodeURIComponent(connectorVerifyMatch[1]!), parsed.extra)
+              .then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
+          });
+          return;
+        }
+        if (req.method === 'GET' && url.pathname === '/cli-tools' && this.cliTools) {
+          if (originBlocked()) return;
+          void this.cliTools.list().then((r) => credJson(200, r), credFail);
+          return;
+        }
+        if (req.method === 'POST' && url.pathname === '/cli-tools/refresh' && this.cliTools) {
+          if (originBlocked()) return;
+          void this.cliTools
+            .refresh(url.searchParams.get('tool') ?? undefined)
+            .then((r) => credJson(200, r), credFail);
+          return;
+        }
+        const cliToolMatch = /^\/cli-tools\/([^/]+)$/.exec(url.pathname);
+        if (req.method === 'PUT' && cliToolMatch && this.cliTools) {
+          if (originBlocked()) return;
+          let body = '';
+          req.on('data', (c) => {
+            body += c;
+          });
+          req.on('end', () => {
+            let parsed: { enabled?: unknown } = {};
+            try {
+              parsed = JSON.parse(body || '{}') as { enabled?: unknown };
+            } catch {
+              return credJson(400, { error: 'body must be JSON' });
+            }
+            if (typeof parsed.enabled !== 'boolean') return credJson(400, { error: 'body must be { enabled: boolean }' });
+            void this.cliTools!
+              .setEnabled(decodeURIComponent(cliToolMatch[1]!), parsed.enabled)
               .then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
           });
           return;

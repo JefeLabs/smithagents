@@ -537,6 +537,15 @@ const tasks = {
   get: (taskId: string) => swarm.getTask(taskId) as unknown as Promise<Record<string, unknown> | null>,
 };
 
+// CLI tool registry (CLI Tools settings group + rail badge): same thin
+// passthrough shape as `connectors`, origin-restricted the same way.
+const cliTools = {
+  list: () => swarm.listCliTools() as unknown as Promise<Record<string, unknown>>,
+  refresh: (tool?: string) => swarm.refreshCliTools(tool) as unknown as Promise<Record<string, unknown>>,
+  setEnabled: (id: string, enabled: boolean) =>
+    swarm.setCliToolEnabled(id, enabled) as unknown as Promise<Record<string, unknown>>,
+};
+
 const textChannel = new TextChannel(
   handleUserText,
   () => [
@@ -835,6 +844,7 @@ const textChannel = new TextChannel(
   channels,
   connectors,
   tasks,
+  cliTools,
 );
 const micSessions = new Map<number, DeepgramSttStream>();
 

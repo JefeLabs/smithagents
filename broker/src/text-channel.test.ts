@@ -51,6 +51,7 @@ function channelWith(opts: {
   channels?: ConstructorParameters<typeof TextChannel>[12];
   connectors?: ConstructorParameters<typeof TextChannel>[13];
   tasks?: ConstructorParameters<typeof TextChannel>[14];
+  cliTools?: ConstructorParameters<typeof TextChannel>[15];
 }): TextChannel {
   return new TextChannel(
     () => {},
@@ -68,6 +69,7 @@ function channelWith(opts: {
     opts.channels,
     opts.connectors,
     opts.tasks,
+    opts.cliTools,
   );
 }
 
@@ -705,6 +707,76 @@ test('connector routes block a disallowed Origin, same as /me', async () => {
       assert.deepEqual(await res.json(), { error: 'origin not allowed' });
       assert.equal(res.headers.get('access-control-allow-origin'), null);
     }
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('GET /cli-tools and PUT /cli-tools/:id pass through to the swarm registry', async () => {
+  const toggled: Array<[string, boolean]> = [];
+  const listing = { tools: [{ cli: 'claude', label: 'Claude Code', active: true, status: null }] };
+  const channel = channelWith({
+    cliTools: {
+      list: async () => listing,
+      refresh: async () => listing,
+      setEnabled: async (id, enabled) => {
+        toggled.push([id, enabled]);
+        return listing;
+      },
+    },
+  });
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/cli-tools`, {
+      headers: { Origin: 'http://localhost:1420' },
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), listing);
+
+    const put = await fetch(`http://127.0.0.1:${port}/cli-tools/codex`, {
+      method: 'PUT',
+      headers: { Origin: 'http://localhost:1420', 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled: false }),
+    });
+    assert.equal(put.status, 200);
+    assert.deepEqual(toggled, [['codex', false]]);
+
+    const badPut = await fetch(`http://127.0.0.1:${port}/cli-tools/codex`, {
+      method: 'PUT',
+      headers: { Origin: 'http://localhost:1420', 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled: 'yes' }),
+    });
+    assert.equal(badPut.status, 400);
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('POST /cli-tools/refresh forwards the ?tool= filter', async () => {
+  const asked: Array<string | undefined> = [];
+  const channel = channelWith({
+    cliTools: {
+      list: async () => ({}),
+      refresh: async (tool) => {
+        asked.push(tool);
+        return { tools: [] };
+      },
+      setEnabled: async () => ({}),
+    },
+  });
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/cli-tools/refresh?tool=claude`, {
+      method: 'POST',
+      headers: { Origin: 'http://localhost:1420' },
+    });
+    assert.equal(res.status, 200);
+    const all = await fetch(`http://127.0.0.1:${port}/cli-tools/refresh`, {
+      method: 'POST',
+      headers: { Origin: 'http://localhost:1420' },
+    });
+    assert.equal(all.status, 200);
+    assert.deepEqual(asked, ['claude', undefined]);
   } finally {
     await channel.stop();
   }
