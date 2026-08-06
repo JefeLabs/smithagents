@@ -5,7 +5,7 @@ interface ControlPlaneLayoutProps {
   leftRail: ReactNode;
   rightRail: ReactNode;
   stage: ReactNode;
-  hint: ReactNode;
+  hint?: ReactNode;
   overlays?: ReactNode;
 }
 
@@ -24,7 +24,7 @@ export function ControlPlaneLayout({
       {leftRail}
       {rightRail}
       {stage}
-      <div className="subhint">{hint}</div>
+      {hint != null && <div className="subhint">{hint}</div>}
       {overlays}
     </>
   );

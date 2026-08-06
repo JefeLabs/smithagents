@@ -182,20 +182,6 @@ export function HomePage() {
           />
         )
       }
-      hint={
-        <>
-          {session && (
-            <>
-              <button type="button" className="subhint__session" onClick={() => setSessionsOpen((open) => !open)}>
-                {session.title} · {session.workspace}
-              </button>
-              {" — "}
-            </>
-          )}
-          agents raise ✋ when they have something to add — click their circle to give them the floor · press{" "}
-          <kbd>g</kbd> to tune the grid
-        </>
-      }
       overlays={
         <>
           <ConfirmSheet
