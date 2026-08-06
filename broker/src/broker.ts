@@ -99,6 +99,8 @@ export interface BrokerDeps {
   mintToken: (roomName: string) => Promise<string>;
   livekitUrl: string;
   pollMs?: number;
+  /** The broker's own identity name (e.g. "Anderson") — addressable like an agent, but never one. */
+  identityName?: string;
 }
 
 // ElevenLabs gates pcm_44100 behind the Pro tier; 24000 is available on every
@@ -346,14 +348,21 @@ export class Broker {
     });
   }
 
-  /** Every name a human could speak to: solo agents, squads, and groups. */
+  /** Queue a system-originated note (session greeting, infrastructure event) as its own brain turn. */
+  announce(note: string): Promise<void> {
+    return this.enqueueTurn(() => this.deps.brain.handleSystemNote(note, this.makeTurn()));
+  }
+
+  /** Every name a human could speak to: solo agents, squads, groups, and the host identity. */
   private addressableNames(): string[] {
     const grouped = this.groupedAgentIds();
-    return [
+    const names = [
       ...this.deps.directory.snapshot().filter((p) => !grouped.has(p.agent.id)).map((p) => p.agent.name),
       ...this.squads.flatMap((s) => [s.id, s.leader.name]),
       ...this.groups.map((g) => g.name),
     ];
+    if (this.deps.identityName) names.push(this.deps.identityName);
+    return names;
   }
 
   private setListening(names: string[]): void {

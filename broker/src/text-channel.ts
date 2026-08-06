@@ -29,7 +29,12 @@ export interface RosterEntry {
 
 export type ChannelFrame =
   | { type: 'utterance' | 'speech'; text: string }
-  | { type: 'roster'; agents: RosterEntry[] }
+  | {
+      type: 'roster';
+      agents: RosterEntry[];
+      /** The broker's own identity (host tile) — never an entry in `agents`. */
+      identity?: { name: string; role: string; ring?: string; listening?: boolean };
+    }
   /** Hello-frame capabilities: audio=true means the broker streams TTS audio frames. */
   | { type: 'config'; audio: boolean }
   /** One synthesized speech chunk (mp3), base64-encoded for the JSON channel. */

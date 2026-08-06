@@ -35,6 +35,8 @@ const NOOP_EXEC: ToolExecutors = {
   remember: async () => 'ok',
   lookup_ticket: async () => 'ok',
   search_docs: async () => 'ok',
+  draft_agent: async () => 'ok',
+  confirm_agent: async () => 'ok',
 };
 
 test('plain text answer streams to onSpeech as chunks', async () => {
@@ -70,15 +72,11 @@ test('tool_use runs the executor and continues with tool_result', async () => {
   ]);
   const delegated: unknown[] = [];
   const exec: ToolExecutors = {
+    ...NOOP_EXEC,
     delegate: async (input) => {
       delegated.push(input);
       return 'queued as task t-42';
     },
-    check_status: async () => 'unused',
-    raise_hand: async () => 'unused',
-    remember: async () => 'unused',
-    lookup_ticket: async () => 'unused',
-    search_docs: async () => 'unused',
   };
   const spoken: string[] = [];
   const brain = new BrokerBrain(factory, exec);
@@ -136,15 +134,7 @@ test('history trim respects turn boundaries even after a tool-use turn', async (
       final: { content: [{ type: 'text', text: 'ack 3.' }], stop_reason: 'end_turn' },
     },
   ]);
-  const exec: ToolExecutors = {
-    delegate: async () => 'ok',
-    check_status: async () => 'ok',
-    raise_hand: async () => 'ok',
-    remember: async () => 'ok',
-    lookup_ticket: async () => 'ok',
-    search_docs: async () => 'ok',
-  };
-  const brain = new BrokerBrain(factory, exec, { maxHistory: 4 });
+  const brain = new BrokerBrain(factory, NOOP_EXEC, { maxHistory: 4 });
   await brain.handleUtterance('have octavio refactor auth', { roster: 'ROSTER', onSpeech: () => {} });
   await brain.handleUtterance('utterance 2', { roster: 'ROSTER', onSpeech: () => {} });
   await brain.handleUtterance('utterance 3', { roster: 'ROSTER', onSpeech: () => {} });
@@ -171,16 +161,8 @@ test('the final permitted tool round forces a text-only reply via tool_choice: n
       final: { content: [{ type: 'text', text: 'Wrapping up now.' }], stop_reason: 'end_turn' },
     },
   ]);
-  const exec: ToolExecutors = {
-    delegate: async () => 'ok',
-    check_status: async () => 'ok',
-    raise_hand: async () => 'ok',
-    remember: async () => 'ok',
-    lookup_ticket: async () => 'ok',
-    search_docs: async () => 'ok',
-  };
   const spoken: string[] = [];
-  const brain = new BrokerBrain(factory, exec);
+  const brain = new BrokerBrain(factory, NOOP_EXEC);
   await brain.handleUtterance('keep delegating', { roster: 'ROSTER', onSpeech: (c) => spoken.push(c) });
 
   assert.equal(calls.length, 4);
@@ -212,4 +194,77 @@ test('round boundary flushes speech: pre-tool text never merges with next round'
   const brain = new BrokerBrain(factory, NOOP_EXEC);
   await brain.handleUtterance('alpha: go', { roster: 'r', onSpeech: (c) => spoken.push(c) });
   assert.deepEqual(spoken, ['Gabriel: Let me scan for pain points.', 'Gabriel: Aurelio is on it now.']);
+});
+
+test('system prompt carries the host identity: name, role, style, host rules', async () => {
+  const { factory, calls } = scripted([
+    { textDeltas: ['Anderson: Aquí estamos.'], final: { content: [{ type: 'text', text: 'Anderson: Aquí estamos.' }], stop_reason: 'end_turn' } },
+  ]);
+  const brain = new BrokerBrain(factory, NOOP_EXEC);
+  await brain.handleUtterance('hey anderson', { roster: 'Manuel — idle', onSpeech: () => {} });
+  const system = String(calls[0]!.system);
+  assert.match(system, /Anderson \(Chief of Staff\)/);
+  assert.match(system, /never takes delegated work/i);
+  assert.match(system, /session-open greeting/i);
+  assert.match(system, /"Hey team" \/ "everyone" addresses the crew/);
+  assert.match(system, /Manuel — idle/); // roster still appended after the persona
+});
+
+test('a custom identity replaces Anderson throughout the prompt', async () => {
+  const { factory, calls } = scripted([
+    { textDeltas: ['x'], final: { content: [{ type: 'text', text: 'x' }], stop_reason: 'end_turn' } },
+  ]);
+  const brain = new BrokerBrain(factory, NOOP_EXEC, {
+    identity: { name: 'Smith', role: 'Concierge', style: 'Clipped.' },
+  });
+  await brain.handleUtterance('hi', { roster: 'r', onSpeech: () => {} });
+  const system = String(calls[0]!.system);
+  assert.match(system, /Smith \(Concierge\)/);
+  assert.match(system, /Clipped\./);
+  assert.doesNotMatch(system, /Anderson/);
+});
+
+test('draft_agent and confirm_agent route to their executors', async () => {
+  const { factory } = scripted([
+    {
+      textDeltas: [''],
+      final: {
+        content: [{ type: 'tool_use', id: 'tu_d', name: 'draft_agent', input: { spec: 'an Architect agent' } }],
+        stop_reason: 'tool_use',
+      },
+    },
+    {
+      textDeltas: ['Anderson: Meet Rafael — add him?'],
+      final: { content: [{ type: 'text', text: 'Anderson: Meet Rafael — add him?' }], stop_reason: 'end_turn' },
+    },
+    {
+      textDeltas: [''],
+      final: {
+        content: [{ type: 'tool_use', id: 'tu_c', name: 'confirm_agent', input: { accept: true } }],
+        stop_reason: 'tool_use',
+      },
+    },
+    {
+      textDeltas: ['Anderson: Rafael is on the crew.'],
+      final: { content: [{ type: 'text', text: 'Anderson: Rafael is on the crew.' }], stop_reason: 'end_turn' },
+    },
+  ]);
+  const drafted: unknown[] = [];
+  const confirmed: unknown[] = [];
+  const exec: ToolExecutors = {
+    ...NOOP_EXEC,
+    draft_agent: async (input) => {
+      drafted.push(input);
+      return 'Draft ready: Rafael, Architect';
+    },
+    confirm_agent: async (input) => {
+      confirmed.push(input);
+      return 'created Rafael';
+    },
+  };
+  const brain = new BrokerBrain(factory, exec);
+  await brain.handleUtterance('anderson, create an architect agent', { roster: 'r', onSpeech: () => {} });
+  await brain.handleUtterance('yes, add him', { roster: 'r', onSpeech: () => {} });
+  assert.deepEqual(drafted, [{ spec: 'an Architect agent' }]);
+  assert.deepEqual(confirmed, [{ accept: true }]);
 });

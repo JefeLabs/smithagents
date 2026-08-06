@@ -92,11 +92,13 @@ function makeBroker(
     onSpeechText?: (text: string) => void;
     onRosterChange?: (roster: { agents: Array<{ status: string }>; squads: unknown[] }) => void;
     onTaskDispatched?: (d: { taskId: string; agent: string; task: string }) => void;
+    identityName?: string;
   },
 ) {
   const directory = new AgentDirectory();
   return new Broker({
     onRosterChange: opts?.onRosterChange,
+    identityName: opts?.identityName,
     onTaskDispatched: opts?.onTaskDispatched,
     swarm: f.swarm,
     directory,
@@ -893,6 +895,28 @@ test('search_docs lists title/url pairs, or a no-results line', async () => {
   f2.swarm.searchDocs = async () => ({ ok: true, docs: [] });
   const b2 = makeBroker(f2);
   assert.equal(await b2.executors.search_docs({ query: 'nothing', workspace: 'acme' }), 'No Confluence docs found for "nothing".');
+});
+
+test('the identity name is addressable — "hey anderson" lights its listening ring', async () => {
+  const f = makeFakes([]);
+  const listenings: string[][] = [];
+  const b = makeBroker(f, {
+    identityName: 'Anderson',
+    onRosterChange: (r) => listenings.push([...(r as unknown as { listening: string[] }).listening]),
+  });
+  await b.start();
+  await b.handleUtterance('hey Anderson, who is free?');
+  assert.ok(listenings.some((l) => l.includes('Anderson')));
+  await b.stop();
+});
+
+test('announce() runs a system-note brain turn', async () => {
+  const f = makeFakes([]);
+  const b = makeBroker(f);
+  await b.start();
+  await b.announce('a new session just started — greet the human');
+  assert.ok(f.heard.some((h) => h.startsWith('NOTE:') && h.includes('new session just started')));
+  await b.stop();
 });
 
 function basicDeps(f: ReturnType<typeof makeFakes>, directory: AgentDirectory) {

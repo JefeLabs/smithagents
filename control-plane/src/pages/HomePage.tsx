@@ -6,6 +6,7 @@ import { usePushToTalk } from "../hooks/usePushToTalk";
 import { useSpokenReplies } from "../hooks/useSpokenReplies";
 import { useTheme } from "../hooks/useTheme";
 import { ConfirmSheet } from "../molecules/ConfirmSheet";
+import { IdentityTile } from "../molecules/IdentityTile";
 import { AddAgentModal } from "../organisms/AddAgentModal";
 import { AgentRoster } from "../organisms/AgentRoster";
 import { DotGridCanvas } from "../organisms/DotGridCanvas";
@@ -51,6 +52,7 @@ export function HomePage() {
   const {
     messages,
     roster,
+    identity,
     connected,
     audioMode,
     session,
@@ -145,21 +147,24 @@ export function HomePage() {
       background={<DotGridCanvas params={gridParams} />}
       leftRail={<ToolRail onNewWorkspace={() => setNewWorkspaceOpen(true)} onSettings={() => setSettingsOpen(true)} />}
       rightRail={
-        <AgentRoster
-          onEdit={(entry) => {
-            setEditingId(entry.id);
-            setModalOpen(true);
-          }}
-          agents={agents}
-          onAdd={() => {
-            setEditingId(null); // the + button always creates
-            setModalOpen(true);
-          }}
-          onCall={callOn}
-          onCompose={compose}
-          onInspect={setInspecting}
-          onRemove={requestRemoval}
-        />
+        <>
+          {identity && <IdentityTile {...identity} />}
+          <AgentRoster
+            onEdit={(entry) => {
+              setEditingId(entry.id);
+              setModalOpen(true);
+            }}
+            agents={agents}
+            onAdd={() => {
+              setEditingId(null); // the + button always creates
+              setModalOpen(true);
+            }}
+            onCall={callOn}
+            onCompose={compose}
+            onInspect={setInspecting}
+            onRemove={requestRemoval}
+          />
+        </>
       }
       stage={
         inspecting ? (

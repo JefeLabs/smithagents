@@ -133,3 +133,29 @@ export class PersonaGenerator {
     return draft;
   }
 }
+
+/**
+ * The wizard-equivalent create payload for a generated draft (see
+ * AddAgentModal.tsx submit()): reactions/quickAnswers arrays become the
+ * keyed records the registry stores. Engine is fixed to the crew's standard
+ * CLI — voice-created agents are always claude/claude-opus; recast in the
+ * wizard if a different engine is ever needed.
+ */
+export function draftToAgentBody(
+  draft: PersonaDraft,
+  opts: { gender?: string; language: string; voiceId?: string },
+): Record<string, unknown> {
+  return {
+    name: draft.name,
+    role: draft.role,
+    gender: opts.gender,
+    backstory: draft.backstory,
+    language: opts.language,
+    persona: { style: draft.style },
+    directives: draft.directives,
+    engine: { cli: 'claude', model: 'claude-opus' },
+    voice: opts.voiceId ? { voiceId: opts.voiceId } : undefined,
+    reactions: Object.fromEntries(draft.reactions.map((r) => [r.level, [r.line]])),
+    quickAnswers: Object.fromEntries(draft.quickAnswers.map((a) => [a.id, a.answer])),
+  };
+}

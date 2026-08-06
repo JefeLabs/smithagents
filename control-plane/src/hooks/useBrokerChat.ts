@@ -40,6 +40,14 @@ export interface RosterAgent {
   members?: string[];
 }
 
+/** The broker's own host identity, riding the roster frame — never one of the agents. */
+export interface BrokerIdentityInfo {
+  name: string;
+  role: string;
+  ring?: string;
+  listening?: boolean;
+}
+
 export type ComposeOp = { op: "form"; agents: string[] } | { op: "add" | "remove"; target: string; agent: string };
 
 export interface SessionSummary {
@@ -112,6 +120,7 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
   const base = opts?.base ?? DEFAULT_BASE;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [roster, setRoster] = useState<RosterAgent[]>([]);
+  const [identity, setIdentity] = useState<BrokerIdentityInfo | null>(null);
   const [connected, setConnected] = useState(false);
   const [audioMode, setAudioMode] = useState(false);
   const [session, setSession] = useState<{ id: string; title: string; workspace: string } | null>(null);
@@ -134,7 +143,7 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
       ws.onmessage = (e) => {
         const frame = JSON.parse(String(e.data)) as
           | { type: "utterance" | "speech"; text: string }
-          | { type: "roster"; agents: RosterAgent[] }
+          | { type: "roster"; agents: RosterAgent[]; identity?: BrokerIdentityInfo }
           | { type: "config"; audio: boolean }
           | ({ type: "audio" } & AudioFrame)
           | {
@@ -162,6 +171,7 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
         }
         if (frame.type === "roster") {
           setRoster(frame.agents);
+          setIdentity(frame.identity ?? null);
           return;
         }
         if (frame.type !== "utterance" && frame.type !== "speech") return;
@@ -454,6 +464,7 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
   return {
     messages,
     roster,
+    identity,
     connected,
     audioMode,
     session,
