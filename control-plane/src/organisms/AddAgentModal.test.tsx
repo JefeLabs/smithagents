@@ -64,6 +64,8 @@ function stubFetch(overrides: Record<string, unknown> = {}) {
     if (url.endsWith("/agent-catalog")) return respond(overrides.catalog ?? CATALOG);
     if (url.endsWith("/agents") && init?.method === "POST") {
       posted.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+      // Pins the in-flight state for tests that assert what's disabled while a join is pending.
+      if (overrides.deferJoin) return new Promise<Response>(() => {});
       return respond(overrides.created ?? { id: "x", name: "x" });
     }
     if (url.endsWith("/agents")) return respond(overrides.agents ?? { agents: [] });
@@ -144,5 +146,37 @@ describe("AddAgentModal chooser", () => {
     render(<AddAgentModal open onClose={vi.fn()} editingId="minerva" />);
     expect(await screen.findByText(/job role/i)).toBeTruthy();
     expect(screen.queryByText(/join team/i)).toBeNull();
+  });
+
+  it("Create custom starts blank even after an abandoned Customize from a previous open", async () => {
+    stubFetch();
+    const onClose = vi.fn();
+    const { rerender } = render(<AddAgentModal open onClose={onClose} />);
+    await userEvent.click(await screen.findByText("Minerva"));
+    await userEvent.click(screen.getByRole("button", { name: /customize/i }));
+    await userEvent.click(screen.getByRole("button", { name: /next/i })); // Setup -> Persona
+    expect(((await screen.findByLabelText(/^name$/i)) as HTMLInputElement).value).toBe("Minerva");
+
+    // Close without submitting — the modal stays mounted, so this state persists.
+    rerender(<AddAgentModal open={false} onClose={onClose} />);
+    rerender(<AddAgentModal open onClose={onClose} />);
+
+    await userEvent.click(await screen.findByText(/create custom/i));
+    await userEvent.click(screen.getByRole("button", { name: /next/i })); // Setup -> Persona
+    expect((screen.getByLabelText(/^name$/i) as HTMLInputElement).value).toBe("");
+    expect((screen.getByLabelText(/backstory/i) as HTMLTextAreaElement).value).toBe("");
+  });
+
+  it("customize and Create custom are disabled while a join is in flight", async () => {
+    stubFetch({ deferJoin: true });
+    render(<AddAgentModal open onClose={vi.fn()} />);
+    await userEvent.click(await screen.findByText("Minerva"));
+    await userEvent.click(screen.getByRole("button", { name: /join team/i }));
+    const joining = (await screen.findByRole("button", { name: /joining/i })) as HTMLButtonElement;
+    const customize = screen.getByRole("button", { name: /customize/i }) as HTMLButtonElement;
+    const createCustom = screen.getByRole("button", { name: /create custom/i }) as HTMLButtonElement;
+    expect(joining.disabled).toBe(true);
+    expect(customize.disabled).toBe(true);
+    expect(createCustom.disabled).toBe(true);
   });
 });

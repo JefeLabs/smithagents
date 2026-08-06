@@ -33,6 +33,8 @@ interface AddAgentChooserProps {
   stereotypeLabels: Record<string, string>;
   /** Broker host:port for portrait URLs. */
   base: string;
+  /** A join is in flight — the blank-wizard path is disabled so it can't be entered mid-request. */
+  busy: boolean;
 }
 
 /** The 12-card grid: 11 premade characters + Create custom. */
@@ -45,6 +47,7 @@ export function AddAgentChooser({
   onPreview,
   stereotypeLabels,
   base,
+  busy,
 }: AddAgentChooserProps) {
   return (
     <div className="preset-grid">
@@ -89,7 +92,7 @@ export function AddAgentChooser({
           </div>
         );
       })}
-      <button type="button" className="preset-card preset-card--custom" onClick={onCustom}>
+      <button type="button" className="preset-card preset-card--custom" onClick={onCustom} disabled={busy}>
         <b>Create custom</b>
         <span className="preset-card__hook">Build your own teammate — persona, voice, and an AI-painted portrait.</span>
       </button>

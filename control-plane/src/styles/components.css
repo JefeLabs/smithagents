@@ -1577,6 +1577,10 @@
   cursor: pointer;
   font: inherit;
 }
+.preset-card--custom:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .voice-browser {
   display: flex;
   flex-direction: column;

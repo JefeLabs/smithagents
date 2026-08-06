@@ -131,12 +131,42 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
   const [avatarPresetRef, setAvatarPresetRef] = useState<string | null>(null);
   const [presetRing, setPresetRing] = useState<string | null>(null);
 
+  /**
+   * Every wizard field back to blank/catalog-default. The modal stays mounted
+   * across close/reopen, so without this a Customize the user abandoned
+   * bleeds into the next Create custom — this is what keeps that path blank.
+   */
+  const resetWizardFields = () => {
+    setName("");
+    setRole("");
+    setGender("neutral");
+    setBackstory("");
+    setLanguage(catalog?.languages?.[0]?.id ?? "");
+    setVoiceId("");
+    setStereotype(null);
+    setJobRole(null);
+    const first = catalog?.engines?.[0] ?? null;
+    setEngine(first);
+    setModel(first?.models[0] ?? "");
+    setGeneratedStyle(undefined);
+    setGeneratedDirectives(undefined);
+    setReactions({});
+    setAnswers({});
+    setHint("");
+    setError(null);
+  };
+
+  // Reset-on-open only: deliberately excludes resetWizardFields (and thus
+  // catalog) from deps — re-running this when the catalog loads would wipe
+  // fields the user is already mid-editing.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: see above
   useEffect(() => {
     if (!open) return;
     setMode(editingId ? "wizard" : "choose");
     setSelectedPresetId(null);
     setAvatarPresetRef(null);
     setPresetRing(null);
+    if (!editingId) resetWizardFields();
   }, [open, editingId]);
 
   useEffect(() => {
@@ -369,6 +399,7 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
 
   /** Refine-via-custom: the preset seeds every wizard field, then it's the normal flow. */
   const customizePreset = (p: PresetCard) => {
+    setError(null);
     setName(p.name);
     setRole(p.role);
     setGender((p.gender as "male" | "female" | "neutral") ?? "neutral");
@@ -385,6 +416,14 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
     if (p.quickAnswers) setAnswers(p.quickAnswers);
     setAvatarPresetRef(p.id);
     setPresetRing(p.ring);
+    setMode("wizard");
+    setStep(0);
+  };
+
+  /** The 12th card: always a blank wizard, even if a prior Customize (this open or an earlier one) left fields populated. */
+  const enterCustomWizard = () => {
+    resetWizardFields();
+    setSelectedPresetId(null);
     setMode("wizard");
     setStep(0);
   };
@@ -419,14 +458,11 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
                 takenIds={takenIds}
                 selectedId={selectedPresetId}
                 onSelect={setSelectedPresetId}
-                onCustom={() => {
-                  setSelectedPresetId(null);
-                  setMode("wizard");
-                  setStep(0);
-                }}
+                onCustom={enterCustomWizard}
                 onPreview={(id) => void preview(id)}
                 stereotypeLabels={Object.fromEntries((catalog?.stereotypes ?? []).map((s) => [s.id, s.label]))}
                 base={BASE}
+                busy={busy}
               />
               {!catalog && <p className="wizard__hint">Loading the catalog…</p>}
             </div>
@@ -435,7 +471,7 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
               <button
                 type="button"
                 className="settings-btn"
-                disabled={!selectedPresetId}
+                disabled={!selectedPresetId || busy}
                 onClick={() => {
                   const p = catalog?.presets?.find((x) => x.id === selectedPresetId);
                   if (p) customizePreset(p);
