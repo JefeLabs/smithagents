@@ -500,10 +500,9 @@ const workspaces = {
 const me = {
   get: () => swarm.getMe() as unknown as Promise<Record<string, unknown>>,
   update: (body: Record<string, unknown>) =>
-    swarm.updateMe(body as { name?: string; atlassian?: { email: string; apiToken: string }; github?: { token: string } }) as unknown as Promise<
+    swarm.updateMe(body as { name?: string }) as unknown as Promise<
       Record<string, unknown>
     >,
-  verifyGithub: () => swarm.verifyGithubToken() as unknown as Promise<Record<string, unknown>>,
 };
 
 // Per-workspace Discord channel config (channels manager UI): same thin

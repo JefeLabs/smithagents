@@ -151,7 +151,6 @@ export class TextChannel {
     private readonly me?: {
       get(): Promise<Record<string, unknown>>;
       update(body: Record<string, unknown>): Promise<Record<string, unknown>>;
-      verifyGithub(): Promise<Record<string, unknown>>;
     },
     /** Per-workspace Discord channel config (channels manager UI). Origin-restricted like /me. */
     private readonly channels?: {
@@ -440,11 +439,6 @@ export class TextChannel {
             }
             void this.me!.update(parsed).then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
           });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/me/verify-github' && this.me) {
-          if (originBlocked()) return;
-          void this.me.verifyGithub().then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
           return;
         }
         const wsAtlassianMatch = /^\/workspaces\/([^/]+)\/verify-atlassian$/.exec(url.pathname);

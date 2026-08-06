@@ -368,20 +368,19 @@ test('GET /me returns the redacted profile; PUT /me forwards the body', async ()
     me: {
       get: async () => {
         calls.push({ method: 'GET' });
-        return { id: 'me', name: 'You', hasAtlassianToken: false, hasGithubToken: false };
+        return { id: 'me', name: 'You', connectors: [] };
       },
       update: async (body) => {
         calls.push({ method: 'PUT' });
-        return { id: 'me', name: (body as { name?: string }).name ?? 'You', hasAtlassianToken: false, hasGithubToken: false };
+        return { id: 'me', name: (body as { name?: string }).name ?? 'You', connectors: [] };
       },
-      verifyGithub: async () => ({ ok: true, detail: 'Authenticated as edwincruz' }),
     },
   });
   const port = await channel.start(0);
   try {
     const get = await fetch(`http://127.0.0.1:${port}/me`);
     assert.equal(get.status, 200);
-    assert.deepEqual(await get.json(), { id: 'me', name: 'You', hasAtlassianToken: false, hasGithubToken: false });
+    assert.deepEqual(await get.json(), { id: 'me', name: 'You', connectors: [] });
 
     const put = await fetch(`http://127.0.0.1:${port}/me`, {
       method: 'PUT',
@@ -390,9 +389,6 @@ test('GET /me returns the redacted profile; PUT /me forwards the body', async ()
     });
     assert.equal(((await put.json()) as { name?: string }).name, 'Edwin');
     assert.deepEqual(calls, [{ method: 'GET' }, { method: 'PUT' }]);
-
-    const verify = await fetch(`http://127.0.0.1:${port}/me/verify-github`, { method: 'POST' });
-    assert.equal(((await verify.json()) as { ok?: boolean }).ok, true);
   } finally {
     await channel.stop();
   }
@@ -401,9 +397,8 @@ test('GET /me returns the redacted profile; PUT /me forwards the body', async ()
 test('GET /me blocks a disallowed browser Origin, allows the control-plane dev origin', async () => {
   const channel = channelWith({
     me: {
-      get: async () => ({ id: 'me', name: 'You', hasAtlassianToken: false, hasGithubToken: false }),
-      update: async () => ({ id: 'me', name: 'You', hasAtlassianToken: false, hasGithubToken: false }),
-      verifyGithub: async () => ({ ok: true, detail: 'Authenticated as edwincruz' }),
+      get: async () => ({ id: 'me', name: 'You', connectors: [] }),
+      update: async () => ({ id: 'me', name: 'You', connectors: [] }),
     },
   });
   const port = await channel.start(0);
@@ -419,7 +414,7 @@ test('GET /me blocks a disallowed browser Origin, allows the control-plane dev o
       headers: { origin: 'http://localhost:1420' },
     });
     assert.equal(allowed.status, 200);
-    assert.deepEqual(await allowed.json(), { id: 'me', name: 'You', hasAtlassianToken: false, hasGithubToken: false });
+    assert.deepEqual(await allowed.json(), { id: 'me', name: 'You', connectors: [] });
     assert.equal(allowed.headers.get('access-control-allow-origin'), 'http://localhost:1420');
   } finally {
     await channel.stop();

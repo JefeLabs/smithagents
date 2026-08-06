@@ -119,18 +119,16 @@ test('me/verify methods hit the right swarm routes', async () => {
     baseUrl: 'http://s',
     fetchImpl: (async (url: unknown, init?: RequestInit) => {
       calls.push(`${init?.method ?? 'GET'} ${String(url).replace('http://s', '')}`);
-      return new Response(JSON.stringify({ ok: true, id: 'me', name: 'You', hasAtlassianToken: false, hasGithubToken: false, detail: 'x' }));
+      return new Response(JSON.stringify({ ok: true, id: 'me', name: 'You', connectors: [], detail: 'x' }));
     }) as typeof fetch,
   });
   await client.getMe();
   await client.updateMe({ name: 'Edwin' });
-  await client.verifyGithubToken();
   await client.verifyWorkspaceAtlassian('acme');
   await client.verifyRepoGithub('acme', 'web');
   assert.deepEqual(calls, [
     'GET /me',
     'PUT /me',
-    'POST /me/verify-github',
     'POST /workspaces/acme/verify-atlassian',
     'POST /workspaces/acme/repos/web/verify-github',
   ]);
@@ -180,4 +178,45 @@ test('getWorkspaceDiscordConfig returns null when the workspace has no Discord c
     fetchImpl: (async () => new Response(JSON.stringify({ error: 'no Discord config' }), { status: 404 })) as typeof fetch,
   });
   assert.equal(await client.getWorkspaceDiscordConfig('acme'), null);
+});
+
+test('connector methods hit the right swarm routes', async () => {
+  const calls: string[] = [];
+  const client = new SwarmClient({
+    baseUrl: 'http://s',
+    fetchImpl: (async (url: unknown, init?: RequestInit) => {
+      calls.push(`${init?.method ?? 'GET'} ${String(url).replace('http://s', '')}`);
+      return new Response(
+        JSON.stringify({ id: 'c1', vendorId: 'github', label: 'personal', fields: {}, ok: true, detail: 'x' }),
+      );
+    }) as typeof fetch,
+  });
+  await client.getConnectorVendors();
+  await client.getMyConnectors();
+  await client.addConnector({ vendorId: 'github', label: 'personal', fields: { token: 'tok' } });
+  await client.updateConnector('c1', { label: 'renamed' });
+  await client.deleteConnector('c1');
+  await client.verifyConnector('c1', { testSiteUrl: 'https://x.atlassian.net' });
+  assert.deepEqual(calls, [
+    'GET /connectors/vendors',
+    'GET /me/connectors',
+    'POST /me/connectors',
+    'PUT /me/connectors/c1',
+    'DELETE /me/connectors/c1',
+    'POST /me/connectors/c1/verify',
+  ]);
+});
+
+test('getMe/updateMe still hit /me — updateMe body is name-only now', async () => {
+  const calls: Array<{ path: string; body?: unknown }> = [];
+  const client = new SwarmClient({
+    baseUrl: 'http://s',
+    fetchImpl: (async (url: unknown, init?: RequestInit) => {
+      calls.push({ path: String(url).replace('http://s', ''), body: init?.body ? JSON.parse(init.body as string) : undefined });
+      return new Response(JSON.stringify({ id: 'me', name: 'Edwin', connectors: [] }));
+    }) as typeof fetch,
+  });
+  await client.getMe();
+  await client.updateMe({ name: 'Edwin' });
+  assert.deepEqual(calls, [{ path: '/me', body: undefined }, { path: '/me', body: { name: 'Edwin' } }]);
 });
