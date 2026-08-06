@@ -14,7 +14,11 @@ The control-plane stage renders one fixed layout: centered greeting, 84px mic he
 
 - **Empty state** (no messages in the active session): centered hero column —
   greeting "The mic is yours, *Edwin*", big mic hero, two-row composer beneath.
-  No transcript.
+  No transcript. The hero is an **always-listening toggle**: idle caption
+  "**Activate always listening**" (replacing "Push to talk — or type below"),
+  live caption unchanged ("Listening… tap to stop"). Its icon changes from
+  lucide `Mic` to lucide `AudioLines` — the **same icon** the composer's
+  voice toggle uses, since both drive the same `onMicToggle`.
 - **Chat state**: greeting + mic hero gone. Transcript takes the full stage
   height (column widened to `min(760px, 92%)`, `flex: 1`, scrollable,
   auto-scroll preserved). Composer docks at the bottom.
@@ -37,8 +41,9 @@ The control-plane stage renders one fixed layout: centered greeting, 84px mic he
 - **Row 2 left**: `+` add-context button (links, files — remains a stub wired
   like today's attach button).
 - **Row 2 right**, in order: `Swarm ▾` routing selector (relocated from the
-  input row) · **dictate mic** toggle (accent + pulse when live; calls the
-  same `onMicToggle`) · **speaker** toggle (TTS on/off; the current
+  input row) · **always-listening** toggle (lucide `AudioLines`, matching the
+  hero; accent + pulse when live; calls the same `onMicToggle`) · **speaker**
+  toggle (TTS on/off; the current
   stage-tools sound toggle moves here, and the floating stage-tools row is
   removed) · **send arrow** button (accent-filled, like the reference
   screenshot; disabled while the draft is empty or the broker is offline).
@@ -79,6 +84,7 @@ The control-plane stage renders one fixed layout: centered greeting, 84px mic he
 | --- | --- |
 | `VoiceStage.tsx` | Orchestrates the two states; wraps hero pieces in `AnimatePresence`; passes mic/speaker props into `Composer`; drops the stage-tools row. |
 | `Composer.tsx` | Two-row layout (`.composer--stacked`); textarea + Enter/Shift+Enter; new optional props `micLive`, `onMicToggle`, `soundOn`, `onSoundToggle`; send button. |
+| `MicHero.tsx` | Icon `Mic` → `AudioLines`; idle caption/title/aria become "Activate always listening"; live caption unchanged. |
 | `Transcript.tsx` | Motion entry per bubble; otherwise unchanged logic. |
 | `components.css` | `.composer--stacked` rules; full-height transcript variant; scrollbar hiding + top mask; chat-state stage layout. |
 | `HomePage.tsx` | No structural change (props already flow through `VoiceStage`). |
@@ -87,7 +93,8 @@ The control-plane stage renders one fixed layout: centered greeting, 84px mic he
 
 New `VoiceStage.test.tsx` (vitest + RTL, jsdom):
 
-- Empty state: greeting present, no transcript log.
+- Empty state: greeting present, no transcript log; hero reads "Activate
+  always listening" when idle.
 - With messages: transcript renders, greeting absent.
 - Dictate button fires `onMicToggle`; speaker fires `onSoundToggle`.
 - Enter sends and clears the draft; Shift+Enter does not send.
