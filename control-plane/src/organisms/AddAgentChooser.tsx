@@ -35,6 +35,8 @@ interface AddAgentChooserProps {
   base: string;
   /** A join is in flight — the blank-wizard path is disabled so it can't be entered mid-request. */
   busy: boolean;
+  /** CLI ids the tool registry marked inactive — cards whose engine.cli is in this set warn and can still be selected for Customize, just not joined as-is. */
+  inactiveClis: Set<string>;
 }
 
 /** The 12-card grid: 11 premade characters + Create custom. */
@@ -48,11 +50,13 @@ export function AddAgentChooser({
   stereotypeLabels,
   base,
   busy,
+  inactiveClis,
 }: AddAgentChooserProps) {
   return (
     <div className="preset-grid">
       {presets.map((p) => {
         const taken = takenIds.has(p.id);
+        const cliInactive = !taken && inactiveClis.has(p.engine.cli);
         return (
           <div
             key={p.id}
@@ -78,6 +82,7 @@ export function AddAgentChooser({
               <span className="preset-card__stereo">{stereotypeLabels[p.stereotype] ?? p.stereotype}</span>
               <span className="preset-card__hook">{p.hook}</span>
               {taken && <span className="preset-card__taken">On the team</span>}
+              {cliInactive && <span className="preset-card__warn">CLI unavailable</span>}
             </button>
             {p.voiceId && !taken && (
               <button

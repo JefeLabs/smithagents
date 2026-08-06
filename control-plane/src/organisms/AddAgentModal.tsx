@@ -476,6 +476,14 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
     if (e.target === e.currentTarget) onClose();
   };
 
+  // CLI ids the tool registry marked inactive — cards for those presets warn and can't join.
+  const inactiveClis = new Set((catalog?.engines ?? []).filter((e) => e.active === false).map((e) => e.cli));
+  const selectedPreset = catalog?.presets?.find((x) => x.id === selectedPresetId) ?? null;
+  const selectedPresetEngine = selectedPreset
+    ? catalog?.engines.find((e) => e.cli === selectedPreset.engine.cli)
+    : undefined;
+  const selectedPresetCliInactive = selectedPresetEngine?.active === false;
+
   return (
     // biome-ignore lint/a11y/useKeyWithClickEvents: click-outside dismiss; the keyboard path is the Escape handler bound while open
     <div
@@ -503,10 +511,20 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
                 stereotypeLabels={Object.fromEntries((catalog?.stereotypes ?? []).map((s) => [s.id, s.label]))}
                 base={BASE}
                 busy={busy}
+                inactiveClis={inactiveClis}
               />
               {!catalog && <p className="wizard__hint">Loading the catalog…</p>}
             </div>
-            {error && <p className="wizard__error">{error}</p>}
+            {error ? (
+              <p className="wizard__error">{error}</p>
+            ) : (
+              selectedPresetCliInactive && (
+                <p className="wizard__error">
+                  {selectedPresetEngine?.statusDetail ?? "This CLI is unavailable on this machine."} Customize to pick
+                  an active one.
+                </p>
+              )
+            )}
             <footer className="wizard__foot">
               <button
                 type="button"
@@ -522,7 +540,7 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
               <button
                 type="button"
                 className="settings-btn settings-btn--primary"
-                disabled={!selectedPresetId || busy}
+                disabled={!selectedPresetId || busy || selectedPresetCliInactive}
                 onClick={() => {
                   const p = catalog?.presets?.find((x) => x.id === selectedPresetId);
                   if (p) void joinPreset(p);

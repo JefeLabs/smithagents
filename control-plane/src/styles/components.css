@@ -1601,6 +1601,18 @@
   border: 1px solid var(--pill-br);
   color: var(--text-dim);
 }
+/* Same slot as .preset-card__taken — mutually exclusive with it, so no overlap. */
+.preset-card__warn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font-size: 9.5px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, #d9534f 55%, transparent);
+  background: color-mix(in srgb, #d9534f 12%, transparent);
+  color: #d9534f;
+}
 .preset-card__play {
   position: absolute;
   bottom: 8px;

@@ -120,6 +120,30 @@ describe("AddAgentModal chooser", () => {
     expect(screen.getByRole("button", { name: /join team/i })).toBeTruthy();
   });
 
+  it("a preset whose CLI is inactive warns on its card and blocks join, but customize stays enabled", async () => {
+    stubFetch({
+      catalog: {
+        ...CATALOG,
+        engines: [
+          {
+            cli: "claude",
+            label: "Claude Code",
+            models: ["claude-opus"],
+            warmSessions: true,
+            active: false,
+            statusDetail: "not logged in — run `claude login`",
+          },
+        ],
+      },
+    });
+    render(<AddAgentModal open onClose={vi.fn()} />);
+    expect((await screen.findAllByText(/cli unavailable/i)).length).toBeGreaterThan(0);
+    await userEvent.click(screen.getByText("Minerva"));
+    expect((screen.getByRole("button", { name: /join team/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: /customize/i }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByText(/not logged in/i)).toBeTruthy();
+  });
+
   it("Customize prefills the wizard from the preset", async () => {
     stubFetch();
     render(<AddAgentModal open onClose={vi.fn()} />);
