@@ -12,6 +12,8 @@ const RUNTIME_OPTIONS = [
 ];
 
 interface DraftRepo {
+  /** Both modes converge on `path`; only the source of the value differs (design §4). */
+  mode: "existing" | "new";
   name: string;
   path: string;
   owner: string;
@@ -19,7 +21,7 @@ interface DraftRepo {
   connectorId: string;
 }
 
-const emptyRepo = (): DraftRepo => ({ name: "", path: "", owner: "", repo: "", connectorId: "" });
+const emptyRepo = (): DraftRepo => ({ mode: "existing", name: "", path: "", owner: "", repo: "", connectorId: "" });
 
 interface NewWorkspaceModalProps {
   open: boolean;
@@ -44,7 +46,7 @@ export function NewWorkspaceModal({
   list,
   listMyConnectors,
   activeWorkspace,
-  pickFolder: _pickFolder,
+  pickFolder,
   onCreated,
 }: NewWorkspaceModalProps) {
   const [name, setName] = useState("");
@@ -74,6 +76,12 @@ export function NewWorkspaceModal({
     setRepos((rs) => rs.map((r, i) => (i === index ? { ...r, ...patch } : r)));
   };
 
+  const browse = async (index: number) => {
+    if (!pickFolder) return;
+    const picked = await pickFolder();
+    if (picked) updateRepo(index, { path: picked });
+  };
+
   const canCreate =
     name.trim().length > 0 &&
     repos.every((r) => r.name.trim() && r.path.trim() && r.owner.trim() && r.repo.trim() && r.connectorId);
@@ -90,6 +98,7 @@ export function NewWorkspaceModal({
         path: r.path.trim(),
         branch: "main",
         github: { owner: r.owner.trim(), repo: r.repo.trim(), connectorId: r.connectorId },
+        ...(r.mode === "new" ? { initGit: true } : {}),
       })),
     };
     const result = await save(record, true).catch((err: unknown): { error?: string; name?: string } => ({
@@ -138,12 +147,26 @@ export function NewWorkspaceModal({
         {repos.map((repo, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: rows have no identity until saved; only appended/removed at the ends
           <div key={i} className="nw-repo-row">
+            <SegmentedControl
+              ariaLabel={`Repo ${i + 1} source`}
+              options={[
+                { id: "existing", label: "Existing repo" },
+                { id: "new", label: "New folder" },
+              ]}
+              selected={repo.mode}
+              onSelect={(id) => updateRepo(i, { mode: id as DraftRepo["mode"] })}
+            />
             <input value={repo.name} onChange={(e) => updateRepo(i, { name: e.target.value })} placeholder="web" />
             <input
               value={repo.path}
               onChange={(e) => updateRepo(i, { path: e.target.value })}
-              placeholder="/Users/me/code/acme-web"
+              placeholder={repo.mode === "new" ? "/Users/me/code/new-project" : "/Users/me/code/acme-web"}
             />
+            {repo.mode === "new" && pickFolder && (
+              <button type="button" className="settings-btn" onClick={() => void browse(i)}>
+                Browse…
+              </button>
+            )}
             <input
               value={repo.owner}
               onChange={(e) => updateRepo(i, { owner: e.target.value })}

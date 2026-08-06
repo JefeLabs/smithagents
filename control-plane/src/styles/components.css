@@ -1944,6 +1944,9 @@
   border: 1px solid var(--pill-br);
   border-radius: 12px;
 }
+.nw-repo-row .seg {
+  flex: 1 1 100%;
+}
 .nw-repo-row input,
 .nw-repo-row select {
   flex: 1 1 110px;

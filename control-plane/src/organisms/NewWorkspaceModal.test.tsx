@@ -103,4 +103,52 @@ describe("NewWorkspaceModal", () => {
     expect(await screen.findByText(/is not a git repository/)).toBeDefined();
     expect(onCreated).not.toHaveBeenCalled();
   });
+
+  it("new-folder mode with a native picker: Browse fills the path and submit carries initGit", async () => {
+    const save = vi.fn(async () => ({ name: "fresh" }));
+    const pickFolder = vi.fn(async () => "/Users/me/dev/fresh");
+    render(<NewWorkspaceModal {...props({ save, pickFolder })} />);
+    await userEvent.click(screen.getByRole("tab", { name: "New folder" }));
+    await userEvent.click(await screen.findByRole("button", { name: /browse/i }));
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText(/new-project/) as HTMLInputElement).value).toBe("/Users/me/dev/fresh"),
+    );
+    await userEvent.type(screen.getByPlaceholderText("acme"), "Fresh");
+    await userEvent.type(screen.getByPlaceholderText("web"), "app");
+    await userEvent.type(screen.getByPlaceholderText("GitHub owner"), "me");
+    await userEvent.type(screen.getByPlaceholderText("GitHub repo"), "fresh");
+    await userEvent.selectOptions(await screen.findByLabelText(/github connector/i), "gh-1");
+    await userEvent.click(screen.getByRole("button", { name: /create workspace/i }));
+    await waitFor(() =>
+      expect(save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          repos: [expect.objectContaining({ path: "/Users/me/dev/fresh", initGit: true })],
+        }),
+        true,
+      ),
+    );
+  });
+
+  it("existing-repo mode never sends initGit", async () => {
+    const save = vi.fn(async () => ({ name: "acme" }));
+    render(<NewWorkspaceModal {...props({ save })} />);
+    await fillOneValidRepo();
+    await userEvent.click(screen.getByRole("button", { name: /create workspace/i }));
+    await waitFor(() =>
+      expect(save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          repos: expect.arrayContaining([expect.not.objectContaining({ initGit: expect.anything() })]),
+        }),
+        true,
+      ),
+    );
+  });
+
+  it("without a native picker the Browse button is absent; a typed path still works in new-folder mode", async () => {
+    render(<NewWorkspaceModal {...props()} />);
+    await userEvent.click(screen.getByRole("tab", { name: "New folder" }));
+    expect(screen.queryByRole("button", { name: /browse/i })).toBeNull();
+    await userEvent.type(screen.getByPlaceholderText(/new-project/), "/Users/me/dev/typed");
+    expect((screen.getByPlaceholderText(/new-project/) as HTMLInputElement).value).toBe("/Users/me/dev/typed");
+  });
 });
