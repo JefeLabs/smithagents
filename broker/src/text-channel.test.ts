@@ -49,6 +49,7 @@ function channelWith(opts: {
   surfaces?: ConstructorParameters<typeof TextChannel>[10];
   me?: ConstructorParameters<typeof TextChannel>[11];
   channels?: ConstructorParameters<typeof TextChannel>[12];
+  connectors?: ConstructorParameters<typeof TextChannel>[13];
 }): TextChannel {
   return new TextChannel(
     () => {},
@@ -64,6 +65,7 @@ function channelWith(opts: {
     opts.surfaces,
     opts.me,
     opts.channels,
+    opts.connectors,
   );
 }
 
@@ -463,6 +465,207 @@ test('GET /workspaces/:name/channels is origin-restricted like /me; PUT round-tr
     });
     assert.equal(verify.status, 200);
     assert.deepEqual(await verify.json(), { ok: true, detail: 'Bot authenticated as crew' });
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('GET /connectors/vendors returns the vendor catalog', async () => {
+  const vendors = [{ id: 'github', name: 'GitHub' }];
+  const channel = channelWith({
+    connectors: {
+      vendors: async () => vendors,
+      list: async () => [],
+      add: async () => ({}),
+      update: async () => ({}),
+      remove: async () => ({}),
+      verify: async () => ({}),
+    },
+  });
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/connectors/vendors`, {
+      headers: { Origin: 'http://localhost:1420' },
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), vendors);
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('GET /me/connectors lists the operator\'s connectors; POST adds one', async () => {
+  const added: Array<Record<string, unknown>> = [];
+  const channel = channelWith({
+    connectors: {
+      vendors: async () => [],
+      list: async () => [{ id: 'c1', vendorId: 'github', label: 'Work GitHub' }],
+      add: async (body) => {
+        added.push(body);
+        return (body as { label?: string }).label === 'bad' ? { error: 'label taken' } : { id: 'c2', ...body };
+      },
+      update: async () => ({}),
+      remove: async () => ({}),
+      verify: async () => ({}),
+    },
+  });
+  const port = await channel.start(0);
+  try {
+    const list = await fetch(`http://127.0.0.1:${port}/me/connectors`, {
+      headers: { Origin: 'http://localhost:1420' },
+    });
+    assert.equal(list.status, 200);
+    assert.deepEqual(await list.json(), [{ id: 'c1', vendorId: 'github', label: 'Work GitHub' }]);
+
+    const ok = await fetch(`http://127.0.0.1:${port}/me/connectors`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Origin: 'http://localhost:1420' },
+      body: JSON.stringify({ vendorId: 'github', label: 'New one', fields: {} }),
+    });
+    assert.equal(ok.status, 201);
+    assert.deepEqual(await ok.json(), { id: 'c2', vendorId: 'github', label: 'New one', fields: {} });
+
+    const bad = await fetch(`http://127.0.0.1:${port}/me/connectors`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Origin: 'http://localhost:1420' },
+      body: JSON.stringify({ vendorId: 'github', label: 'bad', fields: {} }),
+    });
+    assert.equal(bad.status, 400);
+    assert.deepEqual(await bad.json(), { error: 'label taken' });
+
+    assert.deepEqual(added, [
+      { vendorId: 'github', label: 'New one', fields: {} },
+      { vendorId: 'github', label: 'bad', fields: {} },
+    ]);
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('PUT /me/connectors/:id updates; DELETE removes; both pass the swarm answer through', async () => {
+  const calls: string[] = [];
+  const channel = channelWith({
+    connectors: {
+      vendors: async () => [],
+      list: async () => [],
+      add: async () => ({}),
+      update: async (id, body) => {
+        calls.push(`update ${id}`);
+        return id === 'missing' ? { error: `Unknown connector: ${id}` } : { id, ...body };
+      },
+      remove: async (id) => {
+        calls.push(`remove ${id}`);
+        return id === 'missing' ? { error: `Unknown connector: ${id}` } : { ok: true };
+      },
+      verify: async () => ({}),
+    },
+  });
+  const port = await channel.start(0);
+  try {
+    const put = await fetch(`http://127.0.0.1:${port}/me/connectors/c1`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', Origin: 'http://localhost:1420' },
+      body: JSON.stringify({ label: 'Renamed' }),
+    });
+    assert.equal(put.status, 200);
+    assert.deepEqual(await put.json(), { id: 'c1', label: 'Renamed' });
+
+    const putMissing = await fetch(`http://127.0.0.1:${port}/me/connectors/missing`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', Origin: 'http://localhost:1420' },
+      body: JSON.stringify({ label: 'x' }),
+    });
+    assert.equal(putMissing.status, 400);
+    assert.deepEqual(await putMissing.json(), { error: 'Unknown connector: missing' });
+
+    const del = await fetch(`http://127.0.0.1:${port}/me/connectors/c1`, {
+      method: 'DELETE',
+      headers: { Origin: 'http://localhost:1420' },
+    });
+    assert.equal(del.status, 200);
+    assert.deepEqual(await del.json(), { ok: true });
+
+    const delMissing = await fetch(`http://127.0.0.1:${port}/me/connectors/missing`, {
+      method: 'DELETE',
+      headers: { Origin: 'http://localhost:1420' },
+    });
+    assert.equal(delMissing.status, 400);
+    assert.deepEqual(await delMissing.json(), { error: 'Unknown connector: missing' });
+
+    assert.deepEqual(calls, ['update c1', 'update missing', 'remove c1', 'remove missing']);
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('POST /me/connectors/:id/verify forwards optional extra fields and the swarm answer', async () => {
+  const received: Array<{ id: string; extra: Record<string, string> | undefined }> = [];
+  const channel = channelWith({
+    connectors: {
+      vendors: async () => [],
+      list: async () => [],
+      add: async () => ({}),
+      update: async () => ({}),
+      remove: async () => ({}),
+      verify: async (id, extra) => {
+        received.push({ id, extra });
+        return id === 'bad' ? { error: 'invalid token' } : { ok: true, detail: 'verified' };
+      },
+    },
+  });
+  const port = await channel.start(0);
+  try {
+    const ok = await fetch(`http://127.0.0.1:${port}/me/connectors/c1/verify`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Origin: 'http://localhost:1420' },
+      body: JSON.stringify({ extra: { otp: '123456' } }),
+    });
+    assert.equal(ok.status, 200);
+    assert.deepEqual(await ok.json(), { ok: true, detail: 'verified' });
+
+    const bad = await fetch(`http://127.0.0.1:${port}/me/connectors/bad/verify`, {
+      method: 'POST',
+      headers: { Origin: 'http://localhost:1420' },
+    });
+    assert.equal(bad.status, 400);
+    assert.deepEqual(await bad.json(), { error: 'invalid token' });
+
+    assert.deepEqual(received, [
+      { id: 'c1', extra: { otp: '123456' } },
+      { id: 'bad', extra: undefined },
+    ]);
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('connector routes block a disallowed Origin, same as /me', async () => {
+  const connectors = {
+    vendors: async () => [],
+    list: async () => [],
+    add: async () => ({}),
+    update: async () => ({}),
+    remove: async () => ({}),
+    verify: async () => ({}),
+  };
+  const channel = channelWith({ connectors });
+  const port = await channel.start(0);
+  const blockedHeaders = { headers: { origin: 'http://evil.example' } };
+  try {
+    const requests: Array<[string, RequestInit?]> = [
+      [`http://127.0.0.1:${port}/connectors/vendors`, blockedHeaders],
+      [`http://127.0.0.1:${port}/me/connectors`, blockedHeaders],
+      [`http://127.0.0.1:${port}/me/connectors`, { method: 'POST', ...blockedHeaders }],
+      [`http://127.0.0.1:${port}/me/connectors/c1`, { method: 'PUT', ...blockedHeaders }],
+      [`http://127.0.0.1:${port}/me/connectors/c1`, { method: 'DELETE', ...blockedHeaders }],
+      [`http://127.0.0.1:${port}/me/connectors/c1/verify`, { method: 'POST', ...blockedHeaders }],
+    ];
+    for (const [url, init] of requests) {
+      const res = await fetch(url, init);
+      assert.equal(res.status, 403, `${init?.method ?? 'GET'} ${url} should 403`);
+      assert.deepEqual(await res.json(), { error: 'origin not allowed' });
+      assert.equal(res.headers.get('access-control-allow-origin'), null);
+    }
   } finally {
     await channel.stop();
   }

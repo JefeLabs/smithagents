@@ -516,6 +516,24 @@ const channels = {
   verifyDiscord: (name: string) => swarm.verifyWorkspaceDiscord(name) as unknown as Promise<Record<string, unknown>>,
 };
 
+// Connector registry (Integrations settings group): same thin passthrough
+// shape as `me`/`channels`, origin-restricted the same way.
+const connectors = {
+  vendors: () => swarm.getConnectorVendors() as unknown as Promise<Record<string, unknown>[]>,
+  list: () => swarm.getMyConnectors() as unknown as Promise<Record<string, unknown>[]>,
+  add: (body: Record<string, unknown>) =>
+    swarm.addConnector(body as { vendorId: string; label: string; fields: Record<string, string> }) as unknown as Promise<
+      Record<string, unknown>
+    >,
+  update: (id: string, body: Record<string, unknown>) =>
+    swarm.updateConnector(id, body as { label?: string; fields?: Record<string, string> }) as unknown as Promise<
+      Record<string, unknown>
+    >,
+  remove: (id: string) => swarm.deleteConnector(id) as unknown as Promise<Record<string, unknown>>,
+  verify: (id: string, extra?: Record<string, string>) =>
+    swarm.verifyConnector(id, extra) as unknown as Promise<Record<string, unknown>>,
+};
+
 const textChannel = new TextChannel(
   handleUserText,
   () => [
@@ -814,6 +832,7 @@ const textChannel = new TextChannel(
   },
   me,
   channels,
+  connectors,
 );
 const micSessions = new Map<number, DeepgramSttStream>();
 
