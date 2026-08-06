@@ -25,6 +25,8 @@ export interface RosterEntry {
   listening?: boolean;
   /** Squad/group entries: member display names, for the edit-mode expansion. */
   members?: string[];
+  /** Portrait filename; the UI fetches bytes from GET /avatars/<file>. */
+  avatar?: string;
 }
 
 export type ChannelFrame =
@@ -126,6 +128,10 @@ export class TextChannel {
       voices(query: Record<string, string>): Promise<Record<string, unknown>>;
       preview(voiceId: string, text: string): Promise<Buffer>;
       create(body: Record<string, unknown>): Promise<Record<string, unknown>>;
+      /** Gemini portrait for the wizard preview; {error} when no key or refusal. */
+      generateAvatar(body: Record<string, unknown>): Promise<Record<string, unknown>>;
+      /** Portrait bytes proxied from the swarm; null = 404. */
+      avatarFile(file: string): Promise<Buffer | null>;
     },
     /** Remove-agent decision (archive vs delete) and the confirm-sheet preview behind it. */
     private readonly removal?: {
@@ -284,6 +290,39 @@ export class TextChannel {
 
         if (req.method === 'GET' && url.pathname === '/agent-catalog') {
           void this.creation.catalog().then((c) => json(200, c), fail);
+          return;
+        }
+        // Portraits: one URL shape for roster avatars, chooser cards, and
+        // edit-mode previews. `no-cache` because a reroll or preset join can
+        // replace bytes behind an unchanged filename.
+        const avatarFileMatch = /^\/avatars\/([a-z0-9][a-z0-9-]{0,63}\.png)$/.exec(url.pathname);
+        if (req.method === 'GET' && avatarFileMatch) {
+          void this.creation.avatarFile(avatarFileMatch[1]!).then(
+            (buf) =>
+              buf
+                ? res.writeHead(200, { ...CORS, 'content-type': 'image/png', 'cache-control': 'no-cache' }).end(buf)
+                : json(404, { error: 'avatar not found' }),
+            fail,
+          );
+          return;
+        }
+        if (req.method === 'POST' && url.pathname === '/avatars/generate') {
+          let body = '';
+          req.on('data', (c) => {
+            body += c;
+          });
+          req.on('end', () => {
+            let parsed: Record<string, unknown> = {};
+            try {
+              parsed = JSON.parse(body || '{}') as Record<string, unknown>;
+            } catch {
+              return json(400, { error: 'body must be JSON' });
+            }
+            void this.creation!.generateAvatar(parsed).then(
+              (r) => json((r as { error?: string }).error ? 400 : 200, r),
+              fail,
+            );
+          });
           return;
         }
         if (req.method === 'GET' && url.pathname === '/voices') {

@@ -250,3 +250,34 @@ test('getTask throws on a genuine 500, unlike the 404 case', async () => {
   });
   await assert.rejects(client.getTask('t-1'), /swarm on fire/);
 });
+
+test('avatarFile hits GET /avatars/:file with the same auth header as http(), and returns raw bytes', async () => {
+  const calls: Array<{ method: string; url: string; headers: Record<string, string> }> = [];
+  const client = new SwarmClient({
+    baseUrl: 'http://s',
+    token: 'secret',
+    fetchImpl: (async (url: unknown, init?: RequestInit) => {
+      calls.push({ method: init?.method ?? 'GET', url: String(url), headers: (init?.headers as Record<string, string>) ?? {} });
+      return new Response(Buffer.from('PNGBYTES'), { status: 200 });
+    }) as typeof fetch,
+  });
+  const buf = await client.avatarFile('minerva.png');
+  assert.deepEqual(calls, [{ method: 'GET', url: 'http://s/avatars/minerva.png', headers: { authorization: 'Bearer secret' } }]);
+  assert.equal(buf?.toString(), 'PNGBYTES');
+});
+
+test('avatarFile returns null on 404 (no such avatar) instead of throwing', async () => {
+  const client = new SwarmClient({
+    baseUrl: 'http://s',
+    fetchImpl: (async () => new Response('not found', { status: 404 })) as typeof fetch,
+  });
+  assert.equal(await client.avatarFile('ghost.png'), null);
+});
+
+test('avatarFile throws on a genuine 500, unlike the 404 case', async () => {
+  const client = new SwarmClient({
+    baseUrl: 'http://s',
+    fetchImpl: (async () => new Response('boom', { status: 500 })) as typeof fetch,
+  });
+  await assert.rejects(client.avatarFile('minerva.png'), /swarm GET \/avatars\/minerva.png -> 500/);
+});

@@ -31,6 +31,8 @@ const stubCreation: ConstructorParameters<typeof TextChannel>[7] = {
   voices: async () => ({}),
   preview: async () => Buffer.from(''),
   create: async () => ({}),
+  generateAvatar: async () => ({}),
+  avatarFile: async () => null,
 };
 
 // verifyAtlassian/verifyGithubRepo go unused by tests that only exercise the
@@ -336,6 +338,46 @@ test('PUT /workspaces/:name saves with the URL name folded into the body; DELETE
     const conflict = await fetch(`http://127.0.0.1:${port}/workspaces/busy`, { method: 'DELETE' });
     assert.equal(conflict.status, 409);
     assert.deepEqual(await conflict.json(), { error: 'workspace busy: locked' });
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('GET /avatars/:file streams png bytes; misses and traversal shapes 404', async () => {
+  const channel = channelWith({
+    creation: { ...stubCreation, avatarFile: async (f) => (f === 'minerva.png' ? Buffer.from('PNGBYTES') : null) },
+  });
+  const port = await channel.start(0);
+  try {
+    const hit = await fetch(`http://127.0.0.1:${port}/avatars/minerva.png`);
+    assert.equal(hit.status, 200);
+    assert.equal(hit.headers.get('content-type'), 'image/png');
+    assert.equal(Buffer.from(await hit.arrayBuffer()).toString(), 'PNGBYTES');
+    assert.equal((await fetch(`http://127.0.0.1:${port}/avatars/ghost.png`)).status, 404);
+    assert.equal((await fetch(`http://127.0.0.1:${port}/avatars/..%2Fsecrets.png`)).status, 404);
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('POST /avatars/generate maps handler result: imageData -> 200, error -> 400', async () => {
+  const channel = channelWith({
+    creation: {
+      ...stubCreation,
+      generateAvatar: async (body) => (body.name === 'Nena' ? { imageData: 'QUJD' } : { error: 'no Gemini key configured' }),
+    },
+  });
+  const port = await channel.start(0);
+  try {
+    const ok = await fetch(`http://127.0.0.1:${port}/avatars/generate`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Nena' }),
+    });
+    assert.equal(ok.status, 200);
+    assert.deepEqual(await ok.json(), { imageData: 'QUJD' });
+    const err = await fetch(`http://127.0.0.1:${port}/avatars/generate`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    });
+    assert.equal(err.status, 400);
   } finally {
     await channel.stop();
   }

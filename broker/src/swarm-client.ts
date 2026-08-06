@@ -44,6 +44,8 @@ export interface RegistryAgent {
   persona?: { style: string };
   voice?: { provider: string; voiceId?: string; speech?: SpeechProfile };
   avatarRing?: string;
+  /** Portrait filename; fetch bytes via GET /avatars/<file>. */
+  avatar?: string;
   archived?: boolean;
   /** Legacy array of adapter kinds this agent may speak on (e.g. "discord"), or a per-surface mode map; undefined = all. */
   channels?: string[] | Record<string, string>;
@@ -246,6 +248,23 @@ export class SwarmClient {
   /** Stereotypes, quick questions and reaction levels for the creation wizard. */
   async agentCatalog(): Promise<Record<string, unknown>> {
     return this.http('GET', '/agents/catalog');
+  }
+
+  /**
+   * Raw PNG bytes for an avatar file, or null when the swarm has none. Can't
+   * reuse the shared `http()` helper — that flattens every non-2xx into a
+   * thrown Error and always JSON-decodes the body, and a routine 404 here
+   * (no such avatar) isn't a failure worth surfacing, plus the body is bytes,
+   * not JSON. Same auth as `http()`, no body so no content-type header —
+   * matches `getTask`'s GET pattern above.
+   */
+  async avatarFile(file: string): Promise<Buffer | null> {
+    const headers: Record<string, string> = {};
+    if (this.token) headers.authorization = `Bearer ${this.token}`;
+    const res = await this.fetchImpl(`${this.baseUrl}/avatars/${encodeURIComponent(file)}`, { method: 'GET', headers });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`swarm GET /avatars/${file} -> ${res.status}`);
+    return Buffer.from(await res.arrayBuffer());
   }
 
   /** Create a composed agent from the wizard payload. */

@@ -5,8 +5,10 @@
  */
 import Anthropic from '@anthropic-ai/sdk';
 import { DeepgramClient } from '@deepgram/sdk';
+import { GoogleGenAI } from '@google/genai';
 import { createInterface } from 'node:readline';
 import { ElevenLabsVoiceProvider } from '@smithagents/voice';
+import { AvatarGenerator, type AvatarRequest } from './avatar-generator.ts';
 import { BrokerBrain, type StreamFactory } from './brain.ts';
 import { Broker, TTS_SAMPLE_RATE } from './broker.ts';
 import { AdapterHub } from './channels.ts';
@@ -47,6 +49,12 @@ const config = loadBrokerConfig();
 const anthropic = new Anthropic({ apiKey: config.anthropicApiKey });
 const streamFactory: StreamFactory = (params) =>
   anthropic.messages.stream(params as Parameters<typeof anthropic.messages.stream>[0]);
+
+// Portrait generation degrades like ElevenLabs above: no key, no client — the
+// wizard's Generate button just doesn't render (see avatarGen catalog flag below).
+const avatarGenerator = config.geminiApiKey
+  ? new AvatarGenerator(new GoogleGenAI({ apiKey: config.geminiApiKey }), config.geminiImageModel)
+  : null;
 
 const swarm = new SwarmClient({ baseUrl: config.swarm.baseUrl, token: config.swarm.token });
 const directory = new AgentDirectory();
@@ -354,6 +362,7 @@ const toRosterEntries = (roster: UiRoster): RosterEntry[] => {
       name: p.agent.name,
       role: p.agent.role,
       ring: p.agent.avatarRing,
+      avatar: p.agent.avatar,
       status: p.status,
       taskSummary: p.taskSummary,
       kind: 'agent',
@@ -635,7 +644,9 @@ const textChannel = new TextChannel(
   },
   {
     // Agent creation: the swarm owns the registry, the broker owns voices.
-    catalog: () => swarm.agentCatalog(),
+    // avatarGen rides on the catalog the wizard already fetches — the UI
+    // learns in one request whether to render the Generate button at all.
+    catalog: async () => ({ ...(await swarm.agentCatalog()), avatarGen: avatarGenerator !== null }),
     records: async () => (await swarm.registry()) as unknown as Record<string, unknown>[],
     update: async (id, body) => {
       // Fail open on the BEFORE read: this registry read did not exist before
@@ -790,6 +801,15 @@ const textChannel = new TextChannel(
       await broker.resetComposition().catch(() => {});
       return created;
     },
+    generateAvatar: async (body) => {
+      if (!avatarGenerator) return { error: 'no Gemini key configured' };
+      try {
+        return { imageData: await avatarGenerator.generate(body as AvatarRequest) };
+      } catch (err) {
+        return { error: String((err as Error).message) };
+      }
+    },
+    avatarFile: (file) => swarm.avatarFile(file),
   },
   removal,
   workspaces,
