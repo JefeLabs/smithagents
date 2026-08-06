@@ -97,6 +97,7 @@ function RosterItem(props: {
         listening={!editMode && entry.listening}
         // Squad circles skip this — per-member surface config belongs to the member avatars in the expanded view.
         agentId={entry.kind === "squad" ? undefined : entry.id}
+        engineWarning={editMode ? undefined : entry.engineWarning}
       />
       {editMode && entry.kind !== "squad" && !busy && props.onRemove && (
         <button

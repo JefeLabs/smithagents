@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { type AgentSeed, ringForIndex } from "../data/agents";
 import { type AudioFrame, useBrokerChat } from "../hooks/useBrokerChat";
+import { useCliToolHealth } from "../hooks/useCliToolHealth";
 import { GRID_DEFAULTS, type GridParams } from "../hooks/useDotGrid";
 import { usePushToTalk } from "../hooks/usePushToTalk";
 import { useSpokenReplies } from "../hooks/useSpokenReplies";
@@ -80,6 +81,9 @@ export function HomePage() {
     updateConnector,
     deleteConnector,
     verifyConnector,
+    listCliTools,
+    refreshCliTools,
+    setCliToolEnabled,
     getWorkspaceChannels,
     saveWorkspaceChannels,
     verifyWorkspaceDiscord,
@@ -91,6 +95,7 @@ export function HomePage() {
     audio: micAudio,
     end: () => micControl("mic-stop"),
   });
+  const { warnings: engineWarnings, refresh: refreshEngineWarnings } = useCliToolHealth();
 
   const agents: AgentSeed[] = [
     ...roster.map((a, i) => ({
@@ -103,6 +108,7 @@ export function HomePage() {
       listening: a.listening,
       kind: a.kind,
       members: a.members,
+      engineWarning: engineWarnings[a.id],
     })),
   ];
 
@@ -212,7 +218,10 @@ export function HomePage() {
           />
           <SettingsPanel
             open={settingsOpen}
-            onClose={() => setSettingsOpen(false)}
+            onClose={() => {
+              setSettingsOpen(false);
+              void refreshEngineWarnings();
+            }}
             onReset={resetSetup}
             theme={theme}
             onThemeChange={setTheme}
@@ -222,6 +231,9 @@ export function HomePage() {
             updateConnector={updateConnector}
             deleteConnector={deleteConnector}
             verifyConnector={verifyConnector}
+            listCliTools={listCliTools}
+            refreshCliTools={refreshCliTools}
+            setCliToolEnabled={setCliToolEnabled}
             listWorkspaceRecords={listWorkspaceRecords}
             getWorkspaceChannels={getWorkspaceChannels}
             saveWorkspaceChannels={saveWorkspaceChannels}
@@ -268,6 +280,7 @@ export function HomePage() {
             onClose={() => {
               setModalOpen(false);
               setEditingId(null);
+              void refreshEngineWarnings();
             }}
             onCreated={(n) =>
               editingId ? undefined : send(`${n} just joined the crew — welcome them in one short line.`)

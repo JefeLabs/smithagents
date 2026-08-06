@@ -80,6 +80,17 @@ import { lookupTicket, searchDocs } from './atlassian-client.js';
 import { MeetingOrchestrator } from './meetings.js';
 import { loadLiveKitConfig } from './config.js';
 import { resolve, isAbsolute } from 'node:path';
+import {
+  buildCliToolListings,
+  gateReason,
+  inactiveDetail,
+  isActive,
+  loadCliToolsFile,
+  refreshCliTool,
+  saveCliToolsFile,
+  sweepCliTools,
+  type SweepDeps,
+} from './cli-tools.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -214,6 +225,7 @@ export class OrchestratorServer {
         agentCommands: this.orchConfig.agentCommands,
         worktreeDir: this.orchConfig.worktreeDir,
         store: new SessionStore(resolve(process.cwd(), '.smith/sessions')),
+        toolGate: async (cli) => gateReason(await loadCliToolsFile(resolve(process.cwd(), '.smith/cli-tools.json')), cli),
       });
       const summary = await manager.reconcile(hashes);
       this.agentSessions = manager;
@@ -272,6 +284,20 @@ export class OrchestratorServer {
     this.startQueueWorker();
 
     await this.app.listen({ port: this.config.port, host: this.config.host });
+
+    // CLI tool registry: probe machine reality in the background — the cached
+    // file serves until fresh results land (spec: startup + manual +
+    // on-failure; never a boot gate, never periodic).
+    void sweepCliTools(resolve(process.cwd(), '.smith/cli-tools.json'), {
+      agentCommands: this.orchConfig.agentCommands,
+      clis: ENGINES.map((e) => e.cli),
+    }).then(
+      (f) =>
+        this.app.log.info(
+          `CLI tools: ${ENGINES.map((e) => `${e.cli}=${isActive(f.tools[e.cli]) ? 'active' : 'inactive'}`).join(' ')}`,
+        ),
+      (err) => this.app.log.warn(`CLI tool sweep failed: ${(err as Error).message}`),
+    );
 
     this.app.log.info(
       `Orchestrator server running on http://${this.config.host}:${this.config.port}`,
@@ -855,10 +881,17 @@ export class OrchestratorServer {
 
     // ── Agent creation catalog + registry writes ───────────────────────
     this.app.get('/agents/catalog', async () => {
+      // Annotate, don't filter (spec): the wizard grays out inactive engines
+      // with the reason instead of hiding them.
+      const cliFile = await loadCliToolsFile(resolve(process.cwd(), '.smith/cli-tools.json'));
       return {
         stereotypes: STEREOTYPES,
         jobRoles: JOB_ROLES,
-        engines: ENGINES,
+        engines: ENGINES.map((e) => ({
+          ...e,
+          active: isActive(cliFile.tools[e.cli]),
+          statusDetail: inactiveDetail(cliFile.tools[e.cli]) || undefined,
+        })),
         languages: LANGUAGES,
         quickQuestions: QUICK_QUESTIONS,
         reactionLevels: REACTION_LEVELS,
@@ -878,6 +911,9 @@ export class OrchestratorServer {
       if (b.engine?.cli && !findEngine(b.engine.cli)) {
         return reply.status(400).send({ error: `Unknown CLI: ${b.engine.cli}` });
       }
+      const requestedCli = b.engine?.cli ?? 'claude'; // must gate the default too
+      const cliGate = gateReason(await loadCliToolsFile(resolve(process.cwd(), '.smith/cli-tools.json')), requestedCli);
+      if (cliGate) return reply.status(400).send({ error: `${requestedCli} is not available: ${cliGate}` });
       if (b.language && !findLanguage(b.language)) {
         return reply.status(400).send({ error: `Unknown language: ${b.language}` });
       }
@@ -979,6 +1015,10 @@ export class OrchestratorServer {
       if (b.engine?.cli && !findEngine(b.engine.cli)) {
         return reply.status(400).send({ error: `Unknown CLI: ${b.engine.cli}` });
       }
+      if (b.engine?.cli && b.engine.cli !== existing.engine.cli) {
+        const cliGate = gateReason(await loadCliToolsFile(resolve(process.cwd(), '.smith/cli-tools.json')), b.engine.cli);
+        if (cliGate) return reply.status(400).send({ error: `${b.engine.cli} is not available: ${cliGate}` });
+      }
       if (b.language && !findLanguage(b.language)) {
         return reply.status(400).send({ error: `Unknown language: ${b.language}` });
       }
@@ -1045,6 +1085,7 @@ export class OrchestratorServer {
         agentCommands: server.orchConfig.agentCommands,
         worktreeDir: server.orchConfig.worktreeDir,
         store: new SessionStore(resolve(process.cwd(), '.smith/sessions')),
+        toolGate: async (cli) => gateReason(await loadCliToolsFile(resolve(process.cwd(), '.smith/cli-tools.json')), cli),
       });
       return server.agentSessions;
     };
@@ -1076,6 +1117,15 @@ export class OrchestratorServer {
         const info = await sessionManager().create(agent, raw, repoRoot, baseBranch);
         return reply.status(201).send(info);
       } catch (err) {
+        if ((err as { code?: string }).code === 'tool_launch_failed') {
+          // Self-correction (spec: on-failure re-probe): a launch failure is
+          // the freshest signal — refresh just this tool, fire-and-forget.
+          void refreshCliTool(
+            resolve(process.cwd(), '.smith/cli-tools.json'),
+            server.orchConfig.agentCommands,
+            agent.engine.cli,
+          ).catch(() => {});
+        }
         return reply.status(sessionErrorStatus(err)).send({ error: String((err as Error).message) });
       }
     });
@@ -1440,6 +1490,41 @@ export class OrchestratorServer {
       const vendor = findVendor(instance.vendorId);
       if (!vendor) return reply.status(400).send({ error: `Unknown vendor: ${instance.vendorId}` });
       return vendor.verify(instance.fields, b.extra ?? {});
+    });
+
+    // ── CLI tool registry (machine-level; spec 2026-08-06) ─────────────
+    const cliToolsPath = () => resolve(process.cwd(), '.smith/cli-tools.json');
+    const cliSweepDeps = (): SweepDeps => ({
+      agentCommands: server.orchConfig.agentCommands,
+      clis: ENGINES.map((e) => e.cli),
+    });
+
+    this.app.get('/cli-tools', async () => {
+      let file = await loadCliToolsFile(cliToolsPath());
+      // Lazy first sweep: a fresh install that opens Settings before the
+      // startup sweep lands still gets real statuses, not blanks.
+      if (Object.keys(file.tools).length === 0) {
+        file = await sweepCliTools(cliToolsPath(), cliSweepDeps());
+      }
+      return { tools: buildCliToolListings(ENGINES, file) };
+    });
+
+    this.app.post('/cli-tools/refresh', async (req) => {
+      const tool = (req.query as { tool?: string }).tool;
+      const file = await sweepCliTools(cliToolsPath(), cliSweepDeps(), tool);
+      return { tools: buildCliToolListings(ENGINES, file) };
+    });
+
+    this.app.put<{ Params: { id: string } }>('/cli-tools/:id', async (req, reply) => {
+      const b = req.body as { enabled?: boolean };
+      if (typeof b?.enabled !== 'boolean') return reply.status(400).send({ error: 'body must be { enabled: boolean }' });
+      if (!findEngine(req.params.id)) return reply.status(404).send({ error: `Unknown CLI tool: ${req.params.id}` });
+      const file = await loadCliToolsFile(cliToolsPath());
+      const current = file.tools[req.params.id];
+      if (!current) return reply.status(409).send({ error: 'Tool not probed yet — refresh first' });
+      file.tools[req.params.id] = { ...current, enabled: b.enabled };
+      await saveCliToolsFile(cliToolsPath(), file);
+      return { tools: buildCliToolListings(ENGINES, file) };
     });
 
     this.app.post<{ Params: { name: string } }>('/workspaces/:name/verify-atlassian', async (req, reply) => {

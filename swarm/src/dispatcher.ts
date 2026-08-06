@@ -32,6 +32,8 @@ import type { WorkerPool } from './remote-runtime.js';
 import { QuarantineManager } from './quarantine.js';
 import { loadWorkspacesFromDir } from './workspaces.js';
 import { loadUsersFromDir, resolveCurrentUser } from './users.js';
+import { gateReason, loadCliToolsFile, refreshCliTool } from './cli-tools.js';
+import { ToolLaunchError } from './drivers/errors.js';
 
 /**
  * Fire-and-Forget Dispatcher.
@@ -99,6 +101,19 @@ export class Dispatcher extends EventEmitter {
     const sessionName = `${this.config.tmuxPrefix}-${manifest.taskId}`;
     const startedAt = new Date().toISOString();
     const startMs = Date.now();
+
+    // CLI tool registry gate (spec): refuse before any worktree exists. Only
+    // confirmed negatives block; a stale 'active' self-corrects below.
+    const cliFile = await loadCliToolsFile(join(this.config.smithRoot, 'cli-tools.json'));
+    const cliGate = gateReason(cliFile, manifest.agent);
+    if (cliGate) {
+      // A blocked attempt is itself a freshness signal: re-probe so a stale
+      // confirmed-negative self-corrects (mirrors the warm-session path).
+      void refreshCliTool(join(this.config.smithRoot, 'cli-tools.json'), this.config.agentCommands, manifest.agent).catch(
+        () => {},
+      );
+      throw new ToolLaunchError(manifest.agent, `subscription-inactive: ${cliGate}`);
+    }
 
     // Resolve once: pairs this user's credentials with the workspace/repo
     // config for this task, feeding prepareWorktree (Atlassian MCP
@@ -177,6 +192,13 @@ export class Dispatcher extends EventEmitter {
       }
 
       return result;
+    } catch (err) {
+      // Any dispatch failure refreshes this tool's status (spec: on-failure
+      // re-probe) — cheap, async, and harmless when the cause was elsewhere.
+      void refreshCliTool(join(this.config.smithRoot, 'cli-tools.json'), this.config.agentCommands, manifest.agent).catch(
+        () => {},
+      );
+      throw err;
     } finally {
       // Phase 8: ALWAYS tear down — kill orphan sessions, clean up
       await this.teardown(manifest.taskId, sessionName, runtime);

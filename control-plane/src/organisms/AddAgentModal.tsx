@@ -32,6 +32,10 @@ interface EngineOption {
   models: string[];
   warmSessions: boolean;
   note?: string;
+  /** From the cli-tool registry: false = grayed out in the picker. Absent/true = selectable. */
+  active?: boolean;
+  /** Human reason when inactive ("not logged in — run `codex login`"). */
+  statusDetail?: string;
 }
 
 interface LanguageOption {
@@ -126,7 +130,7 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
       .then((r) => r.json())
       .then((c: Catalog) => {
         setCatalog(c);
-        const first = c.engines?.[0];
+        const first = c.engines?.find((e) => e.active !== false) ?? c.engines?.[0];
         if (first) {
           setEngine(first);
           setModel(first.models[0] ?? "");
@@ -360,8 +364,9 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
                   }}
                 >
                   {(catalog?.engines ?? []).map((e) => (
-                    <option key={e.cli} value={e.cli}>
+                    <option key={e.cli} value={e.cli} disabled={e.active === false}>
                       {e.label}
+                      {e.active === false ? " — unavailable" : ""}
                     </option>
                   ))}
                 </select>
@@ -386,6 +391,11 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
                   {engine.warmSessions
                     ? "Supports warm sessions — this agent can hold context across turns."
                     : (engine.note ?? "Task work and steering only.")}
+                </p>
+              )}
+              {engine?.active === false && (
+                <p className="wizard__error">
+                  {engine.statusDetail ?? "This CLI is unavailable on this machine."} Fix it in Settings → CLI Tools.
                 </p>
               )}
               <label>

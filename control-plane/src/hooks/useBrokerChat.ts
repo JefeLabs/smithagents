@@ -113,6 +113,27 @@ export interface ChannelsRecord {
   voiceChannels: string[];
 }
 
+/** One CLI tool's machine status, as the registry persists it. */
+export interface CliToolStatusRecord {
+  detected: boolean;
+  authOk: boolean | "unknown";
+  enabled: boolean;
+  detail: string;
+  version?: string;
+  lastCheckedAt: string;
+}
+
+/** Catalog engine joined with machine status — drives the CLI Tools settings cards. */
+export interface CliToolListing {
+  cli: string;
+  label: string;
+  models: string[];
+  warmSessions: boolean;
+  note?: string;
+  status: CliToolStatusRecord | null;
+  active: boolean;
+}
+
 const DEFAULT_BASE = "127.0.0.1:7790";
 const RECONNECT_MS = 2000;
 
@@ -421,6 +442,34 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
     [base],
   );
 
+  const listCliTools = useCallback(async (): Promise<CliToolListing[]> => {
+    const res = await fetch(`http://${base}/cli-tools`);
+    return ((await res.json()) as { tools?: CliToolListing[] }).tools ?? [];
+  }, [base]);
+
+  const refreshCliTools = useCallback(
+    async (tool?: string): Promise<CliToolListing[]> => {
+      const res = await fetch(`http://${base}/cli-tools/refresh${tool ? `?tool=${encodeURIComponent(tool)}` : ""}`, {
+        method: "POST",
+      });
+      return ((await res.json()) as { tools?: CliToolListing[] }).tools ?? [];
+    },
+    [base],
+  );
+
+  const setCliToolEnabled = useCallback(
+    async (id: string, enabled: boolean): Promise<CliToolListing[] | { error: string }> => {
+      const res = await fetch(`http://${base}/cli-tools/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
+      const body = (await res.json()) as { tools?: CliToolListing[]; error?: string };
+      return body.error ? { error: body.error } : (body.tools ?? []);
+    },
+    [base],
+  );
+
   const workAction = useCallback(
     async (name: string, action: "steer" | "cancel", message?: string): Promise<string | null> => {
       const res = await fetch(`http://${base}/activity/${encodeURIComponent(name)}/${action}`, {
@@ -497,5 +546,8 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
     updateConnector,
     deleteConnector,
     verifyConnector,
+    listCliTools,
+    refreshCliTools,
+    setCliToolEnabled,
   };
 }

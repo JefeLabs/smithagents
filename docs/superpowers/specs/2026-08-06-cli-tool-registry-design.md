@@ -74,7 +74,8 @@ export interface CliToolsFile {
 }
 
 export function isActive(s: CliToolStatus | undefined): boolean;
-// undefined -> false; else s.detected && s.enabled && s.authOk !== false
+// undefined (never probed) -> true — ignorance never blocks;
+// else s.detected && s.enabled && s.authOk !== false
 ```
 
 The catalog remains `ENGINES` in `personas.ts` — this module is only the
@@ -84,9 +85,10 @@ new `EngineOption` + a new driver; the registry needs no changes.
 `cli-tools.ts` owns: load/save of the status file (corrupt or missing file
 regenerates empty and triggers a sweep), the probe orchestrator (generic
 PATH detection + driver auth probe per tool, with a hard per-probe timeout
-of 10s), the `enabled` toggle, and `isActive`. A probe never throws — any
-probe failure lands as `authOk: false` (or `detected: false`) with the
-error in `detail`.
+of 10s), the `enabled` toggle, and `isActive`. A probe never throws — a
+confirmed negative lands as `authOk: false` (or `detected: false`);
+unrecognizable output or probe errors land as `authOk: 'unknown'`, with the
+reason in `detail`.
 
 ## 2. Driver auth probe
 

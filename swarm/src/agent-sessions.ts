@@ -58,6 +58,9 @@ export interface AgentSessionConfig {
   resolveDriver?: (toolId: string) => ToolDriver | null;
   /** Durable session records. Absent = in-memory only (tests, ephemeral runs). */
   store?: SessionStore;
+  /** CLI-tool registry gate — resolves '' when launchable, else the human
+   *  reason to refuse. Absent = no gating (tests, ephemeral runs). */
+  toolGate?: (cli: string) => Promise<string>;
 }
 
 const DEFAULTS = { readinessTimeoutMs: 30_000, readinessSettleMs: 3_000, turnTimeoutMs: 300_000, pollIntervalMs: 500 };
@@ -86,6 +89,9 @@ export class AgentSessionManager {
     }
     const baseCommand = this.config.agentCommands[agent.engine.cli];
     if (!baseCommand) throw new ToolLaunchError(agent.engine.cli, 'no configured command');
+
+    const gate = await this.config.toolGate?.(agent.engine.cli);
+    if (gate) throw new ToolLaunchError(agent.engine.cli, `subscription-inactive: ${gate}`);
 
     const id = randomUUID();
     const branch = `smith/session-${id}`;

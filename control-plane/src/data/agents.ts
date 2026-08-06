@@ -12,6 +12,8 @@ export interface AgentSeed {
   kind?: "agent" | "squad";
   /** Squad entries: member display names for the edit-mode expansion. */
   members?: string[];
+  /** Set when this agent's engine CLI is confirmed inactive — drives the rail warning badge. */
+  engineWarning?: string;
 }
 
 // Mirrors the personas module: agents are data, never a hardcoded enum.
