@@ -106,7 +106,14 @@ export class Dispatcher extends EventEmitter {
     // confirmed negatives block; a stale 'active' self-corrects below.
     const cliFile = await loadCliToolsFile(join(this.config.smithRoot, 'cli-tools.json'));
     const cliGate = gateReason(cliFile, manifest.agent);
-    if (cliGate) throw new ToolLaunchError(manifest.agent, `subscription-inactive: ${cliGate}`);
+    if (cliGate) {
+      // A blocked attempt is itself a freshness signal: re-probe so a stale
+      // confirmed-negative self-corrects (mirrors the warm-session path).
+      void refreshCliTool(join(this.config.smithRoot, 'cli-tools.json'), this.config.agentCommands, manifest.agent).catch(
+        () => {},
+      );
+      throw new ToolLaunchError(manifest.agent, `subscription-inactive: ${cliGate}`);
+    }
 
     // Resolve once: pairs this user's credentials with the workspace/repo
     // config for this task, feeding prepareWorktree (Atlassian MCP
