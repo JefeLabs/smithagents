@@ -21,7 +21,8 @@ import { dirname, join } from 'node:path';
 import type { RosterState, TurnOrigin, UiRoster } from './broker.ts';
 // Type-only — erased at compile time, so this does NOT violate
 // discord-voice-lifecycle.ts's own lazy-boot gate (nothing voice-specific
-// runtime-loads unless DISCORD_VOICE_CHANNELS is set; see that module's header).
+// runtime-loads unless the active workspace's own Discord config has voice
+// channels configured; see that module's header).
 import type { createDiscordVoiceSurface } from './discord-voice.ts';
 import type { VoicePresence } from './voice-presence.ts';
 import { applyModeChange, decideJoin, surfaceModes, SurfacePolicy } from './surface-modes.ts';
@@ -54,16 +55,19 @@ const directory = new AgentDirectory();
 // roster below; later tasks reuse this same instance for the join endpoint
 // and mode-change enforcement.
 const policy = new SurfacePolicy(() => directory.list());
-// Null until setupDiscordVoice boots (only when DISCORD_VOICE_CHANNELS is
-// set) and assigned there once the real surface/presence exist. The
-// agent-PUT wrapper below closes over these names, so a wrapper built before
-// boot still reaches the live surface/presence once they're assigned.
+// Null until discordWorkspaceSwitcher (below) boots voice for the active
+// workspace's own Discord config, and assigned there once the real
+// surface/presence exist. The agent-PUT wrapper below closes over these
+// names, so a wrapper built before boot still reaches the live
+// surface/presence once they're assigned.
 let voiceSurface: ReturnType<typeof createDiscordVoiceSurface> | null = null;
 let voicePresence: VoicePresence | null = null;
-// workspace-aware as of Task 10: reflects active Discord connection state via
-// discordTextLifecycle.activeDiscordText rather than a global env var.
-// Discord boot itself is workspace-driven as of Task 9 (discordWorkspaceSwitcher,
-// below); this flag is now workspace-aware too.
+// Discord-text's own "is it active" state is NOT held as a local flag here —
+// isDiscordTextActive(discordTextLifecycle), imported above, reads
+// discordTextLifecycle.activeDiscordText directly. Boot itself is
+// workspace-driven (discordWorkspaceSwitcher, below) and can change on every
+// session activation/create, not just once at startup, so there's no single
+// point where a cached flag could be safely assigned.
 
 // Routes external channel (Discord, …) traffic through the same turn the app
 // uses. resolveSpokenLineForChannels/handleUserText are `function`
@@ -595,6 +599,14 @@ const textChannel = new TextChannel(
       }
       const fresh = sessionManager.resetAll(workspaceNames[0] ?? 'default');
       brain.loadHistory(fresh.brainHistory);
+      // Reset can change the active workspace (falls back to workspaceNames[0])
+      // — matches every other place that changes it (create/activate above,
+      // boot-time init below): without this, a reset out of a workspace with
+      // Discord configured would leave that connection live, still routing
+      // into whatever session is now active.
+      void discordWorkspaceSwitcher
+        .switchDiscordForWorkspace(fresh.workspace)
+        .catch((err: unknown) => console.error(`[discord] workspace switch failed after reset: ${String(err)}`));
     }
     await broker.resetComposition();
     textChannel.broadcast(sessionFrame());
@@ -916,6 +928,14 @@ console.log(`[broker] running — polling swarm for open meetings. Text channel 
 // (Task 9) is what actually decides WHEN each fires — once at boot, and again
 // on every session activation/create below, since switching the active
 // session can switch the active workspace.
+// TDZ note: discordTextLifecycle/discordVoiceLifecycle/discordWorkspaceSwitcher
+// below are non-hoisted `const`s assigned AFTER `await textChannel.start()`
+// above, yet closures registered earlier (sessions.activate/create,
+// surfaces.presence/info/join) already reference them — safe only because
+// there's no `await` between textChannel.start() resolving and these three
+// consts being assigned, so no event-loop turn can deliver a request into
+// that window. Keep it that way: an `await` inserted in between would let an
+// early request hit a ReferenceError.
 const discordTextLifecycle = createDiscordTextLifecycle({ hub: adapterHub });
 // setupDiscordVoice's full body (the earAwareGateway reconciliation,
 // presence-driven join/leave, and its teardown closure) lives in

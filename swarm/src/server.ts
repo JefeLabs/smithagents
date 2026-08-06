@@ -1940,5 +1940,15 @@ export function buildUserUpdate(existing: User | null, b: Partial<User>): User {
 export function buildChannelsUpdate(existing: WorkspaceChannels | null, b: Partial<WorkspaceChannels>): WorkspaceChannels {
   if (!b.discord) return existing?.discord ? { discord: existing.discord } : {};
   const botToken = b.discord.botToken?.trim() || existing?.discord?.botToken || '';
-  return { discord: { botToken, textChannels: b.discord.textChannels, voiceChannels: b.discord.voiceChannels } };
+  // Defended the same way buildUserUpdate defends its own optional fields
+  // above: a submission that omits one or both lists entirely (e.g.
+  // {"discord":{"botToken":"x"}}) must fall back rather than persist
+  // `undefined` — broker does an unguarded `config.textChannels.length` /
+  // `config.voiceChannels.length` downstream (discord-text-lifecycle.ts,
+  // discord-workspace-switcher.ts), and an undefined list there throws inside
+  // a `.catch`-swallowed call, so Discord would silently never boot for this
+  // workspace with no visible error.
+  const textChannels = b.discord.textChannels ?? existing?.discord?.textChannels ?? [];
+  const voiceChannels = b.discord.voiceChannels ?? existing?.discord?.voiceChannels ?? [];
+  return { discord: { botToken, textChannels, voiceChannels } };
 }

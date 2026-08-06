@@ -13,6 +13,7 @@ import { buildUserUpdate, buildChannelsUpdate, workspaceProblems } from './serve
 import { saveUser, loadUsersFromDir } from './users.js';
 import type { User } from './users.js';
 import type { Workspace } from './workspaces.js';
+import type { WorkspaceChannels } from './channels.js';
 
 const git = promisify(execFile);
 
@@ -97,6 +98,23 @@ test('buildChannelsUpdate: an empty submitted botToken preserves the existing to
 test('buildChannelsUpdate: no existing token and an empty submitted botToken yields an empty-string token, not a crash', () => {
   const merged = buildChannelsUpdate(null, { discord: { botToken: '', textChannels: ['1'], voiceChannels: [] } });
   assert.deepEqual(merged, { discord: { botToken: '', textChannels: ['1'], voiceChannels: [] } });
+});
+
+test('buildChannelsUpdate: a submission that omits both channel lists (e.g. {"discord":{"botToken":"x"}}) falls back to the existing lists rather than persisting undefined', () => {
+  const existing = { discord: { botToken: 'old-tok', textChannels: ['1'], voiceChannels: ['9'] } };
+  const merged = buildChannelsUpdate(existing, { discord: { botToken: 'new-tok' } } as Partial<WorkspaceChannels>);
+  assert.deepEqual(merged, { discord: { botToken: 'new-tok', textChannels: ['1'], voiceChannels: ['9'] } });
+});
+
+test('buildChannelsUpdate: omitting both lists with no existing config falls back to empty arrays, not undefined', () => {
+  const merged = buildChannelsUpdate(null, { discord: { botToken: 'tok' } } as Partial<WorkspaceChannels>);
+  assert.deepEqual(merged, { discord: { botToken: 'tok', textChannels: [], voiceChannels: [] } });
+});
+
+test('buildChannelsUpdate: omitting only voiceChannels preserves the existing voice list while textChannels updates', () => {
+  const existing = { discord: { botToken: 'tok', textChannels: ['1'], voiceChannels: ['9'] } };
+  const merged = buildChannelsUpdate(existing, { discord: { botToken: 'tok', textChannels: ['2', '3'] } } as Partial<WorkspaceChannels>);
+  assert.deepEqual(merged, { discord: { botToken: 'tok', textChannels: ['2', '3'], voiceChannels: ['9'] } });
 });
 
 test('workspaceProblems: rejects a repo github block missing owner or repo, accepts a complete one', async () => {

@@ -4,7 +4,7 @@
 // Workspace records are git-tracked and can never hold a live secret, so
 // this lives in its own untracked companion file, keyed by the same
 // workspace name (design §"Settled decisions").
-import { readdir, readFile, mkdir, open, rm } from 'node:fs/promises';
+import { readFile, mkdir, open, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export interface WorkspaceChannels {

@@ -461,6 +461,13 @@ test('GET /workspaces/:name/channels is origin-restricted like /me; PUT round-tr
     });
     assert.equal(((await put.json()) as { hasDiscordToken?: boolean }).hasDiscordToken, true);
     assert.deepEqual(calls, ['get acme', 'save acme']);
+
+    const verify = await fetch(`http://127.0.0.1:${port}/workspaces/acme/channels/verify-discord`, {
+      method: 'POST',
+      headers: { Origin: 'http://localhost:1420' },
+    });
+    assert.equal(verify.status, 200);
+    assert.deepEqual(await verify.json(), { ok: true, detail: 'Bot authenticated as crew' });
   } finally {
     await channel.stop();
   }

@@ -29,9 +29,11 @@
  * when `leaveAll()` itself throws — see `bootDiscordVoice`'s own teardown
  * closure for the full reasoning on both.
  *
- * Task 9 wires this into session-activation lifecycle, alongside
- * discord-text-lifecycle.ts's equivalent; today main.ts still boots it once
- * at startup from DISCORD_VOICE_CHANNELS, same as before this extraction.
+ * Task 9 wired this into session-activation lifecycle, alongside
+ * discord-text-lifecycle.ts's equivalent: main.ts's discordWorkspaceSwitcher
+ * now drives bootDiscordVoice/teardownDiscordVoice on every workspace switch
+ * (boot-time init, and again on every session create/activate), sourced from
+ * that workspace's own saved Discord config — not a startup-only env-var boot.
  */
 import { spawnSync } from 'node:child_process';
 import type { SttLike } from './broker.ts';
@@ -131,7 +133,9 @@ export interface DiscordVoiceLifecycle {
   /**
    * Discord voice attends only when `allowlist` names at least one channel
    * and `token` is present — same all-local invariant as the text adapter's
-   * DISCORD_TOKEN gate. Every voice-only module (discord-voice.ts,
+   * own bot-token gate (discord-text-lifecycle.ts's `bootDiscordText`), both
+   * now sourced from the active workspace's saved Discord config rather than
+   * an env var. Every voice-only module (discord-voice.ts,
    * discord-audio.ts, discord.js, @discordjs/voice) is dynamic-imported from
    * inside this function, so an unset/empty token or allowlist means none of
    * it ever loads. Returns null when voice doesn't start (missing ffmpeg,
@@ -189,7 +193,7 @@ export function createDiscordVoiceLifecycle(deps: DiscordVoiceLifecycleDeps): Di
       return null;
     }
     if (!token) {
-      console.error('[discord-voice] DISCORD_VOICE_CHANNELS is set but DISCORD_TOKEN is empty — the ear has no bot identity. Voice disabled.');
+      console.error('[discord-voice] this workspace has voice channels configured but no saved Discord bot token — the ear has no bot identity. Voice disabled.');
       return null;
     }
     const earToken = token;
