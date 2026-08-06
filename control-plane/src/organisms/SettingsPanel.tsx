@@ -1,14 +1,16 @@
 import { ArrowLeft, Blocks, MessageSquare, Palette, Settings as SettingsIcon } from "lucide-react";
 import { useState } from "react";
-import type { ConnectorInstanceRecord, ConnectorVendorMeta } from "../hooks/useBrokerChat";
+import type {
+  ChannelsRecord,
+  ConnectorInstanceRecord,
+  ConnectorVendorMeta,
+  WorkspaceRecord,
+} from "../hooks/useBrokerChat";
 import type { ThemeId } from "../hooks/useTheme";
+import { ChannelsGroup } from "./settings/ChannelsGroup";
 import { GeneralGroup, type ResetScope } from "./settings/GeneralGroup";
 import { IntegrationsGroup } from "./settings/IntegrationsGroup";
 import { ThemesGroup } from "./settings/ThemesGroup";
-// ChannelsGroup: wired in Task 13. Import + render it the same way once that
-// file exists — do not stub with placeholder JSX, this task ends with
-// General/Themes/Integrations fully working and Channels left as the NEXT
-// task's job, not a fake placeholder shipped in between.
 
 export type SettingsGroupId = "general" | "integrations" | "channels" | "themes";
 
@@ -35,6 +37,13 @@ interface SettingsPanelProps {
     id: string,
     extra?: Record<string, string>,
   ) => Promise<{ ok?: boolean; detail?: string; error?: string }>;
+  listWorkspaceRecords?: () => Promise<WorkspaceRecord[]>;
+  getWorkspaceChannels?: (name: string) => Promise<ChannelsRecord>;
+  saveWorkspaceChannels?: (
+    name: string,
+    body: { discord?: { botToken: string; textChannels: string[]; voiceChannels: string[] } },
+  ) => Promise<ChannelsRecord & { error?: string }>;
+  verifyWorkspaceDiscord?: (name: string) => Promise<{ ok?: boolean; detail?: string; error?: string }>;
 }
 
 const GROUPS: Array<{ id: SettingsGroupId; label: string; icon: typeof SettingsIcon }> = [
@@ -58,6 +67,10 @@ export function SettingsPanel({
   updateConnector,
   deleteConnector,
   verifyConnector,
+  listWorkspaceRecords,
+  getWorkspaceChannels,
+  saveWorkspaceChannels,
+  verifyWorkspaceDiscord,
 }: SettingsPanelProps) {
   const [active, setActive] = useState<SettingsGroupId>(initialGroup);
 
@@ -102,7 +115,17 @@ export function SettingsPanel({
           ) : (
             <p className="wizard__hint">Integrations — not wired up yet.</p>
           ))}
-        {active === "channels" && <p className="wizard__hint">Channels — coming in the next task.</p>}
+        {active === "channels" &&
+          (listWorkspaceRecords && getWorkspaceChannels && saveWorkspaceChannels && verifyWorkspaceDiscord ? (
+            <ChannelsGroup
+              listWorkspaces={listWorkspaceRecords}
+              getChannels={getWorkspaceChannels}
+              saveChannels={saveWorkspaceChannels}
+              verifyDiscord={verifyWorkspaceDiscord}
+            />
+          ) : (
+            <p className="wizard__hint">Channels — not wired up yet.</p>
+          ))}
       </div>
     </div>
   );

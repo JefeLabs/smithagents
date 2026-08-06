@@ -1,9 +1,9 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ChannelsManagerModal } from "./ChannelsManagerModal";
+import { ChannelsGroup } from "./ChannelsGroup";
 
-describe("ChannelsManagerModal", () => {
+describe("ChannelsGroup", () => {
   afterEach(() => {
     cleanup();
   });
@@ -13,9 +13,7 @@ describe("ChannelsManagerModal", () => {
     const getChannels = vi.fn(async () => ({ hasDiscordToken: false, textChannels: [], voiceChannels: [] }));
     const saveChannels = vi.fn(async () => ({ hasDiscordToken: true, textChannels: ["111"], voiceChannels: [] }));
     render(
-      <ChannelsManagerModal
-        open
-        onClose={() => {}}
+      <ChannelsGroup
         listWorkspaces={listWorkspaces}
         getChannels={getChannels}
         saveChannels={saveChannels}
@@ -40,9 +38,7 @@ describe("ChannelsManagerModal", () => {
   it("Test connection calls verifyDiscord for the selected workspace and shows the result", async () => {
     const verifyDiscord = vi.fn(async () => ({ ok: true, detail: "Bot authenticated as smithagents-crew" }));
     render(
-      <ChannelsManagerModal
-        open
-        onClose={() => {}}
+      <ChannelsGroup
         listWorkspaces={vi.fn(async () => [{ name: "acme", description: undefined, default: true, repos: [] }])}
         getChannels={vi.fn(async () => ({ hasDiscordToken: true, textChannels: [], voiceChannels: [] }))}
         saveChannels={vi.fn()}

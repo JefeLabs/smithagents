@@ -9,7 +9,6 @@ import { ConfirmSheet } from "../molecules/ConfirmSheet";
 import { AccountPanel } from "../organisms/AccountPanel";
 import { AddAgentModal } from "../organisms/AddAgentModal";
 import { AgentRoster } from "../organisms/AgentRoster";
-import { ChannelsManagerModal } from "../organisms/ChannelsManagerModal";
 import { DotGridCanvas } from "../organisms/DotGridCanvas";
 import { DotGridTuner } from "../organisms/DotGridTuner";
 import { SessionsPanel } from "../organisms/SessionsPanel";
@@ -31,7 +30,6 @@ export function HomePage() {
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [workspacesOpen, setWorkspacesOpen] = useState(false);
-  const [channelsOpen, setChannelsOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   /**
    * Agent slated for removal — the outcome preview drives the confirm sheet's copy.
@@ -73,9 +71,6 @@ export function HomePage() {
     removeWorkspace,
     verifyWorkspaceAtlassian,
     verifyRepoGithub,
-    getWorkspaceChannels,
-    saveWorkspaceChannels,
-    verifyWorkspaceDiscord,
     getMe,
     updateMe,
   } = useBrokerChat({ onAudio: (frame) => audioSink.current(frame) });
@@ -226,7 +221,6 @@ export function HomePage() {
             onActivate={activateSession}
             onCreate={createSession}
             onManage={() => setWorkspacesOpen(true)}
-            onManageChannels={() => setChannelsOpen(true)}
           />
           <WorkspaceManagerModal
             open={workspacesOpen}
@@ -236,14 +230,6 @@ export function HomePage() {
             remove={removeWorkspace}
             verifyAtlassian={verifyWorkspaceAtlassian}
             verifyRepoGithub={verifyRepoGithub}
-          />
-          <ChannelsManagerModal
-            open={channelsOpen}
-            onClose={() => setChannelsOpen(false)}
-            listWorkspaces={listWorkspaceRecords}
-            getChannels={getWorkspaceChannels}
-            saveChannels={saveWorkspaceChannels}
-            verifyDiscord={verifyWorkspaceDiscord}
           />
           <AccountPanel open={accountOpen} onClose={() => setAccountOpen(false)} getMe={getMe} updateMe={updateMe} />
           <DotGridTuner
