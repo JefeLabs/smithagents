@@ -29,3 +29,15 @@ test('optional overrides are honored', () => {
   assert.equal(c.swarm.token, 't');
   assert.equal(c.swarm.repository, 'git@x:y.git');
 });
+
+test('gemini config: absent key -> undefined + default image model', () => {
+  const c = loadBrokerConfig(FULL);
+  assert.equal(c.geminiApiKey, undefined);
+  assert.equal(c.geminiImageModel, 'gemini-2.5-flash-image');
+});
+
+test('gemini config: key and model override are read', () => {
+  const c = loadBrokerConfig({ ...FULL, GEMINI_API_KEY: 'g-key', GEMINI_IMAGE_MODEL: 'imagen-4' });
+  assert.equal(c.geminiApiKey, 'g-key');
+  assert.equal(c.geminiImageModel, 'imagen-4');
+});

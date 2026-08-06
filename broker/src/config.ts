@@ -7,6 +7,9 @@ export interface BrokerConfig {
   swarm: { baseUrl: string; token?: string; repository: string };
   /** Loopback port for the text channel (POST /utterance + WS /events). */
   textPort: number;
+  /** Optional: enables the avatar generator. Absent = feature degrades, presets still work. */
+  geminiApiKey?: string;
+  geminiImageModel: string;
 }
 
 export function loadBrokerConfig(env: Record<string, string | undefined> = process.env): BrokerConfig {
@@ -30,5 +33,7 @@ export function loadBrokerConfig(env: Record<string, string | undefined> = proce
       repository: env.SWARM_REPO || '',
     },
     textPort: env.BROKER_TEXT_PORT ? Number(env.BROKER_TEXT_PORT) : 7790,
+    geminiApiKey: env.GEMINI_API_KEY || undefined,
+    geminiImageModel: env.GEMINI_IMAGE_MODEL || 'gemini-2.5-flash-image',
   };
 }
