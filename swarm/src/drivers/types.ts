@@ -20,6 +20,16 @@ export interface NormalizedMessage {
   stopReason?: string | null;
 }
 
+/**
+ * Injected subprocess runner for auth probes — tests stub it; production is
+ * cli-tools.defaultRunner. Resolves (never rejects) with the exit code
+ * (null when killed/timed out) and captured output.
+ */
+export type CommandRunner = (
+  argv: string[],
+  timeoutMs: number,
+) => Promise<{ code: number | null; stdout: string; stderr: string }>;
+
 export interface ToolDriver {
   /** Matches TaskManifest.agent / ComposedAgent.engine.cli. */
   readonly id: string;
@@ -80,4 +90,18 @@ export interface ToolDriver {
     worktreePath: string,
     atlassian?: { siteUrl: string; jiraProjectKeys?: string[]; confluenceSpaceKeys?: string[] },
   ): Promise<string[]>;
+
+  /**
+   * Auth/subscription probe for the CLI tool registry. Optional: tools with
+   * no reliable non-interactive status command omit it and the registry
+   * records authOk 'unknown' — treated as active, since the gate blocks only
+   * confirmed negatives. Implementations must not throw and must return
+   * ok:false only on a CONFIRMED logged-out signal; anything unrecognizable
+   * is 'unknown'. `binary` is the bare executable (no flags).
+   */
+  verifyAuth?(
+    binary: string,
+    run: CommandRunner,
+    timeoutMs: number,
+  ): Promise<{ ok: boolean | 'unknown'; detail: string }>;
 }

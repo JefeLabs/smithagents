@@ -5,8 +5,11 @@
 // and user-enabled. One untracked JSON file under .smith/ — a machine fact,
 // not a per-user fact, so it does not live on the User record. The gate rule
 // throughout: block only confirmed negatives, never ignorance.
+import { execFile } from 'node:child_process';
 import { mkdir, open, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { getDriver } from './drivers/index.js';
+import type { CommandRunner, ToolDriver } from './drivers/types.js';
 import type { EngineOption } from './personas.js';
 
 export interface CliToolStatus {
@@ -84,4 +87,97 @@ export function buildCliToolListings(engines: EngineOption[], file: CliToolsFile
     status: file.tools[e.cli] ?? null,
     active: isActive(file.tools[e.cli]),
   }));
+}
+
+const AUTH_TIMEOUT_MS = 10_000;
+const VERSION_TIMEOUT_MS = 5_000;
+
+/** Production subprocess runner: resolves with exit code + output, never rejects. */
+export const defaultRunner: CommandRunner = (argv, timeoutMs) =>
+  new Promise((done) => {
+    execFile(argv[0]!, argv.slice(1), { timeout: timeoutMs }, (err, stdout, stderr) => {
+      const code = err
+        ? typeof (err as { code?: unknown }).code === 'number'
+          ? ((err as { code: number }).code)
+          : null // killed by timeout/signal
+        : 0;
+      done({ code, stdout: String(stdout), stderr: String(stderr) });
+    });
+  });
+
+export interface SweepDeps {
+  /** OrchestratorConfig.agentCommands — the binary is the first word. */
+  agentCommands: Record<string, string>;
+  /** Which tools to keep entries for — pass ENGINES.map(e => e.cli). */
+  clis: string[];
+  run?: CommandRunner;
+  resolveDriver?: (id: string) => Pick<ToolDriver, 'verifyAuth'> | null;
+  authTimeoutMs?: number;
+  now?: () => string;
+}
+
+/**
+ * Probe every tool in `deps.clis` (or just `only`) and persist the result.
+ * Detection is generic (`command -v` on the configured binary); the auth
+ * probe is the driver's, absent probe = 'unknown'. Entries for tools outside
+ * this sweep are preserved verbatim; `enabled` always survives re-probes.
+ */
+export async function sweepCliTools(path: string, deps: SweepDeps, only?: string): Promise<CliToolsFile> {
+  const run = deps.run ?? defaultRunner;
+  const resolveDriver = deps.resolveDriver ?? getDriver;
+  const authTimeoutMs = deps.authTimeoutMs ?? AUTH_TIMEOUT_MS;
+  const now = deps.now ?? (() => new Date().toISOString());
+  const file = await loadCliToolsFile(path);
+  const targets = only ? deps.clis.filter((c) => c === only) : deps.clis;
+
+  await Promise.all(
+    targets.map(async (cli) => {
+      const baseCommand = deps.agentCommands[cli] ?? cli;
+      const binary = baseCommand.split(/\s+/)[0]!;
+      const enabled = file.tools[cli]?.enabled ?? true;
+      const entry: CliToolStatus = {
+        detected: false,
+        authOk: 'unknown',
+        enabled,
+        detail: '',
+        lastCheckedAt: now(),
+      };
+      try {
+        const found = await run(['/bin/sh', '-c', `command -v -- ${binary}`], VERSION_TIMEOUT_MS);
+        entry.detected = found.code === 0 && found.stdout.trim().length > 0;
+        if (!entry.detected) {
+          entry.detail = `${binary} not found on PATH`;
+        } else {
+          const ver = await run([binary, '--version'], VERSION_TIMEOUT_MS);
+          if (ver.code === 0 && ver.stdout.trim()) entry.version = ver.stdout.trim().split('\n')[0]!;
+          const probe = resolveDriver(cli)?.verifyAuth;
+          if (probe) {
+            const auth = await probe(binary, run, authTimeoutMs);
+            entry.authOk = auth.ok;
+            entry.detail = auth.detail;
+          } else {
+            entry.authOk = 'unknown';
+            entry.detail = 'no auth probe for this tool';
+          }
+        }
+      } catch (err) {
+        // A probe failure is not a confirmed negative — record it, stay 'unknown'.
+        entry.authOk = 'unknown';
+        entry.detail = `probe failed: ${String((err as Error).message ?? err)}`;
+      }
+      file.tools[cli] = entry;
+    }),
+  );
+
+  await saveCliToolsFile(path, file);
+  return file;
+}
+
+/** One-tool sweep with production deps — the launch-failure self-correction hook. */
+export async function refreshCliTool(
+  path: string,
+  agentCommands: Record<string, string>,
+  cli: string,
+): Promise<void> {
+  await sweepCliTools(path, { agentCommands, clis: [cli] }, cli);
 }
