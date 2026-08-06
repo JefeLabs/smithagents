@@ -1,6 +1,7 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { WorkspaceRecord } from "../hooks/useBrokerChat";
 import { NewWorkspaceModal } from "./NewWorkspaceModal";
 
 const CONNECTORS = [
@@ -130,7 +131,7 @@ describe("NewWorkspaceModal", () => {
   });
 
   it("existing-repo mode never sends initGit", async () => {
-    const save = vi.fn(async () => ({ name: "acme" }));
+    const save = vi.fn(async (_ws: WorkspaceRecord, _isNew: boolean) => ({ name: "acme" }));
     render(<NewWorkspaceModal {...props({ save })} />);
     await fillOneValidRepo();
     await userEvent.click(screen.getByRole("button", { name: /create workspace/i }));
