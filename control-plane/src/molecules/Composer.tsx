@@ -100,6 +100,7 @@ export function Composer({
                 onPointerUp={endHold}
                 onPointerLeave={endHold}
                 onPointerCancel={endHold}
+                onBlur={endHold}
                 onKeyDown={(e) => {
                   if ((e.key === " " || e.key === "Enter") && !e.repeat) {
                     e.preventDefault();
@@ -118,6 +119,7 @@ export function Composer({
                 title="Always listening"
                 aria-label="Always listening"
                 aria-pressed={micLive}
+                disabled={holding}
                 onClick={onMicToggle}
               >
                 <AudioLines strokeWidth={1.7} />

@@ -116,4 +116,27 @@ describe("Composer", () => {
     fireEvent.pointerUp(hold);
     expect(onMicToggle).not.toHaveBeenCalled();
   });
+
+  it("always-listening toggle is disabled while holding", () => {
+    const onMicToggle = vi.fn();
+    render(<Composer onSend={() => {}} micLive={false} onMicToggle={onMicToggle} />);
+    const hold = screen.getByRole("button", { name: "Hold to talk" });
+    const alwaysListening = screen.getByRole("button", { name: "Always listening" }) as HTMLButtonElement;
+    fireEvent.pointerDown(hold);
+    expect(alwaysListening.disabled).toBe(true);
+    fireEvent.pointerUp(hold);
+    expect(alwaysListening.disabled).toBe(false);
+  });
+
+  it("blur while holding releases the hold", () => {
+    const onMicToggle = vi.fn();
+    render(<Composer onSend={() => {}} micLive={false} onMicToggle={onMicToggle} />);
+    const hold = screen.getByRole("button", { name: "Hold to talk" });
+    fireEvent.pointerDown(hold);
+    expect(onMicToggle).toHaveBeenCalledTimes(1);
+    fireEvent.blur(hold);
+    expect(onMicToggle).toHaveBeenCalledTimes(2);
+    fireEvent.pointerUp(hold);
+    expect(onMicToggle).toHaveBeenCalledTimes(2);
+  });
 });
