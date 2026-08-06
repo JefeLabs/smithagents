@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { TmuxRuntime } from './runtime.js';
+import { TmuxRuntime, createRuntime } from './runtime.js';
+import { WorkerPool } from './remote-runtime.js';
 
 test('TmuxRuntime.launch: env vars are exported inside the wrapped command, not interpolated into it', async () => {
   const runtime = new TmuxRuntime();
@@ -19,4 +20,10 @@ test('TmuxRuntime.launch: env vars are exported inside the wrapped command, not 
     await runtime.kill(sessionName).catch(() => {});
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test('createRuntime: remote without a WorkerPool throws; with one, returns the RemoteRuntime adapter', () => {
+  assert.throws(() => createRuntime('remote'), /WorkerPool is required/);
+  const adapter = createRuntime('remote', undefined, new WorkerPool());
+  assert.equal(adapter.constructor.name, 'RemoteRuntime');
 });

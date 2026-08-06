@@ -28,6 +28,7 @@ import type {
 import type { RuntimeAdapter } from './runtime.js';
 import { getDriver } from './drivers/index.js';
 import { createRuntime } from './runtime.js';
+import type { WorkerPool } from './remote-runtime.js';
 import { QuarantineManager } from './quarantine.js';
 import { loadWorkspacesFromDir } from './workspaces.js';
 import { loadUsersFromDir, resolveCurrentUser } from './users.js';
@@ -66,10 +67,12 @@ import { loadUsersFromDir, resolveCurrentUser } from './users.js';
 export class Dispatcher extends EventEmitter {
   private readonly config: OrchestratorConfig;
   private readonly quarantine: QuarantineManager;
+  private readonly workerPool?: WorkerPool;
 
-  constructor(config: OrchestratorConfig) {
+  constructor(config: OrchestratorConfig, workerPool?: WorkerPool) {
     super();
     this.config = config;
+    this.workerPool = workerPool;
     this.quarantine = new QuarantineManager(config.logsDir);
   }
 
@@ -84,9 +87,10 @@ export class Dispatcher extends EventEmitter {
    * spawned dozens of sub-agents internally — we don't care. We only
    * care about the final exit code.
    *
-   * The runtime (tmux or docker) is resolved from:
-   *   1. manifest.runtime (if specified)
-   *   2. config.defaultRuntime (fallback)
+   * The runtime is resolved from:
+   *   1. manifest.runtime
+   *   2. the task's workspace's own runtime
+   *   3. config.defaultRuntime
    *
    * @param manifest - The task to dispatch
    * @returns TaskResult with outcome and metadata
@@ -96,15 +100,19 @@ export class Dispatcher extends EventEmitter {
     const startedAt = new Date().toISOString();
     const startMs = Date.now();
 
-    // Resolve the runtime for this task
-    const runtimeType: RuntimeType =
-      manifest.runtime ?? this.config.defaultRuntime;
-    const runtime = createRuntime(runtimeType, this.config.docker);
-
     // Resolve once: pairs this user's credentials with the workspace/repo
-    // config for this task, feeding both prepareWorktree (Atlassian MCP
-    // materialization) and runtime.launch (env injection) below.
+    // config for this task, feeding prepareWorktree (Atlassian MCP
+    // materialization), runtime.launch (env injection), and the runtime
+    // choice itself (workspace.runtime, design §3) below.
     const connections = await this.resolveConnections(manifest);
+
+    // Per-task override wins, then the task's workspace's own runtime, then
+    // the server-wide default. API-created tasks arrive already resolved
+    // (resolveTaskRuntime at POST /tasks); this chain covers directly-
+    // constructed manifests.
+    const runtimeType: RuntimeType =
+      manifest.runtime ?? connections.workspaceRuntime ?? this.config.defaultRuntime;
+    const runtime = createRuntime(runtimeType, this.config.docker, this.workerPool);
 
     let worktreePath = '';
 
@@ -191,6 +199,7 @@ export class Dispatcher extends EventEmitter {
   ): Promise<{
     atlassian?: { siteUrl: string; jiraProjectKeys?: string[]; confluenceSpaceKeys?: string[] };
     env: Record<string, string>;
+    workspaceRuntime?: RuntimeType;
   }> {
     const env: Record<string, string> = {};
     if (!manifest.context.repoPath) return { env };
@@ -225,7 +234,7 @@ export class Dispatcher extends EventEmitter {
     if (githubConnector?.fields.token) {
       env.GH_TOKEN = githubConnector.fields.token;
     }
-    return { atlassian, env };
+    return { atlassian, env, workspaceRuntime: workspace.runtime };
   }
 
   /**

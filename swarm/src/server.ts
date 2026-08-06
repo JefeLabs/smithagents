@@ -30,6 +30,8 @@ import {
   type TaskManifest,
   type TaskResult,
   type DispatcherEvent,
+  type RuntimeType,
+  type LocationType,
 } from './index.js';
 import { WorkerPool } from './remote-runtime.js';
 import {
@@ -170,7 +172,7 @@ export class OrchestratorServer {
     this.config = { ...DEFAULT_SERVER_CONFIG, ...config };
     this.apiToken = process.env.SMITH_API_TOKEN?.trim() || null;
     this.orchConfig = loadConfig(this.config.orchestrator);
-    this.dispatcher = new Dispatcher(this.orchConfig);
+    this.dispatcher = new Dispatcher(this.orchConfig, this.workerPool);
     this.quarantine = new QuarantineManager(this.orchConfig.logsDir);
 
     // Create Fastify instance
@@ -406,13 +408,14 @@ export class OrchestratorServer {
 
       const taskId = randomUUID();
       const agentName = server.namePool.claim(taskId);
+      const resolvedRuntime = resolveTaskRuntime(body.runtime, resolved?.workspace, server.orchConfig.defaultRuntime);
       const manifest: TaskManifest = {
         taskId,
         prompt: body.prompt,
         agentName: agentName ?? undefined,
         agent: body.agent,
-        runtime: body.runtime ?? server.orchConfig.defaultRuntime,
-        location: body.location ?? (body.runtime === 'docker' ? 'docker' : 'local'),
+        runtime: resolvedRuntime.runtime,
+        location: body.location ?? resolvedRuntime.location,
         context: {
           ...body.context,
           workspace: resolved?.workspace.name,
@@ -1743,7 +1746,7 @@ export class OrchestratorServer {
     const runtimeType = manifest.runtime ?? this.orchConfig.defaultRuntime;
     const agentName = (manifest.agentName as AgentName | undefined) ?? this.namePool.getNameForTask(manifest.taskId) ?? null;
     const sessionName = agentName?.toLowerCase() ?? `task-${manifest.taskId}`;
-    const runtime = createRuntime(runtimeType, this.orchConfig.docker);
+    const runtime = createRuntime(runtimeType, this.orchConfig.docker, this.workerPool);
 
     const task: ActiveTask = {
       manifest,
@@ -1987,6 +1990,21 @@ export async function gitInitRequestedRepos(
     }
   }
   return null;
+}
+
+/**
+ * Creation-time runtime resolution (design §3): per-task override wins, then
+ * the resolved workspace's own runtime, then the server default. Resolved
+ * here — not only at dispatch — because this route bakes the result into
+ * manifest.runtime, which dispatchTask and the dashboard both read.
+ */
+export function resolveTaskRuntime(
+  requested: RuntimeType | undefined,
+  workspace: Pick<Workspace, 'runtime'> | undefined,
+  defaultRuntime: RuntimeType,
+): { runtime: RuntimeType; location: LocationType } {
+  const runtime = requested ?? workspace?.runtime ?? defaultRuntime;
+  return { runtime, location: runtime === 'docker' ? 'docker' : runtime === 'remote' ? 'remote' : 'local' };
 }
 
 /**

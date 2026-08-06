@@ -28,8 +28,9 @@ export type AgentType = 'agy' | 'claude' | 'codex' | 'opencode' | 'copilot';
  * Execution runtime for task sessions.
  *   'tmux'   — Bare-metal tmux sessions on the host (default)
  *   'docker' — Docker containers with tmux running inside
+ *   'remote' — Dispatched to a connected worker machine via WorkerPool
  */
-export type RuntimeType = 'tmux' | 'docker';
+export type RuntimeType = 'tmux' | 'docker' | 'remote';
 
 /**
  * Where the agent runs.

@@ -13,9 +13,11 @@
 
 import { execFile } from 'node:child_process';
 import { readFile, unlink, mkdir, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { DockerConfig } from './types.js';
+import type { DockerConfig, RuntimeType } from './types.js';
+import type { WorkerPool } from './remote-runtime.js';
 
 // ---------------------------------------------------------------------------
 // RuntimeAdapter Interface
@@ -515,25 +517,16 @@ export class DockerRuntime implements RuntimeAdapter {
 // ---------------------------------------------------------------------------
 
 /**
- * Create the appropriate RuntimeAdapter based on the requested runtime type.
+ * Create the appropriate RuntimeAdapter for the requested runtime type.
  *
- * @param runtime - 'tmux' for bare-metal, 'docker' for containerised
+ * @param runtime - 'tmux' bare-metal, 'docker' containerised, 'remote' via a worker machine
  * @param dockerConfig - Required when runtime is 'docker'
- * @returns A RuntimeAdapter implementation
+ * @param workerPool - Required when runtime is 'remote'
  */
 export function createRuntime(
-  runtime: 'tmux' | 'docker',
+  runtime: RuntimeType,
   dockerConfig?: DockerConfig,
-): RuntimeAdapter;
-export function createRuntime(
-  runtime: 'remote',
-  dockerConfig: undefined,
-  workerPool: import('./remote-runtime.js').WorkerPool,
-): RuntimeAdapter;
-export function createRuntime(
-  runtime: 'tmux' | 'docker' | 'remote',
-  dockerConfig?: DockerConfig,
-  workerPool?: import('./remote-runtime.js').WorkerPool,
+  workerPool?: WorkerPool,
 ): RuntimeAdapter {
   switch (runtime) {
     case 'tmux':
@@ -555,7 +548,10 @@ export function createRuntime(
           'The server must have a WorkerPool with connected workers.',
         );
       }
-      const { RemoteRuntime } = require('./remote-runtime.js') as typeof import('./remote-runtime.js');
+      // Lazy + require (not a top-level import) to avoid a runtime circular
+      // import; createRequire is the ESM-legal way to do that synchronously
+      // since this package has no global `require`.
+      const { RemoteRuntime } = createRequire(import.meta.url)('./remote-runtime.js') as typeof import('./remote-runtime.js');
       return new RemoteRuntime(workerPool);
     }
 

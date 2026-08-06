@@ -18,6 +18,7 @@ import {
   resolveConnector,
   workspaceProblems,
   gitInitRequestedRepos,
+  resolveTaskRuntime,
 } from './server.js';
 import { saveUser, loadUsersFromDir } from './users.js';
 import type { ConnectorInstance, User } from './users.js';
@@ -298,4 +299,11 @@ test('gitInitRequestedRepos: inits only flagged non-repo paths, leaves existing 
   assert.equal(await isGitRepo(existing), true);
   const missing = join(fresh, 'no-such-dir', 'deeper');
   assert.match((await gitInitRequestedRepos([{ name: 'x', path: missing, initGit: true }]))!, /git init failed/);
+});
+
+test('resolveTaskRuntime: per-task override wins, then workspace runtime, then server default — location mirrors the pick', () => {
+  assert.deepEqual(resolveTaskRuntime('docker', { runtime: 'remote' }, 'tmux'), { runtime: 'docker', location: 'docker' });
+  assert.deepEqual(resolveTaskRuntime(undefined, { runtime: 'remote' }, 'tmux'), { runtime: 'remote', location: 'remote' });
+  assert.deepEqual(resolveTaskRuntime(undefined, { runtime: undefined }, 'docker'), { runtime: 'docker', location: 'docker' });
+  assert.deepEqual(resolveTaskRuntime(undefined, undefined, 'tmux'), { runtime: 'tmux', location: 'local' });
 });
