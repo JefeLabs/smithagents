@@ -1,5 +1,5 @@
 import { ArrowUp, AudioLines, ChevronDown, Plus, Volume2, VolumeX } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 interface ComposerProps {
   onSend: (text: string) => void;
@@ -21,12 +21,16 @@ export function Composer({
   onSoundToggle,
 }: ComposerProps) {
   const [draft, setDraft] = useState("");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const submit = () => {
     const text = draft.trim();
     if (!text || disabled) return;
     onSend(text);
     setDraft("");
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+    }
   };
 
   return (
@@ -38,6 +42,7 @@ export function Composer({
       }}
     >
       <textarea
+        ref={textareaRef}
         rows={1}
         placeholder={disabled ? "Broker offline — start the broker to chat…" : "Type a request…"}
         aria-label="Type a request"
