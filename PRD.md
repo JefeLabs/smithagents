@@ -32,6 +32,15 @@ sessions, never a restructure.
   `directives` (the work prompt prepended to delegated tasks), `persona.style`
   (meeting character), `voice.voiceId` (ElevenLabs) + `voice.speech` (fallback
   profile). Registry agents are the only *delegable* units.
+* **Host identity (broker)** — the broker's own data-driven persona
+  (`broker/.smith/identity.json`; shipped default **Anderson** — Agent
+  Smith's name for Neo). The host, never crew: no `engine`, no `channels`,
+  never in the swarm registry or the delegable roster (structurally — he
+  rides the roster frame as a separate `identity` field). He owns the
+  session-open greeting, roster/status/meta answers, system-action
+  announcements, and voice-driven agent creation; the prompt-enforced
+  **deference rule** (if a specialist plausibly owns it, they answer, not
+  him) is what keeps the product a council rather than one Jarvis.
 * **Squad** — a working unit rendered as one circle. Swarm squads
   (alpha/beta/gamma; 4 members with G/F/O/S initial-coded roles:
   leader/architect/senior/developer) are execution config; user-formed squads
@@ -77,7 +86,9 @@ sessions, never a restructure.
 ## 4. Interaction Model
 
 1. **Meet:** type or hold push-to-talk. The brain voices the crew per
-   etiquette; replies stream as text and per-agent audio.
+   etiquette; replies stream as text and per-agent audio. A new session opens
+   with a roster-aware greeting from Anderson, the host — who's idle, who's
+   deep in what.
 2. **Compose:** long-press the roster to arrange the org — form squads, add
    or free members. Composition is conversation-layer for swarm squads
    (execution rosters stay fixed config) and fully real for user squads.
@@ -145,6 +156,25 @@ playback batches TTS chunks into
 continuous per-mouth segments (closing on an idle gap or a persona switch)
 behind a bounded per-segment backlog, so a stalled consumer can't
 accumulate unbounded PCM in memory.
+
+Added 2026-08-06 (broker identity): the broker has a face — **Anderson**, a
+data-driven host persona (`broker/.smith/identity.json`; the name is config,
+not code). The brain's blanket narrator ban became a scoped one: `Anderson:`
+is a legal speaker owning greetings, roster/status answers, and system
+announcements, with deference to specialists prompt-enforced and task
+completions still announced by the agent who did the work. New sessions get
+a one-time roster-aware spoken greeting. **Voice-driven agent creation**
+shipped confirm-first: "Anderson, create an architect agent" → `draft_agent`
+generates a full persona through the wizard's own generator, Anderson
+pitches it aloud, and only an explicit yes triggers `confirm_agent`, which
+persists through the wizard's create path (voice-cache warm, roster
+refresh). He is addressable ("Hey Anderson" lights his ring), renders as a
+tile above — not inside — the crew grid, and speaks with his own cast
+ElevenLabs voice. Verified live same day, which also surfaced and fixed a
+real playback bug: the webview's autoplay policy could suspend the
+AudioContext and silently wedge the audio queue forever — frames now hold
+until the context runs, any click/keypress resumes it, and a visible pill
+replaces the silence.
 
 ## 6. Roadmap / Open Items
 
@@ -217,11 +247,13 @@ editor loop plays to someone else's strength.
   is the upgrade path if the corpus outgrows it; agents in task worktrees
   cannot read it yet — injecting a memory CLI like `smith-delegate` is the
   obvious next step.
-* **Voices:** upgrade the ElevenLabs plan so the picked Latin library voices
-  replace premade stand-ins (automatic — the fallback only fires on the 402).
-  The same plan gate blocks pre-caching of a new agent's reaction lines, and
-  catalog browsing additionally needs the key's `voices_read` permission.
-  Remaining uncast: Fabian, Osvaldo, Fernando, Orlando, Sebastian.
+* **Voices:** plan upgraded 2026-07-28 — library voices synthesize for real
+  (verified 2026-08-06: Anderson's cast library voice returns audio, no 402).
+  Still open: the API key lacks the `voices_read` permission, so in-app
+  catalog browsing is blocked (synthesis and previews work; audition happens
+  via `/voices/preview`). Remaining uncast: Fabian, Osvaldo, Fernando,
+  Orlando, Sebastian — and any agent created by voice lands on the fallback
+  voice until cast in the wizard.
 * **Voice meetings:** LiveKit path exists (room bridge, meeting polling,
   per-agent meeting TTS) but the in-app meeting UX (join/leave, who's
   speaking) is unbuilt.
@@ -233,8 +265,12 @@ editor loop plays to someone else's strength.
   in the work view (it currently rides the task result and the spoken note).
 * **Agent creation (shipped, with room):** the wizard covers stereotype, job
   role, engine/model, voice, reactions and quick answers, with one-call AI
-  generation; existing agents can be edited or removed from the roster's edit
-  mode, with the broker choosing archive-vs-delete from real evidence. Open:
+  generation; voice-driven creation through Anderson ships confirm-first
+  (2026-08-06) with engine fixed to claude/claude-opus and the fallback
+  voice until cast. Existing agents can be edited or removed from the
+  roster's edit mode, with the broker choosing archive-vs-delete from real
+  evidence. Anderson's own persona text is a first draft awaiting Edwin's
+  authorial pass (`broker/.smith/identity.json`). Open:
   generated personas are never previewed aloud before the voice cache is
   warmed. Removal's transcript evidence (`transcriptMentions`) matches
   speaker prefixes by the agent's current display name, and transcript lines
