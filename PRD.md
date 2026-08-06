@@ -121,8 +121,12 @@ per-agent webhook identity, allowlisted channels. Origin is turn-scoped in the
 broker (`onTurnStart`/`onTurnEnd`), so a channel-sourced turn's speech can
 only ever route back to the channel that asked for it, never leak across
 turns or into a meeting. Designation is per agent (`channels` in
-`swarm/.smith/agents/*.json`); Ignacio and Wilkin both carry `"discord"`
-alongside `"tauri"`.
+`swarm/.smith/agents/*.json`); Ignacio and Wilkin both carry `"discord"`.
+Updated 2026-08-06: the tauri app is NOT a designated surface — it is the
+management console, so every agent (freestanding or in a swarm) always
+appears in its roster; `channels` modes and join/admission apply to external
+surfaces (Discord text/voice) only, and a lingering `"tauri"` key is parsed
+away.
 
 Added 2026-07-29: Discord voice — the crew joins allowlisted voice channels
 as real members. Bot-per-agent presence: each `discord-voice`-designated

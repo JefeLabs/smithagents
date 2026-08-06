@@ -43,8 +43,8 @@
     "pet_peeve": "Three ways to do the same thing in one codebase. That is not flexibility, that is negligence with good manners.",
     "motto": "Structure is destiny. Everything else is decoration, and decoration never woke anybody up at three a.m."
   },
-  "channels": [
-    "tauri",
-    "discord"
-  ]
+  "channels": {
+    "discord": "autojoin",
+    "discord-voice": "disabled"
+  }
 }
