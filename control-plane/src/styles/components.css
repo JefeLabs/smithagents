@@ -678,7 +678,7 @@
   flex-direction: column;
   gap: 6px;
   padding: 4px 2px;
-  scrollbar-width: thin;
+  scrollbar-width: none;
 }
 .transcript .msg {
   max-width: 82%;
@@ -704,6 +704,10 @@
   color: var(--accent);
   font-weight: 600;
   margin-right: 2px;
+}
+
+.transcript::-webkit-scrollbar {
+  display: none;
 }
 
 .composer {
@@ -2048,4 +2052,42 @@
 }
 .nw-repo-row input:nth-of-type(2) {
   flex: 2 1 220px;
+}
+
+/* Chat state: full-height transcript column with a top fade instead of a hard clip. */
+main.chat-active {
+  gap: 16px;
+}
+.chat-log {
+  flex: 1;
+  min-height: 0;
+  width: min(760px, 92%);
+  display: flex;
+  flex-direction: column;
+}
+.chat-log .transcript {
+  flex: 1;
+  max-height: none;
+  width: 100%;
+  padding-top: 56px;
+  mask-image: linear-gradient(to bottom, transparent 0, #000 56px);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 56px);
+}
+.composer-dock {
+  width: min(560px, 90%);
+  display: flex;
+  justify-content: center;
+}
+.composer-dock .composer {
+  width: 100%;
+}
+main.chat-active .composer-dock {
+  width: min(680px, 92%);
+  padding-bottom: 8px;
+}
+.hero-intro {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 30px;
 }
