@@ -86,6 +86,7 @@ import {
   inactiveDetail,
   isActive,
   loadCliToolsFile,
+  refreshCliTool,
   saveCliToolsFile,
   sweepCliTools,
   type SweepDeps,
@@ -224,6 +225,7 @@ export class OrchestratorServer {
         agentCommands: this.orchConfig.agentCommands,
         worktreeDir: this.orchConfig.worktreeDir,
         store: new SessionStore(resolve(process.cwd(), '.smith/sessions')),
+        toolGate: async (cli) => gateReason(await loadCliToolsFile(resolve(process.cwd(), '.smith/cli-tools.json')), cli),
       });
       const summary = await manager.reconcile(hashes);
       this.agentSessions = manager;
@@ -909,6 +911,9 @@ export class OrchestratorServer {
       if (b.engine?.cli && !findEngine(b.engine.cli)) {
         return reply.status(400).send({ error: `Unknown CLI: ${b.engine.cli}` });
       }
+      const requestedCli = b.engine?.cli ?? 'claude'; // must gate the default too
+      const cliGate = gateReason(await loadCliToolsFile(resolve(process.cwd(), '.smith/cli-tools.json')), requestedCli);
+      if (cliGate) return reply.status(400).send({ error: `${requestedCli} is not available: ${cliGate}` });
       if (b.language && !findLanguage(b.language)) {
         return reply.status(400).send({ error: `Unknown language: ${b.language}` });
       }
@@ -1010,6 +1015,10 @@ export class OrchestratorServer {
       if (b.engine?.cli && !findEngine(b.engine.cli)) {
         return reply.status(400).send({ error: `Unknown CLI: ${b.engine.cli}` });
       }
+      if (b.engine?.cli && b.engine.cli !== existing.engine.cli) {
+        const cliGate = gateReason(await loadCliToolsFile(resolve(process.cwd(), '.smith/cli-tools.json')), b.engine.cli);
+        if (cliGate) return reply.status(400).send({ error: `${b.engine.cli} is not available: ${cliGate}` });
+      }
       if (b.language && !findLanguage(b.language)) {
         return reply.status(400).send({ error: `Unknown language: ${b.language}` });
       }
@@ -1076,6 +1085,7 @@ export class OrchestratorServer {
         agentCommands: server.orchConfig.agentCommands,
         worktreeDir: server.orchConfig.worktreeDir,
         store: new SessionStore(resolve(process.cwd(), '.smith/sessions')),
+        toolGate: async (cli) => gateReason(await loadCliToolsFile(resolve(process.cwd(), '.smith/cli-tools.json')), cli),
       });
       return server.agentSessions;
     };
@@ -1107,6 +1117,15 @@ export class OrchestratorServer {
         const info = await sessionManager().create(agent, raw, repoRoot, baseBranch);
         return reply.status(201).send(info);
       } catch (err) {
+        if ((err as { code?: string }).code === 'tool_launch_failed') {
+          // Self-correction (spec: on-failure re-probe): a launch failure is
+          // the freshest signal — refresh just this tool, fire-and-forget.
+          void refreshCliTool(
+            resolve(process.cwd(), '.smith/cli-tools.json'),
+            server.orchConfig.agentCommands,
+            agent.engine.cli,
+          ).catch(() => {});
+        }
         return reply.status(sessionErrorStatus(err)).send({ error: String((err as Error).message) });
       }
     });

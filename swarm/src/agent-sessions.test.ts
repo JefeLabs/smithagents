@@ -244,3 +244,21 @@ test('reconcile: a live warm session with no record is reported, never silently 
   assert.equal(await runtime.exists(orphan), true, 'an unexplained live process is left for a human to inspect');
   await runtime.kill(orphan);
 });
+
+test('create() refuses when toolGate reports a reason — before any worktree or tmux work', async () => {
+  const gated = new AgentSessionManager(runtime, {
+    agentCommands: { claude: 'true' },
+    worktreeDir: '.smith/worktrees',
+    resolveDriver: () => new FakeDriver(),
+    toolGate: async () => 'not logged in — run `claude /login`',
+  });
+  await assert.rejects(
+    // repoRoot is deliberately bogus: the gate must fire before git touches it.
+    () => gated.create(AGENT, JSON.stringify(AGENT), '/nonexistent-repo-root', 'main'),
+    (err: unknown) => {
+      assert.ok(err instanceof ToolLaunchError);
+      assert.match((err as Error).message, /subscription-inactive: not logged in/);
+      return true;
+    },
+  );
+});
