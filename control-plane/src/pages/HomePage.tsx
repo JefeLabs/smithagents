@@ -78,7 +78,6 @@ export function HomePage() {
     verifyWorkspaceDiscord,
     getMe,
     updateMe,
-    verifyGithubToken,
   } = useBrokerChat({ onAudio: (frame) => audioSink.current(frame) });
   const { soundOn, toggleSound, playAudioFrame } = useSpokenReplies(messages, roster, !audioMode);
   audioSink.current = (frame) => void playAudioFrame(frame);
@@ -246,13 +245,7 @@ export function HomePage() {
             saveChannels={saveWorkspaceChannels}
             verifyDiscord={verifyWorkspaceDiscord}
           />
-          <AccountPanel
-            open={accountOpen}
-            onClose={() => setAccountOpen(false)}
-            getMe={getMe}
-            updateMe={updateMe}
-            verifyGithubToken={verifyGithubToken}
-          />
+          <AccountPanel open={accountOpen} onClose={() => setAccountOpen(false)} getMe={getMe} updateMe={updateMe} />
           <DotGridTuner
             open={tunerOpen}
             params={gridParams}

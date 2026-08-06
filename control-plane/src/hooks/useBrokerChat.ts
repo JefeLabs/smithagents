@@ -50,23 +50,49 @@ export interface SessionSummary {
   active: boolean;
 }
 
+export interface ConnectorFieldDef {
+  key: string;
+  label: string;
+  secret: boolean;
+  type?: "text" | "select";
+  options?: { value: string; label: string }[];
+}
+
+export interface ConnectorVendorMeta {
+  id: string;
+  label: string;
+  description: string;
+  fields: ConnectorFieldDef[];
+  verifyExtraFields: ConnectorFieldDef[];
+}
+
+export interface ConnectorInstanceRecord {
+  id: string;
+  vendorId: string;
+  label: string;
+  fields: Record<string, string | boolean>;
+}
+
 /** Full workspace record, as the manager UI reads and writes it. */
 export interface WorkspaceRecord {
   name: string;
   description?: string;
   default: boolean;
   archived?: boolean;
-  repos: Array<{ name: string; path: string; branch: string; github?: { owner: string; repo: string } }>;
-  atlassian?: { siteUrl: string; jiraProjectKeys?: string[]; confluenceSpaceKeys?: string[] };
+  repos: Array<{
+    name: string;
+    path: string;
+    branch: string;
+    github?: { owner: string; repo: string; connectorId?: string };
+  }>;
+  atlassian?: { siteUrl: string; jiraProjectKeys?: string[]; confluenceSpaceKeys?: string[]; connectorId?: string };
 }
 
-/** The operator's own profile — credentials read back as booleans, never the secret itself. */
+/** The operator's own profile — connector credentials read back redacted, never the secret itself. */
 export interface MeRecord {
   id: string;
   name: string;
-  hasAtlassianToken: boolean;
-  hasGithubToken: boolean;
-  atlassianEmail?: string;
+  connectors: ConnectorInstanceRecord[];
 }
 
 /** Per-workspace channel config — Discord token read back as a boolean, never the secret itself. */
@@ -310,11 +336,7 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
   }, [base]);
 
   const updateMe = useCallback(
-    async (body: {
-      name?: string;
-      atlassian?: { email: string; apiToken: string };
-      github?: { token: string };
-    }): Promise<MeRecord & { error?: string }> => {
+    async (body: { name?: string }): Promise<MeRecord & { error?: string }> => {
       const res = await fetch(`http://${base}/me`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
@@ -325,10 +347,66 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
     [base],
   );
 
-  const verifyGithubToken = useCallback(async (): Promise<{ ok?: boolean; detail?: string; error?: string }> => {
-    const res = await fetch(`http://${base}/me/verify-github`, { method: "POST" });
-    return (await res.json()) as { ok?: boolean; detail?: string; error?: string };
+  const listConnectorVendors = useCallback(async (): Promise<ConnectorVendorMeta[]> => {
+    const res = await fetch(`http://${base}/connectors/vendors`);
+    return (await res.json()) as ConnectorVendorMeta[];
   }, [base]);
+
+  const listMyConnectors = useCallback(async (): Promise<ConnectorInstanceRecord[]> => {
+    const res = await fetch(`http://${base}/me/connectors`);
+    return (await res.json()) as ConnectorInstanceRecord[];
+  }, [base]);
+
+  const addConnector = useCallback(
+    async (body: {
+      vendorId: string;
+      label: string;
+      fields: Record<string, string>;
+    }): Promise<ConnectorInstanceRecord & { error?: string }> => {
+      const res = await fetch(`http://${base}/me/connectors`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      return (await res.json()) as ConnectorInstanceRecord & { error?: string };
+    },
+    [base],
+  );
+
+  const updateConnector = useCallback(
+    async (
+      id: string,
+      body: { label?: string; fields?: Record<string, string> },
+    ): Promise<ConnectorInstanceRecord & { error?: string }> => {
+      const res = await fetch(`http://${base}/me/connectors/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      return (await res.json()) as ConnectorInstanceRecord & { error?: string };
+    },
+    [base],
+  );
+
+  const deleteConnector = useCallback(
+    async (id: string): Promise<{ ok?: boolean; error?: string }> => {
+      const res = await fetch(`http://${base}/me/connectors/${encodeURIComponent(id)}`, { method: "DELETE" });
+      return (await res.json()) as { ok?: boolean; error?: string };
+    },
+    [base],
+  );
+
+  const verifyConnector = useCallback(
+    async (id: string, extra?: Record<string, string>): Promise<{ ok?: boolean; detail?: string; error?: string }> => {
+      const res = await fetch(`http://${base}/me/connectors/${encodeURIComponent(id)}/verify`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ extra }),
+      });
+      return (await res.json()) as { ok?: boolean; detail?: string; error?: string };
+    },
+    [base],
+  );
 
   const workAction = useCallback(
     async (name: string, action: "steer" | "cancel", message?: string): Promise<string | null> => {
@@ -399,6 +477,11 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
     verifyWorkspaceDiscord,
     getMe,
     updateMe,
-    verifyGithubToken,
+    listConnectorVendors,
+    listMyConnectors,
+    addConnector,
+    updateConnector,
+    deleteConnector,
+    verifyConnector,
   };
 }

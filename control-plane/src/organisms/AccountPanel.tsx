@@ -7,35 +7,26 @@ interface AccountPanelProps {
   open: boolean;
   onClose: () => void;
   getMe: () => Promise<MeRecord>;
-  updateMe: (body: {
-    name?: string;
-    atlassian?: { email: string; apiToken: string };
-    github?: { token: string };
-  }) => Promise<MeRecord & { error?: string }>;
-  verifyGithubToken: () => Promise<{ ok?: boolean; detail?: string; error?: string }>;
+  updateMe: (body: { name?: string }) => Promise<MeRecord & { error?: string }>;
+  verifyGithubToken?: () => Promise<{ ok?: boolean; detail?: string; error?: string }>;
 }
 
 /** Your own credentials — not workspace config. Site URLs and project/space keys live on the workspace form instead. */
-export function AccountPanel({ open, onClose, getMe, updateMe, verifyGithubToken }: AccountPanelProps) {
-  const [me, setMe] = useState<MeRecord | null>(null);
+export function AccountPanel({ open, onClose, getMe, updateMe }: AccountPanelProps) {
   const [name, setName] = useState("");
   const [atlassianEmail, setAtlassianEmail] = useState("");
   const [atlassianToken, setAtlassianToken] = useState("");
   const [githubToken, setGithubToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [testResult, setTestResult] = useState<{ ok: boolean; detail: string } | null>(null);
-  const [testing, setTesting] = useState(false);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: only re-fetch when the panel opens
   useEffect(() => {
     if (!open) return;
     setError(null);
-    setTestResult(null);
     void getMe().then((record) => {
-      setMe(record);
       setName(record.name);
-      setAtlassianEmail(record.atlassianEmail ?? "");
+      setAtlassianEmail("");
       setAtlassianToken("");
       setGithubToken("");
     });
@@ -48,24 +39,14 @@ export function AccountPanel({ open, onClose, getMe, updateMe, verifyGithubToken
     setError(null);
     const result = await updateMe({
       name,
-      atlassian: atlassianToken.trim() ? { email: atlassianEmail.trim(), apiToken: atlassianToken.trim() } : undefined,
-      github: githubToken.trim() ? { token: githubToken.trim() } : undefined,
     }).catch((err: unknown): { error?: string } => ({ error: String(err) }));
     setBusy(false);
     if ("error" in result && result.error) {
       setError(result.error);
       return;
     }
-    setMe(result as MeRecord);
     setAtlassianToken("");
     setGithubToken("");
-  };
-
-  const testGithub = async () => {
-    setTesting(true);
-    const r = await verifyGithubToken();
-    setTesting(false);
-    setTestResult({ ok: Boolean(r.ok), detail: r.detail ?? r.error ?? "unknown" });
   };
 
   const onScrimClick = (e: MouseEvent<HTMLDivElement>) => {
@@ -95,32 +76,29 @@ export function AccountPanel({ open, onClose, getMe, updateMe, verifyGithubToken
             <input value={name} onChange={(e) => setName(e.target.value)} />
           </label>
 
-          <span className="wizard__hint">Atlassian {me?.hasAtlassianToken ? "token saved" : "— not connected"}</span>
+          <span className="wizard__hint">Atlassian — credentials managed in Integrations</span>
           <input
+            disabled
             value={atlassianEmail}
             onChange={(e) => setAtlassianEmail(e.target.value)}
             placeholder="Atlassian account email"
           />
           <input
+            disabled
             type="password"
             value={atlassianToken}
             onChange={(e) => setAtlassianToken(e.target.value)}
             placeholder="Atlassian API token"
           />
 
-          <span className="wizard__hint">GitHub {me?.hasGithubToken ? "— token saved" : "— not connected"}</span>
+          <span className="wizard__hint">GitHub — credentials managed in Integrations</span>
           <input
+            disabled
             type="password"
             value={githubToken}
             onChange={(e) => setGithubToken(e.target.value)}
             placeholder="GitHub personal access token"
           />
-          {me?.hasGithubToken && (
-            <button type="button" className="settings-btn" onClick={() => void testGithub()} disabled={testing}>
-              {testing ? "testing…" : "Test connection"}
-            </button>
-          )}
-          {testResult && <p className={testResult.ok ? "wizard__hint" : "wizard__error"}>{testResult.detail}</p>}
 
           {error && <p className="wizard__error">{error}</p>}
 
