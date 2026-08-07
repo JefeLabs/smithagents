@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { type AgentSeed, ringForIndex } from "../data/agents";
-import { type AudioFrame, useBrokerChat } from "../hooks/useBrokerChat";
+import { type AudioFrame, useBrokerChat, type VoiceSettingsRecord } from "../hooks/useBrokerChat";
 import { useCliToolHealth } from "../hooks/useCliToolHealth";
 import { GRID_DEFAULTS, type GridParams } from "../hooks/useDotGrid";
 import { usePushToTalk } from "../hooks/usePushToTalk";
 import { useSpokenReplies } from "../hooks/useSpokenReplies";
 import { useTheme } from "../hooks/useTheme";
+import { useVoiceStatus } from "../hooks/useVoiceStatus";
 import { ConfirmSheet } from "../molecules/ConfirmSheet";
 import { IdentityTile } from "../molecules/IdentityTile";
 import { AddAgentModal } from "../organisms/AddAgentModal";
@@ -102,6 +103,24 @@ export function HomePage() {
     end: () => micControl("mic-stop"),
   });
   const { warnings: engineWarnings, refresh: refreshEngineWarnings } = useCliToolHealth();
+
+  const { voice } = useVoiceStatus();
+  const [voicePrefs, setVoicePrefs] = useState<VoiceSettingsRecord | null>(null);
+  // Load voice prefs on mount and again whenever Settings closes — hideInactive may have
+  // changed while the panel was open.
+  useEffect(() => {
+    if (!settingsOpen)
+      void getVoiceSettings()
+        .then(setVoicePrefs)
+        .catch(() => setVoicePrefs(null));
+  }, [settingsOpen, getVoiceSettings]);
+
+  const hideMic = Boolean(voicePrefs?.hideInactive) && !voice.stt;
+  const [voiceNotice, setVoiceNotice] = useState<string | null>(null);
+  const onVoiceBlocked = () => {
+    setVoiceNotice("Add a Deepgram key in Settings → Integrations, then select it under Settings → Voice.");
+    setTimeout(() => setVoiceNotice(null), 6000);
+  };
 
   const agents: AgentSeed[] = [
     ...roster.map((a, i) => ({
@@ -203,6 +222,10 @@ export function HomePage() {
             onSend={send}
             soundOn={soundOn}
             onSoundToggle={toggleSound}
+            sttEnabled={voice.stt}
+            onVoiceBlocked={onVoiceBlocked}
+            showMicHero={!hideMic}
+            voiceNotice={voiceNotice}
           />
         )
       }

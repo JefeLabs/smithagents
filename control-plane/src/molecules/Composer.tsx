@@ -10,6 +10,9 @@ interface ComposerProps {
   /** TTS output state; the toggle renders only when onSoundToggle is wired. */
   soundOn?: boolean;
   onSoundToggle?: () => void;
+  /** STT capability gate (spec §3) — false dims the mic buttons and reroutes presses to onVoiceBlocked. */
+  sttEnabled?: boolean;
+  onVoiceBlocked?: () => void;
 }
 
 export function Composer({
@@ -19,12 +22,18 @@ export function Composer({
   onMicToggle,
   soundOn = false,
   onSoundToggle,
+  sttEnabled = true,
+  onVoiceBlocked,
 }: ComposerProps) {
   const [draft, setDraft] = useState("");
   const [holding, setHolding] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const startHold = () => {
+    if (!sttEnabled) {
+      onVoiceBlocked?.();
+      return;
+    }
     if (micLive || holding || !onMicToggle) return;
     setHolding(true);
     onMicToggle();
@@ -92,7 +101,7 @@ export function Composer({
             <>
               <button
                 type="button"
-                className={holding ? "voice-toggle live" : "voice-toggle"}
+                className={(holding ? "voice-toggle live" : "voice-toggle") + (sttEnabled ? "" : " is-voice-disabled")}
                 title="Hold to talk"
                 aria-label="Hold to talk"
                 aria-pressed={holding}
@@ -115,12 +124,12 @@ export function Composer({
               </button>
               <button
                 type="button"
-                className={micLive ? "voice-toggle live" : "voice-toggle"}
+                className={(micLive ? "voice-toggle live" : "voice-toggle") + (sttEnabled ? "" : " is-voice-disabled")}
                 title="Always listening"
                 aria-label="Always listening"
                 aria-pressed={micLive}
                 disabled={holding}
-                onClick={onMicToggle}
+                onClick={sttEnabled ? onMicToggle : () => onVoiceBlocked?.()}
               >
                 <AudioLines strokeWidth={1.7} />
               </button>

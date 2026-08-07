@@ -179,6 +179,7 @@ export function SettingsPanel({
             <IntegrationsGroup
               listVendors={listConnectorVendors}
               listConnectors={listMyConnectors}
+              getVoice={getVoiceSettings}
               addConnector={addConnector}
               updateConnector={updateConnector}
               deleteConnector={deleteConnector}

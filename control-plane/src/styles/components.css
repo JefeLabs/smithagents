@@ -916,6 +916,11 @@
   opacity: 0.4;
   cursor: default;
 }
+/* STT unavailable (spec §3) — dims the hold-to-talk/always-listening/mic-hero buttons; a
+   press still fires onVoiceBlocked instead of doing nothing. */
+.is-voice-disabled {
+  opacity: 0.5;
+}
 
 /* tiny hidden tuner (press g) */
 .tuner {

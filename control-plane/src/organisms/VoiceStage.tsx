@@ -12,6 +12,13 @@ interface VoiceStageProps {
   onSend: (text: string) => void;
   soundOn: boolean;
   onSoundToggle: () => void;
+  /** STT capability gate (spec §3) — false dims the mic controls and reroutes presses to onVoiceBlocked. */
+  sttEnabled?: boolean;
+  onVoiceBlocked?: () => void;
+  /** Hide-inactive (spec §3): false hides the mic hero and drops the composer's mic buttons entirely. */
+  showMicHero?: boolean;
+  /** Transient hint (e.g. the blocked-press notice) shown above the composer. */
+  voiceNotice?: string | null;
 }
 
 export function VoiceStage({
@@ -22,6 +29,10 @@ export function VoiceStage({
   onSend,
   soundOn,
   onSoundToggle,
+  sttEnabled = true,
+  onVoiceBlocked,
+  showMicHero = true,
+  voiceNotice = null,
 }: VoiceStageProps) {
   const chatActive = messages.length > 0;
   const reduceMotion = useReducedMotion();
@@ -42,7 +53,9 @@ export function VoiceStage({
             <h1 className="greeting">
               The mic is yours, <em>Edwin</em>
             </h1>
-            <MicHero live={micLive} onToggle={onMicToggle} />
+            {showMicHero && (
+              <MicHero live={micLive} onToggle={onMicToggle} sttEnabled={sttEnabled} onVoiceBlocked={onVoiceBlocked} />
+            )}
           </motion.div>
         )}
         {chatActive && (
@@ -58,14 +71,17 @@ export function VoiceStage({
           </motion.div>
         )}
       </AnimatePresence>
+      {voiceNotice && <p className="transcript__notice">{voiceNotice}</p>}
       <motion.div layout className="composer-dock" transition={spring}>
         <Composer
           onSend={onSend}
           disabled={!brokerConnected}
           micLive={micLive}
-          onMicToggle={onMicToggle}
+          onMicToggle={showMicHero ? onMicToggle : undefined}
           soundOn={soundOn}
           onSoundToggle={onSoundToggle}
+          sttEnabled={sttEnabled}
+          onVoiceBlocked={onVoiceBlocked}
         />
       </motion.div>
     </main>

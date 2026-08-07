@@ -1,11 +1,13 @@
 import { X } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { ConnectorInstanceRecord, ConnectorVendorMeta } from "../../hooks/useBrokerChat";
+import type { ConnectorInstanceRecord, ConnectorVendorMeta, VoiceSettingsRecord } from "../../hooks/useBrokerChat";
 import { ConnectorFormModal } from "./ConnectorFormModal";
 
 interface IntegrationsGroupProps {
   listVendors: () => Promise<ConnectorVendorMeta[]>;
   listConnectors: () => Promise<ConnectorInstanceRecord[]>;
+  /** When set, deleting an instance wired into Settings → Voice warns before it goes. */
+  getVoice?: () => Promise<VoiceSettingsRecord>;
   // useBrokerChat's real addConnector/updateConnector resolve the full saved record (plus an
   // optional error), not just `{ error? }` — typed as Partial here so this component can drop
   // the saved instance straight into local state and avoid depending on a subsequent
@@ -30,6 +32,7 @@ interface IntegrationsGroupProps {
 export function IntegrationsGroup({
   listVendors,
   listConnectors,
+  getVoice,
   addConnector,
   updateConnector,
   deleteConnector,
@@ -85,6 +88,16 @@ export function IntegrationsGroup({
   };
 
   const handleRemove = async (id: string) => {
+    if (getVoice) {
+      const v = await getVoice().catch(() => null);
+      const uses = [
+        v?.stt?.instanceId === id && "speech-to-text",
+        v?.tts?.instanceId === id && "text-to-speech",
+      ].filter(Boolean);
+      if (uses.length > 0 && !window.confirm(`Deleting this key also turns off ${uses.join(" and ")}. Continue?`)) {
+        return;
+      }
+    }
     const result = await deleteConnector(id);
     if (result.error) {
       setRemoveError(result.error);

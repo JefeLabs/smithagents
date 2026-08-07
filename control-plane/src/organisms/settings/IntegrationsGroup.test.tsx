@@ -152,6 +152,77 @@ describe("IntegrationsGroup", () => {
     expect(screen.getByText("personal")).toBeDefined();
   });
 
+  it("deleting an instance wired into Settings → Voice warns before it goes, and proceeds on confirm", async () => {
+    const deleteConnector = vi.fn(async () => ({ ok: true }));
+    const getVoice = vi.fn(async () => ({ stt: { instanceId: "c1" }, tts: null, hideInactive: false }));
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(
+      <IntegrationsGroup
+        listVendors={vi.fn(async () => VENDORS)}
+        listConnectors={vi.fn(async () => [
+          { id: "c1", vendorId: "github", label: "personal", fields: { hasToken: true } },
+        ])}
+        getVoice={getVoice}
+        addConnector={vi.fn()}
+        updateConnector={vi.fn()}
+        deleteConnector={deleteConnector}
+        verifyConnector={vi.fn()}
+      />,
+    );
+    await userEvent.click(await screen.findByRole("button", { name: /remove personal/i }));
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("speech-to-text"));
+    await waitFor(() => expect(deleteConnector).toHaveBeenCalledWith("c1"));
+    await waitFor(() => expect(screen.queryByText("personal")).toBeNull());
+    confirmSpy.mockRestore();
+  });
+
+  it("cancelling the delete-confirm leaves the instance in place and never calls deleteConnector", async () => {
+    const deleteConnector = vi.fn(async () => ({ ok: true }));
+    const getVoice = vi.fn(async () => ({ stt: { instanceId: "c1" }, tts: null, hideInactive: false }));
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(
+      <IntegrationsGroup
+        listVendors={vi.fn(async () => VENDORS)}
+        listConnectors={vi.fn(async () => [
+          { id: "c1", vendorId: "github", label: "personal", fields: { hasToken: true } },
+        ])}
+        getVoice={getVoice}
+        addConnector={vi.fn()}
+        updateConnector={vi.fn()}
+        deleteConnector={deleteConnector}
+        verifyConnector={vi.fn()}
+      />,
+    );
+    await userEvent.click(await screen.findByRole("button", { name: /remove personal/i }));
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(deleteConnector).not.toHaveBeenCalled();
+    expect(screen.getByText("personal")).toBeDefined();
+    confirmSpy.mockRestore();
+  });
+
+  it("deleting an instance not referenced by voice skips the confirm entirely", async () => {
+    const deleteConnector = vi.fn(async () => ({ ok: true }));
+    const getVoice = vi.fn(async () => ({ stt: null, tts: null, hideInactive: false }));
+    const confirmSpy = vi.spyOn(window, "confirm");
+    render(
+      <IntegrationsGroup
+        listVendors={vi.fn(async () => VENDORS)}
+        listConnectors={vi.fn(async () => [
+          { id: "c1", vendorId: "github", label: "personal", fields: { hasToken: true } },
+        ])}
+        getVoice={getVoice}
+        addConnector={vi.fn()}
+        updateConnector={vi.fn()}
+        deleteConnector={deleteConnector}
+        verifyConnector={vi.fn()}
+      />,
+    );
+    await userEvent.click(await screen.findByRole("button", { name: /remove personal/i }));
+    expect(confirmSpy).not.toHaveBeenCalled();
+    await waitFor(() => expect(deleteConnector).toHaveBeenCalledWith("c1"));
+    confirmSpy.mockRestore();
+  });
+
   it("a connector with only one of two declared secret fields present shows 'not connected', not a false-positive 'connected'", async () => {
     const DATADOG_TWO_SECRETS = {
       id: "datadog",
