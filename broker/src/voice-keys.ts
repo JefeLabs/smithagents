@@ -21,11 +21,18 @@ export class VoiceKeyResolver {
   ) {}
 
   private refresh(): Promise<void> {
-    this.inflight ??= this.swarm.getVoiceKeys().then((keys) => {
-      if (keys) this.cached = keys; // null = unreachable → keep last good
-      this.fetchedAt = this.now();
-      this.inflight = null;
-    });
+    this.inflight ??= this.swarm
+      .getVoiceKeys()
+      .then((keys) => {
+        if (keys) this.cached = keys; // null = unreachable → keep last good
+      })
+      .catch(() => {
+        // rejection (network/swarm crash) → keep last-good cache, same as null
+      })
+      .finally(() => {
+        this.fetchedAt = this.now();
+        this.inflight = null;
+      });
     return this.inflight;
   }
 

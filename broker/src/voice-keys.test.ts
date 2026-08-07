@@ -55,3 +55,57 @@ test('statusSync returns the cached snapshot without awaiting', async () => {
   await r.status(); // warm
   assert.deepEqual(r.statusSync(), { stt: true, tts: true });
 });
+
+test('concurrent calls while stale deduplicate (single refresh)', async () => {
+  let now = 0;
+  const swarm = makeSwarm([KEYS]);
+  const r = new VoiceKeyResolver(swarm.client, () => now);
+
+  // Warm the cache
+  await r.sttKey();
+  assert.equal(swarm.calls(), 1);
+
+  // Advance past TTL
+  now = VOICE_KEYS_TTL_MS + 1;
+
+  // Multiple overlapping calls while stale: should deduplicate to one refresh
+  const [stt1, tts1, stt2] = await Promise.all([r.sttKey(), r.ttsKey(), r.sttKey()]);
+  assert.equal(stt1, 'dg');
+  assert.equal(tts1, 'el');
+  assert.equal(stt2, 'dg');
+  assert.equal(swarm.calls(), 2); // exactly one refresh despite three awaits
+});
+
+test('swarm rejection keeps last-good cache and allows retry', async () => {
+  let now = 0;
+  let callCount = 0;
+  const r = new VoiceKeyResolver(
+    {
+      getVoiceKeys: async () => {
+        callCount++;
+        if (callCount === 1) return KEYS; // warm the cache
+        if (callCount === 2) throw new Error('swarm crashed'); // rejection
+        return KEYS; // recovery
+      },
+    },
+    () => now,
+  );
+
+  // Warm with good keys
+  assert.equal(await r.sttKey(), 'dg');
+  assert.equal(callCount, 1);
+
+  // Advance past TTL
+  now = VOICE_KEYS_TTL_MS + 1;
+
+  // Refresh hits rejection: should keep last-good, not throw
+  assert.equal(await r.sttKey(), 'dg');
+  assert.equal(callCount, 2);
+
+  // Advance past TTL again
+  now = VOICE_KEYS_TTL_MS * 2 + 1;
+
+  // Next TTL window retries and succeeds
+  assert.equal(await r.sttKey(), 'dg');
+  assert.equal(callCount, 3);
+});
