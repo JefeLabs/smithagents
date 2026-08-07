@@ -74,21 +74,6 @@ test('resolveConnections: missing workspace atlassian config or missing user cre
   assert.equal(resolved.env.GH_TOKEN, undefined);
 });
 
-test('resolveConnections: surfaces the matched workspace runtime; unmatched or unset stays undefined', async () => {
-  const { root, repoPath } = await fixture();
-  const dispatcher = new Dispatcher({} as OrchestratorConfig);
-  const unset = await dispatcher.resolveConnections({ context: { repoPath } } as TaskManifest, root);
-  assert.equal(unset.workspaceRuntime, undefined);
-  await writeFile(
-    join(root, '.smith/workspaces/acme.json'),
-    JSON.stringify({ name: 'acme', repos: [{ name: 'web', path: repoPath }], runtime: 'docker' }),
-  );
-  const pinned = await dispatcher.resolveConnections({ context: { repoPath } } as TaskManifest, root);
-  assert.equal(pinned.workspaceRuntime, 'docker');
-  const nowhere = await dispatcher.resolveConnections({ context: { repoPath: '/nope' } } as TaskManifest, root);
-  assert.equal(nowhere.workspaceRuntime, undefined);
-});
-
 test('resolveConnections: resolves Atlassian env vars through workspace.atlassian.connectorId, not "any atlassian connector the user has"', async () => {
   const root = await mkdtemp(join(tmpdir(), 'dispatch-conn-'));
   await mkdir(join(root, '.smith/workspaces'), { recursive: true });

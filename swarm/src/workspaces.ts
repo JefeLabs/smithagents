@@ -33,8 +33,8 @@ export interface Workspace {
     confluenceSpaceKeys?: string[];
     connectorId?: string;
   };
-  /** Execution environment for this workspace's tasks. Unset = server's defaultRuntime (today's behavior, unchanged). */
-  runtime?: 'tmux' | 'docker' | 'remote';
+  /** Default-context links every session in this workspace inherits (spec 2026-08-07). */
+  links?: string[];
 }
 
 function assertWorkspace(file: string, v: unknown): Workspace {

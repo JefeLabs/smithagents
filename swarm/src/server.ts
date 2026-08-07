@@ -525,7 +525,7 @@ export class OrchestratorServer {
 
       const taskId = randomUUID();
       const agentName = server.namePool.claim(taskId);
-      const resolvedRuntime = resolveTaskRuntime(body.runtime, resolved?.workspace, server.orchConfig.defaultRuntime);
+      const resolvedRuntime = resolveTaskRuntime(body.runtime, server.orchConfig.defaultRuntime);
       const manifest: TaskManifest = {
         taskId,
         prompt: body.prompt,
@@ -1421,7 +1421,7 @@ export class OrchestratorServer {
         })),
         default: Boolean(b.default) || activeWorkspaces(all).length === 0,
         atlassian: b.atlassian,
-        runtime: b.runtime,
+        links: sanitizeLinks(b.links),
       };
       try {
         if (ws.default) for (const other of all.filter((w) => w.default)) await saveWorkspace(dir, { ...other, default: undefined });
@@ -1448,7 +1448,7 @@ export class OrchestratorServer {
         default: b.default ?? existing.default,
         archived: b.archived === false ? undefined : existing.archived,
         atlassian: b.atlassian !== undefined ? b.atlassian : existing.atlassian,
-        runtime: b.runtime !== undefined ? b.runtime : existing.runtime,
+        links: b.links !== undefined ? sanitizeLinks(b.links) : existing.links,
       };
       if (merged.default && merged.archived) {
         return reply.status(409).send({ error: `"${existing.name}" is archived — un-archive it before making it the default` });
@@ -1522,7 +1522,7 @@ export class OrchestratorServer {
           archived: Boolean(w.archived),
           repos: w.repos.map((r) => ({ name: r.name, path: r.path, repository: r.repository, branch: r.branch ?? 'main', github: r.github })),
           atlassian: w.atlassian,
-          runtime: w.runtime,
+          links: w.links,
         })),
       };
     });
@@ -2626,18 +2626,20 @@ export async function gitInitRequestedRepos(
 }
 
 /**
- * Creation-time runtime resolution (design §3): per-task override wins, then
- * the resolved workspace's own runtime, then the server default. Resolved
- * here — not only at dispatch — because this route bakes the result into
- * manifest.runtime, which dispatchTask and the dashboard both read.
+ * Creation-time runtime resolution (design §3): per-task override wins, else
+ * the server default — workspace-level runtime was removed by spec
+ * 2026-08-07. Resolved here — not only at dispatch — because this route
+ * bakes the result into manifest.runtime, which dispatchTask and the
+ * dashboard both read.
  */
 export function resolveTaskRuntime(
   requested: RuntimeType | undefined,
-  workspace: Pick<Workspace, 'runtime'> | undefined,
   defaultRuntime: RuntimeType,
 ): { runtime: RuntimeType; location: LocationType } {
-  const runtime = requested ?? workspace?.runtime ?? defaultRuntime;
-  return { runtime, location: runtime === 'docker' ? 'docker' : runtime === 'remote' ? 'remote' : 'local' };
+  const runtime = requested ?? defaultRuntime;
+  const location: LocationType =
+    runtime === 'docker' ? 'docker' : runtime.startsWith('remote') ? 'remote' : 'local';
+  return { runtime, location };
 }
 
 /**
@@ -2656,8 +2658,8 @@ export async function workspaceProblems(b: Partial<Workspace>): Promise<string |
     if (!r.path || !isAbsolute(r.path)) return `Repo "${r.name}": path must be absolute`;
     if (!(await isGitRepo(r.path))) return `Repo "${r.name}": ${r.path} is not a git repository`;
   }
-  if (b.runtime !== undefined && !['tmux', 'docker', 'remote'].includes(b.runtime)) {
-    return `runtime must be one of tmux, docker, remote — got "${b.runtime}"`;
+  if (b.links !== undefined && (!Array.isArray(b.links) || b.links.some((l) => typeof l !== 'string'))) {
+    return 'links must be an array of strings';
   }
   if (b.atlassian && !b.atlassian.siteUrl?.trim()) {
     return 'Atlassian: site URL is required';
@@ -2668,6 +2670,13 @@ export async function workspaceProblems(b: Partial<Workspace>): Promise<string |
     }
   }
   return null;
+}
+
+/** Trim, drop empties/non-strings; undefined when nothing survives. */
+function sanitizeLinks(links: unknown): string[] | undefined {
+  if (!Array.isArray(links)) return undefined;
+  const clean = links.filter((l): l is string => typeof l === 'string').map((l) => l.trim()).filter(Boolean);
+  return clean.length ? clean : undefined;
 }
 
 /**
