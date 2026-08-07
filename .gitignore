@@ -48,14 +48,8 @@ __pycache__/
 # --- Claude Code local (per-user) settings ---
 .claude/settings.local.json
 
-# Swarm runtime state is ignored, but the seed composed-agents are committed.
-swarm/.smith/*
-!swarm/.smith/agents/
-!swarm/.smith/agents/*.json
-!swarm/.smith/workspaces/
-!swarm/.smith/workspaces/*.json
-!swarm/.smith/squads/
-!swarm/.smith/squads/*.json
+# Swarm runtime state — user crew/workspaces/squads live only on the machine, never in git.
+swarm/.smith/
 
 # Verification screenshots — local working artifacts, not source.
 .screenshots/
