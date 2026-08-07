@@ -145,7 +145,10 @@ export function applyStoryToggles(
   if (incoming.length !== canonical.length) {
     throw new Error(`Story count mismatch (${incoming.length} sent, ${canonical.length} in the slice) — add/remove stories in the map, cards are toggle-only`);
   }
+  const seen = new Set<string>();
   for (const sent of incoming) {
+    if (seen.has(sent.id)) throw new Error(`Duplicate story id ${sent.id} — toggle-only, each story appears once`);
+    seen.add(sent.id);
     const story = canonical.find((s) => s.id === sent.id);
     if (!story) throw new Error(`Unknown or missing story ${sent.id} — cards are toggle-only`);
     if (sent.text !== story.text) throw new Error(`Story ${sent.id} text changed — toggle-only; edit text in the map`);

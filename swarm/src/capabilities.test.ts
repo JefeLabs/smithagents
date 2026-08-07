@@ -61,6 +61,10 @@ test('applyStoryToggles: toggles apply to the capability; text/count drift throw
   assert.throws(() => applyStoryToggles(cap, 'sl1', [{ id: 's1', text: 'REWRITTEN', done: true }]), /toggle-only|text/i);
   assert.throws(() => applyStoryToggles(cap, 'sl1', [{ id: 's1', text: 'create tour time slots', done: true }]), /count|missing/i);
   assert.throws(() => applyStoryToggles(cap, 'ghost', []), /slice/i);
+  assert.throws(() => applyStoryToggles(cap, 'sl1', [
+    { id: 's1', text: 'create tour time slots', done: true },
+    { id: 's1', text: 'create tour time slots', done: false },
+  ]), /duplicate|toggle-only/i);
 });
 
 test('renderSpecSkeleton: title, date, draft status, one checkbox per story', () => {
