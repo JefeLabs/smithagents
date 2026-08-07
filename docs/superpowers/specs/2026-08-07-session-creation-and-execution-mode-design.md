@@ -47,9 +47,12 @@ actually available on this machine right now.
   legacy "any worker" alias.
 - **Lazy creation everywhere.** The new-session screen is pure composer
   state; the session record is born on the first send. Voice/Discord follow
-  the same rule: an inbound utterance with no active session creates one
-  (default workspace, `local-in-process`, titled from the utterance).
-  Broker `init()` no longer fabricates "Session 1".
+  the same rule: an inbound utterance with no active session creates one —
+  local voice in the **default workspace**, Discord in the **workspace whose
+  Discord config is currently attended** (attendance is per-workspace via
+  `switchDiscordForWorkspace`, so the arriving message already implies its
+  workspace) — `local-in-process`, titled from the utterance. Broker
+  `init()` no longer fabricates "Session 1".
 - **Naming: truncate now, brain retitles once.** Title at creation = the
   cleaned first ~40 chars of the initial prompt. After the first broker
   reply, one background brain call generates a short title and renames the
@@ -173,6 +176,24 @@ runs. `createRuntime()` maps `remote-tmux`/`remote-docker` to a
 `RemoteRuntime` that passes the corresponding kind; bare `'remote'` passes
 none. All other pool operations address sessions by name exactly as today.
 
+## 4b. Zero-session broker state
+
+Removing init()'s auto-create makes "no sessions at all" a legal, durable
+broker state that today's code never sees:
+
+- `SessionManager.activeId` may be empty; every session-assuming read path
+  (transcript append targets, brain history swap, `GET /sessions` active
+  flag) must tolerate it.
+- The text-channel hello/session frame gains an explicit
+  no-active-session representation (`session: null` alongside the existing
+  shape). This is a frame-shape change: **both lockstep parsers update
+  together**, same discipline as `RETIRED_SURFACES`.
+- At init with zero sessions, Discord attends the **default workspace's**
+  Discord config (instead of following a nonexistent active session), so
+  the crew stays reachable after a restart; the first inbound message
+  lazy-creates a session there, and attendance then follows the active
+  session exactly as today.
+
 ## 5. Error handling
 
 - **Mode vanishes between render and send** (worker deregistered, Docker
@@ -190,8 +211,10 @@ none. All other pool operations address sessions by name exactly as today.
 
 - **Broker** (`sessions.test.ts` + brain/channel tests): atomic
   create-with-prompt; truncation titling; retitle-exactly-once; legacy
-  fallback; voice/Discord lazy create; init() no longer auto-creates;
-  workspace description+links injection.
+  fallback; voice lazy-create in default workspace; Discord lazy-create in
+  the attended workspace; init() no longer auto-creates; zero-session
+  hello frame round-trips through both lockstep parsers; workspace
+  description+links injection.
 - **Swarm:** dispatch resolution without the workspace clause; pool kind
   filtering (routes to advertising worker; clear error when none);
   `createRuntime` mapping for both new types.
@@ -209,5 +232,8 @@ none. All other pool operations address sessions by name exactly as today.
   changes of any kind.
 - Removing the legacy `'remote'` runtime alias.
 - Manual session rename UI.
+- Warm agent CLI sessions (`swarm/src/agent-sessions.ts`, `smith-warm-*`) —
+  untouched by session execution mode; the sessions ≡ active-agents
+  invariant and PRD assignment remain their own future spec.
 - Additional container providers beyond Docker (the Containers group is
   shaped for them, not populated).
