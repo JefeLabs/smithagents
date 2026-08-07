@@ -73,6 +73,33 @@ Keys) read as one group.
   **Workspace** (Integrations, Channels). Headings are non-interactive
   labels; one idiom, no orphan tabs.
 
+## Acceptance criteria (user stories)
+
+Each line is verified twice: by the automated suites mapped in Testing,
+and as a `docs/MANUAL-TESTING.md` entry when the feature ships.
+
+1. Opening Settings shows three labeled sections — App, Agents,
+   Workspace — with CLI Tools and API Keys under Agents.
+2. The API Keys page shows a card per provider (Anthropic, OpenAI,
+   Google) even before any key exists.
+3. Pasting a key saves and verifies it in one step; the card shows
+   `valid` / `needs valid key` / `unverified` — never the key itself,
+   only `•••• last4`.
+4. A rejected key (provider 401/403) reads `needs valid key` with the
+   provider's reason; a network failure reads `unverified` — a flaky
+   network never marks a key bad.
+5. Re-verify and remove work per card; removal is immediate, and
+   removing an absent key is not an error.
+6. With agy active and no google key, wizard portrait generation still
+   works — slower, with a visible "portrait brewing" state.
+7. With a verified google key, portraits arrive in seconds via the API
+   path.
+8. With neither, portrait generation fails with guidance naming both
+   remedies (add a Google key in Settings → API Keys, or install
+   Antigravity).
+9. No raw key ever appears in any 7790 response, UI payload, or log —
+   the only raw-key hop is the swarm's localhost credential route.
+
 ## Data shapes
 
 ```ts
