@@ -386,7 +386,6 @@ export function HomePage() {
             open={newWorkspaceOpen}
             onClose={() => setNewWorkspaceOpen(false)}
             save={saveWorkspace}
-            list={listWorkspaceRecords}
             listMyConnectors={listMyConnectors}
             activeWorkspace={session?.workspace}
             pickFolder={hasNativeFolderPicker() ? pickFolder : undefined}

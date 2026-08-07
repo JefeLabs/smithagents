@@ -50,6 +50,9 @@ export function WorkspaceManagerModal({
   /** Workspace name being edited; null means the form is building a new one. */
   const [selected, setSelected] = useState<string | null>(null);
   const [form, setForm] = useState<WorkspaceRecord>(blankForm(true));
+  /** Raw textarea text — kept separate from `form.links` so a trailing blank line while
+      typing isn't immediately collapsed away (same pattern as NewWorkspaceModal). */
+  const [linksText, setLinksText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [removing, setRemoving] = useState<{ name: string; busy?: boolean; error?: string } | null>(null);
@@ -81,6 +84,7 @@ export function WorkspaceManagerModal({
     void refresh().then((records) => {
       setSelected(null);
       setForm(blankForm(records.filter((w) => !w.archived).length === 0));
+      setLinksText("");
       setError(null);
     });
   }, [open]);
@@ -110,6 +114,7 @@ export function WorkspaceManagerModal({
   const startNew = () => {
     setSelected(null);
     setForm(blankForm(active.length === 0));
+    setLinksText("");
     setError(null);
     setTestResult(null);
   };
@@ -117,6 +122,7 @@ export function WorkspaceManagerModal({
   const selectWorkspace = (ws: WorkspaceRecord) => {
     setSelected(ws.name);
     setForm({ ...ws, repos: ws.repos.map((r) => ({ ...r })) });
+    setLinksText((ws.links ?? []).join("\n"));
     setError(null);
     setTestResult(null);
   };
@@ -153,6 +159,10 @@ export function WorkspaceManagerModal({
     // onChange handler, so typing in any order never appears to drop a field.
     const normalized: WorkspaceRecord = {
       ...form,
+      links: linksText
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean),
       atlassian: form.atlassian?.siteUrl?.trim() ? form.atlassian : undefined,
       repos: form.repos.map((r) => ({
         ...r,
@@ -271,6 +281,15 @@ export function WorkspaceManagerModal({
                   value={form.description ?? ""}
                   onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
                   placeholder="Marketing site + storefront"
+                />
+              </label>
+              <label>
+                Links <span className="wizard__hint">one per line — docs, dashboards, tickets</span>
+                <textarea
+                  value={linksText}
+                  onChange={(e) => setLinksText(e.target.value)}
+                  rows={3}
+                  placeholder="https://github.com/acme/web"
                 />
               </label>
               <label className="check">

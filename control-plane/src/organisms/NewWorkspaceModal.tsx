@@ -3,14 +3,6 @@ import { type MouseEvent, useEffect, useState } from "react";
 import { SegmentedControl } from "../atoms/SegmentedControl";
 import type { ConnectorInstanceRecord, WorkspaceRecord } from "../hooks/useBrokerChat";
 
-type RuntimeChoice = "tmux" | "docker" | "remote";
-
-const RUNTIME_OPTIONS = [
-  { id: "tmux", label: "In process" },
-  { id: "docker", label: "Local Docker" },
-  { id: "remote", label: "Remote Docker" },
-];
-
 interface DraftRepo {
   /** Both modes converge on `path`; only the source of the value differs (design §4). */
   mode: "existing" | "new";
@@ -28,8 +20,6 @@ interface NewWorkspaceModalProps {
   onClose: () => void;
   /** POST /workspaces via the broker proxy — same function WorkspaceManagerModal uses. */
   save: (ws: WorkspaceRecord, isNew: boolean) => Promise<{ error?: string; name?: string }>;
-  /** Full records — used only to default the execution mode to the active workspace's runtime. */
-  list: () => Promise<WorkspaceRecord[]>;
   listMyConnectors: () => Promise<ConnectorInstanceRecord[]>;
   /** The session's current workspace name, if any. */
   activeWorkspace?: string;
@@ -43,15 +33,14 @@ export function NewWorkspaceModal({
   open,
   onClose,
   save,
-  list,
   listMyConnectors,
-  activeWorkspace,
   pickFolder,
   onCreated,
 }: NewWorkspaceModalProps) {
   const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [linksText, setLinksText] = useState("");
   const [repos, setRepos] = useState<DraftRepo[]>([emptyRepo()]);
-  const [runtime, setRuntime] = useState<RuntimeChoice>("tmux");
   const [connectors, setConnectors] = useState<ConnectorInstanceRecord[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -60,21 +49,12 @@ export function NewWorkspaceModal({
   useEffect(() => {
     if (!open) return;
     setName("");
+    setDescription("");
+    setLinksText("");
     setRepos([emptyRepo()]);
     setBusy(false);
     setError(null);
     void listMyConnectors().then(setConnectors);
-    // Execution mode defaults to the active workspace's own runtime, not a hardcoded value (design §4).
-    // `runtime` no longer lives on WorkspaceRecord (Task 10) — sessions carry their own execution
-    // mode now (Task 11's composer). This whole default-from-workspace lookup is superseded and
-    // goes away with NewWorkspaceModal's full rework (Task 13); the cast just keeps this file
-    // compiling until then without changing its behavior.
-    void list().then((records) => {
-      const active = records.find((w) => w.name === activeWorkspace) as
-        | (WorkspaceRecord & { runtime?: RuntimeChoice })
-        | undefined;
-      setRuntime(active?.runtime ?? "tmux");
-    });
   }, [open]);
 
   const githubConnectors = connectors.filter((c) => c.vendorId === "github");
@@ -96,13 +76,14 @@ export function NewWorkspaceModal({
   const submit = async () => {
     setBusy(true);
     setError(null);
-    // `runtime` is sent for now (see the effect above) but is no longer part of WorkspaceRecord
-    // (Task 10) — dropped without a type annotation here so TS's excess-property check doesn't
-    // fire; `save`'s own `WorkspaceRecord` parameter type still gates every field it declares.
-    const record = {
+    const record: WorkspaceRecord = {
       name: name.trim(),
       default: false, // the first-ever workspace defaults itself server-side
-      runtime,
+      description: description.trim(),
+      links: linksText
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean),
       repos: repos.map((r) => ({
         name: r.name.trim(),
         path: r.path.trim(),
@@ -149,6 +130,17 @@ export function NewWorkspaceModal({
         <div className="account-panel__form">
           <label htmlFor="nw-name">Workspace name</label>
           <input id="nw-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="acme" />
+          <label htmlFor="nw-description">Description</label>
+          <input
+            id="nw-description"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Marketing site + storefront"
+          />
+          <label htmlFor="nw-links">
+            Links <span className="wizard__hint">one per line — docs, dashboards, tickets</span>
+          </label>
+          <textarea id="nw-links" value={linksText} onChange={(e) => setLinksText(e.target.value)} rows={3} />
         </div>
         <p className="wizard__hint">Repos — every repo needs a GitHub connector before create enables.</p>
         {githubConnectors.length === 0 && (
@@ -215,13 +207,6 @@ export function NewWorkspaceModal({
         <button type="button" className="settings-btn" onClick={() => setRepos((rs) => [...rs, emptyRepo()])}>
           <Plus size={11} strokeWidth={2.2} /> add another
         </button>
-        <p className="wizard__hint">Execution mode</p>
-        <SegmentedControl
-          ariaLabel="Execution mode"
-          options={RUNTIME_OPTIONS}
-          selected={runtime}
-          onSelect={(id) => setRuntime(id as RuntimeChoice)}
-        />
         {error && <p className="wizard__error">{error}</p>}
         <button
           type="button"
