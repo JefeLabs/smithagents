@@ -266,6 +266,14 @@
   color: var(--accent);
   border-color: var(--accent);
 }
+/* Pinned host (broker identity) — separated from the crew it introduces. */
+.roster-host {
+  display: flex;
+  justify-content: center;
+  padding-bottom: 10px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--rail-br);
+}
 .roster {
   display: flex;
   flex-direction: column;
