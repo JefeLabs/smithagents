@@ -5,9 +5,9 @@
  */
 import Anthropic from '@anthropic-ai/sdk';
 import { DeepgramClient } from '@deepgram/sdk';
-import { GoogleGenAI } from '@google/genai';
 import { createInterface } from 'node:readline';
 import { ElevenLabsVoiceProvider } from '@smithagents/voice';
+import { resolveAvatarEngine } from './avatar-engine.ts';
 import { AvatarGenerator, type AvatarRequest } from './avatar-generator.ts';
 import { BrokerBrain, type StreamFactory } from './brain.ts';
 import { Broker, TTS_SAMPLE_RATE } from './broker.ts';
@@ -51,13 +51,25 @@ const anthropic = new Anthropic({ apiKey: config.anthropicApiKey });
 const streamFactory: StreamFactory = (params) =>
   anthropic.messages.stream(params as Parameters<typeof anthropic.messages.stream>[0]);
 
-// Portrait generation degrades like ElevenLabs above: no key, no client — the
-// wizard's Generate button just doesn't render (see avatarGen catalog flag below).
-const avatarGenerator = config.geminiApiKey
-  ? new AvatarGenerator(new GoogleGenAI({ apiKey: config.geminiApiKey }), config.geminiImageModel)
-  : null;
-
 const swarm = new SwarmClient({ baseUrl: config.swarm.baseUrl, token: config.swarm.token });
+
+// Portrait generation resolved per request (spec §Avatar generation):
+// verified google key (api-keys store, or legacy .env) accelerates to the
+// Gemini API; otherwise agy (if active per the CLI registry) covers the
+// subscription path; neither → the wizard's Generate button shows the two
+// remedies (see avatarGen catalog flag below).
+const avatarEngine = () =>
+  resolveAvatarEngine({
+    getGoogleKey: async () => {
+      if (config.geminiApiKey) return config.geminiApiKey; // legacy .env still honored
+      const r = await swarm.getApiKeyCredential('google').catch(() => ({ error: 'swarm unreachable' }) as const);
+      return 'key' in r && r.key ? r.key : null;
+    },
+    isAgyActive: async () => {
+      const r = (await swarm.listCliTools().catch(() => null)) as { tools?: Array<{ cli: string; active: boolean }> } | null;
+      return Boolean(r?.tools?.find((t) => t.cli === 'agy')?.active);
+    },
+  });
 const directory = new AgentDirectory();
 // Shared presence policy (surface-modes): the single source of truth for
 // which external surfaces each agent attends. Wired into adapter text
@@ -616,7 +628,7 @@ const apiKeys = {
 // fetches — the UI learns in one request whether to render the Generate
 // button at all.
 const creation = {
-    catalog: async () => ({ ...(await swarm.agentCatalog()), avatarGen: avatarGenerator !== null }),
+    catalog: async () => ({ ...(await swarm.agentCatalog()), avatarGen: (await avatarEngine())?.kind ?? null }),
     records: async () => (await swarm.registry()) as unknown as Record<string, unknown>[],
     update: async (id: string, body: Record<string, unknown>) => {
       // Fail open on the BEFORE read: this registry read did not exist before
@@ -772,9 +784,13 @@ const creation = {
       return created;
     },
     generateAvatar: async (body: Record<string, unknown>) => {
-      if (!avatarGenerator) return { error: 'no Gemini key configured' };
+      const engine = await avatarEngine();
+      if (!engine) {
+        return { error: 'no image engine available — add a Google key in Settings → API Keys, or install Antigravity (agy)' };
+      }
       try {
-        return { imageData: await avatarGenerator.generate(body as AvatarRequest) };
+        const generator = new AvatarGenerator(engine.client, config.geminiImageModel);
+        return { imageData: await generator.generate(body as AvatarRequest), engine: engine.kind };
       } catch (err) {
         return { error: String((err as Error).message) };
       }
