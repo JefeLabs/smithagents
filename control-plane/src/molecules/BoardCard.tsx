@@ -27,6 +27,11 @@ export function BoardCard({ card, agent, onOpen, className }: BoardCardProps) {
             {done}/{total}
           </span>
         )}
+        {card.capabilityRef && (
+          <span className="board-card__cap" title={`capability: ${card.capabilityRef.capabilityId}`}>
+            ⧉ map
+          </span>
+        )}
         {card.jira && (
           <a
             className={`board-card__jira${card.jira.lastPushError ? " has-error" : ""}`}

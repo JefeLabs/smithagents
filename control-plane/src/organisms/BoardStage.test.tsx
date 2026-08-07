@@ -155,7 +155,7 @@ describe("BoardStage", () => {
     await screen.findByText("Backlog");
     await userEvent.click(screen.getByRole("button", { name: /new board/i }));
     await userEvent.type(screen.getByPlaceholderText(/board name/i), "Beta");
-    await userEvent.selectOptions(screen.getByLabelText(/template/i), "capability");
+    await userEvent.selectOptions(screen.getByLabelText(/template/i), "capabilities");
     await userEvent.click(screen.getByRole("button", { name: /create board/i }));
     await waitFor(() =>
       expect(
@@ -163,7 +163,7 @@ describe("BoardStage", () => {
           (c) =>
             c.method === "POST" &&
             c.url.endsWith("/work/boards") &&
-            (c.body as { template?: string })?.template === "capability",
+            (c.body as { template?: string })?.template === "capabilities",
         ),
       ).toBe(true),
     );
@@ -456,5 +456,85 @@ describe("CardSheet", () => {
       expect((call?.body as { title?: string })?.title).toBe("Fix login");
     });
     expect(calls.some((c) => c.method === "PATCH" && c.url.includes("/cards/c1"))).toBe(false);
+  });
+});
+
+describe("board-side capability amendments", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  const WS_BOARDS = {
+    boards: [
+      { ...BOARD },
+      {
+        ...BOARD,
+        id: "skoolscout-capabilities",
+        name: "skoolscout Capabilities",
+        workspaceId: "skoolscout",
+        cards: [
+          {
+            id: "cc1",
+            title: "tour scheduling v1",
+            columnId: "backlog",
+            order: 0,
+            capabilityRef: { capabilityId: "school-feature-set", sliceId: "sl1" },
+            stories: [{ id: "s1", text: "create tour time slots", done: false }],
+          },
+        ],
+      },
+    ],
+    errors: [],
+  };
+
+  it("groups the switcher by workspace with personal boards first", async () => {
+    stubFetch({ boards: WS_BOARDS });
+    render(<BoardStage open roster={ROSTER} lastBoardUpdate={null} onClose={vi.fn()} />);
+    await screen.findByText("Backlog");
+    const select = screen.getByLabelText(/^board$/i);
+    const groups = within(select).getAllByRole("group");
+    expect(groups.map((g) => g.getAttribute("label"))).toEqual(["Personal", "skoolscout"]);
+  });
+
+  it("offers all five templates in the new-board composer", async () => {
+    stubFetch();
+    render(<BoardStage open roster={ROSTER} lastBoardUpdate={null} onClose={vi.fn()} />);
+    await screen.findByText("Backlog");
+    await userEvent.click(screen.getByRole("button", { name: /new board/i }));
+    const options = (screen.getByLabelText(/template/i) as HTMLSelectElement).options;
+    expect(Array.from(options).map((o) => o.value)).toEqual([
+      "personal",
+      "capabilities",
+      "delivery",
+      "maintenance",
+      "support",
+    ]);
+  });
+
+  it("linked cards show a capability chip", async () => {
+    stubFetch({ boards: WS_BOARDS });
+    render(<BoardStage open roster={ROSTER} lastBoardUpdate={null} onClose={vi.fn()} />);
+    await screen.findByText("Backlog");
+    await userEvent.selectOptions(screen.getByLabelText(/^board$/i), "skoolscout-capabilities");
+    await screen.findByText("tour scheduling v1");
+    expect(screen.getByTitle(/school-feature-set/i)).toBeTruthy();
+  });
+
+  it("linked cards are toggle-only: no add-story input, no remove buttons, toggle still PATCHes", async () => {
+    const { calls } = stubFetch({ boards: WS_BOARDS });
+    render(<BoardStage open roster={ROSTER} lastBoardUpdate={null} onClose={vi.fn()} />);
+    await screen.findByText("Backlog");
+    await userEvent.selectOptions(screen.getByLabelText(/^board$/i), "skoolscout-capabilities");
+    await userEvent.click(await screen.findByText("tour scheduling v1"));
+    expect(screen.queryByPlaceholderText(/add a story/i)).toBeNull();
+    expect(screen.queryByLabelText(/remove story/i)).toBeNull();
+    await userEvent.click(screen.getAllByRole("checkbox")[0]);
+    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => {
+      const call = calls.find((c) => c.method === "PATCH" && c.url.includes("/cards/cc1"));
+      const stories = (call?.body as { stories?: Array<{ id: string; done: boolean }> })?.stories;
+      expect(stories).toEqual([expect.objectContaining({ id: "s1", done: true })]);
+    });
   });
 });

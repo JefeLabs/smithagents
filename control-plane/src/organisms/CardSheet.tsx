@@ -27,6 +27,7 @@ export function CardSheet({ board, card, roster, workspaces, onClose, onChanged 
   const [workspace, setWorkspace] = useState(workspaces[0] ?? "");
   const [prompt, setPrompt] = useState(`${card.title}${card.notes ? `\n\n${card.notes}` : ""}`);
   const [error, setError] = useState<string | null>(null);
+  const linked = Boolean(card.capabilityRef);
 
   const cardUrl = `http://${BASE}/work/boards/${encodeURIComponent(board.id)}/cards/${encodeURIComponent(card.id)}`;
   const patch = async (body: unknown) => {
@@ -99,6 +100,7 @@ export function CardSheet({ board, card, roster, workspaces, onClose, onChanged 
       </label>
       <div className="card-sheet__stories">
         <span className="card-sheet__stories-head">Stories</span>
+        {linked && <span className="wizard__hint">Stories are managed in the map — toggle only.</span>}
         {stories.map((s) => (
           <label
             key={s.id}
@@ -125,27 +127,31 @@ export function CardSheet({ board, card, roster, workspaces, onClose, onChanged 
               }
             />
             <span className={s.done ? "is-done" : ""}>{s.text}</span>
-            <button
-              type="button"
-              className="card-sheet__story-remove"
-              aria-label={`Remove story: ${s.text}`}
-              onClick={() => setStories((list) => list.filter((x) => x.id !== s.id))}
-            >
-              <X size={10} strokeWidth={2} />
-            </button>
+            {!linked && (
+              <button
+                type="button"
+                className="card-sheet__story-remove"
+                aria-label={`Remove story: ${s.text}`}
+                onClick={() => setStories((list) => list.filter((x) => x.id !== s.id))}
+              >
+                <X size={10} strokeWidth={2} />
+              </button>
+            )}
           </label>
         ))}
-        <input
-          placeholder="Add a story…"
-          value={storyText}
-          onChange={(e) => setStoryText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && storyText.trim()) {
-              setStories((list) => [...list, { id: crypto.randomUUID(), text: storyText.trim(), done: false }]);
-              setStoryText("");
-            }
-          }}
-        />
+        {!linked && (
+          <input
+            placeholder="Add a story…"
+            value={storyText}
+            onChange={(e) => setStoryText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && storyText.trim()) {
+                setStories((list) => [...list, { id: crypto.randomUUID(), text: storyText.trim(), done: false }]);
+                setStoryText("");
+              }
+            }}
+          />
+        )}
       </div>
       {board.jira &&
         (card.jira ? (

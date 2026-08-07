@@ -31,6 +31,8 @@ export interface WorkCardT {
   jira?: { key: string; url: string; lastPushError?: string };
   delegation?: { agentId: string; taskId: string; state: "working" | "completed" | "failed"; prUrl?: string };
   stories?: Array<{ id: string; text: string; done: boolean; verifiedBy?: string }>;
+  /** Present when this card tracks a capability slice — its checklist becomes toggle-only. */
+  capabilityRef?: { capabilityId: string; sliceId: string };
 }
 export interface WorkBoardT {
   id: string;
@@ -38,7 +40,11 @@ export interface WorkBoardT {
   columns: WorkColumn[];
   cards: WorkCardT[];
   jira?: { connectorId: string; siteUrl: string; projectKey: string; jql?: string };
+  /** Present on a workspace's standing boards; absent on personal boards. */
+  workspaceId?: string;
 }
+
+type BoardTemplate = "personal" | "capabilities" | "delivery" | "maintenance" | "support";
 
 interface BoardStageProps {
   open: boolean;
@@ -180,7 +186,7 @@ export function BoardStage({ open, roster, lastBoardUpdate, onClose }: BoardStag
   const [cardTitle, setCardTitle] = useState("");
   const [creatingBoard, setCreatingBoard] = useState(false);
   const [boardName, setBoardName] = useState("");
-  const [template, setTemplate] = useState<"personal" | "capability">("personal");
+  const [template, setTemplate] = useState<BoardTemplate>("personal");
   const [openCardId, setOpenCardId] = useState<string | null>(null);
   const [workspaces, setWorkspaces] = useState<string[]>([]);
 
@@ -321,10 +327,25 @@ export function BoardStage({ open, roster, lastBoardUpdate, onClose }: BoardStag
       <header className="board-stage__bar">
         <SquareKanban size={14} strokeWidth={2} />
         <select aria-label="Board" value={activeId ?? ""} onChange={(e) => setActiveId(e.target.value)}>
-          {boards.map((b) => (
-            <option key={b.id} value={b.id}>
-              {b.name}
-            </option>
+          <optgroup label="Personal">
+            {boards
+              .filter((b) => !b.workspaceId)
+              .map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                </option>
+              ))}
+          </optgroup>
+          {[...new Set(boards.filter((b) => b.workspaceId).map((b) => b.workspaceId as string))].map((ws) => (
+            <optgroup key={ws} label={ws}>
+              {boards
+                .filter((b) => b.workspaceId === ws)
+                .map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+            </optgroup>
           ))}
         </select>
         <button type="button" className="settings-btn" onClick={() => setCreatingBoard((v) => !v)}>
@@ -351,10 +372,13 @@ export function BoardStage({ open, roster, lastBoardUpdate, onClose }: BoardStag
             <select
               aria-label="Template"
               value={template}
-              onChange={(e) => setTemplate(e.target.value as "personal" | "capability")}
+              onChange={(e) => setTemplate(e.target.value as BoardTemplate)}
             >
               <option value="personal">Personal</option>
-              <option value="capability">Capability Pipeline</option>
+              <option value="capabilities">Capabilities</option>
+              <option value="delivery">Delivery</option>
+              <option value="maintenance">Maintenance</option>
+              <option value="support">Support</option>
             </select>
           </label>
           <button type="button" className="settings-btn settings-btn--primary" onClick={() => void createBoard()}>
