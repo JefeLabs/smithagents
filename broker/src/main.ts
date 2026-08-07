@@ -599,6 +599,16 @@ const cliTools = {
     swarm.setCliToolEnabled(id, enabled) as unknown as Promise<Record<string, unknown>>,
 };
 
+// API key registry (Settings → API Keys): same thin passthrough shape as
+// cliTools, origin-restricted the same way. The credential route is
+// deliberately NOT passed through (spec invariant).
+const apiKeys = {
+  list: () => swarm.listApiKeys(),
+  save: (id: string, key: string) => swarm.saveApiKey(id, key),
+  verify: (id: string) => swarm.verifyApiKey(id),
+  remove: (id: string) => swarm.deleteApiKey(id),
+};
+
 // Agent creation: the swarm owns the registry, the broker owns voices. A
 // named const (not an inline TextChannel argument) because the brain's
 // draft_agent/confirm_agent executors drive the same generate/create path
@@ -918,6 +928,7 @@ const textChannel = new TextChannel(
   connectors,
   tasks,
   cliTools,
+  apiKeys,
 );
 const micSessions = new Map<number, DeepgramSttStream>();
 
