@@ -37,7 +37,9 @@ describe("AgentRoster host slot", () => {
     expect(roster?.textContent).not.toContain("Anderson");
     // Host precedes the crew label in document order.
     const label = container.querySelector(".rail__label");
-    expect(hostSlot && label && hostSlot.compareDocumentPosition(label) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(
+      hostSlot && label && hostSlot.compareDocumentPosition(label) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("labels the crew section 'crew' and keeps the add button when the crew is empty", () => {
