@@ -1,5 +1,5 @@
 import { cleanup, render } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AgentSeed } from "../data/agents";
 import { AgentRoster } from "./AgentRoster";
 
@@ -10,13 +10,19 @@ const CREW: AgentSeed[] = [
 ];
 
 describe("AgentRoster host slot", () => {
+  beforeAll(() => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => storage.get(k) ?? null,
+      setItem: (k: string, v: string) => void storage.set(k, v),
+      removeItem: (k: string) => void storage.delete(k),
+      clear: () => storage.clear(),
+    });
+  });
+
   afterEach(() => {
     cleanup();
-    try {
-      localStorage.clear();
-    } catch {
-      // localStorage not available in test environment
-    }
+    localStorage.clear();
   });
 
   it("pins the host above the crew list, outside the sortable roster", () => {
@@ -48,19 +54,7 @@ describe("AgentRoster host slot", () => {
   });
 
   it("keeps the host out of the saved roster order", () => {
-    let canUseStorage = true;
-    try {
-      localStorage.setItem("smith.rosterOrder", JSON.stringify(["minerva", "ignacio"]));
-    } catch {
-      canUseStorage = false;
-    }
-
-    if (!canUseStorage) {
-      // localStorage not available in test environment - skip this test
-      expect(true).toBe(true);
-      return;
-    }
-
+    localStorage.setItem("smith.rosterOrder", JSON.stringify(["minerva", "ignacio"]));
     const { container } = render(<AgentRoster agents={[HOST, ...CREW]} onAdd={vi.fn()} />);
     const names = [...container.querySelectorAll(".roster .agent-avatar-anchor")].map((n) => n.textContent ?? "");
     expect(names[0]).toContain("Minerva");
