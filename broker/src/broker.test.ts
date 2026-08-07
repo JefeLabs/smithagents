@@ -599,6 +599,48 @@ test('dispatchWork: submits directives-prefixed prompt with merged metadata and 
   await b.stop();
 });
 
+test('dispatchWork stamps the active session runtime only when inheritSessionRuntime is set (meeting-origin)', async () => {
+  const f = makeFakes([]);
+  const b = new Broker({ ...basicDeps(f, new AgentDirectory()), sessionRuntime: () => 'remote-docker' });
+  await b.start();
+  await b.dispatchWork({ agent: 'Manuel', task: 'fix the build', inheritSessionRuntime: true });
+  const sent = f.submitted[0] as { runtime?: string };
+  assert.equal(sent.runtime, 'remote-docker');
+  await b.stop();
+});
+
+test('dispatchWork omits runtime when no session is active, even with inheritSessionRuntime set', async () => {
+  const f = makeFakes([]);
+  const b = new Broker({ ...basicDeps(f, new AgentDirectory()), sessionRuntime: () => undefined });
+  await b.start();
+  await b.dispatchWork({ agent: 'Manuel', task: 'fix the build', inheritSessionRuntime: true });
+  const sent = f.submitted[0] as { runtime?: string };
+  assert.equal(sent.runtime, undefined);
+  await b.stop();
+});
+
+test('dispatchWork does NOT stamp runtime by default — a board dispatch never inherits the session (human ruling 2026-08-07)', async () => {
+  const f = makeFakes([]);
+  const b = new Broker({ ...basicDeps(f, new AgentDirectory()), sessionRuntime: () => 'remote-docker' });
+  await b.start();
+  // Board dispatches (main.ts workBoards.delegate) call dispatchWork directly, without
+  // inheritSessionRuntime — even with an active session, the task must go unstamped.
+  await b.dispatchWork({ agent: 'Manuel', task: 'fix the build' });
+  const sent = f.submitted[0] as { runtime?: string };
+  assert.equal(sent.runtime, undefined);
+  await b.stop();
+});
+
+test('executors.delegate (the meeting brain tool) inherits the active session runtime', async () => {
+  const f = makeFakes([]);
+  const b = new Broker({ ...basicDeps(f, new AgentDirectory()), sessionRuntime: () => 'remote-docker' });
+  await b.start();
+  await b.executors.delegate({ agent: 'Manuel', task: 'fix the build' });
+  const sent = f.submitted[0] as { runtime?: string };
+  assert.equal(sent.runtime, 'remote-docker');
+  await b.stop();
+});
+
 test("delegate executor keeps its exact success/refusal strings", async () => {
   const f = makeFakes([MEETING]);
   const b = makeBroker(f);

@@ -27,3 +27,10 @@ test('createRuntime: remote without a WorkerPool throws; with one, returns the R
   const adapter = createRuntime('remote', undefined, new WorkerPool());
   assert.equal(adapter.constructor.name, 'RemoteRuntime');
 });
+
+test('createRuntime maps remote-tmux and remote-docker to kind-filtered RemoteRuntime', () => {
+  const pool = new WorkerPool();
+  assert.ok(createRuntime('remote-tmux', undefined, pool));
+  assert.ok(createRuntime('remote-docker', undefined, pool));
+  assert.throws(() => createRuntime('remote-tmux'), /WorkerPool is required/);
+});

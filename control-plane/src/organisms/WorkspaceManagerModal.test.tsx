@@ -85,6 +85,41 @@ describe("WorkspaceManagerModal — connector pickers", () => {
     );
   });
 
+  it("editing saves links", async () => {
+    const save = vi.fn(async () => ({}));
+    const existing = {
+      name: "acme",
+      default: true,
+      repos: [],
+      links: ["https://github.com/acme/web"],
+    };
+    render(
+      <WorkspaceManagerModal
+        open
+        onClose={() => {}}
+        list={vi.fn(async () => [existing])}
+        save={save}
+        remove={vi.fn()}
+        verifyAtlassian={vi.fn()}
+        verifyRepoGithub={vi.fn()}
+        listMyConnectors={vi.fn(async () => CONNECTORS)}
+      />,
+    );
+    await userEvent.click(await screen.findByText("acme"));
+    const linksField = (await screen.findByLabelText(/links/i)) as HTMLTextAreaElement;
+    expect(linksField.value).toBe("https://github.com/acme/web");
+    await userEvent.type(linksField, "\nhttps://acme.atlassian.net");
+    await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    await waitFor(() =>
+      expect(save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          links: ["https://github.com/acme/web", "https://acme.atlassian.net"],
+        }),
+        false,
+      ),
+    );
+  });
+
   it("editing owner/repo after picking a connector does not wipe the picked connectorId", async () => {
     const save = vi.fn(async () => ({}));
     render(

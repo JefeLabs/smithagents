@@ -1,6 +1,7 @@
 import {
   ArrowLeft,
   Blocks,
+  Container,
   KeyRound,
   MessageSquare,
   Mic,
@@ -22,12 +23,21 @@ import type { ThemeId } from "../hooks/useTheme";
 import { ApiKeysGroup } from "./settings/ApiKeysGroup";
 import { ChannelsGroup } from "./settings/ChannelsGroup";
 import { CliToolsGroup } from "./settings/CliToolsGroup";
+import { ContainersGroup } from "./settings/ContainersGroup";
 import { GeneralGroup, type ResetScope } from "./settings/GeneralGroup";
 import { IntegrationsGroup } from "./settings/IntegrationsGroup";
 import { ThemesGroup } from "./settings/ThemesGroup";
 import { VoiceGroup } from "./settings/VoiceGroup";
 
-export type SettingsGroupId = "general" | "integrations" | "voice" | "cli-tools" | "api-keys" | "channels" | "themes";
+export type SettingsGroupId =
+  | "general"
+  | "integrations"
+  | "voice"
+  | "cli-tools"
+  | "api-keys"
+  | "channels"
+  | "containers"
+  | "themes";
 
 interface SettingsPanelProps {
   open: boolean;
@@ -72,6 +82,9 @@ interface SettingsPanelProps {
     body: { discord?: { botToken: string; textChannels: string[]; voiceChannels: string[] } },
   ) => Promise<ChannelsRecord & { error?: string }>;
   verifyWorkspaceDiscord?: (name: string) => Promise<{ ok?: boolean; detail?: string; error?: string }>;
+  getContainers?: () => Promise<{ docker: { enabled: boolean } }>;
+  setDockerEnabled?: (enabled: boolean) => Promise<{ docker: { enabled: boolean } }>;
+  verifyContainers?: () => Promise<{ ok: boolean; detail: string }>;
 }
 
 const SECTIONS: Array<{
@@ -98,6 +111,7 @@ const SECTIONS: Array<{
       { id: "integrations", label: "Integrations", icon: Blocks },
       { id: "voice", label: "Voice", icon: Mic },
       { id: "channels", label: "Channels", icon: MessageSquare },
+      { id: "containers", label: "Containers", icon: Container },
     ],
   },
 ];
@@ -129,6 +143,9 @@ export function SettingsPanel({
   getWorkspaceChannels,
   saveWorkspaceChannels,
   verifyWorkspaceDiscord,
+  getContainers,
+  setDockerEnabled,
+  verifyContainers,
 }: SettingsPanelProps) {
   const [active, setActive] = useState<SettingsGroupId>(initialGroup);
 
@@ -230,6 +247,16 @@ export function SettingsPanel({
             />
           ) : (
             <p className="wizard__hint">Channels — not wired up yet.</p>
+          ))}
+        {active === "containers" &&
+          (getContainers && setDockerEnabled && verifyContainers ? (
+            <ContainersGroup
+              getContainers={getContainers}
+              setDockerEnabled={setDockerEnabled}
+              verifyContainers={verifyContainers}
+            />
+          ) : (
+            <p className="wizard__hint">Containers — not wired up yet.</p>
           ))}
       </div>
     </div>

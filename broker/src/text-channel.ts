@@ -41,11 +41,16 @@ export type ChannelFrame =
   | { type: 'config'; audio: boolean }
   /** One synthesized speech chunk (mp3), base64-encoded for the JSON channel. */
   | { type: 'audio'; speaker?: string; mime: string; dataB64: string }
-  /** Active session changed (or hello): full transcript replay + the session list + workspaces. */
+  /**
+   * Active session changed (or hello): full transcript replay + the session list +
+   * workspaces. `session: null` is a valid, deliberate state — zero sessions exist yet
+   * (fresh install, or every session was removed) — distinct from "hello frame not sent
+   * yet"; UIs render an empty/creation state rather than treating it as still-loading.
+   */
   | {
       type: 'session';
-      session: { id: string; title: string; workspace: string };
-      sessions: Array<{ id: string; title: string; workspace: string; updatedAt: string; active: boolean }>;
+      session: { id: string; title: string; workspace: string; runtime: string } | null;
+      sessions: Array<{ id: string; title: string; workspace: string; updatedAt: string; active: boolean; runtime: string }>;
       transcript: Array<{ role: 'user' | 'broker'; text: string }>;
       workspaces: string[];
     }
@@ -141,9 +146,16 @@ export class TextChannel {
       audio(clientId: number, pcm: Uint8Array): void;
       stop(clientId: number): void;
     },
-    /** Session lifecycle (POST /sessions, POST /sessions/:id/activate). Returns an error string or null. */
+    /**
+     * Session lifecycle (POST /sessions, POST /sessions/:id/activate). `create` is async
+     * and atomic — the runtime the caller asked for is validated/acquired before the
+     * session exists, so a rejected create (e.g. an unavailable execution mode) never
+     * leaves a half-created session behind; the handler decides the status code (e.g.
+     * 409 for "mode not available") via the optional `status` field. `activate` is
+     * unchanged: an error string or null, always mapped to 400/200.
+     */
     private readonly sessions?: {
-      create(title?: string, workspace?: string): string | null;
+      create(body: { workspace?: string; runtime?: string; prompt?: string }): Promise<{ error: string; status?: number } | null>;
       activate(id: string): string | null;
     },
     /** Full-setup reset (settings). Returns a report of what was destroyed/preserved. */
@@ -234,6 +246,16 @@ export class TextChannel {
       /** Voice settings passthrough (Settings → Voice group). Origin-restricted like connectors. */
       get(): Promise<Record<string, unknown>>;
       save(body: unknown): Promise<Record<string, unknown>>;
+    },
+    /** Execution-mode availability probe (new-session runtime picker): which runtimes this machine can actually run right now, keyed by mode id. Origin-restricted like cliTools. */
+    private readonly execModes?: {
+      list(): Promise<Record<string, boolean>>;
+    },
+    /** Local-docker container runtime settings + live daemon verify (Settings → advanced). Origin-restricted like cliTools. */
+    private readonly containers?: {
+      get(): Promise<unknown>;
+      set(enabled: boolean): Promise<unknown>;
+      verify(): Promise<unknown>;
     },
   ) {}
 
@@ -752,6 +774,39 @@ export class TextChannel {
           });
           return;
         }
+        if (req.method === 'GET' && url.pathname === '/execution-modes' && this.execModes) {
+          if (originBlocked()) return;
+          void this.execModes.list().then((modes) => credJson(200, { modes }), credFail);
+          return;
+        }
+        if (req.method === 'GET' && url.pathname === '/containers' && this.containers) {
+          if (originBlocked()) return;
+          void this.containers.get().then((r) => credJson(200, r), credFail);
+          return;
+        }
+        if (req.method === 'PUT' && url.pathname === '/containers' && this.containers) {
+          if (originBlocked()) return;
+          let body = '';
+          req.on('data', (c) => {
+            body += c;
+          });
+          req.on('end', () => {
+            let parsed: { docker?: { enabled?: unknown } } = {};
+            try {
+              parsed = JSON.parse(body || '{}') as { docker?: { enabled?: unknown } };
+            } catch {
+              return credJson(400, { error: 'body must be JSON' });
+            }
+            if (typeof parsed.docker?.enabled !== 'boolean') return credJson(400, { error: 'body must be { docker: { enabled: boolean } }' });
+            void this.containers!.set(parsed.docker.enabled).then((r) => credJson(200, r), credFail);
+          });
+          return;
+        }
+        if (req.method === 'POST' && url.pathname === '/containers/verify' && this.containers) {
+          if (originBlocked()) return;
+          void this.containers.verify().then((r) => credJson(200, r), credFail);
+          return;
+        }
         if (req.method === 'GET' && url.pathname === '/api-keys' && this.apiKeys) {
           if (originBlocked()) return;
           void this.apiKeys.list().then((r) => credJson(200, r), credFail);
@@ -798,26 +853,51 @@ export class TextChannel {
       }
       const sessionMatch = /^\/sessions(?:\/([^/]+)\/activate)?$/.exec(req.url ?? '');
       if (req.method === 'POST' && sessionMatch && this.sessions) {
+        // Creating/activating a session is a mutation — same origin guard as /work/delegate
+        // and the credential-adjacent routes above. An absent Origin header still passes
+        // (the smith-broker-send CLI bridge and same-process callers send no Origin); only a
+        // present-and-disallowed origin is refused.
+        const originBlocked = (): boolean => {
+          if (isAllowedOrigin(req)) return false;
+          res.writeHead(403, { ...credentialCors(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: 'origin not allowed' }));
+          return true;
+        };
+        if (originBlocked()) return;
         let body = '';
         req.on('data', (c) => {
           body += c;
         });
         req.on('end', () => {
-          let parsed: { title?: unknown; workspace?: unknown } = {};
+          let parsed: { workspace?: unknown; runtime?: unknown; prompt?: unknown } = {};
           try {
             parsed = JSON.parse(body || '{}') as typeof parsed;
           } catch {
             /* empty body is fine */
           }
-          const error = sessionMatch[1]
-            ? this.sessions!.activate(decodeURIComponent(sessionMatch[1]))
-            : this.sessions!.create(
-                typeof parsed.title === 'string' ? parsed.title : undefined,
-                typeof parsed.workspace === 'string' ? parsed.workspace : undefined,
-              );
-          res
-            .writeHead(error ? 400 : 200, { ...CORS, 'content-type': 'application/json' })
-            .end(JSON.stringify(error ? { error } : { ok: true }));
+          if (sessionMatch[1]) {
+            const error = this.sessions!.activate(decodeURIComponent(sessionMatch[1]));
+            res
+              .writeHead(error ? 400 : 200, { ...CORS, 'content-type': 'application/json' })
+              .end(JSON.stringify(error ? { error } : { ok: true }));
+            return;
+          }
+          // Atomic create: the runtime is validated/acquired before the session exists,
+          // so the caller either gets a live session or a clean rejection — never a
+          // half-created one. The handler decides the status (e.g. 409 for an
+          // unavailable execution mode) via the optional `status` field.
+          void this.sessions!.create({
+            workspace: typeof parsed.workspace === 'string' ? parsed.workspace : undefined,
+            runtime: typeof parsed.runtime === 'string' ? parsed.runtime : undefined,
+            prompt: typeof parsed.prompt === 'string' ? parsed.prompt : undefined,
+          }).then(
+            (r) => {
+              res
+                .writeHead(r ? (r.status ?? 400) : 200, { ...CORS, 'content-type': 'application/json' })
+                .end(JSON.stringify(r ? { error: r.error } : { ok: true }));
+            },
+            (err: unknown) =>
+              res.writeHead(500, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify({ error: String((err as Error).message ?? err) })),
+          );
         });
         return;
       }

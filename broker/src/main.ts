@@ -30,9 +30,11 @@ import type { VoicePresence } from './voice-presence.ts';
 import { applyModeChange, decideJoin, surfaceModes, SurfacePolicy } from './surface-modes.ts';
 import { LocalMemory, type MemoryEntry } from './memory.ts';
 import { MicSessionGate } from './mic-gate.ts';
-import { SessionManager, type Session } from './sessions.ts';
+import { SessionManager, truncateTitle, resolveLazyWorkspace, type Session, type ExecutionMode } from './sessions.ts';
+import { EXEC_TO_RUNTIME, isExecutionMode } from './execution-modes.ts';
+import { generateSessionTitle } from './session-title.ts';
 import { DeepgramSttStream, type LiveLike, deepgramLiveOptions } from './stt.ts';
-import { SwarmClient, type SwarmSquad, type WorkspaceBody } from './swarm-client.ts';
+import { SwarmClient, type SwarmSquad, type SwarmWorkspace, type WorkspaceBody } from './swarm-client.ts';
 import { VoiceKeyResolver, VOICE_STT_HINT, VOICE_TTS_HINT } from './voice-keys.ts';
 import { PersonaGenerator, draftToAgentBody, type PersonaDraft } from './persona-generator.ts';
 import { loadIdentity, promptInfo } from './identity.ts';
@@ -284,13 +286,16 @@ const brain = new BrokerBrain(
   streamFactory,
   {
     // Delegations land in the active session's workspace unless the brain names one.
-    delegate: (input) => broker.executors.delegate({ ...input, workspace: input.workspace ?? sessionManager.active().workspace }),
+    // A meeting-sourced turn (broker.ts's stt.start callback) can run with no
+    // active session — activeOrNull() falls back to the default workspace
+    // rather than throwing (sessionManager.active() would).
+    delegate: (input) => broker.executors.delegate({ ...input, workspace: input.workspace ?? sessionManager.activeOrNull()?.workspace ?? defaultWorkspaceName }),
     check_status: (input) => broker.executors.check_status(input),
     raise_hand: (input) => broker.executors.raise_hand(input),
     remember: (input) => broker.executors.remember(input),
     // Scoped to the current conversation's workspace only — never model-choosable, unlike delegate's optional workspace.
-    lookup_ticket: (input) => broker.executors.lookup_ticket({ ...input, workspace: sessionManager.active().workspace }),
-    search_docs: (input) => broker.executors.search_docs({ ...input, workspace: sessionManager.active().workspace }),
+    lookup_ticket: (input) => broker.executors.lookup_ticket({ ...input, workspace: sessionManager.activeOrNull()?.workspace ?? defaultWorkspaceName }),
+    search_docs: (input) => broker.executors.search_docs({ ...input, workspace: sessionManager.activeOrNull()?.workspace ?? defaultWorkspaceName }),
     // Voice-driven agent creation: draft under the host's control, persist
     // only on the human's explicit yes.
     draft_agent: async ({ spec }) => {
@@ -506,11 +511,76 @@ const rosterFrame = (roster: UiRoster): ChannelFrame => ({
   },
 });
 
+let workspaceNames: string[] = [];
+let workspaceRecords: SwarmWorkspace[] = [];
+let defaultWorkspaceName = 'default';
+
+// Which workspace Discord is currently attending — set by every switchDiscord
+// call (boot, session create/activate, reset). Feeds resolveLazyWorkspace so a
+// Discord-originated turn with no active session lands in the workspace
+// Discord is already attending, not the global default.
+let attendedDiscordWorkspace: string | null = null;
+function switchDiscord(workspaceName: string): void {
+  attendedDiscordWorkspace = workspaceName;
+  void discordWorkspaceSwitcher
+    .switchDiscordForWorkspace(workspaceName)
+    .catch((err: unknown) => console.error(`[discord] workspace switch failed for "${workspaceName}": ${String(err)}`));
+}
+
+// Null-tolerant: zero sessions is a legal state (spec §4b) — fresh install,
+// or every session was removed. `session: null` is distinct from "hello frame
+// not sent yet"; UIs render an empty/creation state rather than treating it
+// as still-loading.
+function sessionFrame() {
+  const s = sessionManager.activeOrNull();
+  return {
+    type: 'session' as const,
+    session: s ? { id: s.id, title: s.title, workspace: s.workspace, runtime: s.runtime } : null,
+    sessions: sessionManager.list(),
+    transcript: (s?.transcript ?? []).map((t) => ({ role: t.role, text: t.text })),
+    workspaces: workspaceNames,
+  };
+}
+
+// Re-fetch workspace records (active only — archived workspaces can't host new
+// sessions) and re-push the session frame that carries them to every client.
+async function refreshWorkspaceNames(): Promise<void> {
+  const all = await swarm.listWorkspaces().catch(() => []);
+  workspaceRecords = all.filter((w) => !w.archived);
+  workspaceNames = workspaceRecords.map((w) => w.name);
+  defaultWorkspaceName = workspaceRecords.find((w) => w.default)?.name ?? workspaceNames[0] ?? 'default';
+  await broker.refreshWorkspaces();
+  textChannel.broadcast(sessionFrame());
+}
+
+/**
+ * Session birth core — create it, load its brain history, seed workspace
+ * context (description/links) onto the brain once, switch Discord attendance,
+ * and broadcast. Used by the sessions HTTP route (explicit create) and lazy
+ * creation (handleUserText) alike, so both paths stay in lockstep.
+ */
+function startSession(workspace: string, opts: { runtime: ExecutionMode; title: string; awaitingTitle?: boolean }): Session {
+  const s = sessionManager.create(workspace, { ...opts });
+  brain.loadHistory(s.brainHistory);
+  const rec = workspaceRecords.find((w) => w.name === workspace);
+  if (rec?.description || rec?.links?.length) {
+    const links = rec.links?.length ? `\nlinks:\n${rec.links.join('\n')}` : '';
+    brain.seedContext(`workspace "${workspace}": ${rec.description ?? ''}${links}`);
+    sessionManager.saveBrainHistory(brain.exportHistory());
+  }
+  switchDiscord(workspace);
+  textChannel.broadcast(sessionFrame());
+  return s;
+}
+
 // Text I/O for UIs (Tauri control plane): POST /utterance in, WS transcript +
 // live roster out. New clients get capabilities + a roster snapshot on connect.
 // Same TDZ note as the executors above — the closures run long after assignment.
 // A user line from any input (HTTP, stdin, mic) lands in the active session's
-// transcript, runs a brain turn, then persists the brain's memory.
+// transcript, runs a brain turn, then persists the brain's memory. No active
+// session (spec §4b: legal after boot with nothing persisted, or after a
+// reset) lazily creates one first — voice/stdin/HTTP land in the default
+// workspace, Discord lands in whichever workspace it's currently attending.
 function handleUserText(text: string, origin?: TurnOrigin): void {
   // Every other inbound path (HTTP /utterance, mic PTT, stdin) already
   // broadcasts the utterance frame at its own entry point before reaching
@@ -518,29 +588,39 @@ function handleUserText(text: string, origin?: TurnOrigin): void {
   // its own — the hub calls straight into this function — so this is the
   // one place to do it for that path, matching the existing frame shape.
   if (origin) textChannel.broadcast({ type: 'utterance', text });
+  const lazilyCreated = !sessionManager.hasActive();
+  if (lazilyCreated) {
+    const workspace = resolveLazyWorkspace(origin, attendedDiscordWorkspace, defaultWorkspaceName);
+    startSession(workspace, { runtime: 'local-in-process', title: truncateTitle(text), awaitingTitle: true });
+  }
   sessionManager.appendTranscript('user', text);
-  void broker.handleUtterance(text, origin).then(() => sessionManager.saveBrainHistory(brain.exportHistory()));
+  // startSession (above) already broadcast a session frame, but with an
+  // EMPTY transcript — this line hadn't been appended yet. The client's
+  // session frame is a full replace of the message list (useBrokerChat's
+  // setMessages(frame.transcript...)), so if that empty frame is the last
+  // one the client sees for this turn, it wipes the very utterance that
+  // triggered the lazy create — permanently, if maybeRetitle below never
+  // re-broadcasts (generateSessionTitle returning null). Re-broadcast now,
+  // AFTER the append, so the last frame for this turn is always the correct
+  // one — regardless of whether the utterance frame (Discord: above; HTTP/
+  // mic/stdin: at their own entry point, before this function ever runs)
+  // landed before or after startSession's.
+  if (lazilyCreated) textChannel.broadcast(sessionFrame());
+  void broker.handleUtterance(text, origin).then(async () => {
+    if (sessionManager.hasActive()) sessionManager.saveBrainHistory(brain.exportHistory());
+    await maybeRetitle();
+  });
 }
 
-let workspaceNames: string[] = [];
-
-function sessionFrame() {
-  const s = sessionManager.active();
-  return {
-    type: 'session' as const,
-    session: { id: s.id, title: s.title, workspace: s.workspace },
-    sessions: sessionManager.list(),
-    transcript: s.transcript.map((t) => ({ role: t.role, text: t.text })),
-    workspaces: workspaceNames,
-  };
-}
-
-// Re-fetch workspace names (active only — archived workspaces can't host new
-// sessions) and re-push the session frame that carries them to every client.
-async function refreshWorkspaceNames(): Promise<void> {
-  workspaceNames = (await swarm.listWorkspaces().catch(() => [])).filter((w) => !w.archived).map((w) => w.name);
-  await broker.refreshWorkspaces();
-  textChannel.broadcast(sessionFrame());
+/** One-shot post-first-reply rename (spec §3); silent on failure. */
+async function maybeRetitle(): Promise<void> {
+  const s = sessionManager.activeOrNull();
+  if (!s?.awaitingTitle) return;
+  const firstUser = s.transcript.find((t) => t.role === 'user')?.text ?? '';
+  const firstReply = s.transcript.find((t) => t.role === 'broker')?.text ?? '';
+  if (!firstReply) return; // no reply landed yet — the next turn retries
+  const title = await generateSessionTitle(streamFactory, 'claude-haiku-4-5', firstUser, firstReply);
+  if (title && sessionManager.retitle(s.id, title)) textChannel.broadcast(sessionFrame());
 }
 
 // One remove intent for agents: the broker decides archive-vs-delete from
@@ -651,6 +731,11 @@ const cliTools = {
 // above) — safe here because this closure only runs once a request lands,
 // by which point module init has completed (same pattern as the `compose`
 // and `work` handlers passed into TextChannel just below).
+//
+// Deliberately NOT passing `inheritSessionRuntime` here: a board card dispatch
+// is a standalone instruction, not a continuation of "the active session", so
+// it must go unstamped and let the server default decide (human ruling
+// 2026-08-07) — see dispatchWork's doc comment in broker.ts.
 const workBoards = {
   proxy: (method: string, path: string, body?: unknown) => swarm.work(method, path, body),
   delegate: async (body: Record<string, unknown>): Promise<{ taskId: string } | { error: string }> => {
@@ -927,27 +1012,26 @@ const textChannel = new TextChannel(
     },
   },
   {
-    create: (title, workspace) => {
-      if (workspace && !workspaceNames.includes(workspace)) return `unknown workspace: ${workspace}`;
-      const s = sessionManager.create(workspace ?? sessionManager.active().workspace, title);
-      brain.loadHistory(s.brainHistory);
-      void discordWorkspaceSwitcher
-        .switchDiscordForWorkspace(s.workspace)
-        .catch((err: unknown) => console.error(`[discord] workspace switch failed for "${s.workspace}": ${String(err)}`));
-      textChannel.broadcast(sessionFrame());
-      // The host greets a NEW session once — activation replays silently.
-      void broker.announce(
-        `a new session just started in workspace "${s.workspace}". As ${identity.name}, greet the human in one or two sentences — roster-aware (who is idle, who is busy on what). Do not delegate.`,
-      );
+    create: async (body) => {
+      const workspace = body.workspace;
+      const prompt = body.prompt?.trim() ?? '';
+      if (!workspace || !workspaceNames.includes(workspace)) return { error: `unknown workspace: ${body.workspace ?? '(none)'}` };
+      if (!prompt) return { error: 'prompt is required' };
+      if (!isExecutionMode(body.runtime)) return { error: `runtime must be one of: ${Object.keys(EXEC_TO_RUNTIME).join(', ')}` };
+      const modes = await swarm.executionModes().catch(() => null);
+      if (modes && modes[body.runtime] === false) {
+        return { error: `execution mode "${body.runtime}" is not available`, status: 409 };
+      }
+      startSession(workspace, { runtime: body.runtime, title: truncateTitle(prompt), awaitingTitle: true });
+      textChannel.broadcast({ type: 'utterance', text: prompt }); // entry-point broadcast, same as POST /utterance
+      handleUserText(prompt);
       return null;
     },
     activate: (id) => {
       const s = sessionManager.activate(id);
       if (!s) return `unknown session: ${id}`;
       brain.loadHistory(s.brainHistory);
-      void discordWorkspaceSwitcher
-        .switchDiscordForWorkspace(s.workspace)
-        .catch((err: unknown) => console.error(`[discord] workspace switch failed for "${s.workspace}": ${String(err)}`));
+      switchDiscord(s.workspace);
       textChannel.broadcast(sessionFrame());
       return null;
     },
@@ -971,16 +1055,14 @@ const textChannel = new TextChannel(
       for (const file of readdirSync(sessionsDir).filter((f) => f.endsWith('.json'))) {
         rmSync(join(sessionsDir, file), { force: true });
       }
-      const fresh = sessionManager.resetAll(workspaceNames[0] ?? 'default');
-      brain.loadHistory(fresh.brainHistory);
-      // Reset can change the active workspace (falls back to workspaceNames[0])
-      // — matches every other place that changes it (create/activate above,
-      // boot-time init below): without this, a reset out of a workspace with
-      // Discord configured would leave that connection live, still routing
-      // into whatever session is now active.
-      void discordWorkspaceSwitcher
-        .switchDiscordForWorkspace(fresh.workspace)
-        .catch((err: unknown) => console.error(`[discord] workspace switch failed after reset: ${String(err)}`));
+      sessionManager.resetAll();
+      brain.loadHistory([]);
+      // Reset creates no session — the UI lands on the composer (spec §4b).
+      // Discord attendance falls back to the default workspace, matching
+      // every other place that changes it (create/activate above, boot below):
+      // without this, a reset out of a workspace with Discord configured
+      // would leave that connection live with no session backing it.
+      switchDiscord(defaultWorkspaceName);
     }
     await broker.resetComposition();
     textChannel.broadcast(sessionFrame());
@@ -1048,6 +1130,12 @@ const textChannel = new TextChannel(
   workBoards,
   apiKeys,
   voice,
+  { list: () => swarm.executionModes() },
+  {
+    get: () => swarm.containers(),
+    set: (enabled: boolean) => swarm.setContainers(enabled),
+    verify: () => swarm.verifyContainers(),
+  },
 );
 const micSessions = new MicSessionGate<DeepgramSttStream>();
 
@@ -1072,7 +1160,7 @@ function broadcastSpokenAudio(text: string): void {
   synthChain = synthChain.then(async () => {
     const t = await currentTts();
     if (!t) {
-      const sid = sessionManager.active().id;
+      const sid = sessionManager.activeOrNull()?.id ?? null;
       if (ttsHintSessionId !== sid) {
         ttsHintSessionId = sid;
         textChannel.broadcast({ type: 'notice', text: VOICE_TTS_HINT });
@@ -1131,8 +1219,8 @@ broker = new Broker(
     brain,
     memory,
     memoryScope: () => {
-      const active = sessionManager.active();
-      return { workspace: active.workspace, session: active.id };
+      const active = sessionManager.activeOrNull();
+      return { workspace: active?.workspace, session: active?.id };
     },
     rosterStore,
     makeStt: () => new DeepgramSttStream(makeDeepgramLive),
@@ -1140,7 +1228,20 @@ broker = new Broker(
     speak,
     onSpeechText: (text) => {
       console.log(`[speech-text] ${text}`);
-      sessionManager.appendTranscript('broker', text);
+      // Paths that bypass handleUserText's lazy creation — meeting STT
+      // (broker.ts's stt.start callback) and swarm-event task narration
+      // (onSwarmEvent's system-note turn, reachable from a work-board
+      // dispatch that names no session at all) — can run in the legal,
+      // durable zero-session state (fresh install; right after Reset).
+      // appendTranscript throws with no active session, and since this is
+      // the first statement in enqueueSpeech's try block (broker.ts), an
+      // unguarded throw here would silently drop the whole speech chunk:
+      // no broadcast, no TTS audio, no channel relay. A session is a
+      // per-conversation transcript; the broker's own speech isn't itself a
+      // reason to lazily birth one (unlike a human's first message), so
+      // this narrows to "persist the line if there's somewhere to persist
+      // it" rather than lazily creating a session here too.
+      if (sessionManager.hasActive()) sessionManager.appendTranscript('broker', text);
       textChannel.broadcast({ type: 'speech', text });
       broadcastSpokenAudio(text);
       adapterHub.dispatchSpeech(text);
@@ -1169,6 +1270,10 @@ broker = new Broker(
       }),
     livekitUrl: config.livekit.url,
     identityName: identity.name,
+    sessionRuntime: () => {
+      const s = sessionManager.activeOrNull();
+      return s ? EXEC_TO_RUNTIME[s.runtime] : undefined;
+    },
   },
   { repository: config.swarm.repository },
 );
@@ -1176,8 +1281,10 @@ broker = new Broker(
 await broker.start();
 const bootWorkspaces = (await swarm.listWorkspaces().catch(() => [])).filter((w) => !w.archived);
 workspaceNames = bootWorkspaces.map((w) => w.name);
-const activeSession = sessionManager.init(bootWorkspaces.find((w) => w.default)?.name ?? workspaceNames[0] ?? 'default');
-brain.loadHistory(activeSession.brainHistory);
+workspaceRecords = bootWorkspaces;
+defaultWorkspaceName = bootWorkspaces.find((w) => w.default)?.name ?? workspaceNames[0] ?? 'default';
+const activeSession = sessionManager.init(); // Session | null — zero sessions is legal (spec §4b)
+if (activeSession) brain.loadHistory(activeSession.brainHistory);
 const textPort = await textChannel.start(config.textPort);
 console.log(`[broker] running — polling swarm for open meetings. Text channel on http://127.0.0.1:${textPort}. Type a line to simulate an utterance.`);
 
@@ -1219,9 +1326,10 @@ const discordVoiceLifecycle = createDiscordVoiceLifecycle({
   },
 });
 const discordWorkspaceSwitcher = createDiscordWorkspaceSwitcher({ swarm, discordTextLifecycle, discordVoiceLifecycle });
-void discordWorkspaceSwitcher
-  .switchDiscordForWorkspace(activeSession.workspace)
-  .catch((err: unknown) => console.error(`[discord] initial workspace connect failed: ${String(err)}`));
+// switchDiscord (defined above) closes over discordWorkspaceSwitcher — safe
+// only from here on, now that it's assigned (see the TDZ note above).
+if (activeSession) switchDiscord(activeSession.workspace);
+else switchDiscord(bootWorkspaces.find((w) => w.default)?.name ?? bootWorkspaces[0]?.name ?? 'default');
 
 const rl = createInterface({ input: process.stdin });
 rl.on('line', (line) => {

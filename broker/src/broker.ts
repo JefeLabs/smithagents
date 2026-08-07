@@ -27,6 +27,7 @@ export interface SwarmClientLike {
     metadata?: Record<string, unknown>;
     workspace?: string;
     repo?: string;
+    runtime?: string;
   }): Promise<{ taskId: string; agentName: string | null }>;
   getOutput(taskIdOrName: string): Promise<{ taskId: string; output: string }>;
   steer(taskIdOrName: string, message: string): Promise<void>;
@@ -103,6 +104,8 @@ export interface BrokerDeps {
   pollMs?: number;
   /** The broker's own identity name (e.g. "Anderson") — addressable like an agent, but never one. */
   identityName?: string;
+  /** Mapped RuntimeType of the active session (EXEC_TO_RUNTIME applied by main.ts); undefined = no session, server default applies. */
+  sessionRuntime?: () => string | undefined;
 }
 
 // ElevenLabs gates pcm_44100 behind the Pro tier; 24000 is available on every
@@ -177,6 +180,10 @@ export class Broker {
         workspace: input.workspace,
         repo: input.repo,
         metadata: { source: 'broker-meeting', ticketKey: input.ticketKey },
+        // This is a conversational/meeting delegation turn — it inherits the active
+        // session's execution mode (human ruling 2026-08-07). The board's dispatch path
+        // (main.ts workBoards.delegate) calls dispatchWork directly without this flag.
+        inheritSessionRuntime: true,
       });
       if ('error' in r) {
         return r.error.startsWith('There is no agent')
@@ -228,7 +235,12 @@ export class Broker {
    * The one dispatch path for real work — the meeting's delegate tool and
    * the board's Send-to-agent both land here, so busy-refusal, the
    * directives-prefixed prompt, task binding, and roster refresh can never
-   * drift apart.
+   * drift apart. The two callers DO diverge on one thing: whether the
+   * dispatched task inherits the active session's execution mode.
+   * Conversational/meeting delegation is a continuation of "this session",
+   * so it inherits; a board card dispatch is a standalone instruction, so it
+   * goes unstamped and the server default decides (human ruling 2026-08-07)
+   * — callers opt in via `inheritSessionRuntime`, default false.
    */
   async dispatchWork(input: {
     agent: string;
@@ -236,6 +248,8 @@ export class Broker {
     workspace?: string;
     repo?: string;
     metadata?: Record<string, unknown>;
+    /** Stamp the task with the active session's runtime. See doc comment above. */
+    inheritSessionRuntime?: boolean;
   }): Promise<{ taskId: string; agentName: string | null; agentDisplayName: string } | { error: string }> {
     const agent = this.deps.directory.resolve(input.agent);
     if (!agent) return { error: `There is no agent named "${input.agent}".` };
@@ -248,6 +262,7 @@ export class Broker {
       workspace: input.workspace,
       repo: input.repo,
       metadata: { composedAgentId: agent.id, ...input.metadata },
+      runtime: input.inheritSessionRuntime ? this.deps.sessionRuntime?.() : undefined,
     });
     this.deps.directory.bindTask(agent.id, { taskId, summary: input.task.slice(0, 80), swarmName: agentName ?? undefined });
     this.deps.onTaskDispatched?.({ taskId, agent: agent.name, task: input.task });

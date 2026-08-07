@@ -4,7 +4,7 @@ import { resolveRemoval, transcriptMentions, createRemovalService } from './remo
 import type { Session } from './sessions.ts';
 
 const session = (texts: string[]): Session => ({
-  id: 's1', title: 't', workspace: 'w', createdAt: 'c', updatedAt: 'u', brainHistory: [],
+  id: 's1', title: 't', workspace: 'w', runtime: 'local-in-process', createdAt: 'c', updatedAt: 'u', brainHistory: [],
   transcript: texts.map((text) => ({ role: 'broker' as const, text, at: 'now' })),
 });
 

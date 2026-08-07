@@ -91,8 +91,7 @@ export class Dispatcher extends EventEmitter {
    *
    * The runtime is resolved from:
    *   1. manifest.runtime
-   *   2. the task's workspace's own runtime
-   *   3. config.defaultRuntime
+   *   2. config.defaultRuntime
    *
    * @param manifest - The task to dispatch
    * @returns TaskResult with outcome and metadata
@@ -117,16 +116,15 @@ export class Dispatcher extends EventEmitter {
 
     // Resolve once: pairs this user's credentials with the workspace/repo
     // config for this task, feeding prepareWorktree (Atlassian MCP
-    // materialization), runtime.launch (env injection), and the runtime
-    // choice itself (workspace.runtime, design §3) below.
+    // materialization) and runtime.launch (env injection).
     const connections = await this.resolveConnections(manifest);
 
-    // Per-task override wins, then the task's workspace's own runtime, then
-    // the server-wide default. API-created tasks arrive already resolved
-    // (resolveTaskRuntime at POST /tasks); this chain covers directly-
-    // constructed manifests.
+    // Per-task override wins, then the server default — workspace-level
+    // runtime was removed by spec 2026-08-07. API-created tasks arrive
+    // already resolved (resolveTaskRuntime at POST /tasks); this chain
+    // covers directly-constructed manifests.
     const runtimeType: RuntimeType =
-      manifest.runtime ?? connections.workspaceRuntime ?? this.config.defaultRuntime;
+      manifest.runtime ?? this.config.defaultRuntime;
     const runtime = createRuntime(runtimeType, this.config.docker, this.workerPool);
 
     let worktreePath = '';
@@ -221,7 +219,6 @@ export class Dispatcher extends EventEmitter {
   ): Promise<{
     atlassian?: { siteUrl: string; jiraProjectKeys?: string[]; confluenceSpaceKeys?: string[] };
     env: Record<string, string>;
-    workspaceRuntime?: RuntimeType;
   }> {
     const env: Record<string, string> = {};
     if (!manifest.context.repoPath) return { env };
@@ -256,7 +253,7 @@ export class Dispatcher extends EventEmitter {
     if (githubConnector?.fields.token) {
       env.GH_TOKEN = githubConnector.fields.token;
     }
-    return { atlassian, env, workspaceRuntime: workspace.runtime };
+    return { atlassian, env };
   }
 
   /**

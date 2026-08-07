@@ -260,15 +260,12 @@ test('workspaceProblems: a connectorId on atlassian or repo.github is ignored en
   assert.equal(ok, null);
 });
 
-test('workspaceProblems: accepts tmux/docker/remote runtimes, rejects anything else, allows unset', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'ws-rt-'));
+test('workspaceProblems: links must be an array of strings when present', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'ws-links-'));
   await git('git', ['init'], { cwd: dir });
   const base = { name: 'acme', repos: [{ name: 'web', path: dir }] } as Partial<Workspace>;
-  assert.equal(await workspaceProblems(base), null);
-  assert.equal(await workspaceProblems({ ...base, runtime: 'tmux' }), null);
-  assert.equal(await workspaceProblems({ ...base, runtime: 'docker' }), null);
-  assert.equal(await workspaceProblems({ ...base, runtime: 'remote' }), null);
-  assert.match((await workspaceProblems({ ...base, runtime: 'warp' as never }))!, /runtime/);
+  assert.equal(await workspaceProblems({ ...base, links: ['https://a', 'https://b'] }), null);
+  assert.match((await workspaceProblems({ ...base, links: 'nope' as never })) ?? '', /links/);
 });
 
 // POST /workspaces/:name/verify-atlassian's two new 400-guard branches (no
@@ -305,11 +302,17 @@ test('gitInitRequestedRepos: inits only flagged non-repo paths, leaves existing 
   assert.match((await gitInitRequestedRepos([{ name: 'x', path: missing, initGit: true }]))!, /git init failed/);
 });
 
-test('resolveTaskRuntime: per-task override wins, then workspace runtime, then server default — location mirrors the pick', () => {
-  assert.deepEqual(resolveTaskRuntime('docker', { runtime: 'remote' }, 'tmux'), { runtime: 'docker', location: 'docker' });
-  assert.deepEqual(resolveTaskRuntime(undefined, { runtime: 'remote' }, 'tmux'), { runtime: 'remote', location: 'remote' });
-  assert.deepEqual(resolveTaskRuntime(undefined, { runtime: undefined }, 'docker'), { runtime: 'docker', location: 'docker' });
-  assert.deepEqual(resolveTaskRuntime(undefined, undefined, 'tmux'), { runtime: 'tmux', location: 'local' });
+test('resolveTaskRuntime: manifest wins, else server default — no workspace clause', () => {
+  assert.equal(resolveTaskRuntime('docker', 'tmux').runtime, 'docker');
+  assert.equal(resolveTaskRuntime(undefined, 'tmux').runtime, 'tmux');
+});
+
+test('resolveTaskRuntime: remote-* runtimes map to location "remote"', () => {
+  assert.equal(resolveTaskRuntime('remote-tmux', 'tmux').location, 'remote');
+  assert.equal(resolveTaskRuntime('remote-docker', 'tmux').location, 'remote');
+  assert.equal(resolveTaskRuntime('remote', 'tmux').location, 'remote');
+  assert.equal(resolveTaskRuntime('docker', 'tmux').location, 'docker');
+  assert.equal(resolveTaskRuntime('tmux', 'docker').location, 'local');
 });
 
 test('buildUserUpdate: renaming the operator carries connectors and voice forward untouched', () => {

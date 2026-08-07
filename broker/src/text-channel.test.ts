@@ -3,6 +3,10 @@ import { test } from 'node:test';
 import { WebSocket } from 'ws';
 import { TextChannel, type ChannelFrame, workUpdateFrames } from './text-channel.ts';
 
+// The control-plane's Vite dev origin (see control-plane/vite.config.ts,
+// tauri.conf.json devUrl) — the one entry in text-channel.ts's ALLOWED_ORIGINS.
+const ALLOWED_ORIGIN = 'http://localhost:1420';
+
 const post = (port: number, body: string) =>
   fetch(`http://127.0.0.1:${port}/utterance`, {
     method: 'POST',
@@ -56,6 +60,7 @@ const stubWorkspaceVerify = {
 
 /** Builds a channel with only the trailing (agent/removal/workspace/surfaces) handlers under test wired in. */
 function channelWith(opts: {
+  sessions?: ConstructorParameters<typeof TextChannel>[5];
   removal?: ConstructorParameters<typeof TextChannel>[8];
   workspaces?: ConstructorParameters<typeof TextChannel>[9];
   creation?: ConstructorParameters<typeof TextChannel>[7];
@@ -68,6 +73,8 @@ function channelWith(opts: {
   workBoards?: ConstructorParameters<typeof TextChannel>[16];
   apiKeys?: ConstructorParameters<typeof TextChannel>[17];
   voice?: ConstructorParameters<typeof TextChannel>[18];
+  execModes?: ConstructorParameters<typeof TextChannel>[19];
+  containers?: ConstructorParameters<typeof TextChannel>[20];
 }): TextChannel {
   return new TextChannel(
     () => {},
@@ -75,7 +82,7 @@ function channelWith(opts: {
     undefined,
     undefined,
     undefined,
-    undefined,
+    opts.sessions,
     undefined,
     opts.creation ?? stubCreation,
     opts.removal,
@@ -89,6 +96,8 @@ function channelWith(opts: {
     opts.workBoards,
     opts.apiKeys,
     opts.voice,
+    opts.execModes,
+    opts.containers,
   );
 }
 
@@ -1158,5 +1167,165 @@ test('agents: response carries the voice status sibling; absent dep → both fal
     assert.deepEqual(body.voice, { stt: false, tts: false });
   } finally {
     await without.stop();
+  }
+});
+
+test('POST /sessions forwards {workspace, runtime, prompt} and maps the handler status', async () => {
+  const calls: unknown[] = [];
+  const channel = channelWith({
+    sessions: {
+      create: async (body) => {
+        calls.push(body);
+        return body.runtime === 'remote-docker'
+          ? { error: 'execution mode "remote-docker" is not available', status: 409 }
+          : null;
+      },
+      activate: () => null,
+    },
+  });
+  const port = await channel.start(0);
+  try {
+    const ok = await fetch(`http://127.0.0.1:${port}/sessions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workspace: 'acme', runtime: 'local-in-process', prompt: 'fix the build' }),
+    });
+    assert.equal(ok.status, 200);
+    assert.deepEqual(calls[0], { workspace: 'acme', runtime: 'local-in-process', prompt: 'fix the build' });
+
+    const conflict = await fetch(`http://127.0.0.1:${port}/sessions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workspace: 'acme', runtime: 'remote-docker', prompt: 'x' }),
+    });
+    assert.equal(conflict.status, 409);
+    assert.match(((await conflict.json()) as { error: string }).error, /not available/);
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('POST /sessions responds 500 instead of hanging when sessions.create() rejects', async () => {
+  const channel = channelWith({
+    sessions: {
+      create: async () => {
+        throw new Error('swarm unreachable');
+      },
+      activate: () => null,
+    },
+  });
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/sessions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workspace: 'acme', runtime: 'local-in-process', prompt: 'x' }),
+    });
+    assert.equal(res.status, 500);
+    assert.deepEqual(await res.json(), { error: 'swarm unreachable' });
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('POST /sessions and /sessions/:id/activate block a disallowed browser Origin; an absent Origin still works', async () => {
+  const calls: unknown[] = [];
+  const channel = channelWith({
+    sessions: {
+      create: async (body) => {
+        calls.push(['create', body]);
+        return null;
+      },
+      activate: (id) => {
+        calls.push(['activate', id]);
+        return null;
+      },
+    },
+  });
+  const port = await channel.start(0);
+  try {
+    const blockedCreate = await fetch(`http://127.0.0.1:${port}/sessions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Origin: 'http://evil.example' },
+      body: JSON.stringify({ workspace: 'acme', runtime: 'local-in-process', prompt: 'x' }),
+    });
+    assert.equal(blockedCreate.status, 403); // matches the exact refusal status the cli-tools PUT's originBlocked() returns
+    assert.deepEqual(await blockedCreate.json(), { error: 'origin not allowed' });
+    assert.equal(blockedCreate.headers.get('access-control-allow-origin'), null);
+
+    const blockedActivate = await fetch(`http://127.0.0.1:${port}/sessions/s1/activate`, {
+      method: 'POST',
+      headers: { origin: 'http://evil.example' },
+    });
+    assert.equal(blockedActivate.status, 403);
+    assert.deepEqual(await blockedActivate.json(), { error: 'origin not allowed' });
+    assert.deepEqual(calls, [], 'the sessions dep must never be reached from a disallowed origin');
+
+    // No Origin header at all — the smith-broker-send CLI bridge and same-process callers
+    // never send one — must still pass, same trust model as every other guarded route.
+    const noOriginCreate = await fetch(`http://127.0.0.1:${port}/sessions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workspace: 'acme', runtime: 'local-in-process', prompt: 'x' }),
+    });
+    assert.equal(noOriginCreate.status, 200);
+
+    const noOriginActivate = await fetch(`http://127.0.0.1:${port}/sessions/s1/activate`, { method: 'POST' });
+    assert.equal(noOriginActivate.status, 200);
+
+    assert.deepEqual(calls, [
+      ['create', { workspace: 'acme', runtime: 'local-in-process', prompt: 'x' }],
+      ['activate', 's1'],
+    ]);
+
+    // The control-plane's own dev origin still works too.
+    const allowedCreate = await fetch(`http://127.0.0.1:${port}/sessions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: ALLOWED_ORIGIN },
+      body: JSON.stringify({ workspace: 'acme', runtime: 'local-in-process', prompt: 'y' }),
+    });
+    assert.equal(allowedCreate.status, 200);
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('the session frame type accepts session: null with an empty transcript', () => {
+  const channel = channelWith({});
+  // Compile-time pin for the lockstep protocol: this call must typecheck.
+  channel.broadcast({ type: 'session', session: null, sessions: [], transcript: [], workspaces: [] });
+});
+
+test('execution-modes and containers routes pass through their deps', async () => {
+  const channel = channelWith({
+    execModes: {
+      list: async () => ({ 'local-in-process': true, 'local-docker': false, 'remote-in-process': false, 'remote-docker': false }),
+    },
+    containers: {
+      get: async () => ({ version: 1, docker: { enabled: false } }),
+      set: async (enabled: boolean) => ({ version: 1, docker: { enabled } }),
+      verify: async () => ({ ok: false, detail: 'docker daemon unreachable — is Docker running?' }),
+    },
+  });
+  const port = await channel.start(0);
+  try {
+    const modes = (await (await fetch(`http://127.0.0.1:${port}/execution-modes`)).json()) as { modes: Record<string, boolean> };
+    assert.equal(modes.modes['local-in-process'], true);
+
+    const put = await fetch(`http://127.0.0.1:${port}/containers`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', origin: ALLOWED_ORIGIN },
+      body: JSON.stringify({ docker: { enabled: true } }),
+    });
+    assert.equal(put.status, 200);
+
+    const badOrigin = await fetch(`http://127.0.0.1:${port}/containers`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', origin: 'https://evil.example' },
+      body: JSON.stringify({ docker: { enabled: true } }),
+    });
+    assert.equal(badOrigin.status, 403); // matches the exact refusal status the cli-tools PUT's originBlocked() returns
+  } finally {
+    await channel.stop();
   }
 });

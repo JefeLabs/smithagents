@@ -26,11 +26,13 @@ export type AgentType = 'agy' | 'claude' | 'codex' | 'opencode' | 'copilot';
 
 /**
  * Execution runtime for task sessions.
- *   'tmux'   — Bare-metal tmux sessions on the host (default)
- *   'docker' — Docker containers with tmux running inside
- *   'remote' — Dispatched to a connected worker machine via WorkerPool
+ *   'tmux'          — Bare-metal tmux sessions on the host (default)
+ *   'docker'        — Docker containers with tmux running inside
+ *   'remote'        — Dispatched to a connected worker machine via WorkerPool (any runtime)
+ *   'remote-tmux'   — Dispatched to a remote worker advertising tmux support
+ *   'remote-docker' — Dispatched to a remote worker advertising docker support
  */
-export type RuntimeType = 'tmux' | 'docker' | 'remote';
+export type RuntimeType = 'tmux' | 'docker' | 'remote' | 'remote-tmux' | 'remote-docker';
 
 /**
  * Where the agent runs.

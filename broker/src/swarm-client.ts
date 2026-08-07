@@ -96,8 +96,7 @@ export interface WorkspaceBody {
     initGit?: boolean;
   }>;
   default?: boolean;
-  /** Execution environment for this workspace's tasks; unset = swarm's server default. */
-  runtime?: 'tmux' | 'docker' | 'remote';
+  links?: string[];
   atlassian?: { siteUrl: string; jiraProjectKeys?: string[]; confluenceSpaceKeys?: string[]; connectorId?: string };
 }
 
@@ -191,12 +190,14 @@ export class SwarmClient {
     branch?: string;
     workspace?: string;
     repo?: string;
+    runtime?: string;
     metadata?: Record<string, unknown>;
   }): Promise<{ taskId: string; agentName: string | null }> {
     const body = {
       prompt: req.prompt,
       agent: req.agent,
       context: { files: [], repository: req.repository, branch: req.branch ?? '', workspace: req.workspace, repo: req.repo },
+      runtime: req.runtime,
       metadata: req.metadata,
     };
     const r = await this.http('POST', '/tasks', body);
@@ -339,6 +340,23 @@ export class SwarmClient {
   async listWorkspaces(): Promise<SwarmWorkspace[]> {
     const r = await this.http('GET', '/workspaces');
     return (r.workspaces as SwarmWorkspace[]) ?? [];
+  }
+
+  async executionModes(): Promise<Record<string, boolean>> {
+    const r = await this.http('GET', '/execution-modes');
+    return (r.modes as Record<string, boolean>) ?? {};
+  }
+
+  async containers(): Promise<{ version: 1; docker: { enabled: boolean } }> {
+    return (await this.http('GET', '/containers')) as never;
+  }
+
+  async setContainers(dockerEnabled: boolean): Promise<{ version: 1; docker: { enabled: boolean } }> {
+    return (await this.http('PUT', '/containers', { docker: { enabled: dockerEnabled } })) as never;
+  }
+
+  async verifyContainers(): Promise<{ ok: boolean; detail: string }> {
+    return (await this.http('POST', '/containers/verify', {})) as never;
   }
 
   async lookupTicket(workspace: string, ticketKey: string): Promise<{ ok: boolean; ticket?: TicketResult; detail?: string }> {

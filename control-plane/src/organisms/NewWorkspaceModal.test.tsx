@@ -15,7 +15,6 @@ function props(overrides: Record<string, unknown> = {}) {
     open: true,
     onClose: vi.fn(),
     save: vi.fn(async () => ({ name: "acme" })),
-    list: vi.fn(async () => []),
     listMyConnectors: vi.fn(async () => CONNECTORS),
     onCreated: vi.fn(),
     ...overrides,
@@ -60,7 +59,7 @@ describe("NewWorkspaceModal", () => {
     expect(create.disabled).toBe(false);
   });
 
-  it("create posts runtime + required connector and hands the server-slugged name to onCreated", async () => {
+  it("create posts required connector and hands the server-slugged name to onCreated", async () => {
     const save = vi.fn(async () => ({ name: "my-app" }));
     const onCreated = vi.fn();
     const onClose = vi.fn();
@@ -71,7 +70,6 @@ describe("NewWorkspaceModal", () => {
       expect(save).toHaveBeenCalledWith(
         expect.objectContaining({
           name: "My App",
-          runtime: "tmux",
           repos: [
             expect.objectContaining({
               name: "web",
@@ -87,12 +85,32 @@ describe("NewWorkspaceModal", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it("defaults execution mode to the active workspace's runtime", async () => {
-    const list = vi.fn(async () => [{ name: "acme", default: true, repos: [], runtime: "docker" }]);
-    render(<NewWorkspaceModal {...props({ list, activeWorkspace: "acme" })} />);
-    await waitFor(() => expect(list).toHaveBeenCalled());
-    const dockerTab = await screen.findByRole("tab", { name: "Local Docker" });
-    await waitFor(() => expect(dockerTab.getAttribute("aria-selected")).toBe("true"));
+  it("submits description and newline-split links", async () => {
+    const save = vi.fn(async () => ({ name: "acme" }));
+    render(<NewWorkspaceModal {...props({ save })} />);
+    await fillOneValidRepo();
+    await userEvent.type(screen.getByLabelText(/description/i), "Marketing site");
+    await userEvent.type(
+      screen.getByLabelText(/links/i),
+      "https://github.com/acme/web\nhttps://acme.atlassian.net\n\n",
+    );
+    await userEvent.click(screen.getByRole("button", { name: /create workspace/i }));
+    await waitFor(() =>
+      expect(save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          description: "Marketing site",
+          links: ["https://github.com/acme/web", "https://acme.atlassian.net"],
+        }),
+        true,
+      ),
+    );
+  });
+
+  it("no execution mode control renders", async () => {
+    render(<NewWorkspaceModal {...props()} />);
+    await screen.findByPlaceholderText("acme");
+    expect(screen.queryByText(/execution mode/i)).toBeNull();
+    expect(screen.queryByRole("tab", { name: "Local Docker" })).toBeNull();
   });
 
   it("a save error is shown inline and onCreated never fires", async () => {

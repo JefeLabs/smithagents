@@ -275,6 +275,12 @@ export class BrokerBrain {
     return [...this.history];
   }
 
+  /** Deterministic session-birth context (workspace description + links) — no API call (spec §3). */
+  seedContext(note: string): void {
+    this.history.push({ role: 'user', content: `[workspace context — not the human speaking] ${note}` });
+    this.history.push({ role: 'assistant', content: 'Noted.' });
+  }
+
   /** Replace the conversation — switching sessions swaps brain memory wholesale. */
   loadHistory(history: HistoryEntry[]): void {
     this.history = [...history];

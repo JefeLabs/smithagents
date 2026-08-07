@@ -1,8 +1,14 @@
 import { Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { type AgentSeed, hostSeed, ringForIndex } from "../data/agents";
 import { type StageContextValue, StageProvider } from "../hooks/StageContext";
-import { type AudioFrame, useBrokerChat, type VoiceSettingsRecord } from "../hooks/useBrokerChat";
+import {
+  type AudioFrame,
+  type ExecutionMode,
+  useBrokerChat,
+  type VoiceSettingsRecord,
+  type WorkspaceRecord,
+} from "../hooks/useBrokerChat";
 import { useCliToolHealth } from "../hooks/useCliToolHealth";
 import { GRID_DEFAULTS, type GridParams } from "../hooks/useDotGrid";
 import { usePushToTalk } from "../hooks/usePushToTalk";
@@ -14,6 +20,7 @@ import { AddAgentModal } from "../organisms/AddAgentModal";
 import { AgentRoster } from "../organisms/AgentRoster";
 import { DotGridCanvas } from "../organisms/DotGridCanvas";
 import { DotGridTuner } from "../organisms/DotGridTuner";
+import { NewSessionScreen } from "../organisms/NewSessionScreen";
 import { NewWorkspaceModal } from "../organisms/NewWorkspaceModal";
 import { SessionsPanel } from "../organisms/SessionsPanel";
 import { SettingsPanel } from "../organisms/SettingsPanel";
@@ -29,6 +36,10 @@ export function HomePage() {
   const [tunerOpen, setTunerOpen] = useState(false);
   const [gridParams, setGridParams] = useState<GridParams>(GRID_DEFAULTS);
   const [sessionsOpen, setSessionsOpen] = useState(false);
+  /** Non-null shows the new-session composer in the stage; `locked` pins its workspace picker. */
+  const [composer, setComposer] = useState<{ locked?: string } | null>(null);
+  const [modes, setModes] = useState<Record<ExecutionMode, boolean> | null>(null);
+  const [wsRecords, setWsRecords] = useState<WorkspaceRecord[] | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [workspacesOpen, setWorkspacesOpen] = useState(false);
   const [newWorkspaceOpen, setNewWorkspaceOpen] = useState(false);
@@ -55,6 +66,7 @@ export function HomePage() {
     connected,
     audioMode,
     session,
+    sessionKnown,
     sessions,
     workspaces,
     lastBoardUpdate,
@@ -70,6 +82,7 @@ export function HomePage() {
     createSession,
     activateSession,
     resetSetup,
+    listExecutionModes,
     listWorkspaceRecords,
     saveWorkspace,
     removeWorkspace,
@@ -93,6 +106,9 @@ export function HomePage() {
     getWorkspaceChannels,
     saveWorkspaceChannels,
     verifyWorkspaceDiscord,
+    getContainers,
+    setDockerEnabled,
+    verifyContainers,
   } = useBrokerChat({ onAudio: (frame) => audioSink.current(frame) });
   const { soundOn, toggleSound, playAudioFrame, audioBlocked } = useSpokenReplies(messages, roster, !audioMode);
   audioSink.current = (frame) => void playAudioFrame(frame);
@@ -130,6 +146,35 @@ export function HomePage() {
     if (voiceNoticeTimer.current) clearTimeout(voiceNoticeTimer.current);
     voiceNoticeTimer.current = setTimeout(() => setVoiceNotice(null), 6000);
   };
+
+  // Zero-session boot forces the composer open even without an explicit entry-point click. Gated
+  // on `sessionKnown`, not just `session === null` — on every fresh connect there's a beat between
+  // `connected` flipping true and the first 'session' frame landing, and `session` stays null for
+  // that whole beat too. Without the gate the composer would flash open then vanish on every load,
+  // even when the broker already has an active session.
+  const composerVisible = composer !== null || (connected && sessionKnown && session === null);
+  // Refetch every time the composer becomes visible (not just on mount) — a mode that vanished
+  // or a workspace that changed while it was closed must be current the moment it reopens.
+  useEffect(() => {
+    if (!composerVisible) return;
+    void listExecutionModes()
+      .then(setModes)
+      .catch(() => setModes(null));
+    void listWorkspaceRecords()
+      .then(setWsRecords)
+      .catch(() => setWsRecords(null));
+  }, [composerVisible, listExecutionModes, listWorkspaceRecords]);
+  const onComposerCancel = useCallback(() => setComposer(null), []);
+  // Picking another session backs out of an explicitly-opened composer (spec §3) — without
+  // this, an explicit composer stays rendered with a possibly-stale locked workspace after
+  // the activated session's frame lands.
+  const onActivateSession = useCallback(
+    (id: string) => {
+      setComposer(null);
+      activateSession(id);
+    },
+    [activateSession],
+  );
 
   const host = hostSeed(identity);
   const agents: AgentSeed[] = [
@@ -240,7 +285,33 @@ export function HomePage() {
             onRemove={requestRemoval}
           />
         }
-        stage={<Outlet />}
+        stage={
+          composerVisible ? (
+            <NewSessionScreen
+              workspaces={workspaces}
+              records={wsRecords}
+              sessions={sessions}
+              modes={modes}
+              lockedWorkspace={composer?.locked}
+              forced={sessionKnown && session === null}
+              onSend={async (ws, mode, prompt) => {
+                const r = await createSession(ws, mode, prompt);
+                if (r.error) {
+                  if (r.status === 409)
+                    void listExecutionModes()
+                      .then(setModes)
+                      .catch(() => {});
+                  return r;
+                }
+                setComposer(null);
+                return undefined;
+              }}
+              onCancel={onComposerCancel}
+            />
+          ) : (
+            <Outlet />
+          )
+        }
         overlays={
           <>
             {audioBlocked && soundOn && (
@@ -293,14 +364,20 @@ export function HomePage() {
               getWorkspaceChannels={getWorkspaceChannels}
               saveWorkspaceChannels={saveWorkspaceChannels}
               verifyWorkspaceDiscord={verifyWorkspaceDiscord}
+              getContainers={getContainers}
+              setDockerEnabled={setDockerEnabled}
+              verifyContainers={verifyContainers}
             />
             <SessionsPanel
               open={sessionsOpen}
               sessions={sessions}
               workspaces={workspaces}
               onClose={() => setSessionsOpen(false)}
-              onActivate={activateSession}
-              onCreate={createSession}
+              onActivate={onActivateSession}
+              onCreate={(ws) => {
+                setSessionsOpen(false);
+                setComposer({ locked: ws || undefined });
+              }}
               onManage={() => setWorkspacesOpen(true)}
             />
             <WorkspaceManagerModal
@@ -317,11 +394,10 @@ export function HomePage() {
               open={newWorkspaceOpen}
               onClose={() => setNewWorkspaceOpen(false)}
               save={saveWorkspace}
-              list={listWorkspaceRecords}
               listMyConnectors={listMyConnectors}
               activeWorkspace={session?.workspace}
               pickFolder={hasNativeFolderPicker() ? pickFolder : undefined}
-              onCreated={(name) => createSession(name)}
+              onCreated={(name) => setComposer({ locked: name })}
             />
             <DotGridTuner
               open={tunerOpen}

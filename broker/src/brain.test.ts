@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { test, mock } from 'node:test';
 import { BrokerBrain, type BrainStreamLike, type StreamFactory, type ToolExecutors } from './brain.ts';
 
 type FinalMsg = Awaited<ReturnType<BrainStreamLike['finalMessage']>>;
@@ -267,4 +267,15 @@ test('draft_agent and confirm_agent route to their executors', async () => {
   await brain.handleUtterance('yes, add him', { roster: 'r', onSpeech: () => {} });
   assert.deepEqual(drafted, [{ spec: 'an Architect agent' }]);
   assert.deepEqual(confirmed, [{ accept: true }]);
+});
+
+test('seedContext pushes a user/assistant pair without any API call', () => {
+  const factory = mock.fn(); // must never be called
+  const brain = new BrokerBrain(factory as never, NOOP_EXEC);
+  brain.seedContext('workspace "acme": builds the acme app\nlinks:\nhttps://acme.dev');
+  const h = brain.exportHistory();
+  assert.equal(h.length, 2);
+  assert.match(String(h[0].content), /workspace context.*acme/s);
+  assert.equal(h[1].role, 'assistant');
+  assert.equal(factory.mock.callCount(), 0);
 });
