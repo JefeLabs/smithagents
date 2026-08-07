@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { emptyContainersFile, loadContainersFile, saveContainersFile, probeDocker } from './containers.js';
+import { emptyContainersFile, loadContainersFile, saveContainersFile, probeDocker, buildExecutionModes } from './containers.js';
 
 test('missing or corrupt file loads as disabled-docker default', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'containers-'));
@@ -39,4 +39,20 @@ test('probeDocker with code!==0 reports daemon unreachable', async () => {
   });
   assert.equal(unreachable.ok, false);
   assert.match(unreachable.detail, /daemon unreachable/i);
+});
+
+test('buildExecutionModes gates by docker toggle and worker advertisement', () => {
+  assert.deepEqual(buildExecutionModes(false, []), {
+    'local-in-process': true,
+    'local-docker': false,
+    'remote-in-process': false,
+    'remote-docker': false,
+  });
+  assert.deepEqual(buildExecutionModes(true, [['tmux'], ['docker']]), {
+    'local-in-process': true,
+    'local-docker': true,
+    'remote-in-process': true,
+    'remote-docker': true,
+  });
+  assert.equal(buildExecutionModes(true, [['tmux']])['remote-docker'], false);
 });

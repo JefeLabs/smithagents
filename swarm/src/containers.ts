@@ -7,6 +7,8 @@ import { dirname } from 'node:path';
 import type { CommandRunner } from './drivers/types.js';
 import { defaultRunner } from './cli-tools.js';
 
+export type ExecutionModeId = 'local-in-process' | 'local-docker' | 'remote-in-process' | 'remote-docker';
+
 export interface ContainersFile {
   version: 1;
   docker: { enabled: boolean };
@@ -48,4 +50,17 @@ export async function probeDocker(run: CommandRunner = defaultRunner): Promise<{
     return { ok: true, detail: `daemon running (server ${result.stdout.trim()})` };
   }
   return { ok: false, detail: 'docker daemon unreachable — is Docker running?' };
+}
+
+/** Availability = the same data routing uses (spec §2): toggle for docker, advertisement for remote. */
+export function buildExecutionModes(
+  dockerEnabled: boolean,
+  workerRuntimes: Array<Array<'tmux' | 'docker'>>,
+): Record<ExecutionModeId, boolean> {
+  return {
+    'local-in-process': true,
+    'local-docker': dockerEnabled,
+    'remote-in-process': workerRuntimes.some((r) => r.includes('tmux')),
+    'remote-docker': workerRuntimes.some((r) => r.includes('docker')),
+  };
 }

@@ -94,6 +94,7 @@ import {
   type SweepDeps,
 } from './cli-tools.js';
 import {
+  buildExecutionModes,
   loadContainersFile,
   probeDocker,
   saveContainersFile,
@@ -1739,6 +1740,11 @@ export class OrchestratorServer {
     });
 
     this.app.post('/containers/verify', async () => await probeDocker());
+
+    this.app.get('/execution-modes', async () => {
+      const file = await loadContainersFile(containersPath());
+      return { modes: buildExecutionModes(file.docker.enabled, server.workerPool.listWorkers().map((w) => w.runtimes)) };
+    });
 
     // ── API key registry (Settings → API Keys; spec 2026-08-06) ────────────
     const apiKeysPath = () => resolve(process.cwd(), '.smith/api-keys.json');
