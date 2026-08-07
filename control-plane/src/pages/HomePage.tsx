@@ -8,7 +8,6 @@ import { useSpokenReplies } from "../hooks/useSpokenReplies";
 import { useTheme } from "../hooks/useTheme";
 import { useVoiceStatus } from "../hooks/useVoiceStatus";
 import { ConfirmSheet } from "../molecules/ConfirmSheet";
-import { IdentityTile } from "../molecules/IdentityTile";
 import { AddAgentModal } from "../organisms/AddAgentModal";
 import { AgentRoster } from "../organisms/AgentRoster";
 import { BoardStage } from "../organisms/BoardStage";
@@ -205,24 +204,21 @@ export function HomePage() {
         />
       }
       rightRail={
-        <>
-          {identity && <IdentityTile {...identity} />}
-          <AgentRoster
-            onEdit={(entry) => {
-              setEditingId(entry.id);
-              setModalOpen(true);
-            }}
-            agents={agents}
-            onAdd={() => {
-              setEditingId(null); // the + button always creates
-              setModalOpen(true);
-            }}
-            onCall={callOn}
-            onCompose={compose}
-            onInspect={setInspecting}
-            onRemove={requestRemoval}
-          />
-        </>
+        <AgentRoster
+          onEdit={(entry) => {
+            setEditingId(entry.id);
+            setModalOpen(true);
+          }}
+          agents={agents}
+          onAdd={() => {
+            setEditingId(null); // the + button always creates
+            setModalOpen(true);
+          }}
+          onCall={callOn}
+          onCompose={compose}
+          onInspect={setInspecting}
+          onRemove={requestRemoval}
+        />
       }
       stage={
         mapOpen ? (
