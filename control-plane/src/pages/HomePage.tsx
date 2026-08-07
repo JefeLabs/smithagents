@@ -151,8 +151,6 @@ export function HomePage() {
 
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  // Clicking the active tool returns home — preserves the old toggle feel.
-  const toggleTo = (route: "/board" | "/map") => void navigate({ to: pathname === route ? "/" : route });
 
   const stageValue: StageContextValue = {
     messages,
@@ -220,8 +218,8 @@ export function HomePage() {
             onHome={() => void navigate({ to: "/" })}
             onNewWorkspace={() => setNewWorkspaceOpen(true)}
             onSessions={() => setSessionsOpen((open) => !open)}
-            onBoard={() => toggleTo("/board")}
-            onMap={() => toggleTo("/map")}
+            onBoard={() => void navigate({ to: "/board" })}
+            onMap={() => void navigate({ to: "/map" })}
             onSettings={() => setSettingsOpen(true)}
           />
         }

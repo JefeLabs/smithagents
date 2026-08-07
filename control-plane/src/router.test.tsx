@@ -138,13 +138,15 @@ describe("stage routing", () => {
     expect(screen.getByRole("button", { name: /^board$/i }).getAttribute("aria-current")).toBe("true");
   });
 
-  it("clicking the active board tool returns home", async () => {
+  it("clicking the active board tool stays on the board (no toggle)", async () => {
     const router = await renderAt("/");
     await userEvent.click(screen.getByRole("button", { name: /^board$/i }));
     await screen.findByRole("main", { name: "Work boards" });
     await userEvent.click(screen.getByRole("button", { name: /^board$/i }));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/"));
-    expect(screen.queryByRole("main", { name: "Work boards" })).toBeNull();
+    // Give a would-be toggle navigation time to land before asserting it didn't.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(router.state.location.pathname).toBe("/board");
+    expect(screen.getByRole("main", { name: "Work boards" })).toBeTruthy();
   });
 
   it("browser back restores the previous stage", async () => {
