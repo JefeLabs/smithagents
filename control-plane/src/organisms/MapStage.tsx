@@ -48,9 +48,7 @@ export interface CapabilityT {
 }
 
 interface MapStageProps {
-  open: boolean;
   lastCapabilityUpdate: { capabilityId: string; seq: number } | null;
-  onClose: () => void;
 }
 
 /**
@@ -183,7 +181,7 @@ function MapStepStories({
  * stacks, with slices carved below. Cards and spec docs are downstream
  * views; every text edit happens here and only here.
  */
-export function MapStage({ open, lastCapabilityUpdate, onClose }: MapStageProps) {
+export function MapStage({ lastCapabilityUpdate }: MapStageProps) {
   const [workspaces, setWorkspaces] = useState<string[]>([]);
   const [workspace, setWorkspace] = useState("");
   const [capabilities, setCapabilities] = useState<CapabilityT[]>([]);
@@ -217,7 +215,6 @@ export function MapStage({ open, lastCapabilityUpdate, onClose }: MapStageProps)
   }, []);
 
   useEffect(() => {
-    if (!open) return;
     void refetch();
     void fetch(`http://${BASE}/workspaces`)
       .then((r) => r.json())
@@ -227,11 +224,11 @@ export function MapStage({ open, lastCapabilityUpdate, onClose }: MapStageProps)
         setWorkspace((w) => w || names[0] || "");
       })
       .catch(() => {});
-  }, [open, refetch]);
+  }, [refetch]);
 
   useEffect(() => {
-    if (open && lastCapabilityUpdate && lastCapabilityUpdate.capabilityId === activeId) void refetch();
-  }, [open, lastCapabilityUpdate, activeId, refetch]);
+    if (lastCapabilityUpdate && lastCapabilityUpdate.capabilityId === activeId) void refetch();
+  }, [lastCapabilityUpdate, activeId, refetch]);
 
   const cap = capabilities.find((c) => c.id === activeId) ?? null;
 
@@ -289,8 +286,6 @@ export function MapStage({ open, lastCapabilityUpdate, onClose }: MapStageProps)
   }, [moveStory]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
-
-  if (!open) return null;
 
   const createCapability = async () => {
     if (!capName.trim() || !workspace) return;
@@ -441,7 +436,7 @@ export function MapStage({ open, lastCapabilityUpdate, onClose }: MapStageProps)
   };
 
   return (
-    <section className="map-stage" aria-label="Story map">
+    <main className="map-stage" aria-label="Story map">
       <header className="map-stage__bar">
         <MapIcon size={14} strokeWidth={2} />
         <select
@@ -472,10 +467,6 @@ export function MapStage({ open, lastCapabilityUpdate, onClose }: MapStageProps)
         </select>
         <button type="button" className="settings-btn" onClick={() => setCreating((v) => !v)}>
           <Plus size={12} strokeWidth={2} /> new capability
-        </button>
-        <span className="spacer" />
-        <button type="button" className="settings-btn" onClick={onClose} aria-label="Close map">
-          <X size={12} strokeWidth={2} />
         </button>
       </header>
       {creating && (
@@ -641,6 +632,6 @@ export function MapStage({ open, lastCapabilityUpdate, onClose }: MapStageProps)
           </div>
         </>
       )}
-    </section>
+    </main>
   );
 }

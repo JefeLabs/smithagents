@@ -2494,10 +2494,9 @@ main.chat-active .composer-dock {
   gap: 10px;
   min-height: 0;
   padding: 14px;
-  /* Same rail-clearance fix as .board-stage: this stage isn't wrapped in
-     `main`, so it must reserve the fixed side rails' width itself. */
-  position: fixed;
-  inset: 0 72px;
+  /* Rendered as the stage's own <main> — see .board-stage. */
+  align-items: stretch;
+  justify-content: flex-start;
 }
 .map-stage__bar,
 .map-stage__composer {

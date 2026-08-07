@@ -222,7 +222,7 @@ export function HomePage() {
       }
       stage={
         mapOpen ? (
-          <MapStage open lastCapabilityUpdate={lastCapabilityUpdate} onClose={() => setMapOpen(false)} />
+          <MapStage lastCapabilityUpdate={lastCapabilityUpdate} />
         ) : boardOpen ? (
           <BoardStage roster={roster} lastBoardUpdate={lastBoardUpdate} />
         ) : inspecting ? (
