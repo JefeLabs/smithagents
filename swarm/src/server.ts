@@ -1476,6 +1476,7 @@ export class OrchestratorServer {
         description: v.description,
         fields: v.fields,
         verifyExtraFields: v.verifyExtraFields ?? [],
+        capabilities: v.capabilities ?? [],
       }));
     });
 
