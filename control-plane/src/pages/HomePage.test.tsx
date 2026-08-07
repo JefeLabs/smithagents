@@ -55,6 +55,7 @@ function mockBrokerChat() {
     createSession: vi.fn(),
     activateSession: vi.fn(),
     resetSetup: vi.fn(),
+    listExecutionModes: vi.fn(async () => ({})),
     listWorkspaceRecords: vi.fn(async () => []),
     saveWorkspace: vi.fn(),
     removeWorkspace: vi.fn(),

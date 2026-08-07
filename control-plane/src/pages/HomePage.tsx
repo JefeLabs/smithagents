@@ -1,6 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { type AgentSeed, hostSeed, ringForIndex } from "../data/agents";
-import { type AudioFrame, useBrokerChat, type VoiceSettingsRecord } from "../hooks/useBrokerChat";
+import {
+  type AudioFrame,
+  type ExecutionMode,
+  useBrokerChat,
+  type VoiceSettingsRecord,
+  type WorkspaceRecord,
+} from "../hooks/useBrokerChat";
 import { useCliToolHealth } from "../hooks/useCliToolHealth";
 import { GRID_DEFAULTS, type GridParams } from "../hooks/useDotGrid";
 import { usePushToTalk } from "../hooks/usePushToTalk";
@@ -15,6 +21,7 @@ import { BoardStage } from "../organisms/BoardStage";
 import { DotGridCanvas } from "../organisms/DotGridCanvas";
 import { DotGridTuner } from "../organisms/DotGridTuner";
 import { MapStage } from "../organisms/MapStage";
+import { NewSessionScreen } from "../organisms/NewSessionScreen";
 import { NewWorkspaceModal } from "../organisms/NewWorkspaceModal";
 import { SessionsPanel } from "../organisms/SessionsPanel";
 import { SettingsPanel } from "../organisms/SettingsPanel";
@@ -34,6 +41,10 @@ export function HomePage() {
   /** A busy agent/squad being inspected — swaps the stage to their work view. */
   const [inspecting, setInspecting] = useState<AgentSeed | null>(null);
   const [sessionsOpen, setSessionsOpen] = useState(false);
+  /** Non-null shows the new-session composer in the stage; `locked` pins its workspace picker. */
+  const [composer, setComposer] = useState<{ locked?: string } | null>(null);
+  const [modes, setModes] = useState<Record<ExecutionMode, boolean> | null>(null);
+  const [wsRecords, setWsRecords] = useState<WorkspaceRecord[] | null>(null);
   const [boardOpen, setBoardOpen] = useState(false);
   const [mapOpen, setMapOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -77,6 +88,7 @@ export function HomePage() {
     createSession,
     activateSession,
     resetSetup,
+    listExecutionModes,
     listWorkspaceRecords,
     saveWorkspace,
     removeWorkspace,
@@ -137,6 +149,21 @@ export function HomePage() {
     if (voiceNoticeTimer.current) clearTimeout(voiceNoticeTimer.current);
     voiceNoticeTimer.current = setTimeout(() => setVoiceNotice(null), 6000);
   };
+
+  // Zero-session boot forces the composer open even without an explicit entry-point click.
+  const composerVisible = composer !== null || (connected && session === null);
+  // Refetch every time the composer becomes visible (not just on mount) — a mode that vanished
+  // or a workspace that changed while it was closed must be current the moment it reopens.
+  useEffect(() => {
+    if (!composerVisible) return;
+    void listExecutionModes()
+      .then(setModes)
+      .catch(() => setModes(null));
+    void listWorkspaceRecords()
+      .then(setWsRecords)
+      .catch(() => setWsRecords(null));
+  }, [composerVisible, listExecutionModes, listWorkspaceRecords]);
+  const onComposerCancel = useCallback(() => setComposer(null), []);
 
   const host = hostSeed(identity);
   const agents: AgentSeed[] = [
@@ -237,6 +264,28 @@ export function HomePage() {
             fetchActivity={activity}
             onWorkAction={workAction}
           />
+        ) : composerVisible ? (
+          <NewSessionScreen
+            workspaces={workspaces}
+            records={wsRecords}
+            sessions={sessions}
+            modes={modes}
+            lockedWorkspace={composer?.locked}
+            forced={session === null}
+            onSend={async (ws, mode, prompt) => {
+              const r = await createSession(ws, mode, prompt);
+              if (r.error) {
+                if (r.status === 409)
+                  void listExecutionModes()
+                    .then(setModes)
+                    .catch(() => {});
+                return r;
+              }
+              setComposer(null);
+              return undefined;
+            }}
+            onCancel={onComposerCancel}
+          />
         ) : (
           <VoiceStage
             micLive={micLive}
@@ -312,7 +361,10 @@ export function HomePage() {
             workspaces={workspaces}
             onClose={() => setSessionsOpen(false)}
             onActivate={activateSession}
-            onCreate={createSession}
+            onCreate={(ws) => {
+              setSessionsOpen(false);
+              setComposer({ locked: ws || undefined });
+            }}
             onManage={() => setWorkspacesOpen(true)}
           />
           <WorkspaceManagerModal
@@ -333,7 +385,7 @@ export function HomePage() {
             listMyConnectors={listMyConnectors}
             activeWorkspace={session?.workspace}
             pickFolder={hasNativeFolderPicker() ? pickFolder : undefined}
-            onCreated={(name) => createSession(name)}
+            onCreated={(name) => setComposer({ locked: name })}
           />
           <DotGridTuner
             open={tunerOpen}

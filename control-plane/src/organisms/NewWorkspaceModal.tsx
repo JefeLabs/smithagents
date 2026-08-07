@@ -65,8 +65,15 @@ export function NewWorkspaceModal({
     setError(null);
     void listMyConnectors().then(setConnectors);
     // Execution mode defaults to the active workspace's own runtime, not a hardcoded value (design §4).
+    // `runtime` no longer lives on WorkspaceRecord (Task 10) — sessions carry their own execution
+    // mode now (Task 11's composer). This whole default-from-workspace lookup is superseded and
+    // goes away with NewWorkspaceModal's full rework (Task 13); the cast just keeps this file
+    // compiling until then without changing its behavior.
     void list().then((records) => {
-      setRuntime(records.find((w) => w.name === activeWorkspace)?.runtime ?? "tmux");
+      const active = records.find((w) => w.name === activeWorkspace) as
+        | (WorkspaceRecord & { runtime?: RuntimeChoice })
+        | undefined;
+      setRuntime(active?.runtime ?? "tmux");
     });
   }, [open]);
 
@@ -89,7 +96,10 @@ export function NewWorkspaceModal({
   const submit = async () => {
     setBusy(true);
     setError(null);
-    const record: WorkspaceRecord = {
+    // `runtime` is sent for now (see the effect above) but is no longer part of WorkspaceRecord
+    // (Task 10) — dropped without a type annotation here so TS's excess-property check doesn't
+    // fire; `save`'s own `WorkspaceRecord` parameter type still gates every field it declares.
+    const record = {
       name: name.trim(),
       default: false, // the first-ever workspace defaults itself server-side
       runtime,
