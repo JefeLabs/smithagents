@@ -146,3 +146,21 @@ export const VENDORS: ConnectorVendorDef[] = [ATLASSIAN, GITHUB, DATADOG, SNYK, 
 export function findVendor(id: string): ConnectorVendorDef | undefined {
   return VENDORS.find((v) => v.id === id);
 }
+
+/**
+ * Hard gate for connector saves: a vendor whose verify is self-contained must
+ * pass its live check before fields persist — a failing key is never stored.
+ * Vendors needing verify-time extras (Atlassian's test site URL) are exempt:
+ * their check can't run from saved fields alone. Returns the blocking error
+ * message, or null when the save may proceed.
+ */
+export async function verifyBeforeSave(
+  vendorId: string,
+  fields: Record<string, string>,
+  fetchImpl: typeof fetch = fetch,
+): Promise<string | null> {
+  const vendor = findVendor(vendorId);
+  if (!vendor || (vendor.verifyExtraFields ?? []).length > 0) return null;
+  const r = await vendor.verify(fields, {}, fetchImpl);
+  return r.ok ? null : `Key check failed — ${r.detail}. Nothing was saved.`;
+}

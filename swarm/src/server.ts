@@ -75,7 +75,7 @@ import { loadUsersFromDir, saveUser, resolveCurrentUser, sweepEncryptUsers, type
 import { isEncrypted } from './secretbox.js';
 import { verifyGithubRepo } from './verify-github.js';
 import { verifyAtlassian } from './verify-atlassian.js';
-import { VENDORS, findVendor } from './connectors.js';
+import { VENDORS, findVendor, verifyBeforeSave } from './connectors.js';
 import { loadChannelsFor, saveChannels, type WorkspaceChannels } from './channels.js';
 import { verifyDiscordToken } from './verify-discord.js';
 import { lookupTicket, searchDocs } from './atlassian-client.js';
@@ -1582,6 +1582,8 @@ export class OrchestratorServer {
         label: b.label.trim(),
         fields: buildConnectorFields(b.vendorId, b.fields),
       };
+      const blocked = await verifyBeforeSave(instance.vendorId, instance.fields);
+      if (blocked) return reply.status(400).send({ error: blocked });
       const merged: User = { ...existing, connectors: [...(existing.connectors ?? []), instance] };
       try {
         await saveUser(dir, merged);
@@ -1599,6 +1601,8 @@ export class OrchestratorServer {
       const current = existing?.connectors?.find((c) => c.id === req.params.id);
       if (!current) return reply.status(404).send({ error: `Unknown connector: ${req.params.id}` });
       const updated = buildConnectorUpdate(current, b);
+      const blocked = await verifyBeforeSave(updated.vendorId, updated.fields);
+      if (blocked) return reply.status(400).send({ error: blocked });
       const merged: User = {
         ...existing!,
         connectors: existing!.connectors!.map((c) => (c.id === current.id ? updated : c)),

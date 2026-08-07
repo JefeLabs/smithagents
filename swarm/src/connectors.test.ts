@@ -1,7 +1,7 @@
 // swarm/src/connectors.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { VENDORS, findVendor } from './connectors.js';
+import { VENDORS, findVendor, verifyBeforeSave } from './connectors.js';
 
 test('findVendor: resolves each of the 6 shipped vendors by id', () => {
   for (const id of ['atlassian', 'github', 'datadog', 'snyk', 'elevenlabs', 'deepgram']) {
@@ -46,4 +46,31 @@ test('capabilities: only the two voice vendors declare them, one capability each
   for (const id of ['atlassian', 'github', 'datadog', 'snyk']) {
     assert.equal(findVendor(id)!.capabilities, undefined);
   }
+});
+
+test('verifyBeforeSave: failing self-contained verify blocks with the vendor detail', async () => {
+  const f = (async () =>
+    new Response(JSON.stringify({ detail: { status: 'invalid_api_key', message: 'Invalid API key' } }), {
+      status: 401,
+    })) as typeof fetch;
+  const err = await verifyBeforeSave('elevenlabs', { apiKey: 'garbage' }, f);
+  assert.ok(err, 'expected a blocking error');
+  assert.match(err!, /Invalid API key/);
+  assert.match(err!, /Nothing was saved/);
+});
+
+test('verifyBeforeSave: passing verify returns null (save proceeds)', async () => {
+  const f = (async () => new Response(JSON.stringify({ projects: [{}] }), { status: 200 })) as typeof fetch;
+  assert.equal(await verifyBeforeSave('deepgram', { apiKey: 'good' }, f), null);
+});
+
+test('verifyBeforeSave: vendors needing verify-time extras (Atlassian) are exempt — no fetch, no block', async () => {
+  const f = (async () => {
+    throw new Error('must not be called');
+  }) as typeof fetch;
+  assert.equal(await verifyBeforeSave('atlassian', { email: 'e@x.com', apiToken: 't' }, f), null);
+});
+
+test('verifyBeforeSave: unknown vendor is not this gate’s problem — returns null for the route’s own 400', async () => {
+  assert.equal(await verifyBeforeSave('nope', {}), null);
 });
