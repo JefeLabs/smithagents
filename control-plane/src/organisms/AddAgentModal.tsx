@@ -54,7 +54,7 @@ interface Catalog {
   quickQuestions: Array<{ id: string; question: string }>;
   reactionLevels: string[];
   presets?: PresetCard[];
-  avatarGen?: boolean;
+  avatarGen?: "api" | "agy" | null;
 }
 
 /** The stored agent record, as the registry returns it. */
@@ -712,7 +712,7 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
                   </div>
                   <AvatarGeneratorBlock
                     base={BASE}
-                    enabled={catalog?.avatarGen ?? false}
+                    enabled={Boolean(catalog?.avatarGen)}
                     name={name}
                     gender={gender}
                     role={role}
