@@ -90,6 +90,8 @@ export interface BrokerDeps {
   onRosterChange?: (roster: UiRoster) => void;
   /** Fired the moment a delegated task is bound in the directory — before any narration. Lets an external bridge (e.g. Copilot/Claude, see broker/bin) correlate its own utterance to the resulting taskId. */
   onTaskDispatched?: (d: { taskId: string; agent: string; task: string }) => void;
+  /** Fired with every raw swarm event, alongside the broker's own handling (narration, directory updates) — lets a caller react to shapes the broker itself has no opinion on (e.g. relaying a work-board update when a completion event carries a `workCardRef`). */
+  onSwarmEvent?: (e: SwarmEvent) => void;
   /** Crew memory — durable facts recalled into every turn. Optional: without it the crew simply forgets. */
   memory?: MemoryPort;
   /** Scope for memory reads/writes: the active session and its workspace. */
@@ -169,26 +171,19 @@ export class Broker {
   /** Tool executors handed to the brain; public for tests + reuse. */
   readonly executors = {
     delegate: async (input: { agent: string; task: string; workspace?: string; repo?: string; ticketKey?: string }): Promise<string> => {
-      const agent = this.deps.directory.resolve(input.agent);
-      if (!agent) return `There is no agent named "${input.agent}". Offer one from the roster.`;
-      const busy = this.deps.directory.snapshot().find((p) => p.agent.id === agent.id && p.status === 'busy');
-      if (busy) return `${agent.name} is busy with: ${busy.taskSummary ?? busy.taskId}. Offer an idle agent instead.`;
-      const { taskId, agentName } = await this.deps.swarm.submitTask({
-        prompt: `${agent.directives}\n\n---\nTask from the live meeting:\n${input.task}`,
-        agent: agent.engine.cli,
-        repository: this.repository,
+      const r = await this.dispatchWork({
+        agent: input.agent,
+        task: input.task,
         workspace: input.workspace,
         repo: input.repo,
-        metadata: { source: 'broker-meeting', composedAgentId: agent.id, ticketKey: input.ticketKey },
+        metadata: { source: 'broker-meeting', ticketKey: input.ticketKey },
       });
-      this.deps.directory.bindTask(agent.id, {
-        taskId,
-        summary: input.task.slice(0, 80),
-        swarmName: agentName ?? undefined,
-      });
-      this.deps.onTaskDispatched?.({ taskId, agent: agent.name, task: input.task });
-      this.notifyRoster();
-      return `Delegated to ${agent.name}: task ${taskId} queued. They will work asynchronously; you will be notified on completion.`;
+      if ('error' in r) {
+        return r.error.startsWith('There is no agent')
+          ? `${r.error} Offer one from the roster.`
+          : `${r.error} Offer an idle agent instead.`;
+      }
+      return `Delegated to ${r.agentDisplayName}: task ${r.taskId} queued. They will work asynchronously; you will be notified on completion.`;
     },
     remember: async (input: { key: string; text: string; scope: string }): Promise<string> => {
       if (!this.deps.memory) return 'Memory is not available in this deployment.';
@@ -228,6 +223,37 @@ export class Broker {
       return r.docs.map((d) => `${d.title} — ${d.url}`).join('\n');
     },
   };
+
+  /**
+   * The one dispatch path for real work — the meeting's delegate tool and
+   * the board's Send-to-agent both land here, so busy-refusal, the
+   * directives-prefixed prompt, task binding, and roster refresh can never
+   * drift apart.
+   */
+  async dispatchWork(input: {
+    agent: string;
+    task: string;
+    workspace?: string;
+    repo?: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<{ taskId: string; agentName: string | null; agentDisplayName: string } | { error: string }> {
+    const agent = this.deps.directory.resolve(input.agent);
+    if (!agent) return { error: `There is no agent named "${input.agent}".` };
+    const busy = this.deps.directory.snapshot().find((p) => p.agent.id === agent.id && p.status === 'busy');
+    if (busy) return { error: `${agent.name} is busy with: ${busy.taskSummary ?? busy.taskId}.` };
+    const { taskId, agentName } = await this.deps.swarm.submitTask({
+      prompt: `${agent.directives}\n\n---\nTask from the live meeting:\n${input.task}`,
+      agent: agent.engine.cli,
+      repository: this.repository,
+      workspace: input.workspace,
+      repo: input.repo,
+      metadata: { composedAgentId: agent.id, ...input.metadata },
+    });
+    this.deps.directory.bindTask(agent.id, { taskId, summary: input.task.slice(0, 80), swarmName: agentName ?? undefined });
+    this.deps.onTaskDispatched?.({ taskId, agent: agent.name, task: input.task });
+    this.notifyRoster();
+    return { taskId, agentName, agentDisplayName: agent.name };
+  }
 
   private repository = '';
   private squads: SwarmSquad[] = [];
@@ -427,6 +453,7 @@ export class Broker {
   }
 
   private onSwarmEvent(e: SwarmEvent): void {
+    this.deps.onSwarmEvent?.(e);
     if (e.type === 'task:completed' || e.type === 'task:failed') {
       const presence = this.deps.directory.findByTask(e.taskId);
       if (presence && this.active) {

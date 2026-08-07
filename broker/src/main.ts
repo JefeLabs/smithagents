@@ -599,6 +599,36 @@ const cliTools = {
     swarm.setCliToolEnabled(id, enabled) as unknown as Promise<Record<string, unknown>>,
 };
 
+// Work boards: verbatim proxy to the swarm's /work/* routes plus the one
+// dispatch route, which reuses the meeting delegation path via
+// broker.dispatchWork so busy-refusal and task binding never drift from the
+// brain's own delegate tool. `broker` is assigned further down (`let broker`
+// above) — safe here because this closure only runs once a request lands,
+// by which point module init has completed (same pattern as the `compose`
+// and `work` handlers passed into TextChannel just below).
+const workBoards = {
+  proxy: (method: string, path: string, body?: unknown) => swarm.work(method, path, body),
+  delegate: async (body: Record<string, unknown>): Promise<{ taskId: string } | { error: string }> => {
+    const b = body as { boardId?: string; cardId?: string; agentId?: string; workspace?: string; repo?: string; prompt?: string };
+    if (!b.boardId || !b.cardId || !b.agentId || !b.prompt?.trim()) {
+      return { error: 'body must be {boardId, cardId, agentId, prompt, workspace?, repo?}' };
+    }
+    const r = await broker.dispatchWork({
+      agent: b.agentId,
+      task: b.prompt,
+      workspace: b.workspace,
+      repo: b.repo,
+      metadata: { source: 'work-board', workCardRef: { boardId: b.boardId, cardId: b.cardId } },
+    });
+    if ('error' in r) return r;
+    // Bind the card before answering so the board's next fetch shows the working badge.
+    await swarm.work('PATCH', `/work/boards/${encodeURIComponent(b.boardId)}/cards/${encodeURIComponent(b.cardId)}`, {
+      delegation: { agentId: b.agentId, taskId: r.taskId, state: 'working' },
+    });
+    return { taskId: r.taskId };
+  },
+};
+
 // Agent creation: the swarm owns the registry, the broker owns voices. A
 // named const (not an inline TextChannel argument) because the brain's
 // draft_agent/confirm_agent executors drive the same generate/create path
@@ -918,6 +948,7 @@ const textChannel = new TextChannel(
   connectors,
   tasks,
   cliTools,
+  workBoards,
 );
 const micSessions = new Map<number, DeepgramSttStream>();
 
@@ -1004,6 +1035,14 @@ broker = new Broker(
     onTurnEnd: () => adapterHub.setActiveOrigin(undefined),
     onRosterChange: (roster) => textChannel.broadcast(rosterFrame(roster)),
     onTaskDispatched: (d) => textChannel.broadcast({ type: 'task-dispatched', taskId: d.taskId, agent: d.agent, task: d.task }),
+    // A completed/failed task carrying workCardRef (added by the swarm — see
+    // Task 2/3) means a work-board card just changed; the board stage
+    // refetches on this frame instead of the broker duplicating card state.
+    onSwarmEvent: (e) => {
+      if ((e.type === 'task:completed' || e.type === 'task:failed') && e.workCardRef) {
+        textChannel.broadcast({ type: 'board-updated', boardId: e.workCardRef.boardId });
+      }
+    },
     mintToken: (roomName) =>
       mintRoomToken({
         apiKey: config.livekit.apiKey,

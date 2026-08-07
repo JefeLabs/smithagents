@@ -150,8 +150,8 @@ export interface SwarmMeeting {
 export type SwarmEvent =
   | ({ type: 'state:snapshot' } & Record<string, unknown>)
   | { type: 'task:dispatched'; taskId: string; sessionName: string }
-  | { type: 'task:completed'; taskId: string; result: unknown }
-  | { type: 'task:failed'; taskId: string; result: unknown }
+  | { type: 'task:completed'; taskId: string; result: unknown; workCardRef?: { boardId: string; cardId: string } }
+  | { type: 'task:failed'; taskId: string; result: unknown; workCardRef?: { boardId: string; cardId: string } }
   | { type: 'task:quarantined'; taskId: string; reason: string };
 
 export interface WsLike {
@@ -478,6 +478,16 @@ export class SwarmClient {
       if (timer) clearTimeout(timer);
       current?.close();
     };
+  }
+
+  /** Verbatim passthrough for the work-board routes — the broker adds no logic. */
+  async work(method: string, path: string, body?: unknown): Promise<{ status: number; payload: unknown }> {
+    const res = await this.fetchImpl(`${this.baseUrl}${path}`, {
+      method,
+      headers: { ...(body !== undefined ? { 'content-type': 'application/json' } : {}), ...(this.token ? { authorization: `Bearer ${this.token}` } : {}) },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    return { status: res.status, payload: await res.json().catch(() => ({})) };
   }
 
   private async http(method: string, path: string, body?: unknown): Promise<Record<string, unknown>> {

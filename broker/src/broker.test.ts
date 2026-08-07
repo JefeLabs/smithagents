@@ -560,6 +560,62 @@ test('delegate forwards ticketKey into task metadata when given', async () => {
   await b.stop();
 });
 
+test('dispatchWork: refuses unknown and busy agents with {error}', async () => {
+  const f = makeFakes([]);
+  const b = makeBroker(f);
+  await b.start();
+  const unknown = await b.dispatchWork({ agent: 'Nobody', task: 'x' });
+  assert.deepEqual(unknown, { error: 'There is no agent named "Nobody".' });
+
+  await b.executors.delegate({ agent: 'Manuel', task: 'build the thing' }); // binds Manuel busy
+  const busy = await b.dispatchWork({ agent: 'Manuel', task: 'second task' });
+  assert.ok('error' in busy);
+  assert.equal((busy as { error: string }).error, 'Manuel is busy with: build the thing.');
+  await b.stop();
+});
+
+test('dispatchWork: submits directives-prefixed prompt with merged metadata and binds the task', async () => {
+  const f = makeFakes([]);
+  const b = makeBroker(f);
+  await b.start();
+  const result = await b.dispatchWork({
+    agent: 'Manuel',
+    task: 'build the thing',
+    metadata: { source: 'work-board', workCardRef: { boardId: 'b1', cardId: 'c1' } },
+  });
+  assert.ok(!('error' in result));
+  const ok = result as { taskId: string; agentName: string | null; agentDisplayName: string };
+  assert.equal(ok.taskId, 't-77');
+  assert.equal(ok.agentDisplayName, 'Manuel');
+
+  const sent = f.submitted[0] as { prompt: string; metadata: Record<string, unknown> };
+  assert.match(sent.prompt, /^Be Manuel\./);
+  assert.match(sent.prompt, /build the thing/);
+  assert.equal(sent.metadata.composedAgentId, 'manuel');
+  assert.equal(sent.metadata.source, 'work-board');
+  assert.deepEqual(sent.metadata.workCardRef, { boardId: 'b1', cardId: 'c1' });
+
+  assert.equal(b.uiRoster().agents[0]!.status, 'busy'); // bindTask ran
+  await b.stop();
+});
+
+test("delegate executor keeps its exact success/refusal strings", async () => {
+  const f = makeFakes([MEETING]);
+  const b = makeBroker(f);
+  await b.start();
+  await b.pollOnce();
+
+  const unknown = await b.executors.delegate({ agent: 'Nobody', task: 'x' });
+  assert.equal(unknown, 'There is no agent named "Nobody". Offer one from the roster.');
+
+  const ok = await b.executors.delegate({ agent: 'Manuel', task: 'build the thing' });
+  assert.equal(ok, 'Delegated to Manuel: task t-77 queued. They will work asynchronously; you will be notified on completion.');
+
+  const busy = await b.executors.delegate({ agent: 'Manuel', task: 'another thing' });
+  assert.equal(busy, 'Manuel is busy with: build the thing. Offer an idle agent instead.');
+  await b.stop();
+});
+
 test('delegate on unknown agent returns an error string (brain speaks it, no throw)', async () => {
   const f = makeFakes([MEETING]);
   const b = makeBroker(f);

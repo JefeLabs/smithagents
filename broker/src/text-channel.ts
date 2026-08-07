@@ -50,7 +50,9 @@ export type ChannelFrame =
       workspaces: string[];
     }
   /** A delegated task was just bound to an agent — the deterministic handle an external bridge (broker/bin) correlates against, since the brain's own spoken confirmation is free-form prose. */
-  | { type: 'task-dispatched'; taskId: string; agent: string; task: string };
+  | { type: 'task-dispatched'; taskId: string; agent: string; task: string }
+  /** A work-board card changed (moved, delegated, or a delegated task completed/failed) — the board stage refetches. */
+  | { type: 'board-updated'; boardId: string };
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -189,6 +191,11 @@ export class TextChannel {
       list(): Promise<Record<string, unknown>>;
       refresh(tool?: string): Promise<Record<string, unknown>>;
       setEnabled(id: string, enabled: boolean): Promise<Record<string, unknown>>;
+    },
+    /** Work boards: verbatim proxy to the swarm + the one dispatch route. Named distinctly from `work` above (busy-agent activity/steer/cancel) — same domain word, different concern. */
+    private readonly workBoards?: {
+      proxy(method: string, path: string, body?: unknown): Promise<{ status: number; payload: unknown }>;
+      delegate(body: Record<string, unknown>): Promise<{ taskId: string } | { error: string }>;
     },
   ) {}
 
@@ -735,6 +742,49 @@ export class TextChannel {
             })();
             const run = action === '/steer' ? this.work!.steer(name, message) : this.work!.cancel(name);
             run.then((error) => respond(error ? 409 : 200, error ? { error } : { ok: true })).catch((err) => respond(502, { error: String(err) }));
+          });
+          return;
+        }
+      }
+      if (this.workBoards) {
+        const url2 = new URL(req.url ?? '/', 'http://localhost');
+        if (req.method === 'POST' && url2.pathname === '/work/delegate') {
+          let body = '';
+          req.on('data', (c) => {
+            body += c;
+          });
+          req.on('end', () => {
+            let parsed: Record<string, unknown> = {};
+            try {
+              parsed = JSON.parse(body || '{}') as Record<string, unknown>;
+            } catch {
+              return res.writeHead(400, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify({ error: 'body must be JSON' }));
+            }
+            void this.workBoards!.delegate(parsed).then(
+              (r) => res.writeHead('error' in r ? 409 : 200, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify(r)),
+              (err: unknown) => res.writeHead(500, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify({ error: String((err as Error).message ?? err) })),
+            );
+          });
+          return;
+        }
+        if (url2.pathname.startsWith('/work/')) {
+          let body = '';
+          req.on('data', (c) => {
+            body += c;
+          });
+          req.on('end', () => {
+            let parsed: unknown;
+            if (body) {
+              try {
+                parsed = JSON.parse(body);
+              } catch {
+                return res.writeHead(400, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify({ error: 'body must be JSON' }));
+              }
+            }
+            void this.workBoards!.proxy(req.method ?? 'GET', url2.pathname, parsed).then(
+              (r) => res.writeHead(r.status, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify(r.payload)),
+              (err: unknown) => res.writeHead(500, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify({ error: String((err as Error).message ?? err) })),
+            );
           });
           return;
         }
