@@ -980,12 +980,19 @@ const micSessions = new Map<number, DeepgramSttStream>();
 // so frames always arrive in speech order; each link swallows its own failure
 // (a bad voice id or network blip degrades to text, never breaks the chain).
 let synthChain = Promise.resolve();
-async function broadcastSpokenAudio(text: string): Promise<void> {
-  const t = await currentTts();
-  if (!t) return;
+function broadcastSpokenAudio(text: string): void {
+  // resolveSpokenLine/elevenVoiceFor and the synthChain reassignment MUST
+  // stay synchronous, in call order — currentTts() is the only step here
+  // that needs to await, so it resolves inside the chained callback rather
+  // than before the chain claims its position. Awaiting it up front would
+  // let two overlapping calls interleave their sticky-speaker resolution
+  // and their chain position, breaking "frames always arrive in speech
+  // order" for whichever call's await happened to settle first.
   const { speaker, spokenText } = resolveSpokenLine(text);
   const voiceId = elevenVoiceFor(speaker);
   synthChain = synthChain.then(async () => {
+    const t = await currentTts();
+    if (!t) return;
     if (textChannel.clientCount === 0) return; // nobody listening — don't spend credits
     const synth = (id: string) =>
       t.provider.synthesize({ text: spokenText, personaId: speaker ?? 'broker', format: 'mp3', voice: { provider: 'elevenlabs', voiceId: id } });
@@ -1049,7 +1056,7 @@ broker = new Broker(
       console.log(`[speech-text] ${text}`);
       sessionManager.appendTranscript('broker', text);
       textChannel.broadcast({ type: 'speech', text });
-      void broadcastSpokenAudio(text);
+      broadcastSpokenAudio(text);
       adapterHub.dispatchSpeech(text);
     },
     // Turn-scoped: activates the hub's origin for exactly the turn now
