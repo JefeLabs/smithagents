@@ -98,6 +98,30 @@ test('lifecycle methods hit the right swarm routes', async () => {
   ]);
 });
 
+test('submitTask with runtime sends it in the body', async () => {
+  const { calls, fetch } = fakeFetch({ '/tasks': { taskId: 't-1', agentName: 'Manuel', status: 'queued', position: 1 } });
+  const c = new SwarmClient({ baseUrl: 'http://127.0.0.1:7777', fetchImpl: fetch });
+  await c.submitTask({ prompt: 'do it', agent: 'claude', repository: 'git@x:y.git', runtime: 'remote-docker' });
+  const sent = JSON.parse(String(calls[0]!.init!.body));
+  assert.equal(sent.runtime, 'remote-docker');
+});
+
+test('executionModes unwraps modes from response', async () => {
+  const { fetch } = fakeFetch({ '/execution-modes': { modes: { 'local-in-process': true, 'local-docker': false } } });
+  const c = new SwarmClient({ baseUrl: 'http://x', fetchImpl: fetch });
+  const modes = await c.executionModes();
+  assert.deepEqual(modes, { 'local-in-process': true, 'local-docker': false });
+});
+
+test('setContainers PUTs the docker config', async () => {
+  const { calls, fetch } = fakeFetch({ '/containers': { version: 1, docker: { enabled: true } } });
+  const c = new SwarmClient({ baseUrl: 'http://x', fetchImpl: fetch });
+  await c.setContainers(true);
+  const sent = JSON.parse(String(calls[0]!.init!.body));
+  assert.deepEqual(sent, { docker: { enabled: true } });
+  assert.equal(calls[0]!.init!.method, 'PUT');
+});
+
 test('deleteAgent/deleteWorkspace send no body and no content-type header', async () => {
   // A bodiless DELETE with Content-Type: application/json 400s against a real
   // fastify server (FST_ERR_CTP_EMPTY_JSON_BODY) — this was live-broken end
