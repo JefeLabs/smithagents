@@ -154,7 +154,11 @@ export function AgentRoster({ agents, onAdd, onCall, onCompose, onInspect, onEdi
   const [combineId, setCombineId] = useState<string | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
-  const entries = applyOrder(agents, order);
+  // The host (broker identity) is presentation only: pinned, never sorted,
+  // dragged, combined, edited, or removed — so it never enters `entries`.
+  const host = agents.find((a) => a.kind === "host");
+  const crew = agents.filter((a) => a.kind !== "host");
+  const entries = applyOrder(crew, order);
   const byId = (id: string | null) => entries.find((e) => e.id === id);
   const expanded = byId(expandedId);
 
@@ -224,6 +228,11 @@ export function AgentRoster({ agents, onAdd, onCall, onCompose, onInspect, onEdi
 
   return (
     <aside className="rail rail--right" aria-label="Agents">
+      {host && (
+        <div className="roster-host">
+          <AgentAvatar name={host.name} role={host.role} ring={host.ring} listening={host.listening} />
+        </div>
+      )}
       <div className="rail__label">
         {editMode ? (
           <button
@@ -236,7 +245,7 @@ export function AgentRoster({ agents, onAdd, onCall, onCompose, onInspect, onEdi
             <Check size={12} strokeWidth={2.5} /> done
           </button>
         ) : (
-          "agents"
+          "crew"
         )}
       </div>
       <DndContext
