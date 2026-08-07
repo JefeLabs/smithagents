@@ -54,8 +54,9 @@ function channelWith(opts: {
   connectors?: ConstructorParameters<typeof TextChannel>[13];
   tasks?: ConstructorParameters<typeof TextChannel>[14];
   cliTools?: ConstructorParameters<typeof TextChannel>[15];
-  apiKeys?: ConstructorParameters<typeof TextChannel>[16];
-  voice?: ConstructorParameters<typeof TextChannel>[17];
+  workBoards?: ConstructorParameters<typeof TextChannel>[16];
+  apiKeys?: ConstructorParameters<typeof TextChannel>[17];
+  voice?: ConstructorParameters<typeof TextChannel>[18];
 }): TextChannel {
   return new TextChannel(
     () => {},
@@ -74,6 +75,7 @@ function channelWith(opts: {
     opts.connectors,
     opts.tasks,
     opts.cliTools,
+    opts.workBoards,
     opts.apiKeys,
     opts.voice,
   );
@@ -793,6 +795,103 @@ test('GET /cli-tools and PUT /cli-tools/:id pass through to the swarm registry',
       body: JSON.stringify({ enabled: 'yes' }),
     });
     assert.equal(badPut.status, 400);
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('/work/* proxies method, path, body, and status verbatim', async () => {
+  const calls: Array<[string, string, unknown]> = [];
+  const channel = channelWith({ workBoards: {
+    proxy: async (m, p, b) => { calls.push([m, p, b]); return { status: 418, payload: { hello: 'board' } }; },
+    delegate: async () => ({ taskId: 't' }),
+  }});
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/work/boards/alpha/cards`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'x' }),
+    });
+    assert.equal(res.status, 418);
+    assert.deepEqual(await res.json(), { hello: 'board' });
+    assert.deepEqual(calls, [['POST', '/work/boards/alpha/cards', { title: 'x' }]]);
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('POST /work/delegate maps handler result: taskId -> 200, error -> 409', async () => {
+  const channel = channelWith({ workBoards: {
+    proxy: async () => ({ status: 200, payload: {} }),
+    delegate: async (b) => (b.agentId === 'minerva' ? { taskId: 'task-1' } : { error: 'busy' }),
+  }});
+  const port = await channel.start(0);
+  try {
+    const ok = await fetch(`http://127.0.0.1:${port}/work/delegate`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ agentId: 'minerva' }),
+    });
+    assert.equal(ok.status, 200);
+    assert.deepEqual(await ok.json(), { taskId: 'task-1' });
+    const refused = await fetch(`http://127.0.0.1:${port}/work/delegate`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    });
+    assert.equal(refused.status, 409);
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('POST /work/delegate blocks a disallowed browser Origin, allows the control-plane dev origin', async () => {
+  const calls: unknown[] = [];
+  const channel = channelWith({ workBoards: {
+    proxy: async () => ({ status: 200, payload: {} }),
+    delegate: async (b) => { calls.push(b); return { taskId: 'task-1' }; },
+  }});
+  const port = await channel.start(0);
+  try {
+    const blocked = await fetch(`http://127.0.0.1:${port}/work/delegate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Origin: 'http://evil.example' },
+      body: JSON.stringify({ agentId: 'minerva' }),
+    });
+    assert.equal(blocked.status, 403);
+    assert.deepEqual(await blocked.json(), { error: 'origin not allowed' });
+    assert.equal(blocked.headers.get('access-control-allow-origin'), null);
+    assert.deepEqual(calls, []);
+
+    const allowed = await fetch(`http://127.0.0.1:${port}/work/delegate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Origin: 'http://localhost:1420' },
+      body: JSON.stringify({ agentId: 'minerva' }),
+    });
+    assert.equal(allowed.status, 200);
+    assert.deepEqual(await allowed.json(), { taskId: 'task-1' });
+    assert.deepEqual(calls, [{ agentId: 'minerva' }]);
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('/work/* and /work/delegate reject malformed JSON bodies with 400, never reaching the handler', async () => {
+  const calls: unknown[] = [];
+  const channel = channelWith({ workBoards: {
+    proxy: async (...args) => { calls.push(args); return { status: 200, payload: {} }; },
+    delegate: async (...args) => { calls.push(args); return { taskId: 't' }; },
+  }});
+  const port = await channel.start(0);
+  try {
+    const proxyRes = await fetch(`http://127.0.0.1:${port}/work/boards`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: 'not json',
+    });
+    assert.equal(proxyRes.status, 400);
+    assert.deepEqual(await proxyRes.json(), { error: 'body must be JSON' });
+
+    const delegateRes = await fetch(`http://127.0.0.1:${port}/work/delegate`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: 'not json',
+    });
+    assert.equal(delegateRes.status, 400);
+    assert.deepEqual(await delegateRes.json(), { error: 'body must be JSON' });
+
+    assert.deepEqual(calls, []);
   } finally {
     await channel.stop();
   }

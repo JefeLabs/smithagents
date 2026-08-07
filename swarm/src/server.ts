@@ -93,6 +93,8 @@ import {
   sweepCliTools,
   type SweepDeps,
 } from './cli-tools.js';
+import { addCard, createBoard, deleteBoardFile, loadBoards, patchCard, removeCard, saveBoard, type WorkBoard } from './work-items.js';
+import { importIssues, searchIssues, transitionIssue } from './jira-sync.js';
 import {
   buildApiKeyListings,
   deleteKey,
@@ -106,6 +108,9 @@ import {
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+
+/** Board card a task's manifest names in `metadata.workCardRef`, if any. */
+type WorkCardRef = { boardId: string; cardId: string };
 
 /** Active task tracked by the server */
 interface ActiveTask {
@@ -213,10 +218,28 @@ export class OrchestratorServer {
 
     // Wire up dispatcher events to broadcast
     this.dispatcher.on('task:dispatched', (e: DispatcherEvent) => this.broadcast(e));
-    this.dispatcher.on('task:completed', (e: DispatcherEvent) => this.broadcast(e));
-    this.dispatcher.on('task:failed', (e: DispatcherEvent) => this.broadcast(e));
+    this.dispatcher.on('task:completed', (e: DispatcherEvent) => this.forwardTaskOutcome(e));
+    this.dispatcher.on('task:failed', (e: DispatcherEvent) => this.forwardTaskOutcome(e));
     this.dispatcher.on('task:quarantined', (e: DispatcherEvent) => this.broadcast(e));
     this.dispatcher.on('session:orphan_cleanup', (e: DispatcherEvent) => this.broadcast(e));
+  }
+
+  /**
+   * Forward a task:completed/task:failed dispatcher event to WS clients. If
+   * the task was dispatched from a board card (manifest.metadata.workCardRef,
+   * still resolvable here — dispatchTask's `.then`/`.catch` only deletes the
+   * activeTasks entry after `dispatch()` resolves, and this event fires from
+   * inside `dispatch()` beforehand), the broadcast carries `workCardRef` and
+   * the card's delegation state is best-effort patched to match.
+   */
+  private forwardTaskOutcome(e: DispatcherEvent): void {
+    if (e.type !== 'task:completed' && e.type !== 'task:failed') return;
+    const manifest = this.activeTasks.get(e.taskId)?.manifest;
+    const workCardRef = manifest?.metadata?.workCardRef as WorkCardRef | undefined;
+    if (workCardRef) {
+      void this.patchWorkCard(workCardRef, e.type === 'task:completed' ? 'completed' : 'failed', e.result.pullRequestUrl).catch(() => {});
+    }
+    this.broadcast((workCardRef ? { ...e, workCardRef } : e) as unknown as DispatcherEvent);
   }
 
   /** Reread `.smith/workspaces/*.json` — called at boot and after every mutation below. */
@@ -396,6 +419,33 @@ export class OrchestratorServer {
       this.meetingOrchestrator = new MeetingOrchestrator(loadLiveKitConfig(), agents);
     }
     return this.meetingOrchestrator;
+  }
+
+  // -------------------------------------------------------------------------
+  // Work boards — the user's kanban store
+  // -------------------------------------------------------------------------
+
+  private workDir(): string {
+    return resolve(process.cwd(), '.smith/work');
+  }
+
+  /**
+   * A finishing task that was dispatched from a board card writes its
+   * outcome back onto the card — state only, never the column; columns
+   * belong to the human. Best-effort: a store hiccup must not disturb
+   * task bookkeeping.
+   */
+  private async patchWorkCard(
+    ref: WorkCardRef,
+    state: 'completed' | 'failed',
+    prUrl?: string,
+  ): Promise<void> {
+    const { boards } = await loadBoards(this.workDir());
+    const board = boards.find((b) => b.id === ref.boardId);
+    const card = board?.cards.find((c) => c.id === ref.cardId);
+    if (!board || !card || !card.delegation) return;
+    patchCard(board, card.id, { delegation: { ...card.delegation, state, prUrl: prUrl ?? card.delegation.prUrl } });
+    await saveBoard(this.workDir(), board);
   }
 
   // -------------------------------------------------------------------------
@@ -594,7 +644,14 @@ export class OrchestratorServer {
         server.activeTasks.delete(taskId);
         server.namePool.releaseByTaskId(taskId);
         server.app.log.info(`Task ${taskId} (${active.agentName}) force-killed`);
-        server.broadcast({ type: 'task:failed', taskId, result: { taskId, outcome: 'failed', exitCode: -9, sessionName: active.sessionName, worktreePath: '', startedAt: active.startedAt, completedAt: new Date().toISOString(), durationMs: Date.now() - new Date(active.startedAt).getTime() } } as unknown as DispatcherEvent);
+        const workCardRef = active.manifest.metadata?.workCardRef as WorkCardRef | undefined;
+        if (workCardRef) void server.patchWorkCard(workCardRef, 'failed').catch(() => {});
+        server.broadcast({
+          type: 'task:failed',
+          taskId,
+          result: { taskId, outcome: 'failed', exitCode: -9, sessionName: active.sessionName, worktreePath: '', startedAt: active.startedAt, completedAt: new Date().toISOString(), durationMs: Date.now() - new Date(active.startedAt).getTime() },
+          ...(workCardRef ? { workCardRef } : {}),
+        } as unknown as DispatcherEvent);
         return { taskId, agentName: active.agentName, status: 'killed', was: 'running' };
       }
 
@@ -1296,6 +1353,11 @@ export class OrchestratorServer {
           resolve(process.cwd(), '.smith/avatars'),
           resolve(process.cwd(), `.smith/avatars-archived-${stamp}`),
         ).catch(() => {});
+        // Work boards are user data too: archived beside the roster, never deleted.
+        await rename(
+          resolve(process.cwd(), '.smith/work'),
+          resolve(process.cwd(), `.smith/work-archived-${stamp}`),
+        ).catch(() => {});
         const squadsDir = resolve(process.cwd(), '.smith/squads');
         killed.squads = SQUAD_ROSTER.length;
         await rename(squadsDir, resolve(process.cwd(), `.smith/squads-archived-${stamp}`)).catch(() => {});
@@ -1910,6 +1972,151 @@ export class OrchestratorServer {
       // Full registry, archived included — the broker filters for the roster and needs the rest for history.
       const agents = await loadAgents(resolve(process.cwd(), '.smith/agents'));
       return { agents };
+    });
+
+    // ── Work boards — the user's kanban store ──────────────────────────
+    const boardOr404 = async (id: string, reply: { status: (n: number) => { send: (b: unknown) => unknown } }): Promise<WorkBoard | null> => {
+      const { boards } = await loadBoards(server.workDir());
+      const board = boards.find((b) => b.id === id) ?? null;
+      if (!board) reply.status(404).send({ error: `Unknown board: ${id}` });
+      return board;
+    };
+
+    this.app.get('/work/boards', async () => loadBoards(server.workDir()));
+
+    this.app.post('/work/boards', async (req, reply) => {
+      const b = req.body as { name?: string; template?: 'personal' | 'capability' };
+      if (!b?.name?.trim()) return reply.status(400).send({ error: 'Missing required field: name' });
+      const template = b.template ?? 'personal';
+      if (template !== 'personal' && template !== 'capability') {
+        return reply.status(400).send({ error: `Unknown template: ${String(b.template)}` });
+      }
+      try {
+        const board = createBoard(b.name, template);
+        const { boards } = await loadBoards(server.workDir());
+        if (boards.some((x) => x.id === board.id)) return reply.status(409).send({ error: `Board "${board.id}" already exists` });
+        await saveBoard(server.workDir(), board);
+        return reply.status(201).send(board);
+      } catch (err) {
+        return reply.status(400).send({ error: String((err as Error).message) });
+      }
+    });
+
+    this.app.patch<{ Params: { id: string } }>('/work/boards/:id', async (req, reply) => {
+      const board = await boardOr404(req.params.id, reply);
+      if (!board) return;
+      const b = req.body as Partial<Pick<WorkBoard, 'name' | 'columns' | 'jira'>>;
+      if (b.name?.trim()) board.name = b.name.trim();
+      if (b.columns) {
+        if (!Array.isArray(b.columns) || b.columns.some((c) => !c?.id || !c?.name)) {
+          return reply.status(400).send({ error: 'columns must be [{id, name, jiraStatus?}]' });
+        }
+        const ids = new Set(b.columns.map((c) => c.id));
+        if (board.cards.some((c) => !ids.has(c.columnId))) {
+          return reply.status(400).send({ error: 'columns update would orphan cards — move them first' });
+        }
+        board.columns = b.columns;
+      }
+      if (b.jira !== undefined) board.jira = b.jira ?? undefined;
+      await saveBoard(server.workDir(), board);
+      return board;
+    });
+
+    this.app.delete<{ Params: { id: string } }>('/work/boards/:id', async (req, reply) => {
+      const board = await boardOr404(req.params.id, reply);
+      if (!board) return;
+      await deleteBoardFile(server.workDir(), board.id);
+      return { ok: true };
+    });
+
+    this.app.post<{ Params: { id: string } }>('/work/boards/:id/cards', async (req, reply) => {
+      const board = await boardOr404(req.params.id, reply);
+      if (!board) return;
+      try {
+        const card = addCard(board, req.body as { title: string; notes?: string; columnId?: string });
+        await saveBoard(server.workDir(), board);
+        return reply.status(201).send(card);
+      } catch (err) {
+        return reply.status(400).send({ error: String((err as Error).message) });
+      }
+    });
+
+    this.app.patch<{ Params: { id: string; cardId: string } }>('/work/boards/:id/cards/:cardId', async (req, reply) => {
+      const board = await boardOr404(req.params.id, reply);
+      if (!board) return;
+      try {
+        const card = patchCard(board, req.params.cardId, req.body as Parameters<typeof patchCard>[2]);
+
+        // Push-on-move: a Jira-linked card landing on a mapped column tries
+        // the matching transition. Best-effort — the human's move always
+        // sticks; only the amber badge reports a failed push. The whole
+        // section (credential load included — loadUsersFromDir throws on a
+        // malformed user file) is one try/catch so nothing here can escape
+        // to the route's outer catch and drop the already-applied move.
+        const movedTo = (req.body as { columnId?: string }).columnId;
+        const target = movedTo ? board.columns.find((c) => c.id === movedTo) : undefined;
+        if (card.jira && target?.jiraStatus && board.jira) {
+          try {
+            const users = await loadUsersFromDir(resolve(process.cwd(), '.smith/users'));
+            const resolved = resolveAtlassianConnector(board.jira.connectorId, resolveCurrentUser(users), { name: 'key', value: card.jira.key });
+            if ('error' in resolved) {
+              card.jira.lastPushError = resolved.error;
+            } else {
+              await transitionIssue(
+                board.jira.siteUrl,
+                resolved.instance.fields.email ?? '',
+                resolved.instance.fields.apiToken ?? '',
+                card.jira.key,
+                target.jiraStatus,
+              );
+              card.jira = { key: card.jira.key, url: card.jira.url };
+            }
+          } catch (err) {
+            card.jira.lastPushError = String((err as Error).message);
+          }
+        }
+
+        await saveBoard(server.workDir(), board);
+        return card;
+      } catch (err) {
+        return reply.status(400).send({ error: String((err as Error).message) });
+      }
+    });
+
+    this.app.delete<{ Params: { id: string; cardId: string } }>('/work/boards/:id/cards/:cardId', async (req, reply) => {
+      const board = await boardOr404(req.params.id, reply);
+      if (!board) return;
+      try {
+        removeCard(board, req.params.cardId);
+        await saveBoard(server.workDir(), board);
+        return { ok: true };
+      } catch (err) {
+        return reply.status(400).send({ error: String((err as Error).message) });
+      }
+    });
+
+    this.app.post<{ Params: { id: string } }>('/work/boards/:id/jira/import', async (req, reply) => {
+      const board = await boardOr404(req.params.id, reply);
+      if (!board) return;
+      if (!board.jira) return reply.status(400).send({ error: `Board "${board.id}" has no Jira link configured` });
+      const users = await loadUsersFromDir(resolve(process.cwd(), '.smith/users'));
+      const user = resolveCurrentUser(users);
+      const resolved = resolveAtlassianConnector(board.jira.connectorId, user, { name: 'jql', value: board.jira.jql ?? 'x' });
+      if ('error' in resolved) return reply.status(400).send({ error: resolved.error });
+      const jql = board.jira.jql?.trim() || `project = ${board.jira.projectKey} ORDER BY updated DESC`;
+      try {
+        const issues = await searchIssues(
+          board.jira.siteUrl,
+          resolved.instance.fields.email ?? '',
+          resolved.instance.fields.apiToken ?? '',
+          jql,
+        );
+        const summary = importIssues(board, issues);
+        await saveBoard(server.workDir(), board);
+        return summary;
+      } catch (err) {
+        return reply.status(400).send({ error: String((err as Error).message) });
+      }
     });
 
     // ── Meetings ──────────────────────────────────────────────────────

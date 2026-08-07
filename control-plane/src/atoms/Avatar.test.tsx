@@ -24,4 +24,17 @@ describe("Avatar", () => {
     expect(screen.getByRole("button", { name: "Minerva" }).querySelector("img")).toBeNull();
     expect(screen.getByRole("button", { name: "Minerva" }).textContent).toBe("M");
   });
+
+  it("interactive=false renders no button role but keeps the image/initial", () => {
+    const { rerender } = render(<Avatar initial="M" label="Minerva" interactive={false} />);
+    expect(screen.queryByRole("button")).toBeNull();
+    expect(screen.getByText("M")).toBeTruthy();
+
+    rerender(
+      <Avatar initial="M" label="Minerva" image="http://127.0.0.1:7790/avatars/minerva.png" interactive={false} />,
+    );
+    expect(screen.queryByRole("button")).toBeNull();
+    const img = screen.getByLabelText("Minerva").querySelector("img");
+    expect(img?.getAttribute("src")).toContain("minerva.png");
+  });
 });

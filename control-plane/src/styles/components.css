@@ -2296,3 +2296,190 @@ main.chat-active .composer-dock {
     animation: none !important;
   }
 }
+
+.board-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  padding: 14px;
+  /* Unlike VoiceStage/WorkStage (both wrapped in `main`, which already reserves
+     `inset: 0 72px` for the fixed side rails), this stage was flowing edge to
+     edge — its bar's right-aligned controls (Close) rendered directly under
+     the fixed right rail's avatars (z-index 3), which paint on top and ate
+     the clicks. Mirror `main`'s rail clearance instead of guessing at
+     whatever happens to be rendered in the rail at a given scroll position. */
+  position: fixed;
+  inset: 0 72px;
+}
+.board-stage__bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.board-stage__bar .spacer {
+  flex: 1;
+}
+.board-stage__composer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.board-stage__columns {
+  display: flex;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+  overflow-x: auto;
+}
+.board-column {
+  flex: 0 0 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--pill-br);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.board-column__name {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin: 0;
+}
+.board-column__cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  min-height: 24px;
+}
+.board-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--pill-br);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.board-card__title {
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+.board-card__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.board-card__jira {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--pill-br);
+  color: var(--text-2);
+  text-decoration: none;
+}
+.board-card__jira.has-error {
+  border-color: #e0a15a;
+  color: #e0a15a;
+}
+.board-card__stories {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--pill-br);
+  color: var(--text-2);
+}
+.board-card__stories.is-complete {
+  border-color: #5fd0b0;
+  color: #5fd0b0;
+}
+.board-card__delegation {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.board-card__delegation .avatar {
+  width: 22px;
+  height: 22px;
+  font-size: 10px;
+}
+.board-card__delegation.is-completed .avatar {
+  --ring: #5fd0b0;
+}
+.board-card__delegation.is-failed .avatar {
+  --ring: #f2778f;
+}
+.board-card__pr {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  text-decoration: none;
+}
+.board-card.is-dragging {
+  opacity: 0.4;
+}
+.board-column.is-over {
+  border-color: var(--accent);
+}
+
+.card-sheet {
+  position: absolute;
+  right: 16px;
+  top: 52px;
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--pill-br);
+  background: var(--panel, rgba(20, 20, 24, 0.97));
+  z-index: 30;
+}
+.card-sheet__head,
+.card-sheet__row,
+.card-sheet__foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+}
+.card-sheet__delegate,
+.card-sheet__stories {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.card-sheet__stories-head {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+.card-sheet__story {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.card-sheet__story .is-done {
+  text-decoration: line-through;
+  color: var(--text-dim);
+}
+.card-sheet__story-remove {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
