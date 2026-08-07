@@ -71,7 +71,7 @@ import {
   type Workspace,
   type WorkspaceRepo,
 } from './workspaces.js';
-import { loadUsersFromDir, saveUser, resolveCurrentUser, sweepEncryptUsers, type User, type ConnectorInstance } from './users.js';
+import { loadUsersFromDir, saveUser, resolveCurrentUser, sweepEncryptUsers, type User, type ConnectorInstance, type VoiceSettings } from './users.js';
 import { verifyGithubRepo } from './verify-github.js';
 import { verifyAtlassian } from './verify-atlassian.js';
 import { VENDORS, findVendor } from './connectors.js';
@@ -1535,7 +1535,11 @@ export class OrchestratorServer {
       if (!existing?.connectors?.some((c) => c.id === req.params.id)) {
         return reply.status(404).send({ error: `Unknown connector: ${req.params.id}` });
       }
-      const merged: User = { ...existing, connectors: existing.connectors.filter((c) => c.id !== req.params.id) };
+      const merged: User = {
+        ...existing,
+        connectors: existing.connectors.filter((c) => c.id !== req.params.id),
+        voice: clearVoiceReferences(existing.voice, req.params.id),
+      };
       try {
         await saveUser(dir, merged);
       } catch (err) {
@@ -1553,6 +1557,42 @@ export class OrchestratorServer {
       const vendor = findVendor(instance.vendorId);
       if (!vendor) return reply.status(400).send({ error: `Unknown vendor: ${instance.vendorId}` });
       return vendor.verify(instance.fields, b.extra ?? {});
+    });
+
+    const redactVoice = (u: User | null) => ({
+      stt: u?.voice?.stt ?? null,
+      tts: u?.voice?.tts ?? null,
+      hideInactive: Boolean(u?.voice?.hideInactive),
+    });
+
+    this.app.get('/me/voice', async () => {
+      const users = await loadUsersFromDir(resolve(process.cwd(), '.smith/users'));
+      return redactVoice(resolveCurrentUser(users));
+    });
+
+    this.app.put('/me/voice', async (req, reply) => {
+      const dir = resolve(process.cwd(), '.smith/users');
+      const users = await loadUsersFromDir(dir);
+      const existing = resolveCurrentUser(users) ?? { id: 'me', name: 'You', default: true, connectors: [] };
+      const r = buildVoiceUpdate(existing, req.body);
+      if ('error' in r) return reply.status(400).send({ error: r.error });
+      const merged: User = { ...existing, voice: r.voice };
+      try {
+        await saveUser(dir, merged);
+      } catch (err) {
+        return reply.status(400).send({ error: String((err as Error).message) });
+      }
+      return redactVoice(merged);
+    });
+
+    // Internal-only — returns RAW voice keys, like /workspaces/:name/channels/discord-token
+    // above: never proxied through broker's browser-facing text-channel.ts surface.
+    // broker's SwarmClient calls it server-to-server on the same loopback-bound,
+    // no-separate-auth trust boundary. In cloud mode this route is the seam where
+    // platform-provisioned keys would be resolved instead (spec §7).
+    this.app.get('/me/voice/keys', async () => {
+      const users = await loadUsersFromDir(resolve(process.cwd(), '.smith/users'));
+      return resolveVoiceKeys(resolveCurrentUser(users));
     });
 
     // ── CLI tool registry (machine-level; spec 2026-08-06) ─────────────
@@ -2281,6 +2321,49 @@ export function resolveAtlassianConnector(
   if ('error' in resolved) return resolved;
   if (!requiredField.value) return { error: `Missing required field: ${requiredField.name}` };
   return resolved;
+}
+
+/** PUT /me/voice body → validated full-replace VoiceSettings (spec §2). */
+export function buildVoiceUpdate(user: User | null, body: unknown): { voice: VoiceSettings } | { error: string } {
+  const b = (body ?? {}) as { stt?: { instanceId?: string } | null; tts?: { instanceId?: string } | null; hideInactive?: boolean };
+  const voice: VoiceSettings = { hideInactive: Boolean(b.hideInactive) };
+  for (const slot of ['stt', 'tts'] as const) {
+    const sel = b[slot];
+    if (!sel) continue; // null/undefined → slot off
+    const instanceId = sel.instanceId ?? '';
+    const instance = user?.connectors?.find((c) => c.id === instanceId);
+    if (!instance) return { error: `Unknown connector instance: ${instanceId}` };
+    const vendor = findVendor(instance.vendorId);
+    if (!vendor?.capabilities?.includes(slot)) {
+      return { error: `${vendor?.label ?? instance.vendorId} cannot power ${slot === 'stt' ? 'speech-to-text' : 'text-to-speech'}` };
+    }
+    voice[slot] = { instanceId };
+  }
+  return { voice };
+}
+
+/** DELETE /me/connectors/:id side effect (spec §2): a deleted instance vacates any voice slot pointing at it. */
+export function clearVoiceReferences(voice: VoiceSettings | undefined, instanceId: string): VoiceSettings | undefined {
+  if (!voice) return undefined;
+  const next: VoiceSettings = { ...voice };
+  if (next.stt?.instanceId === instanceId) delete next.stt;
+  if (next.tts?.instanceId === instanceId) delete next.tts;
+  return next;
+}
+
+/** GET /me/voice/keys resolution (spec §4). Fields are already decrypted in memory by loadUsersFromDir. */
+export function resolveVoiceKeys(user: User | null): {
+  stt: { vendorId: string; apiKey: string } | null;
+  tts: { vendorId: string; apiKey: string } | null;
+} {
+  const resolveSlot = (slot: 'stt' | 'tts') => {
+    const instanceId = user?.voice?.[slot]?.instanceId;
+    const instance = user?.connectors?.find((c) => c.id === instanceId);
+    const apiKey = instance?.fields.apiKey;
+    if (!instance || !apiKey) return null;
+    return { vendorId: instance.vendorId, apiKey };
+  };
+  return { stt: resolveSlot('stt'), tts: resolveSlot('tts') };
 }
 
 /**

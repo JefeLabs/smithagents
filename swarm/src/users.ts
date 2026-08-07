@@ -15,12 +15,20 @@ export interface ConnectorInstance {
   fields: Record<string, string>;
 }
 
+export interface VoiceSettings {
+  stt?: { instanceId: string };
+  tts?: { instanceId: string };
+  hideInactive?: boolean;
+}
+
 export interface User {
   id: string;
   name: string;
   /** Mirrors Workspace's default-invariant pattern; single default user today. */
   default?: boolean;
   connectors?: ConnectorInstance[];
+  /** Which connector instance powers each voice capability (spec §2). */
+  voice?: VoiceSettings;
 }
 
 /** On-disk shape before migration — legacy files may still have these instead of `connectors`. */
