@@ -2015,10 +2015,14 @@ export class OrchestratorServer {
       if (!board) return;
 
       // Linked-card checklists are toggle-only views of the capability's
-      // stories — validate, write through, and refresh the sibling card's
-      // copy in the same request so every surface agrees.
+      // stories — validate and compute the canonical copies up front (400 on
+      // violation), but hold every write until patchCard has actually
+      // succeeded: nothing here may persist on a PATCH that ultimately
+      // rejects for an unrelated reason (e.g. an invalid columnId).
       const bodyPatch = req.body as { stories?: Array<{ id: string; text: string; done: boolean; verifiedBy?: string }> };
       const targetCard = board.cards.find((c) => c.id === req.params.cardId);
+      let capToPersist: Capability | undefined;
+      let crossBoardSibling: WorkBoard | undefined;
       if (bodyPatch.stories && targetCard?.capabilityRef) {
         const { capabilities } = await loadCapabilities(capsDir());
         const cap = capabilities.find((c) => c.id === targetCard.capabilityRef?.capabilityId);
@@ -2029,7 +2033,7 @@ export class OrchestratorServer {
           } catch (err) {
             return reply.status(400).send({ error: String((err as Error).message) });
           }
-          await saveCapability(capsDir(), cap);
+          capToPersist = cap;
           const copy = () => canonical.map((s) => ({ id: s.id, text: s.text, done: s.done, verifiedBy: s.verifiedBy }));
           bodyPatch.stories = copy();
           const slice = cap.slices.find((s) => s.id === targetCard.capabilityRef?.sliceId);
@@ -2040,7 +2044,7 @@ export class OrchestratorServer {
             const otherCard = other?.cards.find((c) => c.id === sibling.cardId);
             if (other && otherCard) {
               otherCard.stories = copy();
-              await saveBoard(server.workDir(), other);
+              crossBoardSibling = other;
             }
           } else if (sibling) {
             const siblingCard = board.cards.find((c) => c.id === sibling.cardId);
@@ -2081,6 +2085,11 @@ export class OrchestratorServer {
           }
         }
 
+        // Only now — patchCard applied cleanly — do the capability/sibling
+        // writes computed above actually hit disk, alongside the board's own
+        // save, so a failed patch (e.g. bad columnId) leaves nothing behind.
+        if (capToPersist) await saveCapability(capsDir(), capToPersist);
+        if (crossBoardSibling) await saveBoard(server.workDir(), crossBoardSibling);
         await saveBoard(server.workDir(), board);
         return card;
       } catch (err) {
