@@ -435,3 +435,38 @@ blocks and there is nothing to stall.
 - [ ] With a verified google key, portraits arrive in seconds via the API path.
 - [ ] With neither, portrait generation fails with guidance naming both remedies (add a Google key in Settings → API Keys, or install Antigravity).
 - [ ] No raw key ever appears in any 7790 response, UI payload, or log — the only raw-key hop is the swarm's localhost credential route.
+
+## Voice provider settings (2026-08-06)
+
+- [ ] Fresh boot with no Deepgram/ElevenLabs keys anywhere (no `.env` values,
+  no saved connectors): the broker starts cleanly. Hold the mic button —
+  **Expected:** a pointer notice ("Add a Deepgram key in Settings →
+  Integrations, then select it under Settings → Voice.") instead of a
+  broken/silent mic. Trigger an agent reply — **Expected:** text-only, with a
+  one-time hint pointing at Settings → Integrations/Voice for ElevenLabs
+  (once per session, not repeated on every reply).
+- [ ] Settings → Integrations → paste a Deepgram key → **Test connection**
+  succeeds → Settings → Voice → select it as the speech-to-text provider.
+  **Expected:** within ~20s, with no broker restart, hold-to-talk works —
+  your speech transcribes and lands in the meeting.
+- [ ] Repeat for ElevenLabs (paste key → Test connection → select as
+  text-to-speech under Settings → Voice). **Expected:** within ~20s, no
+  broker restart, agents speak again.
+- [ ] With the Deepgram connector selected under Voice, delete it from
+  Settings → Integrations. **Expected:** the confirm dialog names
+  speech-to-text as what it's wired to (not a generic "delete this
+  connector" message); after confirming, the mic goes inactive again (same
+  as the fresh-boot state).
+- [ ] Turn on "Hide inactive voice features" (Settings → Voice) while a
+  voice capability has no key selected. **Expected:** the corresponding
+  mic/speaker controls disappear from the UI entirely rather than rendering
+  grayed-out/disabled.
+- [ ] **Upgrade callout (spec §6):** on the live rig (tmux `smith-broker`),
+  upgrading to this build loses voice — root `.env`'s `DEEPGRAM_API_KEY` /
+  `ELEVENLABS_API_KEY` are now ignored, deliberately (hard cut, no env-var
+  fallback). Paste both keys into Settings → Integrations to restore voice.
+  Also for that session: existing `.smith/users/*.json` files are encrypted
+  automatically at first swarm boot after the upgrade (`sweepEncryptUsers`),
+  and `~/.smith/master.key` now exists on disk (mode 0600) — deleting that
+  file orphans every saved secret, voice keys included; recovery is
+  re-entering the keys in Settings, not restoring the file.

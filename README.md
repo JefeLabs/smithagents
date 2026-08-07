@@ -85,9 +85,8 @@ Create a git-ignored `.env` at the repo root:
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...      # the meeting brain (Claude Haiku)
-DEEPGRAM_API_KEY=...              # push-to-talk / meeting STT
-ELEVENLABS_API_KEY=...            # agent voices (paid plan for library voices;
-                                  # premade stand-ins kick in on free tier)
+# Voice (STT/TTS): no env vars — paste your Deepgram + ElevenLabs keys in
+# Settings → Integrations, then pick them under Settings → Voice.
 LIVEKIT_URL=ws://127.0.0.1:7880   # voice meetings (livekit-server --dev)
 LIVEKIT_API_KEY=devkey
 LIVEKIT_API_SECRET=secret
