@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { WebSocket } from 'ws';
-import { TextChannel, type ChannelFrame } from './text-channel.ts';
+import { TextChannel, type ChannelFrame, workUpdateFrames } from './text-channel.ts';
 
 const post = (port: number, body: string) =>
   fetch(`http://127.0.0.1:${port}/utterance`, {
@@ -19,6 +19,17 @@ const connect = (port: number): Promise<WebSocket> =>
 
 const nextFrame = (ws: WebSocket): Promise<ChannelFrame> =>
   new Promise((resolve) => ws.once('message', (d) => resolve(JSON.parse(String(d)) as ChannelFrame)));
+
+/** Opens a WS client, buffers every frame delivered while `act` runs, then closes and returns them. */
+async function collectFramesDuring(port: number, act: () => Promise<void>): Promise<ChannelFrame[]> {
+  const ws = await connect(port);
+  const frames: ChannelFrame[] = [];
+  ws.on('message', (d) => frames.push(JSON.parse(String(d)) as ChannelFrame));
+  await act();
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  ws.close();
+  return frames;
+}
 
 // The removal/workspace routes live inside the same `if (this.creation)` block
 // as the agent routes (per the task brief), so exercising them needs a
@@ -1016,6 +1027,42 @@ test('api-keys: credential route is NOT proxied on 7790', async () => {
       headers: { Origin: 'http://localhost:1420' },
     });
     assert.equal(res.status, 404);
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('workUpdateFrames: capability mutations and linked-card PATCHes yield frames, reads and plain cards do not', () => {
+  assert.deepEqual(workUpdateFrames('PATCH', '/work/capabilities/school-feature-set', {}), [
+    { type: 'capability-updated', capabilityId: 'school-feature-set' },
+  ]);
+  assert.deepEqual(workUpdateFrames('POST', '/work/capabilities', { id: 'new-cap' }), [
+    { type: 'capability-updated', capabilityId: 'new-cap' },
+  ]);
+  assert.deepEqual(workUpdateFrames('POST', '/work/capabilities/school-feature-set/slices/sl1/send', {}), [
+    { type: 'capability-updated', capabilityId: 'school-feature-set' },
+  ]);
+  assert.deepEqual(
+    workUpdateFrames('PATCH', '/work/boards/x-delivery/cards/c9', { capabilityRef: { capabilityId: 'school-feature-set', sliceId: 'sl1' } }),
+    [{ type: 'capability-updated', capabilityId: 'school-feature-set' }],
+  );
+  assert.deepEqual(workUpdateFrames('GET', '/work/capabilities/school-feature-set', {}), []);
+  assert.deepEqual(workUpdateFrames('PATCH', '/work/boards/x/cards/c1', { title: 'plain card' }), []);
+});
+
+test('proxy broadcasts capability-updated to connected WS clients on mutating capability calls', async () => {
+  const channel = channelWith({ workBoards: {
+    proxy: async () => ({ status: 200, payload: { id: 'school-feature-set' } }),
+    delegate: async () => ({ taskId: 't' }),
+  }});
+  const port = await channel.start(0);
+  try {
+    const frames = await collectFramesDuring(port, async () => {
+      await fetch(`http://127.0.0.1:${port}/work/capabilities/school-feature-set`, {
+        method: 'PATCH', headers: { 'content-type': 'application/json' }, body: '{}',
+      });
+    });
+    assert.ok(frames.some((f) => f.type === 'capability-updated' && f.capabilityId === 'school-feature-set'));
   } finally {
     await channel.stop();
   }

@@ -52,7 +52,9 @@ export type ChannelFrame =
   /** A delegated task was just bound to an agent — the deterministic handle an external bridge (broker/bin) correlates against, since the brain's own spoken confirmation is free-form prose. */
   | { type: 'task-dispatched'; taskId: string; agent: string; task: string }
   /** A work-board card changed (moved, delegated, or a delegated task completed/failed) — the board stage refetches. */
-  | { type: 'board-updated'; boardId: string };
+  | { type: 'board-updated'; boardId: string }
+  /** A capability (or one of its slices, or a card linked to it) changed — the story map stage refetches. */
+  | { type: 'capability-updated'; capabilityId: string };
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -94,6 +96,25 @@ function credentialCors(req: IncomingMessage): Record<string, string> {
   };
   if (origin && ALLOWED_ORIGINS.has(origin)) headers['Access-Control-Allow-Origin'] = origin;
   return headers;
+}
+
+/** Frames the channel owes its clients after a successful mutating /work call. */
+export function workUpdateFrames(
+  method: string,
+  pathname: string,
+  payload: unknown,
+): Array<{ type: 'capability-updated'; capabilityId: string }> {
+  if (method === 'GET') return [];
+  const capMatch = pathname.match(/^\/work\/capabilities(?:\/([^/]+))?/);
+  if (capMatch) {
+    const capabilityId = capMatch[1] ?? (payload as { id?: string })?.id;
+    return capabilityId ? [{ type: 'capability-updated', capabilityId }] : [];
+  }
+  const ref = (payload as { capabilityRef?: { capabilityId?: string } })?.capabilityRef;
+  if (/^\/work\/boards\/[^/]+\/cards\/[^/]+$/.test(pathname) && ref?.capabilityId) {
+    return [{ type: 'capability-updated', capabilityId: ref.capabilityId }];
+  }
+  return [];
 }
 
 export class TextChannel {
@@ -840,7 +861,12 @@ export class TextChannel {
               }
             }
             void this.workBoards!.proxy(req.method ?? 'GET', url2.pathname, parsed).then(
-              (r) => res.writeHead(r.status, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify(r.payload)),
+              (r) => {
+                res.writeHead(r.status, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify(r.payload));
+                if (r.status < 400) {
+                  for (const frame of workUpdateFrames(req.method ?? 'GET', url2.pathname, r.payload)) this.broadcast(frame);
+                }
+              },
               (err: unknown) => res.writeHead(500, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify({ error: String((err as Error).message ?? err) })),
             );
           });
