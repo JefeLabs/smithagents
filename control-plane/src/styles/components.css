@@ -2304,14 +2304,10 @@ main.chat-active .composer-dock {
   gap: 10px;
   min-height: 0;
   padding: 14px;
-  /* Unlike VoiceStage/WorkStage (both wrapped in `main`, which already reserves
-     `inset: 0 72px` for the fixed side rails), this stage was flowing edge to
-     edge — its bar's right-aligned controls (Close) rendered directly under
-     the fixed right rail's avatars (z-index 3), which paint on top and ate
-     the clicks. Mirror `main`'s rail clearance instead of guessing at
-     whatever happens to be rendered in the rail at a given scroll position. */
-  position: fixed;
-  inset: 0 72px;
+  /* Rendered as the stage's own <main> (base.css gives main `inset: 0 72px`
+     rail clearance); undo main's centering so columns fill the stage. */
+  align-items: stretch;
+  justify-content: flex-start;
 }
 .board-stage__bar {
   display: flex;

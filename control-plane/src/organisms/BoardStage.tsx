@@ -9,7 +9,7 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Download, Plus, SquareKanban, X } from "lucide-react";
+import { Download, Plus, SquareKanban } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import type { RosterAgent } from "../hooks/useBrokerChat";
 import { BoardCard } from "../molecules/BoardCard";
@@ -47,10 +47,8 @@ export interface WorkBoardT {
 type BoardTemplate = "personal" | "capabilities" | "delivery" | "maintenance" | "support";
 
 interface BoardStageProps {
-  open: boolean;
   roster: RosterAgent[];
   lastBoardUpdate: { boardId: string; seq: number } | null;
-  onClose: () => void;
 }
 
 /** Optimistic mirror of the server's move: new board object, both columns renumbered. */
@@ -177,7 +175,7 @@ function BoardColumn({
  * The kanban stage — the user's boards. Drag (Task 6) only ever changes the
  * user's own status; delegation state is badges on cards, never movement.
  */
-export function BoardStage({ open, roster, lastBoardUpdate, onClose }: BoardStageProps) {
+export function BoardStage({ roster, lastBoardUpdate }: BoardStageProps) {
   const [boards, setBoards] = useState<WorkBoardT[]>([]);
   const [boardErrors, setBoardErrors] = useState<Array<{ file: string; error: string }>>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -208,20 +206,19 @@ export function BoardStage({ open, roster, lastBoardUpdate, onClose }: BoardStag
   }, []);
 
   useEffect(() => {
-    if (open) void refetch();
-  }, [open, refetch]);
+    void refetch();
+  }, [refetch]);
 
   useEffect(() => {
-    if (!open) return;
     fetch(`http://${BASE}/workspaces`)
       .then((r) => r.json())
       .then((res: { workspaces?: Array<{ name: string }> }) => setWorkspaces((res.workspaces ?? []).map((w) => w.name)))
       .catch(() => {});
-  }, [open]);
+  }, []);
 
   useEffect(() => {
-    if (open && lastBoardUpdate && lastBoardUpdate.boardId === activeId) void refetch();
-  }, [open, lastBoardUpdate, activeId, refetch]);
+    if (lastBoardUpdate && lastBoardUpdate.boardId === activeId) void refetch();
+  }, [lastBoardUpdate, activeId, refetch]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
@@ -263,7 +260,6 @@ export function BoardStage({ open, roster, lastBoardUpdate, onClose }: BoardStag
     };
   }, [applyMove]);
 
-  if (!open) return null;
   const board = boards.find((b) => b.id === activeId) ?? null;
   const openCard = board?.cards.find((c) => c.id === openCardId) ?? null;
   const agentFor = (id?: string) => (id ? roster.find((a) => a.id === id) : undefined);
@@ -323,7 +319,7 @@ export function BoardStage({ open, roster, lastBoardUpdate, onClose }: BoardStag
   };
 
   return (
-    <section className="board-stage" aria-label="Work boards">
+    <main className="board-stage" aria-label="Work boards">
       <header className="board-stage__bar">
         <SquareKanban size={14} strokeWidth={2} />
         <select aria-label="Board" value={activeId ?? ""} onChange={(e) => setActiveId(e.target.value)}>
@@ -359,10 +355,6 @@ export function BoardStage({ open, roster, lastBoardUpdate, onClose }: BoardStag
             <Download size={12} strokeWidth={2} /> import from jira
           </button>
         )}
-        <span className="spacer" />
-        <button type="button" className="settings-btn" onClick={onClose} aria-label="Close board">
-          <X size={12} strokeWidth={2} />
-        </button>
       </header>
       {creatingBoard && (
         <div className="board-stage__composer">
@@ -428,6 +420,6 @@ export function BoardStage({ open, roster, lastBoardUpdate, onClose }: BoardStag
           onChanged={() => void refetch()}
         />
       )}
-    </section>
+    </main>
   );
 }

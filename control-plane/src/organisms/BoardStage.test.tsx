@@ -81,7 +81,7 @@ describe("BoardStage", () => {
 
   it("renders columns and cards of the first board", async () => {
     stubFetch();
-    render(<BoardStage open roster={ROSTER} lastBoardUpdate={null} onClose={vi.fn()} />);
+    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
     expect(await screen.findByText("Backlog")).toBeTruthy();
     expect(screen.getByText("Write the spec")).toBeTruthy();
     expect(screen.getByText("PROJ-1")).toBeTruthy();
@@ -89,14 +89,14 @@ describe("BoardStage", () => {
 
   it("shows the delegated card's agent badge from the roster", async () => {
     stubFetch();
-    render(<BoardStage open roster={ROSTER} lastBoardUpdate={null} onClose={vi.fn()} />);
+    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
     await screen.findByText("Ship avatars");
     expect(screen.getByLabelText(/minerva is working on this card/i)).toBeTruthy();
   });
 
   it("the delegated card's avatar badge has no nested button, so the card stays a single button", async () => {
     stubFetch();
-    render(<BoardStage open roster={ROSTER} lastBoardUpdate={null} onClose={vi.fn()} />);
+    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
     const title = await screen.findByText("Ship avatars");
     const badge = screen.getByLabelText(/minerva is working on this card/i);
     expect(within(badge).queryByRole("button")).toBeNull();
@@ -130,7 +130,7 @@ describe("BoardStage", () => {
         errors: [],
       },
     });
-    render(<BoardStage open roster={ROSTER} lastBoardUpdate={null} onClose={vi.fn()} />);
+    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
     await screen.findByText("Ship boards");
     expect(screen.getByText("2/3")).toBeTruthy();
     const noStoriesCard = screen.getByText("Write the spec").closest("button.board-card") as HTMLElement;
@@ -139,7 +139,7 @@ describe("BoardStage", () => {
 
   it("adds a card through the composer", async () => {
     const { calls } = stubFetch();
-    render(<BoardStage open roster={ROSTER} lastBoardUpdate={null} onClose={vi.fn()} />);
+    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
     await screen.findByText("Backlog");
     await userEvent.click(screen.getByRole("button", { name: /add card/i }));
     await userEvent.type(screen.getByPlaceholderText(/card title/i), "New card");
@@ -151,7 +151,7 @@ describe("BoardStage", () => {
 
   it("creates a board from a template via the switcher", async () => {
     const { calls } = stubFetch();
-    render(<BoardStage open roster={ROSTER} lastBoardUpdate={null} onClose={vi.fn()} />);
+    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
     await screen.findByText("Backlog");
     await userEvent.click(screen.getByRole("button", { name: /new board/i }));
     await userEvent.type(screen.getByPlaceholderText(/board name/i), "Beta");
@@ -171,10 +171,10 @@ describe("BoardStage", () => {
 
   it("refetches when lastBoardUpdate names the open board", async () => {
     const { calls } = stubFetch();
-    const { rerender } = render(<BoardStage open roster={ROSTER} lastBoardUpdate={null} onClose={vi.fn()} />);
+    const { rerender } = render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
     await screen.findByText("Backlog");
     const before = calls.filter((c) => c.url.endsWith("/work/boards")).length;
-    rerender(<BoardStage open roster={ROSTER} lastBoardUpdate={{ boardId: "alpha", seq: 1 }} onClose={vi.fn()} />);
+    rerender(<BoardStage roster={ROSTER} lastBoardUpdate={{ boardId: "alpha", seq: 1 }} />);
     await waitFor(() => expect(calls.filter((c) => c.url.endsWith("/work/boards")).length).toBeGreaterThan(before));
   });
 });
@@ -227,7 +227,7 @@ describe("BoardStage drag wiring", () => {
 
   it("a cross-column drop PATCHes the moved card with columnId and order and applies optimistically", async () => {
     const { calls } = stubFetch();
-    render(<BoardStage open roster={ROSTER} lastBoardUpdate={null} onClose={vi.fn()} />);
+    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
     await screen.findByText("Backlog");
     // Drag simulation via dnd-kit is brittle in jsdom — call the exported
     // handler contract instead: the component wires handleCardDrop(cardId,
@@ -254,7 +254,7 @@ describe("BoardStage drag wiring", () => {
 
   it("a same-column reorder PATCHes {order} only, omitting columnId so the swarm's Jira push-on-move never fires", async () => {
     const { calls } = stubFetch();
-    render(<BoardStage open roster={ROSTER} lastBoardUpdate={null} onClose={vi.fn()} />);
+    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
     await screen.findByText("Backlog");
     const { fireDrop } = await import("./BoardStage");
     // c1 is already in "backlog" — this is a same-column reorder.
@@ -267,7 +267,7 @@ describe("BoardStage drag wiring", () => {
 
   it("rolls back the optimistic move and surfaces an error when the PATCH fails", async () => {
     const { calls } = stubFetch({ patchStatus: 500 });
-    render(<BoardStage open roster={ROSTER} lastBoardUpdate={null} onClose={vi.fn()} />);
+    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
     await screen.findByText("Write the spec");
     const { fireDrop } = await import("./BoardStage");
     await fireDrop("c1", "ready", 0);
@@ -344,7 +344,7 @@ describe("CardSheet", () => {
   });
 
   async function openSheet(cardTitle: string) {
-    render(<BoardStage open roster={ROSTER} lastBoardUpdate={null} onClose={vi.fn()} />);
+    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
     await userEvent.click(await screen.findByText(cardTitle));
   }
 
@@ -423,7 +423,7 @@ describe("CardSheet", () => {
   it("busy agents are disabled in the picker with the reason", async () => {
     stubFetch();
     const busyRoster = [{ ...ROSTER[0], status: "busy" as const }];
-    render(<BoardStage open roster={busyRoster} lastBoardUpdate={null} onClose={vi.fn()} />);
+    render(<BoardStage roster={busyRoster} lastBoardUpdate={null} />);
     await userEvent.click(await screen.findByText("Write the spec"));
     await userEvent.click(screen.getByRole("button", { name: /send to agent/i }));
     const option = screen.getByRole("option", { name: /minerva.*busy/i }) as HTMLOptionElement;
@@ -509,7 +509,7 @@ describe("board-side capability amendments", () => {
 
   it("groups the switcher by workspace with personal boards first", async () => {
     stubFetch({ boards: WS_BOARDS });
-    render(<BoardStage open roster={ROSTER} lastBoardUpdate={null} onClose={vi.fn()} />);
+    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
     await screen.findByText("Backlog");
     const select = screen.getByLabelText(/^board$/i);
     const groups = within(select).getAllByRole("group");
@@ -518,7 +518,7 @@ describe("board-side capability amendments", () => {
 
   it("offers all five templates in the new-board composer", async () => {
     stubFetch();
-    render(<BoardStage open roster={ROSTER} lastBoardUpdate={null} onClose={vi.fn()} />);
+    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
     await screen.findByText("Backlog");
     await userEvent.click(screen.getByRole("button", { name: /new board/i }));
     const options = (screen.getByLabelText(/template/i) as HTMLSelectElement).options;
@@ -533,7 +533,7 @@ describe("board-side capability amendments", () => {
 
   it("linked cards show a capability chip", async () => {
     stubFetch({ boards: WS_BOARDS });
-    render(<BoardStage open roster={ROSTER} lastBoardUpdate={null} onClose={vi.fn()} />);
+    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
     await screen.findByText("Backlog");
     await userEvent.selectOptions(screen.getByLabelText(/^board$/i), "skoolscout-capabilities");
     await screen.findByText("tour scheduling v1");
@@ -542,7 +542,7 @@ describe("board-side capability amendments", () => {
 
   it("linked cards are toggle-only: no add-story input, no remove buttons, toggle still PATCHes", async () => {
     const { calls } = stubFetch({ boards: WS_BOARDS });
-    render(<BoardStage open roster={ROSTER} lastBoardUpdate={null} onClose={vi.fn()} />);
+    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
     await screen.findByText("Backlog");
     await userEvent.selectOptions(screen.getByLabelText(/^board$/i), "skoolscout-capabilities");
     await userEvent.click(await screen.findByText("tour scheduling v1"));
