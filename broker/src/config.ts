@@ -1,8 +1,6 @@
 /** Broker configuration from environment (repo-root .env via --env-file). */
 export interface BrokerConfig {
   anthropicApiKey: string;
-  deepgramApiKey: string;
-  elevenlabsApiKey?: string;
   livekit: { url: string; apiKey: string; apiSecret: string };
   swarm: { baseUrl: string; token?: string; repository: string };
   /** Loopback port for the text channel (POST /utterance + WS /events). */
@@ -20,8 +18,6 @@ export function loadBrokerConfig(env: Record<string, string | undefined> = proce
   };
   return {
     anthropicApiKey: required('ANTHROPIC_API_KEY'),
-    deepgramApiKey: required('DEEPGRAM_API_KEY'),
-    elevenlabsApiKey: env.ELEVENLABS_API_KEY || undefined,
     livekit: {
       url: required('LIVEKIT_URL'),
       apiKey: required('LIVEKIT_API_KEY'),

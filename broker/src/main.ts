@@ -32,6 +32,7 @@ import { LocalMemory, type MemoryEntry } from './memory.ts';
 import { SessionManager, type Session } from './sessions.ts';
 import { DeepgramSttStream, type LiveLike, deepgramLiveOptions } from './stt.ts';
 import { SwarmClient, type SwarmSquad, type WorkspaceBody } from './swarm-client.ts';
+import { VoiceKeyResolver, VOICE_STT_HINT, VOICE_TTS_HINT } from './voice-keys.ts';
 import { PersonaGenerator, draftToAgentBody, type PersonaDraft } from './persona-generator.ts';
 import { loadIdentity, promptInfo } from './identity.ts';
 import { VoiceCatalog } from './voice-catalog.ts';
@@ -108,11 +109,28 @@ const adapterHub = new AdapterHub({
 });
 adapterHub.attendsPolicy = (agentId, kind) => policy.attends(agentId, kind);
 
-const tts = config.elevenlabsApiKey ? new ElevenLabsVoiceProvider({ apiKey: config.elevenlabsApiKey }) : null;
-// Voice library browsing + the fixed-line audio cache (reactions, quick answers).
-const voiceCatalog = config.elevenlabsApiKey
-  ? new VoiceCatalog(config.elevenlabsApiKey, process.env.BROKER_VOICE_CACHE_DIR ?? '.smith/voice-cache')
-  : null;
+const voiceKeys = new VoiceKeyResolver(swarm);
+
+// Both classes bind the key in their constructors, so "rebuilt only when the
+// key changes" (spec §4) is a memoized {key, provider, catalog} triple, not a
+// per-call key thread.
+let ttsCache: { key: string; provider: ElevenLabsVoiceProvider; catalog: VoiceCatalog } | null = null;
+async function currentTts(): Promise<{ provider: ElevenLabsVoiceProvider; catalog: VoiceCatalog } | null> {
+  const key = await voiceKeys.ttsKey();
+  if (!key) {
+    ttsCache = null;
+    return null;
+  }
+  if (ttsCache?.key !== key) {
+    ttsCache = {
+      key,
+      provider: new ElevenLabsVoiceProvider({ apiKey: key }),
+      catalog: new VoiceCatalog(key, process.env.BROKER_VOICE_CACHE_DIR ?? '.smith/voice-cache'),
+    };
+  }
+  return ttsCache;
+}
+
 // Bound on a single TTS request. speak() runs inside the serialized turn
 // queue (broker.ts's enqueueSpeech chain) — a hung ElevenLabs call with no
 // deadline would park every subsequent turn, voice or text, until Node's
@@ -132,7 +150,8 @@ function isTtsTimeout(err: unknown): boolean {
 // Meeting TTS speaks with the per-agent cast — same voices as the app's audio
 // frames. Falls back to a premade stand-in when a library voice is plan-gated.
 async function* speak(text: string): AsyncIterable<Uint8Array> {
-  if (!tts) {
+  const t = await currentTts();
+  if (!t) {
     return; // no TTS configured — onSpeechText already surfaced the text
   }
   const { speaker, spokenText } = resolveSpokenLine(text);
@@ -140,7 +159,7 @@ async function* speak(text: string): AsyncIterable<Uint8Array> {
   // invokes attempt() a second time and must get its OWN timeout window, not
   // the first attempt's (already fired-or-consumed) signal.
   const attempt = (voiceId: string) =>
-    tts.stream({
+    t.provider.stream({
       text: spokenText,
       personaId: speaker ?? 'broker',
       format: 'pcm_s16le',
@@ -179,7 +198,6 @@ async function* speak(text: string): AsyncIterable<Uint8Array> {
  * synchronous, so this adapter bridges the gap: audio sent before the socket
  * finishes connecting *and* opening is queued and flushed once truly open.
  */
-const deepgram = new DeepgramClient({ apiKey: config.deepgramApiKey });
 
 // sampleRate defaults to 48000 (mic/meeting PTT's rate) so the existing
 // `new DeepgramSttStream(makeDeepgramLive)` call sites below need no change;
@@ -187,16 +205,22 @@ const deepgram = new DeepgramClient({ apiKey: config.deepgramApiKey });
 // passes it explicitly rather than relying on the default matching by
 // coincidence — see makeVoiceStt below.
 function makeDeepgramLive(sampleRate = 48000): LiveLike {
-  type Socket = Awaited<ReturnType<typeof deepgram.listen.v1.connect>>;
+  type Socket = Awaited<ReturnType<DeepgramClient['listen']['v1']['connect']>>;
   let socket: Socket | null = null;
   let resultsCb: ((data?: unknown) => void) | null = null;
   const pending: Uint8Array[] = [];
   let closed = false;
 
   // Record<string, unknown> can't structurally satisfy the SDK's ConnectArgs; the payload shape is pinned by stt.test.ts.
-  const ready: Promise<Socket | null> = deepgram.listen.v1
-    .connect(deepgramLiveOptions(sampleRate) as any)
+  const ready: Promise<Socket | null> = voiceKeys
+    .sttKey()
+    .then((key) => {
+      if (!key) return null; // no STT key — session yields no results (callers gate before starting)
+      const deepgram = new DeepgramClient({ apiKey: key });
+      return deepgram.listen.v1.connect(deepgramLiveOptions(sampleRate) as any);
+    })
     .then(async (s) => {
+      if (!s) return null;
       if (closed) {
         s.close();
         return null;
@@ -748,8 +772,9 @@ const creation = {
       return draft as unknown as Record<string, unknown>;
     },
     voices: async (query: Record<string, string>) => {
-      if (!voiceCatalog) return { voices: [], hasMore: false, error: 'no ElevenLabs key configured' };
-      return voiceCatalog.browse({
+      const t = await currentTts();
+      if (!t) return { voices: [], hasMore: false, error: VOICE_TTS_HINT };
+      return t.catalog.browse({
         search: query.search,
         gender: query.gender,
         language: query.language,
@@ -757,8 +782,9 @@ const creation = {
       });
     },
     preview: async (voiceId: string, text: string) => {
-      if (!voiceCatalog) throw new Error('no ElevenLabs key configured');
-      return voiceCatalog.synthesize(voiceId, text);
+      const t = await currentTts();
+      if (!t) throw new Error(VOICE_TTS_HINT);
+      return t.catalog.synthesize(voiceId, text);
     },
     create: async (body: Record<string, unknown>) => {
       const created = await swarm.createAgent(body);
@@ -770,12 +796,13 @@ const creation = {
         reactions?: Record<string, string[]>;
         quickAnswers?: Record<string, string>;
       };
-      if (voiceCatalog && agent.voice?.voiceId) {
+      const t = await currentTts();
+      if (t && agent.voice?.voiceId) {
         const lines = [
           ...Object.values(agent.reactions ?? {}).flat(),
           ...Object.values(agent.quickAnswers ?? {}),
         ];
-        const warm = await voiceCatalog.warmAgent(agent.voice.voiceId, lines).catch(() => ({ cached: 0, failed: [] }));
+        const warm = await t.catalog.warmAgent(agent.voice.voiceId, lines).catch(() => ({ cached: 0, failed: [] }));
         // Roster refresh so the new agent appears immediately.
         await broker.resetComposition().catch(() => {});
         return { ...created, voiceCache: warm };
@@ -801,7 +828,7 @@ const creation = {
 const textChannel = new TextChannel(
   handleUserText,
   () => [
-    { type: 'config', audio: Boolean(tts) },
+    { type: 'config', audio: voiceKeys.statusSync().tts },
     rosterFrame(broker.uiRoster()),
     sessionFrame(),
   ],
@@ -953,14 +980,15 @@ const micSessions = new Map<number, DeepgramSttStream>();
 // so frames always arrive in speech order; each link swallows its own failure
 // (a bad voice id or network blip degrades to text, never breaks the chain).
 let synthChain = Promise.resolve();
-function broadcastSpokenAudio(text: string): void {
-  if (!tts) return;
+async function broadcastSpokenAudio(text: string): Promise<void> {
+  const t = await currentTts();
+  if (!t) return;
   const { speaker, spokenText } = resolveSpokenLine(text);
   const voiceId = elevenVoiceFor(speaker);
   synthChain = synthChain.then(async () => {
     if (textChannel.clientCount === 0) return; // nobody listening — don't spend credits
     const synth = (id: string) =>
-      tts.synthesize({ text: spokenText, personaId: speaker ?? 'broker', format: 'mp3', voice: { provider: 'elevenlabs', voiceId: id } });
+      t.provider.synthesize({ text: spokenText, personaId: speaker ?? 'broker', format: 'mp3', voice: { provider: 'elevenlabs', voiceId: id } });
     try {
       let result;
       try {
@@ -1021,7 +1049,7 @@ broker = new Broker(
       console.log(`[speech-text] ${text}`);
       sessionManager.appendTranscript('broker', text);
       textChannel.broadcast({ type: 'speech', text });
-      broadcastSpokenAudio(text);
+      void broadcastSpokenAudio(text);
       adapterHub.dispatchSpeech(text);
     },
     // Turn-scoped: activates the hub's origin for exactly the turn now

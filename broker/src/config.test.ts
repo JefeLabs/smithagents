@@ -4,7 +4,6 @@ import { loadBrokerConfig } from './config.ts';
 
 const FULL = {
   ANTHROPIC_API_KEY: 'sk-ant',
-  DEEPGRAM_API_KEY: 'dg',
   LIVEKIT_URL: 'ws://127.0.0.1:7880',
   LIVEKIT_API_KEY: 'devkey',
   LIVEKIT_API_SECRET: 'secret',
@@ -18,9 +17,10 @@ test('loads with defaults for optional vars', () => {
   assert.equal(c.livekit.url, 'ws://127.0.0.1:7880');
 });
 
-test('throws naming the missing required var', () => {
-  const { DEEPGRAM_API_KEY: _omit, ...rest } = FULL;
-  assert.throws(() => loadBrokerConfig(rest), /DEEPGRAM_API_KEY/);
+test('boots with no voice keys anywhere — voice keys are Settings-managed, not env (spec §6)', () => {
+  const config = loadBrokerConfig(FULL); // FULL no longer contains either voice key
+  assert.ok(!('deepgramApiKey' in config));
+  assert.ok(!('elevenlabsApiKey' in config));
 });
 
 test('optional overrides are honored', () => {
