@@ -102,10 +102,12 @@ import {
   loadCapabilities,
   patchCapability,
   renderSpecSkeleton,
+  resyncLinkedCards,
   saveCapability,
   sendSliceToBoard,
   sliceStories,
   slugify,
+  unlinkSliceCard,
   workspaceBoardId,
   type Capability,
 } from './capabilities.js';
@@ -2100,13 +2102,29 @@ export class OrchestratorServer {
     this.app.delete<{ Params: { id: string; cardId: string } }>('/work/boards/:id/cards/:cardId', async (req, reply) => {
       const board = await boardOr404(req.params.id, reply);
       if (!board) return;
+      const capRef = board.cards.find((c) => c.id === req.params.cardId)?.capabilityRef;
       try {
         removeCard(board, req.params.cardId);
         await saveBoard(server.workDir(), board);
-        return { ok: true };
       } catch (err) {
         return reply.status(400).send({ error: String((err as Error).message) });
       }
+      if (capRef) {
+        // Strand-proofing (I1): without this, a re-send 409s forever because
+        // the slice still thinks this (now-deleted) card holds its ref.
+        // Best-effort — a missing/renamed capability must not fail a delete
+        // that has already succeeded.
+        try {
+          const { capabilities } = await loadCapabilities(capsDir());
+          const cap = capabilities.find((c) => c.id === capRef.capabilityId);
+          if (cap && unlinkSliceCard(cap, capRef.sliceId, req.params.cardId)) {
+            await saveCapability(capsDir(), cap);
+          }
+        } catch {
+          // ignore — the delete already succeeded
+        }
+      }
+      return { ok: true };
     });
 
     this.app.post<{ Params: { id: string } }>('/work/boards/:id/jira/import', async (req, reply) => {
@@ -2169,6 +2187,13 @@ export class OrchestratorServer {
       try {
         patchCapability(cap, req.body as Parameters<typeof patchCapability>[1]);
         await saveCapability(capsDir(), cap);
+        // Runs only after the capability patch itself has succeeded and
+        // persisted (write-ordering discipline from T3): keeps every linked
+        // card's checklist a synced view rather than a send-time snapshot
+        // (C1). resyncLinkedCards already skips any ref whose board/card no
+        // longer resolves; a raw disk failure here still 400s the request,
+        // matching how the sibling write-through PATCH treats its own writes.
+        await resyncLinkedCards(server.workDir(), cap);
         return cap;
       } catch (err) {
         return reply.status(400).send({ error: String((err as Error).message) });

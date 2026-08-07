@@ -58,7 +58,10 @@ export function slugify(name: string): string {
 
 export function createCapability(name: string, workspaceId: string): Capability {
   const now = new Date().toISOString();
-  return { id: slugify(name), name: name.trim(), workspaceId, activities: [], stories: [], slices: [], createdAt: now, updatedAt: now };
+  // Namespaced like workspaceBoardId: the id is the on-disk filename, and two
+  // workspaces must be able to each have their own "Onboarding".
+  const id = `${slugify(workspaceId)}-${slugify(name)}`;
+  return { id, name: name.trim(), workspaceId, activities: [], stories: [], slices: [], createdAt: now, updatedAt: now };
 }
 
 function assertCapability(file: string, v: unknown): Capability {
@@ -199,4 +202,55 @@ export function sendSliceToBoard(cap: Capability, slice: CapSlice, board: WorkBo
   card.stories = sliceStories(cap, slice.id).map((s) => ({ id: s.id, text: s.text, done: s.done, verifiedBy: s.verifiedBy }));
   card.capabilityRef = { capabilityId: cap.id, sliceId: slice.id };
   return card;
+}
+
+/**
+ * After a capability edit, a slice's stories may have moved on from the
+ * snapshot a linked card was sent with. Refresh every linked card's story
+ * copies from the slice's current stories so the checklist stays a synced
+ * view rather than a stale one (a slice whose stories were all unassigned
+ * ends up with an empty checklist, not a dead one). Call only after the
+ * capability patch that produced `cap` has itself succeeded and persisted —
+ * this is a second, best-effort write pass, not part of that validation.
+ * Skips any ref whose board or card no longer resolves.
+ */
+export async function resyncLinkedCards(workDir: string, cap: Capability): Promise<void> {
+  const { boards } = await loadBoards(workDir);
+  const dirty = new Set<WorkBoard>();
+  for (const slice of cap.slices) {
+    const refs = [slice.capCardRef, slice.deliveryCardRef].filter((r): r is { boardId: string; cardId: string } => Boolean(r));
+    if (refs.length === 0) continue;
+    let stories: CapStory[];
+    try {
+      stories = sliceStories(cap, slice.id);
+    } catch {
+      continue; // patchCapability already enforces this; skip defensively rather than throw mid-resync
+    }
+    for (const ref of refs) {
+      const board = boards.find((b) => b.id === ref.boardId);
+      const card = board?.cards.find((c) => c.id === ref.cardId);
+      if (board && card) {
+        card.stories = stories.map((s) => ({ id: s.id, text: s.text, done: s.done, verifiedBy: s.verifiedBy }));
+        dirty.add(board);
+      }
+    }
+  }
+  for (const board of dirty) await saveBoard(workDir, board);
+}
+
+/** Clear a slice's ref to a card that no longer exists (e.g. the card was deleted). Returns whether anything changed. */
+export function unlinkSliceCard(cap: Capability, sliceId: string, cardId: string): boolean {
+  const slice = cap.slices.find((s) => s.id === sliceId);
+  if (!slice) return false;
+  let changed = false;
+  if (slice.capCardRef?.cardId === cardId) {
+    slice.capCardRef = undefined;
+    changed = true;
+  }
+  if (slice.deliveryCardRef?.cardId === cardId) {
+    slice.deliveryCardRef = undefined;
+    changed = true;
+  }
+  if (changed) cap.updatedAt = new Date().toISOString();
+  return changed;
 }

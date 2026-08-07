@@ -5,9 +5,10 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import {
   applyStoryToggles, createCapability, deleteCapabilityFile, ensureWorkspaceBoards, loadCapabilities,
-  patchCapability, renderSpecSkeleton, saveCapability, sendSliceToBoard, sliceStories, slugify, workspaceBoardId,
+  patchCapability, renderSpecSkeleton, resyncLinkedCards, saveCapability, sendSliceToBoard, sliceStories, slugify,
+  unlinkSliceCard, workspaceBoardId,
 } from './capabilities.js';
-import { loadBoards } from './work-items.js';
+import { loadBoards, saveBoard } from './work-items.js';
 
 function fixture() {
   const cap = createCapability('School Feature Set', 'skoolscout');
@@ -29,10 +30,21 @@ test('slugify + createCapability shape', () => {
   assert.equal(slugify('School Feature Set!'), 'school-feature-set');
   assert.throws(() => slugify('!!!'), /name/i);
   const cap = createCapability('School Feature Set', 'skoolscout');
-  assert.equal(cap.id, 'school-feature-set');
+  assert.equal(cap.id, 'skoolscout-school-feature-set');
+  assert.equal(cap.name, 'School Feature Set');
   assert.equal(cap.workspaceId, 'skoolscout');
   assert.deepEqual([cap.activities, cap.stories, cap.slices], [[], [], []]);
   assert.ok(cap.createdAt && cap.updatedAt);
+});
+
+test('createCapability: id is workspace-namespaced — two workspaces can share a name', () => {
+  const a = createCapability('Onboarding', 'skoolscout');
+  const b = createCapability('Onboarding', 'smithagents');
+  assert.notEqual(a.id, b.id);
+  assert.equal(a.id, 'skoolscout-onboarding');
+  assert.equal(b.id, 'smithagents-onboarding');
+  assert.equal(a.name, 'Onboarding');
+  assert.equal(b.name, 'Onboarding');
 });
 
 test('patchCapability: wholesale replace with validation', () => {
@@ -82,7 +94,7 @@ test('store round-trip + malformed isolation', async () => {
   await saveCapability(dir, cap);
   await writeFile(join(dir, 'broken.json'), '{nope');
   const { capabilities, errors } = await loadCapabilities(dir);
-  assert.deepEqual(capabilities.map((c) => c.id), ['school-feature-set']);
+  assert.deepEqual(capabilities.map((c) => c.id), ['skoolscout-school-feature-set']);
   assert.equal(errors.length, 1);
   await deleteCapabilityFile(dir, cap.id);
   assert.deepEqual((await loadCapabilities(dir)).capabilities, []);
@@ -115,7 +127,54 @@ test('sendSliceToBoard: leftmost card, story copies, capabilityRef', async () =>
   const card = sendSliceToBoard(cap, cap.slices[0], board!);
   assert.equal(card.title, 'tour scheduling v1');
   assert.equal(card.columnId, board!.columns[0].id);
-  assert.deepEqual(card.capabilityRef, { capabilityId: 'school-feature-set', sliceId: 'sl1' });
+  assert.deepEqual(card.capabilityRef, { capabilityId: 'skoolscout-school-feature-set', sliceId: 'sl1' });
   assert.deepEqual(card.stories?.map((s) => s.text), ['create tour time slots', 'edit tour time slots']);
   assert.notEqual(card.stories, cap.stories); // copies, not shared references
+});
+
+test('resyncLinkedCards: editing a slice after sending refreshes both linked cards, not just the map (C1)', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'work-'));
+  await ensureWorkspaceBoards(dir, 'skoolscout');
+  const { boards } = await loadBoards(dir);
+  const capBoard = boards.find((b) => b.id === 'skoolscout-capabilities')!;
+  const deliveryBoard = boards.find((b) => b.id === 'skoolscout-delivery')!;
+  const cap = fixture();
+  const capCard = sendSliceToBoard(cap, cap.slices[0], capBoard);
+  await saveBoard(dir, capBoard);
+  const deliveryCard = sendSliceToBoard(cap, cap.slices[0], deliveryBoard);
+  await saveBoard(dir, deliveryBoard);
+  cap.slices[0].capCardRef = { boardId: capBoard.id, cardId: capCard.id };
+  cap.slices[0].deliveryCardRef = { boardId: deliveryBoard.id, cardId: deliveryCard.id };
+
+  // Edit the slice in the map: drop s2, leaving only s1 — same edit that
+  // used to brick applyStoryToggles on both cards forever.
+  patchCapability(cap, { slices: [{ ...cap.slices[0], storyIds: ['s1'] }] });
+  await resyncLinkedCards(dir, cap);
+
+  const { boards: after } = await loadBoards(dir);
+  const afterCapCard = after.find((b) => b.id === capBoard.id)!.cards.find((c) => c.id === capCard.id)!;
+  const afterDeliveryCard = after.find((b) => b.id === deliveryBoard.id)!.cards.find((c) => c.id === deliveryCard.id)!;
+  assert.deepEqual(afterCapCard.stories?.map((s) => s.id), ['s1']);
+  assert.deepEqual(afterDeliveryCard.stories?.map((s) => s.id), ['s1']);
+  assert.notEqual(afterCapCard.stories, afterDeliveryCard.stories); // independent copies, not shared references
+  // What used to 400 forever now succeeds against the refreshed copy.
+  assert.doesNotThrow(() => applyStoryToggles(cap, 'sl1', [{ id: 's1', text: 'create tour time slots', done: true }]));
+
+  // Unassigning every remaining story leaves an empty checklist, not a stale one.
+  patchCapability(cap, { slices: [{ ...cap.slices[0], storyIds: [] }] });
+  await resyncLinkedCards(dir, cap);
+  const { boards: emptied } = await loadBoards(dir);
+  const emptiedCard = emptied.find((b) => b.id === capBoard.id)!.cards.find((c) => c.id === capCard.id)!;
+  assert.deepEqual(emptiedCard.stories, []);
+});
+
+test('unlinkSliceCard: clears only the matching ref (I1); no-op for an unrelated card or slice', () => {
+  const cap = fixture();
+  cap.slices[0].capCardRef = { boardId: 'b1', cardId: 'c1' };
+  cap.slices[0].deliveryCardRef = { boardId: 'b2', cardId: 'c2' };
+  assert.equal(unlinkSliceCard(cap, 'sl1', 'c1'), true);
+  assert.equal(cap.slices[0].capCardRef, undefined);
+  assert.deepEqual(cap.slices[0].deliveryCardRef, { boardId: 'b2', cardId: 'c2' });
+  assert.equal(unlinkSliceCard(cap, 'sl1', 'ghost-card'), false);
+  assert.equal(unlinkSliceCard(cap, 'ghost-slice', 'c2'), false);
 });

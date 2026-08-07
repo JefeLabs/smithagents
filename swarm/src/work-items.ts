@@ -1,6 +1,6 @@
 // Kanban work boards — the user's personal planning store, one JSON file per
 // board under .smith/work/. Boards are data (columns included), never code:
-// two shipped templates seed them, and every mutation goes through the
+// five shipped templates seed them, and every mutation goes through the
 // helpers here so routes stay thin and unit tests never boot the server.
 // Cards may LINK to a Jira issue or a delegated agent task; neither linkage
 // is required, and execution state never moves a card — columns belong to
