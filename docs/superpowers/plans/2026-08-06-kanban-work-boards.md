@@ -14,6 +14,8 @@
 1. `WorkBoard.jira` gains `siteUrl: string` — the Jira base URL was implicit in the spec (workspaces carry it, boards didn't); import/push need it on the board.
 2. Spec §2 said the **broker** patches a completed card. Instead the **swarm** patches its own store at task completion (it holds the manifest's `workCardRef` and the store) and adds `workCardRef` to the broadcast `task:completed|failed` events; the broker only relays the `board-updated` frame. Same user-visible behavior, restart-proof, no broker-side taskId→card map.
 
+**Spec addendum (stories, added to the spec 2026-08-06 after this plan's first commit):** cards carry an acceptance-criteria checklist `stories?: Array<{ id: string; text: string; done: boolean; verifiedBy?: string }>` — authored by hand in v1, replaced wholesale via the card PATCH (same convention as columns), edited in the card sheet as a checklist (add/edit/remove/toggle-done with optional `verifiedBy`). Stories are NEVER a column. Tasks 1, 5, and 7 carry the stories steps.
+
 ## Global Constraints
 
 - Swarm tests NEVER construct `OrchestratorServer` or use Fastify `.inject` — extract logic into exported, unit-tested helpers; route bodies stay thin.
@@ -69,7 +71,7 @@
   - `saveBoard(dir, board): Promise<void>` (validates board id)
   - `createBoard(name: string, template: 'personal' | 'capability'): WorkBoard` (id slugged from name; throws on empty slug)
   - `addCard(board, input: { title: string; notes?: string; columnId?: string }): WorkCard` (mutates board, appends to leftmost column when columnId absent; throws on unknown columnId or empty title)
-  - `patchCard(board, cardId, patch: Partial<Pick<WorkCard, 'title' | 'notes' | 'columnId' | 'order' | 'jira' | 'delegation'>>): WorkCard` (mutates; moves renumber affected columns 0..n-1; `order` is the target index; bumps `updatedAt`; throws on unknown card/column)
+  - `patchCard(board, cardId, patch: Partial<Pick<WorkCard, 'title' | 'notes' | 'columnId' | 'order' | 'jira' | 'delegation' | 'stories'>>): WorkCard` (mutates; moves renumber affected columns 0..n-1; `order` is the target index; bumps `updatedAt`; throws on unknown card/column)
   - `removeCard(board, cardId): void` (throws on unknown card)
   - `deleteBoardFile(dir, id): Promise<void>`
 
@@ -144,6 +146,18 @@ test('same-column reorder via order only', () => {
   assert.deepEqual([c1, c2, c3].map(() => 1).length, 3);
 });
 
+test('stories: replaced wholesale via patchCard, cleared with null-ish, round-trips', () => {
+  const b = createBoard('t', 'personal');
+  const c = addCard(b, { title: 'cap' });
+  patchCard(b, c.id, { stories: [{ id: 's1', text: 'user can log in', done: false }] });
+  assert.equal(b.cards[0].stories?.length, 1);
+  patchCard(b, c.id, { stories: [
+    { id: 's1', text: 'user can log in', done: true, verifiedBy: 'manual 2026-08-07' },
+    { id: 's2', text: 'session survives reload', done: false },
+  ] });
+  assert.deepEqual(b.cards[0].stories?.map((s) => [s.done, s.verifiedBy]), [[true, 'manual 2026-08-07'], [false, undefined]]);
+});
+
 test('save/load round-trip; malformed files land in errors without sinking the rest', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'work-'));
   const b = createBoard('Alpha', 'capability');
@@ -209,6 +223,8 @@ export interface WorkCard {
   updatedAt: string;
   jira?: { key: string; url: string; lastPushError?: string };
   delegation?: { agentId: string; taskId: string; state: 'working' | 'completed' | 'failed'; prUrl?: string };
+  /** Acceptance-criteria checklist — authored by hand in v1, replaced wholesale on PATCH. Never a column. */
+  stories?: Array<{ id: string; text: string; done: boolean; verifiedBy?: string }>;
 }
 
 export interface WorkBoard {
@@ -316,7 +332,7 @@ export function addCard(board: WorkBoard, input: { title: string; notes?: string
 export function patchCard(
   board: WorkBoard,
   cardId: string,
-  patch: Partial<Pick<WorkCard, 'title' | 'notes' | 'columnId' | 'order' | 'jira' | 'delegation'>>,
+  patch: Partial<Pick<WorkCard, 'title' | 'notes' | 'columnId' | 'order' | 'jira' | 'delegation' | 'stories'>>,
 ): WorkCard {
   const card = board.cards.find((c) => c.id === cardId);
   if (!card) throw new Error(`Unknown card: ${cardId}`);
@@ -328,6 +344,7 @@ export function patchCard(
   if (patch.notes !== undefined) card.notes = patch.notes.trim() || undefined;
   if (patch.jira !== undefined) card.jira = patch.jira ?? undefined;
   if (patch.delegation !== undefined) card.delegation = patch.delegation ?? undefined;
+  if (patch.stories !== undefined) card.stories = patch.stories ?? undefined;
   if (patch.columnId !== undefined || patch.order !== undefined) {
     const toColumn = patch.columnId ?? card.columnId;
     const siblings = board.cards.filter((c) => c.columnId === toColumn && c.id !== card.id).sort((a, b) => a.order - b.order);
@@ -355,7 +372,7 @@ export function removeCard(board: WorkBoard, cardId: string): void {
 - [ ] **Step 4: Run to verify pass**
 
 Run: `cd swarm && node --import tsx --test src/work-items.test.ts`
-Expected: PASS (7 tests).
+Expected: PASS (8 tests).
 
 - [ ] **Step 5: Full swarm suite**
 
@@ -1041,7 +1058,7 @@ git commit -m "feat(broker): work-board proxy, dispatchWork refactor + delegate 
 **Interfaces:**
 - Consumes: broker `/work/*` proxy + `board-updated` frame (Task 4); `RosterAgent` (for later tasks' badges).
 - Produces (Tasks 6-7 build on these exact shapes):
-  - Types in `BoardStage.tsx`, exported: `WorkColumn { id; name; jiraStatus? }`, `WorkCardT { id; title; notes?; columnId; order; jira?: { key; url; lastPushError? }; delegation?: { agentId; taskId; state: "working" | "completed" | "failed"; prUrl? } }`, `WorkBoardT { id; name; columns: WorkColumn[]; cards: WorkCardT[]; jira?: { connectorId; siteUrl; projectKey; jql? } }`
+  - Types in `BoardStage.tsx`, exported: `WorkColumn { id; name; jiraStatus? }`, `WorkCardT { id; title; notes?; columnId; order; jira?: { key; url; lastPushError? }; delegation?: { agentId; taskId; state: "working" | "completed" | "failed"; prUrl? }; stories?: Array<{ id; text; done; verifiedBy? }> }`, `WorkBoardT { id; name; columns: WorkColumn[]; cards: WorkCardT[]; jira?: { connectorId; siteUrl; projectKey; jql? } }`
   - `BoardStage` props: `{ open: boolean; roster: RosterAgent[]; lastBoardUpdate: { boardId: string; seq: number } | null; onClose: () => void }`
   - `BoardCard` props: `{ card: WorkCardT; agent?: RosterAgent; onOpen: () => void }`
   - `useBrokerChat` returns `lastBoardUpdate: { boardId: string; seq: number } | null`
@@ -1226,6 +1243,7 @@ export interface WorkCardT {
   id: string; title: string; notes?: string; columnId: string; order: number;
   jira?: { key: string; url: string; lastPushError?: string };
   delegation?: { agentId: string; taskId: string; state: "working" | "completed" | "failed"; prUrl?: string };
+  stories?: Array<{ id: string; text: string; done: boolean; verifiedBy?: string }>;
 }
 export interface WorkBoardT {
   id: string; name: string; columns: WorkColumn[]; cards: WorkCardT[];
@@ -1714,6 +1732,21 @@ describe("CardSheet", () => {
     await waitFor(() => expect(calls.some((c) => c.method === "PATCH" && c.url.includes("/cards/c1") && (c.body as { title?: string })?.title === "Write the better spec")).toBe(true));
   });
 
+  it("stories: add + toggle are sent wholesale on save, toggle stamps verifiedBy", async () => {
+    const { calls } = stubFetch();
+    await openSheet("Write the spec");
+    await userEvent.type(screen.getByPlaceholderText(/add a story/i), "user can log in{Enter}");
+    await userEvent.type(screen.getByPlaceholderText(/add a story/i), "reload keeps session{Enter}");
+    await userEvent.click(screen.getAllByRole("checkbox")[0]);
+    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => {
+      const call = calls.find((c) => c.method === "PATCH" && c.url.includes("/cards/c1"));
+      const stories = (call?.body as { stories?: Array<{ text: string; done: boolean; verifiedBy?: string }> })?.stories;
+      expect(stories?.map((s) => [s.text, s.done])).toEqual([["user can log in", true], ["reload keeps session", false]]);
+      expect(stories?.[0].verifiedBy).toMatch(/^manual /);
+    });
+  });
+
   it("delegates through POST /work/delegate with the card prompt and binds", async () => {
     const { calls } = stubFetch();
     await openSheet("Write the spec");
@@ -1787,6 +1820,8 @@ export function CardSheet({ board, card, roster, workspaces, onClose, onChanged 
   const [title, setTitle] = useState(card.title);
   const [notes, setNotes] = useState(card.notes ?? "");
   const [jiraKey, setJiraKey] = useState("");
+  const [stories, setStories] = useState(card.stories ?? []);
+  const [storyText, setStoryText] = useState("");
   const [delegating, setDelegating] = useState(false);
   const [agentId, setAgentId] = useState("");
   const [workspace, setWorkspace] = useState(workspaces[0] ?? "");
@@ -1805,7 +1840,8 @@ export function CardSheet({ board, card, roster, workspaces, onClose, onChanged 
   };
 
   const save = async () => {
-    if (await patch({ title, notes })) onClose();
+    // Stories are replaced wholesale — the whole checklist rides the single PATCH.
+    if (await patch({ title, notes, stories })) onClose();
   };
 
   const linkJira = async () => {
@@ -1857,6 +1893,50 @@ export function CardSheet({ board, card, roster, workspaces, onClose, onChanged 
         Notes
         <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} />
       </label>
+      <div className="card-sheet__stories">
+        <span className="card-sheet__stories-head">Stories</span>
+        {stories.map((s) => (
+          <label key={s.id} className="card-sheet__story" title={s.verifiedBy ? `verified: ${s.verifiedBy}` : undefined}>
+            <input
+              type="checkbox"
+              checked={s.done}
+              onChange={(e) =>
+                setStories((list) =>
+                  list.map((x) =>
+                    x.id === s.id
+                      ? {
+                          ...x,
+                          done: e.target.checked,
+                          verifiedBy: e.target.checked ? (x.verifiedBy ?? `manual ${new Date().toISOString().slice(0, 10)}`) : undefined,
+                        }
+                      : x,
+                  ),
+                )
+              }
+            />
+            <span className={s.done ? "is-done" : ""}>{s.text}</span>
+            <button
+              type="button"
+              className="card-sheet__story-remove"
+              aria-label={`Remove story: ${s.text}`}
+              onClick={() => setStories((list) => list.filter((x) => x.id !== s.id))}
+            >
+              <X size={10} strokeWidth={2} />
+            </button>
+          </label>
+        ))}
+        <input
+          placeholder="Add a story…"
+          value={storyText}
+          onChange={(e) => setStoryText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && storyText.trim()) {
+              setStories((list) => [...list, { id: crypto.randomUUID(), text: storyText.trim(), done: false }]);
+              setStoryText("");
+            }
+          }}
+        />
+      </div>
       {board.jira &&
         (card.jira ? (
           <div className="card-sheet__row">
@@ -1953,16 +2033,40 @@ export function CardSheet({ board, card, roster, workspaces, onClose, onChanged 
   gap: 8px;
   justify-content: space-between;
 }
-.card-sheet__delegate {
+.card-sheet__delegate,
+.card-sheet__stories {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+.card-sheet__stories-head {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+.card-sheet__story {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.card-sheet__story .is-done {
+  text-decoration: line-through;
+  color: var(--text-dim);
+}
+.card-sheet__story-remove {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
 }
 ```
 
 (`.board-stage` needs `position: relative;` — add it to the Task 5 rule.)
 
-- [ ] **Step 6: Run tests + full suite + biome** — `cd control-plane && npx vitest run src/organisms/BoardStage.test.tsx` → PASS (13 tests); `npx tsc --noEmit && npm test && npx biome check --write src/` → green.
+- [ ] **Step 6: Run tests + full suite + biome** — `cd control-plane && npx vitest run src/organisms/BoardStage.test.tsx` → PASS (14 tests); `npx tsc --noEmit && npm test && npx biome check --write src/` → green.
 
 - [ ] **Step 7: Commit**
 
@@ -1987,7 +2091,7 @@ git commit -m "feat(control-plane): card sheet — edit, jira link/import, expli
 
 ## Self-Review (run after writing, fixed inline)
 
-- **Spec coverage:** boards-as-data + two templates ✓(T1) · one-file-per-board persistence + malformed isolation ✓(T1) · CRUD routes ✓(T2) · reset archival ✓(T2) · completion patches delegation state, never column ✓(T2 hook + spec-delta note) · `workCardRef` event enrichment ✓(T2) · Jira search/import/transition + best-effort push ✓(T3) · broker proxy ✓(T4) · `dispatchWork` refactor + `POST /work/delegate` + card binding ✓(T4) · `board-updated` frame ✓(T4 + T5 plumbing) · stage mode + ToolRail button ✓(T5) · switcher/templates/add-card ✓(T5) · drag with optimistic move + rollback ✓(T6) · card sheet edit/Jira link/delegate picker (busy disabled)/delete ✓(T7) · degraded modes (broker down banner, board file errors, delegate refusal inline) ✓(T5/T7) · testing per package ✓(T1-T7) · live smoke ✓(T8).
+- **Spec coverage:** stories checklist field + wholesale PATCH + sheet UI with verifiedBy stamping ✓(T1/T5/T7 addendum steps) · boards-as-data + two templates ✓(T1) · one-file-per-board persistence + malformed isolation ✓(T1) · CRUD routes ✓(T2) · reset archival ✓(T2) · completion patches delegation state, never column ✓(T2 hook + spec-delta note) · `workCardRef` event enrichment ✓(T2) · Jira search/import/transition + best-effort push ✓(T3) · broker proxy ✓(T4) · `dispatchWork` refactor + `POST /work/delegate` + card binding ✓(T4) · `board-updated` frame ✓(T4 + T5 plumbing) · stage mode + ToolRail button ✓(T5) · switcher/templates/add-card ✓(T5) · drag with optimistic move + rollback ✓(T6) · card sheet edit/Jira link/delegate picker (busy disabled)/delete ✓(T7) · degraded modes (broker down banner, board file errors, delegate refusal inline) ✓(T5/T7) · testing per package ✓(T1-T7) · live smoke ✓(T8).
 - **Spec gaps deliberately narrowed:** configuring a board's `jira` link has API support (`PATCH /work/boards/:id`) but no dedicated settings UI in v1 (smoke test edits the file / uses the API; the sheet links individual cards). Board rename/delete likewise API-only. Both noted for a fast-follow.
 - **Placeholder scan:** none; Task 4 Step 2's test sketches name exact behaviors and instruct mirroring existing fixtures — the assertions are specified. Task 6's `fireDrop` seam is fully specified with rationale.
 - **Type consistency:** `WorkBoard`/`WorkCard` (swarm) match `WorkBoardT`/`WorkCardT` (UI) field-for-field incl. the `siteUrl` delta; `patchCard` patch fields = PATCH route body = UI PATCH bodies; `dispatchWork` input/output shapes consistent between broker.ts, main.ts wiring, and route tests; `board-updated` frame shape identical in text-channel, main.ts, and useBrokerChat.
