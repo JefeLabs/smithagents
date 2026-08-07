@@ -12,10 +12,17 @@ export interface TranscriptLine {
   at: string;
 }
 
+export type ExecutionMode = 'local-in-process' | 'local-docker' | 'remote-in-process' | 'remote-docker';
+
+const LEGACY_MODE: ExecutionMode = 'local-in-process';
+
 export interface Session {
   id: string;
   title: string;
   workspace: string;
+  runtime: ExecutionMode;
+  /** True while the brain still owes this session its one post-first-reply retitle. */
+  awaitingTitle?: boolean;
   createdAt: string;
   updatedAt: string;
   transcript: TranscriptLine[];
@@ -26,6 +33,7 @@ export interface SessionSummary {
   id: string;
   title: string;
   workspace: string;
+  runtime: ExecutionMode;
   updatedAt: string;
   active: boolean;
 }
@@ -37,6 +45,22 @@ export interface SessionStoreLike {
 
 const MAX_TRANSCRIPT_LINES = 500;
 
+/** Collapse whitespace, cap at 40 chars with an ellipsis (spec §3). */
+export function truncateTitle(text: string): string {
+  const clean = text.replace(/\s+/g, ' ').trim();
+  if (!clean) return 'New session';
+  return clean.length <= 40 ? clean : `${clean.slice(0, 39).trimEnd()}…`;
+}
+
+/** Which workspace a lazily-created session lands in: discord = the attended workspace, every other origin = the default workspace. */
+export function resolveLazyWorkspace(
+  origin: string | undefined,
+  attendedDiscordWorkspace: string | null,
+  defaultWorkspace: string,
+): string {
+  return origin === 'discord' ? (attendedDiscordWorkspace ?? defaultWorkspace) : defaultWorkspace;
+}
+
 export class SessionManager {
   private sessions = new Map<string, Session>();
   private activeId = '';
@@ -47,26 +71,26 @@ export class SessionManager {
     private readonly now: () => string = () => new Date().toISOString(),
   ) {}
 
-  /** Load persisted sessions; ensure one exists and is active for the given default workspace. */
-  init(defaultWorkspace: string): Session {
+  /** Load persisted sessions; activate the most recent if any exist. NEVER creates (spec §4b). */
+  init(): Session | null {
     for (const s of this.store.loadAll()) {
+      s.runtime ??= LEGACY_MODE;
       this.sessions.set(s.id, s);
       this.seq = Math.max(this.seq, Number(/^s(\d+)$/.exec(s.id)?.[1] ?? 0));
     }
-    const latest = [...this.sessions.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
-    if (latest) {
-      this.activeId = latest.id;
-      return latest;
-    }
-    return this.create(defaultWorkspace);
+    const latest = [...this.sessions.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] ?? null;
+    this.activeId = latest?.id ?? '';
+    return latest;
   }
 
-  create(workspace: string, title?: string): Session {
+  create(workspace: string, opts?: { title?: string; runtime?: ExecutionMode; awaitingTitle?: boolean }): Session {
     this.seq += 1;
     const session: Session = {
       id: `s${this.seq}`,
-      title: title?.trim() || `Session ${this.seq}`,
+      title: opts?.title?.trim() || `Session ${this.seq}`,
       workspace,
+      runtime: opts?.runtime ?? LEGACY_MODE,
+      awaitingTitle: opts?.awaitingTitle,
       createdAt: this.now(),
       updatedAt: this.now(),
       transcript: [],
@@ -91,10 +115,29 @@ export class SessionManager {
     return session;
   }
 
+  hasActive(): boolean {
+    return this.sessions.has(this.activeId);
+  }
+
+  activeOrNull(): Session | null {
+    return this.sessions.get(this.activeId) ?? null;
+  }
+
+  /** Apply the brain's one-time title. Returns false if this session isn't owed one. */
+  retitle(id: string, title: string): boolean {
+    const session = this.sessions.get(id);
+    if (!session?.awaitingTitle) return false;
+    session.title = title;
+    session.awaitingTitle = undefined;
+    session.updatedAt = this.now();
+    this.store.save(session);
+    return true;
+  }
+
   list(): SessionSummary[] {
     return [...this.sessions.values()]
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-      .map((s) => ({ id: s.id, title: s.title, workspace: s.workspace, updatedAt: s.updatedAt, active: s.id === this.activeId }));
+      .map((s) => ({ id: s.id, title: s.title, workspace: s.workspace, runtime: s.runtime, updatedAt: s.updatedAt, active: s.id === this.activeId }));
   }
 
   /** Every session with its full transcript — evidence for removal decisions. */
@@ -102,16 +145,11 @@ export class SessionManager {
     return [...this.sessions.values()];
   }
 
-  /**
-   * Wipe every conversation and start one fresh session. The store's own
-   * files are removed by the caller (it owns persistence); this resets the
-   * in-memory world so UIs see a clean slate immediately.
-   */
-  resetAll(workspace: string): Session {
+  /** Wipe every conversation. Creates nothing — the UI lands on the composer (spec §4b). */
+  resetAll(): void {
     this.sessions.clear();
     this.activeId = '';
     this.seq = 0;
-    return this.create(workspace);
   }
 
   appendTranscript(role: 'user' | 'broker', text: string): void {
