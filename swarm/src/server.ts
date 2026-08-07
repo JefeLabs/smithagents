@@ -1966,14 +1966,19 @@ export class OrchestratorServer {
 
         // Push-on-move: a Jira-linked card landing on a mapped column tries
         // the matching transition. Best-effort — the human's move always
-        // sticks; only the amber badge reports a failed push.
+        // sticks; only the amber badge reports a failed push. The whole
+        // section (credential load included — loadUsersFromDir throws on a
+        // malformed user file) is one try/catch so nothing here can escape
+        // to the route's outer catch and drop the already-applied move.
         const movedTo = (req.body as { columnId?: string }).columnId;
         const target = movedTo ? board.columns.find((c) => c.id === movedTo) : undefined;
         if (card.jira && target?.jiraStatus && board.jira) {
-          const users = await loadUsersFromDir(resolve(process.cwd(), '.smith/users'));
-          const resolved = resolveAtlassianConnector(board.jira.connectorId, resolveCurrentUser(users), { name: 'key', value: card.jira.key });
-          if (!('error' in resolved)) {
-            try {
+          try {
+            const users = await loadUsersFromDir(resolve(process.cwd(), '.smith/users'));
+            const resolved = resolveAtlassianConnector(board.jira.connectorId, resolveCurrentUser(users), { name: 'key', value: card.jira.key });
+            if ('error' in resolved) {
+              card.jira.lastPushError = resolved.error;
+            } else {
               await transitionIssue(
                 board.jira.siteUrl,
                 resolved.instance.fields.email ?? '',
@@ -1982,11 +1987,9 @@ export class OrchestratorServer {
                 target.jiraStatus,
               );
               card.jira = { key: card.jira.key, url: card.jira.url };
-            } catch (err) {
-              card.jira.lastPushError = String((err as Error).message);
             }
-          } else {
-            card.jira.lastPushError = resolved.error;
+          } catch (err) {
+            card.jira.lastPushError = String((err as Error).message);
           }
         }
 
