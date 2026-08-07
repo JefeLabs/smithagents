@@ -175,7 +175,10 @@ export async function deleteKey(path: string, providerId: string): Promise<ApiKe
 }
 
 /** Raw-key hop for the broker's avatar generator ONLY — served by the
- *  swarm's localhost route, never through the broker's 7790 surface. */
+ *  swarm's localhost route, never through the broker's 7790 surface.
+ *  Same block-only-confirmed-negatives rule as everywhere else: a key
+ *  whose last probe came back verified:false is withheld, but 'unknown'
+ *  is still served. */
 export async function getCredential(
   path: string,
   providerId: string,
@@ -183,5 +186,6 @@ export async function getCredential(
   if (!findProvider(providerId)) return { error: `unknown provider: ${providerId}`, status: 404 };
   const entry = (await loadApiKeysFile(path)).providers[providerId];
   if (!entry) return { error: `no key stored for ${providerId}`, status: 404 };
+  if (entry.verified === false) return { error: `stored key for ${providerId} failed verification`, status: 404 };
   return { key: entry.key };
 }

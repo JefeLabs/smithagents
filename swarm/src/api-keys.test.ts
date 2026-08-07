@@ -158,3 +158,17 @@ test('getCredential: raw key for broker hop; 404 when absent/unknown provider', 
   await saveAndVerifyKey(p, 'google', 'sk-live-9876', okFetch(), NOW);
   assert.deepEqual(await getCredential(p, 'google'), { key: 'sk-live-9876' });
 });
+
+test('getCredential: withholds a key that failed verification (confirmed negative)', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'apikeys-'));
+  const p = join(dir, 'api-keys.json');
+  await saveAndVerifyKey(p, 'google', 'sk-live-9876', statusFetch(401), NOW); // stores verified:false
+  assert.deepEqual(await getCredential(p, 'google'), { error: 'stored key for google failed verification', status: 404 });
+});
+
+test('getCredential: still serves a key whose last probe was unconfirmed', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'apikeys-'));
+  const p = join(dir, 'api-keys.json');
+  await saveAndVerifyKey(p, 'google', 'sk-live-9876', downFetch(), NOW); // stores verified:'unknown'
+  assert.deepEqual(await getCredential(p, 'google'), { key: 'sk-live-9876' });
+});
