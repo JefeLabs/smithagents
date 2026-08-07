@@ -38,8 +38,50 @@ export interface ApiProviderDef {
   verify(key: string, fetchImpl?: typeof fetch): Promise<{ ok: boolean | 'unknown'; detail: string }>;
 }
 
-/** Filled in Task 2 — keep the export so listings can iterate it now. */
-export const PROVIDERS: ApiProviderDef[] = [];
+const PROBE_TIMEOUT_MS = 10_000;
+
+/** One probe idiom for every provider: cheapest authenticated GET; auth in
+ *  headers only (keys in URLs leak into logs). 401/403 are the only
+ *  confirmed negatives. */
+async function probe(
+  url: string,
+  headers: Record<string, string>,
+  label: string,
+  fetchImpl: typeof fetch,
+): Promise<{ ok: boolean | 'unknown'; detail: string }> {
+  try {
+    const res = await fetchImpl(url, { headers, signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
+    if (res.ok) return { ok: true, detail: 'key accepted' };
+    if (res.status === 401 || res.status === 403) return { ok: false, detail: `${label} rejected the key (${res.status})` };
+    return { ok: 'unknown', detail: `${label} answered ${res.status} — could not confirm` };
+  } catch (err) {
+    return { ok: 'unknown', detail: `could not reach ${label}: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
+export const PROVIDERS: ApiProviderDef[] = [
+  {
+    id: 'anthropic',
+    label: 'Anthropic',
+    description: 'Claude models over the Messages API — future api-kind thinkers.',
+    verify: (key, fetchImpl = fetch) =>
+      probe('https://api.anthropic.com/v1/models', { 'x-api-key': key, 'anthropic-version': '2023-06-01' }, 'Anthropic', fetchImpl),
+  },
+  {
+    id: 'openai',
+    label: 'OpenAI',
+    description: 'GPT models over the OpenAI API — future api-kind thinkers.',
+    verify: (key, fetchImpl = fetch) =>
+      probe('https://api.openai.com/v1/models', { authorization: `Bearer ${key}` }, 'OpenAI', fetchImpl),
+  },
+  {
+    id: 'google',
+    label: 'Google',
+    description: 'Gemini API — accelerates avatar generation; future api-kind thinkers.',
+    verify: (key, fetchImpl = fetch) =>
+      probe('https://generativelanguage.googleapis.com/v1beta/models', { 'x-goog-api-key': key }, 'Google', fetchImpl),
+  },
+];
 
 export const findProvider = (id: string): ApiProviderDef | undefined => PROVIDERS.find((p) => p.id === id);
 
