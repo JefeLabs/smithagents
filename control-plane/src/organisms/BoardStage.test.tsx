@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BoardStage } from "./BoardStage";
@@ -83,6 +83,17 @@ describe("BoardStage", () => {
     render(<BoardStage open roster={ROSTER} lastBoardUpdate={null} onClose={vi.fn()} />);
     await screen.findByText("Ship avatars");
     expect(screen.getByLabelText(/minerva is working on this card/i)).toBeTruthy();
+  });
+
+  it("the delegated card's avatar badge has no nested button, so the card stays a single button", async () => {
+    stubFetch();
+    render(<BoardStage open roster={ROSTER} lastBoardUpdate={null} onClose={vi.fn()} />);
+    const title = await screen.findByText("Ship avatars");
+    const badge = screen.getByLabelText(/minerva is working on this card/i);
+    expect(within(badge).queryByRole("button")).toBeNull();
+    const card = title.closest("button.board-card") as HTMLElement;
+    expect(card).not.toBeNull();
+    expect(within(card).queryAllByRole("button")).toHaveLength(0);
   });
 
   it("adds a card through the composer", async () => {

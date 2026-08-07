@@ -43,6 +43,7 @@ export function BoardCard({ card, agent, onOpen }: BoardCardProps) {
               ring={agent?.ring}
               image={agent?.avatar ? `http://${BASE}/avatars/${agent.avatar}` : undefined}
               state={d.state === "working" ? "working" : undefined}
+              interactive={false}
             />
             {d.prUrl && (
               <a

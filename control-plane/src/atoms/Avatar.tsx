@@ -15,15 +15,42 @@ interface AvatarProps {
    * attribute so the animation is pure CSS with no per-frame React work.
    */
   state?: "listening" | "working";
+  /**
+   * False renders a plain, unfocusable <span> instead of a <button> — for badges
+   * nested inside another interactive control (e.g. a kanban card), where a real
+   * button would be invalid HTML and a phantom tab-stop. Default true: every
+   * existing caller is unaffected.
+   */
+  interactive?: boolean;
 }
 
 /** Circular identity button; ring color arrives via the --ring custom property. */
-export function Avatar({ initial, label, ring, image, style, onClick, children, state }: AvatarProps) {
+export function Avatar({
+  initial,
+  label,
+  ring,
+  image,
+  style,
+  onClick,
+  children,
+  state,
+  interactive = true,
+}: AvatarProps) {
   const [broken, setBroken] = useState(false);
   // A reroll or edit swaps the URL under us — give the new image a fresh chance.
   // biome-ignore lint/correctness/useExhaustiveDependencies: image is a prop, must be tracked
   useEffect(() => setBroken(false), [image]);
   const ringStyle = { ...(ring ? { "--ring": ring } : {}), ...style } as CSSProperties;
+  const face =
+    image && !broken ? <img className="avatar__img" src={image} alt="" onError={() => setBroken(true)} /> : initial;
+  if (!interactive) {
+    return (
+      <span className="avatar" role="img" data-state={state} style={ringStyle} title={label} aria-label={label}>
+        {face}
+        {children}
+      </span>
+    );
+  }
   return (
     <button
       type="button"
@@ -34,7 +61,7 @@ export function Avatar({ initial, label, ring, image, style, onClick, children, 
       aria-label={label}
       onClick={onClick}
     >
-      {image && !broken ? <img className="avatar__img" src={image} alt="" onError={() => setBroken(true)} /> : initial}
+      {face}
       {children}
     </button>
   );
