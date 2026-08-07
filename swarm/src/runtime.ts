@@ -541,7 +541,9 @@ export function createRuntime(
       }
       return new DockerRuntime(dockerConfig);
 
-    case 'remote': {
+    case 'remote':
+    case 'remote-tmux':
+    case 'remote-docker': {
       if (!workerPool) {
         throw new Error(
           'WorkerPool is required when runtime is "remote". ' +
@@ -552,7 +554,8 @@ export function createRuntime(
       // import; createRequire is the ESM-legal way to do that synchronously
       // since this package has no global `require`.
       const { RemoteRuntime } = createRequire(import.meta.url)('./remote-runtime.js') as typeof import('./remote-runtime.js');
-      return new RemoteRuntime(workerPool);
+      const kind = runtime === 'remote-tmux' ? 'tmux' : runtime === 'remote-docker' ? 'docker' : undefined;
+      return new RemoteRuntime(workerPool, kind);
     }
 
     default: {

@@ -117,12 +117,14 @@ export class WorkerPool {
 
   /**
    * Pick the best worker for a new task (least loaded with capacity).
+   * If kind is specified, filters to workers advertising that runtime.
    */
-  private pickWorker(): { info: ConnectedWorker; ws: WebSocket } | null {
+  private pickWorker(kind?: 'tmux' | 'docker'): { info: ConnectedWorker; ws: WebSocket } | null {
     let best: { info: ConnectedWorker; ws: WebSocket } | null = null;
     let bestLoad = Infinity;
 
     for (const [, entry] of this.workers) {
+      if (kind && !entry.info.runtimes.includes(kind)) continue;
       if (entry.info.activeCount < entry.info.capacity) {
         const load = entry.info.activeCount / entry.info.capacity;
         if (load < bestLoad) {
@@ -152,11 +154,12 @@ export class WorkerPool {
 
   /**
    * Dispatch a task to the least-loaded worker.
+   * If kind is specified, routes to a worker advertising that runtime.
    */
-  async launch(sessionName: string, command: string, cwd: string, env?: Record<string, string>): Promise<void> {
-    const worker = this.pickWorker();
+  async launch(sessionName: string, command: string, cwd: string, env?: Record<string, string>, kind?: 'tmux' | 'docker'): Promise<void> {
+    const worker = this.pickWorker(kind);
     if (!worker) {
-      throw new Error('No remote workers available with capacity');
+      throw new Error(kind ? `No remote workers advertising "${kind}" with capacity` : 'No remote workers available with capacity');
     }
 
     // env carries secrets (Atlassian/GitHub tokens) — smith-worker doesn't consume
@@ -318,10 +321,13 @@ export class WorkerPool {
  * making remote execution a drop-in replacement for local tmux/docker.
  */
 export class RemoteRuntime implements RuntimeAdapter {
-  constructor(private readonly pool: WorkerPool) {}
+  constructor(
+    private readonly pool: WorkerPool,
+    private readonly kind?: 'tmux' | 'docker',
+  ) {}
 
   launch(sessionName: string, command: string, cwd: string, env?: Record<string, string>): Promise<void> {
-    return this.pool.launch(sessionName, command, cwd, env);
+    return this.pool.launch(sessionName, command, cwd, env, this.kind);
   }
   waitFor(sessionName: string): Promise<number> {
     return this.pool.waitFor(sessionName);
