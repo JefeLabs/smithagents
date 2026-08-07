@@ -1,6 +1,7 @@
-import { ArrowLeft, Blocks, MessageSquare, Palette, Settings as SettingsIcon, Terminal } from "lucide-react";
+import { ArrowLeft, Blocks, KeyRound, MessageSquare, Palette, Settings as SettingsIcon, Terminal } from "lucide-react";
 import { useEffect, useState } from "react";
 import type {
+  ApiKeyListing,
   ChannelsRecord,
   CliToolListing,
   ConnectorInstanceRecord,
@@ -8,13 +9,14 @@ import type {
   WorkspaceRecord,
 } from "../hooks/useBrokerChat";
 import type { ThemeId } from "../hooks/useTheme";
+import { ApiKeysGroup } from "./settings/ApiKeysGroup";
 import { ChannelsGroup } from "./settings/ChannelsGroup";
 import { CliToolsGroup } from "./settings/CliToolsGroup";
 import { GeneralGroup, type ResetScope } from "./settings/GeneralGroup";
 import { IntegrationsGroup } from "./settings/IntegrationsGroup";
 import { ThemesGroup } from "./settings/ThemesGroup";
 
-export type SettingsGroupId = "general" | "integrations" | "cli-tools" | "channels" | "themes";
+export type SettingsGroupId = "general" | "integrations" | "cli-tools" | "api-keys" | "channels" | "themes";
 
 interface SettingsPanelProps {
   open: boolean;
@@ -42,6 +44,10 @@ interface SettingsPanelProps {
   listCliTools?: () => Promise<CliToolListing[]>;
   refreshCliTools?: (tool?: string) => Promise<CliToolListing[]>;
   setCliToolEnabled?: (id: string, enabled: boolean) => Promise<CliToolListing[] | { error: string }>;
+  listApiKeys?: () => Promise<ApiKeyListing[]>;
+  saveApiKey?: (id: string, key: string) => Promise<ApiKeyListing[] | { error: string }>;
+  verifyApiKey?: (id: string) => Promise<ApiKeyListing[] | { error: string }>;
+  deleteApiKey?: (id: string) => Promise<ApiKeyListing[] | { error: string }>;
   listWorkspaceRecords?: () => Promise<WorkspaceRecord[]>;
   getWorkspaceChannels?: (name: string) => Promise<ChannelsRecord>;
   saveWorkspaceChannels?: (
@@ -51,12 +57,31 @@ interface SettingsPanelProps {
   verifyWorkspaceDiscord?: (name: string) => Promise<{ ok?: boolean; detail?: string; error?: string }>;
 }
 
-const GROUPS: Array<{ id: SettingsGroupId; label: string; icon: typeof SettingsIcon }> = [
-  { id: "general", label: "General", icon: SettingsIcon },
-  { id: "integrations", label: "Integrations", icon: Blocks },
-  { id: "cli-tools", label: "CLI Tools", icon: Terminal },
-  { id: "channels", label: "Channels", icon: MessageSquare },
-  { id: "themes", label: "Themes", icon: Palette },
+const SECTIONS: Array<{
+  heading: string;
+  groups: Array<{ id: SettingsGroupId; label: string; icon: typeof SettingsIcon }>;
+}> = [
+  {
+    heading: "App",
+    groups: [
+      { id: "general", label: "General", icon: SettingsIcon },
+      { id: "themes", label: "Themes", icon: Palette },
+    ],
+  },
+  {
+    heading: "Agents",
+    groups: [
+      { id: "cli-tools", label: "CLI Tools", icon: Terminal },
+      { id: "api-keys", label: "API Keys", icon: KeyRound },
+    ],
+  },
+  {
+    heading: "Workspace",
+    groups: [
+      { id: "integrations", label: "Integrations", icon: Blocks },
+      { id: "channels", label: "Channels", icon: MessageSquare },
+    ],
+  },
 ];
 
 /** Full-screen settings: General / Integrations / Channels / Themes. Replaces the old small anchored popover. */
@@ -76,6 +101,10 @@ export function SettingsPanel({
   listCliTools,
   refreshCliTools,
   setCliToolEnabled,
+  listApiKeys,
+  saveApiKey,
+  verifyApiKey,
+  deleteApiKey,
   listWorkspaceRecords,
   getWorkspaceChannels,
   saveWorkspaceChannels,
@@ -100,16 +129,21 @@ export function SettingsPanel({
         <button type="button" className="settings-screen__back" onClick={onClose}>
           <ArrowLeft size={13} strokeWidth={2} /> back to app
         </button>
-        {GROUPS.map((g) => (
-          <button
-            key={g.id}
-            type="button"
-            className={`settings-screen__group${active === g.id ? " is-active" : ""}`}
-            onClick={() => setActive(g.id)}
-            aria-pressed={active === g.id}
-          >
-            <g.icon size={14} strokeWidth={2} /> {g.label}
-          </button>
+        {SECTIONS.map((s) => (
+          <div key={s.heading} className="settings-screen__section">
+            <span className="settings-screen__heading">{s.heading}</span>
+            {s.groups.map((g) => (
+              <button
+                key={g.id}
+                type="button"
+                className={`settings-screen__group${active === g.id ? " is-active" : ""}`}
+                onClick={() => setActive(g.id)}
+                aria-pressed={active === g.id}
+              >
+                <g.icon size={14} strokeWidth={2} /> {g.label}
+              </button>
+            ))}
+          </div>
         ))}
       </nav>
       <div className="settings-screen__content">
@@ -142,6 +176,17 @@ export function SettingsPanel({
             />
           ) : (
             <p className="wizard__hint">CLI Tools — not wired up yet.</p>
+          ))}
+        {active === "api-keys" &&
+          (listApiKeys && saveApiKey && verifyApiKey && deleteApiKey ? (
+            <ApiKeysGroup
+              listApiKeys={listApiKeys}
+              saveApiKey={saveApiKey}
+              verifyApiKey={verifyApiKey}
+              deleteApiKey={deleteApiKey}
+            />
+          ) : (
+            <p className="wizard__hint">API Keys — not wired up yet.</p>
           ))}
         {active === "channels" &&
           (listWorkspaceRecords && getWorkspaceChannels && saveWorkspaceChannels && verifyWorkspaceDiscord ? (
