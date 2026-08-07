@@ -14,6 +14,7 @@ export interface ContainersGroupProps {
 export function ContainersGroup({ getContainers, setDockerEnabled, verifyContainers }: ContainersGroupProps) {
   const [enabled, setEnabled] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [verifyResult, setVerifyResult] = useState<{ ok: boolean; detail: string } | null>(null);
 
@@ -26,20 +27,29 @@ export function ContainersGroup({ getContainers, setDockerEnabled, verifyContain
   }, []);
 
   const toggle = async (next: boolean) => {
+    if (saving) return; // belt-and-suspenders — the checkbox is also disabled while pending
+    setSaving(true);
     setError(null);
     try {
       const r = await setDockerEnabled(next);
       setEnabled(r.docker.enabled);
     } catch (err) {
       setError(`Could not update Docker — ${String(err)}`);
+    } finally {
+      setSaving(false);
     }
   };
 
   const verify = async () => {
     setVerifying(true);
-    const r = await verifyContainers();
-    setVerifying(false);
-    setVerifyResult(r);
+    try {
+      const r = await verifyContainers();
+      setVerifyResult(r);
+    } catch (err) {
+      setVerifyResult({ ok: false, detail: `verify failed — broker unreachable (${String(err)})` });
+    } finally {
+      setVerifying(false);
+    }
   };
 
   return (
@@ -65,7 +75,12 @@ export function ContainersGroup({ getContainers, setDockerEnabled, verifyContain
           </div>
           <div className="settings-panel__options">
             <label className="settings-option">
-              <input type="checkbox" checked={enabled} onChange={(e) => void toggle(e.target.checked)} />
+              <input
+                type="checkbox"
+                checked={enabled}
+                disabled={saving}
+                onChange={(e) => void toggle(e.target.checked)}
+              />
               <span>Docker</span>
             </label>
           </div>
