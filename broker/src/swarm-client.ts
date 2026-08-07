@@ -54,6 +54,11 @@ export interface CliToolListing {
   active: boolean;
 }
 
+export interface VoiceKeys {
+  stt: { vendorId: string; apiKey: string } | null;
+  tts: { vendorId: string; apiKey: string } | null;
+}
+
 export interface RegistryAgent {
   id: string;
   name: string;
@@ -459,6 +464,28 @@ export class SwarmClient {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Raw voice keys (spec §4). Returns null ONLY on transport failure — the
+   * route itself always 200s with per-slot nulls when keys are unset, so the
+   * VoiceKeyResolver can keep its last good keys across a swarm restart
+   * instead of flapping voice off.
+   */
+  async getVoiceKeys(): Promise<VoiceKeys | null> {
+    try {
+      return (await this.http('GET', '/me/voice/keys')) as unknown as VoiceKeys;
+    } catch {
+      return null;
+    }
+  }
+
+  async getMyVoice(): Promise<Record<string, unknown>> {
+    return this.http('GET', '/me/voice');
+  }
+
+  async saveMyVoice(body: unknown): Promise<Record<string, unknown>> {
+    return this.http('PUT', '/me/voice', body);
   }
 
   /** Subscribe to /ws events. Reconnects every 2s until the returned fn is called. */

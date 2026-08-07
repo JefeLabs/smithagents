@@ -281,3 +281,28 @@ test('avatarFile throws on a genuine 500, unlike the 404 case', async () => {
   });
   await assert.rejects(client.avatarFile('minerva.png'), /swarm GET \/avatars\/minerva.png -> 500/);
 });
+
+test('getVoiceKeys: returns the resolved slots from /me/voice/keys', async () => {
+  const client = new SwarmClient({
+    baseUrl: 'http://s',
+    fetchImpl: fakeFetch({ '/me/voice/keys': { stt: { vendorId: 'deepgram', apiKey: 'dg' }, tts: null } }).fetch,
+  });
+  assert.deepEqual(await client.getVoiceKeys(), { stt: { vendorId: 'deepgram', apiKey: 'dg' }, tts: null });
+});
+
+test('getVoiceKeys: unreachable swarm → null (distinct from {stt:null,tts:null})', async () => {
+  const client = new SwarmClient({
+    baseUrl: 'http://s',
+    fetchImpl: (async () => { throw new TypeError('fetch failed'); }) as typeof fetch,
+  });
+  assert.equal(await client.getVoiceKeys(), null);
+});
+
+test('getMyVoice/saveMyVoice: GET and PUT /me/voice pass through', async () => {
+  const client = new SwarmClient({
+    baseUrl: 'http://s',
+    fetchImpl: fakeFetch({ '/me/voice': { stt: null, tts: null, hideInactive: false } }).fetch,
+  });
+  assert.deepEqual(await client.getMyVoice(), { stt: null, tts: null, hideInactive: false });
+  assert.deepEqual(await client.saveMyVoice({ stt: null, tts: null }), { stt: null, tts: null, hideInactive: false });
+});
