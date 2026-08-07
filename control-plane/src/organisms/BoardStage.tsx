@@ -9,10 +9,11 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Plus, SquareKanban, X } from "lucide-react";
+import { Download, Plus, SquareKanban, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import type { RosterAgent } from "../hooks/useBrokerChat";
 import { BoardCard } from "../molecules/BoardCard";
+import { CardSheet } from "./CardSheet";
 
 const BASE = "127.0.0.1:7790";
 
@@ -118,7 +119,7 @@ export async function fireDrop(cardId: string, columnId: string, order: number):
 }
 
 /** One sortable card wrapper — BoardCard stays a pure display button; this owns the drag handle. */
-function SortableCard({ card, agent }: { card: WorkCardT; agent?: RosterAgent }) {
+function SortableCard({ card, agent, onOpen }: { card: WorkCardT; agent?: RosterAgent; onOpen: () => void }) {
   const sortable = useSortable({ id: card.id });
   const style = { transform: CSS.Transform.toString(sortable.transform), transition: sortable.transition };
   return (
@@ -126,7 +127,7 @@ function SortableCard({ card, agent }: { card: WorkCardT; agent?: RosterAgent })
       <BoardCard
         card={card}
         agent={agent}
-        onOpen={() => {}}
+        onOpen={onOpen}
         className={sortable.isDragging ? "is-dragging" : undefined}
       />
     </div>
@@ -138,10 +139,12 @@ function BoardColumn({
   col,
   cards,
   agentFor,
+  onOpenCard,
 }: {
   col: WorkColumn;
   cards: WorkCardT[];
   agentFor: (id?: string) => RosterAgent | undefined;
+  onOpenCard: (cardId: string) => void;
 }) {
   const droppable = useDroppable({ id: `column:${col.id}` });
   const sorted = [...cards].sort((a, b) => a.order - b.order);
@@ -151,7 +154,12 @@ function BoardColumn({
       <SortableContext items={sorted.map((c) => c.id)} strategy={verticalListSortingStrategy}>
         <div className="board-column__cards">
           {sorted.map((card) => (
-            <SortableCard key={card.id} card={card} agent={agentFor(card.delegation?.agentId)} />
+            <SortableCard
+              key={card.id}
+              card={card}
+              agent={agentFor(card.delegation?.agentId)}
+              onOpen={() => onOpenCard(card.id)}
+            />
           ))}
         </div>
       </SortableContext>
@@ -173,6 +181,8 @@ export function BoardStage({ open, roster, lastBoardUpdate, onClose }: BoardStag
   const [creatingBoard, setCreatingBoard] = useState(false);
   const [boardName, setBoardName] = useState("");
   const [template, setTemplate] = useState<"personal" | "capability">("personal");
+  const [openCardId, setOpenCardId] = useState<string | null>(null);
+  const [workspaces, setWorkspaces] = useState<string[]>([]);
 
   const refetch = useCallback(async () => {
     try {
@@ -194,6 +204,14 @@ export function BoardStage({ open, roster, lastBoardUpdate, onClose }: BoardStag
   useEffect(() => {
     if (open) void refetch();
   }, [open, refetch]);
+
+  useEffect(() => {
+    if (!open) return;
+    fetch(`http://${BASE}/workspaces`)
+      .then((r) => r.json())
+      .then((res: { workspaces?: Array<{ name: string }> }) => setWorkspaces((res.workspaces ?? []).map((w) => w.name)))
+      .catch(() => {});
+  }, [open]);
 
   useEffect(() => {
     if (open && lastBoardUpdate && lastBoardUpdate.boardId === activeId) void refetch();
@@ -241,6 +259,7 @@ export function BoardStage({ open, roster, lastBoardUpdate, onClose }: BoardStag
 
   if (!open) return null;
   const board = boards.find((b) => b.id === activeId) ?? null;
+  const openCard = board?.cards.find((c) => c.id === openCardId) ?? null;
   const agentFor = (id?: string) => (id ? roster.find((a) => a.id === id) : undefined);
 
   const handleDragEnd = (e: DragEndEvent) => {
@@ -283,6 +302,20 @@ export function BoardStage({ open, roster, lastBoardUpdate, onClose }: BoardStag
     void refetch();
   };
 
+  const importFromJira = async () => {
+    if (!board) return;
+    const res = (await fetch(`http://${BASE}/work/boards/${encodeURIComponent(board.id)}/jira/import`, {
+      method: "POST",
+    })
+      .then((r) => r.json())
+      .catch(() => ({ error: "Broker unreachable" }))) as { error?: string };
+    if (res.error) {
+      setError(res.error);
+      return;
+    }
+    void refetch();
+  };
+
   return (
     <section className="board-stage" aria-label="Work boards">
       <header className="board-stage__bar">
@@ -300,6 +333,11 @@ export function BoardStage({ open, roster, lastBoardUpdate, onClose }: BoardStag
         <button type="button" className="settings-btn" onClick={() => setAddingCard((v) => !v)} disabled={!board}>
           <Plus size={12} strokeWidth={2} /> add card
         </button>
+        {board?.jira && (
+          <button type="button" className="settings-btn" onClick={() => void importFromJira()}>
+            <Download size={12} strokeWidth={2} /> import from jira
+          </button>
+        )}
         <span className="spacer" />
         <button type="button" className="settings-btn" onClick={onClose} aria-label="Close board">
           <X size={12} strokeWidth={2} />
@@ -349,10 +387,21 @@ export function BoardStage({ open, roster, lastBoardUpdate, onClose }: BoardStag
                 col={col}
                 cards={board.cards.filter((c) => c.columnId === col.id)}
                 agentFor={agentFor}
+                onOpenCard={setOpenCardId}
               />
             ))}
           </div>
         </DndContext>
+      )}
+      {board && openCard && (
+        <CardSheet
+          board={board}
+          card={openCard}
+          roster={roster}
+          workspaces={workspaces}
+          onClose={() => setOpenCardId(null)}
+          onChanged={() => void refetch()}
+        />
       )}
     </section>
   );

@@ -2389,3 +2389,55 @@ main.chat-active .composer-dock {
 .board-column.is-over {
   border-color: var(--accent);
 }
+
+.card-sheet {
+  position: absolute;
+  right: 16px;
+  top: 52px;
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--pill-br);
+  background: var(--panel, rgba(20, 20, 24, 0.97));
+  z-index: 30;
+}
+.card-sheet__head,
+.card-sheet__row,
+.card-sheet__foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+}
+.card-sheet__delegate,
+.card-sheet__stories {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.card-sheet__stories-head {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+.card-sheet__story {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.card-sheet__story .is-done {
+  text-decoration: line-through;
+  color: var(--text-dim);
+}
+.card-sheet__story-remove {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}

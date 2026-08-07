@@ -39,7 +39,7 @@ const ROSTER = [
     role: "Security",
     ring: "#5fd0b0",
     avatar: "minerva.png",
-    status: "busy" as const,
+    status: "idle" as const,
     kind: "agent" as const,
   },
 ];
@@ -55,8 +55,16 @@ function stubFetch(overrides: Record<string, unknown> = {}) {
       return respond(overrides.boards ?? { boards: [BOARD], errors: [] });
     if (url.endsWith("/work/boards") && method === "POST")
       return respond(overrides.created ?? { ...BOARD, id: "beta", name: "Beta", cards: [] }, 201);
+    if (url.endsWith("/workspaces") && method === "GET")
+      return respond(overrides.workspaces ?? { workspaces: [{ name: "acme" }, { name: "beta-ws" }] });
+    if (url.endsWith("/work/delegate") && method === "POST")
+      return respond(overrides.delegated ?? { taskId: "t9" }, (overrides.delegateStatus as number) ?? 200);
+    if (url.includes("/jira/import") && method === "POST")
+      return respond(overrides.imported ?? { ok: true }, (overrides.importStatus as number) ?? 200);
     if (url.includes("/cards") && method === "POST")
       return respond({ id: "new", title: "New card", columnId: "backlog", order: 1 }, 201);
+    if (url.includes("/cards") && method === "DELETE")
+      return respond(overrides.deleted ?? {}, (overrides.deleteStatus as number) ?? 200);
     if (method === "PATCH") return respond(overrides.patched ?? {}, (overrides.patchStatus as number) ?? 200);
     return respond({});
   });
@@ -294,5 +302,108 @@ describe("resolveDrop + moveCard composed (direction-aware drop resolution)", ()
 
   it("self-drop resolves to null (no-op)", () => {
     expect(resolveDrop(seqBoard(), "a", "a")).toBeNull();
+  });
+});
+
+describe("CardSheet", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  async function openSheet(cardTitle: string) {
+    render(<BoardStage open roster={ROSTER} lastBoardUpdate={null} onClose={vi.fn()} />);
+    await userEvent.click(await screen.findByText(cardTitle));
+  }
+
+  it("edits title and notes via PATCH", async () => {
+    const { calls } = stubFetch();
+    await openSheet("Write the spec");
+    const title = screen.getByLabelText(/^title$/i);
+    await userEvent.clear(title);
+    await userEvent.type(title, "Write the better spec");
+    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (c) =>
+            c.method === "PATCH" &&
+            c.url.includes("/cards/c1") &&
+            (c.body as { title?: string })?.title === "Write the better spec",
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it("stories: add + toggle are sent wholesale on save, toggle stamps verifiedBy", async () => {
+    const { calls } = stubFetch();
+    await openSheet("Write the spec");
+    await userEvent.type(screen.getByPlaceholderText(/add a story/i), "user can log in{Enter}");
+    await userEvent.type(screen.getByPlaceholderText(/add a story/i), "reload keeps session{Enter}");
+    await userEvent.click(screen.getAllByRole("checkbox")[0]);
+    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => {
+      const call = calls.find((c) => c.method === "PATCH" && c.url.includes("/cards/c1"));
+      const stories = (call?.body as { stories?: Array<{ text: string; done: boolean; verifiedBy?: string }> })
+        ?.stories;
+      expect(stories?.map((s) => [s.text, s.done])).toEqual([
+        ["user can log in", true],
+        ["reload keeps session", false],
+      ]);
+      expect(stories?.[0].verifiedBy).toMatch(/^manual /);
+    });
+  });
+
+  it("delegates through POST /work/delegate with the card prompt and binds", async () => {
+    const { calls } = stubFetch();
+    await openSheet("Write the spec");
+    await userEvent.click(screen.getByRole("button", { name: /send to agent/i }));
+    await userEvent.selectOptions(screen.getByLabelText(/agent/i), "minerva");
+    await userEvent.selectOptions(screen.getByLabelText(/workspace/i), "acme");
+    await userEvent.click(screen.getByRole("button", { name: /^delegate$/i }));
+    await waitFor(() => {
+      const call = calls.find((c) => c.url.endsWith("/work/delegate"));
+      expect(call).toBeTruthy();
+      expect(call?.body).toMatchObject({ boardId: "alpha", cardId: "c1", agentId: "minerva", workspace: "acme" });
+      expect(String((call?.body as { prompt?: string })?.prompt)).toContain("Write the spec");
+    });
+  });
+
+  it("busy agents are disabled in the picker with the reason", async () => {
+    stubFetch();
+    const busyRoster = [{ ...ROSTER[0], status: "busy" as const }];
+    render(<BoardStage open roster={busyRoster} lastBoardUpdate={null} onClose={vi.fn()} />);
+    await userEvent.click(await screen.findByText("Write the spec"));
+    await userEvent.click(screen.getByRole("button", { name: /send to agent/i }));
+    const option = screen.getByRole("option", { name: /minerva.*busy/i }) as HTMLOptionElement;
+    expect(option.disabled).toBe(true);
+  });
+
+  it("links a Jira key and shows the import button only on jira-linked boards", async () => {
+    const { calls } = stubFetch({
+      boards: {
+        boards: [{ ...BOARD, jira: { connectorId: "atl-1", siteUrl: "https://a.net", projectKey: "PROJ" } }],
+        errors: [],
+      },
+    });
+    await openSheet("Write the spec");
+    await userEvent.type(screen.getByPlaceholderText(/proj-123/i), "PROJ-7");
+    await userEvent.click(screen.getByRole("button", { name: /link jira/i }));
+    await waitFor(() =>
+      expect(
+        calls.some((c) => c.method === "PATCH" && (c.body as { jira?: { key?: string } })?.jira?.key === "PROJ-7"),
+      ).toBe(true),
+    );
+    await userEvent.click(screen.getByRole("button", { name: /close card/i }));
+    expect(screen.getByRole("button", { name: /import from jira/i })).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: /import from jira/i }));
+    await waitFor(() => expect(calls.some((c) => c.url.includes("/jira/import"))).toBe(true));
+  });
+
+  it("deletes a card", async () => {
+    const { calls } = stubFetch();
+    await openSheet("Write the spec");
+    await userEvent.click(screen.getByRole("button", { name: /delete card/i }));
+    await waitFor(() => expect(calls.some((c) => c.method === "DELETE" && c.url.includes("/cards/c1"))).toBe(true));
   });
 });
