@@ -883,6 +883,17 @@ export class TextChannel {
           return;
         }
         if (url2.pathname.startsWith('/work/')) {
+          // Reads stay on the open CORS policy (boards are not credential data), but a
+          // mutation is a mutation: with 'Access-Control-Allow-Origin: *' any page the
+          // operator visits could POST/PATCH/DELETE cards here and the write would land
+          // even though the attacker can't read the reply. Same guard as /work/delegate.
+          const safeMethod = req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS';
+          if (!safeMethod && !isAllowedOrigin(req)) {
+            res
+              .writeHead(403, { ...credentialCors(req), 'content-type': 'application/json' })
+              .end(JSON.stringify({ error: 'origin not allowed' }));
+            return;
+          }
           let body = '';
           req.on('data', (c) => {
             body += c;

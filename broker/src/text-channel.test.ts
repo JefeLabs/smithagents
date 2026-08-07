@@ -882,6 +882,42 @@ test('POST /work/delegate blocks a disallowed browser Origin, allows the control
   }
 });
 
+test('/work/* proxy blocks mutating verbs from a disallowed Origin but leaves reads open', async () => {
+  const calls: Array<{ method: string; path: string }> = [];
+  const channel = channelWith({ workBoards: {
+    proxy: async (method: string, path: string) => { calls.push({ method, path }); return { status: 200, payload: { ok: true } }; },
+    delegate: async () => ({ taskId: 't' }),
+  }});
+  const port = await channel.start(0);
+  try {
+    // A page the operator happens to have open must not be able to mutate their boards.
+    const blocked = await fetch(`http://127.0.0.1:${port}/work/boards/x/cards/c1`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', Origin: 'http://evil.example' },
+      body: JSON.stringify({ title: 'pwned' }),
+    });
+    assert.equal(blocked.status, 403);
+    assert.deepEqual(await blocked.json(), { error: 'origin not allowed' });
+    assert.deepEqual(calls, [], 'the proxy must never be reached from a disallowed origin');
+
+    // Reads are not credential data — they stay on the open policy.
+    const read = await fetch(`http://127.0.0.1:${port}/work/boards/x`, { headers: { Origin: 'http://evil.example' } });
+    assert.equal(read.status, 200);
+    assert.deepEqual(calls, [{ method: 'GET', path: '/work/boards/x' }]);
+
+    // The control-plane's own origin still mutates normally.
+    const allowed = await fetch(`http://127.0.0.1:${port}/work/boards/x/cards/c1`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', Origin: 'http://localhost:1420' },
+      body: JSON.stringify({ title: 'fine' }),
+    });
+    assert.equal(allowed.status, 200);
+    assert.deepEqual(calls[1], { method: 'PATCH', path: '/work/boards/x/cards/c1' });
+  } finally {
+    await channel.stop();
+  }
+});
+
 test('/work/* and /work/delegate reject malformed JSON bodies with 400, never reaching the handler', async () => {
   const calls: unknown[] = [];
   const channel = channelWith({ workBoards: {
