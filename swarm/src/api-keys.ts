@@ -128,3 +128,60 @@ export function buildApiKeyListings(file: ApiKeysFile): ApiKeyListing[] {
     };
   });
 }
+
+export type ApiKeyOpResult = { listings: ApiKeyListing[] } | { error: string; status: 400 | 404 | 409 };
+
+export async function saveAndVerifyKey(
+  path: string,
+  providerId: string,
+  key: string,
+  fetchImpl: typeof fetch = fetch,
+  now: () => string = () => new Date().toISOString(),
+): Promise<ApiKeyOpResult> {
+  const provider = findProvider(providerId);
+  if (!provider) return { error: `unknown provider: ${providerId}`, status: 404 };
+  const trimmed = key.trim();
+  if (!trimmed) return { error: 'key must not be blank', status: 400 };
+  const result = await provider.verify(trimmed, fetchImpl);
+  const file = await loadApiKeysFile(path);
+  file.providers[providerId] = { key: trimmed, verified: result.ok, detail: result.detail, lastCheckedAt: now() };
+  await saveApiKeysFile(path, file);
+  return { listings: buildApiKeyListings(file) };
+}
+
+export async function verifyStoredKey(
+  path: string,
+  providerId: string,
+  fetchImpl: typeof fetch = fetch,
+  now: () => string = () => new Date().toISOString(),
+): Promise<ApiKeyOpResult> {
+  const provider = findProvider(providerId);
+  if (!provider) return { error: `unknown provider: ${providerId}`, status: 404 };
+  const file = await loadApiKeysFile(path);
+  const entry = file.providers[providerId];
+  if (!entry) return { error: `no key stored for ${providerId}`, status: 409 };
+  const result = await provider.verify(entry.key, fetchImpl);
+  file.providers[providerId] = { ...entry, verified: result.ok, detail: result.detail, lastCheckedAt: now() };
+  await saveApiKeysFile(path, file);
+  return { listings: buildApiKeyListings(file) };
+}
+
+export async function deleteKey(path: string, providerId: string): Promise<ApiKeyOpResult> {
+  if (!findProvider(providerId)) return { error: `unknown provider: ${providerId}`, status: 404 };
+  const file = await loadApiKeysFile(path);
+  delete file.providers[providerId];
+  await saveApiKeysFile(path, file);
+  return { listings: buildApiKeyListings(file) };
+}
+
+/** Raw-key hop for the broker's avatar generator ONLY — served by the
+ *  swarm's localhost route, never through the broker's 7790 surface. */
+export async function getCredential(
+  path: string,
+  providerId: string,
+): Promise<{ key: string } | { error: string; status: 404 }> {
+  if (!findProvider(providerId)) return { error: `unknown provider: ${providerId}`, status: 404 };
+  const entry = (await loadApiKeysFile(path)).providers[providerId];
+  if (!entry) return { error: `no key stored for ${providerId}`, status: 404 };
+  return { key: entry.key };
+}

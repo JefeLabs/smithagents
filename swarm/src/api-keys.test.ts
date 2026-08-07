@@ -5,11 +5,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   buildApiKeyListings,
+  deleteKey,
   emptyApiKeysFile,
   findProvider,
+  getCredential,
   last4,
   loadApiKeysFile,
   saveApiKeysFile,
+  saveAndVerifyKey,
+  verifyStoredKey,
   type ApiKeysFile,
 } from './api-keys.js';
 
@@ -103,4 +107,54 @@ test('probe request shapes: header auth, key never in URL', async () => {
   assert.equal(calls[2]!.url, 'https://generativelanguage.googleapis.com/v1beta/models');
   assert.equal(calls[2]!.headers['x-goog-api-key'], 'KEY_C');
   for (const c of calls) assert.ok(!c.url.includes('KEY_'), 'key must never appear in a URL');
+});
+
+const NOW = () => '2026-08-06T12:00:00.000Z';
+
+test('saveAndVerifyKey: 404 unknown provider, 400 blank key', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'apikeys-'));
+  const p = join(dir, 'api-keys.json');
+  assert.deepEqual(await saveAndVerifyKey(p, 'nope', 'k', okFetch(), NOW), { error: 'unknown provider: nope', status: 404 });
+  assert.deepEqual(await saveAndVerifyKey(p, 'google', '   ', okFetch(), NOW), { error: 'key must not be blank', status: 400 });
+});
+
+test('saveAndVerifyKey: persists trimmed key + probe outcome, returns listings', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'apikeys-'));
+  const p = join(dir, 'api-keys.json');
+  const r = await saveAndVerifyKey(p, 'google', '  sk-live-9876  ', statusFetch(401), NOW);
+  assert.ok('listings' in r);
+  const g = r.listings.find((l) => l.id === 'google')!;
+  assert.deepEqual({ hasKey: g.hasKey, last4: g.last4, verified: g.verified }, { hasKey: true, last4: '9876', verified: false });
+  const stored = (await loadApiKeysFile(p)).providers.google!;
+  assert.equal(stored.key, 'sk-live-9876');
+  assert.equal(stored.lastCheckedAt, NOW());
+});
+
+test('verifyStoredKey: 409 without key, re-probes with stored key', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'apikeys-'));
+  const p = join(dir, 'api-keys.json');
+  assert.deepEqual(await verifyStoredKey(p, 'google', okFetch(), NOW), { error: 'no key stored for google', status: 409 });
+  await saveAndVerifyKey(p, 'google', 'sk-live-9876', downFetch(), NOW); // saved as 'unknown'
+  const r = await verifyStoredKey(p, 'google', okFetch(), NOW);
+  assert.ok('listings' in r && r.listings.find((l) => l.id === 'google')!.verified === true);
+});
+
+test('deleteKey: removes, idempotent', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'apikeys-'));
+  const p = join(dir, 'api-keys.json');
+  await saveAndVerifyKey(p, 'google', 'sk-live-9876', okFetch(), NOW);
+  const r1 = await deleteKey(p, 'google');
+  assert.ok('listings' in r1 && r1.listings.find((l) => l.id === 'google')!.hasKey === false);
+  const r2 = await deleteKey(p, 'google'); // absent -> still ok
+  assert.ok('listings' in r2);
+  assert.deepEqual(await deleteKey(p, 'nope'), { error: 'unknown provider: nope', status: 404 });
+});
+
+test('getCredential: raw key for broker hop; 404 when absent/unknown provider', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'apikeys-'));
+  const p = join(dir, 'api-keys.json');
+  assert.deepEqual(await getCredential(p, 'google'), { error: 'no key stored for google', status: 404 });
+  assert.deepEqual(await getCredential(p, 'nope'), { error: 'unknown provider: nope', status: 404 });
+  await saveAndVerifyKey(p, 'google', 'sk-live-9876', okFetch(), NOW);
+  assert.deepEqual(await getCredential(p, 'google'), { key: 'sk-live-9876' });
 });
