@@ -749,6 +749,13 @@
   font-weight: 600;
   margin-right: 2px;
 }
+.transcript__notice {
+  font-size: 12px;
+  opacity: 0.6;
+  font-style: italic;
+  text-align: center;
+  margin: 4px 0;
+}
 
 .transcript::-webkit-scrollbar {
   display: none;

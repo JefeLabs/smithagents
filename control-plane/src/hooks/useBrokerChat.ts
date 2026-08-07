@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
  */
 export interface ChatMessage {
   id: number;
-  role: "user" | "broker";
+  role: "user" | "broker" | "notice";
   text: string;
 }
 
@@ -73,6 +73,7 @@ export interface ConnectorVendorMeta {
   description: string;
   fields: ConnectorFieldDef[];
   verifyExtraFields: ConnectorFieldDef[];
+  capabilities?: string[];
 }
 
 export interface ConnectorInstanceRecord {
@@ -112,6 +113,13 @@ export interface ChannelsRecord {
   hasDiscordToken: boolean;
   textChannels: string[];
   voiceChannels: string[];
+}
+
+/** The operator's chosen STT/TTS connectors — read back by instance id, never the secret itself. */
+export interface VoiceSettingsRecord {
+  stt: { instanceId: string } | null;
+  tts: { instanceId: string } | null;
+  hideInactive: boolean;
 }
 
 /** One CLI tool's machine status, as the registry persists it. */
@@ -177,6 +185,7 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
       ws.onmessage = (e) => {
         const frame = JSON.parse(String(e.data)) as
           | { type: "utterance" | "speech"; text: string }
+          | { type: "notice"; text: string }
           | { type: "roster"; agents: RosterAgent[]; identity?: BrokerIdentityInfo }
           | { type: "config"; audio: boolean }
           | ({ type: "audio" } & AudioFrame)
@@ -206,6 +215,10 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
         if (frame.type === "roster") {
           setRoster(frame.agents);
           setIdentity(frame.identity ?? null);
+          return;
+        }
+        if (frame.type === "notice") {
+          setMessages((list) => [...list, { id: nextId.current++, role: "notice", text: frame.text }]);
           return;
         }
         if (frame.type !== "utterance" && frame.type !== "speech") return;
@@ -373,6 +386,27 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
         method: "POST",
       });
       return (await res.json()) as { ok?: boolean; detail?: string; error?: string };
+    },
+    [base],
+  );
+
+  const getVoiceSettings = useCallback(async (): Promise<VoiceSettingsRecord> => {
+    const res = await fetch(`http://${base}/me/voice`);
+    return (await res.json()) as VoiceSettingsRecord;
+  }, [base]);
+
+  const saveVoiceSettings = useCallback(
+    async (body: {
+      stt: { instanceId: string } | null;
+      tts: { instanceId: string } | null;
+      hideInactive: boolean;
+    }): Promise<VoiceSettingsRecord & { error?: string }> => {
+      const res = await fetch(`http://${base}/me/voice`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      return (await res.json()) as VoiceSettingsRecord & { error?: string };
     },
     [base],
   );
@@ -587,6 +621,8 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
     getWorkspaceChannels,
     saveWorkspaceChannels,
     verifyWorkspaceDiscord,
+    getVoiceSettings,
+    saveVoiceSettings,
     getMe,
     updateMe,
     listConnectorVendors,
