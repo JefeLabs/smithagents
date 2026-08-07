@@ -406,4 +406,23 @@ describe("CardSheet", () => {
     await userEvent.click(screen.getByRole("button", { name: /delete card/i }));
     await waitFor(() => expect(calls.some((c) => c.method === "DELETE" && c.url.includes("/cards/c1"))).toBe(true));
   });
+
+  it("switching cards without closing remounts the sheet — no stale edits saved to the wrong card", async () => {
+    const { calls } = stubFetch();
+    await openSheet("Write the spec");
+    const title = screen.getByLabelText(/^title$/i);
+    await userEvent.clear(title);
+    await userEvent.type(title, "Stale edit meant for card A");
+    // Switch straight to a different card — no close, no save.
+    await userEvent.click(screen.getByText("Fix login"));
+    const retargeted = screen.getByLabelText(/^title$/i) as HTMLInputElement;
+    expect(retargeted.value).toBe("Fix login");
+    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => {
+      const call = calls.find((c) => c.method === "PATCH" && c.url.includes("/cards/c2"));
+      expect(call).toBeTruthy();
+      expect((call?.body as { title?: string })?.title).toBe("Fix login");
+    });
+    expect(calls.some((c) => c.method === "PATCH" && c.url.includes("/cards/c1"))).toBe(false);
+  });
 });

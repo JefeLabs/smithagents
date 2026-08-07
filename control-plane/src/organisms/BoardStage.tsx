@@ -395,6 +395,7 @@ export function BoardStage({ open, roster, lastBoardUpdate, onClose }: BoardStag
       )}
       {board && openCard && (
         <CardSheet
+          key={openCard.id}
           board={board}
           card={openCard}
           roster={roster}
