@@ -176,6 +176,10 @@ AudioContext and silently wedge the audio queue forever — frames now hold
 until the context runs, any click/keypress resumes it, and a visible pill
 replaces the silence.
 
+Agent work is subscription-first; provider API keys (Anthropic/OpenAI/Google)
+are managed and live-verified in Settings → API Keys, and avatar generation
+runs agy-first with the google key as accelerator.
+
 ## 6. Roadmap / Open Items
 
 ### 6.1 Infrastructure gaps (benchmarked against Orca, 2026-07-27)

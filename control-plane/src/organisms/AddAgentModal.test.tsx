@@ -52,7 +52,7 @@ const CATALOG = {
   quickQuestions: [{ id: "name", question: "What should I call you?" }],
   reactionLevels: ["agree"],
   presets: PRESETS,
-  avatarGen: true,
+  avatarGen: "api",
 };
 
 /** Routes every fetch by URL; tests override per-route. Captures POST /agents bodies. */
@@ -276,7 +276,7 @@ describe("AddAgentModal avatar generator", () => {
     const { posted } = stubFetch();
     await openBlankWizardAtPersona();
     await userEvent.type(screen.getByLabelText(/^name$/i), "Nena");
-    await userEvent.click(screen.getByRole("button", { name: /generate a portrait/i }));
+    await userEvent.click(screen.getByRole("button", { name: /generate portrait/i }));
     expect(await screen.findByRole("button", { name: /reroll the portrait/i })).toBeTruthy();
     // walk to the last step and create
     await userEvent.click(screen.getByRole("button", { name: /next/i })); // Voice
@@ -292,7 +292,7 @@ describe("AddAgentModal avatar generator", () => {
     const { posted } = stubFetch({ generated: { error: "Gemini returned no image — try again" } });
     await openBlankWizardAtPersona();
     await userEvent.type(screen.getByLabelText(/^name$/i), "Nena");
-    await userEvent.click(screen.getByRole("button", { name: /generate a portrait/i }));
+    await userEvent.click(screen.getByRole("button", { name: /generate portrait/i }));
     expect(await screen.findByText(/no image/i)).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: /next/i }));
     await userEvent.click(screen.getByRole("button", { name: /next/i }));
@@ -302,10 +302,10 @@ describe("AddAgentModal avatar generator", () => {
     expect(posted[0].avatarData).toBeUndefined();
   });
 
-  it("avatarGen false hides the generate button", async () => {
-    stubFetch({ catalog: { ...CATALOG, avatarGen: false } });
+  it("avatarGen null hides the generate button", async () => {
+    stubFetch({ catalog: { ...CATALOG, avatarGen: null } });
     await openBlankWizardAtPersona();
-    expect(screen.queryByRole("button", { name: /generate a portrait/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /generate portrait/i })).toBeNull();
   });
 
   it("customized preset keeps its committed art: submit carries avatarPreset, not avatarData", async () => {

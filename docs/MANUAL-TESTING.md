@@ -423,3 +423,15 @@ blocks and there is nothing to stall.
 - Restart the broker mid-admission → the admitted on-request agent does not auto-return.
 - Unset DISCORD_TOKEN and restart → both Discord rows render grayed with the "not configured" note.
 - Hand-edit an agent file back to the legacy array form → behavior matches the pre-feature suite (text delivered, voice only when designated).
+
+## API Keys + avatar engines (2026-08-06)
+
+- [ ] Opening Settings shows three labeled sections — App, Agents, Workspace — with CLI Tools and API Keys under Agents.
+- [ ] The API Keys page shows a card per provider (Anthropic, OpenAI, Google) even before any key exists.
+- [ ] Pasting a key saves and verifies it in one step; the card shows `valid` / `needs valid key` / `unverified` — never the key itself, only `•••• last4`.
+- [ ] A rejected key (provider 401/403) reads `needs valid key` with the provider's reason; a network failure reads `unverified` — a flaky network never marks a key bad.
+- [ ] Re-verify and remove work per card; removal is immediate, and removing an absent key is not an error.
+- [ ] With agy active and no google key, wizard portrait generation still works — slower, with a visible "portrait brewing" state.
+- [ ] With a verified google key, portraits arrive in seconds via the API path.
+- [ ] With neither, portrait generation fails with guidance naming both remedies (add a Google key in Settings → API Keys, or install Antigravity).
+- [ ] No raw key ever appears in any 7790 response, UI payload, or log — the only raw-key hop is the swarm's localhost credential route.

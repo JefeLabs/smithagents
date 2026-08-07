@@ -92,6 +92,15 @@ import {
   sweepCliTools,
   type SweepDeps,
 } from './cli-tools.js';
+import {
+  buildApiKeyListings,
+  deleteKey,
+  getCredential,
+  loadApiKeysFile,
+  saveAndVerifyKey,
+  verifyStoredKey,
+  type ApiKeyOpResult,
+} from './api-keys.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -1576,6 +1585,33 @@ export class OrchestratorServer {
       file.tools[req.params.id] = { ...current, enabled: b.enabled };
       await saveCliToolsFile(cliToolsPath(), file);
       return { tools: buildCliToolListings(ENGINES, file) };
+    });
+
+    // ── API key registry (Settings → API Keys; spec 2026-08-06) ────────────
+    const apiKeysPath = () => resolve(process.cwd(), '.smith/api-keys.json');
+    const sendKeyOp = (reply: { status(code: number): { send(body: unknown): unknown } }, r: ApiKeyOpResult) =>
+      'error' in r ? reply.status(r.status).send({ error: r.error }) : { providers: r.listings };
+
+    this.app.get('/api-keys', async () => ({ providers: buildApiKeyListings(await loadApiKeysFile(apiKeysPath())) }));
+
+    this.app.put<{ Params: { provider: string } }>('/api-keys/:provider', async (req, reply) =>
+      sendKeyOp(reply, await saveAndVerifyKey(apiKeysPath(), req.params.provider, ((req.body ?? {}) as { key?: string }).key ?? '')),
+    );
+
+    this.app.post<{ Params: { provider: string } }>('/api-keys/:provider/verify', async (req, reply) =>
+      sendKeyOp(reply, await verifyStoredKey(apiKeysPath(), req.params.provider)),
+    );
+
+    this.app.delete<{ Params: { provider: string } }>('/api-keys/:provider', async (req, reply) =>
+      sendKeyOp(reply, await deleteKey(apiKeysPath(), req.params.provider)),
+    );
+
+    // Raw-key hop for the broker's avatar generator ONLY. Guard: the swarm
+    // binds 127.0.0.1, and this route is deliberately absent from the broker's
+    // text-channel passthrough — 7790 can never serve it (spec invariant).
+    this.app.get<{ Params: { provider: string } }>('/api-keys/:provider/credential', async (req, reply) => {
+      const r = await getCredential(apiKeysPath(), req.params.provider);
+      return 'error' in r ? reply.status(r.status).send({ error: r.error }) : r;
     });
 
     this.app.post<{ Params: { name: string } }>('/workspaces/:name/verify-atlassian', async (req, reply) => {

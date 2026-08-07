@@ -54,6 +54,7 @@ function channelWith(opts: {
   connectors?: ConstructorParameters<typeof TextChannel>[13];
   tasks?: ConstructorParameters<typeof TextChannel>[14];
   cliTools?: ConstructorParameters<typeof TextChannel>[15];
+  apiKeys?: ConstructorParameters<typeof TextChannel>[16];
 }): TextChannel {
   return new TextChannel(
     () => {},
@@ -72,6 +73,7 @@ function channelWith(opts: {
     opts.connectors,
     opts.tasks,
     opts.cliTools,
+    opts.apiKeys,
   );
 }
 
@@ -819,6 +821,102 @@ test('POST /cli-tools/refresh forwards the ?tool= filter', async () => {
     });
     assert.equal(all.status, 200);
     assert.deepEqual(asked, ['claude', undefined]);
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('api-keys passthrough: list/save/verify/remove reach handlers and return JSON', async () => {
+  const calls: string[] = [];
+  const apiKeys = {
+    list: async () => {
+      calls.push('list');
+      return { providers: [] };
+    },
+    save: async (id: string, key: string) => {
+      calls.push(`save:${id}:${key.length}`);
+      return { providers: [] };
+    },
+    verify: async (id: string) => {
+      calls.push(`verify:${id}`);
+      return { providers: [] };
+    },
+    remove: async (id: string) => {
+      calls.push(`remove:${id}`);
+      return { providers: [] };
+    },
+  };
+  const channel = channelWith({ apiKeys });
+  const port = await channel.start(0);
+  try {
+    const list = await fetch(`http://127.0.0.1:${port}/api-keys`, {
+      headers: { Origin: 'http://localhost:1420' },
+    });
+    assert.equal(list.status, 200);
+    const save = await fetch(`http://127.0.0.1:${port}/api-keys/google`, {
+      method: 'PUT',
+      headers: { Origin: 'http://localhost:1420', 'content-type': 'application/json' },
+      body: JSON.stringify({ key: 'sk-x' }),
+    });
+    assert.equal(save.status, 200);
+    const verify = await fetch(`http://127.0.0.1:${port}/api-keys/google/verify`, {
+      method: 'POST',
+      headers: { Origin: 'http://localhost:1420' },
+    });
+    assert.equal(verify.status, 200);
+    const del = await fetch(`http://127.0.0.1:${port}/api-keys/google`, {
+      method: 'DELETE',
+      headers: { Origin: 'http://localhost:1420' },
+    });
+    assert.equal(del.status, 200);
+    assert.deepEqual(calls, ['list', 'save:google:4', 'verify:google', 'remove:google']);
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('api-keys routes block a disallowed Origin, same as /me and connectors', async () => {
+  const apiKeys = {
+    list: async () => ({ providers: [] }),
+    save: async () => ({ providers: [] }),
+    verify: async () => ({ providers: [] }),
+    remove: async () => ({ providers: [] }),
+  };
+  const channel = channelWith({ apiKeys });
+  const port = await channel.start(0);
+  const blockedHeaders = { headers: { origin: 'http://evil.example' } };
+  try {
+    const requests: Array<[string, RequestInit?]> = [
+      [`http://127.0.0.1:${port}/api-keys`, blockedHeaders],
+      [`http://127.0.0.1:${port}/api-keys/google`, { method: 'PUT', ...blockedHeaders, body: '{"key":"x"}' }],
+      [`http://127.0.0.1:${port}/api-keys/google/verify`, { method: 'POST', ...blockedHeaders }],
+      [`http://127.0.0.1:${port}/api-keys/google`, { method: 'DELETE', ...blockedHeaders }],
+    ];
+    for (const [url, init] of requests) {
+      const res = await fetch(url, init);
+      assert.equal(res.status, 403, `${init?.method ?? 'GET'} ${url} should 403`);
+      assert.deepEqual(await res.json(), { error: 'origin not allowed' });
+      assert.equal(res.headers.get('access-control-allow-origin'), null);
+    }
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('api-keys: credential route is NOT proxied on 7790', async () => {
+  const apiKeys = {
+    list: async () => ({ providers: [] }),
+    save: async () => ({ providers: [] }),
+    verify: async () => ({ providers: [] }),
+    remove: async () => ({ providers: [] }),
+  };
+  const channel = channelWith({ apiKeys });
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api-keys/google/credential`, {
+      headers: { Origin: 'http://localhost:1420' },
+    });
+    assert.equal(res.status, 404);
   } finally {
     await channel.stop();
   }
