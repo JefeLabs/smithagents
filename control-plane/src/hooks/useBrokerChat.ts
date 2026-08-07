@@ -51,12 +51,30 @@ export interface BrokerIdentityInfo {
 
 export type ComposeOp = { op: "form"; agents: string[] } | { op: "add" | "remove"; target: string; agent: string };
 
+/** The control plane's copy of the broker's runtime vocabulary — must mirror swarm's ExecutionMode. */
+export type ExecutionMode = "local-in-process" | "local-docker" | "remote-in-process" | "remote-docker";
+
 export interface SessionSummary {
   id: string;
   title: string;
   workspace: string;
   updatedAt: string;
   active: boolean;
+  runtime: ExecutionMode;
+}
+
+/**
+ * The `session` frame's shape, exactly mirroring broker's text-channel.ts
+ * `ChannelFrame`'s `session` variant — the second lockstep parser. `session:
+ * null` is a valid, deliberate state (zero sessions exist yet), distinct from
+ * "hello frame not sent yet".
+ */
+export interface SessionFrame {
+  type: "session";
+  session: { id: string; title: string; workspace: string; runtime: ExecutionMode } | null;
+  sessions: SessionSummary[];
+  transcript: Array<{ role: "user" | "broker"; text: string }>;
+  workspaces: string[];
 }
 
 export interface ConnectorFieldDef {
@@ -97,8 +115,8 @@ export interface WorkspaceRecord {
     initGit?: boolean;
   }>;
   atlassian?: { siteUrl: string; jiraProjectKeys?: string[]; confluenceSpaceKeys?: string[]; connectorId?: string };
-  /** Execution environment for this workspace's tasks; unset = swarm's server default. */
-  runtime?: "tmux" | "docker" | "remote";
+  /** Reference links (repo, docs, tracker) shown on the workspace card. */
+  links?: string[];
 }
 
 /** The operator's own profile — connector credentials read back redacted, never the secret itself. */
@@ -158,6 +176,47 @@ export interface ApiKeyListing {
 const DEFAULT_BASE = "127.0.0.1:7790";
 const RECONNECT_MS = 2000;
 
+/** All modes assumed unavailable except the one every machine can always run — the honest fallback when the broker's response is unreadable. */
+const DEFAULT_EXECUTION_MODES: Record<ExecutionMode, boolean> = {
+  "local-in-process": true,
+  "local-docker": false,
+  "remote-in-process": false,
+  "remote-docker": false,
+};
+
+/**
+ * POST /sessions — atomic create: the broker validates/acquires the runtime
+ * before the session exists, so the caller either gets a live session or a
+ * clean rejection. Exported standalone (rather than trapped in a useCallback
+ * closure) so it's testable without rendering the hook.
+ */
+export async function postSession(
+  base: string,
+  workspace: string,
+  runtime: ExecutionMode,
+  prompt: string,
+): Promise<{ error?: string; status?: number }> {
+  try {
+    const res = await fetch(`http://${base}/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workspace, runtime, prompt }),
+    });
+    if (res.ok) return {};
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    return { error: body.error ?? `broker returned ${res.status}`, status: res.status };
+  } catch {
+    return { error: "broker unreachable" };
+  }
+}
+
+/** GET /execution-modes — which runtimes this machine can actually run right now, keyed by mode id. */
+export async function fetchExecutionModes(base: string): Promise<Record<ExecutionMode, boolean>> {
+  const res = await fetch(`http://${base}/execution-modes`);
+  const body = (await res.json()) as { modes?: Record<ExecutionMode, boolean> };
+  return body.modes ?? DEFAULT_EXECUTION_MODES;
+}
+
 export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFrame) => void }) {
   const base = opts?.base ?? DEFAULT_BASE;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -165,7 +224,12 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
   const [identity, setIdentity] = useState<BrokerIdentityInfo | null>(null);
   const [connected, setConnected] = useState(false);
   const [audioMode, setAudioMode] = useState(false);
-  const [session, setSession] = useState<{ id: string; title: string; workspace: string } | null>(null);
+  const [session, setSession] = useState<{
+    id: string;
+    title: string;
+    workspace: string;
+    runtime: ExecutionMode;
+  } | null>(null);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [workspaces, setWorkspaces] = useState<string[]>([]);
   const [lastBoardUpdate, setLastBoardUpdate] = useState<{ boardId: string; seq: number } | null>(null);
@@ -195,13 +259,7 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
           | ({ type: "audio" } & AudioFrame)
           | { type: "board-updated"; boardId: string }
           | { type: "capability-updated"; capabilityId: string }
-          | {
-              type: "session";
-              session: { id: string; title: string; workspace: string };
-              sessions: SessionSummary[];
-              transcript: Array<{ role: "user" | "broker"; text: string }>;
-              workspaces: string[];
-            };
+          | SessionFrame;
         if (frame.type === "session") {
           setSession(frame.session);
           setSessions(frame.sessions);
@@ -508,6 +566,33 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
     return ((await res.json()) as { tools?: CliToolListing[] }).tools ?? [];
   }, [base]);
 
+  const listExecutionModes = useCallback(
+    (): Promise<Record<ExecutionMode, boolean>> => fetchExecutionModes(base),
+    [base],
+  );
+
+  const getContainers = useCallback(async (): Promise<{ docker: { enabled: boolean } }> => {
+    const res = await fetch(`http://${base}/containers`);
+    return (await res.json()) as { docker: { enabled: boolean } };
+  }, [base]);
+
+  const setDockerEnabled = useCallback(
+    async (enabled: boolean): Promise<{ docker: { enabled: boolean } }> => {
+      const res = await fetch(`http://${base}/containers`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ docker: { enabled } }),
+      });
+      return (await res.json()) as { docker: { enabled: boolean } };
+    },
+    [base],
+  );
+
+  const verifyContainers = useCallback(async (): Promise<{ ok: boolean; detail: string }> => {
+    const res = await fetch(`http://${base}/containers/verify`, { method: "POST" });
+    return (await res.json()) as { ok: boolean; detail: string };
+  }, [base]);
+
   const refreshCliTools = useCallback(
     async (tool?: string): Promise<CliToolListing[]> => {
       const res = await fetch(`http://${base}/cli-tools/refresh${tool ? `?tool=${encodeURIComponent(tool)}` : ""}`, {
@@ -582,13 +667,8 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
   );
 
   const createSession = useCallback(
-    (workspace?: string) => {
-      void fetch(`http://${base}/sessions`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(workspace ? { workspace } : {}),
-      }).catch(() => {});
-    },
+    (workspace: string, runtime: ExecutionMode, prompt: string): Promise<{ error?: string; status?: number }> =>
+      postSession(base, workspace, runtime, prompt),
     [base],
   );
 
@@ -650,6 +730,10 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
     listCliTools,
     refreshCliTools,
     setCliToolEnabled,
+    listExecutionModes,
+    getContainers,
+    setDockerEnabled,
+    verifyContainers,
     listApiKeys,
     saveApiKey,
     verifyApiKey,
