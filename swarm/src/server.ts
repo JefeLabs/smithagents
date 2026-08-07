@@ -829,19 +829,15 @@ export class OrchestratorServer {
 
             // Forward task completion events to the orchestrator's event stream
             if (msg.type === 'task:completed' || msg.type === 'task:failed') {
-              const outcome = msg.type === 'task:completed' && msg.exitCode === 0 ? 'completed' : 'failed';
-              const workCardRef = server.activeTasks.get(msg.taskId)?.manifest.metadata?.workCardRef as WorkCardRef | undefined;
-              if (workCardRef) void server.patchWorkCard(workCardRef, outcome).catch(() => {});
               server.broadcast({
                 type: msg.type === 'task:completed' ? 'task:completed' : 'task:failed',
                 taskId: msg.taskId,
                 result: {
                   taskId: msg.taskId,
-                  outcome,
+                  outcome: msg.type === 'task:completed' && msg.exitCode === 0 ? 'completed' : 'failed',
                   exitCode: msg.exitCode,
                   sessionName: msg.sessionName,
                 },
-                ...(workCardRef ? { workCardRef } : {}),
               } as unknown as DispatcherEvent);
             }
           }
