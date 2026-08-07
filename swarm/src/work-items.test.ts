@@ -7,13 +7,29 @@ import {
   addCard, BOARD_TEMPLATES, createBoard, deleteBoardFile, loadBoards, patchCard, removeCard, saveBoard,
 } from './work-items.js';
 
-test('templates: personal has 5 columns, capability has 6, ids unique and slug-shaped', () => {
+test('templates: five column sets, ids unique and slug-shaped', () => {
   assert.deepEqual(BOARD_TEMPLATES.personal.map((c) => c.name), ['Backlog', 'Ready', 'In Progress', 'In Review', 'Done']);
-  assert.deepEqual(BOARD_TEMPLATES.capability.map((c) => c.name), ['Capability', 'Spec', 'Implementation PRD', 'User Stories', 'In Progress', 'Completed']);
+  assert.deepEqual(BOARD_TEMPLATES.capabilities.map((c) => c.name), ['Capability', 'Story Mapping', 'Spec', 'Plan', 'Ready for Delivery']);
+  assert.deepEqual(BOARD_TEMPLATES.delivery.map((c) => c.name), ['Ready', 'In Progress', 'In Review', 'Verified', 'Done']);
+  assert.deepEqual(BOARD_TEMPLATES.maintenance.map((c) => c.name), ['Reported', 'Triaged', 'In Progress', 'In Review', 'Done']);
+  assert.deepEqual(BOARD_TEMPLATES.support.map((c) => c.name), ['Inbox', 'Triaged', 'Waiting on User', 'In Progress', 'Resolved']);
   for (const cols of Object.values(BOARD_TEMPLATES)) {
     assert.equal(new Set(cols.map((c) => c.id)).size, cols.length);
     for (const c of cols) assert.match(c.id, /^[a-z0-9][a-z0-9-]*$/);
   }
+});
+
+test('createBoard carries workspaceId; capabilityRef round-trips through save/load', async () => {
+  const b = createBoard('skoolscout Capabilities', 'capabilities', 'skoolscout');
+  assert.equal(b.id, 'skoolscout-capabilities');
+  assert.equal(b.workspaceId, 'skoolscout');
+  assert.equal(createBoard('Solo', 'personal').workspaceId, undefined);
+  const card = addCard(b, { title: 'tour scheduling v1' });
+  patchCard(b, card.id, { capabilityRef: { capabilityId: 'school-feature-set', sliceId: 'sl1' } });
+  const dir = await mkdtemp(join(tmpdir(), 'work-'));
+  await saveBoard(dir, b);
+  const { boards } = await loadBoards(dir);
+  assert.deepEqual(boards[0].cards[0].capabilityRef, { capabilityId: 'school-feature-set', sliceId: 'sl1' });
 });
 
 test('createBoard slugs the name and copies template columns; bad names throw', () => {
@@ -80,7 +96,7 @@ test('stories: replaced wholesale via patchCard, cleared with null-ish, round-tr
 
 test('save/load round-trip; malformed files land in errors without sinking the rest', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'work-'));
-  const b = createBoard('Alpha', 'capability');
+  const b = createBoard('Alpha', 'capabilities');
   addCard(b, { title: 'card' });
   await saveBoard(dir, b);
   await writeFile(join(dir, 'broken.json'), '{not json');

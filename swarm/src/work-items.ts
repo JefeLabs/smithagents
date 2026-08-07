@@ -29,6 +29,8 @@ export interface WorkCard {
   delegation?: { agentId: string; taskId: string; state: 'working' | 'completed' | 'failed'; prUrl?: string };
   /** Acceptance-criteria checklist — authored by hand in v1, replaced wholesale on PATCH. Never a column. */
   stories?: Array<{ id: string; text: string; done: boolean; verifiedBy?: string }>;
+  /** Set when this card tracks a capability slice — its checklist becomes a toggle-only view of the capability's stories. */
+  capabilityRef?: { capabilityId: string; sliceId: string };
 }
 
 export interface WorkBoard {
@@ -37,11 +39,15 @@ export interface WorkBoard {
   columns: WorkColumn[];
   cards: WorkCard[];
   jira?: { connectorId: string; siteUrl: string; projectKey: string; jql?: string };
+  /** Present on a workspace's standing boards (the Capabilities/Delivery pair and on-demand maintenance/support); absent on personal boards. */
+  workspaceId?: string;
 }
 
 const BOARD_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
-export const BOARD_TEMPLATES: Record<'personal' | 'capability', WorkColumn[]> = {
+export type BoardTemplate = 'personal' | 'capabilities' | 'delivery' | 'maintenance' | 'support';
+
+export const BOARD_TEMPLATES: Record<BoardTemplate, WorkColumn[]> = {
   personal: [
     { id: 'backlog', name: 'Backlog' },
     { id: 'ready', name: 'Ready' },
@@ -49,20 +55,42 @@ export const BOARD_TEMPLATES: Record<'personal' | 'capability', WorkColumn[]> = 
     { id: 'in-review', name: 'In Review' },
     { id: 'done', name: 'Done' },
   ],
-  capability: [
+  capabilities: [
     { id: 'capability', name: 'Capability' },
+    { id: 'story-mapping', name: 'Story Mapping' },
     { id: 'spec', name: 'Spec' },
-    { id: 'implementation-prd', name: 'Implementation PRD' },
-    { id: 'user-stories', name: 'User Stories' },
+    { id: 'plan', name: 'Plan' },
+    { id: 'ready-for-delivery', name: 'Ready for Delivery' },
+  ],
+  delivery: [
+    { id: 'ready', name: 'Ready' },
     { id: 'in-progress', name: 'In Progress' },
-    { id: 'completed', name: 'Completed' },
+    { id: 'in-review', name: 'In Review' },
+    { id: 'verified', name: 'Verified' },
+    { id: 'done', name: 'Done' },
+  ],
+  maintenance: [
+    { id: 'reported', name: 'Reported' },
+    { id: 'triaged', name: 'Triaged' },
+    { id: 'in-progress', name: 'In Progress' },
+    { id: 'in-review', name: 'In Review' },
+    { id: 'done', name: 'Done' },
+  ],
+  support: [
+    { id: 'inbox', name: 'Inbox' },
+    { id: 'triaged', name: 'Triaged' },
+    { id: 'waiting-on-user', name: 'Waiting on User' },
+    { id: 'in-progress', name: 'In Progress' },
+    { id: 'resolved', name: 'Resolved' },
   ],
 };
 
-export function createBoard(name: string, template: 'personal' | 'capability'): WorkBoard {
+export function createBoard(name: string, template: BoardTemplate, workspaceId?: string): WorkBoard {
   const id = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   if (!BOARD_ID_RE.test(id)) throw new Error(`Board name "${name}" does not reduce to a usable id`);
-  return { id, name: name.trim(), columns: BOARD_TEMPLATES[template].map((c) => ({ ...c })), cards: [] };
+  const board: WorkBoard = { id, name: name.trim(), columns: BOARD_TEMPLATES[template].map((c) => ({ ...c })), cards: [] };
+  if (workspaceId) board.workspaceId = workspaceId;
+  return board;
 }
 
 function assertBoard(file: string, v: unknown): WorkBoard {
@@ -136,7 +164,7 @@ export function addCard(board: WorkBoard, input: { title: string; notes?: string
 export function patchCard(
   board: WorkBoard,
   cardId: string,
-  patch: Partial<Pick<WorkCard, 'title' | 'notes' | 'columnId' | 'order' | 'jira' | 'delegation' | 'stories'>>,
+  patch: Partial<Pick<WorkCard, 'title' | 'notes' | 'columnId' | 'order' | 'jira' | 'delegation' | 'stories' | 'capabilityRef'>>,
 ): WorkCard {
   const card = board.cards.find((c) => c.id === cardId);
   if (!card) throw new Error(`Unknown card: ${cardId}`);
@@ -149,6 +177,7 @@ export function patchCard(
   if (patch.jira !== undefined) card.jira = patch.jira ?? undefined;
   if (patch.delegation !== undefined) card.delegation = patch.delegation ?? undefined;
   if (patch.stories !== undefined) card.stories = patch.stories ?? undefined;
+  if (patch.capabilityRef !== undefined) card.capabilityRef = patch.capabilityRef ?? undefined;
   if (patch.columnId !== undefined || patch.order !== undefined) {
     const toColumn = patch.columnId ?? card.columnId;
     const siblings = board.cards.filter((c) => c.columnId === toColumn && c.id !== card.id).sort((a, b) => a.order - b.order);

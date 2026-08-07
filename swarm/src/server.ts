@@ -1938,14 +1938,15 @@ export class OrchestratorServer {
     this.app.get('/work/boards', async () => loadBoards(server.workDir()));
 
     this.app.post('/work/boards', async (req, reply) => {
-      const b = req.body as { name?: string; template?: 'personal' | 'capability' };
+      const b = req.body as { name?: string; template?: string };
       if (!b?.name?.trim()) return reply.status(400).send({ error: 'Missing required field: name' });
       const template = b.template ?? 'personal';
-      if (template !== 'personal' && template !== 'capability') {
+      const TEMPLATES = new Set(['personal', 'capabilities', 'delivery', 'maintenance', 'support']);
+      if (!TEMPLATES.has(template)) {
         return reply.status(400).send({ error: `Unknown template: ${String(b.template)}` });
       }
       try {
-        const board = createBoard(b.name, template);
+        const board = createBoard(b.name, template as any);
         const { boards } = await loadBoards(server.workDir());
         if (boards.some((x) => x.id === board.id)) return reply.status(409).send({ error: `Board "${board.id}" already exists` });
         await saveBoard(server.workDir(), board);
