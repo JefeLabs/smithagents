@@ -60,6 +60,12 @@
   width: 26px;
   height: 26px;
 }
+button.logo {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
 
 /* left rail: tool / activity icons */
 .tool {

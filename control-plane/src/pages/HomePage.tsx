@@ -196,6 +196,12 @@ export function HomePage() {
       background={<DotGridCanvas params={gridParams} />}
       leftRail={
         <ToolRail
+          activeRoute={mapOpen ? "/map" : boardOpen ? "/board" : "/"}
+          onHome={() => {
+            setMapOpen(false);
+            setBoardOpen(false);
+            setInspecting(null);
+          }}
           onNewWorkspace={() => setNewWorkspaceOpen(true)}
           onSessions={() => setSessionsOpen((open) => !open)}
           onBoard={() => setBoardOpen((v) => !v)}

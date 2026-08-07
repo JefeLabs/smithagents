@@ -43,4 +43,24 @@ describe("ToolRail", () => {
     await userEvent.click(screen.getByRole("button", { name: /settings/i }));
     expect(onSettings).toHaveBeenCalledTimes(1);
   });
+
+  it("board tool is highlighted only when activeRoute is /board", () => {
+    render(<ToolRail activeRoute="/board" />);
+    expect(screen.getByRole("button", { name: /^board$/i }).getAttribute("aria-current")).toBe("true");
+    expect(screen.getByRole("button", { name: /^map$/i }).getAttribute("aria-current")).toBeNull();
+    expect(screen.getByRole("button", { name: /new workspace/i }).getAttribute("aria-current")).toBeNull();
+  });
+
+  it("nothing is highlighted at the home route", () => {
+    render(<ToolRail activeRoute="/" />);
+    expect(screen.getByRole("button", { name: /^board$/i }).getAttribute("aria-current")).toBeNull();
+    expect(screen.getByRole("button", { name: /^map$/i }).getAttribute("aria-current")).toBeNull();
+  });
+
+  it("logo fires onHome", async () => {
+    const onHome = vi.fn();
+    render(<ToolRail onHome={onHome} />);
+    await userEvent.click(screen.getByRole("button", { name: /home/i }));
+    expect(onHome).toHaveBeenCalledTimes(1);
+  });
 });
