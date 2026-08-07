@@ -2378,6 +2378,17 @@ main.chat-active .composer-dock {
   border-color: #e0a15a;
   color: #e0a15a;
 }
+.board-card__stories {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--pill-br);
+  color: var(--text-2);
+}
+.board-card__stories.is-complete {
+  border-color: #5fd0b0;
+  color: #5fd0b0;
+}
 .board-card__delegation {
   display: inline-flex;
   align-items: center;

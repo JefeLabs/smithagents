@@ -105,6 +105,38 @@ describe("BoardStage", () => {
     expect(within(card).queryAllByRole("button")).toHaveLength(0);
   });
 
+  it("shows a done/total stories chip on the card face, and none when there are no stories", async () => {
+    stubFetch({
+      boards: {
+        boards: [
+          {
+            ...BOARD,
+            cards: [
+              ...BOARD.cards,
+              {
+                id: "c4",
+                title: "Ship boards",
+                columnId: "done",
+                order: 0,
+                stories: [
+                  { id: "s1", text: "one", done: true },
+                  { id: "s2", text: "two", done: true },
+                  { id: "s3", text: "three", done: false },
+                ],
+              },
+            ],
+          },
+        ],
+        errors: [],
+      },
+    });
+    render(<BoardStage open roster={ROSTER} lastBoardUpdate={null} onClose={vi.fn()} />);
+    await screen.findByText("Ship boards");
+    expect(screen.getByText("2/3")).toBeTruthy();
+    const noStoriesCard = screen.getByText("Write the spec").closest("button.board-card") as HTMLElement;
+    expect(within(noStoriesCard).queryByText(/^\d+\/\d+$/)).toBeNull();
+  });
+
   it("adds a card through the composer", async () => {
     const { calls } = stubFetch();
     render(<BoardStage open roster={ROSTER} lastBoardUpdate={null} onClose={vi.fn()} />);

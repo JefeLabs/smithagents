@@ -16,10 +16,17 @@ interface BoardCardProps {
 /** One kanban card face: title, Jira chip, delegation badge. Pure display — drag wiring wraps it. */
 export function BoardCard({ card, agent, onOpen, className }: BoardCardProps) {
   const d = card.delegation;
+  const total = card.stories?.length ?? 0;
+  const done = card.stories?.filter((s) => s.done).length ?? 0;
   return (
     <button type="button" className={`board-card${className ? ` ${className}` : ""}`} onClick={onOpen}>
       <span className="board-card__title">{card.title}</span>
       <span className="board-card__meta">
+        {total > 0 && (
+          <span className={`board-card__stories${done === total ? " is-complete" : ""}`} title="stories verified">
+            {done}/{total}
+          </span>
+        )}
         {card.jira && (
           <a
             className={`board-card__jira${card.jira.lastPushError ? " has-error" : ""}`}
