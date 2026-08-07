@@ -1,2 +1,5 @@
 allowBuilds:
   esbuild: true
+minimumReleaseAgeExclude:
+  - '@tanstack/react-router@1.170.23'
+  - '@tanstack/router-core@1.171.19'

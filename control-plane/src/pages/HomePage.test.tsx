@@ -1,3 +1,4 @@
+import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -6,7 +7,7 @@ import { useCliToolHealth } from "../hooks/useCliToolHealth";
 import { usePushToTalk } from "../hooks/usePushToTalk";
 import { useSpokenReplies } from "../hooks/useSpokenReplies";
 import { useTheme } from "../hooks/useTheme";
-import { HomePage } from "./HomePage";
+import { createAppRouter } from "../router";
 
 // HomePage owns no injectable props for its dependencies (unlike every other tested
 // component) — it calls these hooks directly, and useBrokerChat opens a real WebSocket
@@ -107,7 +108,8 @@ describe("HomePage — voice status refresh on Settings close", () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ agents: [], voice: { stt: false, tts: true } })));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<HomePage />);
+    const router = createAppRouter(createMemoryHistory({ initialEntries: ["/"] }));
+    render(<RouterProvider router={router} />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:7790/agents"));
     const callsAfterMount = fetchMock.mock.calls.length;
 

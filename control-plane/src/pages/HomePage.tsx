@@ -1,5 +1,7 @@
+import { Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { type AgentSeed, hostSeed, ringForIndex } from "../data/agents";
+import { type StageContextValue, StageProvider } from "../hooks/StageContext";
 import { type AudioFrame, useBrokerChat, type VoiceSettingsRecord } from "../hooks/useBrokerChat";
 import { useCliToolHealth } from "../hooks/useCliToolHealth";
 import { GRID_DEFAULTS, type GridParams } from "../hooks/useDotGrid";
@@ -10,16 +12,12 @@ import { useVoiceStatus } from "../hooks/useVoiceStatus";
 import { ConfirmSheet } from "../molecules/ConfirmSheet";
 import { AddAgentModal } from "../organisms/AddAgentModal";
 import { AgentRoster } from "../organisms/AgentRoster";
-import { BoardStage } from "../organisms/BoardStage";
 import { DotGridCanvas } from "../organisms/DotGridCanvas";
 import { DotGridTuner } from "../organisms/DotGridTuner";
-import { MapStage } from "../organisms/MapStage";
 import { NewWorkspaceModal } from "../organisms/NewWorkspaceModal";
 import { SessionsPanel } from "../organisms/SessionsPanel";
 import { SettingsPanel } from "../organisms/SettingsPanel";
 import { ToolRail } from "../organisms/ToolRail";
-import { VoiceStage } from "../organisms/VoiceStage";
-import { WorkStage } from "../organisms/WorkStage";
 import { WorkspaceManagerModal } from "../organisms/WorkspaceManagerModal";
 import { hasNativeFolderPicker, pickFolder } from "../services/nativeDialog";
 import { ControlPlaneLayout } from "../templates/ControlPlaneLayout";
@@ -30,11 +28,7 @@ export function HomePage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [tunerOpen, setTunerOpen] = useState(false);
   const [gridParams, setGridParams] = useState<GridParams>(GRID_DEFAULTS);
-  /** A busy agent/squad being inspected — swaps the stage to their work view. */
-  const [inspecting, setInspecting] = useState<AgentSeed | null>(null);
   const [sessionsOpen, setSessionsOpen] = useState(false);
-  const [boardOpen, setBoardOpen] = useState(false);
-  const [mapOpen, setMapOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [workspacesOpen, setWorkspacesOpen] = useState(false);
   const [newWorkspaceOpen, setNewWorkspaceOpen] = useState(false);
@@ -155,6 +149,31 @@ export function HomePage() {
     })),
   ];
 
+  const navigate = useNavigate();
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  // Clicking the active tool returns home — preserves the old toggle feel.
+  const toggleTo = (route: "/board" | "/map") => void navigate({ to: pathname === route ? "/" : route });
+
+  const stageValue: StageContextValue = {
+    messages,
+    micLive,
+    onMicToggle: () => void toggleMic(),
+    brokerConnected: connected,
+    send,
+    soundOn,
+    onSoundToggle: toggleSound,
+    sttEnabled: voice.stt,
+    onVoiceBlocked,
+    showMicHero: !hideMic,
+    voiceNotice,
+    roster,
+    lastBoardUpdate,
+    lastCapabilityUpdate,
+    agents,
+    activity,
+    workAction,
+  };
+
   const callOn = (name: string) => send(`Go ahead, ${name} — you have the floor.`);
 
   // A rejected fetch (broker down) and a resolved-but-{error} response (unknown agent,
@@ -192,171 +211,141 @@ export function HomePage() {
   }, []);
 
   return (
-    <ControlPlaneLayout
-      background={<DotGridCanvas params={gridParams} />}
-      leftRail={
-        <ToolRail
-          activeRoute={mapOpen ? "/map" : boardOpen ? "/board" : "/"}
-          onHome={() => {
-            setMapOpen(false);
-            setBoardOpen(false);
-            setInspecting(null);
-          }}
-          onNewWorkspace={() => setNewWorkspaceOpen(true)}
-          onSessions={() => setSessionsOpen((open) => !open)}
-          onBoard={() => setBoardOpen((v) => !v)}
-          onMap={() => setMapOpen((v) => !v)}
-          onSettings={() => setSettingsOpen(true)}
-        />
-      }
-      rightRail={
-        <AgentRoster
-          onEdit={(entry) => {
-            setEditingId(entry.id);
-            setModalOpen(true);
-          }}
-          agents={agents}
-          onAdd={() => {
-            setEditingId(null); // the + button always creates
-            setModalOpen(true);
-          }}
-          onCall={callOn}
-          onCompose={compose}
-          onInspect={setInspecting}
-          onRemove={requestRemoval}
-        />
-      }
-      stage={
-        mapOpen ? (
-          <MapStage lastCapabilityUpdate={lastCapabilityUpdate} />
-        ) : boardOpen ? (
-          <BoardStage roster={roster} lastBoardUpdate={lastBoardUpdate} />
-        ) : inspecting ? (
-          <WorkStage
-            name={inspecting.name}
-            ring={inspecting.ring}
-            onBack={() => setInspecting(null)}
-            fetchActivity={activity}
-            onWorkAction={workAction}
+    <StageProvider value={stageValue}>
+      <ControlPlaneLayout
+        background={<DotGridCanvas params={gridParams} />}
+        leftRail={
+          <ToolRail
+            activeRoute={pathname}
+            onHome={() => void navigate({ to: "/" })}
+            onNewWorkspace={() => setNewWorkspaceOpen(true)}
+            onSessions={() => setSessionsOpen((open) => !open)}
+            onBoard={() => toggleTo("/board")}
+            onMap={() => toggleTo("/map")}
+            onSettings={() => setSettingsOpen(true)}
           />
-        ) : (
-          <VoiceStage
-            micLive={micLive}
-            onMicToggle={() => void toggleMic()}
-            messages={messages}
-            brokerConnected={connected}
-            onSend={send}
-            soundOn={soundOn}
-            onSoundToggle={toggleSound}
-            sttEnabled={voice.stt}
-            onVoiceBlocked={onVoiceBlocked}
-            showMicHero={!hideMic}
-            voiceNotice={voiceNotice}
-          />
-        )
-      }
-      overlays={
-        <>
-          {audioBlocked && soundOn && (
-            <div className="audio-blocked-hint">audio is blocked — click anywhere to enable sound</div>
-          )}
-          <ConfirmSheet
-            open={removing !== null}
-            title={`Remove ${removing?.entry.name}?`}
-            body={
-              removing?.outcome === "delete"
-                ? `${removing.entry.name} has never worked or spoken — this removes them permanently.`
-                : removing?.outcome === "archive"
-                  ? `${removing.entry.name} has history (${removing.reasons.join(", ")}) — they will be archived.`
-                  : `Could not check what happens to ${removing?.entry.name} yet.`
-            }
-            confirmLabel={
-              removing?.outcome === "delete" ? "delete" : removing?.outcome === "archive" ? "archive" : undefined
-            }
-            error={removing?.error}
-            busy={removing?.busy}
-            onConfirm={() => void confirmRemoval()}
-            onCancel={() => setRemoving(null)}
-          />
-          <SettingsPanel
-            open={settingsOpen}
-            onClose={() => {
-              setSettingsOpen(false);
-              void refreshEngineWarnings();
-              refreshVoiceStatus();
+        }
+        rightRail={
+          <AgentRoster
+            onEdit={(entry) => {
+              setEditingId(entry.id);
+              setModalOpen(true);
             }}
-            onReset={resetSetup}
-            theme={theme}
-            onThemeChange={setTheme}
-            listConnectorVendors={listConnectorVendors}
-            listMyConnectors={listMyConnectors}
-            getVoiceSettings={getVoiceSettings}
-            saveVoiceSettings={saveVoiceSettings}
-            addConnector={addConnector}
-            updateConnector={updateConnector}
-            deleteConnector={deleteConnector}
-            verifyConnector={verifyConnector}
-            listCliTools={listCliTools}
-            refreshCliTools={refreshCliTools}
-            setCliToolEnabled={setCliToolEnabled}
-            listApiKeys={listApiKeys}
-            saveApiKey={saveApiKey}
-            verifyApiKey={verifyApiKey}
-            deleteApiKey={deleteApiKey}
-            listWorkspaceRecords={listWorkspaceRecords}
-            getWorkspaceChannels={getWorkspaceChannels}
-            saveWorkspaceChannels={saveWorkspaceChannels}
-            verifyWorkspaceDiscord={verifyWorkspaceDiscord}
-          />
-          <SessionsPanel
-            open={sessionsOpen}
-            sessions={sessions}
-            workspaces={workspaces}
-            onClose={() => setSessionsOpen(false)}
-            onActivate={activateSession}
-            onCreate={createSession}
-            onManage={() => setWorkspacesOpen(true)}
-          />
-          <WorkspaceManagerModal
-            open={workspacesOpen}
-            onClose={() => setWorkspacesOpen(false)}
-            list={listWorkspaceRecords}
-            save={saveWorkspace}
-            remove={removeWorkspace}
-            verifyAtlassian={verifyWorkspaceAtlassian}
-            verifyRepoGithub={verifyRepoGithub}
-            listMyConnectors={listMyConnectors}
-          />
-          <NewWorkspaceModal
-            open={newWorkspaceOpen}
-            onClose={() => setNewWorkspaceOpen(false)}
-            save={saveWorkspace}
-            list={listWorkspaceRecords}
-            listMyConnectors={listMyConnectors}
-            activeWorkspace={session?.workspace}
-            pickFolder={hasNativeFolderPicker() ? pickFolder : undefined}
-            onCreated={(name) => createSession(name)}
-          />
-          <DotGridTuner
-            open={tunerOpen}
-            params={gridParams}
-            onChange={(key, value) => setGridParams((p) => ({ ...p, [key]: value }))}
-            onReset={() => setGridParams(GRID_DEFAULTS)}
-          />
-          <AddAgentModal
-            open={modalOpen}
-            editingId={editingId ?? undefined}
-            onClose={() => {
-              setModalOpen(false);
-              setEditingId(null);
-              void refreshEngineWarnings();
+            agents={agents}
+            onAdd={() => {
+              setEditingId(null); // the + button always creates
+              setModalOpen(true);
             }}
-            onCreated={(n) =>
-              editingId ? undefined : send(`${n} just joined the crew — welcome them in one short line.`)
-            }
+            onCall={callOn}
+            onCompose={compose}
+            onInspect={(entry) => void navigate({ to: "/work/$agentId", params: { agentId: entry.id } })}
+            onRemove={requestRemoval}
           />
-        </>
-      }
-    />
+        }
+        stage={<Outlet />}
+        overlays={
+          <>
+            {audioBlocked && soundOn && (
+              <div className="audio-blocked-hint">audio is blocked — click anywhere to enable sound</div>
+            )}
+            <ConfirmSheet
+              open={removing !== null}
+              title={`Remove ${removing?.entry.name}?`}
+              body={
+                removing?.outcome === "delete"
+                  ? `${removing.entry.name} has never worked or spoken — this removes them permanently.`
+                  : removing?.outcome === "archive"
+                    ? `${removing.entry.name} has history (${removing.reasons.join(", ")}) — they will be archived.`
+                    : `Could not check what happens to ${removing?.entry.name} yet.`
+              }
+              confirmLabel={
+                removing?.outcome === "delete" ? "delete" : removing?.outcome === "archive" ? "archive" : undefined
+              }
+              error={removing?.error}
+              busy={removing?.busy}
+              onConfirm={() => void confirmRemoval()}
+              onCancel={() => setRemoving(null)}
+            />
+            <SettingsPanel
+              open={settingsOpen}
+              onClose={() => {
+                setSettingsOpen(false);
+                void refreshEngineWarnings();
+                refreshVoiceStatus();
+              }}
+              onReset={resetSetup}
+              theme={theme}
+              onThemeChange={setTheme}
+              listConnectorVendors={listConnectorVendors}
+              listMyConnectors={listMyConnectors}
+              getVoiceSettings={getVoiceSettings}
+              saveVoiceSettings={saveVoiceSettings}
+              addConnector={addConnector}
+              updateConnector={updateConnector}
+              deleteConnector={deleteConnector}
+              verifyConnector={verifyConnector}
+              listCliTools={listCliTools}
+              refreshCliTools={refreshCliTools}
+              setCliToolEnabled={setCliToolEnabled}
+              listApiKeys={listApiKeys}
+              saveApiKey={saveApiKey}
+              verifyApiKey={verifyApiKey}
+              deleteApiKey={deleteApiKey}
+              listWorkspaceRecords={listWorkspaceRecords}
+              getWorkspaceChannels={getWorkspaceChannels}
+              saveWorkspaceChannels={saveWorkspaceChannels}
+              verifyWorkspaceDiscord={verifyWorkspaceDiscord}
+            />
+            <SessionsPanel
+              open={sessionsOpen}
+              sessions={sessions}
+              workspaces={workspaces}
+              onClose={() => setSessionsOpen(false)}
+              onActivate={activateSession}
+              onCreate={createSession}
+              onManage={() => setWorkspacesOpen(true)}
+            />
+            <WorkspaceManagerModal
+              open={workspacesOpen}
+              onClose={() => setWorkspacesOpen(false)}
+              list={listWorkspaceRecords}
+              save={saveWorkspace}
+              remove={removeWorkspace}
+              verifyAtlassian={verifyWorkspaceAtlassian}
+              verifyRepoGithub={verifyRepoGithub}
+              listMyConnectors={listMyConnectors}
+            />
+            <NewWorkspaceModal
+              open={newWorkspaceOpen}
+              onClose={() => setNewWorkspaceOpen(false)}
+              save={saveWorkspace}
+              list={listWorkspaceRecords}
+              listMyConnectors={listMyConnectors}
+              activeWorkspace={session?.workspace}
+              pickFolder={hasNativeFolderPicker() ? pickFolder : undefined}
+              onCreated={(name) => createSession(name)}
+            />
+            <DotGridTuner
+              open={tunerOpen}
+              params={gridParams}
+              onChange={(key, value) => setGridParams((p) => ({ ...p, [key]: value }))}
+              onReset={() => setGridParams(GRID_DEFAULTS)}
+            />
+            <AddAgentModal
+              open={modalOpen}
+              editingId={editingId ?? undefined}
+              onClose={() => {
+                setModalOpen(false);
+                setEditingId(null);
+                void refreshEngineWarnings();
+              }}
+              onCreated={(n) =>
+                editingId ? undefined : send(`${n} just joined the crew — welcome them in one short line.`)
+              }
+            />
+          </>
+        }
+      />
+    </StageProvider>
   );
 }
