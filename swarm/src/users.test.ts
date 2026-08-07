@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, readFile, open } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -6,6 +6,15 @@ import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { loadUsersFromDir, saveUser, resolveCurrentUser, sweepEncryptUsers } from './users.js';
 import { ENC_PREFIX } from './secretbox.js';
+
+// A fixed key for the whole file: saveUser/loadUsersFromDir now call
+// resolveMasterKey() unconditionally, so every test here — not just the
+// encryption-specific ones — would otherwise read-or-create the real
+// ~/.smith/master.key. This machine runs multiple git worktrees sharing one
+// HOME, so concurrent `npm test` runs would race on that real file.
+const MASTER_HEX = randomBytes(32).toString('hex');
+before(() => { process.env.SMITH_MASTER_KEY = MASTER_HEX; });
+after(() => { delete process.env.SMITH_MASTER_KEY; });
 
 test('loadUsersFromDir: a legacy user file (atlassian + github fields, no connectors) is upgraded on load into two ConnectorInstance entries', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'users-legacy-'));
@@ -113,10 +122,7 @@ test('resolveCurrentUser: unchanged behavior — default-flagged user, else sole
   assert.equal(resolveCurrentUser([]), null);
 });
 
-const MASTER_HEX = randomBytes(32).toString('hex');
-
 test('saveUser encrypts secret fields on disk; loadUsersFromDir decrypts them in memory', async () => {
-  process.env.SMITH_MASTER_KEY = MASTER_HEX;
   const dir = await mkdtemp(join(tmpdir(), 'users-enc-'));
   await saveUser(dir, {
     id: 'me', name: 'You', default: true,
@@ -126,11 +132,9 @@ test('saveUser encrypts secret fields on disk; loadUsersFromDir decrypts them in
   assert.ok(String(onDisk.connectors[0].fields.token).startsWith(ENC_PREFIX), 'secret must be encrypted at rest');
   const [user] = await loadUsersFromDir(dir);
   assert.equal(user!.connectors?.[0]!.fields.token, 'ghp_raw'); // decrypted in memory
-  delete process.env.SMITH_MASTER_KEY;
 });
 
 test('non-secret fields stay plaintext on disk (files remain inspectable)', async () => {
-  process.env.SMITH_MASTER_KEY = MASTER_HEX;
   const dir = await mkdtemp(join(tmpdir(), 'users-enc-'));
   await saveUser(dir, {
     id: 'me', name: 'You', default: true,
@@ -139,11 +143,9 @@ test('non-secret fields stay plaintext on disk (files remain inspectable)', asyn
   const onDisk = JSON.parse(await readFile(join(dir, 'me.json'), 'utf8'));
   assert.equal(onDisk.connectors[0].fields.email, 'e@a.com');
   assert.ok(String(onDisk.connectors[0].fields.apiToken).startsWith(ENC_PREFIX));
-  delete process.env.SMITH_MASTER_KEY;
 });
 
 test('sweepEncryptUsers: rewrites a plaintext legacy file once, then is a no-op', async () => {
-  process.env.SMITH_MASTER_KEY = MASTER_HEX;
   const dir = await mkdtemp(join(tmpdir(), 'users-sweep-'));
   const fh = await open(join(dir, 'me.json'), 'w', 0o600); // hand-written plaintext file, as upgrades find it
   await fh.writeFile(JSON.stringify({
@@ -157,11 +159,9 @@ test('sweepEncryptUsers: rewrites a plaintext legacy file once, then is a no-op'
   assert.equal(await sweepEncryptUsers(dir), 0); // already encrypted → untouched
   const [user] = await loadUsersFromDir(dir);
   assert.equal(user!.connectors?.[0]!.fields.token, 'ghp_plain');
-  delete process.env.SMITH_MASTER_KEY;
 });
 
 test('a value that fails to decrypt is passed through as-is (connected-but-failing-verify, spec §3), not a crash', async () => {
-  process.env.SMITH_MASTER_KEY = MASTER_HEX;
   const dir = await mkdtemp(join(tmpdir(), 'users-badkey-'));
   await saveUser(dir, {
     id: 'me', name: 'You', default: true,
@@ -170,5 +170,5 @@ test('a value that fails to decrypt is passed through as-is (connected-but-faili
   process.env.SMITH_MASTER_KEY = randomBytes(32).toString('hex'); // key rotated out from under the file
   const [user] = await loadUsersFromDir(dir);
   assert.ok(String(user!.connectors?.[0]!.fields.token).startsWith(ENC_PREFIX)); // ciphertext passthrough
-  delete process.env.SMITH_MASTER_KEY;
+  process.env.SMITH_MASTER_KEY = MASTER_HEX; // restore the file-wide key for any test that runs after this one
 });
