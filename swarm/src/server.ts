@@ -93,6 +93,13 @@ import {
   sweepCliTools,
   type SweepDeps,
 } from './cli-tools.js';
+import {
+  emptyContainersFile,
+  loadContainersFile,
+  probeDocker,
+  saveContainersFile,
+  type ContainersFile,
+} from './containers.js';
 import { addCard, createBoard, deleteBoardFile, loadBoards, patchCard, removeCard, saveBoard, type WorkBoard } from './work-items.js';
 import { importIssues, searchIssues, transitionIssue } from './jira-sync.js';
 import {
@@ -1716,6 +1723,24 @@ export class OrchestratorServer {
       await saveCliToolsFile(cliToolsPath(), file);
       return { tools: buildCliToolListings(ENGINES, file) };
     });
+
+    // ── Containers (Settings → Workspace → Containers; spec 2026-08-07) ────
+    const containersPath = () => resolve(process.cwd(), '.smith/containers.json');
+
+    this.app.get('/containers', async () => await loadContainersFile(containersPath()));
+
+    this.app.put('/containers', async (req, reply) => {
+      const b = req.body as { docker?: { enabled?: boolean } };
+      if (typeof b?.docker?.enabled !== 'boolean') {
+        return reply.status(400).send({ error: 'body must be { docker: { enabled: boolean } }' });
+      }
+      const file = await loadContainersFile(containersPath());
+      file.docker.enabled = b.docker.enabled;
+      await saveContainersFile(containersPath(), file);
+      return file;
+    });
+
+    this.app.post('/containers/verify', async () => await probeDocker());
 
     // ── API key registry (Settings → API Keys; spec 2026-08-06) ────────────
     const apiKeysPath = () => resolve(process.cwd(), '.smith/api-keys.json');
