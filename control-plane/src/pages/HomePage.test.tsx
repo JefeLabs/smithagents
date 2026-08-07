@@ -42,6 +42,7 @@ function mockBrokerChat() {
     connected: true,
     audioMode: false,
     session: null,
+    sessionKnown: true, // preserves this suite's intent: session:null is a confirmed zero-session state, not "unknown yet"
     sessions: [],
     workspaces: [],
     send: vi.fn(),

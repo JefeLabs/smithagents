@@ -1,7 +1,36 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { type ExecutionMode, fetchExecutionModes, postSession, type SessionFrame } from "./useBrokerChat";
+import { act, renderHook } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  type ExecutionMode,
+  fetchExecutionModes,
+  postSession,
+  type SessionFrame,
+  useBrokerChat,
+} from "./useBrokerChat";
 
 afterEach(() => vi.unstubAllGlobals());
+
+/** Minimal WebSocket stand-in: the hook only reads/assigns onopen/onmessage/onclose/onerror and calls close(). */
+class MockWebSocket {
+  static instances: MockWebSocket[] = [];
+  onopen: (() => void) | null = null;
+  onmessage: ((e: { data: string }) => void) | null = null;
+  onclose: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  readyState = 0;
+  constructor(public url: string) {
+    MockWebSocket.instances.push(this);
+  }
+  close() {
+    this.readyState = 3;
+    this.onclose?.();
+  }
+  send(_data: unknown) {}
+}
+
+function sessionFrame(session: SessionFrame["session"]): SessionFrame {
+  return { type: "session", session, sessions: [], transcript: [], workspaces: [] };
+}
 
 describe("postSession", () => {
   it("POSTs {workspace, runtime, prompt} and resolves {} on success", async () => {
@@ -99,5 +128,60 @@ describe("SessionFrame (lockstep pin)", () => {
       workspaces: ["acme"],
     };
     expect(frame.session?.runtime).toBe("local-docker");
+  });
+});
+
+describe("useBrokerChat — sessionKnown", () => {
+  beforeEach(() => {
+    MockWebSocket.instances = [];
+    vi.stubGlobal("WebSocket", MockWebSocket as unknown as typeof WebSocket);
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("stays false while connected but before any session frame — the flash window this fix closes", () => {
+    const { result, unmount } = renderHook(() => useBrokerChat({ base: "127.0.0.1:7790" }));
+    const socket = MockWebSocket.instances[0];
+    expect(socket).toBeDefined();
+    expect(result.current.sessionKnown).toBe(false);
+
+    act(() => socket.onopen?.());
+    expect(result.current.connected).toBe(true);
+    expect(result.current.sessionKnown).toBe(false); // connected, but the broker hasn't spoken yet
+
+    unmount();
+  });
+
+  it("a null session frame still marks it KNOWN — confirmed zero, not unknown", () => {
+    const { result, unmount } = renderHook(() => useBrokerChat({ base: "127.0.0.1:7790" }));
+    const socket = MockWebSocket.instances[0];
+
+    act(() => socket.onmessage?.({ data: JSON.stringify(sessionFrame(null)) }));
+
+    expect(result.current.sessionKnown).toBe(true);
+    expect(result.current.session).toBeNull();
+
+    unmount();
+  });
+
+  it("a populated session frame marks it known, and closing the socket does not un-know it", () => {
+    const { result, unmount } = renderHook(() => useBrokerChat({ base: "127.0.0.1:7790" }));
+    const socket = MockWebSocket.instances[0];
+
+    act(() =>
+      socket.onmessage?.({
+        data: JSON.stringify(
+          sessionFrame({ id: "s1", title: "Fix the build", workspace: "acme", runtime: "local-in-process" }),
+        ),
+      }),
+    );
+    expect(result.current.sessionKnown).toBe(true);
+    expect(result.current.session?.id).toBe("s1");
+
+    act(() => socket.close());
+    expect(result.current.connected).toBe(false);
+    expect(result.current.sessionKnown).toBe(true); // same lifecycle as `session`: not nulled on disconnect
+
+    unmount();
   });
 });

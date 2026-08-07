@@ -73,6 +73,7 @@ export function HomePage() {
     connected,
     audioMode,
     session,
+    sessionKnown,
     sessions,
     workspaces,
     lastBoardUpdate,
@@ -150,8 +151,12 @@ export function HomePage() {
     voiceNoticeTimer.current = setTimeout(() => setVoiceNotice(null), 6000);
   };
 
-  // Zero-session boot forces the composer open even without an explicit entry-point click.
-  const composerVisible = composer !== null || (connected && session === null);
+  // Zero-session boot forces the composer open even without an explicit entry-point click. Gated
+  // on `sessionKnown`, not just `session === null` — on every fresh connect there's a beat between
+  // `connected` flipping true and the first 'session' frame landing, and `session` stays null for
+  // that whole beat too. Without the gate the composer would flash open then vanish on every load,
+  // even when the broker already has an active session.
+  const composerVisible = composer !== null || (connected && sessionKnown && session === null);
   // Refetch every time the composer becomes visible (not just on mount) — a mode that vanished
   // or a workspace that changed while it was closed must be current the moment it reopens.
   useEffect(() => {
@@ -271,7 +276,7 @@ export function HomePage() {
             sessions={sessions}
             modes={modes}
             lockedWorkspace={composer?.locked}
-            forced={session === null}
+            forced={sessionKnown && session === null}
             onSend={async (ws, mode, prompt) => {
               const r = await createSession(ws, mode, prompt);
               if (r.error) {

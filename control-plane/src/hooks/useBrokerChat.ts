@@ -230,6 +230,11 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
     workspace: string;
     runtime: ExecutionMode;
   } | null>(null);
+  // False until the first 'session' frame is processed — distinguishes "haven't heard from the
+  // broker yet" (session === null but unknown) from "broker confirmed zero sessions" (session ===
+  // null and known). Never reset on close/reconnect, mirroring `session` itself: once known, stays
+  // known for the life of the hook.
+  const [sessionKnown, setSessionKnown] = useState(false);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [workspaces, setWorkspaces] = useState<string[]>([]);
   const [lastBoardUpdate, setLastBoardUpdate] = useState<{ boardId: string; seq: number } | null>(null);
@@ -262,6 +267,7 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
           | SessionFrame;
         if (frame.type === "session") {
           setSession(frame.session);
+          setSessionKnown(true); // a null `frame.session` still means KNOWN zero, not "unknown"
           setSessions(frame.sessions);
           setWorkspaces(frame.workspaces);
           nextId.current = 0;
@@ -694,6 +700,7 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
     connected,
     audioMode,
     session,
+    sessionKnown,
     sessions,
     workspaces,
     lastBoardUpdate,
