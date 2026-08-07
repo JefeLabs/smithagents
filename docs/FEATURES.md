@@ -68,3 +68,5 @@ Product concepts and history live in [PRD.md](../PRD.md).
 | Tiered settings reset | Reset runtime / worktrees / agents in tiers from the settings panel | [→ test](./MANUAL-TESTING.md#settings-reset) |
 | Theme switcher | Light/dark theme | [→ test](./MANUAL-TESTING.md#theme) |
 | Web/desktop/iOS one codebase | Tauri desktop app; the same UI runs in a plain browser (vite :1420); iOS target builds | [→ test](./MANUAL-TESTING.md#platforms) |
+| Settings: Agents section + API Keys | Grouped nav (App/Agents/Workspace) with CLI Tools and API Keys under Agents; provider cards (Anthropic, OpenAI, Google) with live verify that blocks only on confirmed negatives (a flaky network never marks a key bad); avatar generation runs agy-first with a verified Google key as a seconds-fast accelerator; the raw key is never exposed on 7790 | [→ test](./MANUAL-TESTING.md#api-keys--avatar-engines-2026-08-06) |
+

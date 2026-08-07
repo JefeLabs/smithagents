@@ -712,7 +712,7 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
                   </div>
                   <AvatarGeneratorBlock
                     base={BASE}
-                    enabled={Boolean(catalog?.avatarGen)}
+                    engine={catalog?.avatarGen ?? null}
                     name={name}
                     gender={gender}
                     role={role}
