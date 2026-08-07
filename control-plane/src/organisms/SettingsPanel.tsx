@@ -1,4 +1,13 @@
-import { ArrowLeft, Blocks, KeyRound, MessageSquare, Palette, Settings as SettingsIcon, Terminal } from "lucide-react";
+import {
+  ArrowLeft,
+  Blocks,
+  KeyRound,
+  MessageSquare,
+  Mic,
+  Palette,
+  Settings as SettingsIcon,
+  Terminal,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import type {
   ApiKeyListing,
@@ -6,6 +15,7 @@ import type {
   CliToolListing,
   ConnectorInstanceRecord,
   ConnectorVendorMeta,
+  VoiceSettingsRecord,
   WorkspaceRecord,
 } from "../hooks/useBrokerChat";
 import type { ThemeId } from "../hooks/useTheme";
@@ -15,8 +25,9 @@ import { CliToolsGroup } from "./settings/CliToolsGroup";
 import { GeneralGroup, type ResetScope } from "./settings/GeneralGroup";
 import { IntegrationsGroup } from "./settings/IntegrationsGroup";
 import { ThemesGroup } from "./settings/ThemesGroup";
+import { VoiceGroup } from "./settings/VoiceGroup";
 
-export type SettingsGroupId = "general" | "integrations" | "cli-tools" | "api-keys" | "channels" | "themes";
+export type SettingsGroupId = "general" | "integrations" | "voice" | "cli-tools" | "api-keys" | "channels" | "themes";
 
 interface SettingsPanelProps {
   open: boolean;
@@ -27,6 +38,12 @@ interface SettingsPanelProps {
   initialGroup?: SettingsGroupId;
   listConnectorVendors?: () => Promise<ConnectorVendorMeta[]>;
   listMyConnectors?: () => Promise<ConnectorInstanceRecord[]>;
+  getVoiceSettings?: () => Promise<VoiceSettingsRecord>;
+  saveVoiceSettings?: (body: {
+    stt: { instanceId: string } | null;
+    tts: { instanceId: string } | null;
+    hideInactive: boolean;
+  }) => Promise<VoiceSettingsRecord & { error?: string }>;
   addConnector?: (body: {
     vendorId: string;
     label: string;
@@ -79,6 +96,7 @@ const SECTIONS: Array<{
     heading: "Workspace",
     groups: [
       { id: "integrations", label: "Integrations", icon: Blocks },
+      { id: "voice", label: "Voice", icon: Mic },
       { id: "channels", label: "Channels", icon: MessageSquare },
     ],
   },
@@ -94,6 +112,8 @@ export function SettingsPanel({
   initialGroup = "general",
   listConnectorVendors,
   listMyConnectors,
+  getVoiceSettings,
+  saveVoiceSettings,
   addConnector,
   updateConnector,
   deleteConnector,
@@ -166,6 +186,17 @@ export function SettingsPanel({
             />
           ) : (
             <p className="wizard__hint">Integrations — not wired up yet.</p>
+          ))}
+        {active === "voice" &&
+          (getVoiceSettings && saveVoiceSettings && listConnectorVendors && listMyConnectors ? (
+            <VoiceGroup
+              getVoice={getVoiceSettings}
+              saveVoice={saveVoiceSettings}
+              listVendors={listConnectorVendors}
+              listConnectors={listMyConnectors}
+            />
+          ) : (
+            <p className="wizard__hint">Voice — not wired up yet.</p>
           ))}
         {active === "cli-tools" &&
           (listCliTools && refreshCliTools && setCliToolEnabled ? (

@@ -77,6 +77,8 @@ export function HomePage() {
     verifyRepoGithub,
     listConnectorVendors,
     listMyConnectors,
+    getVoiceSettings,
+    saveVoiceSettings,
     addConnector,
     updateConnector,
     deleteConnector,
@@ -238,6 +240,8 @@ export function HomePage() {
             onThemeChange={setTheme}
             listConnectorVendors={listConnectorVendors}
             listMyConnectors={listMyConnectors}
+            getVoiceSettings={getVoiceSettings}
+            saveVoiceSettings={saveVoiceSettings}
             addConnector={addConnector}
             updateConnector={updateConnector}
             deleteConnector={deleteConnector}
