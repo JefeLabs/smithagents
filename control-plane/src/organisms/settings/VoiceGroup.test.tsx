@@ -62,4 +62,28 @@ describe("VoiceGroup", () => {
     fireEvent.click(screen.getByLabelText("Hide inactive voice features"));
     await waitFor(() => expect(props.saveVoice).toHaveBeenCalledWith({ stt: null, tts: null, hideInactive: true }));
   });
+
+  it("keeps the prior selection and surfaces the error when save resolves with { error }", async () => {
+    const props = make({
+      saveVoice: vi.fn(async () => ({ stt: null, tts: null, hideInactive: false, error: "save rejected by server" })),
+    });
+    render(<VoiceGroup {...props} />);
+    await screen.findByLabelText("Speech-to-text");
+    fireEvent.change(screen.getByLabelText("Speech-to-text"), { target: { value: "dg1" } });
+    await screen.findByText("save rejected by server");
+    expect((screen.getByLabelText("Speech-to-text") as HTMLSelectElement).value).toBe("");
+  });
+
+  it("keeps the prior selection and surfaces the error when save rejects", async () => {
+    const props = make({
+      saveVoice: vi.fn(async () => {
+        throw new Error("network down");
+      }),
+    });
+    render(<VoiceGroup {...props} />);
+    await screen.findByLabelText("Speech-to-text");
+    fireEvent.change(screen.getByLabelText("Speech-to-text"), { target: { value: "dg1" } });
+    await screen.findByText(/network down/);
+    expect((screen.getByLabelText("Speech-to-text") as HTMLSelectElement).value).toBe("");
+  });
 });

@@ -35,10 +35,25 @@ export function VoiceGroup({ getVoice, saveVoice, listVendors, listConnectors }:
     });
   }, []);
 
+  // Commits `next` to local state only once the save actually succeeds — same convention as
+  // IntegrationsGroup (merges only `if (!result.error && result.id)`) and ChannelsGroup (updates
+  // form state only past its error-return). A failed save — whether an `{ error }` response or a
+  // rejected promise from the underlying fetch — leaves `voice` (and every control reading it)
+  // exactly as it was, with the failure surfaced via `error` instead.
   const save = async (next: VoiceSettingsRecord) => {
+    let res: VoiceSettingsRecord & { error?: string };
+    try {
+      res = await saveVoice({ stt: next.stt, tts: next.tts, hideInactive: next.hideInactive });
+    } catch (err) {
+      setError(String(err));
+      return;
+    }
+    if (res.error) {
+      setError(res.error);
+      return;
+    }
     setVoice(next);
-    const res = await saveVoice({ stt: next.stt, tts: next.tts, hideInactive: next.hideInactive });
-    setError(res.error ?? null);
+    setError(null);
   };
 
   const optionsFor = (slot: "stt" | "tts") => {
@@ -91,6 +106,12 @@ export function VoiceGroup({ getVoice, saveVoice, listVendors, listConnectors }:
             </label>
           );
         })}
+      </div>
+      {/* Deliberately outside .account-panel__form: that wrapper's `label` rule (display:flex;
+          flex-direction:column) outranks .settings-option's own row layout by specificity
+          (0,1,1 vs 0,1,0), stacking the checkbox above its text instead of beside it. Mirrors
+          GeneralGroup's own .settings-panel__options wrapper, which has no such competing rule. */}
+      <div className="settings-panel__options">
         <label className="settings-option">
           <input
             type="checkbox"
