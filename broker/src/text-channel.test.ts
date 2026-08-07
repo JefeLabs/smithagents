@@ -838,6 +838,37 @@ test('POST /work/delegate maps handler result: taskId -> 200, error -> 409', asy
   }
 });
 
+test('POST /work/delegate blocks a disallowed browser Origin, allows the control-plane dev origin', async () => {
+  const calls: unknown[] = [];
+  const channel = channelWith({ workBoards: {
+    proxy: async () => ({ status: 200, payload: {} }),
+    delegate: async (b) => { calls.push(b); return { taskId: 'task-1' }; },
+  }});
+  const port = await channel.start(0);
+  try {
+    const blocked = await fetch(`http://127.0.0.1:${port}/work/delegate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Origin: 'http://evil.example' },
+      body: JSON.stringify({ agentId: 'minerva' }),
+    });
+    assert.equal(blocked.status, 403);
+    assert.deepEqual(await blocked.json(), { error: 'origin not allowed' });
+    assert.equal(blocked.headers.get('access-control-allow-origin'), null);
+    assert.deepEqual(calls, []);
+
+    const allowed = await fetch(`http://127.0.0.1:${port}/work/delegate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Origin: 'http://localhost:1420' },
+      body: JSON.stringify({ agentId: 'minerva' }),
+    });
+    assert.equal(allowed.status, 200);
+    assert.deepEqual(await allowed.json(), { taskId: 'task-1' });
+    assert.deepEqual(calls, [{ agentId: 'minerva' }]);
+  } finally {
+    await channel.stop();
+  }
+});
+
 test('/work/* and /work/delegate reject malformed JSON bodies with 400, never reaching the handler', async () => {
   const calls: unknown[] = [];
   const channel = channelWith({ workBoards: {

@@ -799,6 +799,14 @@ export class TextChannel {
       if (this.workBoards) {
         const url2 = new URL(req.url ?? '/', 'http://localhost');
         if (req.method === 'POST' && url2.pathname === '/work/delegate') {
+          // Dispatch binds a task to an agent — same origin guard as /me and /me/connectors;
+          // the generic /work/* proxy below stays on the open CORS policy.
+          const originBlocked = (): boolean => {
+            if (isAllowedOrigin(req)) return false;
+            res.writeHead(403, { ...credentialCors(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: 'origin not allowed' }));
+            return true;
+          };
+          if (originBlocked()) return;
           let body = '';
           req.on('data', (c) => {
             body += c;
