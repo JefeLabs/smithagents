@@ -113,6 +113,9 @@ export function HomePage() {
     getWorkspaceChannels,
     saveWorkspaceChannels,
     verifyWorkspaceDiscord,
+    getContainers,
+    setDockerEnabled,
+    verifyContainers,
   } = useBrokerChat({ onAudio: (frame) => audioSink.current(frame) });
   const { soundOn, toggleSound, playAudioFrame, audioBlocked } = useSpokenReplies(messages, roster, !audioMode);
   audioSink.current = (frame) => void playAudioFrame(frame);
@@ -359,6 +362,9 @@ export function HomePage() {
             getWorkspaceChannels={getWorkspaceChannels}
             saveWorkspaceChannels={saveWorkspaceChannels}
             verifyWorkspaceDiscord={verifyWorkspaceDiscord}
+            getContainers={getContainers}
+            setDockerEnabled={setDockerEnabled}
+            verifyContainers={verifyContainers}
           />
           <SessionsPanel
             open={sessionsOpen}
