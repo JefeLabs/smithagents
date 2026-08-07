@@ -69,10 +69,10 @@ test('resetAll leaves zero sessions', () => {
 });
 
 test('resolveLazyWorkspace: discord lands in the attended workspace, everything else in the default', () => {
-  assert.equal(resolveLazyWorkspace('discord', 'acme', 'main'), 'acme');
-  assert.equal(resolveLazyWorkspace('discord', null, 'main'), 'main');
+  assert.equal(resolveLazyWorkspace({ kind: 'discord', channelRef: 'c' }, 'acme', 'main'), 'acme');
+  assert.equal(resolveLazyWorkspace({ kind: 'discord', channelRef: 'c' }, null, 'main'), 'main');
   assert.equal(resolveLazyWorkspace(undefined, 'acme', 'main'), 'main');
-  assert.equal(resolveLazyWorkspace('stdin', 'acme', 'main'), 'main');
+  assert.equal(resolveLazyWorkspace({ kind: 'stdin', channelRef: 'c' }, 'acme', 'main'), 'main');
 });
 
 test('transcript and brain history persist through the store; switching swaps them', () => {

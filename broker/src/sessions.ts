@@ -5,6 +5,7 @@
  * remembers), so switching sessions swaps both wholesale.
  */
 import type { HistoryEntry } from './brain.ts';
+import type { TurnOrigin } from './broker.ts';
 
 export interface TranscriptLine {
   role: 'user' | 'broker';
@@ -54,11 +55,11 @@ export function truncateTitle(text: string): string {
 
 /** Which workspace a lazily-created session lands in: discord = the attended workspace, every other origin = the default workspace. */
 export function resolveLazyWorkspace(
-  origin: string | undefined,
+  origin: TurnOrigin | undefined,
   attendedDiscordWorkspace: string | null,
   defaultWorkspace: string,
 ): string {
-  return origin === 'discord' ? (attendedDiscordWorkspace ?? defaultWorkspace) : defaultWorkspace;
+  return origin?.kind === 'discord' ? (attendedDiscordWorkspace ?? defaultWorkspace) : defaultWorkspace;
 }
 
 export class SessionManager {

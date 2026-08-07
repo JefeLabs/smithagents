@@ -27,6 +27,7 @@ export interface SwarmClientLike {
     metadata?: Record<string, unknown>;
     workspace?: string;
     repo?: string;
+    runtime?: string;
   }): Promise<{ taskId: string; agentName: string | null }>;
   getOutput(taskIdOrName: string): Promise<{ taskId: string; output: string }>;
   steer(taskIdOrName: string, message: string): Promise<void>;
@@ -103,6 +104,8 @@ export interface BrokerDeps {
   pollMs?: number;
   /** The broker's own identity name (e.g. "Anderson") — addressable like an agent, but never one. */
   identityName?: string;
+  /** Mapped RuntimeType of the active session (EXEC_TO_RUNTIME applied by main.ts); undefined = no session, server default applies. */
+  sessionRuntime?: () => string | undefined;
 }
 
 // ElevenLabs gates pcm_44100 behind the Pro tier; 24000 is available on every
@@ -248,6 +251,7 @@ export class Broker {
       workspace: input.workspace,
       repo: input.repo,
       metadata: { composedAgentId: agent.id, ...input.metadata },
+      runtime: this.deps.sessionRuntime?.(),
     });
     this.deps.directory.bindTask(agent.id, { taskId, summary: input.task.slice(0, 80), swarmName: agentName ?? undefined });
     this.deps.onTaskDispatched?.({ taskId, agent: agent.name, task: input.task });

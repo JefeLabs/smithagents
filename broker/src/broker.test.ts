@@ -599,6 +599,26 @@ test('dispatchWork: submits directives-prefixed prompt with merged metadata and 
   await b.stop();
 });
 
+test('dispatchWork stamps the active session runtime onto the submitted task', async () => {
+  const f = makeFakes([]);
+  const b = new Broker({ ...basicDeps(f, new AgentDirectory()), sessionRuntime: () => 'remote-docker' });
+  await b.start();
+  await b.dispatchWork({ agent: 'Manuel', task: 'fix the build' });
+  const sent = f.submitted[0] as { runtime?: string };
+  assert.equal(sent.runtime, 'remote-docker');
+  await b.stop();
+});
+
+test('dispatchWork omits runtime when no session is active', async () => {
+  const f = makeFakes([]);
+  const b = new Broker({ ...basicDeps(f, new AgentDirectory()), sessionRuntime: () => undefined });
+  await b.start();
+  await b.dispatchWork({ agent: 'Manuel', task: 'fix the build' });
+  const sent = f.submitted[0] as { runtime?: string };
+  assert.equal(sent.runtime, undefined);
+  await b.stop();
+});
+
 test("delegate executor keeps its exact success/refusal strings", async () => {
   const f = makeFakes([MEETING]);
   const b = makeBroker(f);
