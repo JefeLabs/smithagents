@@ -104,7 +104,7 @@ export function HomePage() {
   });
   const { warnings: engineWarnings, refresh: refreshEngineWarnings } = useCliToolHealth();
 
-  const { voice } = useVoiceStatus();
+  const { voice, refresh: refreshVoiceStatus } = useVoiceStatus();
   const [voicePrefs, setVoicePrefs] = useState<VoiceSettingsRecord | null>(null);
   // Load voice prefs on mount and again whenever Settings closes — hideInactive may have
   // changed while the panel was open.
@@ -117,9 +117,19 @@ export function HomePage() {
 
   const hideMic = Boolean(voicePrefs?.hideInactive) && !voice.stt;
   const [voiceNotice, setVoiceNotice] = useState<string | null>(null);
+  // A ref (not state) for the pending dismiss timer: rapid presses must restart the 6s window
+  // rather than letting an earlier press's timer cut the latest notice short.
+  const voiceNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (voiceNoticeTimer.current) clearTimeout(voiceNoticeTimer.current);
+    },
+    [],
+  );
   const onVoiceBlocked = () => {
     setVoiceNotice("Add a Deepgram key in Settings → Integrations, then select it under Settings → Voice.");
-    setTimeout(() => setVoiceNotice(null), 6000);
+    if (voiceNoticeTimer.current) clearTimeout(voiceNoticeTimer.current);
+    voiceNoticeTimer.current = setTimeout(() => setVoiceNotice(null), 6000);
   };
 
   const agents: AgentSeed[] = [
@@ -257,6 +267,7 @@ export function HomePage() {
             onClose={() => {
               setSettingsOpen(false);
               void refreshEngineWarnings();
+              refreshVoiceStatus();
             }}
             onReset={resetSetup}
             theme={theme}
