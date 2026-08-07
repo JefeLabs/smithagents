@@ -588,13 +588,26 @@ function handleUserText(text: string, origin?: TurnOrigin): void {
   // its own — the hub calls straight into this function — so this is the
   // one place to do it for that path, matching the existing frame shape.
   if (origin) textChannel.broadcast({ type: 'utterance', text });
-  if (!sessionManager.hasActive()) {
+  const lazilyCreated = !sessionManager.hasActive();
+  if (lazilyCreated) {
     const workspace = resolveLazyWorkspace(origin, attendedDiscordWorkspace, defaultWorkspaceName);
     startSession(workspace, { runtime: 'local-in-process', title: truncateTitle(text), awaitingTitle: true });
   }
   sessionManager.appendTranscript('user', text);
+  // startSession (above) already broadcast a session frame, but with an
+  // EMPTY transcript — this line hadn't been appended yet. The client's
+  // session frame is a full replace of the message list (useBrokerChat's
+  // setMessages(frame.transcript...)), so if that empty frame is the last
+  // one the client sees for this turn, it wipes the very utterance that
+  // triggered the lazy create — permanently, if maybeRetitle below never
+  // re-broadcasts (generateSessionTitle returning null). Re-broadcast now,
+  // AFTER the append, so the last frame for this turn is always the correct
+  // one — regardless of whether the utterance frame (Discord: above; HTTP/
+  // mic/stdin: at their own entry point, before this function ever runs)
+  // landed before or after startSession's.
+  if (lazilyCreated) textChannel.broadcast(sessionFrame());
   void broker.handleUtterance(text, origin).then(async () => {
-    sessionManager.saveBrainHistory(brain.exportHistory());
+    if (sessionManager.hasActive()) sessionManager.saveBrainHistory(brain.exportHistory());
     await maybeRetitle();
   });
 }
@@ -1210,7 +1223,20 @@ broker = new Broker(
     speak,
     onSpeechText: (text) => {
       console.log(`[speech-text] ${text}`);
-      sessionManager.appendTranscript('broker', text);
+      // Paths that bypass handleUserText's lazy creation — meeting STT
+      // (broker.ts's stt.start callback) and swarm-event task narration
+      // (onSwarmEvent's system-note turn, reachable from a work-board
+      // dispatch that names no session at all) — can run in the legal,
+      // durable zero-session state (fresh install; right after Reset).
+      // appendTranscript throws with no active session, and since this is
+      // the first statement in enqueueSpeech's try block (broker.ts), an
+      // unguarded throw here would silently drop the whole speech chunk:
+      // no broadcast, no TTS audio, no channel relay. A session is a
+      // per-conversation transcript; the broker's own speech isn't itself a
+      // reason to lazily birth one (unlike a human's first message), so
+      // this narrows to "persist the line if there's somewhere to persist
+      // it" rather than lazily creating a session here too.
+      if (sessionManager.hasActive()) sessionManager.appendTranscript('broker', text);
       textChannel.broadcast({ type: 'speech', text });
       broadcastSpokenAudio(text);
       adapterHub.dispatchSpeech(text);
