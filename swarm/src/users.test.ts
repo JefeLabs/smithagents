@@ -1,9 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, open } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadUsersFromDir, saveUser, resolveCurrentUser } from './users.js';
+import { randomBytes } from 'node:crypto';
+import { loadUsersFromDir, saveUser, resolveCurrentUser, sweepEncryptUsers } from './users.js';
+import { ENC_PREFIX } from './secretbox.js';
 
 test('loadUsersFromDir: a legacy user file (atlassian + github fields, no connectors) is upgraded on load into two ConnectorInstance entries', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'users-legacy-'));
@@ -109,4 +111,64 @@ test('resolveCurrentUser: unchanged behavior — default-flagged user, else sole
   assert.equal(resolveCurrentUser([a, b]), b);
   assert.equal(resolveCurrentUser([a]), a);
   assert.equal(resolveCurrentUser([]), null);
+});
+
+const MASTER_HEX = randomBytes(32).toString('hex');
+
+test('saveUser encrypts secret fields on disk; loadUsersFromDir decrypts them in memory', async () => {
+  process.env.SMITH_MASTER_KEY = MASTER_HEX;
+  const dir = await mkdtemp(join(tmpdir(), 'users-enc-'));
+  await saveUser(dir, {
+    id: 'me', name: 'You', default: true,
+    connectors: [{ id: 'c1', vendorId: 'github', label: 'personal', fields: { token: 'ghp_raw' } }],
+  });
+  const onDisk = JSON.parse(await readFile(join(dir, 'me.json'), 'utf8'));
+  assert.ok(String(onDisk.connectors[0].fields.token).startsWith(ENC_PREFIX), 'secret must be encrypted at rest');
+  const [user] = await loadUsersFromDir(dir);
+  assert.equal(user!.connectors?.[0]!.fields.token, 'ghp_raw'); // decrypted in memory
+  delete process.env.SMITH_MASTER_KEY;
+});
+
+test('non-secret fields stay plaintext on disk (files remain inspectable)', async () => {
+  process.env.SMITH_MASTER_KEY = MASTER_HEX;
+  const dir = await mkdtemp(join(tmpdir(), 'users-enc-'));
+  await saveUser(dir, {
+    id: 'me', name: 'You', default: true,
+    connectors: [{ id: 'c1', vendorId: 'atlassian', label: 'acme', fields: { email: 'e@a.com', apiToken: 'tok' } }],
+  });
+  const onDisk = JSON.parse(await readFile(join(dir, 'me.json'), 'utf8'));
+  assert.equal(onDisk.connectors[0].fields.email, 'e@a.com');
+  assert.ok(String(onDisk.connectors[0].fields.apiToken).startsWith(ENC_PREFIX));
+  delete process.env.SMITH_MASTER_KEY;
+});
+
+test('sweepEncryptUsers: rewrites a plaintext legacy file once, then is a no-op', async () => {
+  process.env.SMITH_MASTER_KEY = MASTER_HEX;
+  const dir = await mkdtemp(join(tmpdir(), 'users-sweep-'));
+  const fh = await open(join(dir, 'me.json'), 'w', 0o600); // hand-written plaintext file, as upgrades find it
+  await fh.writeFile(JSON.stringify({
+    id: 'me', name: 'You', default: true,
+    connectors: [{ id: 'c1', vendorId: 'github', label: 'personal', fields: { token: 'ghp_plain' } }],
+  }));
+  await fh.close();
+  assert.equal(await sweepEncryptUsers(dir), 1);
+  const onDisk = JSON.parse(await readFile(join(dir, 'me.json'), 'utf8'));
+  assert.ok(String(onDisk.connectors[0].fields.token).startsWith(ENC_PREFIX));
+  assert.equal(await sweepEncryptUsers(dir), 0); // already encrypted → untouched
+  const [user] = await loadUsersFromDir(dir);
+  assert.equal(user!.connectors?.[0]!.fields.token, 'ghp_plain');
+  delete process.env.SMITH_MASTER_KEY;
+});
+
+test('a value that fails to decrypt is passed through as-is (connected-but-failing-verify, spec §3), not a crash', async () => {
+  process.env.SMITH_MASTER_KEY = MASTER_HEX;
+  const dir = await mkdtemp(join(tmpdir(), 'users-badkey-'));
+  await saveUser(dir, {
+    id: 'me', name: 'You', default: true,
+    connectors: [{ id: 'c1', vendorId: 'github', label: 'personal', fields: { token: 'ghp_raw' } }],
+  });
+  process.env.SMITH_MASTER_KEY = randomBytes(32).toString('hex'); // key rotated out from under the file
+  const [user] = await loadUsersFromDir(dir);
+  assert.ok(String(user!.connectors?.[0]!.fields.token).startsWith(ENC_PREFIX)); // ciphertext passthrough
+  delete process.env.SMITH_MASTER_KEY;
 });

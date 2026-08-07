@@ -3,6 +3,8 @@
 // under .smith/users/, untracked (holds secrets) unlike agents/workspaces.
 import { readdir, readFile, mkdir, open } from 'node:fs/promises';
 import { join } from 'node:path';
+import { findVendor } from './connectors.js';
+import { encryptSecret, decryptSecret, isEncrypted, resolveMasterKey } from './secretbox.js';
 
 export interface ConnectorInstance {
   id: string;
@@ -65,6 +67,47 @@ function assertUser(file: string, v: unknown): User {
   return upgradeLegacyConnectors(o as User & LegacyUserFields);
 }
 
+/** Which of this instance's field keys are secrets, per the vendor registry. Unknown vendor → none. */
+function secretKeysFor(vendorId: string): Set<string> {
+  return new Set((findVendor(vendorId)?.fields ?? []).filter((f) => f.secret).map((f) => f.key));
+}
+
+function mapSecretFields(
+  user: User,
+  fn: (value: string, isSecret: boolean) => string,
+): User {
+  if (!user.connectors) return user;
+  return {
+    ...user,
+    connectors: user.connectors.map((c) => {
+      const secrets = secretKeysFor(c.vendorId);
+      const fields = Object.fromEntries(
+        Object.entries(c.fields).map(([k, v]) => [k, fn(v, secrets.has(k))]),
+      );
+      return { ...c, fields };
+    }),
+  };
+}
+
+function encryptUser(user: User, key: Buffer): User {
+  // idempotent: an already-encrypted value (incl. a decrypt-failure passthrough) is left alone
+  return mapSecretFields(user, (v, isSecret) => (isSecret && v && !isEncrypted(v) ? encryptSecret(v, key) : v));
+}
+
+function decryptUser(user: User, key: Buffer): User {
+  return mapSecretFields(user, (v, isSecret) => {
+    if (!isSecret || !isEncrypted(v)) return v;
+    try {
+      return decryptSecret(v, key);
+    } catch {
+      // Wrong/rotated master key: keep the ciphertext as the field value so the
+      // connector shows connected-but-failing-verify (spec §3) instead of crashing.
+      console.warn(`[users] could not decrypt a secret for connector — re-enter the key in Settings`);
+      return v;
+    }
+  });
+}
+
 /** Load every *.json in `dir` as a User. Throws (naming the file) on malformed input. */
 export async function loadUsersFromDir(dir: string): Promise<User[]> {
   let entries: string[];
@@ -74,9 +117,10 @@ export async function loadUsersFromDir(dir: string): Promise<User[]> {
     return [];
   }
   const users: User[] = [];
+  const key = await resolveMasterKey();
   for (const file of entries.filter((f) => f.endsWith('.json'))) {
     const raw = await readFile(join(dir, file), 'utf8');
-    users.push(assertUser(file, JSON.parse(raw)));
+    users.push(decryptUser(assertUser(file, JSON.parse(raw)), key));
   }
   return users;
 }
@@ -88,12 +132,40 @@ export async function saveUser(dir: string, user: User): Promise<void> {
   }
   await mkdir(dir, { recursive: true, mode: 0o700 });
   const filePath = join(dir, `${user.id}.json`);
+  const key = await resolveMasterKey();
+  const toWrite = encryptUser(user, key);
   const fh = await open(filePath, 'w', 0o600);
   try {
-    await fh.writeFile(`${JSON.stringify(user, null, 2)}\n`);
+    await fh.writeFile(`${JSON.stringify(toWrite, null, 2)}\n`);
   } finally {
     await fh.close();
   }
+}
+
+/**
+ * One-time-per-boot migration pass (spec §3): any user file still holding a
+ * plaintext secret is re-saved, which encrypts it. Skips files already fully
+ * encrypted so boots don't churn IVs. Returns how many files were rewritten.
+ */
+export async function sweepEncryptUsers(dir: string): Promise<number> {
+  let entries: string[];
+  try {
+    entries = await readdir(dir);
+  } catch {
+    return 0;
+  }
+  let rewritten = 0;
+  for (const file of entries.filter((f) => f.endsWith('.json'))) {
+    const raw = assertUser(file, JSON.parse(await readFile(join(dir, file), 'utf8')));
+    const hasPlaintextSecret = (raw.connectors ?? []).some((c) => {
+      const secrets = secretKeysFor(c.vendorId);
+      return Object.entries(c.fields).some(([k, v]) => secrets.has(k) && v && !isEncrypted(v));
+    });
+    if (!hasPlaintextSecret) continue;
+    await saveUser(dir, raw); // raw is plaintext in memory; saveUser encrypts
+    rewritten++;
+  }
+  return rewritten;
 }
 
 /**

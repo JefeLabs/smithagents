@@ -71,7 +71,7 @@ import {
   type Workspace,
   type WorkspaceRepo,
 } from './workspaces.js';
-import { loadUsersFromDir, saveUser, resolveCurrentUser, type User, type ConnectorInstance } from './users.js';
+import { loadUsersFromDir, saveUser, resolveCurrentUser, sweepEncryptUsers, type User, type ConnectorInstance } from './users.js';
 import { verifyGithubRepo } from './verify-github.js';
 import { verifyAtlassian } from './verify-atlassian.js';
 import { VENDORS, findVendor } from './connectors.js';
@@ -295,6 +295,8 @@ export class OrchestratorServer {
     this.registerRoutes();
     this.startUdpHeartbeat();
     this.startQueueWorker();
+
+    await sweepEncryptUsers(resolve(process.cwd(), '.smith/users'));
 
     await this.app.listen({ port: this.config.port, host: this.config.host });
 
