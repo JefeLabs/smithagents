@@ -10,6 +10,13 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-07-stage-routing-design.md`
 
+## Post-ship amendments (2026-08-07)
+
+**Status: EXECUTED — shipped on main (`90c477f..1312ef1`).** Two corrections discovered at execution time; the task steps below are left as written for the historical record:
+
+- **The repo is pnpm, not npm.** Every `npm`/`npx` command below ran as its pnpm equivalent; the dependency was added with `pnpm add -E @tanstack/react-router@1.170.23`, and the committed lockfile is `control-plane/pnpm-lock.yaml` (plus a `pnpm-workspace.yaml` `minimumReleaseAgeExclude` entry) — there is no `package-lock.json`.
+- **Task 3 Step 3.5 was wrong to drop `X` from MapStage's lucide import.** Unlike BoardStage, MapStage also uses `X` for the story/activity/step remove buttons — only the `Close map` button block was deleted; the import keeps `X`.
+
 ## Global Constraints
 
 - **Baseline check (do this before Task 1):** at plan time the working tree carried ANOTHER SESSION's uncommitted changes (deleted `IdentityTile.tsx`/`.test.tsx`, modified `HomePage.tsx` and `components.css` — an identity-tile removal, orthogonal to this plan). Run `git -C /Users/edwincruz/Development/Workspaces/jefelabs/smithagents status --short control-plane`. If those files are still dirty, STOP and ask Edwin whether that work has landed. Never `git add -A` — stage explicit paths only.
