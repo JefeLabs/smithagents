@@ -38,14 +38,14 @@ export async function saveContainersFile(path: string, file: ContainersFile): Pr
 
 /** Diagnostic only — enabling docker never requires a passing probe (spec §2). */
 export async function probeDocker(run: CommandRunner = defaultRunner): Promise<{ ok: boolean; detail: string }> {
-  try {
-    const result = await run(['docker', 'info', '--format', '{{.ServerVersion}}'], 5000);
-    if (result.code === 0 && result.stdout.trim()) {
-      return { ok: true, detail: `daemon running (server ${result.stdout.trim()})` };
-    }
-    return { ok: false, detail: 'docker daemon unreachable — is Docker running?' };
-  } catch (err) {
-    const msg = String((err as Error).message ?? err);
-    return { ok: false, detail: /ENOENT|not found/.test(msg) ? 'docker binary not found on PATH' : 'docker daemon unreachable — is Docker running?' };
+  const result = await run(['docker', 'info', '--format', '{{.ServerVersion}}'], 5000);
+  // CommandRunner resolves (never rejects): code is null when binary not found or killed by timeout.
+  // Discriminate: code === null with empty stdout/stderr → binary not found; code !== 0 → daemon error.
+  if (result.code === null && !result.stdout && !result.stderr) {
+    return { ok: false, detail: 'docker binary not found on PATH' };
   }
+  if (result.code === 0 && result.stdout.trim()) {
+    return { ok: true, detail: `daemon running (server ${result.stdout.trim()})` };
+  }
+  return { ok: false, detail: 'docker daemon unreachable — is Docker running?' };
 }

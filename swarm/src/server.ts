@@ -94,11 +94,9 @@ import {
   type SweepDeps,
 } from './cli-tools.js';
 import {
-  emptyContainersFile,
   loadContainersFile,
   probeDocker,
   saveContainersFile,
-  type ContainersFile,
 } from './containers.js';
 import { addCard, createBoard, deleteBoardFile, loadBoards, patchCard, removeCard, saveBoard, type WorkBoard } from './work-items.js';
 import { importIssues, searchIssues, transitionIssue } from './jira-sync.js';

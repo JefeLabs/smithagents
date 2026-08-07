@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { emptyContainersFile, loadContainersFile, saveContainersFile, probeDocker } from './containers.js';
@@ -17,18 +17,26 @@ test('save/load round-trip preserves enabled flag', async () => {
   assert.equal((await loadContainersFile(path)).docker.enabled, true);
 });
 
-test('probeDocker reports ok with server version, and failure as unreachable', async () => {
-  const ok = await probeDocker(async (argv) => {
-    if (argv.includes('docker')) {
-      return { code: 0, stdout: '27.0.1\n', stderr: '' };
-    }
-    throw new Error('Unexpected command');
+test('probeDocker with code:0 and version in stdout reports ok', async () => {
+  const ok = await probeDocker(async () => {
+    return { code: 0, stdout: '27.0.1\n', stderr: '' };
   });
   assert.equal(ok.ok, true);
   assert.match(ok.detail, /27\.0\.1/);
-  const bad = await probeDocker(async () => {
-    throw new Error('Cannot connect to the Docker daemon');
+});
+
+test('probeDocker with code:null and empty stdout/stderr reports binary not found', async () => {
+  const notFound = await probeDocker(async () => {
+    return { code: null, stdout: '', stderr: '' };
   });
-  assert.equal(bad.ok, false);
-  assert.match(bad.detail, /daemon/i);
+  assert.equal(notFound.ok, false);
+  assert.match(notFound.detail, /binary not found/i);
+});
+
+test('probeDocker with code!==0 reports daemon unreachable', async () => {
+  const unreachable = await probeDocker(async () => {
+    return { code: 1, stdout: '', stderr: 'Cannot connect to the Docker daemon' };
+  });
+  assert.equal(unreachable.ok, false);
+  assert.match(unreachable.detail, /daemon unreachable/i);
 });
