@@ -2383,3 +2383,9 @@ main.chat-active .composer-dock {
   color: var(--accent);
   text-decoration: none;
 }
+.board-card.is-dragging {
+  opacity: 0.4;
+}
+.board-column.is-over {
+  border-color: var(--accent);
+}

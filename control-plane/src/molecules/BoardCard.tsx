@@ -9,13 +9,15 @@ interface BoardCardProps {
   /** Roster entry for the delegated agent, when the card is delegated. */
   agent?: RosterAgent;
   onOpen: () => void;
+  /** Extra classes appended by the drag wrapper (e.g. "is-dragging"). */
+  className?: string;
 }
 
 /** One kanban card face: title, Jira chip, delegation badge. Pure display — drag wiring wraps it. */
-export function BoardCard({ card, agent, onOpen }: BoardCardProps) {
+export function BoardCard({ card, agent, onOpen, className }: BoardCardProps) {
   const d = card.delegation;
   return (
-    <button type="button" className="board-card" onClick={onOpen}>
+    <button type="button" className={`board-card${className ? ` ${className}` : ""}`} onClick={onOpen}>
       <span className="board-card__title">{card.title}</span>
       <span className="board-card__meta">
         {card.jira && (

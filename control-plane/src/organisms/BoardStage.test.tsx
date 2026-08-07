@@ -1,7 +1,7 @@
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BoardStage } from "./BoardStage";
+import { BoardStage, moveCard } from "./BoardStage";
 
 const BOARD = {
   id: "alpha",
@@ -56,7 +56,7 @@ function stubFetch(overrides: Record<string, unknown> = {}) {
       return respond(overrides.created ?? { ...BOARD, id: "beta", name: "Beta", cards: [] }, 201);
     if (url.includes("/cards") && method === "POST")
       return respond({ id: "new", title: "New card", columnId: "backlog", order: 1 }, 201);
-    if (method === "PATCH") return respond(overrides.patched ?? {});
+    if (method === "PATCH") return respond(overrides.patched ?? {}, (overrides.patchStatus as number) ?? 200);
     return respond({});
   });
   vi.stubGlobal("fetch", fn);
@@ -135,5 +135,106 @@ describe("BoardStage", () => {
     const before = calls.filter((c) => c.url.endsWith("/work/boards")).length;
     rerender(<BoardStage open roster={ROSTER} lastBoardUpdate={{ boardId: "alpha", seq: 1 }} onClose={vi.fn()} />);
     await waitFor(() => expect(calls.filter((c) => c.url.endsWith("/work/boards")).length).toBeGreaterThan(before));
+  });
+});
+
+describe("moveCard (optimistic mirror of the server move)", () => {
+  const board = () => ({
+    ...BOARD,
+    cards: [
+      { id: "a", title: "a", columnId: "ready", order: 0 },
+      { id: "b", title: "b", columnId: "ready", order: 1 },
+      { id: "c", title: "c", columnId: "done", order: 0 },
+    ],
+  });
+
+  it("moves across columns at the target index and renumbers both", () => {
+    const next = moveCard(board(), "a", "done", 0);
+    const inCol = (col: string) =>
+      next.cards
+        .filter((c) => c.columnId === col)
+        .sort((x, y) => x.order - y.order)
+        .map((c) => c.id);
+    expect(inCol("done")).toEqual(["a", "c"]);
+    expect(inCol("ready")).toEqual(["b"]);
+    expect(next.cards.find((c) => c.id === "b")?.order).toBe(0);
+  });
+
+  it("reorders within a column", () => {
+    const next = moveCard(board(), "b", "ready", 0);
+    expect(
+      next.cards
+        .filter((c) => c.columnId === "ready")
+        .sort((x, y) => x.order - y.order)
+        .map((c) => c.id),
+    ).toEqual(["b", "a"]);
+  });
+
+  it("returns a new object and never mutates the input", () => {
+    const b = board();
+    const snapshot = JSON.stringify(b);
+    moveCard(b, "a", "done", 1);
+    expect(JSON.stringify(b)).toBe(snapshot);
+  });
+});
+
+describe("BoardStage drag wiring", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("a cross-column drop PATCHes the moved card with columnId and order and applies optimistically", async () => {
+    const { calls } = stubFetch();
+    render(<BoardStage open roster={ROSTER} lastBoardUpdate={null} onClose={vi.fn()} />);
+    await screen.findByText("Backlog");
+    // Drag simulation via dnd-kit is brittle in jsdom — call the exported
+    // handler contract instead: the component wires handleCardDrop(cardId,
+    // columnId, index) into DndContext. Assert through the module seam.
+    const stage = screen.getByLabelText("Work boards");
+    expect(stage).toBeTruthy();
+    // The drop handler is exercised through moveCard tests above + the PATCH
+    // assertion here via the exposed test hook:
+    const { fireDrop } = await import("./BoardStage");
+    await fireDrop("c1", "ready", 0);
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (c) =>
+            c.method === "PATCH" &&
+            c.url.includes("/cards/c1") &&
+            (c.body as { columnId?: string })?.columnId === "ready",
+        ),
+      ).toBe(true),
+    );
+    const patchCall = calls.find((c) => c.method === "PATCH" && c.url.includes("/cards/c1"));
+    expect(patchCall?.body).toEqual({ columnId: "ready", order: 0 });
+  });
+
+  it("a same-column reorder PATCHes {order} only, omitting columnId so the swarm's Jira push-on-move never fires", async () => {
+    const { calls } = stubFetch();
+    render(<BoardStage open roster={ROSTER} lastBoardUpdate={null} onClose={vi.fn()} />);
+    await screen.findByText("Backlog");
+    const { fireDrop } = await import("./BoardStage");
+    // c1 is already in "backlog" — this is a same-column reorder.
+    await fireDrop("c1", "backlog", 0);
+    await waitFor(() => expect(calls.some((c) => c.method === "PATCH" && c.url.includes("/cards/c1"))).toBe(true));
+    const patchCall = calls.find((c) => c.method === "PATCH" && c.url.includes("/cards/c1"));
+    expect(patchCall?.body).toEqual({ order: 0 });
+    expect(patchCall?.body).not.toHaveProperty("columnId");
+  });
+
+  it("rolls back the optimistic move and surfaces an error when the PATCH fails", async () => {
+    const { calls } = stubFetch({ patchStatus: 500 });
+    render(<BoardStage open roster={ROSTER} lastBoardUpdate={null} onClose={vi.fn()} />);
+    await screen.findByText("Write the spec");
+    const { fireDrop } = await import("./BoardStage");
+    await fireDrop("c1", "ready", 0);
+    await waitFor(() => expect(calls.some((c) => c.method === "PATCH" && c.url.includes("/cards/c1"))).toBe(true));
+    expect(await screen.findByText(/move failed/i)).toBeTruthy();
+    // Card c1 is back in Backlog, not left dangling in Ready.
+    const backlogHeading = screen.getByText("Backlog");
+    const backlogColumn = backlogHeading.closest(".board-column") as HTMLElement;
+    expect(within(backlogColumn).queryByText("Write the spec")).toBeTruthy();
   });
 });

@@ -1,3 +1,14 @@
+import {
+  DndContext,
+  type DragEndEvent,
+  PointerSensor,
+  pointerWithin,
+  useDroppable,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { Plus, SquareKanban, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import type { RosterAgent } from "../hooks/useBrokerChat";
@@ -33,6 +44,81 @@ interface BoardStageProps {
   roster: RosterAgent[];
   lastBoardUpdate: { boardId: string; seq: number } | null;
   onClose: () => void;
+}
+
+/** Optimistic mirror of the server's move: new board object, both columns renumbered. */
+export function moveCard(board: WorkBoardT, cardId: string, columnId: string, order: number): WorkBoardT {
+  const cards = board.cards.map((c) => ({ ...c }));
+  const card = cards.find((c) => c.id === cardId);
+  if (!card) return board;
+  const from = card.columnId;
+  const siblings = cards.filter((c) => c.columnId === columnId && c.id !== cardId).sort((a, b) => a.order - b.order);
+  const at = Math.max(0, Math.min(order, siblings.length));
+  card.columnId = columnId;
+  siblings.splice(at, 0, card);
+  siblings.forEach((c, i) => {
+    c.order = i;
+  });
+  if (from !== columnId) {
+    cards
+      .filter((c) => c.columnId === from)
+      .sort((a, b) => a.order - b.order)
+      .forEach((c, i) => {
+        c.order = i;
+      });
+  }
+  return { ...board, cards };
+}
+
+// Test seam: jsdom cannot synthesize dnd-kit pointer sequences; the drop
+// handler is registered here so tests can invoke the exact code path a real
+// drop takes.
+let dropHandler: ((cardId: string, columnId: string, order: number) => Promise<void>) | null = null;
+export async function fireDrop(cardId: string, columnId: string, order: number): Promise<void> {
+  if (!dropHandler) throw new Error("BoardStage is not mounted");
+  await dropHandler(cardId, columnId, order);
+}
+
+/** One sortable card wrapper — BoardCard stays a pure display button; this owns the drag handle. */
+function SortableCard({ card, agent }: { card: WorkCardT; agent?: RosterAgent }) {
+  const sortable = useSortable({ id: card.id });
+  const style = { transform: CSS.Transform.toString(sortable.transform), transition: sortable.transition };
+  return (
+    <div ref={sortable.setNodeRef} style={style} {...sortable.attributes} {...sortable.listeners}>
+      <BoardCard
+        card={card}
+        agent={agent}
+        onOpen={() => {}}
+        className={sortable.isDragging ? "is-dragging" : undefined}
+      />
+    </div>
+  );
+}
+
+/** One column: a droppable zone (for empty-column drops) containing a sortable card list. */
+function BoardColumn({
+  col,
+  cards,
+  agentFor,
+}: {
+  col: WorkColumn;
+  cards: WorkCardT[];
+  agentFor: (id?: string) => RosterAgent | undefined;
+}) {
+  const droppable = useDroppable({ id: `column:${col.id}` });
+  const sorted = [...cards].sort((a, b) => a.order - b.order);
+  return (
+    <div ref={droppable.setNodeRef} className={`board-column${droppable.isOver ? " is-over" : ""}`}>
+      <h3 className="board-column__name">{col.name}</h3>
+      <SortableContext items={sorted.map((c) => c.id)} strategy={verticalListSortingStrategy}>
+        <div className="board-column__cards">
+          {sorted.map((card) => (
+            <SortableCard key={card.id} card={card} agent={agentFor(card.delegation?.agentId)} />
+          ))}
+        </div>
+      </SortableContext>
+    </div>
+  );
 }
 
 /**
@@ -75,9 +161,67 @@ export function BoardStage({ open, roster, lastBoardUpdate, onClose }: BoardStag
     if (open && lastBoardUpdate && lastBoardUpdate.boardId === activeId) void refetch();
   }, [open, lastBoardUpdate, activeId, refetch]);
 
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+
+  // Optimistic move + PATCH + rollback-on-fail. Same-column reorders PATCH
+  // {order} only — omitting columnId keeps the swarm's Jira push-on-move
+  // (which triggers on any body carrying columnId) from firing on a card
+  // that never left its column.
+  const applyMove = useCallback(
+    async (cardId: string, columnId: string, order: number) => {
+      const previous = boards.find((b) => b.id === activeId);
+      if (!previous) return;
+      const movingCard = previous.cards.find((c) => c.id === cardId);
+      const sameColumn = movingCard?.columnId === columnId;
+      const next = moveCard(previous, cardId, columnId, order);
+      setBoards((all) => all.map((b) => (b.id === next.id ? next : b)));
+      const body: { columnId?: string; order: number } = sameColumn ? { order } : { columnId, order };
+      const res = await fetch(
+        `http://${BASE}/work/boards/${encodeURIComponent(previous.id)}/cards/${encodeURIComponent(cardId)}`,
+        { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) },
+      ).catch(() => null);
+      if (!res?.ok) {
+        setBoards((all) => all.map((b) => (b.id === previous.id ? previous : b)));
+        setError("Move failed — restored the previous order");
+        return;
+      }
+      void refetch(); // pick up server-side effects (renumber, jira lastPushError)
+    },
+    [boards, activeId, refetch],
+  );
+
+  useEffect(() => {
+    dropHandler = applyMove;
+    return () => {
+      dropHandler = null;
+    };
+  }, [applyMove]);
+
   if (!open) return null;
   const board = boards.find((b) => b.id === activeId) ?? null;
   const agentFor = (id?: string) => (id ? roster.find((a) => a.id === id) : undefined);
+
+  const handleDragEnd = (e: DragEndEvent) => {
+    if (!board || !e.over) return;
+    const cardId = String(e.active.id);
+    const overId = String(e.over.id);
+    let columnId: string;
+    let order: number;
+    if (overId.startsWith("column:")) {
+      columnId = overId.slice("column:".length);
+      order = board.cards.filter((c) => c.columnId === columnId && c.id !== cardId).length;
+    } else {
+      const overCard = board.cards.find((c) => c.id === overId);
+      if (!overCard) return;
+      columnId = overCard.columnId;
+      const siblings = board.cards
+        .filter((c) => c.columnId === columnId && c.id !== cardId)
+        .sort((a, b) => a.order - b.order);
+      const idx = siblings.findIndex((c) => c.id === overId);
+      order = idx < 0 ? siblings.length : idx;
+    }
+    void applyMove(cardId, columnId, order);
+  };
 
   const addCard = async () => {
     if (!board || !cardTitle.trim()) return;
@@ -168,21 +312,18 @@ export function BoardStage({ open, roster, lastBoardUpdate, onClose }: BoardStag
         <p className="wizard__hint">Some board files failed to load: {boardErrors.map((e) => e.file).join(", ")}</p>
       )}
       {board && (
-        <div className="board-stage__columns">
-          {board.columns.map((col) => (
-            <div key={col.id} className="board-column">
-              <h3 className="board-column__name">{col.name}</h3>
-              <div className="board-column__cards">
-                {board.cards
-                  .filter((c) => c.columnId === col.id)
-                  .sort((a, b) => a.order - b.order)
-                  .map((card) => (
-                    <BoardCard key={card.id} card={card} agent={agentFor(card.delegation?.agentId)} onOpen={() => {}} />
-                  ))}
-              </div>
-            </div>
-          ))}
-        </div>
+        <DndContext sensors={sensors} collisionDetection={pointerWithin} onDragEnd={handleDragEnd}>
+          <div className="board-stage__columns">
+            {board.columns.map((col) => (
+              <BoardColumn
+                key={col.id}
+                col={col}
+                cards={board.cards.filter((c) => c.columnId === col.id)}
+                agentFor={agentFor}
+              />
+            ))}
+          </div>
+        </DndContext>
       )}
     </section>
   );
