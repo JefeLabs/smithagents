@@ -128,13 +128,9 @@ function SortableStory({
       </span>
       <select aria-label={`Slice for ${story.text}`} value={sliceValue} onChange={(e) => onSliceChange(e.target.value)}>
         <option value="backlog">backlog</option>
-        {sliceOptions.map((s, i) => (
-          // Numbered rather than the bare name: an <option>'s text is a
-          // direct DOM text node just like the slice band's own name span,
-          // so an exact-match text query (as slice-band tests use) would
-          // otherwise find both and fail on ambiguity.
+        {sliceOptions.map((s) => (
           <option key={s.id} value={s.id}>
-            {`${i + 1}. ${s.name}`}
+            {s.name}
           </option>
         ))}
       </select>
@@ -162,7 +158,8 @@ function MapStepStories({
   onRemove: (story: CapStoryT) => void;
 }) {
   const droppable = useDroppable({ id: `step:${stepId}` });
-  const sorted = [...stories].sort((a, b) => a.order - b.order);
+  // `stories` is already sorted (storiesFor sorts before passing it down).
+  const sorted = stories;
   return (
     <div ref={droppable.setNodeRef} className={`map-step__stories${droppable.isOver ? " is-over" : ""}`}>
       <SortableContext items={sorted.map((s) => s.id)} strategy={verticalListSortingStrategy}>
@@ -315,7 +312,7 @@ export function MapStage({ open, lastCapabilityUpdate, onClose }: MapStageProps)
   };
 
   const storiesFor = (stepId: string) =>
-    [...(cap?.stories ?? [])].filter((s) => s.stepId === stepId).sort((a, b) => a.order - b.order);
+    (cap?.stories ?? []).filter((s) => s.stepId === stepId).sort((a, b) => a.order - b.order);
   const doneFraction = (slice: CapSliceT) => {
     const stories = (cap?.stories ?? []).filter((s) => slice.storyIds.includes(s.id));
     return `${stories.filter((s) => s.done).length}/${stories.length}`;

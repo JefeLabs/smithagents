@@ -99,7 +99,7 @@ describe("MapStage", () => {
   it("shows slice bands with done fractions", async () => {
     stubFetch();
     render(<MapStage open lastCapabilityUpdate={null} onClose={vi.fn()} />);
-    await screen.findByText("tour scheduling v1");
+    await screen.findByText("tour scheduling v1", { selector: ".slice-band__name" });
     expect(screen.getByText("1/2")).toBeTruthy();
   });
 });
@@ -155,7 +155,7 @@ describe("MapStage editing", () => {
   it("slice actions: generate spec POSTs; delivery send gated until specPath; sends post the target", async () => {
     const { calls } = stubFetch();
     render(<MapStage open lastCapabilityUpdate={null} onClose={vi.fn()} />);
-    await screen.findByText("tour scheduling v1");
+    await screen.findByText("tour scheduling v1", { selector: ".slice-band__name" });
     // sl2 has no specPath: generate visible, delivery send disabled with reason.
     expect(screen.getByRole("button", { name: /generate spec for analytics v1/i })).toBeTruthy();
     const deliveryBtn = screen.getByRole("button", { name: /send analytics v1 to delivery/i }) as HTMLButtonElement;
@@ -176,7 +176,7 @@ describe("MapStage editing", () => {
   it("creates a slice", async () => {
     const { calls } = stubFetch();
     render(<MapStage open lastCapabilityUpdate={null} onClose={vi.fn()} />);
-    await screen.findByText("tour scheduling v1");
+    await screen.findByText("tour scheduling v1", { selector: ".slice-band__name" });
     await userEvent.type(screen.getByPlaceholderText(/new slice name/i), "tour scheduling v2{Enter}");
     await waitFor(() => {
       const call = calls.find((c) => c.method === "PATCH" && c.url.includes("/work/capabilities/school-feature-set"));
