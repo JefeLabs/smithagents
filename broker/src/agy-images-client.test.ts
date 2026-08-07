@@ -18,8 +18,10 @@ test('collects the produced image even when misnamed, returns ImagesClient shape
   const data = res.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data)?.inlineData?.data;
   assert.equal(data, PNG_BYTES.toString('base64'));
   assert.equal(seenArgv[0], 'agy');
-  assert.equal(seenArgv[1], '-p');
-  assert.ok(seenArgv[2]!.includes('portrait prompt'), 'house prompt must reach agy verbatim');
+  assert.equal(seenArgv[1], '--sandbox');
+  assert.equal(seenArgv[2], '-p');
+  assert.ok(seenArgv[3]!.includes('portrait prompt'), 'house prompt must reach agy verbatim');
+  assert.ok(seenArgv.includes('--sandbox'));
   assert.ok(seenArgv.includes('--dangerously-skip-permissions'));
 });
 

@@ -1,10 +1,12 @@
-// Subscription-path avatar engine: drives headless `agy -p` (Antigravity's
+// Subscription-path avatar engine: drives headless `agy --sandbox -p` (Antigravity's
 // native Nano Banana) and adapts its file output to the ImagesClient shape
 // AvatarGenerator already consumes. Empirics behind the wrapper (spec
 // §Avatar generation): ~60–90s per image, imperfect path discipline, and
 // JPEG output mislabeled .png — so the run is contained in a fresh temp
 // dir, whatever image lands there is collected regardless of name, and
-// sharp downstream normalizes size/format.
+// sharp downstream normalizes size/format. --sandbox is the isolation
+// boundary; --dangerously-skip-permissions only auto-approves inside it,
+// protecting against hostile prompts that embed owner-typed wizard fields.
 import { execFile } from 'node:child_process';
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -46,7 +48,7 @@ export class AgyImagesClient implements ImagesClient {
           `${contents} Generate exactly one image and save it into the current working directory (${dir}). ` +
           'Write no other files anywhere else.';
         const res = await this.run(
-          [this.binary, '-p', prompt, '--dangerously-skip-permissions', '--add-dir', dir],
+          [this.binary, '--sandbox', '-p', prompt, '--dangerously-skip-permissions', '--add-dir', dir],
           dir,
           TIMEOUT_MS,
         );
