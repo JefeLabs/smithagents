@@ -93,6 +93,7 @@ import {
   type SweepDeps,
 } from './cli-tools.js';
 import { addCard, createBoard, deleteBoardFile, loadBoards, patchCard, removeCard, saveBoard, type WorkBoard } from './work-items.js';
+import { importIssues, searchIssues, transitionIssue } from './jira-sync.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -1962,6 +1963,33 @@ export class OrchestratorServer {
       if (!board) return;
       try {
         const card = patchCard(board, req.params.cardId, req.body as Parameters<typeof patchCard>[2]);
+
+        // Push-on-move: a Jira-linked card landing on a mapped column tries
+        // the matching transition. Best-effort — the human's move always
+        // sticks; only the amber badge reports a failed push.
+        const movedTo = (req.body as { columnId?: string }).columnId;
+        const target = movedTo ? board.columns.find((c) => c.id === movedTo) : undefined;
+        if (card.jira && target?.jiraStatus && board.jira) {
+          const users = await loadUsersFromDir(resolve(process.cwd(), '.smith/users'));
+          const resolved = resolveAtlassianConnector(board.jira.connectorId, resolveCurrentUser(users), { name: 'key', value: card.jira.key });
+          if (!('error' in resolved)) {
+            try {
+              await transitionIssue(
+                board.jira.siteUrl,
+                resolved.instance.fields.email ?? '',
+                resolved.instance.fields.apiToken ?? '',
+                card.jira.key,
+                target.jiraStatus,
+              );
+              card.jira = { key: card.jira.key, url: card.jira.url };
+            } catch (err) {
+              card.jira.lastPushError = String((err as Error).message);
+            }
+          } else {
+            card.jira.lastPushError = resolved.error;
+          }
+        }
+
         await saveBoard(server.workDir(), board);
         return card;
       } catch (err) {
@@ -1976,6 +2004,30 @@ export class OrchestratorServer {
         removeCard(board, req.params.cardId);
         await saveBoard(server.workDir(), board);
         return { ok: true };
+      } catch (err) {
+        return reply.status(400).send({ error: String((err as Error).message) });
+      }
+    });
+
+    this.app.post<{ Params: { id: string } }>('/work/boards/:id/jira/import', async (req, reply) => {
+      const board = await boardOr404(req.params.id, reply);
+      if (!board) return;
+      if (!board.jira) return reply.status(400).send({ error: `Board "${board.id}" has no Jira link configured` });
+      const users = await loadUsersFromDir(resolve(process.cwd(), '.smith/users'));
+      const user = resolveCurrentUser(users);
+      const resolved = resolveAtlassianConnector(board.jira.connectorId, user, { name: 'jql', value: board.jira.jql ?? 'x' });
+      if ('error' in resolved) return reply.status(400).send({ error: resolved.error });
+      const jql = board.jira.jql?.trim() || `project = ${board.jira.projectKey} ORDER BY updated DESC`;
+      try {
+        const issues = await searchIssues(
+          board.jira.siteUrl,
+          resolved.instance.fields.email ?? '',
+          resolved.instance.fields.apiToken ?? '',
+          jql,
+        );
+        const summary = importIssues(board, issues);
+        await saveBoard(server.workDir(), board);
+        return summary;
       } catch (err) {
         return reply.status(400).send({ error: String((err as Error).message) });
       }
