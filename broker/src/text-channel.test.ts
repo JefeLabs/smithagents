@@ -1205,6 +1205,29 @@ test('POST /sessions forwards {workspace, runtime, prompt} and maps the handler 
   }
 });
 
+test('POST /sessions responds 500 instead of hanging when sessions.create() rejects', async () => {
+  const channel = channelWith({
+    sessions: {
+      create: async () => {
+        throw new Error('swarm unreachable');
+      },
+      activate: () => null,
+    },
+  });
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/sessions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workspace: 'acme', runtime: 'local-in-process', prompt: 'x' }),
+    });
+    assert.equal(res.status, 500);
+    assert.deepEqual(await res.json(), { error: 'swarm unreachable' });
+  } finally {
+    await channel.stop();
+  }
+});
+
 test('the session frame type accepts session: null with an empty transcript', () => {
   const channel = channelWith({});
   // Compile-time pin for the lockstep protocol: this call must typecheck.

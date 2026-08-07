@@ -879,11 +879,15 @@ export class TextChannel {
             workspace: typeof parsed.workspace === 'string' ? parsed.workspace : undefined,
             runtime: typeof parsed.runtime === 'string' ? parsed.runtime : undefined,
             prompt: typeof parsed.prompt === 'string' ? parsed.prompt : undefined,
-          }).then((r) => {
-            res
-              .writeHead(r ? (r.status ?? 400) : 200, { ...CORS, 'content-type': 'application/json' })
-              .end(JSON.stringify(r ? { error: r.error } : { ok: true }));
-          });
+          }).then(
+            (r) => {
+              res
+                .writeHead(r ? (r.status ?? 400) : 200, { ...CORS, 'content-type': 'application/json' })
+                .end(JSON.stringify(r ? { error: r.error } : { ok: true }));
+            },
+            (err: unknown) =>
+              res.writeHead(500, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify({ error: String((err as Error).message ?? err) })),
+          );
         });
         return;
       }
