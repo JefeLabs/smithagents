@@ -135,6 +135,18 @@ export interface CliToolListing {
   active: boolean;
 }
 
+/** Provider key joined with redacted machine state — drives the API Keys settings cards. */
+export interface ApiKeyListing {
+  id: string;
+  label: string;
+  description: string;
+  hasKey: boolean;
+  last4: string | null;
+  verified: boolean | "unknown" | null;
+  detail: string | null;
+  lastCheckedAt: string | null;
+}
+
 const DEFAULT_BASE = "127.0.0.1:7790";
 const RECONNECT_MS = 2000;
 
@@ -478,6 +490,42 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
     [base],
   );
 
+  const listApiKeys = useCallback(async (): Promise<ApiKeyListing[]> => {
+    const res = await fetch(`http://${base}/api-keys`);
+    return ((await res.json()) as { providers?: ApiKeyListing[] }).providers ?? [];
+  }, [base]);
+
+  const saveApiKey = useCallback(
+    async (id: string, key: string): Promise<ApiKeyListing[] | { error: string }> => {
+      const res = await fetch(`http://${base}/api-keys/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ key }),
+      });
+      const body = (await res.json()) as { providers?: ApiKeyListing[]; error?: string };
+      return body.error ? { error: body.error } : (body.providers ?? []);
+    },
+    [base],
+  );
+
+  const verifyApiKey = useCallback(
+    async (id: string): Promise<ApiKeyListing[] | { error: string }> => {
+      const res = await fetch(`http://${base}/api-keys/${encodeURIComponent(id)}/verify`, { method: "POST" });
+      const body = (await res.json()) as { providers?: ApiKeyListing[]; error?: string };
+      return body.error ? { error: body.error } : (body.providers ?? []);
+    },
+    [base],
+  );
+
+  const deleteApiKey = useCallback(
+    async (id: string): Promise<ApiKeyListing[] | { error: string }> => {
+      const res = await fetch(`http://${base}/api-keys/${encodeURIComponent(id)}`, { method: "DELETE" });
+      const body = (await res.json()) as { providers?: ApiKeyListing[]; error?: string };
+      return body.error ? { error: body.error } : (body.providers ?? []);
+    },
+    [base],
+  );
+
   const workAction = useCallback(
     async (name: string, action: "steer" | "cancel", message?: string): Promise<string | null> => {
       const res = await fetch(`http://${base}/activity/${encodeURIComponent(name)}/${action}`, {
@@ -558,5 +606,9 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
     listCliTools,
     refreshCliTools,
     setCliToolEnabled,
+    listApiKeys,
+    saveApiKey,
+    verifyApiKey,
+    deleteApiKey,
   };
 }

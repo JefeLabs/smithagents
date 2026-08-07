@@ -1288,6 +1288,19 @@
 .settings-screen__back:hover {
   color: var(--text);
 }
+.settings-screen__section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.settings-screen__heading {
+  margin: 10px 8px 2px;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.55;
+}
 .settings-screen__group {
   display: flex;
   align-items: center;

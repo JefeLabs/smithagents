@@ -87,6 +87,10 @@ export function HomePage() {
     listCliTools,
     refreshCliTools,
     setCliToolEnabled,
+    listApiKeys,
+    saveApiKey,
+    verifyApiKey,
+    deleteApiKey,
     getWorkspaceChannels,
     saveWorkspaceChannels,
     verifyWorkspaceDiscord,
@@ -247,6 +251,10 @@ export function HomePage() {
             listCliTools={listCliTools}
             refreshCliTools={refreshCliTools}
             setCliToolEnabled={setCliToolEnabled}
+            listApiKeys={listApiKeys}
+            saveApiKey={saveApiKey}
+            verifyApiKey={verifyApiKey}
+            deleteApiKey={deleteApiKey}
             listWorkspaceRecords={listWorkspaceRecords}
             getWorkspaceChannels={getWorkspaceChannels}
             saveWorkspaceChannels={saveWorkspaceChannels}

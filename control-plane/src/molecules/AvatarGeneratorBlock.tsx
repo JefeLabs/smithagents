@@ -5,8 +5,8 @@ import { useState } from "react";
 interface AvatarGeneratorBlockProps {
   /** Broker host:port. */
   base: string;
-  /** catalog.avatarGen — false renders nothing (no Gemini key on the broker). */
-  enabled: boolean;
+  /** catalog.avatarGen — null/undefined renders nothing (no engine available on the broker). */
+  engine: "api" | "agy" | null | undefined;
   name: string;
   gender: string;
   role: string;
@@ -25,7 +25,7 @@ interface AvatarGeneratorBlockProps {
  */
 export function AvatarGeneratorBlock({
   base,
-  enabled,
+  engine,
   name,
   gender,
   role,
@@ -38,7 +38,7 @@ export function AvatarGeneratorBlock({
   const [genBusy, setGenBusy] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
 
-  if (!enabled) return null;
+  if (!engine) return null;
 
   const generate = async () => {
     setGenBusy(true);
@@ -65,8 +65,20 @@ export function AvatarGeneratorBlock({
       </span>
       <button type="button" className="settings-btn" onClick={() => void generate()} disabled={genBusy}>
         {value ? <RefreshCw size={12} strokeWidth={2} /> : <Sparkles size={12} strokeWidth={2} />}{" "}
-        {genBusy ? "painting the portrait…" : value ? "reroll the portrait" : "generate a portrait"}
+        {genBusy
+          ? engine === "agy"
+            ? "brewing…"
+            : "painting the portrait…"
+          : value
+            ? "reroll the portrait"
+            : "generate portrait"}
       </button>
+      {engine === "agy" && (
+        <p className="wizard__hint">
+          Subscription path (Antigravity) — a portrait brews for ~1–2 min. Add a Google key in Settings → API Keys for
+          seconds-fast rerolls.
+        </p>
+      )}
       {genError && <p className="wizard__error">{genError}</p>}
     </div>
   );

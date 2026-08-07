@@ -400,6 +400,22 @@ export class SwarmClient {
     }>;
   }
 
+  async listApiKeys() {
+    return this.http('GET', '/api-keys') as unknown as Promise<Record<string, unknown>>;
+  }
+  async saveApiKey(id: string, key: string) {
+    return this.http('PUT', `/api-keys/${encodeURIComponent(id)}`, { key }) as unknown as Promise<Record<string, unknown>>;
+  }
+  async verifyApiKey(id: string) {
+    return this.http('POST', `/api-keys/${encodeURIComponent(id)}/verify`) as unknown as Promise<Record<string, unknown>>;
+  }
+  async deleteApiKey(id: string) {
+    return this.http('DELETE', `/api-keys/${encodeURIComponent(id)}`) as unknown as Promise<Record<string, unknown>>;
+  }
+  async getApiKeyCredential(id: string) {
+    return this.http('GET', `/api-keys/${encodeURIComponent(id)}/credential`) as unknown as Promise<{ key?: string; error?: string }>;
+  }
+
   async verifyWorkspaceAtlassian(name: string): Promise<VerifyResult> {
     return this.http('POST', `/workspaces/${encodeURIComponent(name)}/verify-atlassian`, {}) as unknown as Promise<VerifyResult>;
   }

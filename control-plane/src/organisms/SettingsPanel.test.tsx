@@ -76,4 +76,30 @@ describe("SettingsPanel", () => {
     );
     expect(container.firstChild).toBeNull();
   });
+
+  it("groups the nav under App / Agents / Workspace headings with API Keys under Agents", () => {
+    render(<SettingsPanel open onClose={() => {}} onReset={vi.fn()} theme="dark" onThemeChange={vi.fn()} />);
+    for (const heading of ["App", "Agents", "Workspace"]) {
+      expect(screen.getByText(heading)).toBeDefined();
+    }
+    expect(screen.getByRole("button", { name: /api keys/i })).toBeDefined();
+  });
+
+  it("opens the API Keys group and renders its cards when wired", async () => {
+    render(
+      <SettingsPanel
+        open
+        onClose={() => {}}
+        onReset={vi.fn()}
+        theme="dark"
+        onThemeChange={vi.fn()}
+        initialGroup="api-keys"
+        listApiKeys={async () => []}
+        saveApiKey={vi.fn()}
+        verifyApiKey={vi.fn()}
+        deleteApiKey={vi.fn()}
+      />,
+    );
+    expect(await screen.findByRole("heading", { name: /api keys/i })).toBeDefined();
+  });
 });

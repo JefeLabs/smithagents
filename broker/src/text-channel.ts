@@ -197,6 +197,13 @@ export class TextChannel {
       proxy(method: string, path: string, body?: unknown): Promise<{ status: number; payload: unknown }>;
       delegate(body: Record<string, unknown>): Promise<{ taskId: string } | { error: string }>;
     },
+    /** API key registry (Settings → API Keys): provider list, save/verify/remove. Origin-restricted like connectors. No credential route — raw keys never transit 7790. */
+    private readonly apiKeys?: {
+      list(): Promise<unknown>;
+      save(id: string, key: string): Promise<unknown>;
+      verify(id: string): Promise<unknown>;
+      remove(id: string): Promise<unknown>;
+    },
   ) {}
 
   private clientSeq = 0;
@@ -688,6 +695,49 @@ export class TextChannel {
           });
           return;
         }
+        if (req.method === 'GET' && url.pathname === '/api-keys' && this.apiKeys) {
+          if (originBlocked()) return;
+          void this.apiKeys.list().then((r) => credJson(200, r), credFail);
+          return;
+        }
+        const apiKeyVerifyMatch = /^\/api-keys\/([^/]+)\/verify$/.exec(url.pathname);
+        if (req.method === 'POST' && apiKeyVerifyMatch && this.apiKeys) {
+          if (originBlocked()) return;
+          void this.apiKeys
+            .verify(decodeURIComponent(apiKeyVerifyMatch[1]!))
+            .then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
+          return;
+        }
+        const apiKeyMatch = /^\/api-keys\/([^/]+)$/.exec(url.pathname);
+        if (req.method === 'PUT' && apiKeyMatch && this.apiKeys) {
+          if (originBlocked()) return;
+          let body = '';
+          req.on('data', (c) => {
+            body += c;
+          });
+          req.on('end', () => {
+            let parsed: { key?: string } = {};
+            try {
+              parsed = JSON.parse(body || '{}') as { key?: string };
+            } catch {
+              return credJson(400, { error: 'body must be JSON' });
+            }
+            void this.apiKeys!
+              .save(decodeURIComponent(apiKeyMatch[1]!), parsed.key ?? '')
+              .then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
+          });
+          return;
+        }
+        if (req.method === 'DELETE' && apiKeyMatch && this.apiKeys) {
+          if (originBlocked()) return;
+          void this.apiKeys
+            .remove(decodeURIComponent(apiKeyMatch[1]!))
+            .then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
+          return;
+        }
+        // NOTE: /api-keys/:id/credential is deliberately absent — raw keys never
+        // transit 7790 (spec invariant). The verify-match must run BEFORE the bare
+        // /api-keys/:id match so PUT/DELETE never swallow /verify; keep this order.
       }
       const sessionMatch = /^\/sessions(?:\/([^/]+)\/activate)?$/.exec(req.url ?? '');
       if (req.method === 'POST' && sessionMatch && this.sessions) {
