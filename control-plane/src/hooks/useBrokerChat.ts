@@ -162,6 +162,8 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
   const [workspaces, setWorkspaces] = useState<string[]>([]);
   const [lastBoardUpdate, setLastBoardUpdate] = useState<{ boardId: string; seq: number } | null>(null);
   const boardSeq = useRef(0);
+  const [lastCapabilityUpdate, setLastCapabilityUpdate] = useState<{ capabilityId: string; seq: number } | null>(null);
+  const capSeq = useRef(0);
   const nextId = useRef(0);
   const wsRef = useRef<WebSocket | null>(null);
   const onAudio = useRef(opts?.onAudio);
@@ -183,6 +185,7 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
           | { type: "config"; audio: boolean }
           | ({ type: "audio" } & AudioFrame)
           | { type: "board-updated"; boardId: string }
+          | { type: "capability-updated"; capabilityId: string }
           | {
               type: "session";
               session: { id: string; title: string; workspace: string };
@@ -213,6 +216,10 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
         }
         if (frame.type === "board-updated") {
           setLastBoardUpdate({ boardId: frame.boardId, seq: ++boardSeq.current });
+          return;
+        }
+        if (frame.type === "capability-updated") {
+          setLastCapabilityUpdate({ capabilityId: frame.capabilityId, seq: ++capSeq.current });
           return;
         }
         if (frame.type !== "utterance" && frame.type !== "speech") return;
@@ -576,6 +583,7 @@ export function useBrokerChat(opts?: { base?: string; onAudio?: (frame: AudioFra
     sessions,
     workspaces,
     lastBoardUpdate,
+    lastCapabilityUpdate,
     send,
     compose,
     activity,

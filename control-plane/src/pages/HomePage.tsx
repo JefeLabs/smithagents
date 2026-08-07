@@ -13,6 +13,7 @@ import { AgentRoster } from "../organisms/AgentRoster";
 import { BoardStage } from "../organisms/BoardStage";
 import { DotGridCanvas } from "../organisms/DotGridCanvas";
 import { DotGridTuner } from "../organisms/DotGridTuner";
+import { MapStage } from "../organisms/MapStage";
 import { NewWorkspaceModal } from "../organisms/NewWorkspaceModal";
 import { SessionsPanel } from "../organisms/SessionsPanel";
 import { SettingsPanel } from "../organisms/SettingsPanel";
@@ -33,6 +34,7 @@ export function HomePage() {
   const [inspecting, setInspecting] = useState<AgentSeed | null>(null);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [boardOpen, setBoardOpen] = useState(false);
+  const [mapOpen, setMapOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [workspacesOpen, setWorkspacesOpen] = useState(false);
   const [newWorkspaceOpen, setNewWorkspaceOpen] = useState(false);
@@ -62,6 +64,7 @@ export function HomePage() {
     sessions,
     workspaces,
     lastBoardUpdate,
+    lastCapabilityUpdate,
     send,
     compose,
     activity,
@@ -164,6 +167,7 @@ export function HomePage() {
           onNewWorkspace={() => setNewWorkspaceOpen(true)}
           onSessions={() => setSessionsOpen((open) => !open)}
           onBoard={() => setBoardOpen((v) => !v)}
+          onMap={() => setMapOpen((v) => !v)}
           onSettings={() => setSettingsOpen(true)}
         />
       }
@@ -188,7 +192,9 @@ export function HomePage() {
         </>
       }
       stage={
-        boardOpen ? (
+        mapOpen ? (
+          <MapStage open lastCapabilityUpdate={lastCapabilityUpdate} onClose={() => setMapOpen(false)} />
+        ) : boardOpen ? (
           <BoardStage open roster={roster} lastBoardUpdate={lastBoardUpdate} onClose={() => setBoardOpen(false)} />
         ) : inspecting ? (
           <WorkStage
