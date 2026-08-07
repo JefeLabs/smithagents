@@ -29,6 +29,7 @@ import type { createDiscordVoiceSurface } from './discord-voice.ts';
 import type { VoicePresence } from './voice-presence.ts';
 import { applyModeChange, decideJoin, surfaceModes, SurfacePolicy } from './surface-modes.ts';
 import { LocalMemory, type MemoryEntry } from './memory.ts';
+import { MicSessionGate } from './mic-gate.ts';
 import { SessionManager, type Session } from './sessions.ts';
 import { DeepgramSttStream, type LiveLike, deepgramLiveOptions } from './stt.ts';
 import { SwarmClient, type SwarmSquad, type WorkspaceBody } from './swarm-client.ts';
@@ -858,26 +859,33 @@ const textChannel = new TextChannel(
     cancel: (name) => broker.cancelWork(name),
   },
   {
-    // Push-to-talk from UIs: one Deepgram session per client while the mic is held.
+    // Push-to-talk from UIs: one Deepgram session per client while the mic is
+    // held. `reserve` claims the slot synchronously — before the STT-key
+    // await below — so a second mic-start (or a mic-stop) landing while the
+    // gate is in flight can never end up with two sessions or an orphaned
+    // one; see mic-gate.ts's header for the full race this closes.
     start: (clientId) => {
+      if (!micSessions.reserve(clientId)) return;
       void (async () => {
         if (!(await voiceKeys.sttKey())) {
           textChannel.broadcast({ type: 'notice', text: VOICE_STT_HINT });
+          micSessions.cancel(clientId);
           return;
         }
-        if (micSessions.has(clientId)) return;
         const stt = new DeepgramSttStream(makeDeepgramLive);
         stt.start((utterance) => {
           textChannel.broadcast({ type: 'utterance', text: utterance });
           handleUserText(utterance);
         });
-        micSessions.set(clientId, stt);
+        // A mic-stop can land while we were awaiting the key above — commit()
+        // fails in that case, and the session we just built must still be
+        // torn down rather than left running unreferenced.
+        if (!micSessions.commit(clientId, stt)) stt.stop();
       })();
     },
     audio: (clientId, pcm) => micSessions.get(clientId)?.sendAudio(pcm),
     stop: (clientId) => {
-      micSessions.get(clientId)?.stop();
-      micSessions.delete(clientId);
+      micSessions.stop(clientId)?.stop();
     },
   },
   {
@@ -1002,7 +1010,7 @@ const textChannel = new TextChannel(
   apiKeys,
   voice,
 );
-const micSessions = new Map<number, DeepgramSttStream>();
+const micSessions = new MicSessionGate<DeepgramSttStream>();
 
 // ElevenLabs audio for text-channel replies: synthesize each speech chunk with
 // the speaking agent's voice and fan the mp3 out as an audio frame. Serialized
