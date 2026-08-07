@@ -59,5 +59,7 @@ describe("AgentRoster host slot", () => {
     const names = [...container.querySelectorAll(".roster .agent-avatar-anchor")].map((n) => n.textContent ?? "");
     expect(names[0]).toContain("Minerva");
     expect(names[1]).toContain("Ignacio");
+    expect(names).toHaveLength(2);
+    expect(container.querySelector(".roster")?.textContent).not.toContain("Anderson");
   });
 });
