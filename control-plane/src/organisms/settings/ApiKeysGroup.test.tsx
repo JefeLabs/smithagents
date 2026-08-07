@@ -71,4 +71,22 @@ describe("ApiKeysGroup", () => {
     await userEvent.click(screen.getByRole("button", { name: /verify/i }));
     await screen.findByText(/no key stored for google/);
   });
+
+  it("keeps the typed draft in the input when save fails, so the user can correct it", async () => {
+    const saveApiKey = vi.fn(async () => ({ error: "invalid key format" }));
+    render(
+      <ApiKeysGroup
+        listApiKeys={async () => [listing()]}
+        saveApiKey={saveApiKey}
+        verifyApiKey={vi.fn()}
+        deleteApiKey={vi.fn()}
+      />,
+    );
+    await screen.findByText("no key");
+    const input = screen.getByLabelText(/api key/i) as HTMLInputElement;
+    await userEvent.type(input, "sk-bad-key");
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+    await screen.findByText(/invalid key format/);
+    expect(input.value).toBe("sk-bad-key");
+  });
 });

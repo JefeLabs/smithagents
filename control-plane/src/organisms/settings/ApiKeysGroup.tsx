@@ -28,16 +28,18 @@ export function ApiKeysGroup({ listApiKeys, saveApiKey, verifyApiKey, deleteApiK
     void listApiKeys().then(setKeys, (err: unknown) => setError(`Could not load API keys — ${String(err)}`));
   }, []);
 
-  const apply = async (id: string, op: () => Promise<ApiKeyListing[] | { error: string }>) => {
+  /** Returns whether the op succeeded, so callers can decide what to do only on success (e.g. clear a draft). */
+  const apply = async (id: string, op: () => Promise<ApiKeyListing[] | { error: string }>): Promise<boolean> => {
     setBusy(id);
     setError(null);
     const result = await op();
     setBusy(null);
     if ("error" in result) {
       setError(result.error);
-      return;
+      return false;
     }
     setKeys(result);
+    return true;
   };
 
   return (
@@ -82,9 +84,9 @@ export function ApiKeysGroup({ listApiKeys, saveApiKey, verifyApiKey, deleteApiK
                   className="settings-btn"
                   disabled={busy !== null || !(drafts[l.id] ?? "").trim()}
                   onClick={() =>
-                    void apply(l.id, () => saveApiKey(l.id, (drafts[l.id] ?? "").trim())).then(() =>
-                      setDrafts((d) => ({ ...d, [l.id]: "" })),
-                    )
+                    void apply(l.id, () => saveApiKey(l.id, (drafts[l.id] ?? "").trim())).then((ok) => {
+                      if (ok) setDrafts((d) => ({ ...d, [l.id]: "" }));
+                    })
                   }
                 >
                   {busy === l.id ? "saving…" : "save"}
