@@ -70,6 +70,44 @@ export function moveCard(board: WorkBoardT, cardId: string, columnId: string, or
   return { ...board, cards };
 }
 
+/**
+ * Resolves a raw dnd-kit drop target (`over.id`) into the column + insertion
+ * index moveCard expects. moveCard's `order` always indexes into the target
+ * column's siblings with the active card already excluded, so a same-column
+ * forward drag (active card started before the target) must land one slot
+ * AFTER the target's position in that excluded list — landing AT it is a
+ * no-op, since that's exactly where the active card already sits once
+ * excluded. A backward drag (or a cross-column drop) lands AT the target's
+ * position, i.e. right before it.
+ */
+export function resolveDrop(
+  board: WorkBoardT,
+  activeCardId: string,
+  overId: string,
+): { columnId: string; order: number } | null {
+  if (overId === activeCardId) return null;
+  const active = board.cards.find((c) => c.id === activeCardId);
+  if (!active) return null;
+
+  if (overId.startsWith("column:")) {
+    const columnId = overId.slice("column:".length);
+    const order = board.cards.filter((c) => c.columnId === columnId && c.id !== activeCardId).length;
+    return { columnId, order };
+  }
+
+  const overCard = board.cards.find((c) => c.id === overId);
+  if (!overCard) return null;
+  const columnId = overCard.columnId;
+  const siblings = board.cards
+    .filter((c) => c.columnId === columnId && c.id !== activeCardId)
+    .sort((a, b) => a.order - b.order);
+  const idx = siblings.findIndex((c) => c.id === overId);
+  if (idx < 0) return null;
+
+  const forward = active.columnId === columnId && active.order < overCard.order;
+  return { columnId, order: forward ? idx + 1 : idx };
+}
+
 // Test seam: jsdom cannot synthesize dnd-kit pointer sequences; the drop
 // handler is registered here so tests can invoke the exact code path a real
 // drop takes.
@@ -181,6 +219,10 @@ export function BoardStage({ open, roster, lastBoardUpdate, onClose }: BoardStag
         { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) },
       ).catch(() => null);
       if (!res?.ok) {
+        // Full-snapshot restore: a second drag that started (and applied its
+        // own optimistic update) while this PATCH was in flight gets
+        // discarded too — this rolls back to the state captured before
+        // THIS move, not a merge of the two.
         setBoards((all) => all.map((b) => (b.id === previous.id ? previous : b)));
         setError("Move failed — restored the previous order");
         return;
@@ -205,22 +247,9 @@ export function BoardStage({ open, roster, lastBoardUpdate, onClose }: BoardStag
     if (!board || !e.over) return;
     const cardId = String(e.active.id);
     const overId = String(e.over.id);
-    let columnId: string;
-    let order: number;
-    if (overId.startsWith("column:")) {
-      columnId = overId.slice("column:".length);
-      order = board.cards.filter((c) => c.columnId === columnId && c.id !== cardId).length;
-    } else {
-      const overCard = board.cards.find((c) => c.id === overId);
-      if (!overCard) return;
-      columnId = overCard.columnId;
-      const siblings = board.cards
-        .filter((c) => c.columnId === columnId && c.id !== cardId)
-        .sort((a, b) => a.order - b.order);
-      const idx = siblings.findIndex((c) => c.id === overId);
-      order = idx < 0 ? siblings.length : idx;
-    }
-    void applyMove(cardId, columnId, order);
+    const target = resolveDrop(board, cardId, overId);
+    if (!target) return;
+    void applyMove(cardId, target.columnId, target.order);
   };
 
   const addCard = async () => {

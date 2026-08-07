@@ -1,7 +1,8 @@
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BoardStage, moveCard } from "./BoardStage";
+import type { WorkBoardT } from "./BoardStage";
+import { BoardStage, moveCard, resolveDrop } from "./BoardStage";
 
 const BOARD = {
   id: "alpha",
@@ -236,5 +237,62 @@ describe("BoardStage drag wiring", () => {
     const backlogHeading = screen.getByText("Backlog");
     const backlogColumn = backlogHeading.closest(".board-column") as HTMLElement;
     expect(within(backlogColumn).queryByText("Write the spec")).toBeTruthy();
+  });
+});
+
+describe("resolveDrop + moveCard composed (direction-aware drop resolution)", () => {
+  const seqBoard = (): WorkBoardT => ({
+    ...BOARD,
+    cards: [
+      { id: "a", title: "a", columnId: "ready", order: 0 },
+      { id: "b", title: "b", columnId: "ready", order: 1 },
+      { id: "c", title: "c", columnId: "ready", order: 2 },
+      { id: "d", title: "d", columnId: "ready", order: 3 },
+      { id: "g", title: "g", columnId: "done", order: 0 },
+      { id: "h", title: "h", columnId: "done", order: 1 },
+    ],
+  });
+  const idsOf = (board: WorkBoardT, columnId: string) =>
+    board.cards
+      .filter((c) => c.columnId === columnId)
+      .sort((x, y) => x.order - y.order)
+      .map((c) => c.id);
+  const drop = (board: WorkBoardT, activeId: string, overId: string): WorkBoardT => {
+    const target = resolveDrop(board, activeId, overId);
+    if (!target) throw new Error("expected a resolvable drop target");
+    return moveCard(board, activeId, target.columnId, target.order);
+  };
+
+  it("forward-adjacent: b onto c lands b right after c", () => {
+    const next = drop(seqBoard(), "b", "c");
+    expect(idsOf(next, "ready")).toEqual(["a", "c", "b", "d"]);
+  });
+
+  it("forward-far: a onto d lands a at the end, after d", () => {
+    const next = drop(seqBoard(), "a", "d");
+    expect(idsOf(next, "ready")).toEqual(["b", "c", "d", "a"]);
+  });
+
+  it("backward: d onto b lands d right before b", () => {
+    const next = drop(seqBoard(), "d", "b");
+    expect(idsOf(next, "ready")).toEqual(["a", "d", "b", "c"]);
+  });
+
+  it("cross-column onto a card lands the active card at that card's index in the target column", () => {
+    const next = drop(seqBoard(), "a", "g");
+    expect(idsOf(next, "done")).toEqual(["a", "g", "h"]);
+    expect(idsOf(next, "ready")).toEqual(["b", "c", "d"]);
+  });
+
+  it("drop on column:<id> of an empty column resolves to the end of that column", () => {
+    const base = seqBoard();
+    const board: WorkBoardT = { ...base, columns: [...base.columns, { id: "empty", name: "Empty" }] };
+    const next = drop(board, "a", "column:empty");
+    expect(idsOf(next, "empty")).toEqual(["a"]);
+    expect(idsOf(next, "ready")).toEqual(["b", "c", "d"]);
+  });
+
+  it("self-drop resolves to null (no-op)", () => {
+    expect(resolveDrop(seqBoard(), "a", "a")).toBeNull();
   });
 });
