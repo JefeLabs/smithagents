@@ -103,3 +103,85 @@ describe("MapStage", () => {
     expect(screen.getByText("1/2")).toBeTruthy();
   });
 });
+
+describe("MapStage editing", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("adds a story to a step via wholesale PATCH", async () => {
+    const { calls } = stubFetch();
+    render(<MapStage open lastCapabilityUpdate={null} onClose={vi.fn()} />);
+    await screen.findByText("Define Tour Schedule");
+    await userEvent.type(screen.getAllByPlaceholderText(/add a story/i)[0], "delete tour time slots{Enter}");
+    await waitFor(() => {
+      const call = calls.find((c) => c.method === "PATCH" && c.url.includes("/work/capabilities/school-feature-set"));
+      const stories = (call?.body as { stories?: Array<{ text: string; stepId: string }> })?.stories;
+      expect(stories?.some((s) => s.text === "delete tour time slots" && s.stepId === "st1")).toBe(true);
+      expect(stories?.length).toBe(4); // wholesale: existing three ride along
+    });
+  });
+
+  it("fireStoryDrop moves a story between steps via wholesale PATCH", async () => {
+    const { calls } = stubFetch();
+    render(<MapStage open lastCapabilityUpdate={null} onClose={vi.fn()} />);
+    await screen.findByText("Define Tour Schedule");
+    const { fireStoryDrop } = await import("./MapStage");
+    await fireStoryDrop("s2", "st2", 0);
+    await waitFor(() => {
+      const call = calls.find((c) => c.method === "PATCH" && c.url.includes("/work/capabilities/school-feature-set"));
+      const moved = (call?.body as { stories?: Array<{ id: string; stepId: string }> })?.stories?.find(
+        (s) => s.id === "s2",
+      );
+      expect(moved?.stepId).toBe("st2");
+    });
+  });
+
+  it("assigning a story to a slice keeps storyIds disjoint", async () => {
+    const { calls } = stubFetch();
+    render(<MapStage open lastCapabilityUpdate={null} onClose={vi.fn()} />);
+    await screen.findByText("create tour time slots");
+    // Each story renders a slice select; move s1 from sl1 to sl2.
+    await userEvent.selectOptions(screen.getAllByLabelText(/slice for/i)[0], "sl2");
+    await waitFor(() => {
+      const call = calls.find((c) => c.method === "PATCH" && c.url.includes("/work/capabilities/school-feature-set"));
+      const slices = (call?.body as { slices?: Array<{ id: string; storyIds: string[] }> })?.slices;
+      expect(slices?.find((s) => s.id === "sl1")?.storyIds).toEqual(["s2"]);
+      expect(slices?.find((s) => s.id === "sl2")?.storyIds).toEqual(["s1"]);
+    });
+  });
+
+  it("slice actions: generate spec POSTs; delivery send gated until specPath; sends post the target", async () => {
+    const { calls } = stubFetch();
+    render(<MapStage open lastCapabilityUpdate={null} onClose={vi.fn()} />);
+    await screen.findByText("tour scheduling v1");
+    // sl2 has no specPath: generate visible, delivery send disabled with reason.
+    expect(screen.getByRole("button", { name: /generate spec for analytics v1/i })).toBeTruthy();
+    const deliveryBtn = screen.getByRole("button", { name: /send analytics v1 to delivery/i }) as HTMLButtonElement;
+    expect(deliveryBtn.disabled).toBe(true);
+    expect(deliveryBtn.title).toMatch(/spec/i);
+    await userEvent.click(screen.getByRole("button", { name: /generate spec for analytics v1/i }));
+    await waitFor(() =>
+      expect(calls.some((c) => c.url.includes("/slices/sl2/spec") && c.method === "POST")).toBe(true),
+    );
+    // sl1 has a specPath: delivery send enabled and posts the target.
+    await userEvent.click(screen.getByRole("button", { name: /send tour scheduling v1 to delivery/i }));
+    await waitFor(() => {
+      const call = calls.find((c) => c.url.includes("/slices/sl1/send"));
+      expect(call?.body).toMatchObject({ target: "delivery" });
+    });
+  });
+
+  it("creates a slice", async () => {
+    const { calls } = stubFetch();
+    render(<MapStage open lastCapabilityUpdate={null} onClose={vi.fn()} />);
+    await screen.findByText("tour scheduling v1");
+    await userEvent.type(screen.getByPlaceholderText(/new slice name/i), "tour scheduling v2{Enter}");
+    await waitFor(() => {
+      const call = calls.find((c) => c.method === "PATCH" && c.url.includes("/work/capabilities/school-feature-set"));
+      const slices = (call?.body as { slices?: Array<{ name: string }> })?.slices;
+      expect(slices?.some((s) => s.name === "tour scheduling v2")).toBe(true);
+    });
+  });
+});

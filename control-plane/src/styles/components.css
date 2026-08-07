@@ -2533,18 +2533,32 @@ main.chat-active .composer-dock {
   flex-direction: column;
   gap: 6px;
   min-height: 24px;
+  border: 1px solid transparent;
+  border-radius: 10px;
 }
 .map-story {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 6px 10px;
   border-radius: 10px;
   border: 1px solid var(--pill-br);
   background: rgba(255, 255, 255, 0.04);
   font-size: 12px;
+}
+.map-story__handle {
+  flex: 1;
   cursor: grab;
 }
-.map-story.is-done {
+.map-story.is-done .map-story__handle {
   text-decoration: line-through;
   color: var(--text-dim);
+}
+.map-story.is-dragging {
+  opacity: 0.4;
+}
+.map-step__stories.is-over {
+  border-color: var(--accent);
 }
 .map-stage__slices {
   display: flex;
@@ -2561,6 +2575,10 @@ main.chat-active .composer-dock {
   font-size: 12px;
 }
 .slice-band__fraction {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.slice-band__path {
   font-size: 10px;
   color: var(--text-dim);
 }
