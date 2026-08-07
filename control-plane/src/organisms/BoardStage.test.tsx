@@ -367,6 +367,25 @@ describe("CardSheet", () => {
     );
   });
 
+  it("surfaces the server's error text on a failed save instead of a generic message (I4)", async () => {
+    stubFetch({
+      patched: {
+        error: "Story count mismatch (2 sent, 1 in the slice) — add/remove stories in the map, cards are toggle-only",
+      },
+      patchStatus: 400,
+    });
+    await openSheet("Write the spec");
+    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+    expect(await screen.findByText(/story count mismatch/i)).toBeTruthy();
+  });
+
+  it("falls back to a generic message when the server gives no error body", async () => {
+    stubFetch({ patched: null, patchStatus: 500 });
+    await openSheet("Write the spec");
+    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+    expect(await screen.findByText(/update failed/i)).toBeTruthy();
+  });
+
   it("stories: add + toggle are sent wholesale on save, toggle stamps verifiedBy", async () => {
     const { calls } = stubFetch();
     await openSheet("Write the spec");

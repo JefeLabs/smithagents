@@ -23,6 +23,20 @@ describe("ToolRail", () => {
     expect(onSessions).toHaveBeenCalledTimes(1);
   });
 
+  it("board tool fires onBoard", async () => {
+    const onBoard = vi.fn();
+    render(<ToolRail onBoard={onBoard} />);
+    await userEvent.click(screen.getByRole("button", { name: /^board$/i }));
+    expect(onBoard).toHaveBeenCalledTimes(1);
+  });
+
+  it("map tool fires onMap", async () => {
+    const onMap = vi.fn();
+    render(<ToolRail onMap={onMap} />);
+    await userEvent.click(screen.getByRole("button", { name: /^map$/i }));
+    expect(onMap).toHaveBeenCalledTimes(1);
+  });
+
   it("settings button still fires onSettings", async () => {
     const onSettings = vi.fn();
     render(<ToolRail onSettings={onSettings} />);

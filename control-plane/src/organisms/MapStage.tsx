@@ -444,7 +444,17 @@ export function MapStage({ open, lastCapabilityUpdate, onClose }: MapStageProps)
     <section className="map-stage" aria-label="Story map">
       <header className="map-stage__bar">
         <MapIcon size={14} strokeWidth={2} />
-        <select aria-label="Workspace" value={workspace} onChange={(e) => setWorkspace(e.target.value)}>
+        <select
+          aria-label="Workspace"
+          value={workspace}
+          onChange={(e) => {
+            const next = e.target.value;
+            setWorkspace(next);
+            // Otherwise the capability picker and grid keep showing whatever
+            // was active in the previous workspace (I5).
+            setActiveId(capabilities.find((c) => c.workspaceId === next)?.id ?? null);
+          }}
+        >
           {workspaces.map((w) => (
             <option key={w} value={w}>
               {w}

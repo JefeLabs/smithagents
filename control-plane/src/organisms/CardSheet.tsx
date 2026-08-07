@@ -37,7 +37,8 @@ export function CardSheet({ board, card, roster, workspaces, onClose, onChanged 
       body: JSON.stringify(body),
     }).catch(() => null);
     if (!res?.ok) {
-      setError("Update failed");
+      const payload = (await res?.json().catch(() => null)) as { error?: string } | null;
+      setError(payload?.error ?? "Update failed");
       return false;
     }
     onChanged();

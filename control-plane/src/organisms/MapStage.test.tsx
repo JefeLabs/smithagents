@@ -102,6 +102,35 @@ describe("MapStage", () => {
     await screen.findByText("tour scheduling v1", { selector: ".slice-band__name" });
     expect(screen.getByText("1/2")).toBeTruthy();
   });
+
+  it("switching workspace resets the selected capability to that workspace's own map (I5)", async () => {
+    const OTHER_CAP = {
+      id: "other-cap",
+      name: "Other Product",
+      workspaceId: "smithagents",
+      activities: [{ id: "act2", name: "Different Activity", order: 0, steps: [] }],
+      stories: [],
+      slices: [],
+    };
+    stubFetch({ capabilities: { capabilities: [CAP, OTHER_CAP], errors: [] } });
+    render(<MapStage open lastCapabilityUpdate={null} onClose={vi.fn()} />);
+    await screen.findByText("Manage Candidate Tours");
+    await userEvent.selectOptions(screen.getByLabelText("Workspace"), "smithagents");
+    await waitFor(() => expect((screen.getByLabelText("Capability") as HTMLSelectElement).value).toBe("other-cap"));
+    expect(screen.getByText("Different Activity")).toBeTruthy();
+    expect(screen.queryByText("Manage Candidate Tours")).toBeNull();
+  });
+
+  it("switching to a workspace with no capabilities clears the map instead of showing the old one", async () => {
+    stubFetch({ capabilities: { capabilities: [CAP], errors: [] } });
+    render(<MapStage open lastCapabilityUpdate={null} onClose={vi.fn()} />);
+    await screen.findByText("Manage Candidate Tours");
+    await userEvent.selectOptions(screen.getByLabelText("Workspace"), "smithagents");
+    await waitFor(() => expect(screen.queryByText("Manage Candidate Tours")).toBeNull());
+    const capSelect = screen.getByLabelText("Capability") as HTMLSelectElement;
+    expect(capSelect.value).toBe("");
+    expect(capSelect.querySelectorAll("option").length).toBe(0);
+  });
 });
 
 describe("MapStage editing", () => {
