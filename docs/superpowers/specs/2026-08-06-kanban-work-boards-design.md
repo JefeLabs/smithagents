@@ -14,6 +14,7 @@ A kanban-style task manager in the control-plane, **for Edwin's own use first**.
 - **Jira first** (existing Atlassian connector); Linear later behind the same field seam.
 - **Multiple boards with data-driven column sets.** Two shipped templates: **Personal** (Backlog · Ready · In Progress · In Review · Done) and **Capability Pipeline** (Capability · Spec · Implementation PRD · User Stories · In Progress · Completed). Boards addable, columns renameable.
 - Architecture: swarm owns storage + Jira calls; broker proxies + owns dispatch/events; board is a control-plane stage mode.
+- **Stories are a checklist on the card, never a column (added 2026-08-06).** User stories are authored once, in a spec's `## Acceptance criteria` section, and *tracked* on the capability card as a `stories` checklist — checked off as they're verified, with `verifiedBy` recording how. Status lives on plans/delegations; truth lives on stories. v1 ships the field with hand entry; one-way import from spec docs and a cross-board story view are the follow-on cycle.
 
 ## 1. Data model (swarm)
 
@@ -40,6 +41,11 @@ interface WorkCard {
   updatedAt: string;  // ISO
   jira?: { key: string; url: string; lastPushError?: string };
   delegation?: { agentId: string; taskId: string; state: 'working' | 'completed' | 'failed'; prUrl?: string };
+  /** Acceptance-criteria checklist. Authored in a spec's "## Acceptance
+   *  criteria" section (hand-entered in v1; one-way spec import is the
+   *  follow-on cycle). `verifiedBy` records how it was proven — e.g.
+   *  'manual 2026-08-07' or a test file path. */
+  stories?: Array<{ id: string; text: string; done: boolean; verifiedBy?: string }>;
 }
 ```
 
@@ -52,7 +58,7 @@ New module `swarm/src/work-items.ts`: load/save/validate boards (malformed file 
 - `PATCH /work/boards/:id` `{ name?, columns?, jira? }` (merge; columns replace wholesale when sent)
 - `DELETE /work/boards/:id`
 - `POST /work/boards/:id/cards` `{ title, notes?, columnId? }` (default leftmost column, appended)
-- `PATCH /work/boards/:id/cards/:cardId` `{ title?, notes?, columnId?, order?, jira?, delegation? }` — the single mutation route for edit, move, reorder, link/unlink, and delegation-state updates
+- `PATCH /work/boards/:id/cards/:cardId` `{ title?, notes?, columnId?, order?, jira?, delegation?, stories? }` — the single mutation route for edit, move, reorder, link/unlink, delegation-state updates, and story-checklist changes (stories replace wholesale when sent, same convention as columns)
 - `DELETE /work/boards/:id/cards/:cardId`
 - `POST /work/boards/:id/jira/import` → runs the board's JQL via its connector; creates cards (leftmost column) for unseen keys, updates title on known keys; idempotent by `jira.key`; response summarizes `{created, updated, errors}`
 - Reset flow (`scope.agents` in `/reset` — reuse the same stamp block) additionally archives `.smith/work/` → `.smith/work-archived-<stamp>`.
@@ -72,7 +78,8 @@ New module `swarm/src/work-items.ts`: load/save/validate boards (malformed file 
 - **Top bar:** board switcher (all boards + "New board…" prompting name + template), Add card, and — when the board is Jira-linked — "Import from Jira".
 - **Columns/cards:** horizontal column row, vertical card lists; dnd-kit with `AgentRoster`'s established sensor/collision/`arrayMove` patterns. Cross-column drop = `PATCH {columnId, order}`; same-column reorder = `PATCH {order}`. Optimistic UI with rollback on error. Cards are draggable regardless of delegation state.
 - **Card face:** title; Jira chip (`KEY-123`, click opens the issue URL; amber dot when `lastPushError`); delegation badge — agent portrait (reusing `Avatar` with the roster's avatar/ring data) with working/completed/failed state, PR chip when `prUrl`.
-- **Card sheet** (click): edit title/notes; Jira link/unlink (enter a key; url derived from the connector's site); **Send to agent** — a picker of roster agents (busy and inactive-CLI agents shown disabled with the reason, mirroring the chooser's convention) × workspaces, prompt textarea prefilled `title + "\n\n" + notes`; confirm → `POST /work/delegate`. Delete card.
+- **Card sheet** (click): edit title/notes; Jira link/unlink (enter a key; url derived from the connector's site); **Stories** — checklist section: add/edit/remove lines, toggle done (optionally setting `verifiedBy`), whole list sent via the single PATCH; **Send to agent** — a picker of roster agents (busy and inactive-CLI agents shown disabled with the reason, mirroring the chooser's convention) × workspaces, prompt textarea prefilled `title + "\n\n" + notes`; confirm → `POST /work/delegate`. Delete card.
+- **Card face** additionally shows a `done/total` stories fraction chip when the card has stories (e.g. `7/9`).
 - **Live updates:** on `board-updated` frames for the open board (and on stage open), refetch the board.
 - **Degraded modes:** broker unreachable → read-only banner; board file error → error card in the switcher; delegation refusal → inline error in the picker.
 
@@ -80,11 +87,12 @@ New module `swarm/src/work-items.ts`: load/save/validate boards (malformed file 
 
 - Linear (the `jira` field name stays vendor-specific; a `tracker` generalization happens with the second vendor).
 - Jira webhooks, background polling, rank/order sync, comment/attachment sync, issue creation FROM cards.
-- Auto-moving cards on execution events; WIP limits; due dates; labels; multi-user presence; subtask/user-story generation from spec docs (future: Capability Pipeline cards could link their spec/plan artifacts — not in v1).
+- Auto-moving cards on execution events; WIP limits; due dates; labels; multi-user presence.
+- Story **import from spec docs** and the cross-board **story view** (rows = stories grouped by capability, unverified-only filter). The `stories` field ships in v1 so these need no migration; parsing `## Acceptance criteria` sections and the lens UI are their own small cycle. Capability Pipeline cards linking their spec/plan artifacts lands there too.
 - Mobile layout beyond the stage's existing responsive behavior.
 
 ## 5. Testing
 
-- **Swarm:** `work-items.test.ts` (templates valid, CRUD helpers, move/reorder invariants, malformed-file isolation, id validation) and `jira-sync.test.ts` (mocked fetch: transition match by status name, import idempotency by key, error → `lastPushError` set and PATCH still succeeds).
+- **Swarm:** `work-items.test.ts` (templates valid, CRUD helpers, move/reorder invariants, malformed-file isolation, id validation, stories round-trip + wholesale-replace semantics) and `jira-sync.test.ts` (mocked fetch: transition match by status name, import idempotency by key, error → `lastPushError` set and PATCH still succeeds).
 - **Broker:** `text-channel.test.ts` route tests for the `/work/*` proxy and `POST /work/delegate` (accept + busy-refusal shapes via stub handlers); an event-handler test that a `task:completed` with `workCardRef` triggers the card PATCH and the `board-updated` frame.
-- **Control-plane:** `BoardStage.test.tsx` — renders boards/columns/cards from a fixture; drag handlers issue the right PATCHes (unit-level, mirroring AgentRoster's approach); delegate sheet posts the exact payload; badges render for each delegation state; Jira chip states. `ToolRail` gains a test that the third button opens the stage.
+- **Control-plane:** `BoardStage.test.tsx` — renders boards/columns/cards from a fixture; drag handlers issue the right PATCHes (unit-level, mirroring AgentRoster's approach); delegate sheet posts the exact payload; badges render for each delegation state; Jira chip states; story checklist toggles send the wholesale-replaced list and the card face fraction chip updates. `ToolRail` gains a test that the third button opens the stage.
