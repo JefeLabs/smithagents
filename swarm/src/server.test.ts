@@ -13,6 +13,7 @@ import {
   buildChannelsUpdate,
   buildConnectorFields,
   buildConnectorUpdate,
+  buildUserUpdate,
   buildVoiceUpdate,
   clearVoiceReferences,
   redactConnector,
@@ -311,6 +312,27 @@ test('resolveTaskRuntime: per-task override wins, then workspace runtime, then s
   assert.deepEqual(resolveTaskRuntime(undefined, undefined, 'tmux'), { runtime: 'tmux', location: 'local' });
 });
 
+test('buildUserUpdate: renaming the operator carries connectors and voice forward untouched', () => {
+  const existing: User = {
+    id: 'me', name: 'Old Name', default: true,
+    connectors: [{ id: 'c1', vendorId: 'github', label: 'personal', fields: { token: 'ghp' } }],
+    voice: { stt: { instanceId: 'dg1' }, hideInactive: true },
+  };
+  const r = buildUserUpdate(existing, { name: 'New Name' });
+  assert.equal(r.name, 'New Name');
+  assert.deepEqual(r.connectors, existing.connectors);
+  assert.deepEqual(r.voice, existing.voice); // the regression this guards: voice used to be dropped here
+});
+
+test('buildUserUpdate: no existing user → defaults id "me"/name "You", no voice', () => {
+  assert.deepEqual(buildUserUpdate(null, {}), { id: 'me', name: 'You', default: true, connectors: undefined, voice: undefined });
+});
+
+test('buildUserUpdate: blank submitted name falls back to the existing name (not "You")', () => {
+  const existing: User = { id: 'me', name: 'Keep Me', default: true };
+  assert.equal(buildUserUpdate(existing, { name: '  ' }).name, 'Keep Me');
+});
+
 const voiceUser: User = {
   id: 'me', name: 'You', default: true,
   connectors: [
@@ -356,4 +378,13 @@ test('resolveVoiceKeys: resolves selected slots to raw keys; unset/dangling/empt
   });
   assert.deepEqual(resolveVoiceKeys({ ...voiceUser, voice: { stt: { instanceId: 'gone' } } }), { stt: null, tts: null });
   assert.deepEqual(resolveVoiceKeys(null), { stt: null, tts: null });
+});
+
+test('resolveVoiceKeys: a still-encrypted apiKey (lost/rotated master key) resolves null, not the ciphertext', () => {
+  const undecryptable: User = {
+    ...voiceUser,
+    connectors: [{ id: 'dg1', vendorId: 'deepgram', label: 'personal', fields: { apiKey: 'enc:v1:iv:ct:tag' } }],
+    voice: { stt: { instanceId: 'dg1' } },
+  };
+  assert.deepEqual(resolveVoiceKeys(undecryptable), { stt: null, tts: null });
 });

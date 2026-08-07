@@ -72,6 +72,7 @@ import {
   type WorkspaceRepo,
 } from './workspaces.js';
 import { loadUsersFromDir, saveUser, resolveCurrentUser, sweepEncryptUsers, type User, type ConnectorInstance, type VoiceSettings } from './users.js';
+import { isEncrypted } from './secretbox.js';
 import { verifyGithubRepo } from './verify-github.js';
 import { verifyAtlassian } from './verify-atlassian.js';
 import { VENDORS, findVendor } from './connectors.js';
@@ -296,7 +297,15 @@ export class OrchestratorServer {
     this.startUdpHeartbeat();
     this.startQueueWorker();
 
-    await sweepEncryptUsers(resolve(process.cwd(), '.smith/users'));
+    // Belt-and-braces on top of sweepEncryptUsers' own per-file skip-and-
+    // continue: also guards the failure mode that isn't per-file, e.g.
+    // resolveMasterKey unable to create ~/.smith (read-only/absent HOME). An
+    // un-swept file still works fine — saveUser encrypts on the next write.
+    try {
+      await sweepEncryptUsers(resolve(process.cwd(), '.smith/users'));
+    } catch (err) {
+      this.app.log.warn(`User encrypt-sweep failed, continuing unswept: ${(err as Error).message}`);
+    }
 
     await this.app.listen({ port: this.config.port, host: this.config.host });
 
@@ -1455,12 +1464,7 @@ export class OrchestratorServer {
       const dir = resolve(process.cwd(), '.smith/users');
       const users = await loadUsersFromDir(dir);
       const existing = resolveCurrentUser(users);
-      const merged: User = {
-        id: existing?.id ?? 'me',
-        name: b.name?.trim() || existing?.name || 'You',
-        default: true,
-        connectors: existing?.connectors,
-      };
+      const merged = buildUserUpdate(existing, b);
       try {
         await saveUser(dir, merged);
       } catch (err) {
@@ -2323,6 +2327,25 @@ export function resolveAtlassianConnector(
   return resolved;
 }
 
+/**
+ * PUT /me merge: rebuilds field-by-field (id/default are never
+ * user-submitted) rather than `{...existing, ...}` — but every field the
+ * three connector-writing siblings below carry forward (connectors, voice)
+ * must be explicitly threaded here too, or renaming the operator silently
+ * wipes it. Final-review caught `voice` missing from this list: an operator
+ * rename turned off both voice capabilities and reset hideInactive with no
+ * error — currently latent (no shipped UI calls this route) but a landmine.
+ */
+export function buildUserUpdate(existing: User | null, body: { name?: string }): User {
+  return {
+    id: existing?.id ?? 'me',
+    name: body.name?.trim() || existing?.name || 'You',
+    default: true,
+    connectors: existing?.connectors,
+    voice: existing?.voice,
+  };
+}
+
 /** PUT /me/voice body → validated full-replace VoiceSettings (spec §2). */
 export function buildVoiceUpdate(user: User | null, body: unknown): { voice: VoiceSettings } | { error: string } {
   const b = (body ?? {}) as { stt?: { instanceId?: string } | null; tts?: { instanceId?: string } | null; hideInactive?: boolean };
@@ -2360,7 +2383,13 @@ export function resolveVoiceKeys(user: User | null): {
     const instanceId = user?.voice?.[slot]?.instanceId;
     const instance = user?.connectors?.find((c) => c.id === instanceId);
     const apiKey = instance?.fields.apiKey;
-    if (!instance || !apiKey) return null;
+    // A still-`enc:v1:…` value means decryptUser couldn't decrypt it (lost/
+    // rotated master key, passed through by design — see users.ts
+    // decryptUser). Reporting that slot as populated would flip statusSync()
+    // true and open the mic gate, only for Deepgram/ElevenLabs to silently
+    // reject the ciphertext — treat it as absent so the user gets the normal
+    // "add a key in Settings" pointer instead of a silent no-op.
+    if (!instance || !apiKey || isEncrypted(apiKey)) return null;
     return { vendorId: instance.vendorId, apiKey };
   };
   return { stt: resolveSlot('stt'), tts: resolveSlot('tts') };

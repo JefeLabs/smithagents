@@ -154,6 +154,15 @@ export async function saveUser(dir: string, user: User): Promise<void> {
  * One-time-per-boot migration pass (spec §3): any user file still holding a
  * plaintext secret is re-saved, which encrypts it. Skips files already fully
  * encrypted so boots don't churn IVs. Returns how many files were rewritten.
+ *
+ * Runs at server boot (server.ts start(), before app.listen()), so a single
+ * corrupt file must never abort the sweep: unlike loadUsersFromDir (called
+ * per-request, where a thrown error only 500s that one route), a throw here
+ * would stop the orchestrator from listening at all over a voice-adjacent
+ * file — every agent, workspace, and task taken down with it. Each file is
+ * therefore its own failure domain; a bad one is skipped (with a named
+ * warning) and the sweep continues, including past a saveUser failure (e.g.
+ * a legacy id that fails saveUser's id-shape check).
  */
 export async function sweepEncryptUsers(dir: string): Promise<number> {
   let entries: string[];
@@ -164,14 +173,18 @@ export async function sweepEncryptUsers(dir: string): Promise<number> {
   }
   let rewritten = 0;
   for (const file of entries.filter((f) => f.endsWith('.json'))) {
-    const raw = assertUser(file, JSON.parse(await readFile(join(dir, file), 'utf8')));
-    const hasPlaintextSecret = (raw.connectors ?? []).some((c) => {
-      const secrets = secretKeysFor(c.vendorId);
-      return Object.entries(c.fields).some(([k, v]) => secrets.has(k) && v && !isEncrypted(v));
-    });
-    if (!hasPlaintextSecret) continue;
-    await saveUser(dir, raw); // raw is plaintext in memory; saveUser encrypts
-    rewritten++;
+    try {
+      const raw = assertUser(file, JSON.parse(await readFile(join(dir, file), 'utf8')));
+      const hasPlaintextSecret = (raw.connectors ?? []).some((c) => {
+        const secrets = secretKeysFor(c.vendorId);
+        return Object.entries(c.fields).some(([k, v]) => secrets.has(k) && v && !isEncrypted(v));
+      });
+      if (!hasPlaintextSecret) continue;
+      await saveUser(dir, raw); // raw is plaintext in memory; saveUser encrypts
+      rewritten++;
+    } catch (err) {
+      console.warn(`[users] skipping ${file} during encrypt sweep: ${(err as Error).message}`);
+    }
   }
   return rewritten;
 }

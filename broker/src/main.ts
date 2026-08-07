@@ -111,6 +111,14 @@ const adapterHub = new AdapterHub({
 adapterHub.attendsPolicy = (agentId, kind) => policy.attends(agentId, kind);
 
 const voiceKeys = new VoiceKeyResolver(swarm);
+// Prime the cache at boot: the first client to hit GET /agents or open the WS
+// (its hello frame's config.audio) reads statusSync()'s cold snapshot
+// otherwise, which is always {stt:false,tts:false} until the 20s TTL's
+// background refresh happens to land — the mic stays dimmed/hidden and
+// audioMode stays off for that connection's whole lifetime even with both
+// keys configured. Best-effort: the resolver already keeps last-good on
+// failure and never rejects (see refresh()), so no error handling here.
+void voiceKeys.status();
 
 // Both classes bind the key in their constructors, so "rebuilt only when the
 // key changes" (spec §4) is a memoized {key, provider, catalog} triple, not a

@@ -161,6 +161,24 @@ test('sweepEncryptUsers: rewrites a plaintext legacy file once, then is a no-op'
   assert.equal(user!.connectors?.[0]!.fields.token, 'ghp_plain');
 });
 
+test('sweepEncryptUsers: a corrupt file is skipped, not thrown — the valid sibling still gets encrypted', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'users-sweep-corrupt-'));
+  await writeFile(join(dir, 'broken.json'), '{ not valid json', 'utf8'); // malformed JSON
+  await writeFile(join(dir, 'bad-shape.json'), JSON.stringify({ connectors: [] }), 'utf8'); // parses, fails assertUser (no id/name)
+  const fh = await open(join(dir, 'ok.json'), 'w', 0o600);
+  await fh.writeFile(JSON.stringify({
+    id: 'ok', name: 'You', default: true,
+    connectors: [{ id: 'c1', vendorId: 'github', label: 'personal', fields: { token: 'ghp_plain' } }],
+  }));
+  await fh.close();
+
+  // Boot-time contract (spec: degrade-never-crash): neither corrupt file
+  // throws out of the sweep, and the valid file is still processed.
+  assert.equal(await sweepEncryptUsers(dir), 1);
+  const onDisk = JSON.parse(await readFile(join(dir, 'ok.json'), 'utf8'));
+  assert.ok(String(onDisk.connectors[0].fields.token).startsWith(ENC_PREFIX));
+});
+
 test('a value that fails to decrypt is passed through as-is (connected-but-failing-verify, spec §3), not a crash', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'users-badkey-'));
   await saveUser(dir, {
