@@ -50,7 +50,7 @@ import type {
   RegisteredMessage,
 } from './remote-types.js';
 import { execFile } from 'node:child_process';
-import { mkdir, rename, rm, stat } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { loadAgents, findAgent, saveAgent, activeAgents, type ComposedAgent } from './agents.js';
 import { readAvatar, stageAvatar } from './avatars.js';
 import { QUICK_QUESTIONS, STEREOTYPES, JOB_ROLES, ENGINES, LANGUAGES, DEFAULT_LANGUAGE, findStereotype, findJobRole, findEngine, findLanguage, REACTION_LEVELS, PRESET_AGENTS } from './personas.js';
@@ -80,7 +80,7 @@ import { verifyDiscordToken } from './verify-discord.js';
 import { lookupTicket, searchDocs } from './atlassian-client.js';
 import { MeetingOrchestrator } from './meetings.js';
 import { loadLiveKitConfig } from './config.js';
-import { resolve, isAbsolute } from 'node:path';
+import { dirname, resolve, isAbsolute } from 'node:path';
 import {
   buildCliToolListings,
   gateReason,
@@ -94,6 +94,21 @@ import {
 } from './cli-tools.js';
 import { addCard, createBoard, deleteBoardFile, loadBoards, patchCard, removeCard, saveBoard, type WorkBoard } from './work-items.js';
 import { importIssues, searchIssues, transitionIssue } from './jira-sync.js';
+import {
+  applyStoryToggles,
+  createCapability,
+  deleteCapabilityFile,
+  ensureWorkspaceBoards,
+  loadCapabilities,
+  patchCapability,
+  renderSpecSkeleton,
+  saveCapability,
+  sendSliceToBoard,
+  sliceStories,
+  slugify,
+  workspaceBoardId,
+  type Capability,
+} from './capabilities.js';
 import {
   buildApiKeyListings,
   deleteKey,
@@ -1998,6 +2013,42 @@ export class OrchestratorServer {
     this.app.patch<{ Params: { id: string; cardId: string } }>('/work/boards/:id/cards/:cardId', async (req, reply) => {
       const board = await boardOr404(req.params.id, reply);
       if (!board) return;
+
+      // Linked-card checklists are toggle-only views of the capability's
+      // stories — validate, write through, and refresh the sibling card's
+      // copy in the same request so every surface agrees.
+      const bodyPatch = req.body as { stories?: Array<{ id: string; text: string; done: boolean; verifiedBy?: string }> };
+      const targetCard = board.cards.find((c) => c.id === req.params.cardId);
+      if (bodyPatch.stories && targetCard?.capabilityRef) {
+        const { capabilities } = await loadCapabilities(capsDir());
+        const cap = capabilities.find((c) => c.id === targetCard.capabilityRef?.capabilityId);
+        if (cap) {
+          let canonical: ReturnType<typeof applyStoryToggles>;
+          try {
+            canonical = applyStoryToggles(cap, targetCard.capabilityRef.sliceId, bodyPatch.stories);
+          } catch (err) {
+            return reply.status(400).send({ error: String((err as Error).message) });
+          }
+          await saveCapability(capsDir(), cap);
+          const copy = () => canonical.map((s) => ({ id: s.id, text: s.text, done: s.done, verifiedBy: s.verifiedBy }));
+          bodyPatch.stories = copy();
+          const slice = cap.slices.find((s) => s.id === targetCard.capabilityRef?.sliceId);
+          const sibling = [slice?.capCardRef, slice?.deliveryCardRef].find((r) => r && r.cardId !== targetCard.id);
+          if (sibling && sibling.boardId !== board.id) {
+            const { boards: all } = await loadBoards(server.workDir());
+            const other = all.find((b) => b.id === sibling.boardId);
+            const otherCard = other?.cards.find((c) => c.id === sibling.cardId);
+            if (other && otherCard) {
+              otherCard.stories = copy();
+              await saveBoard(server.workDir(), other);
+            }
+          } else if (sibling) {
+            const siblingCard = board.cards.find((c) => c.id === sibling.cardId);
+            if (siblingCard) siblingCard.stories = copy();
+          }
+        }
+      }
+
       try {
         const card = patchCard(board, req.params.cardId, req.body as Parameters<typeof patchCard>[2]);
 
@@ -2068,6 +2119,120 @@ export class OrchestratorServer {
         const summary = importIssues(board, issues);
         await saveBoard(server.workDir(), board);
         return summary;
+      } catch (err) {
+        return reply.status(400).send({ error: String((err as Error).message) });
+      }
+    });
+
+    // ── Capability story maps — the authoring layer above the boards ──
+    const capsDir = () => resolve(process.cwd(), '.smith/work/capabilities');
+    const capOr404 = async (id: string, reply: { status: (n: number) => { send: (b: unknown) => unknown } }): Promise<Capability | null> => {
+      const { capabilities } = await loadCapabilities(capsDir());
+      const cap = capabilities.find((c) => c.id === id) ?? null;
+      if (!cap) reply.status(404).send({ error: `Unknown capability: ${id}` });
+      return cap;
+    };
+
+    this.app.get('/work/capabilities', async (req) => {
+      const { capabilities, errors } = await loadCapabilities(capsDir());
+      const ws = (req.query as { workspaceId?: string }).workspaceId;
+      return { capabilities: ws ? capabilities.filter((c) => c.workspaceId === ws) : capabilities, errors };
+    });
+
+    this.app.post('/work/capabilities', async (req, reply) => {
+      const b = req.body as { name?: string; workspaceId?: string };
+      if (!b?.name?.trim() || !b.workspaceId?.trim()) return reply.status(400).send({ error: 'Missing required fields: name, workspaceId' });
+      try {
+        const cap = createCapability(b.name, b.workspaceId.trim());
+        const { capabilities } = await loadCapabilities(capsDir());
+        if (capabilities.some((c) => c.id === cap.id)) return reply.status(409).send({ error: `Capability "${cap.id}" already exists` });
+        await saveCapability(capsDir(), cap);
+        await ensureWorkspaceBoards(server.workDir(), cap.workspaceId);
+        return reply.status(201).send(cap);
+      } catch (err) {
+        return reply.status(400).send({ error: String((err as Error).message) });
+      }
+    });
+
+    this.app.patch<{ Params: { id: string } }>('/work/capabilities/:id', async (req, reply) => {
+      const cap = await capOr404(req.params.id, reply);
+      if (!cap) return;
+      try {
+        patchCapability(cap, req.body as Parameters<typeof patchCapability>[1]);
+        await saveCapability(capsDir(), cap);
+        return cap;
+      } catch (err) {
+        return reply.status(400).send({ error: String((err as Error).message) });
+      }
+    });
+
+    this.app.delete<{ Params: { id: string } }>('/work/capabilities/:id', async (req, reply) => {
+      const cap = await capOr404(req.params.id, reply);
+      if (!cap) return;
+      // Unlink, never orphan: linked cards keep their story copies as local checklists.
+      for (const slice of cap.slices) {
+        for (const ref of [slice.capCardRef, slice.deliveryCardRef]) {
+          if (!ref) continue;
+          const { boards } = await loadBoards(server.workDir());
+          const board = boards.find((b) => b.id === ref.boardId);
+          const card = board?.cards.find((c) => c.id === ref.cardId);
+          if (board && card) {
+            card.capabilityRef = undefined;
+            await saveBoard(server.workDir(), board);
+          }
+        }
+      }
+      await deleteCapabilityFile(capsDir(), cap.id);
+      return { ok: true };
+    });
+
+    this.app.post<{ Params: { id: string; sliceId: string } }>('/work/capabilities/:id/slices/:sliceId/spec', async (req, reply) => {
+      const cap = await capOr404(req.params.id, reply);
+      if (!cap) return;
+      const slice = cap.slices.find((s) => s.id === req.params.sliceId);
+      if (!slice) return reply.status(404).send({ error: `Unknown slice: ${req.params.sliceId}` });
+      if (slice.specPath) return reply.status(409).send({ error: `Slice already has a spec: ${slice.specPath}` });
+      const workspaces = await loadWorkspacesFromDir(resolve(process.cwd(), '.smith/workspaces'));
+      const resolved = resolveRepo(workspaces, cap.workspaceId);
+      if (!resolved) return reply.status(400).send({ error: `No active workspace/repo for: ${cap.workspaceId}` });
+      try {
+        const date = new Date().toISOString().slice(0, 10);
+        const relPath = `docs/superpowers/specs/${date}-${slugify(slice.name)}-design.md`;
+        const absPath = resolve(resolved.repo.path, relPath);
+        const exists = await readFile(absPath, 'utf8').then(() => true, () => false);
+        if (exists) return reply.status(409).send({ error: `File already exists: ${relPath}` });
+        await mkdir(dirname(absPath), { recursive: true });
+        await writeFile(absPath, renderSpecSkeleton(slice.name, sliceStories(cap, slice.id), date));
+        slice.specPath = relPath;
+        cap.updatedAt = new Date().toISOString();
+        await saveCapability(capsDir(), cap);
+        return { specPath: relPath };
+      } catch (err) {
+        return reply.status(400).send({ error: String((err as Error).message) });
+      }
+    });
+
+    this.app.post<{ Params: { id: string; sliceId: string } }>('/work/capabilities/:id/slices/:sliceId/send', async (req, reply) => {
+      const cap = await capOr404(req.params.id, reply);
+      if (!cap) return;
+      const slice = cap.slices.find((s) => s.id === req.params.sliceId);
+      if (!slice) return reply.status(404).send({ error: `Unknown slice: ${req.params.sliceId}` });
+      const target = (req.body as { target?: 'capabilities' | 'delivery' })?.target;
+      if (target !== 'capabilities' && target !== 'delivery') return reply.status(400).send({ error: 'target must be "capabilities" or "delivery"' });
+      const refKey = target === 'capabilities' ? 'capCardRef' : 'deliveryCardRef';
+      if (slice[refKey]) return reply.status(409).send({ error: `Slice already sent to ${target}` });
+      if (target === 'delivery' && !slice.specPath) return reply.status(409).send({ error: 'Generate the spec before sending to delivery' });
+      await ensureWorkspaceBoards(server.workDir(), cap.workspaceId);
+      const { boards } = await loadBoards(server.workDir());
+      const board = boards.find((b) => b.id === workspaceBoardId(cap.workspaceId, target));
+      if (!board) return reply.status(400).send({ error: `Workspace board missing: ${cap.workspaceId} ${target}` });
+      try {
+        const card = sendSliceToBoard(cap, slice, board);
+        await saveBoard(server.workDir(), board);
+        slice[refKey] = { boardId: board.id, cardId: card.id };
+        cap.updatedAt = new Date().toISOString();
+        await saveCapability(capsDir(), cap);
+        return reply.status(201).send(card);
       } catch (err) {
         return reply.status(400).send({ error: String((err as Error).message) });
       }
