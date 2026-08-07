@@ -20,6 +20,13 @@ export function Transcript({ messages }: TranscriptProps) {
   return (
     <div className="transcript" role="log" aria-label="Conversation transcript">
       {messages.map((m) => {
+        if (m.role === "notice") {
+          return (
+            <p key={m.id} className="transcript__notice">
+              {m.text}
+            </p>
+          );
+        }
         // Broker speech is speaker-prefixed ("Manuel: On it.") — render the name as a label.
         const spoken = m.role === "broker" ? /^([A-Z][\w-]{1,24}):\s+(.*)$/s.exec(m.text) : null;
         return (

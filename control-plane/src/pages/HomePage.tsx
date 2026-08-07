@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { type AgentSeed, ringForIndex } from "../data/agents";
-import { type AudioFrame, useBrokerChat } from "../hooks/useBrokerChat";
+import { type AudioFrame, useBrokerChat, type VoiceSettingsRecord } from "../hooks/useBrokerChat";
 import { useCliToolHealth } from "../hooks/useCliToolHealth";
 import { GRID_DEFAULTS, type GridParams } from "../hooks/useDotGrid";
 import { usePushToTalk } from "../hooks/usePushToTalk";
 import { useSpokenReplies } from "../hooks/useSpokenReplies";
 import { useTheme } from "../hooks/useTheme";
+import { useVoiceStatus } from "../hooks/useVoiceStatus";
 import { ConfirmSheet } from "../molecules/ConfirmSheet";
 import { IdentityTile } from "../molecules/IdentityTile";
 import { AddAgentModal } from "../organisms/AddAgentModal";
@@ -83,6 +84,8 @@ export function HomePage() {
     verifyRepoGithub,
     listConnectorVendors,
     listMyConnectors,
+    getVoiceSettings,
+    saveVoiceSettings,
     addConnector,
     updateConnector,
     deleteConnector,
@@ -106,6 +109,34 @@ export function HomePage() {
     end: () => micControl("mic-stop"),
   });
   const { warnings: engineWarnings, refresh: refreshEngineWarnings } = useCliToolHealth();
+
+  const { voice, refresh: refreshVoiceStatus } = useVoiceStatus();
+  const [voicePrefs, setVoicePrefs] = useState<VoiceSettingsRecord | null>(null);
+  // Load voice prefs on mount and again whenever Settings closes — hideInactive may have
+  // changed while the panel was open.
+  useEffect(() => {
+    if (!settingsOpen)
+      void getVoiceSettings()
+        .then(setVoicePrefs)
+        .catch(() => setVoicePrefs(null));
+  }, [settingsOpen, getVoiceSettings]);
+
+  const hideMic = Boolean(voicePrefs?.hideInactive) && !voice.stt;
+  const [voiceNotice, setVoiceNotice] = useState<string | null>(null);
+  // A ref (not state) for the pending dismiss timer: rapid presses must restart the 6s window
+  // rather than letting an earlier press's timer cut the latest notice short.
+  const voiceNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (voiceNoticeTimer.current) clearTimeout(voiceNoticeTimer.current);
+    },
+    [],
+  );
+  const onVoiceBlocked = () => {
+    setVoiceNotice("Add a Deepgram key in Settings → Integrations, then select it under Settings → Voice.");
+    if (voiceNoticeTimer.current) clearTimeout(voiceNoticeTimer.current);
+    voiceNoticeTimer.current = setTimeout(() => setVoiceNotice(null), 6000);
+  };
 
   const agents: AgentSeed[] = [
     ...roster.map((a, i) => ({
@@ -213,6 +244,10 @@ export function HomePage() {
             onSend={send}
             soundOn={soundOn}
             onSoundToggle={toggleSound}
+            sttEnabled={voice.stt}
+            onVoiceBlocked={onVoiceBlocked}
+            showMicHero={!hideMic}
+            voiceNotice={voiceNotice}
           />
         )
       }
@@ -244,12 +279,15 @@ export function HomePage() {
             onClose={() => {
               setSettingsOpen(false);
               void refreshEngineWarnings();
+              refreshVoiceStatus();
             }}
             onReset={resetSetup}
             theme={theme}
             onThemeChange={setTheme}
             listConnectorVendors={listConnectorVendors}
             listMyConnectors={listMyConnectors}
+            getVoiceSettings={getVoiceSettings}
+            saveVoiceSettings={saveVoiceSettings}
             addConnector={addConnector}
             updateConnector={updateConnector}
             deleteConnector={deleteConnector}

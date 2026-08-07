@@ -67,6 +67,7 @@ function channelWith(opts: {
   cliTools?: ConstructorParameters<typeof TextChannel>[15];
   workBoards?: ConstructorParameters<typeof TextChannel>[16];
   apiKeys?: ConstructorParameters<typeof TextChannel>[17];
+  voice?: ConstructorParameters<typeof TextChannel>[18];
 }): TextChannel {
   return new TextChannel(
     () => {},
@@ -87,6 +88,7 @@ function channelWith(opts: {
     opts.cliTools,
     opts.workBoards,
     opts.apiKeys,
+    opts.voice,
   );
 }
 
@@ -1065,5 +1067,60 @@ test('proxy broadcasts capability-updated to connected WS clients on mutating ca
     assert.ok(frames.some((f) => f.type === 'capability-updated' && f.capabilityId === 'school-feature-set'));
   } finally {
     await channel.stop();
+  }
+});
+
+const voiceDep = {
+  status: () => ({ stt: true, tts: false }),
+  get: async () => ({ stt: null, tts: null, hideInactive: false }),
+  save: async (body: unknown) => body as Record<string, unknown>,
+};
+
+test('voice: GET and PUT /me/voice are proxied when the voice dep is wired', async () => {
+  const channel = channelWith({ voice: voiceDep });
+  const port = await channel.start(0);
+  try {
+    const got = await fetch(`http://127.0.0.1:${port}/me/voice`, { headers: { Origin: 'http://localhost:1420' } });
+    assert.equal(got.status, 200);
+    assert.deepEqual(await got.json(), { stt: null, tts: null, hideInactive: false });
+    const put = await fetch(`http://127.0.0.1:${port}/me/voice`, {
+      method: 'PUT',
+      headers: { Origin: 'http://localhost:1420', 'content-type': 'application/json' },
+      body: JSON.stringify({ stt: { instanceId: 'dg1' }, tts: null, hideInactive: false }),
+    });
+    assert.equal(put.status, 200);
+    assert.deepEqual(await put.json(), { stt: { instanceId: 'dg1' }, tts: null, hideInactive: false });
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('voice: /me/voice/keys is NOT proxied on 7790 — raw keys never reach the browser surface', async () => {
+  const channel = channelWith({ voice: voiceDep });
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/me/voice/keys`, { headers: { Origin: 'http://localhost:1420' } });
+    assert.equal(res.status, 404);
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('agents: response carries the voice status sibling; absent dep → both false', async () => {
+  const withDep = channelWith({ voice: voiceDep });
+  const port = await withDep.start(0);
+  try {
+    const body = (await (await fetch(`http://127.0.0.1:${port}/agents`)).json()) as { voice?: unknown };
+    assert.deepEqual(body.voice, { stt: true, tts: false });
+  } finally {
+    await withDep.stop();
+  }
+  const without = channelWith({});
+  const port2 = await without.start(0);
+  try {
+    const body = (await (await fetch(`http://127.0.0.1:${port2}/agents`)).json()) as { voice?: unknown };
+    assert.deepEqual(body.voice, { stt: false, tts: false });
+  } finally {
+    await without.stop();
   }
 });

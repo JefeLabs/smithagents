@@ -86,4 +86,31 @@ describe("VoiceStage", () => {
     expect(box.disabled).toBe(true);
     expect(box.placeholder).toBe("Broker offline — start the broker to chat…");
   });
+
+  it("sttEnabled false dims the mic hero and reroutes its click to onVoiceBlocked", async () => {
+    const onVoiceBlocked = vi.fn();
+    const { onMicToggle } = renderStage({ sttEnabled: false, onVoiceBlocked });
+    const hero = screen.getByRole("button", { name: "Activate always listening" });
+    expect(hero.className).toContain("is-voice-disabled");
+    await userEvent.click(hero);
+    expect(onMicToggle).not.toHaveBeenCalled();
+    expect(onVoiceBlocked).toHaveBeenCalledTimes(1);
+  });
+
+  it("showMicHero false hides the mic hero and drops the composer's mic buttons entirely", () => {
+    renderStage({ showMicHero: false });
+    expect(screen.queryByRole("button", { name: "Activate always listening" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Always listening" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Hold to talk" })).toBeNull();
+  });
+
+  it("voiceNotice renders above the composer when set", () => {
+    renderStage({ voiceNotice: "Add a Deepgram key in Settings → Integrations." });
+    expect(screen.getByText("Add a Deepgram key in Settings → Integrations.")).toBeTruthy();
+  });
+
+  it("no voiceNotice renders nothing extra", () => {
+    renderStage({ voiceNotice: null });
+    expect(document.querySelector(".transcript__notice")).toBeNull();
+  });
 });

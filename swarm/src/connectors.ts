@@ -7,6 +7,8 @@ import { verifyAtlassian } from './verify-atlassian.js';
 import { verifyGithubToken } from './verify-github.js';
 import { verifyDatadog } from './verify-datadog.js';
 import { verifySnyk } from './verify-snyk.js';
+import { verifyElevenlabs } from './verify-elevenlabs.js';
+import { verifyDeepgram } from './verify-deepgram.js';
 
 export interface ConnectorFieldDef {
   key: string;
@@ -32,6 +34,8 @@ export interface ConnectorVendorDef {
    * (which Jira/Confluence site to test against).
    */
   verifyExtraFields?: ConnectorFieldDef[];
+  /** Voice capabilities this vendor's credential can power (spec §1). Absent = not a voice vendor. */
+  capabilities?: ('stt' | 'tts')[];
   verify(
     fields: Record<string, string>,
     extra: Record<string, string>,
@@ -119,7 +123,25 @@ const SNYK: ConnectorVendorDef = {
   verify: (fields, _extra, fetchImpl) => verifySnyk(fields.region || 'us-01', fields.token ?? '', fetchImpl),
 };
 
-export const VENDORS: ConnectorVendorDef[] = [ATLASSIAN, GITHUB, DATADOG, SNYK];
+const ELEVENLABS: ConnectorVendorDef = {
+  id: 'elevenlabs',
+  label: 'ElevenLabs',
+  description: 'Text-to-speech — the voices agents speak with.',
+  fields: [{ key: 'apiKey', label: 'API key', secret: true }],
+  capabilities: ['tts'],
+  verify: (fields, _extra, fetchImpl) => verifyElevenlabs(fields.apiKey ?? '', fetchImpl),
+};
+
+const DEEPGRAM: ConnectorVendorDef = {
+  id: 'deepgram',
+  label: 'Deepgram',
+  description: 'Speech-to-text — how agents hear you.',
+  fields: [{ key: 'apiKey', label: 'API key', secret: true }],
+  capabilities: ['stt'],
+  verify: (fields, _extra, fetchImpl) => verifyDeepgram(fields.apiKey ?? '', fetchImpl),
+};
+
+export const VENDORS: ConnectorVendorDef[] = [ATLASSIAN, GITHUB, DATADOG, SNYK, ELEVENLABS, DEEPGRAM];
 
 export function findVendor(id: string): ConnectorVendorDef | undefined {
   return VENDORS.find((v) => v.id === id);

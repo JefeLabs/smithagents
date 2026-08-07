@@ -29,9 +29,11 @@ import type { createDiscordVoiceSurface } from './discord-voice.ts';
 import type { VoicePresence } from './voice-presence.ts';
 import { applyModeChange, decideJoin, surfaceModes, SurfacePolicy } from './surface-modes.ts';
 import { LocalMemory, type MemoryEntry } from './memory.ts';
+import { MicSessionGate } from './mic-gate.ts';
 import { SessionManager, type Session } from './sessions.ts';
 import { DeepgramSttStream, type LiveLike, deepgramLiveOptions } from './stt.ts';
 import { SwarmClient, type SwarmSquad, type WorkspaceBody } from './swarm-client.ts';
+import { VoiceKeyResolver, VOICE_STT_HINT, VOICE_TTS_HINT } from './voice-keys.ts';
 import { PersonaGenerator, draftToAgentBody, type PersonaDraft } from './persona-generator.ts';
 import { loadIdentity, promptInfo } from './identity.ts';
 import { VoiceCatalog } from './voice-catalog.ts';
@@ -108,11 +110,36 @@ const adapterHub = new AdapterHub({
 });
 adapterHub.attendsPolicy = (agentId, kind) => policy.attends(agentId, kind);
 
-const tts = config.elevenlabsApiKey ? new ElevenLabsVoiceProvider({ apiKey: config.elevenlabsApiKey }) : null;
-// Voice library browsing + the fixed-line audio cache (reactions, quick answers).
-const voiceCatalog = config.elevenlabsApiKey
-  ? new VoiceCatalog(config.elevenlabsApiKey, process.env.BROKER_VOICE_CACHE_DIR ?? '.smith/voice-cache')
-  : null;
+const voiceKeys = new VoiceKeyResolver(swarm);
+// Prime the cache at boot: the first client to hit GET /agents or open the WS
+// (its hello frame's config.audio) reads statusSync()'s cold snapshot
+// otherwise, which is always {stt:false,tts:false} until the 20s TTL's
+// background refresh happens to land — the mic stays dimmed/hidden and
+// audioMode stays off for that connection's whole lifetime even with both
+// keys configured. Best-effort: the resolver already keeps last-good on
+// failure and never rejects (see refresh()), so no error handling here.
+void voiceKeys.status();
+
+// Both classes bind the key in their constructors, so "rebuilt only when the
+// key changes" (spec §4) is a memoized {key, provider, catalog} triple, not a
+// per-call key thread.
+let ttsCache: { key: string; provider: ElevenLabsVoiceProvider; catalog: VoiceCatalog } | null = null;
+async function currentTts(): Promise<{ provider: ElevenLabsVoiceProvider; catalog: VoiceCatalog } | null> {
+  const key = await voiceKeys.ttsKey();
+  if (!key) {
+    ttsCache = null;
+    return null;
+  }
+  if (ttsCache?.key !== key) {
+    ttsCache = {
+      key,
+      provider: new ElevenLabsVoiceProvider({ apiKey: key }),
+      catalog: new VoiceCatalog(key, process.env.BROKER_VOICE_CACHE_DIR ?? '.smith/voice-cache'),
+    };
+  }
+  return ttsCache;
+}
+
 // Bound on a single TTS request. speak() runs inside the serialized turn
 // queue (broker.ts's enqueueSpeech chain) — a hung ElevenLabs call with no
 // deadline would park every subsequent turn, voice or text, until Node's
@@ -132,7 +159,8 @@ function isTtsTimeout(err: unknown): boolean {
 // Meeting TTS speaks with the per-agent cast — same voices as the app's audio
 // frames. Falls back to a premade stand-in when a library voice is plan-gated.
 async function* speak(text: string): AsyncIterable<Uint8Array> {
-  if (!tts) {
+  const t = await currentTts();
+  if (!t) {
     return; // no TTS configured — onSpeechText already surfaced the text
   }
   const { speaker, spokenText } = resolveSpokenLine(text);
@@ -140,7 +168,7 @@ async function* speak(text: string): AsyncIterable<Uint8Array> {
   // invokes attempt() a second time and must get its OWN timeout window, not
   // the first attempt's (already fired-or-consumed) signal.
   const attempt = (voiceId: string) =>
-    tts.stream({
+    t.provider.stream({
       text: spokenText,
       personaId: speaker ?? 'broker',
       format: 'pcm_s16le',
@@ -179,7 +207,6 @@ async function* speak(text: string): AsyncIterable<Uint8Array> {
  * synchronous, so this adapter bridges the gap: audio sent before the socket
  * finishes connecting *and* opening is queued and flushed once truly open.
  */
-const deepgram = new DeepgramClient({ apiKey: config.deepgramApiKey });
 
 // sampleRate defaults to 48000 (mic/meeting PTT's rate) so the existing
 // `new DeepgramSttStream(makeDeepgramLive)` call sites below need no change;
@@ -187,16 +214,22 @@ const deepgram = new DeepgramClient({ apiKey: config.deepgramApiKey });
 // passes it explicitly rather than relying on the default matching by
 // coincidence — see makeVoiceStt below.
 function makeDeepgramLive(sampleRate = 48000): LiveLike {
-  type Socket = Awaited<ReturnType<typeof deepgram.listen.v1.connect>>;
+  type Socket = Awaited<ReturnType<DeepgramClient['listen']['v1']['connect']>>;
   let socket: Socket | null = null;
   let resultsCb: ((data?: unknown) => void) | null = null;
   const pending: Uint8Array[] = [];
   let closed = false;
 
   // Record<string, unknown> can't structurally satisfy the SDK's ConnectArgs; the payload shape is pinned by stt.test.ts.
-  const ready: Promise<Socket | null> = deepgram.listen.v1
-    .connect(deepgramLiveOptions(sampleRate) as any)
+  const ready: Promise<Socket | null> = voiceKeys
+    .sttKey()
+    .then((key) => {
+      if (!key) return null; // no STT key — session yields no results (callers gate before starting)
+      const deepgram = new DeepgramClient({ apiKey: key });
+      return deepgram.listen.v1.connect(deepgramLiveOptions(sampleRate) as any);
+    })
     .then(async (s) => {
+      if (!s) return null;
       if (closed) {
         s.close();
         return null;
@@ -651,6 +684,16 @@ const apiKeys = {
   remove: (id: string) => swarm.deleteApiKey(id),
 };
 
+// Voice status + settings passthrough (Settings → Voice group), origin-restricted
+// the same way as apiKeys/cliTools. status() rides the same cached resolver
+// snapshot the hello-frame config and mic gate use — never a second source of
+// truth for whether keys are configured.
+const voice = {
+  status: () => voiceKeys.statusSync(),
+  get: () => swarm.getMyVoice(),
+  save: (body: unknown) => swarm.saveMyVoice(body),
+};
+
 // Agent creation: the swarm owns the registry, the broker owns voices. A
 // named const (not an inline TextChannel argument) because the brain's
 // draft_agent/confirm_agent executors drive the same generate/create path
@@ -778,8 +821,9 @@ const creation = {
       return draft as unknown as Record<string, unknown>;
     },
     voices: async (query: Record<string, string>) => {
-      if (!voiceCatalog) return { voices: [], hasMore: false, error: 'no ElevenLabs key configured' };
-      return voiceCatalog.browse({
+      const t = await currentTts();
+      if (!t) return { voices: [], hasMore: false, error: VOICE_TTS_HINT };
+      return t.catalog.browse({
         search: query.search,
         gender: query.gender,
         language: query.language,
@@ -787,8 +831,9 @@ const creation = {
       });
     },
     preview: async (voiceId: string, text: string) => {
-      if (!voiceCatalog) throw new Error('no ElevenLabs key configured');
-      return voiceCatalog.synthesize(voiceId, text);
+      const t = await currentTts();
+      if (!t) throw new Error(VOICE_TTS_HINT);
+      return t.catalog.synthesize(voiceId, text);
     },
     create: async (body: Record<string, unknown>) => {
       const created = await swarm.createAgent(body);
@@ -800,12 +845,13 @@ const creation = {
         reactions?: Record<string, string[]>;
         quickAnswers?: Record<string, string>;
       };
-      if (voiceCatalog && agent.voice?.voiceId) {
+      const t = await currentTts();
+      if (t && agent.voice?.voiceId) {
         const lines = [
           ...Object.values(agent.reactions ?? {}).flat(),
           ...Object.values(agent.quickAnswers ?? {}),
         ];
-        const warm = await voiceCatalog.warmAgent(agent.voice.voiceId, lines).catch(() => ({ cached: 0, failed: [] }));
+        const warm = await t.catalog.warmAgent(agent.voice.voiceId, lines).catch(() => ({ cached: 0, failed: [] }));
         // Roster refresh so the new agent appears immediately.
         await broker.resetComposition().catch(() => {});
         return { ...created, voiceCache: warm };
@@ -831,7 +877,7 @@ const creation = {
 const textChannel = new TextChannel(
   handleUserText,
   () => [
-    { type: 'config', audio: Boolean(tts) },
+    { type: 'config', audio: voiceKeys.statusSync().tts },
     rosterFrame(broker.uiRoster()),
     sessionFrame(),
   ],
@@ -851,20 +897,33 @@ const textChannel = new TextChannel(
     cancel: (name) => broker.cancelWork(name),
   },
   {
-    // Push-to-talk from UIs: one Deepgram session per client while the mic is held.
+    // Push-to-talk from UIs: one Deepgram session per client while the mic is
+    // held. `reserve` claims the slot synchronously — before the STT-key
+    // await below — so a second mic-start (or a mic-stop) landing while the
+    // gate is in flight can never end up with two sessions or an orphaned
+    // one; see mic-gate.ts's header for the full race this closes.
     start: (clientId) => {
-      if (micSessions.has(clientId)) return;
-      const stt = new DeepgramSttStream(makeDeepgramLive);
-      stt.start((utterance) => {
-        textChannel.broadcast({ type: 'utterance', text: utterance });
-        handleUserText(utterance);
-      });
-      micSessions.set(clientId, stt);
+      if (!micSessions.reserve(clientId)) return;
+      void (async () => {
+        if (!(await voiceKeys.sttKey())) {
+          textChannel.broadcast({ type: 'notice', text: VOICE_STT_HINT });
+          micSessions.cancel(clientId);
+          return;
+        }
+        const stt = new DeepgramSttStream(makeDeepgramLive);
+        stt.start((utterance) => {
+          textChannel.broadcast({ type: 'utterance', text: utterance });
+          handleUserText(utterance);
+        });
+        // A mic-stop can land while we were awaiting the key above — commit()
+        // fails in that case, and the session we just built must still be
+        // torn down rather than left running unreferenced.
+        if (!micSessions.commit(clientId, stt)) stt.stop();
+      })();
     },
     audio: (clientId, pcm) => micSessions.get(clientId)?.sendAudio(pcm),
     stop: (clientId) => {
-      micSessions.get(clientId)?.stop();
-      micSessions.delete(clientId);
+      micSessions.stop(clientId)?.stop();
     },
   },
   {
@@ -950,7 +1009,13 @@ const textChannel = new TextChannel(
         // in the VC just because it holds a minted bot token.
         const decision = decideJoin(agentId, surface, policy.modeFor(agentId, surface));
         if (decision.type === 'reject') return { error: decision.error, status: decision.status };
-        if (!voiceSurface) return { error: 'Discord voice is not configured', status: 409 };
+        if (!voiceSurface) {
+          const caps = voiceKeys.statusSync();
+          return {
+            error: !caps.stt && !caps.tts ? `Discord voice needs voice keys — ${VOICE_STT_HINT}` : 'Discord voice is not configured',
+            status: 409,
+          };
+        }
         try {
           await voiceSurface.joinAgent(agentId);
         } catch (err) {
@@ -959,6 +1024,12 @@ const textChannel = new TextChannel(
         // autojoin needs no admission (it already attends by mode alone);
         // only on-request records one.
         if (decision.type === 'admit') policy.admit(agentId, surface);
+        // Spec §5: voice boots on either capability alone — hint the missing
+        // half rather than blocking the join outright.
+        const caps = voiceKeys.statusSync();
+        if (!caps.stt || !caps.tts) {
+          textChannel.broadcast({ type: 'notice', text: caps.stt ? VOICE_TTS_HINT : VOICE_STT_HINT });
+        }
         return { ok: true } as const;
       }
       if (surface !== 'discord') return { error: `unknown surface: ${surface}`, status: 404 };
@@ -976,22 +1047,41 @@ const textChannel = new TextChannel(
   cliTools,
   workBoards,
   apiKeys,
+  voice,
 );
-const micSessions = new Map<number, DeepgramSttStream>();
+const micSessions = new MicSessionGate<DeepgramSttStream>();
 
 // ElevenLabs audio for text-channel replies: synthesize each speech chunk with
 // the speaking agent's voice and fan the mp3 out as an audio frame. Serialized
 // so frames always arrive in speech order; each link swallows its own failure
 // (a bad voice id or network blip degrades to text, never breaks the chain).
 let synthChain = Promise.resolve();
+// Notice fires once per session (not once per missed utterance) — a session
+// keeps talking without a TTS key otherwise flooding the notice frame.
+let ttsHintSessionId: string | null = null;
 function broadcastSpokenAudio(text: string): void {
-  if (!tts) return;
+  // resolveSpokenLine/elevenVoiceFor and the synthChain reassignment MUST
+  // stay synchronous, in call order — currentTts() is the only step here
+  // that needs to await, so it resolves inside the chained callback rather
+  // than before the chain claims its position. Awaiting it up front would
+  // let two overlapping calls interleave their sticky-speaker resolution
+  // and their chain position, breaking "frames always arrive in speech
+  // order" for whichever call's await happened to settle first.
   const { speaker, spokenText } = resolveSpokenLine(text);
   const voiceId = elevenVoiceFor(speaker);
   synthChain = synthChain.then(async () => {
+    const t = await currentTts();
+    if (!t) {
+      const sid = sessionManager.active().id;
+      if (ttsHintSessionId !== sid) {
+        ttsHintSessionId = sid;
+        textChannel.broadcast({ type: 'notice', text: VOICE_TTS_HINT });
+      }
+      return;
+    }
     if (textChannel.clientCount === 0) return; // nobody listening — don't spend credits
     const synth = (id: string) =>
-      tts.synthesize({ text: spokenText, personaId: speaker ?? 'broker', format: 'mp3', voice: { provider: 'elevenlabs', voiceId: id } });
+      t.provider.synthesize({ text: spokenText, personaId: speaker ?? 'broker', format: 'mp3', voice: { provider: 'elevenlabs', voiceId: id } });
     try {
       let result;
       try {
@@ -1122,6 +1212,7 @@ const discordVoiceLifecycle = createDiscordVoiceLifecycle({
   // (Discord's receive rate), but the value is threaded through honestly
   // rather than relying on makeDeepgramLive's default matching by luck.
   makeStt: (sampleRate) => new DeepgramSttStream(() => makeDeepgramLive(sampleRate)),
+  voiceCapabilities: () => voiceKeys.statusSync(),
   onSurfaceChange: (surface, presence) => {
     voiceSurface = surface;
     voicePresence = presence;

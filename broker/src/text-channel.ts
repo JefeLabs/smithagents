@@ -51,6 +51,8 @@ export type ChannelFrame =
     }
   /** A delegated task was just bound to an agent — the deterministic handle an external bridge (broker/bin) correlates against, since the brain's own spoken confirmation is free-form prose. */
   | { type: 'task-dispatched'; taskId: string; agent: string; task: string }
+  /** A muted system line (e.g. "no STT key configured") — distinct from an agent's own `speech`, so UIs can render it de-emphasized instead of attributing it to a speaker. */
+  | { type: 'notice'; text: string }
   /** A work-board card changed (moved, delegated, or a delegated task completed/failed) — the board stage refetches. */
   | { type: 'board-updated'; boardId: string }
   /** A capability (or one of its slices, or a card linked to it) changed — the story map stage refetches. */
@@ -224,6 +226,14 @@ export class TextChannel {
       save(id: string, key: string): Promise<unknown>;
       verify(id: string): Promise<unknown>;
       remove(id: string): Promise<unknown>;
+    },
+    /** Voice status + settings passthrough (Settings → Voice group). Origin-restricted like connectors. No credential route here either — raw provider keys live behind swarm's /me/voice/keys, never proxied on 7790. */
+    private readonly voice?: {
+      /** Cached resolver snapshot for the /agents payload. */
+      status(): { stt: boolean; tts: boolean };
+      /** Voice settings passthrough (Settings → Voice group). Origin-restricted like connectors. */
+      get(): Promise<Record<string, unknown>>;
+      save(body: unknown): Promise<Record<string, unknown>>;
     },
   ) {}
 
@@ -424,7 +434,11 @@ export class TextChannel {
               ...a,
               presence: presence[String((a as { id?: unknown }).id)] ?? {},
             }));
-            return json(200, { agents: withPresence, discord: this.surfaces?.info() ?? { configured: false, voiceReady: false } });
+            return json(200, {
+              agents: withPresence,
+              discord: this.surfaces?.info() ?? { configured: false, voiceReady: false },
+              voice: this.voice?.status() ?? { stt: false, tts: false },
+            });
           }, fail);
           return;
         }
@@ -607,6 +621,28 @@ export class TextChannel {
             (r) => credJson((r as { error?: string }).error ? 400 : 200, r),
             credFail,
           );
+          return;
+        }
+        if (req.method === 'GET' && url.pathname === '/me/voice' && this.voice) {
+          if (originBlocked()) return;
+          void this.voice.get().then((v) => credJson(200, v), credFail);
+          return;
+        }
+        if (req.method === 'PUT' && url.pathname === '/me/voice' && this.voice) {
+          if (originBlocked()) return;
+          let body = '';
+          req.on('data', (c) => {
+            body += c;
+          });
+          req.on('end', () => {
+            let parsed: Record<string, unknown> = {};
+            try {
+              parsed = JSON.parse(body || '{}') as Record<string, unknown>;
+            } catch {
+              return credJson(400, { error: 'body must be JSON' });
+            }
+            void this.voice!.save(parsed).then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
+          });
           return;
         }
         if (req.method === 'GET' && url.pathname === '/connectors/vendors' && this.connectors) {

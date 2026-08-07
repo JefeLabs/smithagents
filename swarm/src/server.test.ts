@@ -13,15 +13,19 @@ import {
   buildChannelsUpdate,
   buildConnectorFields,
   buildConnectorUpdate,
+  buildUserUpdate,
+  buildVoiceUpdate,
+  clearVoiceReferences,
   redactConnector,
   resolveAtlassianConnector,
   resolveConnector,
+  resolveVoiceKeys,
   workspaceProblems,
   gitInitRequestedRepos,
   resolveTaskRuntime,
 } from './server.js';
 import { saveUser, loadUsersFromDir } from './users.js';
-import type { ConnectorInstance, User } from './users.js';
+import type { ConnectorInstance, User, VoiceSettings } from './users.js';
 import { isGitRepo } from './workspaces.js';
 import type { Workspace } from './workspaces.js';
 import type { WorkspaceChannels } from './channels.js';
@@ -306,4 +310,81 @@ test('resolveTaskRuntime: per-task override wins, then workspace runtime, then s
   assert.deepEqual(resolveTaskRuntime(undefined, { runtime: 'remote' }, 'tmux'), { runtime: 'remote', location: 'remote' });
   assert.deepEqual(resolveTaskRuntime(undefined, { runtime: undefined }, 'docker'), { runtime: 'docker', location: 'docker' });
   assert.deepEqual(resolveTaskRuntime(undefined, undefined, 'tmux'), { runtime: 'tmux', location: 'local' });
+});
+
+test('buildUserUpdate: renaming the operator carries connectors and voice forward untouched', () => {
+  const existing: User = {
+    id: 'me', name: 'Old Name', default: true,
+    connectors: [{ id: 'c1', vendorId: 'github', label: 'personal', fields: { token: 'ghp' } }],
+    voice: { stt: { instanceId: 'dg1' }, hideInactive: true },
+  };
+  const r = buildUserUpdate(existing, { name: 'New Name' });
+  assert.equal(r.name, 'New Name');
+  assert.deepEqual(r.connectors, existing.connectors);
+  assert.deepEqual(r.voice, existing.voice); // the regression this guards: voice used to be dropped here
+});
+
+test('buildUserUpdate: no existing user → defaults id "me"/name "You", no voice', () => {
+  assert.deepEqual(buildUserUpdate(null, {}), { id: 'me', name: 'You', default: true, connectors: undefined, voice: undefined });
+});
+
+test('buildUserUpdate: blank submitted name falls back to the existing name (not "You")', () => {
+  const existing: User = { id: 'me', name: 'Keep Me', default: true };
+  assert.equal(buildUserUpdate(existing, { name: '  ' }).name, 'Keep Me');
+});
+
+const voiceUser: User = {
+  id: 'me', name: 'You', default: true,
+  connectors: [
+    { id: 'dg1', vendorId: 'deepgram', label: 'personal', fields: { apiKey: 'dg-key' } },
+    { id: 'el1', vendorId: 'elevenlabs', label: 'personal', fields: { apiKey: 'el-key' } },
+    { id: 'gh1', vendorId: 'github', label: 'personal', fields: { token: 'ghp' } },
+  ],
+};
+
+test('buildVoiceUpdate: accepts matching-capability instances and hideInactive', () => {
+  const r = buildVoiceUpdate(voiceUser, { stt: { instanceId: 'dg1' }, tts: { instanceId: 'el1' }, hideInactive: true });
+  assert.deepEqual(r, { voice: { stt: { instanceId: 'dg1' }, tts: { instanceId: 'el1' }, hideInactive: true } });
+});
+
+test('buildVoiceUpdate: null slots clear; omitted hideInactive defaults false-ish', () => {
+  const r = buildVoiceUpdate(voiceUser, { stt: null, tts: null });
+  assert.deepEqual(r, { voice: { hideInactive: false } });
+});
+
+test('buildVoiceUpdate: unknown instance id → error', () => {
+  const r = buildVoiceUpdate(voiceUser, { stt: { instanceId: 'nope' }, tts: null });
+  assert.ok('error' in r && /nope/.test(r.error));
+});
+
+test('buildVoiceUpdate: wrong-capability instance rejected (github can neither hear nor speak; elevenlabs cannot do STT in v1)', () => {
+  for (const instanceId of ['gh1', 'el1']) {
+    const r = buildVoiceUpdate(voiceUser, { stt: { instanceId }, tts: null });
+    assert.ok('error' in r, `expected error for stt=${instanceId}`);
+  }
+});
+
+test('clearVoiceReferences: deleting a selected instance clears only that slot', () => {
+  const voice = { stt: { instanceId: 'dg1' }, tts: { instanceId: 'el1' }, hideInactive: true };
+  assert.deepEqual(clearVoiceReferences(voice, 'dg1'), { tts: { instanceId: 'el1' }, hideInactive: true });
+  assert.deepEqual(clearVoiceReferences(voice, 'other'), voice);
+  assert.equal(clearVoiceReferences(undefined, 'dg1'), undefined);
+});
+
+test('resolveVoiceKeys: resolves selected slots to raw keys; unset/dangling/empty → null per slot', () => {
+  assert.deepEqual(resolveVoiceKeys({ ...voiceUser, voice: { stt: { instanceId: 'dg1' }, tts: { instanceId: 'el1' } } }), {
+    stt: { vendorId: 'deepgram', apiKey: 'dg-key' },
+    tts: { vendorId: 'elevenlabs', apiKey: 'el-key' },
+  });
+  assert.deepEqual(resolveVoiceKeys({ ...voiceUser, voice: { stt: { instanceId: 'gone' } } }), { stt: null, tts: null });
+  assert.deepEqual(resolveVoiceKeys(null), { stt: null, tts: null });
+});
+
+test('resolveVoiceKeys: a still-encrypted apiKey (lost/rotated master key) resolves null, not the ciphertext', () => {
+  const undecryptable: User = {
+    ...voiceUser,
+    connectors: [{ id: 'dg1', vendorId: 'deepgram', label: 'personal', fields: { apiKey: 'enc:v1:iv:ct:tag' } }],
+    voice: { stt: { instanceId: 'dg1' } },
+  };
+  assert.deepEqual(resolveVoiceKeys(undecryptable), { stt: null, tts: null });
 });

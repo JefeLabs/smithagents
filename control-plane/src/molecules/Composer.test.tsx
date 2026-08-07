@@ -140,3 +140,40 @@ describe("Composer", () => {
     expect(onMicToggle).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("Composer voice gating", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("blocked hold-to-talk fires onVoiceBlocked instead of starting the mic", () => {
+    const onMicToggle = vi.fn();
+    const onVoiceBlocked = vi.fn();
+    render(<Composer onSend={vi.fn()} onMicToggle={onMicToggle} sttEnabled={false} onVoiceBlocked={onVoiceBlocked} />);
+    fireEvent.pointerDown(screen.getByLabelText("Hold to talk"));
+    expect(onMicToggle).not.toHaveBeenCalled();
+    expect(onVoiceBlocked).toHaveBeenCalled();
+  });
+
+  it("sttEnabled leaves the mic working", () => {
+    const onMicToggle = vi.fn();
+    render(<Composer onSend={vi.fn()} onMicToggle={onMicToggle} sttEnabled={true} />);
+    fireEvent.pointerDown(screen.getByLabelText("Hold to talk"));
+    expect(onMicToggle).toHaveBeenCalled();
+  });
+
+  it("blocked always-listening toggle fires onVoiceBlocked instead of toggling", async () => {
+    const onMicToggle = vi.fn();
+    const onVoiceBlocked = vi.fn();
+    render(<Composer onSend={vi.fn()} onMicToggle={onMicToggle} sttEnabled={false} onVoiceBlocked={onVoiceBlocked} />);
+    await userEvent.click(screen.getByRole("button", { name: "Always listening" }));
+    expect(onMicToggle).not.toHaveBeenCalled();
+    expect(onVoiceBlocked).toHaveBeenCalled();
+  });
+
+  it("blocked mic buttons carry the is-voice-disabled class", () => {
+    render(<Composer onSend={vi.fn()} onMicToggle={vi.fn()} sttEnabled={false} />);
+    expect(screen.getByLabelText("Hold to talk").className).toContain("is-voice-disabled");
+    expect(screen.getByRole("button", { name: "Always listening" }).className).toContain("is-voice-disabled");
+  });
+});

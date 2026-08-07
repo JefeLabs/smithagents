@@ -749,6 +749,13 @@
   font-weight: 600;
   margin-right: 2px;
 }
+.transcript__notice {
+  font-size: 12px;
+  opacity: 0.6;
+  font-style: italic;
+  text-align: center;
+  margin: 4px 0;
+}
 
 .transcript::-webkit-scrollbar {
   display: none;
@@ -908,6 +915,11 @@
 .composer--stacked .send:disabled {
   opacity: 0.4;
   cursor: default;
+}
+/* STT unavailable (spec §3) — dims the hold-to-talk/always-listening/mic-hero buttons; a
+   press still fires onVoiceBlocked instead of doing nothing. */
+.is-voice-disabled {
+  opacity: 0.5;
 }
 
 /* tiny hidden tuner (press g) */
