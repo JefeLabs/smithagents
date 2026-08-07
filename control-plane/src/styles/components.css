@@ -2271,3 +2271,115 @@ main.chat-active .composer-dock {
     animation: none !important;
   }
 }
+
+.board-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+  padding: 14px;
+  position: relative;
+}
+.board-stage__bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.board-stage__bar .spacer {
+  flex: 1;
+}
+.board-stage__composer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.board-stage__columns {
+  display: flex;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+  overflow-x: auto;
+}
+.board-column {
+  flex: 0 0 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--pill-br);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.board-column__name {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin: 0;
+}
+.board-column__cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  min-height: 24px;
+}
+.board-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--pill-br);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.board-card__title {
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+.board-card__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.board-card__jira {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--pill-br);
+  color: var(--text-2);
+  text-decoration: none;
+}
+.board-card__jira.has-error {
+  border-color: #e0a15a;
+  color: #e0a15a;
+}
+.board-card__delegation {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.board-card__delegation .avatar {
+  width: 22px;
+  height: 22px;
+  font-size: 10px;
+}
+.board-card__delegation.is-completed .avatar {
+  --ring: #5fd0b0;
+}
+.board-card__delegation.is-failed .avatar {
+  --ring: #f2778f;
+}
+.board-card__pr {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  text-decoration: none;
+}

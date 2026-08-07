@@ -10,6 +10,7 @@ import { ConfirmSheet } from "../molecules/ConfirmSheet";
 import { IdentityTile } from "../molecules/IdentityTile";
 import { AddAgentModal } from "../organisms/AddAgentModal";
 import { AgentRoster } from "../organisms/AgentRoster";
+import { BoardStage } from "../organisms/BoardStage";
 import { DotGridCanvas } from "../organisms/DotGridCanvas";
 import { DotGridTuner } from "../organisms/DotGridTuner";
 import { NewWorkspaceModal } from "../organisms/NewWorkspaceModal";
@@ -31,6 +32,7 @@ export function HomePage() {
   /** A busy agent/squad being inspected — swaps the stage to their work view. */
   const [inspecting, setInspecting] = useState<AgentSeed | null>(null);
   const [sessionsOpen, setSessionsOpen] = useState(false);
+  const [boardOpen, setBoardOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [workspacesOpen, setWorkspacesOpen] = useState(false);
   const [newWorkspaceOpen, setNewWorkspaceOpen] = useState(false);
@@ -59,6 +61,7 @@ export function HomePage() {
     session,
     sessions,
     workspaces,
+    lastBoardUpdate,
     send,
     compose,
     activity,
@@ -156,6 +159,7 @@ export function HomePage() {
         <ToolRail
           onNewWorkspace={() => setNewWorkspaceOpen(true)}
           onSessions={() => setSessionsOpen((open) => !open)}
+          onBoard={() => setBoardOpen((v) => !v)}
           onSettings={() => setSettingsOpen(true)}
         />
       }
@@ -180,7 +184,9 @@ export function HomePage() {
         </>
       }
       stage={
-        inspecting ? (
+        boardOpen ? (
+          <BoardStage open roster={roster} lastBoardUpdate={lastBoardUpdate} onClose={() => setBoardOpen(false)} />
+        ) : inspecting ? (
           <WorkStage
             name={inspecting.name}
             ring={inspecting.ring}

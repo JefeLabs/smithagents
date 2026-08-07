@@ -1,4 +1,4 @@
-import { History, Plus, Settings } from "lucide-react";
+import { History, Plus, Settings, SquareKanban } from "lucide-react";
 import { useState } from "react";
 import { Logo } from "../atoms/Logo";
 import { ToolButton } from "../atoms/ToolButton";
@@ -6,6 +6,7 @@ import { ToolButton } from "../atoms/ToolButton";
 const TOOLS = [
   { icon: Plus, label: "New workspace" },
   { icon: History, label: "Sessions" },
+  { icon: SquareKanban, label: "Board" },
 ];
 
 interface ToolRailProps {
@@ -13,13 +14,15 @@ interface ToolRailProps {
   onNewWorkspace?: () => void;
   /** "Sessions" tool — toggles the sessions panel. */
   onSessions?: () => void;
+  /** "Board" tool — toggles the kanban board stage. */
+  onBoard?: () => void;
   /** Settings — the reset surface. */
   onSettings?: () => void;
 }
 
 // No operator avatar: there's no "account" concept in an all-local, single-operator
 // app — reintroduce it when cloud hosting makes identity meaningful.
-export function ToolRail({ onNewWorkspace, onSessions, onSettings }: ToolRailProps) {
+export function ToolRail({ onNewWorkspace, onSessions, onBoard, onSettings }: ToolRailProps) {
   const [active, setActive] = useState(0);
   return (
     <nav className="rail rail--left" aria-label="Tools and activity">
@@ -36,6 +39,7 @@ export function ToolRail({ onNewWorkspace, onSessions, onSettings }: ToolRailPro
             setActive(i);
             if (tool.label === "New workspace") onNewWorkspace?.();
             if (tool.label === "Sessions") onSessions?.();
+            if (tool.label === "Board") onBoard?.();
           }}
         />
       ))}
