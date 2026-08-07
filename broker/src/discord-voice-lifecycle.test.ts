@@ -95,6 +95,19 @@ test('bootDiscordVoice: missing token returns null without constructing an ear c
   assert.deepEqual(surfaceChanges, []);
 });
 
+test('bootDiscordVoice: no STT or TTS keys configured returns null without constructing an ear client', async () => {
+  const { deps, surfaceChanges } = fakeDeps({
+    voiceCapabilities: () => ({ stt: false, tts: false }),
+    createEarClient: () => {
+      throw new Error('createEarClient should not be called when no voice keys are configured');
+    },
+  });
+  const lifecycle = createDiscordVoiceLifecycle(deps);
+  const result = await lifecycle.bootDiscordVoice('tok', ['chan-1']);
+  assert.equal(result, null);
+  assert.deepEqual(surfaceChanges, []);
+});
+
 test('bootDiscordVoice: logs in the injected ear client and reports the new surface/presence via onSurfaceChange', async () => {
   const fakeClient = fakeEarClient();
   const { deps, surfaceChanges } = fakeDeps({ createEarClient: () => fakeClient.client });

@@ -645,6 +645,16 @@ const apiKeys = {
   remove: (id: string) => swarm.deleteApiKey(id),
 };
 
+// Voice status + settings passthrough (Settings → Voice group), origin-restricted
+// the same way as apiKeys/cliTools. status() rides the same cached resolver
+// snapshot the hello-frame config and mic gate use — never a second source of
+// truth for whether keys are configured.
+const voice = {
+  status: () => voiceKeys.statusSync(),
+  get: () => swarm.getMyVoice(),
+  save: (body: unknown) => swarm.saveMyVoice(body),
+};
+
 // Agent creation: the swarm owns the registry, the broker owns voices. A
 // named const (not an inline TextChannel argument) because the brain's
 // draft_agent/confirm_agent executors drive the same generate/create path
@@ -850,13 +860,19 @@ const textChannel = new TextChannel(
   {
     // Push-to-talk from UIs: one Deepgram session per client while the mic is held.
     start: (clientId) => {
-      if (micSessions.has(clientId)) return;
-      const stt = new DeepgramSttStream(makeDeepgramLive);
-      stt.start((utterance) => {
-        textChannel.broadcast({ type: 'utterance', text: utterance });
-        handleUserText(utterance);
-      });
-      micSessions.set(clientId, stt);
+      void (async () => {
+        if (!(await voiceKeys.sttKey())) {
+          textChannel.broadcast({ type: 'notice', text: VOICE_STT_HINT });
+          return;
+        }
+        if (micSessions.has(clientId)) return;
+        const stt = new DeepgramSttStream(makeDeepgramLive);
+        stt.start((utterance) => {
+          textChannel.broadcast({ type: 'utterance', text: utterance });
+          handleUserText(utterance);
+        });
+        micSessions.set(clientId, stt);
+      })();
     },
     audio: (clientId, pcm) => micSessions.get(clientId)?.sendAudio(pcm),
     stop: (clientId) => {
@@ -947,7 +963,13 @@ const textChannel = new TextChannel(
         // in the VC just because it holds a minted bot token.
         const decision = decideJoin(agentId, surface, policy.modeFor(agentId, surface));
         if (decision.type === 'reject') return { error: decision.error, status: decision.status };
-        if (!voiceSurface) return { error: 'Discord voice is not configured', status: 409 };
+        if (!voiceSurface) {
+          const caps = voiceKeys.statusSync();
+          return {
+            error: !caps.stt && !caps.tts ? `Discord voice needs voice keys — ${VOICE_STT_HINT}` : 'Discord voice is not configured',
+            status: 409,
+          };
+        }
         try {
           await voiceSurface.joinAgent(agentId);
         } catch (err) {
@@ -956,6 +978,12 @@ const textChannel = new TextChannel(
         // autojoin needs no admission (it already attends by mode alone);
         // only on-request records one.
         if (decision.type === 'admit') policy.admit(agentId, surface);
+        // Spec §5: voice boots on either capability alone — hint the missing
+        // half rather than blocking the join outright.
+        const caps = voiceKeys.statusSync();
+        if (!caps.stt || !caps.tts) {
+          textChannel.broadcast({ type: 'notice', text: caps.stt ? VOICE_TTS_HINT : VOICE_STT_HINT });
+        }
         return { ok: true } as const;
       }
       if (surface !== 'discord') return { error: `unknown surface: ${surface}`, status: 404 };
@@ -972,6 +1000,7 @@ const textChannel = new TextChannel(
   tasks,
   cliTools,
   apiKeys,
+  voice,
 );
 const micSessions = new Map<number, DeepgramSttStream>();
 
@@ -980,6 +1009,9 @@ const micSessions = new Map<number, DeepgramSttStream>();
 // so frames always arrive in speech order; each link swallows its own failure
 // (a bad voice id or network blip degrades to text, never breaks the chain).
 let synthChain = Promise.resolve();
+// Notice fires once per session (not once per missed utterance) — a session
+// keeps talking without a TTS key otherwise flooding the notice frame.
+let ttsHintSessionId: string | null = null;
 function broadcastSpokenAudio(text: string): void {
   // resolveSpokenLine/elevenVoiceFor and the synthChain reassignment MUST
   // stay synchronous, in call order — currentTts() is the only step here
@@ -992,7 +1024,14 @@ function broadcastSpokenAudio(text: string): void {
   const voiceId = elevenVoiceFor(speaker);
   synthChain = synthChain.then(async () => {
     const t = await currentTts();
-    if (!t) return;
+    if (!t) {
+      const sid = sessionManager.active().id;
+      if (ttsHintSessionId !== sid) {
+        ttsHintSessionId = sid;
+        textChannel.broadcast({ type: 'notice', text: VOICE_TTS_HINT });
+      }
+      return;
+    }
     if (textChannel.clientCount === 0) return; // nobody listening — don't spend credits
     const synth = (id: string) =>
       t.provider.synthesize({ text: spokenText, personaId: speaker ?? 'broker', format: 'mp3', voice: { provider: 'elevenlabs', voiceId: id } });
@@ -1118,6 +1157,7 @@ const discordVoiceLifecycle = createDiscordVoiceLifecycle({
   // (Discord's receive rate), but the value is threaded through honestly
   // rather than relying on makeDeepgramLive's default matching by luck.
   makeStt: (sampleRate) => new DeepgramSttStream(() => makeDeepgramLive(sampleRate)),
+  voiceCapabilities: () => voiceKeys.statusSync(),
   onSurfaceChange: (surface, presence) => {
     voiceSurface = surface;
     voicePresence = presence;

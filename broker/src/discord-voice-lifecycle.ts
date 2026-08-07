@@ -99,6 +99,8 @@ export interface DiscordVoiceLifecycleDeps {
   createEarClient?: () => DiscordEarClientLike | Promise<DiscordEarClientLike>;
   /** Test seam: whether voice may boot at all. Defaults to a real `ffmpeg -version` PATH check via spawnSync. */
   checkFfmpeg?: () => boolean;
+  /** Spec §5: voice boots if EITHER capability is available; blocked only when both are missing. */
+  voiceCapabilities?: () => { stt: boolean; tts: boolean };
 }
 
 function realFfmpegAvailable(): boolean {
@@ -194,6 +196,11 @@ export function createDiscordVoiceLifecycle(deps: DiscordVoiceLifecycleDeps): Di
     }
     if (!token) {
       console.error('[discord-voice] this workspace has voice channels configured but no saved Discord bot token — the ear has no bot identity. Voice disabled.');
+      return null;
+    }
+    const caps = deps.voiceCapabilities?.() ?? { stt: true, tts: true };
+    if (!caps.stt && !caps.tts) {
+      console.error('[discord-voice] no STT or TTS keys configured — voice disabled. Add keys in Settings → Voice.');
       return null;
     }
     const earToken = token;
