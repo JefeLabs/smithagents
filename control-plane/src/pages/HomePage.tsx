@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { type AgentSeed, ringForIndex } from "../data/agents";
+import { type AgentSeed, hostSeed, ringForIndex } from "../data/agents";
 import { type AudioFrame, useBrokerChat, type VoiceSettingsRecord } from "../hooks/useBrokerChat";
 import { useCliToolHealth } from "../hooks/useCliToolHealth";
 import { GRID_DEFAULTS, type GridParams } from "../hooks/useDotGrid";
@@ -138,7 +138,9 @@ export function HomePage() {
     voiceNoticeTimer.current = setTimeout(() => setVoiceNotice(null), 6000);
   };
 
+  const host = hostSeed(identity);
   const agents: AgentSeed[] = [
+    ...(host ? [host] : []),
     ...roster.map((a, i) => ({
       id: a.id,
       name: a.name,
