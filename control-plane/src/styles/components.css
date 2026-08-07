@@ -426,8 +426,18 @@
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 .session-row__meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   font-size: 10.5px;
   color: var(--text-dim);
+}
+.session-row__runtime {
+  opacity: 0.7;
+}
+.session-row__runtime::before {
+  content: "·";
+  margin-right: 5px;
 }
 .session-row--new {
   justify-content: flex-start;

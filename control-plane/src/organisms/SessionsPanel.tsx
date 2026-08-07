@@ -1,6 +1,7 @@
 import { Plus, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { SessionSummary } from "../hooks/useBrokerChat";
+import { MODE_LABELS } from "./NewSessionScreen";
 
 interface SessionsPanelProps {
   open: boolean;
@@ -66,7 +67,10 @@ export function SessionsPanel({
             }}
           >
             <span className="session-row__title">{s.title}</span>
-            <span className="session-row__meta">{s.workspace}</span>
+            <span className="session-row__meta">
+              {s.workspace}
+              <span className="session-row__runtime">{MODE_LABELS[s.runtime]}</span>
+            </span>
           </button>
         ))}
       </div>

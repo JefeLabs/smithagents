@@ -1228,6 +1228,68 @@ test('POST /sessions responds 500 instead of hanging when sessions.create() reje
   }
 });
 
+test('POST /sessions and /sessions/:id/activate block a disallowed browser Origin; an absent Origin still works', async () => {
+  const calls: unknown[] = [];
+  const channel = channelWith({
+    sessions: {
+      create: async (body) => {
+        calls.push(['create', body]);
+        return null;
+      },
+      activate: (id) => {
+        calls.push(['activate', id]);
+        return null;
+      },
+    },
+  });
+  const port = await channel.start(0);
+  try {
+    const blockedCreate = await fetch(`http://127.0.0.1:${port}/sessions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Origin: 'http://evil.example' },
+      body: JSON.stringify({ workspace: 'acme', runtime: 'local-in-process', prompt: 'x' }),
+    });
+    assert.equal(blockedCreate.status, 403); // matches the exact refusal status the cli-tools PUT's originBlocked() returns
+    assert.deepEqual(await blockedCreate.json(), { error: 'origin not allowed' });
+    assert.equal(blockedCreate.headers.get('access-control-allow-origin'), null);
+
+    const blockedActivate = await fetch(`http://127.0.0.1:${port}/sessions/s1/activate`, {
+      method: 'POST',
+      headers: { origin: 'http://evil.example' },
+    });
+    assert.equal(blockedActivate.status, 403);
+    assert.deepEqual(await blockedActivate.json(), { error: 'origin not allowed' });
+    assert.deepEqual(calls, [], 'the sessions dep must never be reached from a disallowed origin');
+
+    // No Origin header at all — the smith-broker-send CLI bridge and same-process callers
+    // never send one — must still pass, same trust model as every other guarded route.
+    const noOriginCreate = await fetch(`http://127.0.0.1:${port}/sessions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workspace: 'acme', runtime: 'local-in-process', prompt: 'x' }),
+    });
+    assert.equal(noOriginCreate.status, 200);
+
+    const noOriginActivate = await fetch(`http://127.0.0.1:${port}/sessions/s1/activate`, { method: 'POST' });
+    assert.equal(noOriginActivate.status, 200);
+
+    assert.deepEqual(calls, [
+      ['create', { workspace: 'acme', runtime: 'local-in-process', prompt: 'x' }],
+      ['activate', 's1'],
+    ]);
+
+    // The control-plane's own dev origin still works too.
+    const allowedCreate = await fetch(`http://127.0.0.1:${port}/sessions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: ALLOWED_ORIGIN },
+      body: JSON.stringify({ workspace: 'acme', runtime: 'local-in-process', prompt: 'y' }),
+    });
+    assert.equal(allowedCreate.status, 200);
+  } finally {
+    await channel.stop();
+  }
+});
+
 test('the session frame type accepts session: null with an empty transcript', () => {
   const channel = channelWith({});
   // Compile-time pin for the lockstep protocol: this call must typecheck.

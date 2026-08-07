@@ -1,5 +1,5 @@
 import { X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ExecutionMode, SessionSummary, WorkspaceRecord } from "../hooks/useBrokerChat";
 
 export interface NewSessionScreenProps {
@@ -56,6 +56,11 @@ export function NewSessionScreen({
   const ws = lockedWorkspace ?? pickedWs;
   const available = availableModes(modes);
   const [mode, setMode] = useState<ExecutionMode>(() => defaultMode(ws, sessions, available));
+  // True once the user has manually chosen a mode in the radio group — blocks the
+  // derivation effects below from clobbering their choice. Reset on workspace change: a
+  // manual pick made for one workspace shouldn't survive into another's default (spec §3
+  // default is per-workspace, "most recent session's mode in that workspace").
+  const [userPickedMode, setUserPickedMode] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -65,7 +70,23 @@ export function NewSessionScreen({
   // biome-ignore lint/correctness/useExhaustiveDependencies: workspace-keyed recompute, see comment above
   useEffect(() => {
     setMode(defaultMode(ws, sessions, available));
+    setUserPickedMode(false);
   }, [ws]);
+
+  // `modes` starts null (the capability probe is still in flight on first open) and
+  // resolves asynchronously — the initial useState above ran against `available ===
+  // ["local-in-process"]` and can never see the real default. Re-derive the default once
+  // `modes` actually transitions from null to a resolved record, but only that one
+  // transition (not every `modes`/`ws`/`sessions` change) and only if the user hasn't
+  // already made an explicit pick in the meantime.
+  const prevModesRef = useRef(modes);
+  useEffect(() => {
+    const prevWasProbing = prevModesRef.current === null;
+    prevModesRef.current = modes;
+    if (prevWasProbing && modes !== null && !userPickedMode) {
+      setMode(defaultMode(ws, sessions, availableModes(modes)));
+    }
+  }, [modes, ws, sessions, userPickedMode]);
 
   useEffect(() => {
     if (forced) return;
@@ -120,7 +141,17 @@ export function NewSessionScreen({
         <div className="new-session-screen__modes" role="radiogroup" aria-label="Execution mode">
           {available.map((m) => (
             <label key={m} className="new-session-screen__mode">
-              <input type="radio" name="new-session-mode" value={m} checked={mode === m} onChange={() => setMode(m)} />
+              <input
+                type="radio"
+                name="new-session-mode"
+                value={m}
+                checked={mode === m}
+                // onClick (not just onChange) marks the manual pick: a native radio never
+                // fires `change` when re-clicking its own already-checked value, but a click
+                // is still a deliberate user interaction with the group either way.
+                onClick={() => setUserPickedMode(true)}
+                onChange={() => setMode(m)}
+              />
               {MODE_LABELS[m]}
             </label>
           ))}

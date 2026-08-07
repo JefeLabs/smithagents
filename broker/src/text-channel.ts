@@ -853,6 +853,16 @@ export class TextChannel {
       }
       const sessionMatch = /^\/sessions(?:\/([^/]+)\/activate)?$/.exec(req.url ?? '');
       if (req.method === 'POST' && sessionMatch && this.sessions) {
+        // Creating/activating a session is a mutation — same origin guard as /work/delegate
+        // and the credential-adjacent routes above. An absent Origin header still passes
+        // (the smith-broker-send CLI bridge and same-process callers send no Origin); only a
+        // present-and-disallowed origin is refused.
+        const originBlocked = (): boolean => {
+          if (isAllowedOrigin(req)) return false;
+          res.writeHead(403, { ...credentialCors(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: 'origin not allowed' }));
+          return true;
+        };
+        if (originBlocked()) return;
         let body = '';
         req.on('data', (c) => {
           body += c;

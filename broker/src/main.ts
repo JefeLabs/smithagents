@@ -731,6 +731,11 @@ const cliTools = {
 // above) — safe here because this closure only runs once a request lands,
 // by which point module init has completed (same pattern as the `compose`
 // and `work` handlers passed into TextChannel just below).
+//
+// Deliberately NOT passing `inheritSessionRuntime` here: a board card dispatch
+// is a standalone instruction, not a continuation of "the active session", so
+// it must go unstamped and let the server default decide (human ruling
+// 2026-08-07) — see dispatchWork's doc comment in broker.ts.
 const workBoards = {
   proxy: (method: string, path: string, body?: unknown) => swarm.work(method, path, body),
   delegate: async (body: Record<string, unknown>): Promise<{ taskId: string } | { error: string }> => {

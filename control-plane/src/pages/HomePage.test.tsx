@@ -34,7 +34,7 @@ beforeAll(() => {
   }
 });
 
-function mockBrokerChat() {
+function mockBrokerChat(overrides: Record<string, unknown> = {}) {
   vi.mocked(useBrokerChat).mockReturnValue({
     messages: [],
     roster: [],
@@ -82,6 +82,7 @@ function mockBrokerChat() {
     saveApiKey: vi.fn(),
     verifyApiKey: vi.fn(),
     deleteApiKey: vi.fn(),
+    ...overrides,
   } as unknown as ReturnType<typeof useBrokerChat>);
 }
 
@@ -118,5 +119,68 @@ describe("HomePage — voice status refresh on Settings close", () => {
 
     await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(callsAfterMount));
     expect(fetchMock).toHaveBeenLastCalledWith("http://127.0.0.1:7790/agents");
+  });
+});
+
+describe("HomePage — composer closes when another session is activated", () => {
+  const activateSession = vi.fn();
+  const SESSIONS = [
+    {
+      id: "s-active",
+      title: "Current work",
+      workspace: "acme",
+      updatedAt: "2026-08-01T00:00:00Z",
+      active: true,
+      runtime: "local-in-process",
+    },
+    {
+      id: "s-other",
+      title: "Other work",
+      workspace: "acme",
+      updatedAt: "2026-08-02T00:00:00Z",
+      active: false,
+      runtime: "local-docker",
+    },
+  ];
+
+  beforeEach(() => {
+    vi.mocked(useTheme).mockReturnValue({ theme: "dark", setTheme: vi.fn() });
+    vi.mocked(useCliToolHealth).mockReturnValue({ warnings: {}, refresh: vi.fn() });
+    vi.mocked(useSpokenReplies).mockReturnValue({
+      soundOn: false,
+      toggleSound: vi.fn(),
+      playAudioFrame: vi.fn(),
+      audioBlocked: false,
+    });
+    vi.mocked(usePushToTalk).mockReturnValue({ micLive: false, micError: null, toggleMic: vi.fn() });
+    activateSession.mockClear();
+    mockBrokerChat({
+      session: { id: "s-active", title: "Current work", workspace: "acme", runtime: "local-in-process" },
+      sessions: SESSIONS,
+      workspaces: ["acme"],
+      activateSession,
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it("picking another session backs out of an explicitly-opened composer (spec §3)", async () => {
+    render(<HomePage />);
+
+    // Open the sessions panel and start a new session in "acme" — opens the composer explicitly.
+    await userEvent.click(screen.getByRole("button", { name: "Sessions" }));
+    await userEvent.click(screen.getByRole("button", { name: /new session · acme/i }));
+    expect(screen.getByText("Start a session")).toBeDefined();
+
+    // Reopen sessions and activate the other (inactive) session.
+    await userEvent.click(screen.getByRole("button", { name: "Sessions" }));
+    await userEvent.click(screen.getByText("Other work"));
+
+    expect(activateSession).toHaveBeenCalledWith("s-other");
+    expect(screen.queryByText("Start a session")).toBeNull();
   });
 });

@@ -2,6 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { SessionSummary } from "../hooks/useBrokerChat";
 import { NewSessionScreen, type NewSessionScreenProps } from "./NewSessionScreen";
 
 const base: NewSessionScreenProps = {
@@ -57,6 +58,64 @@ describe("NewSessionScreen", () => {
       />,
     );
     expect(screen.getByRole("radio", { name: "Local Docker" })).toBeChecked();
+  });
+
+  it("re-derives the default once the capability probe resolves (modes: null → loaded)", () => {
+    const sessions: SessionSummary[] = [
+      {
+        id: "s1",
+        title: "recent",
+        workspace: "acme",
+        updatedAt: "2026-08-07T00:00:00Z",
+        active: false,
+        runtime: "local-docker",
+      },
+    ];
+    const { rerender } = render(<NewSessionScreen {...base} lockedWorkspace="acme" sessions={sessions} modes={null} />);
+    // While the probe is in flight, "In process" is the only mode that can render at all.
+    expect(screen.getByRole("radio", { name: "In process" })).toBeChecked();
+
+    rerender(
+      <NewSessionScreen
+        {...base}
+        lockedWorkspace="acme"
+        sessions={sessions}
+        modes={{ "local-in-process": true, "local-docker": true, "remote-in-process": false, "remote-docker": false }}
+      />,
+    );
+
+    expect(screen.getByRole("radio", { name: "Local Docker" })).toBeChecked();
+  });
+
+  it("a user's manual mode pick survives modes resolving from null", async () => {
+    const sessions: SessionSummary[] = [
+      {
+        id: "s1",
+        title: "recent",
+        workspace: "acme",
+        updatedAt: "2026-08-07T00:00:00Z",
+        active: false,
+        runtime: "local-docker",
+      },
+    ];
+    const { rerender } = render(<NewSessionScreen {...base} lockedWorkspace="acme" sessions={sessions} modes={null} />);
+    // Only "In process" renders while the probe is in flight, and it's already checked —
+    // clicking it is still a deliberate interaction with the radio group (a native radio
+    // never fires `change` re-selecting its own value, which is exactly why the pick is
+    // tracked on click, not change — see NewSessionScreen's onClick comment).
+    await userEvent.click(screen.getByRole("radio", { name: "In process" }));
+
+    rerender(
+      <NewSessionScreen
+        {...base}
+        lockedWorkspace="acme"
+        sessions={sessions}
+        modes={{ "local-in-process": true, "local-docker": true, "remote-in-process": false, "remote-docker": false }}
+      />,
+    );
+
+    expect(screen.getByRole("radio", { name: "In process" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Local Docker" })).not.toBeChecked();
   });
 
   it("locks the workspace picker when lockedWorkspace is set", () => {

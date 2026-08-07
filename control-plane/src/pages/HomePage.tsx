@@ -172,6 +172,16 @@ export function HomePage() {
       .catch(() => setWsRecords(null));
   }, [composerVisible, listExecutionModes, listWorkspaceRecords]);
   const onComposerCancel = useCallback(() => setComposer(null), []);
+  // Picking another session backs out of an explicitly-opened composer (spec §3) — without
+  // this, an explicit composer stays rendered with a possibly-stale locked workspace after
+  // the activated session's frame lands.
+  const onActivateSession = useCallback(
+    (id: string) => {
+      setComposer(null);
+      activateSession(id);
+    },
+    [activateSession],
+  );
 
   const host = hostSeed(identity);
   const agents: AgentSeed[] = [
@@ -371,7 +381,7 @@ export function HomePage() {
             sessions={sessions}
             workspaces={workspaces}
             onClose={() => setSessionsOpen(false)}
-            onActivate={activateSession}
+            onActivate={onActivateSession}
             onCreate={(ws) => {
               setSessionsOpen(false);
               setComposer({ locked: ws || undefined });

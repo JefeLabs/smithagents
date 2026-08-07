@@ -112,6 +112,12 @@ describe("SessionsPanel", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("shows each session's runtime as a human-readable label", () => {
+    render(<SessionsPanel {...props()} />);
+    expect(screen.getByText("In process")).toBeDefined(); // s1: local-in-process
+    expect(screen.getByText("Local Docker")).toBeDefined(); // s2: local-docker
+  });
+
   it("renders nothing when closed", () => {
     const { container } = render(<SessionsPanel {...props({ open: false })} />);
     expect(container.innerHTML).toBe("");
