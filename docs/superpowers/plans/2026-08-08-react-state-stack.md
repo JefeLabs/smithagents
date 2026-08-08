@@ -771,18 +771,27 @@ export function useTranscript() {
 }
 
 /**
- * Workspaces and roster DO have GETs (`GET /workspaces`, `GET /agents`), so
- * they get a real queryFn as a first-paint and reconnect fallback. The socket
- * frame is still the fast path and overwrites via setQueryData.
+ * Roster and workspaces are ALSO skipToken, despite `GET /agents` and
+ * `GET /workspaces` existing — neither endpoint returns the shape this cache
+ * holds. `GET /agents` (broker/src/text-channel.ts:452) returns
+ * {agents, discord, voice} with NO `identity` field; the host identity rides
+ * the WS roster frame only. `GET /workspaces` (text-channel.ts:528) returns
+ * full WorkspaceRecord objects, not the bare name list this key stores.
+ *
+ * Rather than transform-and-merge two responses to approximate what one frame
+ * already delivers correctly, all five pushed keys are socket-fed. The socket
+ * connects at app boot, so the "first paint before the frame lands" window a
+ * fallback would cover is a single render.
  */
 export function useWorkspaces() {
-  return useQuery<string[]>({ queryKey: qk.workspaces, queryFn: () => api.getWorkspaces() });
+  return useQuery<string[]>({ queryKey: qk.workspaces, queryFn: skipToken, staleTime: Infinity });
 }
 
 export function useRoster() {
   return useQuery<{ agents: RosterAgent[]; identity: BrokerIdentityInfo | null }>({
     queryKey: qk.roster,
-    queryFn: () => api.getAgents(),
+    queryFn: skipToken,
+    staleTime: Infinity,
   });
 }
 ```
@@ -811,7 +820,9 @@ Owns the WebSocket, the reconnect backoff, `send`/`compose`/mic control, and the
 
 **Interfaces:**
 - Consumes: `qk` (Task 4), `registerStoreReset` (Task 2), types (Task 1)
-- Produces: `useSocketStore` with state `{ connected: boolean }` and actions `connect(qc: QueryClient, base?: string): void`, `disconnect(): void`, `send(text: string): void`, `compose(op: ComposeOp): void`, `micControl(type: "mic-start" | "mic-stop"): void`, `micAudio(pcm: ArrayBuffer): void`, `onAudioFrame(fn: (frame: AudioFrame) => void): () => void`
+- Produces: `useSocketStore` with state `{ connected: boolean }` and actions `connect(qc: QueryClient, base?: string): void`, `disconnect(): void`, `micControl(type: "mic-start" | "mic-stop"): void`, `micAudio(pcm: ArrayBuffer): void`, `onAudioFrame(fn: (frame: AudioFrame) => void): () => void`
+
+**`send` and `compose` are NOT store actions.** They are HTTP POSTs to `/utterance` and `/compose` (`useBrokerChat.ts:175-198`), so they live in `api/broker.ts` as `postUtterance` / `postCompose` and reach components as Query mutations. Putting them on the socket would silently drop every message: the broker would never receive them, yet nothing would throw.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1019,10 +1030,15 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     set({ connected: false });
   },
 
-  send: (text) => socket?.send(JSON.stringify({ type: "utterance", text })),
-  compose: (op) => socket?.send(JSON.stringify({ type: "compose", ...op })),
-  micControl: (type) => socket?.send(JSON.stringify({ type })),
-  micAudio: (pcm) => socket?.send(pcm),
+  // send/compose are HTTP POSTs, NOT socket sends — the broker echoes the
+  // accepted utterance back as a frame, which is what updates the transcript.
+  // Only mic control rides the socket, and only while it is actually OPEN.
+  micControl: (type) => {
+    if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type }));
+  },
+  micAudio: (pcm) => {
+    if (socket?.readyState === WebSocket.OPEN) socket.send(pcm);
+  },
 
   onAudioFrame: (fn) => {
     audioSubs.add(fn);
