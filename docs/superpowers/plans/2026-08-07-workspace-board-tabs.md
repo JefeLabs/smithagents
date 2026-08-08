@@ -1612,7 +1612,7 @@ Append to `control-plane/src/styles/components.css`:
   min-width: 140px;
   border: 1px solid var(--pill-br);
   border-radius: 8px;
-  background: var(--bg);
+  background: var(--ground);
   padding: 4px;
 }
 .board-tabs__menu button {
