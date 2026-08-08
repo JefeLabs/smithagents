@@ -2781,3 +2781,62 @@ main.chat-active .composer-dock {
   opacity: 0.5;
   cursor: default;
 }
+.board-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.board-tabs__scope {
+  align-self: flex-start;
+}
+.board-tabs__row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-bottom: 1px solid var(--pill-br);
+}
+.board-tabs__tab {
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  opacity: 0.7;
+}
+.board-tabs__tab.is-active {
+  border-color: var(--pill-br);
+  background: rgba(255, 255, 255, 0.05);
+  opacity: 1;
+}
+.board-tabs__add {
+  position: relative;
+}
+.board-tabs__menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 140px;
+  border: 1px solid var(--pill-br);
+  border-radius: 8px;
+  background: var(--ground);
+  padding: 4px;
+}
+.board-tabs__menu button {
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.board-tabs__menu button:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
