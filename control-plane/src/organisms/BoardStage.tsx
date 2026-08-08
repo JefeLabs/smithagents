@@ -34,6 +34,8 @@ export interface WorkCardT {
   stories?: Array<{ id: string; text: string; done: boolean; verifiedBy?: string }>;
   /** Present when this card tracks a capability slice — its checklist becomes toggle-only. */
   capabilityRef?: { capabilityId: string; sliceId: string };
+  flag?: { kind: "blocked" | "at-risk" | "waiting"; reason?: string; since: string };
+  routedFrom?: Array<{ boardId: string; boardType: string; columnId: string; at: string }>;
 }
 export interface WorkBoardT {
   id: string;

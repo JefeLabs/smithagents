@@ -4,6 +4,15 @@ import type { WorkCardT } from "../organisms/BoardStage";
 
 const BASE = "127.0.0.1:7790";
 
+const FLAG_LABEL = { blocked: "Blocked", "at-risk": "At risk", waiting: "Waiting" } as const;
+const FLAG_GLYPH = { blocked: "⛔", "at-risk": "⚠", waiting: "⏸" } as const;
+
+/** Whole days since `since`, floored — "how long has this been stuck now". */
+export function flagAge(since: string, now: Date = new Date()): string {
+  const days = Math.floor((now.getTime() - new Date(since).getTime()) / 86_400_000);
+  return `${Math.max(0, days)}d`;
+}
+
 interface BoardCardProps {
   card: WorkCardT;
   /** Roster entry for the delegated agent, when the card is delegated. */
@@ -11,17 +20,35 @@ interface BoardCardProps {
   onOpen: () => void;
   /** Extra classes appended by the drag wrapper (e.g. "is-dragging"). */
   className?: string;
+  /** Workspace identity colour; applied to the card fill in the aggregate view only. */
+  tint?: string;
 }
 
-/** One kanban card face: title, Jira chip, delegation badge. Pure display — drag wiring wraps it. */
-export function BoardCard({ card, agent, onOpen, className }: BoardCardProps) {
+/** One kanban card face: title, flag, Jira chip, delegation badge. Pure display — drag wiring wraps it. */
+export function BoardCard({ card, agent, onOpen, className, tint }: BoardCardProps) {
   const d = card.delegation;
   const total = card.stories?.length ?? 0;
   const done = card.stories?.filter((s) => s.done).length ?? 0;
   return (
-    <button type="button" className={`board-card${className ? ` ${className}` : ""}`} onClick={onOpen}>
+    <button
+      type="button"
+      className={`board-card${card.flag ? ` has-flag is-${card.flag.kind}` : ""}${className ? ` ${className}` : ""}`}
+      style={tint ? ({ "--card-tint": tint } as React.CSSProperties) : undefined}
+      onClick={onOpen}
+    >
       <span className="board-card__title">{card.title}</span>
       <span className="board-card__meta">
+        {card.flag && (
+          // biome-ignore lint/a11y/useSemanticElements: no semantic element fits a status chip inline in flow text; role="group" names it for AT and makes aria-label valid.
+          <span
+            className="board-card__flag"
+            role="group"
+            aria-label={`${FLAG_LABEL[card.flag.kind]} for ${flagAge(card.flag.since)}`}
+            title={card.flag.reason}
+          >
+            {FLAG_GLYPH[card.flag.kind]} {flagAge(card.flag.since)}
+          </span>
+        )}
         {total > 0 && (
           <span className={`board-card__stories${done === total ? " is-complete" : ""}`} title="stories verified">
             {done}/{total}

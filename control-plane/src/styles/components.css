@@ -2377,10 +2377,29 @@ main.chat-active .composer-dock {
   padding: 8px 10px;
   border-radius: 10px;
   border: 1px solid var(--pill-br);
-  background: rgba(255, 255, 255, 0.04);
   color: var(--text);
   font: inherit;
   cursor: pointer;
+}
+/* Two encodings, two channels: fill = workspace identity (aggregate view
+   only), left edge + chip = flag. They must never share one. */
+.board-card {
+  background: var(--card-tint, rgba(255, 255, 255, 0.04));
+  border-left: 3px solid transparent;
+}
+.board-card.has-flag.is-blocked {
+  border-left-color: #d9534f;
+}
+.board-card.has-flag.is-at-risk {
+  border-left-color: #e0a458;
+}
+.board-card.has-flag.is-waiting {
+  border-left-color: #8b94a8;
+}
+.board-card__flag {
+  font-size: 11px;
+  opacity: 0.85;
+  white-space: nowrap;
 }
 .board-card__title {
   font-size: 12.5px;
