@@ -1607,7 +1607,12 @@ Use `useFieldArray` for the repos list rather than an index-keyed `useState` arr
 const { fields, append, remove } = useFieldArray({ control, name: "repos" });
 ```
 
-Preserve the existing validation exactly — `WorkspaceManagerModal.tsx:212` shows the current rule: name non-empty, and every repo's `name` and `path` non-empty. Express it as `register("name", { required: true })` and the same on each repo field. Do not add validation the app did not have.
+Preserve the existing validation exactly. **The two workspace modals do NOT share a rule** — verified:
+
+- `WorkspaceManagerModal.tsx:212` — `name.trim()` plus every repo's `name` and `path`. **2 fields per repo.**
+- `NewWorkspaceModal.tsx:76-77` — `name.trim()` plus every repo's `name`, `path`, `owner`, `repo`, **and a non-empty `connectorId`**. **5 fields per repo**, one of them a select.
+
+Express each with `register(..., { required: true })` on exactly the fields that component checks today. Do not add validation the app did not have, and do not level the two modals to a common rule.
 
 - [ ] **Step 4: Migrate `WorkspaceManagerModal` (16 inputs)**
 
@@ -1622,6 +1627,20 @@ Same `useFieldArray` shape for repos. Keep `canSave` semantics by using `formSta
 The biggest one, and the reason RHF earns its place. Fields that become RHF: `name`, `role`, `gender`, `backstory`, `hint`, `model`, `language`, `voiceId`, `voiceSearch`, and the `reactions` / `answers` records. Fields that stay `useState`: `step`, `mode`, `catalog`, `voices`, `generating`, `busy`, `error` — these are wizard machinery and fetched data, not user input.
 
 One `useForm` at the modal root spans all steps; step navigation does not remount it, so values persist across steps and reset on close.
+
+**The wizard's gate is per-step, not whole-form** — `AddAgentModal.tsx:474`:
+
+```ts
+step === 0 ? Boolean(engine && model.trim() && language) : step === 1 ? name.trim().length > 0 : true
+```
+
+`formState.isValid` is whole-form and would keep "Next" disabled on step 0 until step 1's fields are filled — the wizard would deadlock. **Do not use `isValid` here.** Keep the expression exactly as written and source its values from `watch()`:
+
+```ts
+const [engine, model, language, name] = watch(["engine", "model", "language", "name"]);
+```
+
+That preserves the gate literally and sidesteps whole-form validity entirely. (`mode: "onChange"` is still required in the components that *do* gate on `isValid` — the connector and workspace modals.)
 
 ```tsx
 const { register, handleSubmit, watch, setValue, reset } = useForm<AgentFormValues>({
