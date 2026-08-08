@@ -37,4 +37,12 @@ describe("broker api", () => {
     stubJson({ error: "unknown tool" }, false, 400);
     expect(await setCliToolEnabled("nope", true)).toEqual({ error: "unknown tool" });
   });
+
+  it("trusts the parsed body over res.ok — a non-2xx with no {error} still returns the list", async () => {
+    // Pins the branch on `body.error`, not `!res.ok || body.error`: a 400 that
+    // parses to {tools: []} with no error field must still resolve to [],
+    // not get reinterpreted as a rejection just because res.ok is false.
+    stubJson({ tools: [] }, false, 400);
+    expect(await setCliToolEnabled("nope", true)).toEqual([]);
+  });
 });
