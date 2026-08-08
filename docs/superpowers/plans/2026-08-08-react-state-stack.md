@@ -926,7 +926,7 @@ Create `src/stores/socketStore.ts`. Port the frame handling from `useBrokerChat.
 import type { QueryClient } from "@tanstack/react-query";
 import { create } from "zustand";
 import { BROKER_BASE } from "../api/broker";
-import type { AudioFrame, ChatMessage, ComposeOp, SessionFrame } from "../api/types";
+import type { AudioFrame, ChatMessage, SessionFrame } from "../api/types";
 import { qk } from "../queries/keys";
 import { registerStoreReset } from "./reset";
 
@@ -943,8 +943,6 @@ interface SocketState {
   audioMode: boolean;
   connect: (qc: QueryClient, base?: string) => void;
   disconnect: () => void;
-  send: (text: string) => void;
-  compose: (op: ComposeOp) => void;
   micControl: (type: "mic-start" | "mic-stop") => void;
   micAudio: (pcm: ArrayBuffer) => void;
   onAudioFrame: (fn: (frame: AudioFrame) => void) => () => void;
@@ -954,7 +952,10 @@ interface SocketState {
 // live socket in reactive state would notify every subscriber on reconnect.
 let socket: WebSocket | null = null;
 let timer: ReturnType<typeof setTimeout> | null = null;
-let disposed = false;
+// `active` (not `disposed`) because WebSocket.close() is ASYNCHRONOUS: a
+// superseded socket's onclose can fire long after a reconnect has already
+// opened its replacement.
+let active = false;
 let nextId = 0;
 const audioSubs = new Set<(frame: AudioFrame) => void>();
 
@@ -967,8 +968,11 @@ export const useSocketStore = create<SocketState>((set, get) => ({
   audioMode: false,
 
   connect: (qc, base = BROKER_BASE) => {
-    if (socket) return; // idempotent — StrictMode double-mounts this
-    disposed = false;
+    // Guard on `active`, not on `socket`: after a close, `socket` is null while
+    // a reconnect timer is pending, so a `socket`-only check would open a second
+    // connection and then let the timer open a third.
+    if (active) return;
+    active = true;
     const open = () => {
       const ws = new WebSocket(`ws://${base}/events`);
       socket = ws;
@@ -1023,9 +1027,13 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         }
       };
       ws.onclose = () => {
+        // A superseded socket's late close must not null the CURRENT handle
+        // (which would silently no-op every mic send) nor schedule a duplicate
+        // reconnect. StrictMode's mount/unmount/mount makes this reachable.
+        if (socket !== ws) return;
         set({ connected: false });
         socket = null;
-        if (!disposed) timer = setTimeout(open, RECONNECT_MS);
+        if (active) timer = setTimeout(open, RECONNECT_MS);
       };
       ws.onerror = () => ws.close();
     };
@@ -1033,7 +1041,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
   },
 
   disconnect: () => {
-    disposed = true;
+    active = false;
     if (timer) clearTimeout(timer);
     timer = null;
     socket?.close();
