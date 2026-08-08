@@ -135,11 +135,14 @@ export const useSocketStore = create<SocketState>((set) => ({
             for (const fn of audioSubs) fn(frame);
             return;
           case "board-updated":
-            // Id-only frames: invalidate, never write. There is no data here to cache.
-            qc.invalidateQueries({ queryKey: qk.board(frame.boardId) });
+            // Id-only frames: invalidate, never write. There is no data here to
+            // cache. Both boards and capabilities are fetched as whole
+            // collections (no per-item GET exists), so the key invalidated is
+            // the collection, not the id the frame names — see queries/work.ts.
+            qc.invalidateQueries({ queryKey: qk.boards });
             return;
           case "capability-updated":
-            qc.invalidateQueries({ queryKey: qk.capability(frame.capabilityId) });
+            qc.invalidateQueries({ queryKey: qk.capabilities });
             return;
           case "notice":
             append(qc, "notice", frame.text);

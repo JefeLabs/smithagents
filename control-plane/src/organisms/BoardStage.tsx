@@ -1,7 +1,9 @@
 import { DndContext, type DragEndEvent, PointerSensor, pointerWithin, useSensor, useSensors } from "@dnd-kit/core";
+import { useQueryClient } from "@tanstack/react-query";
 import { Download, Plus, SquareKanban } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import type { RosterAgent } from "../api/types";
+import type { BoardsResult } from "../api/work";
 import {
   ALL_WORKSPACES,
   addableTypes,
@@ -13,6 +15,8 @@ import {
 import { workspaceColor } from "../lib/workspace-color";
 import { BoardColumn } from "../molecules/BoardColumn";
 import { BoardTabs } from "../molecules/BoardTabs";
+import { qk } from "../queries/keys";
+import { useBoards, useCreateBoard, useCreateCard, useImportJira, useMoveCard } from "../queries/work";
 import { CardSheet } from "./CardSheet";
 
 const BASE = "127.0.0.1:7790";
@@ -49,13 +53,6 @@ export interface WorkBoardT {
 
 interface BoardStageProps {
   roster: RosterAgent[];
-  /**
-   * Dead as of the socket store: a `board-updated` frame now invalidates
-   * `qk.board(id)` instead of bumping a seq counter, so nothing supplies this
-   * any more. It (and the effect below that reads it) go away with the rest of
-   * the seq mechanism once this stage reads its boards through Query.
-   */
-  lastBoardUpdate?: { boardId: string; seq: number } | null;
 }
 
 /** Optimistic mirror of the server's move: new board object, both columns renumbered. */
@@ -153,9 +150,18 @@ export async function fireDrop(boardId: string, cardId: string, columnId: string
  * The kanban stage — the user's boards. Drag (Task 6) only ever changes the
  * user's own status; delegation state is badges on cards, never movement.
  */
-export function BoardStage({ roster, lastBoardUpdate }: BoardStageProps) {
-  const [boards, setBoards] = useState<WorkBoardT[]>([]);
-  const [boardErrors, setBoardErrors] = useState<Array<{ file: string; error: string }>>([]);
+export function BoardStage({ roster }: BoardStageProps) {
+  const qc = useQueryClient();
+  const boardsQuery = useBoards();
+  const boards = boardsQuery.data?.boards ?? [];
+  const boardErrors = boardsQuery.data?.errors ?? [];
+  const loadError = boardsQuery.isError ? "Could not load boards — is the broker running?" : null;
+
+  const createBoardMutation = useCreateBoard();
+  const createCardMutation = useCreateCard();
+  const moveCardMutation = useMoveCard();
+  const importJiraMutation = useImportJira();
+
   const [scope, setScope] = useState<string>(ALL_WORKSPACES);
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -164,25 +170,7 @@ export function BoardStage({ roster, lastBoardUpdate }: BoardStageProps) {
   const [open, setOpen] = useState<{ boardId: string; cardId: string } | null>(null);
   const [workspaces, setWorkspaces] = useState<Array<{ name: string; color?: string }>>([]);
 
-  const refetch = useCallback(async () => {
-    try {
-      const res = (await fetch(`http://${BASE}/work/boards`).then((r) => r.json())) as {
-        boards?: WorkBoardT[];
-        errors?: Array<{ file: string; error: string }>;
-        error?: string;
-      };
-      if (res.error) throw new Error(res.error);
-      setBoards(res.boards ?? []);
-      setBoardErrors(res.errors ?? []);
-      setError(null);
-    } catch {
-      setError("Could not load boards — is the broker running?");
-    }
-  }, []);
-
-  useEffect(() => {
-    void refetch();
-  }, [refetch]);
+  const displayError = error ?? loadError;
 
   useEffect(() => {
     fetch(`http://${BASE}/workspaces`)
@@ -215,14 +203,6 @@ export function BoardStage({ roster, lastBoardUpdate }: BoardStageProps) {
   const openBoard = open ? boardOf(open.boardId) : null;
   const openCard = open ? (openBoard?.cards.find((c) => c.id === open.cardId) ?? null) : null;
 
-  // Keyed on the joined ids, not the tabBoards array: that array is rebuilt on
-  // every render, and refetch replaces `boards` with a fresh array, so an
-  // identity-keyed effect would refetch itself in a loop.
-  const tabBoardIds = tab ? tab.boardIds.join(",") : "";
-  useEffect(() => {
-    if (lastBoardUpdate && tabBoardIds.split(",").includes(lastBoardUpdate.boardId)) void refetch();
-  }, [lastBoardUpdate, tabBoardIds, refetch]);
-
   // The composer targets tabBoards[0], so a half-typed card must not survive a
   // move to a different board — same reset BoardTabs does for its add menu.
   // `open` joins them: it names a card in another collection, so neither tool
@@ -250,24 +230,28 @@ export function BoardStage({ roster, lastBoardUpdate }: BoardStageProps) {
       const movingCard = previous.cards.find((c) => c.id === cardId);
       const sameColumn = movingCard?.columnId === columnId;
       const next = moveCard(previous, cardId, columnId, order);
-      setBoards((all) => all.map((b) => (b.id === next.id ? next : b)));
+      qc.setQueryData<BoardsResult>(qk.boards, (curr) =>
+        curr ? { ...curr, boards: curr.boards.map((b) => (b.id === next.id ? next : b)) } : curr,
+      );
       const body: { columnId?: string; order: number } = sameColumn ? { order } : { columnId, order };
-      const res = await fetch(
-        `http://${BASE}/work/boards/${encodeURIComponent(boardId)}/cards/${encodeURIComponent(cardId)}`,
-        { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) },
-      ).catch(() => null);
-      if (!res?.ok) {
+      try {
+        // Success invalidates qk.boards itself (useMoveCard's onSuccess), which
+        // picks up server-side effects (renumber, jira lastPushError) — same as
+        // the original's `void refetch()` after a successful PATCH.
+        await moveCardMutation.mutateAsync({ boardId, cardId, body });
+        setError(null);
+      } catch {
         // Full-snapshot restore: a second drag that started (and applied its
         // own optimistic update) while this PATCH was in flight gets
         // discarded too — this rolls back to the state captured before
         // THIS move, not a merge of the two.
-        setBoards((all) => all.map((b) => (b.id === previous.id ? previous : b)));
+        qc.setQueryData<BoardsResult>(qk.boards, (curr) =>
+          curr ? { ...curr, boards: curr.boards.map((b) => (b.id === previous.id ? previous : b)) } : curr,
+        );
         setError("Move failed — restored the previous order");
-        return;
       }
-      void refetch(); // pick up server-side effects (renumber, jira lastPushError)
     },
-    [boards, refetch],
+    [boards, moveCardMutation, qc],
   );
 
   useEffect(() => {
@@ -292,45 +276,35 @@ export function BoardStage({ roster, lastBoardUpdate }: BoardStageProps) {
   const addCard = async () => {
     const target = tabBoards[0];
     if (!target || !cardTitle.trim()) return;
-    await fetch(`http://${BASE}/work/boards/${encodeURIComponent(target.id)}/cards`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ title: cardTitle.trim() }),
-    }).catch(() => setError("Could not add the card"));
+    try {
+      await createCardMutation.mutateAsync({ boardId: target.id, body: { title: cardTitle.trim() } });
+      setError(null);
+    } catch {
+      setError("Could not add the card");
+    }
     setCardTitle("");
     setAddingCard(false);
-    void refetch();
   };
 
   const addBoard = async (type: BoardTypeT) => {
-    const res = (await fetch(`http://${BASE}/work/boards`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ type, workspaceId: scope }),
-    })
-      .then((r) => r.json())
-      .catch(() => ({ error: "unreachable" }))) as WorkBoardT & { error?: string };
-    if (res.error) {
-      setError(res.error);
-      return;
+    try {
+      await createBoardMutation.mutateAsync({ type, workspaceId: scope });
+      setActiveKey(type);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "unreachable");
     }
-    setActiveKey(type);
-    void refetch();
   };
 
   const importFromJira = async () => {
     const target = tabBoards[0];
     if (!target) return;
-    const res = (await fetch(`http://${BASE}/work/boards/${encodeURIComponent(target.id)}/jira/import`, {
-      method: "POST",
-    })
-      .then((r) => r.json())
-      .catch(() => ({ error: "Broker unreachable" }))) as { error?: string };
-    if (res.error) {
-      setError(res.error);
-      return;
+    try {
+      await importJiraMutation.mutateAsync(target.id);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Broker unreachable");
     }
-    void refetch();
   };
 
   return (
@@ -377,7 +351,7 @@ export function BoardStage({ roster, lastBoardUpdate }: BoardStageProps) {
           />
         </div>
       )}
-      {error && <p className="wizard__error">{error}</p>}
+      {displayError && <p className="wizard__error">{displayError}</p>}
       {boardErrors.length > 0 && (
         <p className="wizard__hint">Some board files failed to load: {boardErrors.map((e) => e.file).join(", ")}</p>
       )}
@@ -405,7 +379,7 @@ export function BoardStage({ roster, lastBoardUpdate }: BoardStageProps) {
           roster={roster}
           workspaces={workspaces.map((w) => w.name)}
           onClose={() => setOpen(null)}
-          onChanged={() => void refetch()}
+          onChanged={() => void qc.invalidateQueries({ queryKey: qk.boards })}
         />
       )}
     </main>

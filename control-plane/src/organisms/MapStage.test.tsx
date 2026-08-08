@@ -1,6 +1,9 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { qk } from "../queries/keys";
+import { useSocketStore } from "../stores/socketStore";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { MapStage } from "./MapStage";
 
 const CAP = {
@@ -64,7 +67,7 @@ describe("MapStage", () => {
 
   it("renders the backbone and story stacks for the selected capability", async () => {
     stubFetch();
-    render(<MapStage lastCapabilityUpdate={null} />);
+    renderWithProviders(<MapStage />);
     expect(await screen.findByText("Manage Candidate Tours")).toBeTruthy();
     expect(screen.getByText("Define Tour Schedule")).toBeTruthy();
     expect(screen.getByText("create tour time slots")).toBeTruthy();
@@ -72,7 +75,7 @@ describe("MapStage", () => {
 
   it("creates a capability in the selected workspace", async () => {
     const { calls } = stubFetch();
-    render(<MapStage lastCapabilityUpdate={null} />);
+    renderWithProviders(<MapStage />);
     await screen.findByText("Manage Candidate Tours");
     await userEvent.click(screen.getByRole("button", { name: /new capability/i }));
     await userEvent.type(screen.getByPlaceholderText(/capability name/i), "New Cap");
@@ -83,22 +86,9 @@ describe("MapStage", () => {
     });
   });
 
-  it("refetches when lastCapabilityUpdate names the open capability", async () => {
-    const { calls } = stubFetch();
-    const { rerender } = render(<MapStage lastCapabilityUpdate={null} />);
-    await screen.findByText("Manage Candidate Tours");
-    const before = calls.filter((c) => c.url.includes("/work/capabilities") && c.method === "GET").length;
-    rerender(<MapStage lastCapabilityUpdate={{ capabilityId: "school-feature-set", seq: 1 }} />);
-    await waitFor(() =>
-      expect(calls.filter((c) => c.url.includes("/work/capabilities") && c.method === "GET").length).toBeGreaterThan(
-        before,
-      ),
-    );
-  });
-
   it("shows slice bands with done fractions", async () => {
     stubFetch();
-    render(<MapStage lastCapabilityUpdate={null} />);
+    renderWithProviders(<MapStage />);
     await screen.findByText("tour scheduling v1", { selector: ".slice-band__name" });
     expect(screen.getByText("1/2")).toBeTruthy();
   });
@@ -113,7 +103,7 @@ describe("MapStage", () => {
       slices: [],
     };
     stubFetch({ capabilities: { capabilities: [CAP, OTHER_CAP], errors: [] } });
-    render(<MapStage lastCapabilityUpdate={null} />);
+    renderWithProviders(<MapStage />);
     await screen.findByText("Manage Candidate Tours");
     await userEvent.selectOptions(screen.getByLabelText("Workspace"), "smithagents");
     await waitFor(() => expect((screen.getByLabelText("Capability") as HTMLSelectElement).value).toBe("other-cap"));
@@ -123,13 +113,60 @@ describe("MapStage", () => {
 
   it("switching to a workspace with no capabilities clears the map instead of showing the old one", async () => {
     stubFetch({ capabilities: { capabilities: [CAP], errors: [] } });
-    render(<MapStage lastCapabilityUpdate={null} />);
+    renderWithProviders(<MapStage />);
     await screen.findByText("Manage Candidate Tours");
     await userEvent.selectOptions(screen.getByLabelText("Workspace"), "smithagents");
     await waitFor(() => expect(screen.queryByText("Manage Candidate Tours")).toBeNull());
     const capSelect = screen.getByLabelText("Capability") as HTMLSelectElement;
     expect(capSelect.value).toBe("");
     expect(capSelect.querySelectorAll("option").length).toBe(0);
+  });
+});
+
+describe("MapStage + socket store wiring", () => {
+  /** Minimal WebSocket stand-in — only what socketStore.connect()/onmessage need. */
+  class FakeSocket {
+    static last: FakeSocket | null = null;
+    onopen: (() => void) | null = null;
+    onmessage: ((e: { data: string }) => void) | null = null;
+    onclose: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    readyState = 0;
+    constructor(_url: string) {
+      FakeSocket.last = this;
+    }
+    close() {}
+  }
+
+  afterEach(() => {
+    cleanup();
+    useSocketStore.getState().disconnect();
+    FakeSocket.last = null;
+    vi.unstubAllGlobals();
+  });
+
+  it("a capability-updated frame invalidates the capabilities collection and triggers a real refetch", async () => {
+    // Replaces the deleted lastCapabilityUpdate seq counter: Task 6's
+    // socketStore invalidates qk.capabilities, and because MapStage observes
+    // that key via useCapabilities(), the invalidate alone produces a second
+    // GET — no prop, no manual refetch() call.
+    vi.stubGlobal("WebSocket", FakeSocket);
+    const { calls } = stubFetch();
+    const { client } = renderWithProviders(<MapStage />);
+    await screen.findByText("Manage Candidate Tours");
+    const fetched = () => calls.filter((c) => c.url.includes("/work/capabilities") && c.method === "GET").length;
+    const before = fetched();
+    const spy = vi.spyOn(client, "invalidateQueries");
+
+    useSocketStore.getState().connect(client);
+    await act(async () => {
+      FakeSocket.last?.onmessage?.({
+        data: JSON.stringify({ type: "capability-updated", capabilityId: "school-feature-set" }),
+      });
+    });
+
+    expect(spy).toHaveBeenCalledWith({ queryKey: qk.capabilities });
+    await waitFor(() => expect(fetched()).toBe(before + 1));
   });
 });
 
@@ -141,7 +178,7 @@ describe("MapStage editing", () => {
 
   it("adds a story to a step via wholesale PATCH", async () => {
     const { calls } = stubFetch();
-    render(<MapStage lastCapabilityUpdate={null} />);
+    renderWithProviders(<MapStage />);
     await screen.findByText("Define Tour Schedule");
     await userEvent.type(screen.getAllByPlaceholderText(/add a story/i)[0], "delete tour time slots{Enter}");
     await waitFor(() => {
@@ -154,7 +191,7 @@ describe("MapStage editing", () => {
 
   it("fireStoryDrop moves a story between steps via wholesale PATCH", async () => {
     const { calls } = stubFetch();
-    render(<MapStage lastCapabilityUpdate={null} />);
+    renderWithProviders(<MapStage />);
     await screen.findByText("Define Tour Schedule");
     const { fireStoryDrop } = await import("./MapStage");
     await fireStoryDrop("s2", "st2", 0);
@@ -169,7 +206,7 @@ describe("MapStage editing", () => {
 
   it("assigning a story to a slice keeps storyIds disjoint", async () => {
     const { calls } = stubFetch();
-    render(<MapStage lastCapabilityUpdate={null} />);
+    renderWithProviders(<MapStage />);
     await screen.findByText("create tour time slots");
     // Each story renders a slice select; move s1 from sl1 to sl2.
     await userEvent.selectOptions(screen.getAllByLabelText(/slice for/i)[0], "sl2");
@@ -183,7 +220,7 @@ describe("MapStage editing", () => {
 
   it("slice actions: generate spec POSTs; delivery send gated until specPath; sends post the target", async () => {
     const { calls } = stubFetch();
-    render(<MapStage lastCapabilityUpdate={null} />);
+    renderWithProviders(<MapStage />);
     await screen.findByText("tour scheduling v1", { selector: ".slice-band__name" });
     // sl2 has no specPath: generate visible, delivery send disabled with reason.
     expect(screen.getByRole("button", { name: /generate spec for analytics v1/i })).toBeTruthy();
@@ -204,7 +241,7 @@ describe("MapStage editing", () => {
 
   it("creates a slice", async () => {
     const { calls } = stubFetch();
-    render(<MapStage lastCapabilityUpdate={null} />);
+    renderWithProviders(<MapStage />);
     await screen.findByText("tour scheduling v1", { selector: ".slice-band__name" });
     await userEvent.type(screen.getByPlaceholderText(/new slice name/i), "tour scheduling v2{Enter}");
     await waitFor(() => {

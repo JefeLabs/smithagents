@@ -11,6 +11,13 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import { Map as MapIcon, Plus, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import {
+  useCapabilities,
+  useCreateCapability,
+  useGenerateSpec,
+  usePatchCapability,
+  useSendSlice,
+} from "../queries/work";
 
 const BASE = "127.0.0.1:7790";
 
@@ -45,16 +52,6 @@ export interface CapabilityT {
   activities: CapActivityT[];
   stories: CapStoryT[];
   slices: CapSliceT[];
-}
-
-interface MapStageProps {
-  /**
-   * Dead as of the socket store: a `capability-updated` frame now invalidates
-   * `qk.capability(id)` instead of bumping a seq counter, so nothing supplies
-   * this any more. It (and the effect below that reads it) go away with the
-   * rest of the seq mechanism once this stage reads capabilities through Query.
-   */
-  lastCapabilityUpdate?: { capabilityId: string; seq: number } | null;
 }
 
 /**
@@ -187,11 +184,19 @@ function MapStepStories({
  * stacks, with slices carved below. Cards and spec docs are downstream
  * views; every text edit happens here and only here.
  */
-export function MapStage({ lastCapabilityUpdate }: MapStageProps) {
+export function MapStage() {
+  const capabilitiesQuery = useCapabilities();
+  const capabilities = capabilitiesQuery.data?.capabilities ?? [];
+  const capErrors = capabilitiesQuery.data?.errors ?? [];
+  const loadError = capabilitiesQuery.isError ? "Could not load capabilities — is the broker running?" : null;
+
+  const createCapMutation = useCreateCapability();
+  const patchCapMutation = usePatchCapability();
+  const generateSpecMutation = useGenerateSpec();
+  const sendSliceMutation = useSendSlice();
+
   const [workspaces, setWorkspaces] = useState<string[]>([]);
   const [workspace, setWorkspace] = useState("");
-  const [capabilities, setCapabilities] = useState<CapabilityT[]>([]);
-  const [capErrors, setCapErrors] = useState<Array<{ file: string; error: string }>>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [capName, setCapName] = useState("");
@@ -202,27 +207,20 @@ export function MapStage({ lastCapabilityUpdate }: MapStageProps) {
   const [planTexts, setPlanTexts] = useState<Record<string, string>>({});
   const [sliceName, setSliceName] = useState("");
 
-  const refetch = useCallback(async () => {
-    try {
-      const res = (await fetch(`http://${BASE}/work/capabilities`).then((r) => r.json())) as {
-        capabilities?: CapabilityT[];
-        errors?: Array<{ file: string; error: string }>;
-        error?: string;
-      };
-      if (res.error) throw new Error(res.error);
-      setCapabilities(res.capabilities ?? []);
-      setCapErrors(res.errors ?? []);
-      setError(null);
-      setActiveId((id) => id ?? res.capabilities?.[0]?.id ?? null);
-      setWorkspace((w) => w || res.capabilities?.[0]?.workspaceId || "");
-    } catch {
-      setError("Could not load capabilities — is the broker running?");
-    }
-  }, []);
+  const displayError = error ?? loadError;
+
+  // Re-derives on every successful load (including a WS-driven background
+  // refetch), same as the original's `refetch()` — the `?? ` / `||` guards
+  // make it a no-op once the user (or a prior load) has already set either.
+  useEffect(() => {
+    const caps = capabilitiesQuery.data?.capabilities;
+    if (!caps) return;
+    setActiveId((id) => id ?? caps[0]?.id ?? null);
+    setWorkspace((w) => w || caps[0]?.workspaceId || "");
+  }, [capabilitiesQuery.data]);
 
   useEffect(() => {
-    void refetch();
-    void fetch(`http://${BASE}/workspaces`)
+    fetch(`http://${BASE}/workspaces`)
       .then((r) => r.json())
       .then((res: { workspaces?: Array<{ name: string }> }) => {
         const names = (res.workspaces ?? []).map((w) => w.name);
@@ -230,31 +228,21 @@ export function MapStage({ lastCapabilityUpdate }: MapStageProps) {
         setWorkspace((w) => w || names[0] || "");
       })
       .catch(() => {});
-  }, [refetch]);
-
-  useEffect(() => {
-    if (lastCapabilityUpdate && lastCapabilityUpdate.capabilityId === activeId) void refetch();
-  }, [lastCapabilityUpdate, activeId, refetch]);
+  }, []);
 
   const cap = capabilities.find((c) => c.id === activeId) ?? null;
 
   const patchCap = useCallback(
     async (body: Partial<Pick<CapabilityT, "name" | "activities" | "stories" | "slices">>) => {
       if (!cap) return;
-      const res = await fetch(`http://${BASE}/work/capabilities/${encodeURIComponent(cap.id)}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      }).catch(() => null);
-      if (!res?.ok) {
-        const payload = (await res?.json().catch(() => null)) as { error?: string } | null;
-        setError(payload?.error ?? "Update failed");
-        return;
+      try {
+        await patchCapMutation.mutateAsync({ id: cap.id, body });
+        setError(null);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Update failed");
       }
-      setError(null);
-      void refetch();
     },
-    [cap, refetch],
+    [cap, patchCapMutation],
   );
 
   const moveStory = useCallback(
@@ -295,21 +283,15 @@ export function MapStage({ lastCapabilityUpdate }: MapStageProps) {
 
   const createCapability = async () => {
     if (!capName.trim() || !workspace) return;
-    const res = (await fetch(`http://${BASE}/work/capabilities`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: capName.trim(), workspaceId: workspace }),
-    })
-      .then((r) => r.json())
-      .catch(() => ({ error: "unreachable" }))) as CapabilityT & { error?: string };
-    if (res.error) {
-      setError(res.error);
-      return;
+    try {
+      const created = await createCapMutation.mutateAsync({ name: capName.trim(), workspaceId: workspace });
+      setCreating(false);
+      setCapName("");
+      setActiveId(created.id);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "unreachable");
     }
-    setCreating(false);
-    setCapName("");
-    setActiveId(res.id);
-    void refetch();
   };
 
   const storiesFor = (stepId: string) =>
@@ -381,20 +363,12 @@ export function MapStage({ lastCapabilityUpdate }: MapStageProps) {
   };
   const generateSpec = async (slice: CapSliceT) => {
     if (!cap) return;
-    const res = (await fetch(
-      `http://${BASE}/work/capabilities/${encodeURIComponent(cap.id)}/slices/${encodeURIComponent(slice.id)}/spec`,
-      {
-        method: "POST",
-      },
-    )
-      .then((r) => r.json())
-      .catch(() => ({ error: "unreachable" }))) as { error?: string };
-    if (res.error) {
-      setError(res.error);
-      return;
+    try {
+      await generateSpecMutation.mutateAsync({ id: cap.id, sliceId: slice.id });
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "unreachable");
     }
-    setError(null);
-    void refetch();
   };
   const setPlanPath = (slice: CapSliceT) => {
     const value = (planTexts[slice.id] ?? "").trim();
@@ -404,22 +378,12 @@ export function MapStage({ lastCapabilityUpdate }: MapStageProps) {
   };
   const sendSlice = async (slice: CapSliceT, target: "capabilities" | "delivery") => {
     if (!cap) return;
-    const res = (await fetch(
-      `http://${BASE}/work/capabilities/${encodeURIComponent(cap.id)}/slices/${encodeURIComponent(slice.id)}/send`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ target }),
-      },
-    )
-      .then((r) => r.json())
-      .catch(() => ({ error: "unreachable" }))) as { error?: string };
-    if (res.error) {
-      setError(res.error);
-      return;
+    try {
+      await sendSliceMutation.mutateAsync({ id: cap.id, sliceId: slice.id, target });
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "unreachable");
     }
-    setError(null);
-    void refetch();
   };
   const addSlice = () => {
     if (!cap || !sliceName.trim()) return;
@@ -483,7 +447,7 @@ export function MapStage({ lastCapabilityUpdate }: MapStageProps) {
           </button>
         </div>
       )}
-      {error && <p className="wizard__error">{error}</p>}
+      {displayError && <p className="wizard__error">{displayError}</p>}
       {capErrors.length > 0 && (
         <p className="wizard__hint">Some capability files failed to load: {capErrors.map((e) => e.file).join(", ")}</p>
       )}

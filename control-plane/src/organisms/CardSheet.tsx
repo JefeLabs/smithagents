@@ -1,10 +1,9 @@
 import { Send, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import type { RosterAgent } from "../api/types";
+import * as api from "../api/work";
 import { exitsForUI } from "../lib/board-aggregate";
 import type { WorkBoardT, WorkCardT } from "./BoardStage";
-
-const BASE = "127.0.0.1:7790";
 
 interface CardSheetProps {
   board: WorkBoardT;
@@ -31,20 +30,15 @@ export function CardSheet({ board, card, roster, workspaces, onClose, onChanged 
   const [flagReason, setFlagReason] = useState(card.flag?.reason ?? "");
   const linked = Boolean(card.capabilityRef);
 
-  const cardUrl = `http://${BASE}/work/boards/${encodeURIComponent(board.id)}/cards/${encodeURIComponent(card.id)}`;
   const patch = async (body: unknown) => {
-    const res = await fetch(cardUrl, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    }).catch(() => null);
-    if (!res?.ok) {
-      const payload = (await res?.json().catch(() => null)) as { error?: string } | null;
-      setError(payload?.error ?? "Update failed");
+    try {
+      await api.patchCard(board.id, card.id, body);
+      onChanged();
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Update failed");
       return false;
     }
-    onChanged();
-    return true;
   };
 
   const save = async () => {
@@ -69,18 +63,13 @@ export function CardSheet({ board, card, roster, workspaces, onClose, onChanged 
   const exits = exitsForUI(board.type, card.columnId);
 
   const route = async (toType: string) => {
-    const res = await fetch(`${cardUrl}/route`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ toType }),
-    }).catch(() => null);
-    if (!res?.ok) {
-      const payload = (await res?.json().catch(() => null)) as { error?: string } | null;
-      setError(payload?.error ?? "Could not move the card");
-      return;
+    try {
+      await api.routeCard(board.id, card.id, toType);
+      onChanged();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not move the card");
     }
-    onChanged();
-    onClose();
   };
 
   const setFlag = async (kind: string) => {
@@ -90,27 +79,29 @@ export function CardSheet({ board, card, roster, workspaces, onClose, onChanged 
   };
 
   const remove = async () => {
-    const res = await fetch(cardUrl, { method: "DELETE" }).catch(() => null);
-    if (res?.ok) {
+    try {
+      await api.deleteCard(board.id, card.id);
       onChanged();
       onClose();
-    } else setError("Delete failed");
+    } catch {
+      setError("Delete failed");
+    }
   };
 
   const delegate = async () => {
-    const res = (await fetch(`http://${BASE}/work/delegate`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ boardId: board.id, cardId: card.id, agentId, workspace: workspace || undefined, prompt }),
-    })
-      .then((r) => r.json())
-      .catch(() => ({ error: "Broker unreachable" }))) as { taskId?: string; error?: string };
-    if (res.error) {
-      setError(res.error);
-      return;
+    try {
+      await api.delegateCard({
+        boardId: board.id,
+        cardId: card.id,
+        agentId,
+        workspace: workspace || undefined,
+        prompt,
+      });
+      onChanged();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Broker unreachable");
     }
-    onChanged();
-    onClose();
   };
 
   return (

@@ -1,7 +1,10 @@
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ALL_WORKSPACES } from "../lib/board-aggregate";
+import { qk } from "../queries/keys";
+import { useSocketStore } from "../stores/socketStore";
+import { renderWithProviders } from "../test/renderWithProviders";
 import type { WorkBoardT } from "./BoardStage";
 import { BoardStage, moveCard, resolveCrossBoardDrop, resolveDrop } from "./BoardStage";
 
@@ -82,7 +85,7 @@ describe("BoardStage", () => {
 
   it("renders columns and cards of the first board", async () => {
     stubFetch();
-    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
+    renderWithProviders(<BoardStage roster={ROSTER} />);
     expect(await screen.findByText("Todo")).toBeTruthy();
     expect(screen.getByText("Write the spec")).toBeTruthy();
     expect(screen.getByText("PROJ-1")).toBeTruthy();
@@ -90,14 +93,14 @@ describe("BoardStage", () => {
 
   it("shows the delegated card's agent badge from the roster", async () => {
     stubFetch();
-    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
+    renderWithProviders(<BoardStage roster={ROSTER} />);
     await screen.findByText("Ship avatars");
     expect(screen.getByLabelText(/minerva is working on this card/i)).toBeTruthy();
   });
 
   it("the delegated card's avatar badge has no nested button, so the card stays a single button", async () => {
     stubFetch();
-    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
+    renderWithProviders(<BoardStage roster={ROSTER} />);
     const title = await screen.findByText("Ship avatars");
     const badge = screen.getByLabelText(/minerva is working on this card/i);
     expect(within(badge).queryByRole("button")).toBeNull();
@@ -131,7 +134,7 @@ describe("BoardStage", () => {
         errors: [],
       },
     });
-    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
+    renderWithProviders(<BoardStage roster={ROSTER} />);
     await screen.findByText("Ship boards");
     expect(screen.getByText("2/3")).toBeTruthy();
     const noStoriesCard = screen.getByText("Write the spec").closest("button.board-card") as HTMLElement;
@@ -140,7 +143,7 @@ describe("BoardStage", () => {
 
   it("adds a card through the composer", async () => {
     const { calls } = stubFetch();
-    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
+    renderWithProviders(<BoardStage roster={ROSTER} />);
     await screen.findByText("Todo");
     await userEvent.click(screen.getByRole("button", { name: /add card/i }));
     await userEvent.type(screen.getByPlaceholderText(/card title/i), "New card");
@@ -160,7 +163,7 @@ describe("BoardStage", () => {
         errors: [],
       },
     });
-    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
+    renderWithProviders(<BoardStage roster={ROSTER} />);
     await waitFor(() => expect(screen.getByRole("tab", { name: "Plan" })).toBeTruthy());
     expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Plan", "Personal"]);
     expect(screen.getByLabelText("Workspace")).toBeTruthy();
@@ -192,7 +195,7 @@ describe("BoardStage", () => {
         errors: [],
       },
     });
-    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
+    renderWithProviders(<BoardStage roster={ROSTER} />);
     await waitFor(() => expect(screen.getByText("Parent portal")).toBeTruthy());
     // Start in a single workspace: acme's card only, and no subheadings.
     await userEvent.selectOptions(screen.getByLabelText("Workspace"), "acme");
@@ -218,7 +221,7 @@ describe("BoardStage", () => {
         errors: [],
       },
     });
-    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
+    renderWithProviders(<BoardStage roster={ROSTER} />);
     await waitFor(() => expect(screen.getByRole("tab", { name: "Personal" })).toBeTruthy());
     await userEvent.click(screen.getByRole("tab", { name: "Personal" }));
     await userEvent.click(screen.getByRole("button", { name: /add card/i }));
@@ -245,7 +248,7 @@ describe("BoardStage", () => {
         errors: [],
       },
     });
-    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
+    renderWithProviders(<BoardStage roster={ROSTER} />);
     await waitFor(() => expect(screen.getByRole("tab", { name: "Personal" })).toBeTruthy());
     await userEvent.click(screen.getByRole("tab", { name: "Personal" }));
     await userEvent.click(screen.getByText("Write the spec"));
@@ -266,7 +269,7 @@ describe("BoardStage", () => {
         errors: [],
       },
     });
-    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
+    renderWithProviders(<BoardStage roster={ROSTER} />);
     await waitFor(() => expect(screen.getByRole("tab", { name: "Plan" })).toBeTruthy());
     await userEvent.selectOptions(screen.getByLabelText("Workspace"), "acme");
     await userEvent.click(screen.getByRole("button", { name: /add board/i }));
@@ -278,20 +281,50 @@ describe("BoardStage", () => {
       }),
     );
   });
+});
 
-  it("refetches when lastBoardUpdate names the open board", async () => {
+describe("BoardStage + socket store wiring", () => {
+  /** Minimal WebSocket stand-in — only what socketStore.connect()/onmessage need. */
+  class FakeSocket {
+    static last: FakeSocket | null = null;
+    onopen: (() => void) | null = null;
+    onmessage: ((e: { data: string }) => void) | null = null;
+    onclose: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    readyState = 0;
+    constructor(_url: string) {
+      FakeSocket.last = this;
+    }
+    close() {}
+  }
+
+  afterEach(() => {
+    cleanup();
+    useSocketStore.getState().disconnect();
+    FakeSocket.last = null;
+    vi.unstubAllGlobals();
+  });
+
+  it("a board-updated frame invalidates the boards collection and triggers a real refetch", async () => {
+    // This is the mechanism that replaced the deleted lastBoardUpdate seq
+    // counter: Task 6's socketStore invalidates qk.boards, and because
+    // BoardStage observes that key via useBoards(), the invalidate alone is
+    // enough to produce a second GET — no prop, no manual refetch() call.
+    vi.stubGlobal("WebSocket", FakeSocket);
     const { calls } = stubFetch();
-    const { rerender } = render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
+    const { client } = renderWithProviders(<BoardStage roster={ROSTER} />);
     await screen.findByText("Todo");
-    const fetched = () => calls.filter((c) => c.url.endsWith("/work/boards")).length;
+    const fetched = () => calls.filter((c) => c.url.endsWith("/work/boards") && c.method === "GET").length;
     const before = fetched();
-    rerender(<BoardStage roster={ROSTER} lastBoardUpdate={{ boardId: "alpha", seq: 1 }} />);
+    const spy = vi.spyOn(client, "invalidateQueries");
+
+    useSocketStore.getState().connect(client);
+    await act(async () => {
+      FakeSocket.last?.onmessage?.({ data: JSON.stringify({ type: "board-updated", boardId: "alpha" }) });
+    });
+
+    expect(spy).toHaveBeenCalledWith({ queryKey: qk.boards });
     await waitFor(() => expect(fetched()).toBe(before + 1));
-    // ...and settles there. The effect watches the tab's board ids, not the
-    // derived board array: that array is rebuilt on every render, so an
-    // identity-keyed effect would refetch, re-render, and refetch forever.
-    await new Promise((r) => setTimeout(r, 50));
-    expect(fetched()).toBe(before + 1);
   });
 });
 
@@ -356,7 +389,7 @@ describe("BoardStage drag wiring", () => {
 
   it("a cross-column drop PATCHes the moved card with columnId and order and applies optimistically", async () => {
     const { calls } = stubFetch();
-    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
+    renderWithProviders(<BoardStage roster={ROSTER} />);
     await readyToDrop("Todo");
     // Drag simulation via dnd-kit is brittle in jsdom — call the exported
     // handler contract instead: the component wires handleCardDrop(boardId,
@@ -413,7 +446,7 @@ describe("BoardStage drag wiring", () => {
         errors: [],
       },
     });
-    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
+    renderWithProviders(<BoardStage roster={ROSTER} />);
     await readyToDrop("Billing");
     const { fireDrop } = await import("./BoardStage");
     await fireDrop("globex-plan", "g1", "ready", 0);
@@ -424,7 +457,7 @@ describe("BoardStage drag wiring", () => {
 
   it("a same-column reorder PATCHes {order} only, omitting columnId so the swarm's Jira push-on-move never fires", async () => {
     const { calls } = stubFetch();
-    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
+    renderWithProviders(<BoardStage roster={ROSTER} />);
     await readyToDrop("Todo");
     const { fireDrop } = await import("./BoardStage");
     // c1 is already in "todo" — this is a same-column reorder.
@@ -437,7 +470,7 @@ describe("BoardStage drag wiring", () => {
 
   it("rolls back the optimistic move and surfaces an error when the PATCH fails", async () => {
     const { calls } = stubFetch({ patchStatus: 500 });
-    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
+    renderWithProviders(<BoardStage roster={ROSTER} />);
     await readyToDrop("Write the spec");
     const { fireDrop } = await import("./BoardStage");
     await fireDrop("alpha", "c1", "doing", 0);
@@ -567,7 +600,7 @@ describe("CardSheet", () => {
   });
 
   async function openSheet(cardTitle: string) {
-    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
+    renderWithProviders(<BoardStage roster={ROSTER} />);
     await userEvent.click(await screen.findByText(cardTitle));
   }
 
@@ -648,7 +681,7 @@ describe("CardSheet", () => {
   it("busy agents are disabled in the picker with the reason", async () => {
     stubFetch();
     const busyRoster = [{ ...ROSTER[0], status: "busy" as const }];
-    render(<BoardStage roster={busyRoster} lastBoardUpdate={null} />);
+    renderWithProviders(<BoardStage roster={busyRoster} />);
     await userEvent.click(await screen.findByText("Write the spec"));
     await userEvent.click(screen.getByRole("button", { name: /send to agent/i }));
     const option = screen.getByRole("option", { name: /minerva.*busy/i }) as HTMLOptionElement;
@@ -681,11 +714,13 @@ describe("CardSheet", () => {
     // open); once route pills move a card off open.boardId it is the normal flow.
     const overrides: Record<string, unknown> = { boards: { boards: [{ ...BOARD }], errors: [] } };
     stubFetch(overrides);
-    const { rerender } = render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
+    const { client } = renderWithProviders(<BoardStage roster={ROSTER} />);
     await userEvent.click(await screen.findByText("Write the spec"));
     expect(screen.getByRole("dialog")).toBeTruthy();
     overrides.boards = { boards: [{ ...BOARD, cards: BOARD.cards.filter((c) => c.id !== "c1") }], errors: [] };
-    rerender(<BoardStage roster={ROSTER} lastBoardUpdate={{ boardId: "alpha", seq: 1 }} />);
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: qk.boards });
+    });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     // The stage itself survives — the card is gone, not the whole tree.
     expect(screen.getByLabelText("Work boards")).toBeTruthy();
@@ -752,14 +787,14 @@ describe("board-side capability amendments", () => {
 
   it("linked cards show a capability chip", async () => {
     stubFetch({ boards: WS_BOARDS });
-    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
+    renderWithProviders(<BoardStage roster={ROSTER} />);
     await screen.findByText("tour scheduling v1");
     expect(screen.getByTitle(/school-feature-set/i)).toBeTruthy();
   });
 
   it("linked cards are toggle-only: no add-story input, no remove buttons, toggle still PATCHes", async () => {
     const { calls } = stubFetch({ boards: WS_BOARDS });
-    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
+    renderWithProviders(<BoardStage roster={ROSTER} />);
     await userEvent.click(await screen.findByText("tour scheduling v1"));
     expect(screen.queryByPlaceholderText(/add a story/i)).toBeNull();
     expect(screen.queryByLabelText(/remove story/i)).toBeNull();

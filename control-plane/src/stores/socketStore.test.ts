@@ -298,12 +298,15 @@ describe("socketStore frame handling", () => {
     emit({ type: "board-updated", boardId: "b1" });
     emit({ type: "capability-updated", capabilityId: "c1" });
 
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: qk.board("b1") });
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: qk.capability("c1") });
+    // Boards/capabilities are fetched as whole collections (no per-item GET),
+    // so the id the frame names is invalidation fodder only — the key that
+    // must be invalidated is the collection key, not qk.board(id)/qk.capability(id).
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: qk.boards });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: qk.capabilities });
     // The frame carried an id, not data — writing anything would be inventing it.
     expect(write).not.toHaveBeenCalled();
-    expect(qc.getQueryData(qk.board("b1"))).toBeUndefined();
-    expect(qc.getQueryData(qk.capability("c1"))).toBeUndefined();
+    expect(qc.getQueryData(qk.boards)).toBeUndefined();
+    expect(qc.getQueryData(qk.capabilities)).toBeUndefined();
   });
 
   it("routes audio frames to subscribers, never to the cache", () => {
