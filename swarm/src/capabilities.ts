@@ -5,7 +5,9 @@
 // applyStoryToggles. Truth has one home; everything else is a view.
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { addCard, createBoard, loadBoards, saveBoard, type WorkBoard, type WorkCard } from './work-items.js';
+import {
+  addCard, boardIdFor, type BoardType, createBoard, loadBoards, saveBoard, type WorkBoard, type WorkCard,
+} from './work-items.js';
 
 export interface CapStory {
   id: string;
@@ -58,7 +60,7 @@ export function slugify(name: string): string {
 
 export function createCapability(name: string, workspaceId: string): Capability {
   const now = new Date().toISOString();
-  // Namespaced like workspaceBoardId: the id is the on-disk filename, and two
+  // Namespaced like boardIdFor: the id is the on-disk filename, and two
   // workspaces must be able to each have their own "Onboarding".
   const id = `${slugify(workspaceId)}-${slugify(name)}`;
   return { id, name: name.trim(), workspaceId, activities: [], stories: [], slices: [], createdAt: now, updatedAt: now };
@@ -178,20 +180,11 @@ export function renderSpecSkeleton(sliceName: string, stories: CapStory[], dateI
   ].join('\n');
 }
 
-export function workspaceBoardId(workspaceId: string, target: 'capabilities' | 'delivery'): string {
-  return `${slugify(workspaceId)}-${target}`;
-}
-
-/** Create the workspace's Capabilities + Delivery pair iff missing. ONLY the pair — maintenance/support are on-demand. */
+/** Create the workspace's standing boards iff missing. Ideation + Plan + Deliver; the rest are on-demand. */
 export async function ensureWorkspaceBoards(workDir: string, workspaceId: string): Promise<void> {
   const { boards } = await loadBoards(workDir);
-  const wanted: Array<['capabilities' | 'delivery', string]> = [
-    ['capabilities', `${workspaceId} Capabilities`],
-    ['delivery', `${workspaceId} Delivery`],
-  ];
-  for (const [template, name] of wanted) {
-    const board = createBoard(name, template, workspaceId);
-    board.id = workspaceBoardId(workspaceId, template);
+  for (const type of ['ideation', 'plan', 'deliver'] as BoardType[]) {
+    const board = createBoard(type, workspaceId);
     if (!boards.some((b) => b.id === board.id)) await saveBoard(workDir, board);
   }
 }

@@ -4,46 +4,64 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import {
-  addCard, BOARD_TEMPLATES, createBoard, deleteBoardFile, loadBoards, patchCard, removeCard, saveBoard,
+  addCard, BOARD_TEMPLATES, BOARD_TYPE_ORDER, boardIdFor, type BoardType, createBoard,
+  deleteBoardFile, loadBoards, patchCard, removeCard, saveBoard, WORKSPACE_BOARD_TYPES,
 } from './work-items.js';
 
-test('templates: five column sets, ids unique and slug-shaped', () => {
-  assert.deepEqual(BOARD_TEMPLATES.personal.map((c) => c.name), ['Backlog', 'Ready', 'In Progress', 'In Review', 'Done']);
-  assert.deepEqual(BOARD_TEMPLATES.capabilities.map((c) => c.name), ['Capability', 'Story Mapping', 'Spec', 'Plan', 'Ready for Delivery']);
-  assert.deepEqual(BOARD_TEMPLATES.delivery.map((c) => c.name), ['Ready', 'In Progress', 'In Review', 'Verified', 'Done']);
-  assert.deepEqual(BOARD_TEMPLATES.maintenance.map((c) => c.name), ['Reported', 'Triaged', 'In Progress', 'In Review', 'Done']);
-  assert.deepEqual(BOARD_TEMPLATES.support.map((c) => c.name), ['Inbox', 'Triaged', 'Waiting on User', 'In Progress', 'Resolved']);
+test('templates: seven typed column sets, ids unique and slug-shaped', () => {
+  assert.deepEqual(BOARD_TEMPLATES.personal.map((c) => c.name), ['Todo', 'Doing', 'Done', 'Not Doing']);
+  assert.deepEqual(BOARD_TEMPLATES.ideation.map((c) => c.name), ['Intake', 'Scoping', 'Confirm', 'Killed']);
+  assert.deepEqual(BOARD_TEMPLATES.plan.map((c) => c.name), ['Spec', 'Tech design', 'Decomposed', 'Ready']);
+  assert.deepEqual(BOARD_TEMPLATES.deliver.map((c) => c.name), ['Ready', 'In progress', 'Review', 'Verify', 'Merged']);
+  assert.deepEqual(BOARD_TEMPLATES.release.map((c) => c.name), ['Cut', 'Regression', 'Sign-off', 'Ship', 'Rollback']);
+  assert.deepEqual(BOARD_TEMPLATES.reactive.map((c) => c.name), ['Triage', 'Diagnose', 'Fix', 'Verify', 'Closed']);
+  assert.deepEqual(BOARD_TEMPLATES.maintenance.map((c) => c.name), ['Triage', 'Queued', 'Doing', 'Done', "Won't do"]);
+  assert.equal(Object.keys(BOARD_TEMPLATES).length, 7);
   for (const cols of Object.values(BOARD_TEMPLATES)) {
     assert.equal(new Set(cols.map((c) => c.id)).size, cols.length);
     for (const c of cols) assert.match(c.id, /^[a-z0-9][a-z0-9-]*$/);
   }
 });
 
-test('createBoard carries workspaceId; capabilityRef round-trips through save/load', async () => {
-  const b = createBoard('skoolscout Capabilities', 'capabilities', 'skoolscout');
-  assert.equal(b.id, 'skoolscout-capabilities');
-  assert.equal(b.workspaceId, 'skoolscout');
-  assert.equal(createBoard('Solo', 'personal').workspaceId, undefined);
-  const card = addCard(b, { title: 'tour scheduling v1' });
-  patchCard(b, card.id, { capabilityRef: { capabilityId: 'school-feature-set', sliceId: 'sl1' } });
-  const dir = await mkdtemp(join(tmpdir(), 'work-'));
-  await saveBoard(dir, b);
-  const { boards } = await loadBoards(dir);
-  assert.deepEqual(boards[0].cards[0].capabilityRef, { capabilityId: 'school-feature-set', sliceId: 'sl1' });
+test('type order puts personal last and WORKSPACE_BOARD_TYPES excludes it', () => {
+  assert.deepEqual(BOARD_TYPE_ORDER, ['ideation', 'plan', 'deliver', 'release', 'reactive', 'maintenance', 'personal']);
+  assert.equal(WORKSPACE_BOARD_TYPES.includes('personal' as BoardType), false);
+  assert.equal(WORKSPACE_BOARD_TYPES.length, 6);
 });
 
-test('createBoard slugs the name and copies template columns; bad names throw', () => {
-  const b = createBoard('Q3 Roadmap!', 'personal');
-  assert.equal(b.id, 'q3-roadmap');
-  assert.equal(b.name, 'Q3 Roadmap!');
-  assert.equal(b.columns.length, 5);
-  assert.notEqual(b.columns, BOARD_TEMPLATES.personal); // copy, not shared reference
+test('createBoard derives id from workspace+type, seeds the label, copies columns', () => {
+  const b = createBoard('deliver', 'Skool Scout');
+  assert.equal(b.id, 'skool-scout-deliver');
+  assert.equal(b.name, 'Deliver');
+  assert.equal(b.type, 'deliver');
+  assert.equal(b.workspaceId, 'Skool Scout');
   assert.deepEqual(b.cards, []);
-  assert.throws(() => createBoard('!!!', 'personal'), /name/i);
+  assert.notEqual(b.columns, BOARD_TEMPLATES.deliver); // copy, not shared reference
+  assert.equal(boardIdFor('Skool Scout', 'deliver'), 'skool-scout-deliver');
+});
+
+test('createBoard: personal is workspace-less with a fixed id; mismatches throw', () => {
+  const p = createBoard('personal');
+  assert.equal(p.id, 'personal');
+  assert.equal(p.name, 'Personal');
+  assert.equal(p.workspaceId, undefined);
+  assert.throws(() => createBoard('personal', 'acme'), /workspace/i);
+  assert.throws(() => createBoard('deliver'), /workspace/i);
+  assert.throws(() => createBoard('deliver', '!!!'), /workspace/i);
+});
+
+test('assertBoard rejects a file with a missing or unknown type', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'work-'));
+  await writeFile(join(dir, 'untyped.json'), JSON.stringify({ id: 'untyped', name: 'U', columns: [], cards: [] }));
+  await writeFile(join(dir, 'bogus.json'), JSON.stringify({ id: 'bogus', name: 'B', type: 'nope', columns: [], cards: [] }));
+  const { boards, errors } = await loadBoards(dir);
+  assert.deepEqual(boards, []);
+  assert.equal(errors.length, 2);
+  for (const e of errors) assert.match(e.error, /type/i);
 });
 
 test('addCard appends to the leftmost column by default and orders sequentially', () => {
-  const b = createBoard('t', 'personal');
+  const b = createBoard('personal');
   const a = addCard(b, { title: 'first' });
   const c = addCard(b, { title: 'second' });
   assert.equal(a.columnId, b.columns[0].id);
@@ -54,7 +72,7 @@ test('addCard appends to the leftmost column by default and orders sequentially'
 });
 
 test('patchCard moves between columns at a target index and renumbers both columns', () => {
-  const b = createBoard('t', 'personal');
+  const b = createBoard('personal');
   const [ready, inProgress] = [b.columns[1].id, b.columns[2].id];
   const c1 = addCard(b, { title: 'one', columnId: ready });
   const c2 = addCard(b, { title: 'two', columnId: ready });
@@ -71,7 +89,7 @@ test('patchCard moves between columns at a target index and renumbers both colum
 });
 
 test('same-column reorder via order only', () => {
-  const b = createBoard('t', 'personal');
+  const b = createBoard('personal');
   const col = b.columns[0].id;
   const c1 = addCard(b, { title: 'a' });
   const c2 = addCard(b, { title: 'b' });
@@ -83,7 +101,7 @@ test('same-column reorder via order only', () => {
 });
 
 test('stories: replaced wholesale via patchCard, cleared with null-ish, round-trips', () => {
-  const b = createBoard('t', 'personal');
+  const b = createBoard('personal');
   const c = addCard(b, { title: 'cap' });
   patchCard(b, c.id, { stories: [{ id: 's1', text: 'user can log in', done: false }] });
   assert.equal(b.cards[0].stories?.length, 1);
@@ -96,23 +114,23 @@ test('stories: replaced wholesale via patchCard, cleared with null-ish, round-tr
 
 test('save/load round-trip; malformed files land in errors without sinking the rest', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'work-'));
-  const b = createBoard('Alpha', 'capabilities');
+  const b = createBoard('plan', 'alpha');
   addCard(b, { title: 'card' });
   await saveBoard(dir, b);
   await writeFile(join(dir, 'broken.json'), '{not json');
   await writeFile(join(dir, 'shapeless.json'), '{"id":"shapeless"}');
   const { boards, errors } = await loadBoards(dir);
-  assert.deepEqual(boards.map((x) => x.id), ['alpha']);
+  assert.deepEqual(boards.map((x) => x.id), ['alpha-plan']);
   assert.equal(boards[0].cards[0].title, 'card');
   assert.equal(errors.length, 2);
-  assert.deepEqual((await readFile(join(dir, 'alpha.json'), 'utf8')).endsWith('\n'), true);
-  await deleteBoardFile(dir, 'alpha');
+  assert.deepEqual((await readFile(join(dir, 'alpha-plan.json'), 'utf8')).endsWith('\n'), true);
+  await deleteBoardFile(dir, 'alpha-plan');
   assert.deepEqual((await loadBoards(dir)).boards, []);
   await assert.rejects(saveBoard(dir, { ...b, id: '../evil' }), /id/i);
 });
 
 test('removeCard deletes and renumbers its column', () => {
-  const b = createBoard('t', 'personal');
+  const b = createBoard('personal');
   const c1 = addCard(b, { title: 'a' });
   const c2 = addCard(b, { title: 'b' });
   removeCard(b, c1.id);

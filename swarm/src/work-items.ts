@@ -1,6 +1,6 @@
 // Kanban work boards — the user's personal planning store, one JSON file per
 // board under .smith/work/. Boards are data (columns included), never code:
-// five shipped templates seed them, and every mutation goes through the
+// seven typed templates seed them, and every mutation goes through the
 // helpers here so routes stay thin and unit tests never boot the server.
 // Cards may LINK to a Jira issue or a delegated agent task; neither linkage
 // is required, and execution state never moves a card — columns belong to
@@ -36,59 +36,116 @@ export interface WorkCard {
 export interface WorkBoard {
   id: string;
   name: string;
+  /** Persisted board identity — drives tabs, one-per-type cardinality, and routing. */
+  type: BoardType;
   columns: WorkColumn[];
   cards: WorkCard[];
   jira?: { connectorId: string; siteUrl: string; projectKey: string; jql?: string };
-  /** Present on a workspace's standing boards (the Capabilities/Delivery pair and on-demand maintenance/support); absent on personal boards. */
+  /** Present on every workspace board; absent only on the single personal board. */
   workspaceId?: string;
 }
 
 const BOARD_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
-export type BoardTemplate = 'personal' | 'capabilities' | 'delivery' | 'maintenance' | 'support';
+export type BoardType =
+  | 'personal' | 'ideation' | 'plan' | 'deliver'
+  | 'release'  | 'reactive' | 'maintenance';
 
-export const BOARD_TEMPLATES: Record<BoardTemplate, WorkColumn[]> = {
+/** Tab order. personal is always last; the other six are the workspace types. */
+export const BOARD_TYPE_ORDER: BoardType[] = [
+  'ideation', 'plan', 'deliver', 'release', 'reactive', 'maintenance', 'personal',
+];
+
+export const WORKSPACE_BOARD_TYPES: BoardType[] = BOARD_TYPE_ORDER.filter((t) => t !== 'personal');
+
+export const BOARD_TYPE_LABELS: Record<BoardType, string> = {
+  personal: 'Personal',
+  ideation: 'Ideation',
+  plan: 'Plan',
+  deliver: 'Deliver',
+  release: 'Release',
+  reactive: 'Reactive',
+  maintenance: 'Maintenance',
+};
+
+// Boards that own an outcome get a terminal column (Killed / Won't do / Not
+// Doing); boards that hand work onward get an exit in BOARD_ROUTES instead,
+// which is why plan and deliver have neither.
+export const BOARD_TEMPLATES: Record<BoardType, WorkColumn[]> = {
   personal: [
-    { id: 'backlog', name: 'Backlog' },
-    { id: 'ready', name: 'Ready' },
-    { id: 'in-progress', name: 'In Progress' },
-    { id: 'in-review', name: 'In Review' },
+    { id: 'todo', name: 'Todo' },
+    { id: 'doing', name: 'Doing' },
     { id: 'done', name: 'Done' },
+    { id: 'not-doing', name: 'Not Doing' },
   ],
-  capabilities: [
-    { id: 'capability', name: 'Capability' },
-    { id: 'story-mapping', name: 'Story Mapping' },
+  ideation: [
+    { id: 'intake', name: 'Intake' },
+    { id: 'scoping', name: 'Scoping' },
+    { id: 'confirm', name: 'Confirm' },
+    { id: 'killed', name: 'Killed' },
+  ],
+  plan: [
     { id: 'spec', name: 'Spec' },
-    { id: 'plan', name: 'Plan' },
-    { id: 'ready-for-delivery', name: 'Ready for Delivery' },
-  ],
-  delivery: [
+    { id: 'tech-design', name: 'Tech design' },
+    { id: 'decomposed', name: 'Decomposed' },
     { id: 'ready', name: 'Ready' },
-    { id: 'in-progress', name: 'In Progress' },
-    { id: 'in-review', name: 'In Review' },
-    { id: 'verified', name: 'Verified' },
-    { id: 'done', name: 'Done' },
+  ],
+  deliver: [
+    { id: 'ready', name: 'Ready' },
+    { id: 'in-progress', name: 'In progress' },
+    { id: 'review', name: 'Review' },
+    { id: 'verify', name: 'Verify' },
+    { id: 'merged', name: 'Merged' },
+  ],
+  release: [
+    { id: 'cut', name: 'Cut' },
+    { id: 'regression', name: 'Regression' },
+    { id: 'sign-off', name: 'Sign-off' },
+    { id: 'ship', name: 'Ship' },
+    { id: 'rollback', name: 'Rollback' },
+  ],
+  reactive: [
+    { id: 'triage', name: 'Triage' },
+    { id: 'diagnose', name: 'Diagnose' },
+    { id: 'fix', name: 'Fix' },
+    { id: 'verify', name: 'Verify' },
+    { id: 'closed', name: 'Closed' },
   ],
   maintenance: [
-    { id: 'reported', name: 'Reported' },
-    { id: 'triaged', name: 'Triaged' },
-    { id: 'in-progress', name: 'In Progress' },
-    { id: 'in-review', name: 'In Review' },
+    { id: 'triage', name: 'Triage' },
+    { id: 'queued', name: 'Queued' },
+    { id: 'doing', name: 'Doing' },
     { id: 'done', name: 'Done' },
-  ],
-  support: [
-    { id: 'inbox', name: 'Inbox' },
-    { id: 'triaged', name: 'Triaged' },
-    { id: 'waiting-on-user', name: 'Waiting on User' },
-    { id: 'in-progress', name: 'In Progress' },
-    { id: 'resolved', name: 'Resolved' },
+    { id: 'wont-do', name: "Won't do" },
   ],
 };
 
-export function createBoard(name: string, template: BoardTemplate, workspaceId?: string): WorkBoard {
-  const id = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-  if (!BOARD_ID_RE.test(id)) throw new Error(`Board name "${name}" does not reduce to a usable id`);
-  const board: WorkBoard = { id, name: name.trim(), columns: BOARD_TEMPLATES[template].map((c) => ({ ...c })), cards: [] };
+function slug(v: string): string {
+  return v.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+/** The on-disk id (and filename) of a workspace's board of a given type. */
+export function boardIdFor(workspaceId: string, type: BoardType): string {
+  return `${slug(workspaceId)}-${type}`;
+}
+
+/**
+ * Mint a board from its type. The id comes from the type, never the name, so a
+ * later rename via PATCH never has to move a file.
+ */
+export function createBoard(type: BoardType, workspaceId?: string): WorkBoard {
+  if (!BOARD_TEMPLATES[type]) throw new Error(`Unknown board type: ${type}`);
+  if (type === 'personal' && workspaceId) throw new Error('The personal board belongs to no workspace');
+  if (type !== 'personal' && !workspaceId) throw new Error(`Board type "${type}" requires a workspace`);
+  const id = type === 'personal' ? 'personal' : boardIdFor(workspaceId as string, type);
+  if (!BOARD_ID_RE.test(id)) throw new Error(`Workspace "${workspaceId}" does not reduce to a usable board id`);
+  const board: WorkBoard = {
+    id,
+    name: BOARD_TYPE_LABELS[type],
+    type,
+    columns: BOARD_TEMPLATES[type].map((c) => ({ ...c })),
+    cards: [],
+  };
   if (workspaceId) board.workspaceId = workspaceId;
   return board;
 }
@@ -97,9 +154,10 @@ function assertBoard(file: string, v: unknown): WorkBoard {
   const o = v as WorkBoard;
   const ok =
     o && typeof o.id === 'string' && typeof o.name === 'string' &&
+    typeof o.type === 'string' && Boolean(BOARD_TEMPLATES[o.type]) &&
     Array.isArray(o.columns) && o.columns.every((c) => typeof c?.id === 'string' && typeof c?.name === 'string') &&
     Array.isArray(o.cards);
-  if (!ok) throw new Error(`Invalid work-board file ${file}: requires id, name, columns[], cards[]`);
+  if (!ok) throw new Error(`Invalid work-board file ${file}: requires id, name, a known type, columns[], cards[]`);
   return o;
 }
 

@@ -30,7 +30,7 @@ test('searchIssues: jql query, basic auth, maps key/summary/url; non-ok throws',
 });
 
 test('importIssues: creates unseen keys in the leftmost column, updates titles of known keys, idempotent', () => {
-  const b = createBoard('t', 'personal');
+  const b = createBoard('personal');
   const existing = addCard(b, { title: 'old title', columnId: b.columns[3].id });
   existing.jira = { key: 'PROJ-1', url: 'https://a/browse/PROJ-1' };
   const issues = [

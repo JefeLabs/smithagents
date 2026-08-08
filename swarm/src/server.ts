@@ -99,7 +99,10 @@ import {
   probeDocker,
   saveContainersFile,
 } from './containers.js';
-import { addCard, createBoard, deleteBoardFile, loadBoards, patchCard, removeCard, saveBoard, type WorkBoard } from './work-items.js';
+import {
+  addCard, boardIdFor, type BoardType, createBoard, deleteBoardFile, loadBoards, patchCard, removeCard, saveBoard,
+  type WorkBoard,
+} from './work-items.js';
 import { importIssues, searchIssues, transitionIssue } from './jira-sync.js';
 import {
   applyStoryToggles,
@@ -115,7 +118,6 @@ import {
   sliceStories,
   slugify,
   unlinkSliceCard,
-  workspaceBoardId,
   type Capability,
 } from './capabilities.js';
 import {
@@ -2035,15 +2037,9 @@ export class OrchestratorServer {
     this.app.get('/work/boards', async () => loadBoards(server.workDir()));
 
     this.app.post('/work/boards', async (req, reply) => {
-      const b = req.body as { name?: string; template?: string };
-      if (!b?.name?.trim()) return reply.status(400).send({ error: 'Missing required field: name' });
-      const template = b.template ?? 'personal';
-      const TEMPLATES = new Set(['personal', 'capabilities', 'delivery', 'maintenance', 'support']);
-      if (!TEMPLATES.has(template)) {
-        return reply.status(400).send({ error: `Unknown template: ${String(b.template)}` });
-      }
+      const b = req.body as { type?: string; workspaceId?: string };
       try {
-        const board = createBoard(b.name, template as any);
+        const board = createBoard(b.type as BoardType, b.workspaceId);
         const { boards } = await loadBoards(server.workDir());
         if (boards.some((x) => x.id === board.id)) return reply.status(409).send({ error: `Board "${board.id}" already exists` });
         await saveBoard(server.workDir(), board);
@@ -2338,7 +2334,7 @@ export class OrchestratorServer {
       if (target === 'delivery' && !slice.specPath) return reply.status(409).send({ error: 'Generate the spec before sending to delivery' });
       await ensureWorkspaceBoards(server.workDir(), cap.workspaceId);
       const { boards } = await loadBoards(server.workDir());
-      const board = boards.find((b) => b.id === workspaceBoardId(cap.workspaceId, target));
+      const board = boards.find((b) => b.id === boardIdFor(cap.workspaceId, target === 'capabilities' ? 'plan' : 'deliver'));
       if (!board) return reply.status(400).send({ error: `Workspace board missing: ${cap.workspaceId} ${target}` });
       try {
         const card = sendSliceToBoard(cap, slice, board);

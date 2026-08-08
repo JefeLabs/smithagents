@@ -6,9 +6,9 @@ import { test } from 'node:test';
 import {
   applyStoryToggles, createCapability, deleteCapabilityFile, ensureWorkspaceBoards, loadCapabilities,
   patchCapability, renderSpecSkeleton, resyncLinkedCards, saveCapability, sendSliceToBoard, sliceStories, slugify,
-  unlinkSliceCard, workspaceBoardId,
+  unlinkSliceCard,
 } from './capabilities.js';
-import { loadBoards, saveBoard } from './work-items.js';
+import { boardIdFor, loadBoards, saveBoard } from './work-items.js';
 
 function fixture() {
   const cap = createCapability('School Feature Set', 'skoolscout');
@@ -101,28 +101,24 @@ test('store round-trip + malformed isolation', async () => {
   await assert.rejects(saveCapability(dir, { ...cap, id: '../evil' }), /id/i);
 });
 
-test('workspaceBoardId: generates board ids consistently', () => {
-  assert.equal(workspaceBoardId('SkoolScout', 'capabilities'), 'skoolscout-capabilities');
-  assert.equal(workspaceBoardId('SkoolScout', 'delivery'), 'skoolscout-delivery');
-});
-
-test('ensureWorkspaceBoards: creates the pair once, idempotent, never maintenance/support', async () => {
+test('ensureWorkspaceBoards: creates the standing three once, idempotent, never release/reactive/maintenance', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'work-'));
   await ensureWorkspaceBoards(dir, 'skoolscout');
   await ensureWorkspaceBoards(dir, 'skoolscout');
   const { boards } = await loadBoards(dir);
   assert.deepEqual(boards.map((b) => [b.id, b.workspaceId]).sort(), [
-    ['skoolscout-capabilities', 'skoolscout'],
-    ['skoolscout-delivery', 'skoolscout'],
+    ['skoolscout-deliver', 'skoolscout'],
+    ['skoolscout-ideation', 'skoolscout'],
+    ['skoolscout-plan', 'skoolscout'],
   ]);
-  assert.deepEqual(boards.find((b) => b.id === 'skoolscout-capabilities')?.columns.map((c) => c.id)[0], 'capability');
+  assert.deepEqual(boards.find((b) => b.id === 'skoolscout-plan')?.columns.map((c) => c.id)[0], 'spec');
 });
 
 test('sendSliceToBoard: leftmost card, story copies, capabilityRef', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'work-'));
   await ensureWorkspaceBoards(dir, 'skoolscout');
   const { boards } = await loadBoards(dir);
-  const board = boards.find((b) => b.id === 'skoolscout-capabilities');
+  const board = boards.find((b) => b.id === boardIdFor('skoolscout', 'plan'));
   const cap = fixture();
   const card = sendSliceToBoard(cap, cap.slices[0], board!);
   assert.equal(card.title, 'tour scheduling v1');
@@ -136,8 +132,8 @@ test('resyncLinkedCards: editing a slice after sending refreshes both linked car
   const dir = await mkdtemp(join(tmpdir(), 'work-'));
   await ensureWorkspaceBoards(dir, 'skoolscout');
   const { boards } = await loadBoards(dir);
-  const capBoard = boards.find((b) => b.id === 'skoolscout-capabilities')!;
-  const deliveryBoard = boards.find((b) => b.id === 'skoolscout-delivery')!;
+  const capBoard = boards.find((b) => b.id === boardIdFor('skoolscout', 'plan'))!;
+  const deliveryBoard = boards.find((b) => b.id === boardIdFor('skoolscout', 'deliver'))!;
   const cap = fixture();
   const capCard = sendSliceToBoard(cap, cap.slices[0], capBoard);
   await saveBoard(dir, capBoard);
