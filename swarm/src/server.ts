@@ -101,7 +101,8 @@ import {
 } from './containers.js';
 import {
   addCard, BOARD_TEMPLATES, BOARD_TYPE_LABELS, boardIdFor, type BoardType, createBoard, deleteBoardFile,
-  findRouteDestination, loadBoards, patchCard, removeCard, resolveExit, routeCard, saveBoard, type WorkBoard,
+  findCardByRef, findRouteDestination, loadBoards, patchCard, removeCard, resolveExit, routeCard, saveBoard,
+  type WorkBoard,
 } from './work-items.js';
 import { importIssues, searchIssues, transitionIssue } from './jira-sync.js';
 import {
@@ -113,11 +114,13 @@ import {
   loadCapabilities,
   patchCapability,
   renderSpecSkeleton,
+  repointSliceCardRef,
   resyncLinkedCards,
   saveCapability,
   sendSliceToBoard,
   sliceStories,
   slugify,
+  unlinkCapabilityCards,
   unlinkSliceCard,
   type Capability,
 } from './capabilities.js';
@@ -460,6 +463,12 @@ export class OrchestratorServer {
    * outcome back onto the card — state only, never the column; columns
    * belong to the human. Best-effort: a store hiccup must not disturb
    * task bookkeeping.
+   *
+   * findCardByRef, not a boardId lookup: the manifest's ref is stamped at
+   * dispatch, and deliver/in-progress — where delegated cards live — has a
+   * "Back to plan" route out of it. Silence is right for a DELETED card; a
+   * MOVED one still exists, and missing it strands the card on a spinning
+   * "working" badge forever with no PR link.
    */
   private async patchWorkCard(
     ref: WorkCardRef,
@@ -467,11 +476,11 @@ export class OrchestratorServer {
     prUrl?: string,
   ): Promise<void> {
     const { boards } = await loadBoards(this.workDir());
-    const board = boards.find((b) => b.id === ref.boardId);
-    const card = board?.cards.find((c) => c.id === ref.cardId);
-    if (!board || !card || !card.delegation) return;
-    patchCard(board, card.id, { delegation: { ...card.delegation, state, prUrl: prUrl ?? card.delegation.prUrl } });
-    await saveBoard(this.workDir(), board);
+    const found = findCardByRef(boards, ref);
+    const delegation = found?.card.delegation;
+    if (!found || !delegation) return;
+    patchCard(found.board, found.card.id, { delegation: { ...delegation, state, prUrl: prUrl ?? delegation.prUrl } });
+    await saveBoard(this.workDir(), found.board);
   }
 
   // -------------------------------------------------------------------------
@@ -2249,6 +2258,22 @@ export class OrchestratorServer {
         // card (recoverable) rather than losing it (not).
         await saveBoard(server.workDir(), plan.writeFirst);
         await saveBoard(server.workDir(), plan.writeSecond);
+        if (plan.card.capabilityRef) {
+          // The card just changed board file; its slice's ref still names the
+          // one it left. Repoint so the ref stays accurate rather than merely
+          // recoverable by findCardByRef's scan. Best-effort, mirroring the
+          // card-DELETE unlink: a missing capability must not fail a move
+          // that has already been persisted.
+          try {
+            const { capabilities } = await loadCapabilities(capsDir());
+            const cap = capabilities.find((c) => c.id === plan.card.capabilityRef?.capabilityId);
+            if (cap && repointSliceCardRef(cap, plan.card.id, dest.id)) {
+              await saveCapability(capsDir(), cap);
+            }
+          } catch {
+            // ignore — the route already succeeded
+          }
+        }
         return reply.status(200).send({ card: plan.card, boardId: dest.id });
       },
     );
@@ -2330,18 +2355,8 @@ export class OrchestratorServer {
       const cap = await capOr404(req.params.id, reply);
       if (!cap) return;
       // Unlink, never orphan: linked cards keep their story copies as local checklists.
-      for (const slice of cap.slices) {
-        for (const ref of [slice.capCardRef, slice.deliveryCardRef]) {
-          if (!ref) continue;
-          const { boards } = await loadBoards(server.workDir());
-          const board = boards.find((b) => b.id === ref.boardId);
-          const card = board?.cards.find((c) => c.id === ref.cardId);
-          if (board && card) {
-            card.capabilityRef = undefined;
-            await saveBoard(server.workDir(), board);
-          }
-        }
-      }
+      const { boards } = await loadBoards(server.workDir());
+      for (const board of unlinkCapabilityCards(boards, cap)) await saveBoard(server.workDir(), board);
       await deleteCapabilityFile(capsDir(), cap.id);
       return { ok: true };
     });

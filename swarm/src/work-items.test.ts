@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import {
   addCard, BOARD_ROUTES, BOARD_TEMPLATES, BOARD_TYPE_ORDER, boardIdFor, type BoardType, type CardFlag, createBoard,
-  deleteBoardFile, exitsFor, findRouteDestination, loadBoards, patchCard, removeCard, resolveExit, routeCard,
-  saveBoard, WORKSPACE_BOARD_TYPES,
+  deleteBoardFile, exitsFor, findCardByRef, findRouteDestination, loadBoards, patchCard, removeCard, resolveExit,
+  routeCard, saveBoard, WORKSPACE_BOARD_TYPES,
 } from './work-items.js';
 
 test('templates: seven typed column sets, ids unique and slug-shaped', () => {
@@ -326,4 +326,28 @@ test('findRouteDestination: undefined when the workspace has no board of that ty
   const exit = resolveExit(source, 'ready', 'deliver');
   assert.ok(exit);
   assert.equal(findRouteDestination([source], source, exit), undefined);
+});
+
+test('findCardByRef: follows a routed card to its new board, and reports gone only when it truly is', () => {
+  const plan = createBoard('plan', 'acme');
+  const deliver = createBoard('deliver', 'acme');
+  const card = addCard(plan, { title: 'Parent portal', columnId: 'ready' });
+  const boards = [plan, deliver];
+
+  const before = findCardByRef(boards, { boardId: plan.id, cardId: card.id });
+  assert.equal(before?.board, plan);
+  assert.equal(before?.card, card);
+
+  const exit = resolveExit(plan, 'ready', 'deliver');
+  assert.ok(exit);
+  const moved = routeCard(plan, deliver, card.id, exit, '2026-08-07T10:00:00.000Z').card;
+
+  // The ref still names the board it left; the card id is what resolves it.
+  const after = findCardByRef(boards, { boardId: plan.id, cardId: card.id });
+  assert.equal(after?.board, deliver);
+  assert.equal(after?.card, moved);
+
+  removeCard(deliver, card.id);
+  assert.equal(findCardByRef(boards, { boardId: plan.id, cardId: card.id }), undefined);
+  assert.equal(findCardByRef(boards, { cardId: 'never-existed' }), undefined);
 });

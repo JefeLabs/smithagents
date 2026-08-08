@@ -5,10 +5,10 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import {
   applyStoryToggles, createCapability, deleteCapabilityFile, ensurePersonalBoard, ensureWorkspaceBoards,
-  loadCapabilities, patchCapability, renderSpecSkeleton, resyncLinkedCards, saveCapability, sendSliceToBoard,
-  sliceStories, slugify, unlinkSliceCard,
+  loadCapabilities, patchCapability, renderSpecSkeleton, repointSliceCardRef, resyncLinkedCards, saveCapability,
+  sendSliceToBoard, sliceStories, slugify, unlinkCapabilityCards, unlinkSliceCard,
 } from './capabilities.js';
-import { boardIdFor, loadBoards, saveBoard } from './work-items.js';
+import { boardIdFor, loadBoards, resolveExit, routeCard, saveBoard } from './work-items.js';
 
 function fixture() {
   const cap = createCapability('School Feature Set', 'skoolscout');
@@ -184,4 +184,54 @@ test('unlinkSliceCard: clears only the matching ref (I1); no-op for an unrelated
   assert.deepEqual(cap.slices[0].deliveryCardRef, { boardId: 'b2', cardId: 'c2' });
   assert.equal(unlinkSliceCard(cap, 'sl1', 'ghost-card'), false);
   assert.equal(unlinkSliceCard(cap, 'ghost-slice', 'c2'), false);
+});
+
+test('a ROUTED linked card still resyncs and still unlinks — the ref boardId is a hint, the cardId the key', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'work-'));
+  await ensureWorkspaceBoards(dir, 'skoolscout');
+  const { boards } = await loadBoards(dir);
+  const plan = boards.find((b) => b.id === boardIdFor('skoolscout', 'plan'))!;
+  const deliver = boards.find((b) => b.id === boardIdFor('skoolscout', 'deliver'))!;
+  const cap = fixture();
+  const card = sendSliceToBoard(cap, cap.slices[0], plan);
+  cap.slices[0].capCardRef = { boardId: plan.id, cardId: card.id };
+
+  // The spec's headline flow, not an edge case: drag spec → ready, then
+  // "Send to deliver". The card changes board file; the ref does not.
+  card.columnId = 'ready';
+  const routed = routeCard(plan, deliver, card.id, resolveExit(plan, 'ready', 'deliver')!, new Date().toISOString());
+  await saveBoard(dir, deliver);
+  await saveBoard(dir, plan);
+  assert.deepEqual(routed.card.capabilityRef, { capabilityId: cap.id, sliceId: 'sl1' });
+  assert.equal(cap.slices[0].capCardRef!.boardId, plan.id, 'the stale ref is the precondition under test');
+
+  // A map edit must still reach the card on its new board.
+  patchCapability(cap, { slices: [{ ...cap.slices[0], storyIds: ['s1'] }] });
+  await resyncLinkedCards(dir, cap);
+  const { boards: after } = await loadBoards(dir);
+  const onDeliver = after.find((b) => b.id === deliver.id)!.cards.find((c) => c.id === card.id)!;
+  assert.deepEqual(onDeliver.stories?.map((s) => s.id), ['s1']);
+  assert.equal(after.find((b) => b.id === plan.id)!.cards.length, 0);
+
+  // And deleting the capability must still unlink it: a card left `linked`
+  // to a capability that no longer exists is toggle-only forever with no UI
+  // to clear it.
+  assert.deepEqual(unlinkCapabilityCards(after, cap).map((b) => b.id), [deliver.id]);
+  assert.equal(after.find((b) => b.id === deliver.id)!.cards.find((c) => c.id === card.id)!.capabilityRef, undefined);
+});
+
+test('repointSliceCardRef: retargets whichever ref holds the card, leaves the sibling and a re-send 409 alone', () => {
+  const cap = fixture();
+  cap.slices[0].capCardRef = { boardId: 'acme-plan', cardId: 'c1' };
+  cap.slices[0].deliveryCardRef = { boardId: 'acme-deliver', cardId: 'c2' };
+
+  assert.equal(repointSliceCardRef(cap, 'c1', 'acme-deliver'), true);
+  assert.deepEqual(cap.slices[0].capCardRef, { boardId: 'acme-deliver', cardId: 'c1' });
+  assert.deepEqual(cap.slices[0].deliveryCardRef, { boardId: 'acme-deliver', cardId: 'c2' });
+  // The ref is still SET, so re-sending this slice still 409s rather than
+  // minting a duplicate card for it.
+  assert.ok(cap.slices[0].capCardRef);
+
+  assert.equal(repointSliceCardRef(cap, 'c1', 'acme-deliver'), false, 'already there — no write, no updatedAt bump');
+  assert.equal(repointSliceCardRef(cap, 'ghost-card', 'acme-plan'), false);
 });

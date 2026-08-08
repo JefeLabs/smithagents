@@ -248,6 +248,31 @@ export function routeCard(
   return { card: moved, writeFirst: dest, writeSecond: source };
 }
 
+/**
+ * Resolve a persisted `{ boardId, cardId }` ref — a slice's capCardRef, a
+ * task manifest's workCardRef — against every board at once.
+ *
+ * The card id is the KEY and the board id only a HINT, because routeCard
+ * moves a card between board files and every such ref names the board it
+ * left. Card ids are uuids, so a cardId-keyed search is exact; a
+ * boardId-keyed one silently orphans the ref the moment the card is routed
+ * (unlinkSliceCard has always matched on cardId alone — this is that rule
+ * made reusable). Undefined means the card genuinely no longer exists.
+ */
+export function findCardByRef(
+  boards: WorkBoard[],
+  ref: { boardId?: string; cardId: string },
+): { board: WorkBoard; card: WorkCard } | undefined {
+  const hinted = boards.find((b) => b.id === ref.boardId);
+  const hintedCard = hinted?.cards.find((c) => c.id === ref.cardId);
+  if (hinted && hintedCard) return { board: hinted, card: hintedCard };
+  for (const board of boards) {
+    const card = board.cards.find((c) => c.id === ref.cardId);
+    if (card) return { board, card };
+  }
+  return undefined;
+}
+
 function assertBoard(file: string, v: unknown): WorkBoard {
   const o = v as WorkBoard;
   const ok =

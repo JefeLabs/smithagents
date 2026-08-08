@@ -6,7 +6,7 @@
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-  addCard, boardIdFor, type BoardType, createBoard, loadBoards, saveBoard, type WorkBoard, type WorkCard,
+  addCard, boardIdFor, type BoardType, createBoard, findCardByRef, loadBoards, saveBoard, type WorkBoard, type WorkCard,
 } from './work-items.js';
 
 export interface CapStory {
@@ -212,7 +212,9 @@ export function sendSliceToBoard(cap: Capability, slice: CapSlice, board: WorkBo
  * ends up with an empty checklist, not a dead one). Call only after the
  * capability patch that produced `cap` has itself succeeded and persisted —
  * this is a second, best-effort write pass, not part of that validation.
- * Skips any ref whose board or card no longer resolves.
+ * Skips only refs whose CARD no longer resolves anywhere: findCardByRef
+ * treats ref.boardId as a hint, so a card routed to another board keeps
+ * syncing instead of silently freezing into a read-only stale checklist.
  */
 export async function resyncLinkedCards(workDir: string, cap: Capability): Promise<void> {
   const { boards } = await loadBoards(workDir);
@@ -227,11 +229,10 @@ export async function resyncLinkedCards(workDir: string, cap: Capability): Promi
       continue; // patchCapability already enforces this; skip defensively rather than throw mid-resync
     }
     for (const ref of refs) {
-      const board = boards.find((b) => b.id === ref.boardId);
-      const card = board?.cards.find((c) => c.id === ref.cardId);
-      if (board && card) {
-        card.stories = stories.map((s) => ({ id: s.id, text: s.text, done: s.done, verifiedBy: s.verifiedBy }));
-        dirty.add(board);
+      const found = findCardByRef(boards, ref);
+      if (found) {
+        found.card.stories = stories.map((s) => ({ id: s.id, text: s.text, done: s.done, verifiedBy: s.verifiedBy }));
+        dirty.add(found.board);
       }
     }
   }
@@ -253,4 +254,49 @@ export function unlinkSliceCard(cap: Capability, sliceId: string, cardId: string
   }
   if (changed) cap.updatedAt = new Date().toISOString();
   return changed;
+}
+
+/**
+ * Point a slice's ref at the board a card has just been routed to. The refs
+ * stay accurate rather than merely recoverable, so nothing has to fall back
+ * to the whole-store scan. Matches on cardId across every slice — the caller
+ * knows the card, not which slice or which of the two refs holds it. Returns
+ * whether anything changed.
+ */
+export function repointSliceCardRef(cap: Capability, cardId: string, boardId: string): boolean {
+  let changed = false;
+  for (const slice of cap.slices) {
+    for (const key of ['capCardRef', 'deliveryCardRef'] as const) {
+      const ref = slice[key];
+      if (ref?.cardId === cardId && ref.boardId !== boardId) {
+        slice[key] = { boardId, cardId };
+        changed = true;
+      }
+    }
+  }
+  if (changed) cap.updatedAt = new Date().toISOString();
+  return changed;
+}
+
+/**
+ * Unlink, never orphan: every card this capability's slices point at loses
+ * its capabilityRef, keeping its story copies as a plain local checklist.
+ * Pure over an already-loaded board set; returns the boards the caller must
+ * save. A card left `linked` to a deleted capability is toggle-only with no
+ * add and no remove and NO UI to clear it, so a ref that fails to resolve
+ * here is unrecoverable without hand-editing JSON — hence findCardByRef's
+ * cardId-keyed search, which survives the card having been routed.
+ */
+export function unlinkCapabilityCards(boards: WorkBoard[], cap: Capability): WorkBoard[] {
+  const dirty = new Set<WorkBoard>();
+  for (const slice of cap.slices) {
+    for (const ref of [slice.capCardRef, slice.deliveryCardRef]) {
+      if (!ref) continue;
+      const found = findCardByRef(boards, ref);
+      if (!found) continue;
+      found.card.capabilityRef = undefined;
+      dirty.add(found.board);
+    }
+  }
+  return [...dirty];
 }
