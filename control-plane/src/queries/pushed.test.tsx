@@ -24,6 +24,8 @@ function stubFetchThrows() {
 function Probe() {
   const { data } = useSession();
   const known = useSessionKnown();
+  // `!data` reads as known-zero rather than as a hole: setQueryData is a documented
+  // no-op when handed undefined, so "success with undefined data" is unreachable here.
   return <div data-testid="state">{!known ? "unknown" : !data ? "known-zero" : data.id}</div>;
 }
 
