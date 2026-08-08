@@ -1689,6 +1689,12 @@ export function useEngineWarnings(): Record<string, string> {
 
 Move `computeEngineWarnings`'s existing tests over unchanged — it is a pure function and its test needs no provider.
 
+- [ ] **Step 1b: Move the stages' own `/workspaces` fetch onto Query**
+
+`BoardStage.tsx:175-182` and `MapStage.tsx:222-231` each still run a hand-rolled `fetch(\`http://${BASE}/workspaces\`)` for workspace names and colours — left out of Task 10's scope deliberately, and a **permanent leftover** unless claimed here.
+
+Use `useWorkspaceRecords()` (`queries/http.ts:30`). It hits the same URL with the same envelope via `api/broker.ts:132-136`, so the arrival guarantee is identical, and routing both stages through it dedupes the two requests. Do **not** use `useWorkspaces()` — that is the socket-pushed `skipToken` query holding bare names with no colour.
+
 - [ ] **Step 2: Simplify `useSurfacePolicy`**
 
 It hand-rolls request-generation cancellation (`generationRef`, `useSurfacePolicy.ts:88-96`) to discard stale `/agents` responses. Query does that natively via query keys. Replace the fetch and the generation guard with `useRoster()`, keeping the pure `joinNowVisible` helper and the mutation paths as-is.
