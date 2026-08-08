@@ -20,10 +20,17 @@ interface WorkspaceManagerModalProps {
 }
 
 /**
- * The editable draft. Every field is a plain string so RHF owns it directly: the
- * record's optional blocks (`atlassian`, a repo's `github`) and its single-element
- * key arrays are rebuilt in `toRecord` at submit, which is where the "half-filled
- * block is not a block" rule already lived.
+ * The editable draft. Most fields are plain strings so RHF owns them directly; the
+ * record's optional blocks (`atlassian`, a repo's `github`) are rebuilt in `toRecord`
+ * at submit, which is where the "half-filled block is not a block" rule already lived.
+ *
+ * The two Atlassian key lists stay ARRAYS even though the UI exposes a single input
+ * each. The input is bound to index 0; entries 1..N are carried through untouched. The
+ * schema and the on-disk `.smith/workspaces/*.json` both permit multiple keys, and
+ * `PUT /workspaces/:name` replaces the whole `atlassian` block
+ * (`swarm/src/server.ts:1477`), so flattening to `[0]` here would silently and
+ * permanently drop the tail of a hand-written or externally-produced record on the
+ * first unrelated save in this modal.
  */
 interface WorkspaceFormValues {
   name: string;
@@ -34,7 +41,13 @@ interface WorkspaceFormValues {
   /** "" means no colour picked. */
   color: string;
   default: boolean;
-  atlassian: { siteUrl: string; connectorId: string; jiraProjectKey: string; confluenceSpaceKey: string };
+  atlassian: {
+    siteUrl: string;
+    connectorId: string;
+    /** Index 0 is the edited one; the rest ride along. */
+    jiraProjectKeys: string[];
+    confluenceSpaceKeys: string[];
+  };
   repos: Array<{
     name: string;
     path: string;
@@ -48,7 +61,13 @@ interface WorkspaceFormValues {
 
 const emptyRepo = () => ({ name: "", path: "", branch: "main", owner: "", repo: "", connectorId: "" });
 
-const noAtlassian = () => ({ siteUrl: "", connectorId: "", jiraProjectKey: "", confluenceSpaceKey: "" });
+const noAtlassian = () => ({ siteUrl: "", connectorId: "", jiraProjectKeys: [], confluenceSpaceKeys: [] });
+
+/** Drops blanks (including a cleared index 0) and collapses an empty list to undefined, as the record expects. */
+const keyList = (keys: string[]): string[] | undefined => {
+  const kept = keys.filter((k) => k.trim());
+  return kept.length > 0 ? kept : undefined;
+};
 
 /** Non-blank after trimming — the two fields per repo, plus the name, that gate saving. */
 const filled = (v: string) => v.trim().length > 0;
@@ -77,8 +96,9 @@ function toForm(ws: WorkspaceRecord): WorkspaceFormValues {
     atlassian: {
       siteUrl: ws.atlassian?.siteUrl ?? "",
       connectorId: ws.atlassian?.connectorId ?? "",
-      jiraProjectKey: ws.atlassian?.jiraProjectKeys?.[0] ?? "",
-      confluenceSpaceKey: ws.atlassian?.confluenceSpaceKeys?.[0] ?? "",
+      // Whole arrays, not just [0] — see WorkspaceFormValues.
+      jiraProjectKeys: [...(ws.atlassian?.jiraProjectKeys ?? [])],
+      confluenceSpaceKeys: [...(ws.atlassian?.confluenceSpaceKeys ?? [])],
     },
     repos: ws.repos.map((r) => ({
       name: r.name,
@@ -97,6 +117,12 @@ function toForm(ws: WorkspaceRecord): WorkspaceFormValues {
  * (project key typed before site URL, or one of owner/repo left blank) must never
  * be submitted as if it were configured — that normalization happens here rather
  * than in each onChange, so typing in any order never appears to drop a field.
+ *
+ * NOTE: this is a closed allowlist, unlike the `{...form}` spread it replaced. A field
+ * added to `WorkspaceRecord` later will be silently dropped from every save made here
+ * until it is listed below. `archived` is the only currently-unrepresented field, and
+ * omitting it is safe: `PUT /workspaces/:name` falls back to `existing.archived`
+ * (`swarm/src/server.ts:1476`), and this modal only ever lists un-archived workspaces.
  */
 function toRecord(v: WorkspaceFormValues): WorkspaceRecord {
   return {
@@ -115,8 +141,8 @@ function toRecord(v: WorkspaceFormValues): WorkspaceRecord {
       ? {
           siteUrl: v.atlassian.siteUrl,
           connectorId: v.atlassian.connectorId || undefined,
-          jiraProjectKeys: v.atlassian.jiraProjectKey ? [v.atlassian.jiraProjectKey] : undefined,
-          confluenceSpaceKeys: v.atlassian.confluenceSpaceKey ? [v.atlassian.confluenceSpaceKey] : undefined,
+          jiraProjectKeys: keyList(v.atlassian.jiraProjectKeys),
+          confluenceSpaceKeys: keyList(v.atlassian.confluenceSpaceKeys),
         }
       : undefined,
     repos: v.repos.map((r) => ({
@@ -413,8 +439,9 @@ export function WorkspaceManagerModal({
                       ))}
                   </select>
                 </label>
-                <input {...register("atlassian.jiraProjectKey")} placeholder="Jira project key (ACME)" />
-                <input {...register("atlassian.confluenceSpaceKey")} placeholder="Confluence space key (DOCS)" />
+                {/* Bound to index 0; any further stored keys are preserved by toRecord. */}
+                <input {...register("atlassian.jiraProjectKeys.0")} placeholder="Jira project key (ACME)" />
+                <input {...register("atlassian.confluenceSpaceKeys.0")} placeholder="Confluence space key (DOCS)" />
                 {selected && atlassianSiteUrl && (
                   <button
                     type="button"

@@ -1,6 +1,7 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { WorkspaceRecord } from "../api/types";
 import { WORKSPACE_PALETTE } from "../lib/workspace-color";
 import { WorkspaceManagerModal } from "./WorkspaceManagerModal";
 
@@ -199,6 +200,99 @@ describe("WorkspaceManagerModal — connector pickers", () => {
         true,
       ),
     );
+  });
+});
+
+describe("WorkspaceManagerModal — Atlassian key lists", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  const TWO_KEYS = {
+    name: "acme",
+    default: true,
+    repos: [],
+    atlassian: {
+      siteUrl: "https://acme.atlassian.net",
+      jiraProjectKeys: ["ACME", "PLATFORM"],
+      confluenceSpaceKeys: ["DOCS", "RUNBOOKS"],
+    },
+  };
+
+  /** Typed so `save.mock.calls[0][0]` is a WorkspaceRecord rather than an untyped tuple. */
+  const spySave = () => vi.fn(async (_ws: WorkspaceRecord, _isNew: boolean) => ({}));
+
+  function renderWith(save: ReturnType<typeof spySave>) {
+    render(
+      <WorkspaceManagerModal
+        open
+        onClose={() => {}}
+        list={vi.fn(async () => [TWO_KEYS])}
+        save={save}
+        remove={vi.fn()}
+        verifyAtlassian={vi.fn()}
+        verifyRepoGithub={vi.fn()}
+        listMyConnectors={vi.fn(async () => CONNECTORS)}
+      />,
+    );
+  }
+
+  it("an unrelated edit does not truncate a record's 2nd..Nth jira/confluence keys", async () => {
+    // Only one input exists per key list, so a flattened form would rebuild these as
+    // single-element arrays. PUT /workspaces/:name replaces the whole atlassian block
+    // (swarm/src/server.ts:1477), so the dropped entries would be gone from disk
+    // permanently, with no error — triggered by an edit that never touched them.
+    const save = spySave();
+    renderWith(save);
+    await userEvent.click(await screen.findByText("acme"));
+    await userEvent.type(await screen.findByLabelText(/description/i), "now with a description");
+    await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0]?.[0]).toMatchObject({
+      description: "now with a description",
+      atlassian: {
+        jiraProjectKeys: ["ACME", "PLATFORM"],
+        confluenceSpaceKeys: ["DOCS", "RUNBOOKS"],
+      },
+    });
+  });
+
+  it("editing the visible key replaces only the first entry and keeps the rest", async () => {
+    const save = spySave();
+    renderWith(save);
+    await userEvent.click(await screen.findByText("acme"));
+    const jira = await screen.findByPlaceholderText(/jira project key/i);
+    expect((jira as HTMLInputElement).value).toBe("ACME"); // the input shows entry 0
+    await userEvent.clear(jira);
+    await userEvent.type(jira, "RENAMED");
+    await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0]?.[0]).toMatchObject({
+      atlassian: { jiraProjectKeys: ["RENAMED", "PLATFORM"] },
+    });
+  });
+
+  it("clearing the only key drops the list entirely rather than sending a blank entry", async () => {
+    const save = spySave();
+    render(
+      <WorkspaceManagerModal
+        open
+        onClose={() => {}}
+        list={vi.fn(async () => [
+          { ...TWO_KEYS, atlassian: { siteUrl: "https://acme.atlassian.net", jiraProjectKeys: ["ACME"] } },
+        ])}
+        save={save}
+        remove={vi.fn()}
+        verifyAtlassian={vi.fn()}
+        verifyRepoGithub={vi.fn()}
+        listMyConnectors={vi.fn(async () => CONNECTORS)}
+      />,
+    );
+    await userEvent.click(await screen.findByText("acme"));
+    await userEvent.clear(await screen.findByPlaceholderText(/jira project key/i));
+    await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0]?.[0].atlassian?.jiraProjectKeys).toBeUndefined();
   });
 });
 

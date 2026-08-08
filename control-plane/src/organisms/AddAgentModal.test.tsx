@@ -68,6 +68,7 @@ function stubFetch(overrides: Record<string, unknown> = {}) {
       if (overrides.deferJoin) return new Promise<Response>(() => {});
       return respond(overrides.created ?? { id: "x", name: "x" });
     }
+    if (url.endsWith("/agents/generate")) return respond(overrides.draft ?? {});
     if (url.endsWith("/agents")) return respond(overrides.agents ?? { agents: [] });
     if (url.endsWith("/avatars/generate")) return respond(overrides.generated ?? { imageData: "QUJD" });
     if (url.includes("/voices")) return respond({ voices: [] });
@@ -296,6 +297,49 @@ describe("AddAgentModal chooser", () => {
     await userEvent.click(await screen.findByText(/create custom/i));
     await userEvent.click(screen.getByRole("button", { name: /next/i }));
     expect((screen.getByLabelText(/^name$/i) as HTMLInputElement).value).toBe("");
+  });
+
+  it("a Customize on a later open does not inherit the previous open's generated portrait or directives", async () => {
+    // Isolates the open-effect's `if (!editingId) resetWizardFields()`. The
+    // Create-custom path can't: enterCustomWizard() calls resetWizardFields() itself, so
+    // that test stays green with the open-effect line deleted. Customize is the path with
+    // no reset of its own — customizePreset sets generatedStyle but never clears
+    // generatedDirectives, and never touches avatarData/editingAvatar. Without the
+    // open-effect line, both survive into the next open and the customized agent is
+    // created carrying another persona's portrait and directives.
+    const { posted } = stubFetch({ draft: { name: "Draft", directives: "STALE DIRECTIVES FROM A PRIOR OPEN" } });
+    const onClose = vi.fn();
+    const { rerender } = render(<AddAgentModal open onClose={onClose} />);
+
+    // Open 1: blank wizard, generate a persona (sets generatedDirectives) and a portrait
+    // (sets avatarData), then abandon it.
+    await userEvent.click(await screen.findByText(/create custom/i));
+    await userEvent.click(screen.getByRole("button", { name: /next/i })); // -> Persona
+    await userEvent.click(screen.getByRole("button", { name: /generate the rest with AI/i }));
+    await waitFor(() => expect((screen.getByLabelText(/^name$/i) as HTMLInputElement).value).toBe("Draft"));
+    await userEvent.click(screen.getByRole("button", { name: /generate portrait/i }));
+    expect(await screen.findByRole("button", { name: /reroll the portrait/i })).toBeTruthy();
+
+    rerender(<AddAgentModal open={false} onClose={onClose} />);
+    rerender(<AddAgentModal open onClose={onClose} />);
+
+    // Open 2: Customize a preset and create it.
+    await userEvent.click(await screen.findByText("Minerva"));
+    await userEvent.click(screen.getByRole("button", { name: /customize/i }));
+    await userEvent.click(screen.getByRole("button", { name: /next/i })); // -> Persona
+    // NB: the avatar block shows "reroll" either way here — customizePreset sets
+    // avatarPresetRef, so the block has a value regardless of whether stale avatarData
+    // survived. Only the submitted payload distinguishes the two, so that is what is
+    // asserted below.
+    await userEvent.click(screen.getByRole("button", { name: /next/i })); // -> Voice
+    await userEvent.click(screen.getByRole("button", { name: /next/i })); // -> Reactions
+    await userEvent.click(screen.getByRole("button", { name: /next/i })); // -> Answers
+    await userEvent.click(screen.getByRole("button", { name: /create agent/i }));
+    await waitFor(() => expect(posted.length).toBe(1));
+
+    expect(posted[0].avatarData).toBeUndefined();
+    expect(posted[0].avatarPreset).toBe("minerva");
+    expect(posted[0].directives).toBe("guard"); // Minerva's jobRole directives, not the stale draft's
   });
 
   it("wizard reset defaults the CLI to the first active engine, not catalog.engines[0]", async () => {
