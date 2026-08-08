@@ -88,10 +88,24 @@ export const useSocketStore = create<SocketState>((set) => ({
     active = true;
 
     const open = () => {
-      const ws = new WebSocket(`ws://${base}/events`);
+      let ws: WebSocket;
+      try {
+        ws = new WebSocket(`ws://${base}/events`);
+      } catch (err) {
+        // `base` is caller-supplied, and a malformed one throws right here. Releasing
+        // the guard matters more than the throw does: `active` is module-scoped, so
+        // leaving it set would make every later connect() a silent no-op that no
+        // remount could heal — the store would be dead for the life of the page.
+        active = false;
+        throw err;
+      }
       socket = ws;
       ws.onopen = () => set({ connected: true });
       ws.onmessage = (e) => {
+        // close() only moves a socket to CLOSING; buffered frames can still arrive
+        // until the handshake finishes. Without this, a superseded socket would keep
+        // writing into the same QueryClient its replacement is writing to.
+        if (socket !== ws) return;
         const frame = JSON.parse(String(e.data)) as BrokerFrame;
 
         switch (frame.type) {

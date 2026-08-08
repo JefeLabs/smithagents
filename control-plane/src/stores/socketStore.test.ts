@@ -118,6 +118,20 @@ describe("socketStore connection lifecycle", () => {
     expect(FakeSocket.count).toBe(2);
   });
 
+  it("cancels an armed reconnect on disconnect", () => {
+    // The test above only disconnects AFTER the timer has fired, so it proves the
+    // `if (active)` check in onclose and never the clearTimeout. Unmounting while
+    // the broker is down lands here: a socket built after teardown would keep
+    // writing into the QueryClient captured in its closure, unreachable forever.
+    vi.useFakeTimers();
+    store().connect(new QueryClient());
+    FakeSocket.last?.close(); // armed, not yet fired
+    store().disconnect();
+    vi.advanceTimersByTime(10_000);
+    expect(FakeSocket.count).toBe(1);
+    expect(liveSockets()).toHaveLength(0);
+  });
+
   it("does not open a second socket when connect races a pending reconnect", () => {
     vi.useFakeTimers();
     const qc = new QueryClient();
@@ -149,6 +163,42 @@ describe("socketStore connection lifecycle", () => {
     second?.open();
     store().micControl("mic-start");
     expect(second?.sent).toHaveLength(1); // the live handle was not stolen
+  });
+
+  it("ignores frames from a socket that was already superseded", () => {
+    const qc = new QueryClient();
+    store().connect(qc);
+    const first = FakeSocket.last;
+    store().disconnect();
+    store().connect(qc);
+    const second = FakeSocket.last;
+
+    // CLOSING, not CLOSED: buffered frames can still arrive on the old socket, and
+    // both sockets close over the same QueryClient.
+    first?.emit({ type: "speech", text: "ghost" });
+    expect(qc.getQueryData(qk.transcript)).toBeUndefined();
+
+    second?.emit({ type: "speech", text: "live" });
+    expect(qc.getQueryData(qk.transcript)).toHaveLength(1);
+  });
+
+  it("stays recoverable when the WebSocket constructor throws", () => {
+    vi.stubGlobal(
+      "WebSocket",
+      class {
+        constructor() {
+          throw new Error("bad base");
+        }
+      },
+    );
+    // `active` is module-scoped, so unlike the old hook's per-component flag, a
+    // remount cannot heal it — a stuck guard would kill the store for the page.
+    expect(() => store().connect(new QueryClient(), "no:such:base")).toThrow("bad base");
+
+    vi.stubGlobal("WebSocket", FakeSocket);
+    store().connect(new QueryClient());
+    expect(FakeSocket.count).toBe(1);
+    expect(liveSockets()).toHaveLength(1);
   });
 });
 
@@ -313,6 +363,7 @@ describe("socketStore reset", () => {
 
     resetAllStores();
 
+    expect(liveSockets()).toHaveLength(0); // "closes the socket" — asserted, not just named
     expect(store().connected).toBe(false);
     expect(store().audioMode).toBe(false);
     store().connect(new QueryClient()); // reset released the guard, so this opens fresh
