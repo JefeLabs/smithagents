@@ -2404,6 +2404,8 @@ main.chat-active .composer-dock {
   letter-spacing: 0.06em;
   opacity: 0.8;
 }
+/* Two encodings, two channels: fill = workspace identity (aggregate view
+   only), left edge + chip = flag. They must never share one. */
 .board-card {
   display: flex;
   flex-direction: column;
@@ -2412,15 +2414,15 @@ main.chat-active .composer-dock {
   padding: 8px 10px;
   border-radius: 10px;
   border: 1px solid var(--pill-br);
+  /* --card-tint carries the full-strength palette hex. Painted raw it puts
+     --text at ~1.5:1 on the lighter hues, so mix it down: the fill is a tint,
+     and the coloured cluster subheading is what actually names the workspace.
+     Mixing the unset fallback with itself reproduces the untinted fill exactly. */
+  background: color-mix(in srgb, var(--card-tint, rgba(255, 255, 255, 0.04)) 18%, rgba(255, 255, 255, 0.04));
+  border-left: 3px solid transparent;
   color: var(--text);
   font: inherit;
   cursor: pointer;
-}
-/* Two encodings, two channels: fill = workspace identity (aggregate view
-   only), left edge + chip = flag. They must never share one. */
-.board-card {
-  background: var(--card-tint, rgba(255, 255, 255, 0.04));
-  border-left: 3px solid transparent;
 }
 .board-card.has-flag.is-blocked {
   border-left-color: #d9534f;
