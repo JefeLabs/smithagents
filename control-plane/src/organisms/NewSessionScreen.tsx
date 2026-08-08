@@ -1,15 +1,10 @@
 import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { ExecutionMode, SessionSummary, WorkspaceRecord } from "../api/types";
+import type { ExecutionMode, SessionSummary } from "../api/types";
+import { useExecutionModes, useWorkspaceRecords } from "../queries/http";
+import { useSessions, useWorkspaces } from "../queries/pushed";
 
 export interface NewSessionScreenProps {
-  workspaces: string[];
-  /** Full workspace records — used only for the description + links context preview. */
-  records: WorkspaceRecord[] | null;
-  /** All sessions across workspaces — used only to derive the default mode. */
-  sessions: SessionSummary[];
-  /** null = capability probe still in flight; only "local-in-process" renders until it resolves. */
-  modes: Record<ExecutionMode, boolean> | null;
   /** Set when the caller already knows the target workspace (spec §3) — the picker becomes static text. */
   lockedWorkspace?: string;
   /** Zero-session boot: this screen is the only thing on screen, so it hides the cancel affordance. */
@@ -27,6 +22,12 @@ export const MODE_LABELS: Record<ExecutionMode, string> = {
 
 const MODE_ORDER = Object.keys(MODE_LABELS) as ExecutionMode[];
 
+// Stable empties for the pushed queries' "frame hasn't landed yet" state — same reasoning as
+// HomePage's own NO_SESSIONS/NO_WORKSPACES: a fresh `[]` per render would re-run every effect
+// downstream that lists one of these in its deps.
+const NO_SESSIONS: SessionSummary[] = [];
+const NO_WORKSPACES: string[] = [];
+
 /** modes === null means the capability probe hasn't resolved — the only mode every machine can always run. */
 function availableModes(modes: Record<ExecutionMode, boolean> | null): ExecutionMode[] {
   return modes === null ? ["local-in-process"] : MODE_ORDER.filter((m) => modes[m]);
@@ -41,17 +42,18 @@ function defaultMode(ws: string, sessions: SessionSummary[], available: Executio
   return recent?.runtime ?? "local-in-process";
 }
 
-/** Calm, centered "start a session" screen — not a modal (spec §3). */
-export function NewSessionScreen({
-  workspaces,
-  records,
-  sessions,
-  modes,
-  lockedWorkspace,
-  forced,
-  onSend,
-  onCancel,
-}: NewSessionScreenProps) {
+/**
+ * Calm, centered "start a session" screen — not a modal (spec §3). This screen only ever
+ * mounts while the composer is visible (see HomePage), so calling these hooks unconditionally
+ * here reproduces the same "hold the probes until the composer is on screen, re-read them on
+ * every reopen" contract the caller used to gate with an `enabled` flag — mount IS the gate.
+ */
+export function NewSessionScreen({ lockedWorkspace, forced, onSend, onCancel }: NewSessionScreenProps) {
+  const { data: workspaces = NO_WORKSPACES } = useWorkspaces();
+  const { data: records = null } = useWorkspaceRecords();
+  const { data: sessions = NO_SESSIONS } = useSessions();
+  const { data: modes = null } = useExecutionModes();
+
   const [pickedWs, setPickedWs] = useState(lockedWorkspace ?? workspaces[0] ?? "");
   const ws = lockedWorkspace ?? pickedWs;
   const available = availableModes(modes);

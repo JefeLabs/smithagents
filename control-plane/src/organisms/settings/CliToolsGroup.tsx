@@ -1,12 +1,7 @@
 import { RefreshCw } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { CliToolListing } from "../../api/types";
-
-interface CliToolsGroupProps {
-  listCliTools: () => Promise<CliToolListing[]>;
-  refreshCliTools: (tool?: string) => Promise<CliToolListing[]>;
-  setCliToolEnabled: (id: string, enabled: boolean) => Promise<CliToolListing[] | { error: string }>;
-}
+import { useCliTools, useRefreshCliTools, useSetCliToolEnabled } from "../../queries/http";
 
 /** Status pill precedence: reality before preference (spec §6). Exported for tests. */
 export function pillFor(t: CliToolListing): { label: string; cls: string } {
@@ -18,21 +13,18 @@ export function pillFor(t: CliToolListing): { label: string; cls: string } {
 }
 
 /** Card grid, one per catalog engine — machine status, refresh probes, and the opt-out toggle. */
-export function CliToolsGroup({ listCliTools, refreshCliTools, setCliToolEnabled }: CliToolsGroupProps) {
-  const [tools, setTools] = useState<CliToolListing[]>([]);
+export function CliToolsGroup() {
+  const { data: tools = [] } = useCliTools();
+  const refreshTools = useRefreshCliTools();
+  const setEnabled = useSetCliToolEnabled();
   const [busy, setBusy] = useState<string | null>(null); // cli being refreshed, "*" = all
   const [error, setError] = useState<string | null>(null);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-once load, same convention as IntegrationsGroup
-  useEffect(() => {
-    void listCliTools().then(setTools, (err: unknown) => setError(`Could not load CLI tools — ${String(err)}`));
-  }, []);
 
   const refresh = async (tool?: string) => {
     setBusy(tool ?? "*");
     setError(null);
     try {
-      setTools(await refreshCliTools(tool));
+      await refreshTools.mutateAsync(tool);
     } catch (err) {
       setError(`Refresh failed — ${String(err)}`);
     } finally {
@@ -41,13 +33,12 @@ export function CliToolsGroup({ listCliTools, refreshCliTools, setCliToolEnabled
   };
 
   const toggle = async (t: CliToolListing) => {
-    const result = await setCliToolEnabled(t.cli, !(t.status?.enabled ?? true));
+    const result = await setEnabled.mutateAsync({ id: t.cli, enabled: !(t.status?.enabled ?? true) });
     if ("error" in result) {
       setError(result.error);
       return;
     }
     setError(null);
-    setTools(result);
   };
 
   return (

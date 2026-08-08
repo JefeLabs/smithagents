@@ -1,7 +1,9 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ApiKeyListing } from "../../api/types";
+import { qk } from "../../queries/keys";
+import { renderWithProviders } from "../../test/renderWithProviders";
 import { ApiKeysGroup, pillForApiKey } from "./ApiKeysGroup";
 
 const listing = (over: Partial<ApiKeyListing> = {}): ApiKeyListing => ({
@@ -16,6 +18,22 @@ const listing = (over: Partial<ApiKeyListing> = {}): ApiKeyListing => ({
   ...over,
 });
 
+const jsonResponse = (body: unknown) => ({ ok: true, json: async () => body }) as Response;
+
+/**
+ * A live broker really is listening on 127.0.0.1:7790 on dev machines — this throws by
+ * default so an un-stubbed route fails loudly instead of silently reaching it. Tests that
+ * exercise a mutation replace this with their own `vi.stubGlobal("fetch", ...)`.
+ */
+function stubNoNetwork() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      throw new Error("no network in this test");
+    }),
+  );
+}
+
 describe("pillForApiKey", () => {
   it("maps the four states", () => {
     expect(pillForApiKey(listing()).label).toBe("no key");
@@ -26,62 +44,69 @@ describe("pillForApiKey", () => {
 });
 
 describe("ApiKeysGroup", () => {
-  afterEach(() => cleanup());
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
 
   it("renders a card per provider with masked last4, never the key", async () => {
-    render(
-      <ApiKeysGroup
-        listApiKeys={async () => [listing({ hasKey: true, last4: "9876", verified: true })]}
-        saveApiKey={vi.fn()}
-        verifyApiKey={vi.fn()}
-        deleteApiKey={vi.fn()}
-      />,
-    );
+    stubNoNetwork();
+    const { client } = renderWithProviders(<ApiKeysGroup />);
+    client.setQueryData(qk.apiKeys, [listing({ hasKey: true, last4: "9876", verified: true })]);
     await screen.findByText(/•••• 9876/);
     expect(screen.getByText("valid")).toBeDefined();
   });
 
   it("save sends the typed key and re-renders from the response", async () => {
-    const saveApiKey = vi.fn(async () => [listing({ hasKey: true, last4: "4321", verified: true })]);
-    render(
-      <ApiKeysGroup
-        listApiKeys={async () => [listing()]}
-        saveApiKey={saveApiKey}
-        verifyApiKey={vi.fn()}
-        deleteApiKey={vi.fn()}
-      />,
-    );
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api-keys/google") && init?.method === "PUT") {
+        expect(JSON.parse(String(init.body))).toEqual({ key: "sk-new-4321" });
+        return jsonResponse({ providers: [listing({ hasKey: true, last4: "4321", verified: true })] });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { client } = renderWithProviders(<ApiKeysGroup />);
+    client.setQueryData(qk.apiKeys, [listing()]);
     await screen.findByText("no key");
     await userEvent.type(screen.getByLabelText(/api key/i), "sk-new-4321");
     await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
-    expect(saveApiKey).toHaveBeenCalledWith("google", "sk-new-4321");
     await screen.findByText(/•••• 4321/);
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/api-keys/google"),
+      expect.objectContaining({ method: "PUT" }),
+    );
   });
 
   it("surfaces errors inline", async () => {
-    render(
-      <ApiKeysGroup
-        listApiKeys={async () => [listing({ hasKey: true, last4: "9876", verified: "unknown" })]}
-        saveApiKey={vi.fn()}
-        verifyApiKey={vi.fn(async () => ({ error: "no key stored for google" }))}
-        deleteApiKey={vi.fn()}
-      />,
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/api-keys/google/verify")) return jsonResponse({ error: "no key stored for google" });
+        throw new Error(`unexpected fetch ${url}`);
+      }),
     );
+    const { client } = renderWithProviders(<ApiKeysGroup />);
+    client.setQueryData(qk.apiKeys, [listing({ hasKey: true, last4: "9876", verified: "unknown" })]);
     await screen.findByText("unverified");
     await userEvent.click(screen.getByRole("button", { name: /verify/i }));
     await screen.findByText(/no key stored for google/);
   });
 
   it("keeps the typed draft in the input when save fails, so the user can correct it", async () => {
-    const saveApiKey = vi.fn(async () => ({ error: "invalid key format" }));
-    render(
-      <ApiKeysGroup
-        listApiKeys={async () => [listing()]}
-        saveApiKey={saveApiKey}
-        verifyApiKey={vi.fn()}
-        deleteApiKey={vi.fn()}
-      />,
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/api-keys/google") && init?.method === "PUT")
+          return jsonResponse({ error: "invalid key format" });
+        throw new Error(`unexpected fetch ${url}`);
+      }),
     );
+    const { client } = renderWithProviders(<ApiKeysGroup />);
+    client.setQueryData(qk.apiKeys, [listing()]);
     await screen.findByText("no key");
     const input = screen.getByLabelText(/api key/i) as HTMLInputElement;
     await userEvent.type(input, "sk-bad-key");

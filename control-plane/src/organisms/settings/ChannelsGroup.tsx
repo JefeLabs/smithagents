@@ -1,16 +1,12 @@
 import { Plus, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { ChannelsRecord, WorkspaceRecord } from "../../api/types";
-
-interface ChannelsGroupProps {
-  listWorkspaces: () => Promise<WorkspaceRecord[]>;
-  getChannels: (name: string) => Promise<ChannelsRecord>;
-  saveChannels: (
-    name: string,
-    body: { discord?: { botToken: string; textChannels: string[]; voiceChannels: string[] } },
-  ) => Promise<ChannelsRecord & { error?: string }>;
-  verifyDiscord: (name: string) => Promise<{ ok?: boolean; detail?: string; error?: string }>;
-}
+import type { ChannelsRecord } from "../../api/types";
+import {
+  useSaveWorkspaceChannels,
+  useVerifyWorkspaceDiscord,
+  useWorkspaceChannels,
+  useWorkspaceRecords,
+} from "../../queries/http";
 
 interface FormState {
   hasDiscordToken: boolean;
@@ -22,40 +18,40 @@ interface FormState {
 const blankForm = (): FormState => ({ hasDiscordToken: false, botToken: "", textChannels: [""], voiceChannels: [""] });
 
 /** Discord channel config, as a Settings group — same behavior as when this lived in its own standalone modal, just re-parented. */
-export function ChannelsGroup({ listWorkspaces, getChannels, saveChannels, verifyDiscord }: ChannelsGroupProps) {
-  const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([]);
-  const [loadError, setLoadError] = useState<string | null>(null);
+export function ChannelsGroup() {
+  const { data: workspaces = [], error: loadError } = useWorkspaceRecords();
   const [selected, setSelected] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(blankForm());
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{ ok: boolean; detail: string } | null>(null);
-  const [testing, setTesting] = useState(false);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-once load, same convention as IntegrationsGroup
+  // Only fetches once a workspace is actually picked — `selected` starts null, and the query
+  // key would otherwise be a meaningless empty-name request.
+  const { data: channels } = useWorkspaceChannels(selected ?? "", selected !== null);
+  const saveChannels = useSaveWorkspaceChannels();
+  const verifyDiscord = useVerifyWorkspaceDiscord();
+
+  // Reinitializes the editable form whenever the selected workspace's channel config arrives —
+  // mirrors the old imperative `getChannels(name).then(setForm)`.
   useEffect(() => {
-    void listWorkspaces().then(setWorkspaces, (err: unknown) =>
-      setLoadError(`Could not load workspaces — ${String(err)}`),
-    );
-  }, []);
+    if (channels) {
+      setForm({
+        hasDiscordToken: channels.hasDiscordToken,
+        botToken: "",
+        textChannels: channels.textChannels.length ? channels.textChannels : [""],
+        voiceChannels: channels.voiceChannels.length ? channels.voiceChannels : [""],
+      });
+    }
+  }, [channels]);
 
   const selectWorkspace = (name: string) => {
     setSelected(name);
     setError(null);
     setTestResult(null);
-    void getChannels(name).then((c) =>
-      setForm({
-        hasDiscordToken: c.hasDiscordToken,
-        botToken: "",
-        textChannels: c.textChannels.length ? c.textChannels : [""],
-        voiceChannels: c.voiceChannels.length ? c.voiceChannels : [""],
-      }),
-    );
   };
 
   const submit = async () => {
     if (!selected) return;
-    setBusy(true);
     setError(null);
     const discord =
       form.botToken.trim() || form.hasDiscordToken
@@ -65,10 +61,9 @@ export function ChannelsGroup({ listWorkspaces, getChannels, saveChannels, verif
             voiceChannels: form.voiceChannels.filter(Boolean),
           }
         : undefined;
-    const result = await saveChannels(selected, { discord }).catch((err: unknown): { error?: string } => ({
-      error: String(err),
-    }));
-    setBusy(false);
+    const result = await saveChannels
+      .mutateAsync({ name: selected, body: { discord } })
+      .catch((err: unknown): { error?: string } => ({ error: String(err) }));
     if ("error" in result && result.error) {
       setError(result.error);
       return;
@@ -78,9 +73,7 @@ export function ChannelsGroup({ listWorkspaces, getChannels, saveChannels, verif
 
   const testDiscord = async () => {
     if (!selected) return;
-    setTesting(true);
-    const r = await verifyDiscord(selected);
-    setTesting(false);
+    const r = await verifyDiscord.mutateAsync(selected);
     setTestResult({ ok: Boolean(r.ok), detail: r.detail ?? r.error ?? "unknown" });
   };
 
@@ -94,7 +87,7 @@ export function ChannelsGroup({ listWorkspaces, getChannels, saveChannels, verif
   return (
     <>
       <h1>channels</h1>
-      {loadError && <p className="wizard__error">{loadError}</p>}
+      {loadError && <p className="wizard__error">Could not load workspaces — {String(loadError)}</p>}
       <div className="workspace-manager__body">
         <div className="workspace-manager__list">
           {workspaces.map((ws) => (
@@ -165,8 +158,13 @@ export function ChannelsGroup({ listWorkspaces, getChannels, saveChannels, verif
               </button>
 
               {form.hasDiscordToken && (
-                <button type="button" className="settings-btn" onClick={() => void testDiscord()} disabled={testing}>
-                  {testing ? "testing…" : "Test connection"}
+                <button
+                  type="button"
+                  className="settings-btn"
+                  onClick={() => void testDiscord()}
+                  disabled={verifyDiscord.isPending}
+                >
+                  {verifyDiscord.isPending ? "testing…" : "Test connection"}
                 </button>
               )}
               {testResult && <p className={testResult.ok ? "wizard__hint" : "wizard__error"}>{testResult.detail}</p>}
@@ -176,9 +174,9 @@ export function ChannelsGroup({ listWorkspaces, getChannels, saveChannels, verif
                 type="button"
                 className="settings-btn settings-btn--primary settings-btn--wide"
                 onClick={() => void submit()}
-                disabled={busy}
+                disabled={saveChannels.isPending}
               >
-                {busy ? "saving…" : "save"}
+                {saveChannels.isPending ? "saving…" : "save"}
               </button>
             </>
           )}

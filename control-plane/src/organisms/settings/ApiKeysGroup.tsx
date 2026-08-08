@@ -1,12 +1,6 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { ApiKeyListing } from "../../api/types";
-
-interface ApiKeysGroupProps {
-  listApiKeys: () => Promise<ApiKeyListing[]>;
-  saveApiKey: (id: string, key: string) => Promise<ApiKeyListing[] | { error: string }>;
-  verifyApiKey: (id: string) => Promise<ApiKeyListing[] | { error: string }>;
-  deleteApiKey: (id: string) => Promise<ApiKeyListing[] | { error: string }>;
-}
+import { useApiKeys, useDeleteApiKey, useSaveApiKey, useVerifyApiKey } from "../../queries/http";
 
 /** Status pill precedence mirrors CliToolsGroup: reality before preference. Exported for tests. */
 export function pillForApiKey(l: ApiKeyListing): { label: string; cls: string } {
@@ -17,16 +11,14 @@ export function pillForApiKey(l: ApiKeyListing): { label: string; cls: string } 
 }
 
 /** Card grid, one per registry provider — masked key state, save/verify/remove. */
-export function ApiKeysGroup({ listApiKeys, saveApiKey, verifyApiKey, deleteApiKey }: ApiKeysGroupProps) {
-  const [keys, setKeys] = useState<ApiKeyListing[]>([]);
+export function ApiKeysGroup() {
+  const { data: keys = [] } = useApiKeys();
+  const save = useSaveApiKey();
+  const verify = useVerifyApiKey();
+  const remove = useDeleteApiKey();
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-once load, same convention as CliToolsGroup
-  useEffect(() => {
-    void listApiKeys().then(setKeys, (err: unknown) => setError(`Could not load API keys — ${String(err)}`));
-  }, []);
 
   /** Returns whether the op succeeded, so callers can decide what to do only on success (e.g. clear a draft). */
   const apply = async (id: string, op: () => Promise<ApiKeyListing[] | { error: string }>): Promise<boolean> => {
@@ -38,7 +30,6 @@ export function ApiKeysGroup({ listApiKeys, saveApiKey, verifyApiKey, deleteApiK
       setError(result.error);
       return false;
     }
-    setKeys(result);
     return true;
   };
 
@@ -84,9 +75,11 @@ export function ApiKeysGroup({ listApiKeys, saveApiKey, verifyApiKey, deleteApiK
                   className="settings-btn"
                   disabled={busy !== null || !(drafts[l.id] ?? "").trim()}
                   onClick={() =>
-                    void apply(l.id, () => saveApiKey(l.id, (drafts[l.id] ?? "").trim())).then((ok) => {
-                      if (ok) setDrafts((d) => ({ ...d, [l.id]: "" }));
-                    })
+                    void apply(l.id, () => save.mutateAsync({ id: l.id, key: (drafts[l.id] ?? "").trim() })).then(
+                      (ok) => {
+                        if (ok) setDrafts((d) => ({ ...d, [l.id]: "" }));
+                      },
+                    )
                   }
                 >
                   {busy === l.id ? "saving…" : "save"}
@@ -97,7 +90,7 @@ export function ApiKeysGroup({ listApiKeys, saveApiKey, verifyApiKey, deleteApiK
                       type="button"
                       className="settings-btn"
                       disabled={busy !== null}
-                      onClick={() => void apply(l.id, () => verifyApiKey(l.id))}
+                      onClick={() => void apply(l.id, () => verify.mutateAsync(l.id))}
                     >
                       verify
                     </button>
@@ -105,7 +98,7 @@ export function ApiKeysGroup({ listApiKeys, saveApiKey, verifyApiKey, deleteApiK
                       type="button"
                       className="settings-btn"
                       disabled={busy !== null}
-                      onClick={() => void apply(l.id, () => deleteApiKey(l.id))}
+                      onClick={() => void apply(l.id, () => remove.mutateAsync(l.id))}
                     >
                       remove
                     </button>

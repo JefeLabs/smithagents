@@ -22,7 +22,7 @@ import { SessionsPanel } from "../organisms/SessionsPanel";
 import { SettingsPanel } from "../organisms/SettingsPanel";
 import { ToolRail } from "../organisms/ToolRail";
 import { WorkspaceManagerModal } from "../organisms/WorkspaceManagerModal";
-import { useExecutionModes, useVoiceSettings, useWorkspaceRecords } from "../queries/http";
+import { useVoiceSettings } from "../queries/http";
 import { qk } from "../queries/keys";
 import { useRoster, useSession, useSessions, useTranscript, useWorkspaces } from "../queries/pushed";
 import { hasNativeFolderPicker, pickFolder } from "../services/nativeDialog";
@@ -141,13 +141,6 @@ export function HomePage() {
   const knownZeroSessions = sessionStatus === "success" && session === null;
   const composerVisible = composer !== null || (connected && knownZeroSessions);
 
-  // Gated on the composer, not fetched at boot: Query runs these on the
-  // false→true flip, so a mode that vanished or a workspace that changed while
-  // the composer was closed is re-read the moment it reopens — the same
-  // contract the hand-rolled refetch effect had, minus the effect.
-  const { data: modes } = useExecutionModes(composerVisible);
-  const { data: wsRecords } = useWorkspaceRecords(composerVisible);
-
   // Picking another session backs out of an explicitly-opened composer (spec §3) — without
   // this, an explicit composer stays rendered with a possibly-stale locked workspace after
   // the activated session's frame lands.
@@ -237,10 +230,6 @@ export function HomePage() {
         stage={
           composerVisible ? (
             <NewSessionScreen
-              workspaces={workspaces}
-              records={wsRecords ?? null}
-              sessions={sessions}
-              modes={modes ?? null}
               lockedWorkspace={composer?.locked}
               forced={knownZeroSessions}
               onSend={async (ws, mode, prompt) => {
@@ -294,28 +283,6 @@ export function HomePage() {
               onReset={api.resetSetup}
               theme={theme}
               onThemeChange={setTheme}
-              listConnectorVendors={api.getConnectorVendors}
-              listMyConnectors={api.getMyConnectors}
-              getVoiceSettings={api.getVoiceSettings}
-              saveVoiceSettings={api.saveVoiceSettings}
-              addConnector={api.addConnector}
-              updateConnector={api.updateConnector}
-              deleteConnector={api.deleteConnector}
-              verifyConnector={api.verifyConnector}
-              listCliTools={api.getCliTools}
-              refreshCliTools={api.refreshCliTools}
-              setCliToolEnabled={api.setCliToolEnabled}
-              listApiKeys={api.getApiKeys}
-              saveApiKey={api.saveApiKey}
-              verifyApiKey={api.verifyApiKey}
-              deleteApiKey={api.deleteApiKey}
-              listWorkspaceRecords={api.getWorkspaceRecords}
-              getWorkspaceChannels={api.getWorkspaceChannels}
-              saveWorkspaceChannels={api.saveWorkspaceChannels}
-              verifyWorkspaceDiscord={api.verifyWorkspaceDiscord}
-              getContainers={api.getContainers}
-              setDockerEnabled={api.setDockerEnabled}
-              verifyContainers={api.verifyContainers}
             />
             <SessionsPanel
               open={sessionsOpen}

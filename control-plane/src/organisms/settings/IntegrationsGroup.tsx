@@ -1,57 +1,36 @@
 import { X } from "lucide-react";
-import { useEffect, useState } from "react";
-import type { ConnectorInstanceRecord, ConnectorVendorMeta, VoiceSettingsRecord } from "../../api/types";
+import { useState } from "react";
+import type { ConnectorInstanceRecord, ConnectorVendorMeta } from "../../api/types";
+import {
+  useAddConnector,
+  useConnectorVendors,
+  useDeleteConnector,
+  useMyConnectors,
+  useUpdateConnector,
+  useVerifyConnector,
+  useVoiceSettings,
+} from "../../queries/http";
 import { ConnectorFormModal } from "./ConnectorFormModal";
 
-interface IntegrationsGroupProps {
-  listVendors: () => Promise<ConnectorVendorMeta[]>;
-  listConnectors: () => Promise<ConnectorInstanceRecord[]>;
-  /** When set, deleting an instance wired into Settings → Voice warns before it goes. */
-  getVoice?: () => Promise<VoiceSettingsRecord>;
-  // useBrokerChat's real addConnector/updateConnector resolve the full saved record (plus an
-  // optional error), not just `{ error? }` — typed as Partial here so this component can drop
-  // the saved instance straight into local state and avoid depending on a subsequent
-  // listConnectors() round-trip to reflect the change.
-  addConnector: (body: {
-    vendorId: string;
-    label: string;
-    fields: Record<string, string>;
-  }) => Promise<Partial<ConnectorInstanceRecord> & { error?: string }>;
-  updateConnector: (
-    id: string,
-    body: { label?: string; fields?: Record<string, string> },
-  ) => Promise<Partial<ConnectorInstanceRecord> & { error?: string }>;
-  deleteConnector: (id: string) => Promise<{ ok?: boolean; error?: string }>;
-  verifyConnector: (
-    id: string,
-    extra?: Record<string, string>,
-  ) => Promise<{ ok?: boolean; detail?: string; error?: string }>;
-}
-
 /** Card grid, one per registered vendor — a vendor's saved instances list inline, "+ add another" opens the generic connect form. */
-export function IntegrationsGroup({
-  listVendors,
-  listConnectors,
-  getVoice,
-  addConnector,
-  updateConnector,
-  deleteConnector,
-  verifyConnector,
-}: IntegrationsGroupProps) {
-  const [vendors, setVendors] = useState<ConnectorVendorMeta[]>([]);
-  const [connectors, setConnectors] = useState<ConnectorInstanceRecord[]>([]);
+export function IntegrationsGroup() {
+  const { data: vendors = [], error: vendorsError } = useConnectorVendors();
+  const { data: connectors = [], error: connectorsError } = useMyConnectors();
+  const { data: voice } = useVoiceSettings();
+  const addConnector = useAddConnector();
+  const updateConnector = useUpdateConnector();
+  const deleteConnector = useDeleteConnector();
+  const verifyConnector = useVerifyConnector();
+
   const [formVendor, setFormVendor] = useState<ConnectorVendorMeta | null>(null);
   const [formExisting, setFormExisting] = useState<ConnectorInstanceRecord | undefined>(undefined);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-once load, same convention as ChannelsGroup's own mount effect
-  useEffect(() => {
-    void listVendors().then(setVendors, (err: unknown) => setLoadError(`Could not load vendors — ${String(err)}`));
-    void listConnectors().then(setConnectors, (err: unknown) =>
-      setLoadError(`Could not load connectors — ${String(err)}`),
-    );
-  }, []);
+  const loadError = vendorsError
+    ? `Could not load vendors — ${String(vendorsError)}`
+    : connectorsError
+      ? `Could not load connectors — ${String(connectorsError)}`
+      : null;
 
   const openConnect = (vendor: ConnectorVendorMeta, existing?: ConnectorInstanceRecord) => {
     setFormVendor(vendor);
@@ -64,47 +43,29 @@ export function IntegrationsGroup({
   };
 
   const handleSave = async (body: { vendorId: string; label: string; fields: Record<string, string> }) => {
-    const result = formExisting
-      ? await updateConnector(formExisting.id, { label: body.label, fields: body.fields })
-      : await addConnector(body);
-    // Merge the saved record straight into local state so it shows up immediately — no
-    // reliance on re-fetching listConnectors() to reflect a change that just happened.
-    if (!result.error && result.id) {
-      const saved: ConnectorInstanceRecord = {
-        id: result.id,
-        vendorId: result.vendorId ?? body.vendorId,
-        label: result.label ?? body.label,
-        // Never fall back to the raw submitted `body.fields` — those can carry plaintext
-        // secrets straight from the form. The real backend always echoes a redacted `fields`
-        // back, so this path is unreachable today; an empty object is the safe fallback if a
-        // future response shape ever omits it, not a plaintext round-trip into client state.
-        fields: result.fields ?? {},
-      };
-      setConnectors((cs) =>
-        cs.some((c) => c.id === saved.id) ? cs.map((c) => (c.id === saved.id ? saved : c)) : [...cs, saved],
-      );
-    }
-    return result;
+    // Both mutations invalidate `qk.myConnectors` on success, so the new/updated instance
+    // reflects here via the shared query cache — no local merge to hand-roll.
+    return formExisting
+      ? await updateConnector.mutateAsync({ id: formExisting.id, body: { label: body.label, fields: body.fields } })
+      : await addConnector.mutateAsync(body);
   };
 
   const handleRemove = async (id: string) => {
-    if (getVoice) {
-      const v = await getVoice().catch(() => null);
+    if (voice) {
       const uses = [
-        v?.stt?.instanceId === id && "speech-to-text",
-        v?.tts?.instanceId === id && "text-to-speech",
+        voice.stt?.instanceId === id && "speech-to-text",
+        voice.tts?.instanceId === id && "text-to-speech",
       ].filter(Boolean);
       if (uses.length > 0 && !window.confirm(`Deleting this key also turns off ${uses.join(" and ")}. Continue?`)) {
         return;
       }
     }
-    const result = await deleteConnector(id);
+    const result = await deleteConnector.mutateAsync(id);
     if (result.error) {
       setRemoveError(result.error);
       return;
     }
     setRemoveError(null);
-    setConnectors((cs) => cs.filter((c) => c.id !== id));
   };
 
   // Mirrors server.ts's redactConnector key-naming (has<Field>) so a saved secret's presence
@@ -168,7 +129,7 @@ export function IntegrationsGroup({
         existing={formExisting}
         onClose={closeForm}
         onSave={handleSave}
-        onVerify={formExisting ? (extra) => verifyConnector(formExisting.id, extra) : undefined}
+        onVerify={formExisting ? (extra) => verifyConnector.mutateAsync({ id: formExisting.id, extra }) : undefined}
       />
     </>
   );

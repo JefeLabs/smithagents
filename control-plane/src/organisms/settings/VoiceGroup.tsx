@@ -1,16 +1,6 @@
-import { useEffect, useState } from "react";
-import type { ConnectorInstanceRecord, ConnectorVendorMeta, VoiceSettingsRecord } from "../../api/types";
-
-interface VoiceGroupProps {
-  getVoice: () => Promise<VoiceSettingsRecord>;
-  saveVoice: (body: {
-    stt: { instanceId: string } | null;
-    tts: { instanceId: string } | null;
-    hideInactive: boolean;
-  }) => Promise<VoiceSettingsRecord & { error?: string }>;
-  listVendors: () => Promise<ConnectorVendorMeta[]>;
-  listConnectors: () => Promise<ConnectorInstanceRecord[]>;
-}
+import { useState } from "react";
+import type { VoiceSettingsRecord } from "../../api/types";
+import { useConnectorVendors, useMyConnectors, useSaveVoiceSettings, useVoiceSettings } from "../../queries/http";
 
 const SLOTS = [
   { slot: "stt" as const, label: "Speech-to-text", vendorHint: "a Deepgram" },
@@ -20,30 +10,22 @@ const SLOTS = [
 /** Settings → Voice (spec §2): maps each voice capability to a connected connector
  * instance. Key entry/verify lives in Integrations — this group deals strictly in
  * instance ids and labels, never key material. */
-export function VoiceGroup({ getVoice, saveVoice, listVendors, listConnectors }: VoiceGroupProps) {
-  const [voice, setVoice] = useState<VoiceSettingsRecord | null>(null);
-  const [vendors, setVendors] = useState<ConnectorVendorMeta[]>([]);
-  const [connectors, setConnectors] = useState<ConnectorInstanceRecord[]>([]);
+export function VoiceGroup() {
+  const { data: voice } = useVoiceSettings();
+  const { data: vendors = [] } = useConnectorVendors();
+  const { data: connectors = [] } = useMyConnectors();
+  const saveVoice = useSaveVoiceSettings();
   const [error, setError] = useState<string | null>(null);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-once load, same convention as IntegrationsGroup
-  useEffect(() => {
-    void Promise.all([getVoice(), listVendors(), listConnectors()]).then(([v, vs, cs]) => {
-      setVoice(v);
-      setVendors(vs);
-      setConnectors(cs);
-    });
-  }, []);
-
-  // Commits `next` to local state only once the save actually succeeds — same convention as
-  // IntegrationsGroup (merges only `if (!result.error && result.id)`) and ChannelsGroup (updates
-  // form state only past its error-return). A failed save — whether an `{ error }` response or a
-  // rejected promise from the underlying fetch — leaves `voice` (and every control reading it)
-  // exactly as it was, with the failure surfaced via `error` instead.
+  // The mutation's own onSuccess only writes `qk.voiceSettings` when the response carries no
+  // `error` — same "commit only once the save actually succeeds" contract the old local
+  // `setVoice(next)` call hand-rolled. A failed save, whether an `{ error }` response or a
+  // rejected promise from the underlying fetch, leaves the cache (and every control reading
+  // it) exactly as it was, with the failure surfaced via `error` instead.
   const save = async (next: VoiceSettingsRecord) => {
     let res: VoiceSettingsRecord & { error?: string };
     try {
-      res = await saveVoice({ stt: next.stt, tts: next.tts, hideInactive: next.hideInactive });
+      res = await saveVoice.mutateAsync({ stt: next.stt, tts: next.tts, hideInactive: next.hideInactive });
     } catch (err) {
       setError(String(err));
       return;
@@ -52,7 +34,6 @@ export function VoiceGroup({ getVoice, saveVoice, listVendors, listConnectors }:
       setError(res.error);
       return;
     }
-    setVoice(next);
     setError(null);
   };
 

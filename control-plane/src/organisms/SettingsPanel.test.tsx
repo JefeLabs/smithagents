@@ -1,21 +1,40 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { qk } from "../queries/keys";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { SettingsPanel } from "./SettingsPanel";
+
+/**
+ * A live broker really is listening on 127.0.0.1:7790 on dev machines — every group now
+ * fetches its own data via query hooks the moment it's the active one, so any test that lands
+ * on a non-General/Themes group needs this stubbed.
+ */
+function stubNoNetwork() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      throw new Error("no network in this test");
+    }),
+  );
+}
 
 describe("SettingsPanel", () => {
   afterEach(() => {
-    cleanup();
+    vi.unstubAllGlobals();
   });
 
   it("opens on the General group by default and renders reset options", () => {
-    render(<SettingsPanel open onClose={() => {}} onReset={vi.fn()} theme="dark" onThemeChange={vi.fn()} />);
+    renderWithProviders(
+      <SettingsPanel open onClose={() => {}} onReset={vi.fn()} theme="dark" onThemeChange={vi.fn()} />,
+    );
     expect(screen.getByRole("heading", { name: /general/i })).toBeDefined();
     expect(screen.getByText(/kill running instances/i)).toBeDefined();
   });
 
-  it("opens on Integrations directly when initialGroup is set (avatar deep-link)", () => {
-    render(
+  it("opens on Integrations directly when initialGroup is set (avatar deep-link)", async () => {
+    stubNoNetwork();
+    renderWithProviders(
       <SettingsPanel
         open
         onClose={() => {}}
@@ -25,18 +44,22 @@ describe("SettingsPanel", () => {
         initialGroup="integrations"
       />,
     );
-    expect(screen.getByText(/not wired up yet/i)).toBeDefined();
+    expect(await screen.findByRole("heading", { name: /integrations/i })).toBeDefined();
   });
 
   it("clicking a nav group switches the visible content", async () => {
-    render(<SettingsPanel open onClose={() => {}} onReset={vi.fn()} theme="dark" onThemeChange={vi.fn()} />);
+    renderWithProviders(
+      <SettingsPanel open onClose={() => {}} onReset={vi.fn()} theme="dark" onThemeChange={vi.fn()} />,
+    );
     await userEvent.click(screen.getByRole("button", { name: /themes/i }));
     expect(screen.getAllByText(/dark|light/i).length).toBeGreaterThan(0); // theme chips render
   });
 
   it("back to app calls onClose", async () => {
     const onClose = vi.fn();
-    render(<SettingsPanel open onClose={onClose} onReset={vi.fn()} theme="dark" onThemeChange={vi.fn()} />);
+    renderWithProviders(
+      <SettingsPanel open onClose={onClose} onReset={vi.fn()} theme="dark" onThemeChange={vi.fn()} />,
+    );
     await userEvent.click(screen.getByRole("button", { name: /back to app/i }));
     expect(onClose).toHaveBeenCalled();
   });
@@ -46,7 +69,8 @@ describe("SettingsPanel", () => {
     // convention as every other overlay), so it never remounts between opens — a stale
     // `useState(initialGroup)` would only ever honor the FIRST open's value and silently
     // ignore every later one. This is the "rail Settings, then avatar" sequence exactly.
-    const { rerender } = render(
+    stubNoNetwork();
+    const { rerender } = renderWithProviders(
       <SettingsPanel
         open={false}
         onClose={() => {}}
@@ -66,19 +90,21 @@ describe("SettingsPanel", () => {
         initialGroup="integrations"
       />,
     );
-    expect(await screen.findByText(/not wired up yet/i)).toBeDefined();
+    expect(await screen.findByRole("heading", { name: /integrations/i })).toBeDefined();
     expect(screen.queryByText(/kill running instances/i)).toBeNull(); // not stuck on General
   });
 
   it("renders nothing when closed", () => {
-    const { container } = render(
+    const { container } = renderWithProviders(
       <SettingsPanel open={false} onClose={() => {}} onReset={vi.fn()} theme="dark" onThemeChange={vi.fn()} />,
     );
     expect(container.firstChild).toBeNull();
   });
 
   it("groups the nav under App / Agents / Workspace headings with API Keys under Agents", () => {
-    render(<SettingsPanel open onClose={() => {}} onReset={vi.fn()} theme="dark" onThemeChange={vi.fn()} />);
+    renderWithProviders(
+      <SettingsPanel open onClose={() => {}} onReset={vi.fn()} theme="dark" onThemeChange={vi.fn()} />,
+    );
     for (const heading of ["App", "Agents", "Workspace"]) {
       expect(screen.getByText(heading)).toBeDefined();
     }
@@ -86,7 +112,8 @@ describe("SettingsPanel", () => {
   });
 
   it("opens the API Keys group and renders its cards when wired", async () => {
-    render(
+    stubNoNetwork();
+    const { client } = renderWithProviders(
       <SettingsPanel
         open
         onClose={() => {}}
@@ -94,12 +121,9 @@ describe("SettingsPanel", () => {
         theme="dark"
         onThemeChange={vi.fn()}
         initialGroup="api-keys"
-        listApiKeys={async () => []}
-        saveApiKey={vi.fn()}
-        verifyApiKey={vi.fn()}
-        deleteApiKey={vi.fn()}
       />,
     );
+    client.setQueryData(qk.apiKeys, []);
     expect(await screen.findByRole("heading", { name: /api keys/i })).toBeDefined();
   });
 });

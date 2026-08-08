@@ -10,15 +10,6 @@ import {
   Terminal,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import type {
-  ApiKeyListing,
-  ChannelsRecord,
-  CliToolListing,
-  ConnectorInstanceRecord,
-  ConnectorVendorMeta,
-  VoiceSettingsRecord,
-  WorkspaceRecord,
-} from "../api/types";
 import type { ThemeId } from "../hooks/useTheme";
 import { ApiKeysGroup } from "./settings/ApiKeysGroup";
 import { ChannelsGroup } from "./settings/ChannelsGroup";
@@ -46,45 +37,6 @@ interface SettingsPanelProps {
   theme: ThemeId;
   onThemeChange: (theme: ThemeId) => void;
   initialGroup?: SettingsGroupId;
-  listConnectorVendors?: () => Promise<ConnectorVendorMeta[]>;
-  listMyConnectors?: () => Promise<ConnectorInstanceRecord[]>;
-  getVoiceSettings?: () => Promise<VoiceSettingsRecord>;
-  saveVoiceSettings?: (body: {
-    stt: { instanceId: string } | null;
-    tts: { instanceId: string } | null;
-    hideInactive: boolean;
-  }) => Promise<VoiceSettingsRecord & { error?: string }>;
-  addConnector?: (body: {
-    vendorId: string;
-    label: string;
-    fields: Record<string, string>;
-  }) => Promise<{ error?: string }>;
-  updateConnector?: (
-    id: string,
-    body: { label?: string; fields?: Record<string, string> },
-  ) => Promise<{ error?: string }>;
-  deleteConnector?: (id: string) => Promise<{ ok?: boolean; error?: string }>;
-  verifyConnector?: (
-    id: string,
-    extra?: Record<string, string>,
-  ) => Promise<{ ok?: boolean; detail?: string; error?: string }>;
-  listCliTools?: () => Promise<CliToolListing[]>;
-  refreshCliTools?: (tool?: string) => Promise<CliToolListing[]>;
-  setCliToolEnabled?: (id: string, enabled: boolean) => Promise<CliToolListing[] | { error: string }>;
-  listApiKeys?: () => Promise<ApiKeyListing[]>;
-  saveApiKey?: (id: string, key: string) => Promise<ApiKeyListing[] | { error: string }>;
-  verifyApiKey?: (id: string) => Promise<ApiKeyListing[] | { error: string }>;
-  deleteApiKey?: (id: string) => Promise<ApiKeyListing[] | { error: string }>;
-  listWorkspaceRecords?: () => Promise<WorkspaceRecord[]>;
-  getWorkspaceChannels?: (name: string) => Promise<ChannelsRecord>;
-  saveWorkspaceChannels?: (
-    name: string,
-    body: { discord?: { botToken: string; textChannels: string[]; voiceChannels: string[] } },
-  ) => Promise<ChannelsRecord & { error?: string }>;
-  verifyWorkspaceDiscord?: (name: string) => Promise<{ ok?: boolean; detail?: string; error?: string }>;
-  getContainers?: () => Promise<{ docker: { enabled: boolean } }>;
-  setDockerEnabled?: (enabled: boolean) => Promise<{ docker: { enabled: boolean } }>;
-  verifyContainers?: () => Promise<{ ok: boolean; detail: string }>;
 }
 
 const SECTIONS: Array<{
@@ -124,28 +76,6 @@ export function SettingsPanel({
   theme,
   onThemeChange,
   initialGroup = "general",
-  listConnectorVendors,
-  listMyConnectors,
-  getVoiceSettings,
-  saveVoiceSettings,
-  addConnector,
-  updateConnector,
-  deleteConnector,
-  verifyConnector,
-  listCliTools,
-  refreshCliTools,
-  setCliToolEnabled,
-  listApiKeys,
-  saveApiKey,
-  verifyApiKey,
-  deleteApiKey,
-  listWorkspaceRecords,
-  getWorkspaceChannels,
-  saveWorkspaceChannels,
-  verifyWorkspaceDiscord,
-  getContainers,
-  setDockerEnabled,
-  verifyContainers,
 }: SettingsPanelProps) {
   const [active, setActive] = useState<SettingsGroupId>(initialGroup);
 
@@ -186,78 +116,12 @@ export function SettingsPanel({
       <div className="settings-screen__content">
         {active === "general" && <GeneralGroup onReset={onReset} />}
         {active === "themes" && <ThemesGroup theme={theme} onThemeChange={onThemeChange} />}
-        {active === "integrations" &&
-          (listConnectorVendors &&
-          listMyConnectors &&
-          addConnector &&
-          updateConnector &&
-          deleteConnector &&
-          verifyConnector ? (
-            <IntegrationsGroup
-              listVendors={listConnectorVendors}
-              listConnectors={listMyConnectors}
-              getVoice={getVoiceSettings}
-              addConnector={addConnector}
-              updateConnector={updateConnector}
-              deleteConnector={deleteConnector}
-              verifyConnector={verifyConnector}
-            />
-          ) : (
-            <p className="wizard__hint">Integrations — not wired up yet.</p>
-          ))}
-        {active === "voice" &&
-          (getVoiceSettings && saveVoiceSettings && listConnectorVendors && listMyConnectors ? (
-            <VoiceGroup
-              getVoice={getVoiceSettings}
-              saveVoice={saveVoiceSettings}
-              listVendors={listConnectorVendors}
-              listConnectors={listMyConnectors}
-            />
-          ) : (
-            <p className="wizard__hint">Voice — not wired up yet.</p>
-          ))}
-        {active === "cli-tools" &&
-          (listCliTools && refreshCliTools && setCliToolEnabled ? (
-            <CliToolsGroup
-              listCliTools={listCliTools}
-              refreshCliTools={refreshCliTools}
-              setCliToolEnabled={setCliToolEnabled}
-            />
-          ) : (
-            <p className="wizard__hint">CLI Tools — not wired up yet.</p>
-          ))}
-        {active === "api-keys" &&
-          (listApiKeys && saveApiKey && verifyApiKey && deleteApiKey ? (
-            <ApiKeysGroup
-              listApiKeys={listApiKeys}
-              saveApiKey={saveApiKey}
-              verifyApiKey={verifyApiKey}
-              deleteApiKey={deleteApiKey}
-            />
-          ) : (
-            <p className="wizard__hint">API Keys — not wired up yet.</p>
-          ))}
-        {active === "channels" &&
-          (listWorkspaceRecords && getWorkspaceChannels && saveWorkspaceChannels && verifyWorkspaceDiscord ? (
-            <ChannelsGroup
-              listWorkspaces={listWorkspaceRecords}
-              getChannels={getWorkspaceChannels}
-              saveChannels={saveWorkspaceChannels}
-              verifyDiscord={verifyWorkspaceDiscord}
-            />
-          ) : (
-            <p className="wizard__hint">Channels — not wired up yet.</p>
-          ))}
-        {active === "containers" &&
-          (getContainers && setDockerEnabled && verifyContainers ? (
-            <ContainersGroup
-              getContainers={getContainers}
-              setDockerEnabled={setDockerEnabled}
-              verifyContainers={verifyContainers}
-            />
-          ) : (
-            <p className="wizard__hint">Containers — not wired up yet.</p>
-          ))}
+        {active === "integrations" && <IntegrationsGroup />}
+        {active === "voice" && <VoiceGroup />}
+        {active === "cli-tools" && <CliToolsGroup />}
+        {active === "api-keys" && <ApiKeysGroup />}
+        {active === "channels" && <ChannelsGroup />}
+        {active === "containers" && <ContainersGroup />}
       </div>
     </div>
   );

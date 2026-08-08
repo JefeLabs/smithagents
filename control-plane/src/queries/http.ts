@@ -31,8 +31,13 @@ export function useWorkspaceRecords(enabled = true) {
   return useQuery({ queryKey: qk.workspaceRecords, queryFn: () => api.getWorkspaceRecords(), enabled });
 }
 
-export function useWorkspaceChannels(name: string) {
-  return useQuery({ queryKey: qk.workspaceChannels(name), queryFn: () => api.getWorkspaceChannels(name) });
+/**
+ * `enabled` exists so `ChannelsGroup` can hold the fetch off until a workspace is actually
+ * selected — same reasoning as `useWorkspaceRecords`. Defaulting to true keeps this
+ * unaffected for any caller that always has a name in hand.
+ */
+export function useWorkspaceChannels(name: string, enabled = true) {
+  return useQuery({ queryKey: qk.workspaceChannels(name), queryFn: () => api.getWorkspaceChannels(name), enabled });
 }
 
 export function useConnectorVendors() {
