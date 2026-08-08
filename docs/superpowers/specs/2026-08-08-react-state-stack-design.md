@@ -104,9 +104,14 @@ react-hook-form                  7.85.0
 
 Installed with **pnpm** (control-plane's package manager).
 
-**No `zod` / `@hookform/resolvers`.** Validation across these forms is "required,
-non-empty, valid path" — RHF's built-in `rules` covers it. A schema layer for that
-is weight without payoff. Revisit if validation grows real branching.
+**No `zod` / `@hookform/resolvers` in this branch.** Two separate calls:
+
+- **Forms: permanently no.** The total form validation in the app is one line
+  (`WorkspaceManagerModal.tsx:212`) checking non-empty strings. RHF's built-in `rules`
+  expresses that natively; a schema library plus a resolver adapter to test string
+  emptiness is ceremony with no payoff. Revisit only if validation grows real
+  branching.
+- **API boundary: yes, but sequenced after.** See "Follow-up: API schema validation".
 
 ## Architecture
 
@@ -132,6 +137,10 @@ src/
 Three layers, one direction of dependency: `api/` knows nothing about React;
 `queries/` knows about `api/`; `stores/socketStore` knows about `queries/keys` and
 the `QueryClient`. Nothing depends on `stores/uiStore` except components.
+
+`api/broker.ts` is deliberately React-free and holds every response cast in one
+place. That is the designed seam for the schema-validation follow-up below — the
+migration's job is to create it, not to fill it.
 
 ### Store topology
 
@@ -192,9 +201,38 @@ Single branch, single landing (`react-state-stack`, big bang). Internal work ord
 - **`useSurfacePolicy` and `useCliToolHealth`** are independent fetchers not listed in
   `useBrokerChat`'s 51 keys; they fold into `queries/` as well.
 
+## Follow-up: API schema validation (separate branch)
+
+Not part of this migration, but planned and the reason `api/broker.ts` is shaped the
+way it is.
+
+The control plane performs **35 unchecked `as` casts** on `res.json()`, plus the
+WebSocket frame parse (`useBrokerChat.ts:261`) — a bare `as` over an **8-variant
+union**. Nothing verifies the broker sent what the type claims. The threat model is
+not malice (broker and UI ship in one repo, over localhost) but **drift**: the broker
+renames a field, the UI silently reads `undefined`, and a panel renders blank with no
+error surfaced anywhere. This repo has that failure mode on record.
+
+Sequenced *after* the migration rather than inside it, because the migration is what
+makes it cheap. Today those 35 casts are scattered across two tangled files,
+interleaved with socket lifecycle and React hooks. Afterward they live in one
+React-free file of plain functions — the ideal surface for schema parsing, and
+trivially unit-testable. Deferring costs no second pass; it buys the seam.
+
+Under the new design the frame union deserves particular care: its output feeds
+`setQueryData` directly, so a malformed frame corrupts the Query cache rather than
+one component's local state.
+
+```
+branch: api-schema-validation
+  api/schemas.ts        zod over the 13 endpoint roots
+  stores/socketStore    zod over the 8-variant frame union
+  → 2 files, ~0 test churn
+```
+
 ## Out of scope
 
-- No `zod` (see Dependencies)
+- No `zod` in this branch (see Dependencies and the follow-up above)
 - No changes to `broker/`, `swarm/`, or `voice/` — no new endpoints, including the
   absent `GET /sessions`; `skipToken` handles it client-side
 - No visual or behavioral change. This is a state-plumbing migration; every surface
