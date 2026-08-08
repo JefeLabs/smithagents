@@ -160,6 +160,10 @@ export function WorkspaceManagerModal({
     // onChange handler, so typing in any order never appears to drop a field.
     const normalized: WorkspaceRecord = {
       ...form,
+      // PUT reads an absent colour as "keep the existing one", so unpicking
+      // has to travel as an empty string to actually clear it. Both routes
+      // collapse "" to undefined before saving; the convention is untouched.
+      color: form.color ?? "",
       links: linksText
         .split("\n")
         .map((l) => l.trim())
@@ -295,11 +299,23 @@ export function WorkspaceManagerModal({
               </label>
               <fieldset className="swatch-row">
                 <legend>Colour</legend>
+                {/* "None" is a real option, not just the starting state — without
+                    it a workspace colour could never be cleared once set. */}
+                <label className="swatch swatch--none">
+                  <input
+                    type="radio"
+                    name="wm-color"
+                    aria-label="No colour"
+                    checked={!form.color}
+                    onChange={() => setForm((f) => ({ ...f, color: undefined }))}
+                  />
+                  <span />
+                </label>
                 {WORKSPACE_PALETTE.map((c, i) => (
                   <label key={c} className="swatch">
                     <input
                       type="radio"
-                      name="ws-color"
+                      name="wm-color"
                       aria-label={`Colour ${i + 1}`}
                       checked={form.color === c}
                       onChange={() => setForm((f) => ({ ...f, color: c }))}

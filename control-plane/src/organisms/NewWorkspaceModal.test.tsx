@@ -184,6 +184,19 @@ describe("NewWorkspaceModal", () => {
     const p = props();
     render(<NewWorkspaceModal {...p} />);
     await fillOneValidRepo();
+    expect((screen.getByLabelText("No colour") as HTMLInputElement).checked).toBe(true);
+    await userEvent.click(screen.getByRole("button", { name: /create workspace/i }));
+    await waitFor(() => expect(p.save).toHaveBeenCalled());
+    expect((p.save as ReturnType<typeof vi.fn>).mock.calls[0][0].color).toBeUndefined();
+  });
+
+  it("the None swatch unpicks a chosen colour", async () => {
+    const p = props();
+    render(<NewWorkspaceModal {...p} />);
+    await fillOneValidRepo();
+    await userEvent.click(screen.getByLabelText("Colour 3"));
+    await userEvent.click(screen.getByLabelText("No colour"));
+    expect((screen.getByLabelText("Colour 3") as HTMLInputElement).checked).toBe(false);
     await userEvent.click(screen.getByRole("button", { name: /create workspace/i }));
     await waitFor(() => expect(p.save).toHaveBeenCalled());
     expect((p.save as ReturnType<typeof vi.fn>).mock.calls[0][0].color).toBeUndefined();

@@ -1,6 +1,7 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { WORKSPACE_PALETTE } from "../lib/workspace-color";
 import { WorkspaceManagerModal } from "./WorkspaceManagerModal";
 
 const CONNECTORS = [
@@ -156,5 +157,60 @@ describe("WorkspaceManagerModal — connector pickers", () => {
         true,
       ),
     );
+  });
+});
+
+describe("WorkspaceManagerModal — colour", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  const withColour = (color?: string) => ({
+    open: true as const,
+    onClose: () => {},
+    list: vi.fn(async () => [{ name: "acme", default: true, repos: [], color }]),
+    save: vi.fn(async () => ({})),
+    remove: vi.fn(),
+    verifyAtlassian: vi.fn(),
+    verifyRepoGithub: vi.fn(),
+    listMyConnectors: vi.fn(async () => CONNECTORS),
+  });
+
+  it("seeds the swatch row from the edited workspace's stored colour", async () => {
+    const p = withColour(WORKSPACE_PALETTE[2]);
+    render(<WorkspaceManagerModal {...p} />);
+    await userEvent.click(await screen.findByText("acme"));
+    expect((screen.getByLabelText("Colour 3") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText("No colour") as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("saves a changed colour", async () => {
+    const p = withColour(WORKSPACE_PALETTE[2]);
+    render(<WorkspaceManagerModal {...p} />);
+    await userEvent.click(await screen.findByText("acme"));
+    await userEvent.click(screen.getByLabelText("Colour 5"));
+    await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    await waitFor(() =>
+      expect(p.save).toHaveBeenCalledWith(expect.objectContaining({ color: WORKSPACE_PALETTE[4] }), false),
+    );
+  });
+
+  it("clears a colour through the None swatch — an empty string, since PUT reads undefined as keep-existing", async () => {
+    const p = withColour(WORKSPACE_PALETTE[2]);
+    render(<WorkspaceManagerModal {...p} />);
+    await userEvent.click(await screen.findByText("acme"));
+    await userEvent.click(screen.getByLabelText("No colour"));
+    expect((screen.getByLabelText("Colour 3") as HTMLInputElement).checked).toBe(false);
+    await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    await waitFor(() => expect(p.save).toHaveBeenCalledWith(expect.objectContaining({ color: "" }), false));
+  });
+
+  it("defaults an uncoloured workspace to None and still sends the clearing empty string", async () => {
+    const p = withColour(undefined);
+    render(<WorkspaceManagerModal {...p} />);
+    await userEvent.click(await screen.findByText("acme"));
+    expect((screen.getByLabelText("No colour") as HTMLInputElement).checked).toBe(true);
+    await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    await waitFor(() => expect(p.save).toHaveBeenCalledWith(expect.objectContaining({ color: "" }), false));
   });
 });

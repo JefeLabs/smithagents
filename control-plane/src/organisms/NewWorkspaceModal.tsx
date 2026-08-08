@@ -148,11 +148,17 @@ export function NewWorkspaceModal({
         </div>
         <fieldset className="swatch-row">
           <legend>Colour</legend>
+          {/* "None" is a real option, not just the starting state — without it
+              a picked swatch could never be unpicked. */}
+          <label className="swatch swatch--none">
+            <input type="radio" name="nw-color" aria-label="No colour" checked={!color} onChange={() => setColor("")} />
+            <span />
+          </label>
           {WORKSPACE_PALETTE.map((c, i) => (
             <label key={c} className="swatch">
               <input
                 type="radio"
-                name="ws-color"
+                name="nw-color"
                 aria-label={`Colour ${i + 1}`}
                 checked={color === c}
                 onChange={() => setColor(c)}
