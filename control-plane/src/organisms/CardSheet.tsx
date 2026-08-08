@@ -49,7 +49,12 @@ export function CardSheet({ board, card, roster, workspaces, onClose, onChanged 
 
   const save = async () => {
     // Stories are replaced wholesale — the whole checklist rides the single PATCH.
-    if (await patch({ title, notes, stories })) onClose();
+    // The flag's kind is set instantly via its own select; only its reason text
+    // is edited here, and rides along with title/notes/stories on save.
+    if (
+      await patch({ title, notes, stories, flag: card.flag ? { kind: card.flag.kind, reason: flagReason } : undefined })
+    )
+      onClose();
   };
 
   const linkJira = async () => {
@@ -79,6 +84,8 @@ export function CardSheet({ board, card, roster, workspaces, onClose, onChanged 
   };
 
   const setFlag = async (kind: string) => {
+    // Clearing drops the reason too, so a later re-pick doesn't carry a stale one.
+    if (!kind) setFlagReason("");
     await patch({ flag: kind ? { kind, reason: flagReason } : null });
   };
 
@@ -251,14 +258,7 @@ export function CardSheet({ board, card, roster, workspaces, onClose, onChanged 
             <option value="waiting">Waiting</option>
           </select>
         </label>
-        {card.flag && (
-          <input
-            placeholder="Why?"
-            value={flagReason}
-            onChange={(e) => setFlagReason(e.target.value)}
-            onBlur={() => void setFlag(card.flag?.kind ?? "")}
-          />
-        )}
+        {card.flag && <input placeholder="Why?" value={flagReason} onChange={(e) => setFlagReason(e.target.value)} />}
       </div>
       {exits.length > 0 && (
         <div className="card-sheet__routes">

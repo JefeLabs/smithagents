@@ -78,4 +78,53 @@ describe("CardSheet flags", () => {
     await userEvent.selectOptions(screen.getByLabelText("Flag"), "");
     await waitFor(() => expect(calls.find((c) => c.method === "PATCH")?.body).toEqual({ flag: null }));
   });
+
+  it("resets the reason on clear, so a later re-pick doesn't carry a stale reason", async () => {
+    render(
+      <CardSheet
+        {...props}
+        card={{ ...CARD, flag: { kind: "blocked", reason: "waiting on Edwin", since: "2026-08-01T00:00:00.000Z" } }}
+      />,
+    );
+    await userEvent.selectOptions(screen.getByLabelText("Flag"), "");
+    await waitFor(() => expect(calls.find((c) => c.method === "PATCH")?.body).toEqual({ flag: null }));
+    await userEvent.selectOptions(screen.getByLabelText("Flag"), "at-risk");
+    await waitFor(() => {
+      const patches = calls.filter((c) => c.method === "PATCH");
+      expect(patches[patches.length - 1]?.body).toEqual({ flag: { kind: "at-risk", reason: "" } });
+    });
+  });
+
+  it("save persists the flag's kind and current reason together with title/notes/stories, without since", async () => {
+    render(
+      <CardSheet
+        {...props}
+        card={{ ...CARD, flag: { kind: "blocked", reason: "", since: "2026-08-01T00:00:00.000Z" } }}
+      />,
+    );
+    await userEvent.type(screen.getByPlaceholderText("Why?"), "waiting on Edwin");
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+    await waitFor(() => expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(1));
+    expect(calls.find((c) => c.method === "PATCH")?.body).toEqual({
+      title: "Alert 4412",
+      notes: "",
+      stories: [],
+      flag: { kind: "blocked", reason: "waiting on Edwin" },
+    });
+  });
+
+  it("changing the flag select fires exactly one PATCH — no revert from a blurred reason input", async () => {
+    render(
+      <CardSheet
+        {...props}
+        card={{ ...CARD, flag: { kind: "blocked", reason: "waiting on Edwin", since: "2026-08-01T00:00:00.000Z" } }}
+      />,
+    );
+    await userEvent.click(screen.getByPlaceholderText("Why?"));
+    await userEvent.selectOptions(screen.getByLabelText("Flag"), "at-risk");
+    await waitFor(() => expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(1));
+    expect(calls.find((c) => c.method === "PATCH")?.body).toEqual({
+      flag: { kind: "at-risk", reason: "waiting on Edwin" },
+    });
+  });
 });
