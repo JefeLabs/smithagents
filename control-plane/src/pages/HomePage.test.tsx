@@ -9,6 +9,7 @@ import { useSpokenReplies } from "../hooks/useSpokenReplies";
 import { useTheme } from "../hooks/useTheme";
 import { qk } from "../queries/keys";
 import { createAppRouter } from "../router";
+import { useSocketStore } from "../stores/socketStore";
 import { renderWithProviders } from "../test/renderWithProviders";
 
 // Only the hooks that reach for browser hardware are module-mocked: speech
@@ -75,6 +76,9 @@ const SESSION_FRAME = {
   transcript: [],
 };
 
+/** Module-scoped so the audio-relay test can assert on it; cleared in afterEach. */
+const playAudioFrame = vi.fn();
+
 let fetchMock: ReturnType<typeof vi.fn>;
 
 function stubBroker() {
@@ -134,7 +138,7 @@ beforeEach(() => {
   vi.mocked(useSpokenReplies).mockReturnValue({
     soundOn: false,
     toggleSound: vi.fn(),
-    playAudioFrame: vi.fn(),
+    playAudioFrame,
     audioBlocked: false,
   });
   vi.mocked(usePushToTalk).mockReturnValue({ micLive: false, micError: null, toggleMic: vi.fn() });
@@ -183,6 +187,19 @@ describe("HomePage — the broker socket", () => {
     act(() => FakeSocket.last?.emit({ type: "config", audio: true }));
 
     await waitFor(() => expect(vi.mocked(useSpokenReplies).mock.lastCall?.[2]).toBe(false));
+  });
+
+  it("hands broker audio frames to the player", async () => {
+    // The socket store fans `audio` frames out to subscribers instead of
+    // invoking a callback the way useBrokerChat's `onAudio` option did. Without
+    // the subscription effect this page renders identically and every other
+    // test still passes — broker-produced speech simply never plays.
+    renderApp();
+    await appMounted();
+
+    act(() => FakeSocket.last?.emit({ type: "audio", mime: "audio/mpeg", dataB64: "x" }));
+
+    expect(playAudioFrame).toHaveBeenCalledWith(expect.objectContaining({ mime: "audio/mpeg", dataB64: "x" }));
   });
 });
 
@@ -251,6 +268,10 @@ describe("HomePage — the zero-session composer", () => {
     renderApp();
     await appMounted();
     act(() => FakeSocket.last?.open());
+    // Asserted, not assumed: the optional chaining above would quietly no-op on a
+    // null socket, and this case would then be passing through the `connected`
+    // gate rather than the status gate it exists to isolate.
+    expect(useSocketStore.getState().connected).toBe(true);
 
     await screen.findByRole("main");
     expect(screen.queryByRole("heading", { name: /start a session/i })).toBeNull();
