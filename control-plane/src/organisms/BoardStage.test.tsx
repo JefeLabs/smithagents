@@ -2,32 +2,31 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkBoardT } from "./BoardStage";
-import { BoardStage, moveCard, resolveDrop } from "./BoardStage";
+import { BoardStage, moveCard, resolveCrossBoardDrop, resolveDrop } from "./BoardStage";
 
 const BOARD = {
   id: "alpha",
   name: "Alpha",
   type: "personal" as const,
   columns: [
-    { id: "backlog", name: "Backlog" },
-    { id: "ready", name: "Ready" },
-    { id: "in-progress", name: "In Progress" },
-    { id: "in-review", name: "In Review" },
+    { id: "todo", name: "Todo" },
+    { id: "doing", name: "Doing" },
     { id: "done", name: "Done" },
+    { id: "not-doing", name: "Not Doing" },
   ],
   cards: [
-    { id: "c1", title: "Write the spec", columnId: "backlog", order: 0 },
+    { id: "c1", title: "Write the spec", columnId: "todo", order: 0 },
     {
       id: "c2",
       title: "Fix login",
-      columnId: "ready",
+      columnId: "doing",
       order: 0,
       jira: { key: "PROJ-1", url: "https://a/browse/PROJ-1" },
     },
     {
       id: "c3",
       title: "Ship avatars",
-      columnId: "in-progress",
+      columnId: "done",
       order: 0,
       delegation: { agentId: "minerva", taskId: "t1", state: "working" },
     },
@@ -83,7 +82,7 @@ describe("BoardStage", () => {
   it("renders columns and cards of the first board", async () => {
     stubFetch();
     render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
-    expect(await screen.findByText("Backlog")).toBeTruthy();
+    expect(await screen.findByText("Todo")).toBeTruthy();
     expect(screen.getByText("Write the spec")).toBeTruthy();
     expect(screen.getByText("PROJ-1")).toBeTruthy();
   });
@@ -141,7 +140,7 @@ describe("BoardStage", () => {
   it("adds a card through the composer", async () => {
     const { calls } = stubFetch();
     render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
-    await screen.findByText("Backlog");
+    await screen.findByText("Todo");
     await userEvent.click(screen.getByRole("button", { name: /add card/i }));
     await userEvent.type(screen.getByPlaceholderText(/card title/i), "New card");
     await userEvent.keyboard("{Enter}");
@@ -150,33 +149,92 @@ describe("BoardStage", () => {
     );
   });
 
-  it("creates a board from a template via the switcher", async () => {
-    const { calls } = stubFetch();
+  it("shows the workspace dropdown and a tab per board, personal last", async () => {
+    stubFetch({
+      boards: {
+        boards: [
+          { ...BOARD, id: "acme-plan", name: "Plan", type: "plan", workspaceId: "acme" },
+          { ...BOARD, id: "personal", name: "Personal", type: "personal", workspaceId: undefined },
+        ],
+        errors: [],
+      },
+    });
     render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
-    await screen.findByText("Backlog");
-    await userEvent.click(screen.getByRole("button", { name: /new board/i }));
-    await userEvent.type(screen.getByPlaceholderText(/board name/i), "Beta");
-    await userEvent.selectOptions(screen.getByLabelText(/template/i), "capabilities");
-    await userEvent.click(screen.getByRole("button", { name: /create board/i }));
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Plan" })).toBeTruthy());
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Plan", "Personal"]);
+    expect(screen.getByLabelText("Workspace")).toBeTruthy();
+  });
+
+  it("clusters cards by workspace under a subheading in the aggregate view", async () => {
+    stubFetch({
+      boards: {
+        boards: [
+          {
+            ...BOARD,
+            id: "acme-plan",
+            name: "Plan",
+            type: "plan",
+            workspaceId: "acme",
+            columns: [{ id: "spec", name: "Spec" }],
+            cards: [{ id: "a1", title: "Parent portal", columnId: "spec", order: 0 }],
+          },
+          {
+            ...BOARD,
+            id: "globex-plan",
+            name: "Plan",
+            type: "plan",
+            workspaceId: "globex",
+            columns: [{ id: "spec", name: "Spec" }],
+            cards: [{ id: "g1", title: "Billing", columnId: "spec", order: 0 }],
+          },
+        ],
+        errors: [],
+      },
+    });
+    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
+    await waitFor(() => expect(screen.getByText("Parent portal")).toBeTruthy());
+    await userEvent.selectOptions(screen.getByLabelText("Workspace"), "*");
+    // Scoped to the column: "acme" is also an <option> in the workspace
+    // dropdown, so an unscoped getByText would match two elements.
+    const column = await waitFor(() => screen.getByText("Spec").closest(".board-column") as HTMLElement);
+    expect(within(column).getByText("acme")).toBeTruthy();
+    expect(within(column).getByText("globex")).toBeTruthy();
+    expect(screen.getByText("Billing")).toBeTruthy();
+  });
+
+  it("creates a board for the scoped workspace from the add menu", async () => {
+    const { calls } = stubFetch({
+      boards: {
+        boards: [{ ...BOARD, id: "acme-plan", name: "Plan", type: "plan", workspaceId: "acme" }],
+        errors: [],
+      },
+    });
+    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Plan" })).toBeTruthy());
+    await userEvent.selectOptions(screen.getByLabelText("Workspace"), "acme");
+    await userEvent.click(screen.getByRole("button", { name: /add board/i }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Deliver" }));
     await waitFor(() =>
-      expect(
-        calls.some(
-          (c) =>
-            c.method === "POST" &&
-            c.url.endsWith("/work/boards") &&
-            (c.body as { template?: string })?.template === "capabilities",
-        ),
-      ).toBe(true),
+      expect(calls.find((c) => c.method === "POST" && c.url.endsWith("/work/boards"))?.body).toEqual({
+        type: "deliver",
+        workspaceId: "acme",
+      }),
     );
   });
 
   it("refetches when lastBoardUpdate names the open board", async () => {
     const { calls } = stubFetch();
     const { rerender } = render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
-    await screen.findByText("Backlog");
-    const before = calls.filter((c) => c.url.endsWith("/work/boards")).length;
+    await screen.findByText("Todo");
+    const fetched = () => calls.filter((c) => c.url.endsWith("/work/boards")).length;
+    const before = fetched();
     rerender(<BoardStage roster={ROSTER} lastBoardUpdate={{ boardId: "alpha", seq: 1 }} />);
-    await waitFor(() => expect(calls.filter((c) => c.url.endsWith("/work/boards")).length).toBeGreaterThan(before));
+    await waitFor(() => expect(fetched()).toBe(before + 1));
+    // ...and settles there. The effect watches the tab's board ids, not the
+    // derived board array: that array is rebuilt on every render, so an
+    // identity-keyed effect would refetch, re-render, and refetch forever.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(fetched()).toBe(before + 1);
   });
 });
 
@@ -229,37 +287,78 @@ describe("BoardStage drag wiring", () => {
   it("a cross-column drop PATCHes the moved card with columnId and order and applies optimistically", async () => {
     const { calls } = stubFetch();
     render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
-    await screen.findByText("Backlog");
+    await screen.findByText("Todo");
     // Drag simulation via dnd-kit is brittle in jsdom — call the exported
-    // handler contract instead: the component wires handleCardDrop(cardId,
-    // columnId, index) into DndContext. Assert through the module seam.
+    // handler contract instead: the component wires handleCardDrop(boardId,
+    // cardId, columnId, index) into DndContext. Assert through the module seam.
     const stage = screen.getByLabelText("Work boards");
     expect(stage).toBeTruthy();
     // The drop handler is exercised through moveCard tests above + the PATCH
     // assertion here via the exposed test hook:
     const { fireDrop } = await import("./BoardStage");
-    await fireDrop("c1", "ready", 0);
+    await fireDrop("alpha", "c1", "doing", 0);
     await waitFor(() =>
       expect(
         calls.some(
           (c) =>
             c.method === "PATCH" &&
             c.url.includes("/cards/c1") &&
-            (c.body as { columnId?: string })?.columnId === "ready",
+            (c.body as { columnId?: string })?.columnId === "doing",
         ),
       ).toBe(true),
     );
     const patchCall = calls.find((c) => c.method === "PATCH" && c.url.includes("/cards/c1"));
-    expect(patchCall?.body).toEqual({ columnId: "ready", order: 0 });
+    expect(patchCall?.body).toEqual({ columnId: "doing", order: 0 });
+  });
+
+  it("PATCHes the card's own board, not the active tab's first board, in the aggregate view", async () => {
+    const { calls } = stubFetch({
+      boards: {
+        boards: [
+          {
+            ...BOARD,
+            id: "acme-plan",
+            name: "Plan",
+            type: "plan",
+            workspaceId: "acme",
+            columns: [
+              { id: "spec", name: "Spec" },
+              { id: "ready", name: "Ready" },
+            ],
+            cards: [{ id: "a1", title: "Parent portal", columnId: "spec", order: 0 }],
+          },
+          {
+            ...BOARD,
+            id: "globex-plan",
+            name: "Plan",
+            type: "plan",
+            workspaceId: "globex",
+            columns: [
+              { id: "spec", name: "Spec" },
+              { id: "ready", name: "Ready" },
+            ],
+            cards: [{ id: "g1", title: "Billing", columnId: "spec", order: 0 }],
+          },
+        ],
+        errors: [],
+      },
+    });
+    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
+    await screen.findByText("Billing");
+    const { fireDrop } = await import("./BoardStage");
+    await fireDrop("globex-plan", "g1", "ready", 0);
+    await waitFor(() =>
+      expect(calls.some((c) => c.method === "PATCH" && c.url.includes("/work/boards/globex-plan/cards/g1"))).toBe(true),
+    );
   });
 
   it("a same-column reorder PATCHes {order} only, omitting columnId so the swarm's Jira push-on-move never fires", async () => {
     const { calls } = stubFetch();
     render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
-    await screen.findByText("Backlog");
+    await screen.findByText("Todo");
     const { fireDrop } = await import("./BoardStage");
-    // c1 is already in "backlog" — this is a same-column reorder.
-    await fireDrop("c1", "backlog", 0);
+    // c1 is already in "todo" — this is a same-column reorder.
+    await fireDrop("alpha", "c1", "todo", 0);
     await waitFor(() => expect(calls.some((c) => c.method === "PATCH" && c.url.includes("/cards/c1"))).toBe(true));
     const patchCall = calls.find((c) => c.method === "PATCH" && c.url.includes("/cards/c1"));
     expect(patchCall?.body).toEqual({ order: 0 });
@@ -271,13 +370,12 @@ describe("BoardStage drag wiring", () => {
     render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
     await screen.findByText("Write the spec");
     const { fireDrop } = await import("./BoardStage");
-    await fireDrop("c1", "ready", 0);
+    await fireDrop("alpha", "c1", "doing", 0);
     await waitFor(() => expect(calls.some((c) => c.method === "PATCH" && c.url.includes("/cards/c1"))).toBe(true));
     expect(await screen.findByText(/move failed/i)).toBeTruthy();
-    // Card c1 is back in Backlog, not left dangling in Ready.
-    const backlogHeading = screen.getByText("Backlog");
-    const backlogColumn = backlogHeading.closest(".board-column") as HTMLElement;
-    expect(within(backlogColumn).queryByText("Write the spec")).toBeTruthy();
+    // Card c1 is back in Todo, not left dangling in Doing.
+    const todoColumn = screen.getByText("Todo").closest(".board-column") as HTMLElement;
+    expect(within(todoColumn).queryByText("Write the spec")).toBeTruthy();
   });
 });
 
@@ -335,6 +433,60 @@ describe("resolveDrop + moveCard composed (direction-aware drop resolution)", ()
 
   it("self-drop resolves to null (no-op)", () => {
     expect(resolveDrop(seqBoard(), "a", "a")).toBeNull();
+  });
+});
+
+describe("resolveCrossBoardDrop (the aggregate view's drag fence)", () => {
+  const AGG: WorkBoardT[] = [
+    {
+      ...BOARD,
+      id: "acme-plan",
+      name: "Plan",
+      type: "plan",
+      workspaceId: "acme",
+      columns: [
+        { id: "spec", name: "Spec" },
+        { id: "ready", name: "Ready" },
+      ],
+      cards: [
+        { id: "a1", title: "Parent portal", columnId: "spec", order: 0 },
+        { id: "a2", title: "Rosters", columnId: "spec", order: 1 },
+      ],
+    },
+    {
+      ...BOARD,
+      id: "globex-plan",
+      name: "Plan",
+      type: "plan",
+      workspaceId: "globex",
+      columns: [
+        { id: "spec", name: "Spec" },
+        { id: "ready", name: "Ready" },
+      ],
+      cards: [{ id: "g1", title: "Billing", columnId: "spec", order: 0 }],
+    },
+  ];
+
+  it("refuses a drop onto a card belonging to another workspace's board", () => {
+    expect(resolveCrossBoardDrop(AGG, "a1", "g1")).toEqual({
+      error: "Cards can only move within their own workspace",
+    });
+  });
+
+  it("resolves a same-board drop against the card's own board, not the first board of the tab", () => {
+    expect(resolveCrossBoardDrop(AGG, "g1", "column:ready")).toEqual({
+      boardId: "globex-plan",
+      columnId: "ready",
+      order: 0,
+    });
+  });
+
+  it("resolves a card-onto-card drop within one board", () => {
+    expect(resolveCrossBoardDrop(AGG, "a1", "a2")).toEqual({ boardId: "acme-plan", columnId: "spec", order: 1 });
+  });
+
+  it("returns null when the dragged card belongs to no loaded board", () => {
+    expect(resolveCrossBoardDrop(AGG, "nope", "a1")).toBeNull();
   });
 });
 
@@ -411,7 +563,8 @@ describe("CardSheet", () => {
     await openSheet("Write the spec");
     await userEvent.click(screen.getByRole("button", { name: /send to agent/i }));
     await userEvent.selectOptions(screen.getByLabelText(/agent/i), "minerva");
-    await userEvent.selectOptions(screen.getByLabelText(/workspace/i), "acme");
+    // The stage's scope dropdown is also labelled "Workspace" — scope to the sheet.
+    await userEvent.selectOptions(within(screen.getByRole("dialog")).getByLabelText(/workspace/i), "acme");
     await userEvent.click(screen.getByRole("button", { name: /^delegate$/i }));
     await waitFor(() => {
       const call = calls.find((c) => c.url.endsWith("/work/delegate"));
@@ -490,14 +643,16 @@ describe("board-side capability amendments", () => {
       { ...BOARD },
       {
         ...BOARD,
-        id: "skoolscout-capabilities",
-        name: "skoolscout Capabilities",
+        id: "skoolscout-plan",
+        name: "Plan",
+        type: "plan",
         workspaceId: "skoolscout",
+        columns: [{ id: "spec", name: "Spec" }],
         cards: [
           {
             id: "cc1",
             title: "tour scheduling v1",
-            columnId: "backlog",
+            columnId: "spec",
             order: 0,
             capabilityRef: { capabilityId: "school-feature-set", sliceId: "sl1" },
             stories: [{ id: "s1", text: "create tour time slots", done: false }],
@@ -508,35 +663,9 @@ describe("board-side capability amendments", () => {
     errors: [],
   };
 
-  it("groups the switcher by workspace with personal boards first", async () => {
-    stubFetch({ boards: WS_BOARDS });
-    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
-    await screen.findByText("Backlog");
-    const select = screen.getByLabelText(/^board$/i);
-    const groups = within(select).getAllByRole("group");
-    expect(groups.map((g) => g.getAttribute("label"))).toEqual(["Personal", "skoolscout"]);
-  });
-
-  it("offers all five templates in the new-board composer", async () => {
-    stubFetch();
-    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
-    await screen.findByText("Backlog");
-    await userEvent.click(screen.getByRole("button", { name: /new board/i }));
-    const options = (screen.getByLabelText(/template/i) as HTMLSelectElement).options;
-    expect(Array.from(options).map((o) => o.value)).toEqual([
-      "personal",
-      "capabilities",
-      "delivery",
-      "maintenance",
-      "support",
-    ]);
-  });
-
   it("linked cards show a capability chip", async () => {
     stubFetch({ boards: WS_BOARDS });
     render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
-    await screen.findByText("Backlog");
-    await userEvent.selectOptions(screen.getByLabelText(/^board$/i), "skoolscout-capabilities");
     await screen.findByText("tour scheduling v1");
     expect(screen.getByTitle(/school-feature-set/i)).toBeTruthy();
   });
@@ -544,8 +673,6 @@ describe("board-side capability amendments", () => {
   it("linked cards are toggle-only: no add-story input, no remove buttons, toggle still PATCHes", async () => {
     const { calls } = stubFetch({ boards: WS_BOARDS });
     render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
-    await screen.findByText("Backlog");
-    await userEvent.selectOptions(screen.getByLabelText(/^board$/i), "skoolscout-capabilities");
     await userEvent.click(await screen.findByText("tour scheduling v1"));
     expect(screen.queryByPlaceholderText(/add a story/i)).toBeNull();
     expect(screen.queryByLabelText(/remove story/i)).toBeNull();

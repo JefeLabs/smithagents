@@ -1,19 +1,18 @@
-import {
-  DndContext,
-  type DragEndEvent,
-  PointerSensor,
-  pointerWithin,
-  useDroppable,
-  useSensor,
-  useSensors,
-} from "@dnd-kit/core";
-import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
+import { DndContext, type DragEndEvent, PointerSensor, pointerWithin, useSensor, useSensors } from "@dnd-kit/core";
 import { Download, Plus, SquareKanban } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import type { RosterAgent } from "../hooks/useBrokerChat";
-import type { BoardTypeT } from "../lib/board-aggregate";
-import { BoardCard } from "../molecules/BoardCard";
+import {
+  ALL_WORKSPACES,
+  addableTypes,
+  type BoardTypeT,
+  clusterByWorkspace,
+  collectCards,
+  tabsFor,
+} from "../lib/board-aggregate";
+import { workspaceColor } from "../lib/workspace-color";
+import { BoardColumn } from "../molecules/BoardColumn";
+import { BoardTabs } from "../molecules/BoardTabs";
 import { CardSheet } from "./CardSheet";
 
 const BASE = "127.0.0.1:7790";
@@ -47,8 +46,6 @@ export interface WorkBoardT {
   /** Present on a workspace's standing boards; absent on personal boards. */
   workspaceId?: string;
 }
-
-type BoardTemplate = "personal" | "capabilities" | "delivery" | "maintenance" | "support";
 
 interface BoardStageProps {
   roster: RosterAgent[];
@@ -117,62 +114,33 @@ export function resolveDrop(
   return { columnId, order: forward ? idx + 1 : idx };
 }
 
+/**
+ * Resolves a drop in the aggregate view, where one tab spans several boards.
+ * The dragged card's OWN board is the authority — the PATCH route addresses a
+ * single board, so a card dropped onto another board's card has no meaning and
+ * is refused rather than silently moved. Grouping doubles as the drag fence.
+ */
+export function resolveCrossBoardDrop(
+  boards: WorkBoardT[],
+  activeCardId: string,
+  overId: string,
+): { boardId: string; columnId: string; order: number } | { error: string } | null {
+  const source = boards.find((b) => b.cards.some((c) => c.id === activeCardId));
+  if (!source) return null;
+  const overCard = boards.flatMap((b) => b.cards.map((c) => ({ card: c, board: b }))).find((x) => x.card.id === overId);
+  if (overCard && overCard.board.id !== source.id) return { error: "Cards can only move within their own workspace" };
+  const target = resolveDrop(source, activeCardId, overId);
+  if (!target) return null;
+  return { boardId: source.id, ...target };
+}
+
 // Test seam: jsdom cannot synthesize dnd-kit pointer sequences; the drop
 // handler is registered here so tests can invoke the exact code path a real
 // drop takes.
-let dropHandler: ((cardId: string, columnId: string, order: number) => Promise<void>) | null = null;
-export async function fireDrop(cardId: string, columnId: string, order: number): Promise<void> {
+let dropHandler: ((boardId: string, cardId: string, columnId: string, order: number) => Promise<void>) | null = null;
+export async function fireDrop(boardId: string, cardId: string, columnId: string, order: number): Promise<void> {
   if (!dropHandler) throw new Error("BoardStage is not mounted");
-  await dropHandler(cardId, columnId, order);
-}
-
-/** One sortable card wrapper — BoardCard stays a pure display button; this owns the drag handle. */
-function SortableCard({ card, agent, onOpen }: { card: WorkCardT; agent?: RosterAgent; onOpen: () => void }) {
-  const sortable = useSortable({ id: card.id });
-  const style = { transform: CSS.Transform.toString(sortable.transform), transition: sortable.transition };
-  return (
-    <div ref={sortable.setNodeRef} style={style} {...sortable.attributes} {...sortable.listeners}>
-      <BoardCard
-        card={card}
-        agent={agent}
-        onOpen={onOpen}
-        className={sortable.isDragging ? "is-dragging" : undefined}
-      />
-    </div>
-  );
-}
-
-/** One column: a droppable zone (for empty-column drops) containing a sortable card list. */
-function BoardColumn({
-  col,
-  cards,
-  agentFor,
-  onOpenCard,
-}: {
-  col: WorkColumn;
-  cards: WorkCardT[];
-  agentFor: (id?: string) => RosterAgent | undefined;
-  onOpenCard: (cardId: string) => void;
-}) {
-  const droppable = useDroppable({ id: `column:${col.id}` });
-  const sorted = [...cards].sort((a, b) => a.order - b.order);
-  return (
-    <div ref={droppable.setNodeRef} className={`board-column${droppable.isOver ? " is-over" : ""}`}>
-      <h3 className="board-column__name">{col.name}</h3>
-      <SortableContext items={sorted.map((c) => c.id)} strategy={verticalListSortingStrategy}>
-        <div className="board-column__cards">
-          {sorted.map((card) => (
-            <SortableCard
-              key={card.id}
-              card={card}
-              agent={agentFor(card.delegation?.agentId)}
-              onOpen={() => onOpenCard(card.id)}
-            />
-          ))}
-        </div>
-      </SortableContext>
-    </div>
-  );
+  await dropHandler(boardId, cardId, columnId, order);
 }
 
 /**
@@ -182,15 +150,13 @@ function BoardColumn({
 export function BoardStage({ roster, lastBoardUpdate }: BoardStageProps) {
   const [boards, setBoards] = useState<WorkBoardT[]>([]);
   const [boardErrors, setBoardErrors] = useState<Array<{ file: string; error: string }>>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const [scope, setScope] = useState<string>(ALL_WORKSPACES);
+  const [activeKey, setActiveKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [addingCard, setAddingCard] = useState(false);
   const [cardTitle, setCardTitle] = useState("");
-  const [creatingBoard, setCreatingBoard] = useState(false);
-  const [boardName, setBoardName] = useState("");
-  const [template, setTemplate] = useState<BoardTemplate>("personal");
-  const [openCardId, setOpenCardId] = useState<string | null>(null);
-  const [workspaces, setWorkspaces] = useState<string[]>([]);
+  const [open, setOpen] = useState<{ boardId: string; cardId: string } | null>(null);
+  const [workspaces, setWorkspaces] = useState<Array<{ name: string; color?: string }>>([]);
 
   const refetch = useCallback(async () => {
     try {
@@ -203,7 +169,6 @@ export function BoardStage({ roster, lastBoardUpdate }: BoardStageProps) {
       setBoards(res.boards ?? []);
       setBoardErrors(res.errors ?? []);
       setError(null);
-      setActiveId((id) => id ?? res.boards?.[0]?.id ?? null);
     } catch {
       setError("Could not load boards — is the broker running?");
     }
@@ -216,23 +181,43 @@ export function BoardStage({ roster, lastBoardUpdate }: BoardStageProps) {
   useEffect(() => {
     fetch(`http://${BASE}/workspaces`)
       .then((r) => r.json())
-      .then((res: { workspaces?: Array<{ name: string }> }) => setWorkspaces((res.workspaces ?? []).map((w) => w.name)))
+      .then((res: { workspaces?: Array<{ name: string; color?: string }> }) =>
+        setWorkspaces((res.workspaces ?? []).map((w) => ({ name: w.name, color: w.color }))),
+      )
       .catch(() => {});
   }, []);
 
-  useEffect(() => {
-    if (lastBoardUpdate && lastBoardUpdate.boardId === activeId) void refetch();
-  }, [lastBoardUpdate, activeId, refetch]);
-
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+
+  const tabs = tabsFor(boards, scope);
+  const tab = tabs.find((t) => t.key === activeKey) ?? tabs[0] ?? null;
+  const tabBoards = tab ? boards.filter((b) => tab.boardIds.includes(b.id)) : [];
+  const columns = tabBoards[0]?.columns ?? [];
+  // Cards go to the board they came from, never the tab — in aggregate scope a
+  // tab spans several boards.
+  const boardOf = (id: string) => boards.find((b) => b.id === id) ?? null;
+  const colorFor = (workspaceId?: string) => {
+    if (!workspaceId) return undefined;
+    const ws = workspaces.find((w) => w.name === workspaceId);
+    return workspaceColor(ws ?? { name: workspaceId });
+  };
+  const agentFor = (id?: string) => (id ? roster.find((a) => a.id === id) : undefined);
+
+  // Keyed on the joined ids, not the tabBoards array: that array is rebuilt on
+  // every render, and refetch replaces `boards` with a fresh array, so an
+  // identity-keyed effect would refetch itself in a loop.
+  const tabBoardIds = tab ? tab.boardIds.join(",") : "";
+  useEffect(() => {
+    if (lastBoardUpdate && tabBoardIds.split(",").includes(lastBoardUpdate.boardId)) void refetch();
+  }, [lastBoardUpdate, tabBoardIds, refetch]);
 
   // Optimistic move + PATCH + rollback-on-fail. Same-column reorders PATCH
   // {order} only — omitting columnId keeps the swarm's Jira push-on-move
   // (which triggers on any body carrying columnId) from firing on a card
   // that never left its column.
   const applyMove = useCallback(
-    async (cardId: string, columnId: string, order: number) => {
-      const previous = boards.find((b) => b.id === activeId);
+    async (boardId: string, cardId: string, columnId: string, order: number) => {
+      const previous = boards.find((b) => b.id === boardId);
       if (!previous) return;
       const movingCard = previous.cards.find((c) => c.id === cardId);
       const sameColumn = movingCard?.columnId === columnId;
@@ -240,7 +225,7 @@ export function BoardStage({ roster, lastBoardUpdate }: BoardStageProps) {
       setBoards((all) => all.map((b) => (b.id === next.id ? next : b)));
       const body: { columnId?: string; order: number } = sameColumn ? { order } : { columnId, order };
       const res = await fetch(
-        `http://${BASE}/work/boards/${encodeURIComponent(previous.id)}/cards/${encodeURIComponent(cardId)}`,
+        `http://${BASE}/work/boards/${encodeURIComponent(boardId)}/cards/${encodeURIComponent(cardId)}`,
         { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) },
       ).catch(() => null);
       if (!res?.ok) {
@@ -254,7 +239,7 @@ export function BoardStage({ roster, lastBoardUpdate }: BoardStageProps) {
       }
       void refetch(); // pick up server-side effects (renumber, jira lastPushError)
     },
-    [boards, activeId, refetch],
+    [boards, refetch],
   );
 
   useEffect(() => {
@@ -264,22 +249,22 @@ export function BoardStage({ roster, lastBoardUpdate }: BoardStageProps) {
     };
   }, [applyMove]);
 
-  const board = boards.find((b) => b.id === activeId) ?? null;
-  const openCard = board?.cards.find((c) => c.id === openCardId) ?? null;
-  const agentFor = (id?: string) => (id ? roster.find((a) => a.id === id) : undefined);
-
   const handleDragEnd = (e: DragEndEvent) => {
-    if (!board || !e.over) return;
+    if (!e.over) return;
     const cardId = String(e.active.id);
-    const overId = String(e.over.id);
-    const target = resolveDrop(board, cardId, overId);
-    if (!target) return;
-    void applyMove(cardId, target.columnId, target.order);
+    const outcome = resolveCrossBoardDrop(boards, cardId, String(e.over.id));
+    if (!outcome) return;
+    if ("error" in outcome) {
+      setError(outcome.error);
+      return;
+    }
+    void applyMove(outcome.boardId, cardId, outcome.columnId, outcome.order);
   };
 
   const addCard = async () => {
-    if (!board || !cardTitle.trim()) return;
-    await fetch(`http://${BASE}/work/boards/${encodeURIComponent(board.id)}/cards`, {
+    const target = tabBoards[0];
+    if (!target || !cardTitle.trim()) return;
+    await fetch(`http://${BASE}/work/boards/${encodeURIComponent(target.id)}/cards`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ title: cardTitle.trim() }),
@@ -289,12 +274,11 @@ export function BoardStage({ roster, lastBoardUpdate }: BoardStageProps) {
     void refetch();
   };
 
-  const createBoard = async () => {
-    if (!boardName.trim()) return;
+  const addBoard = async (type: BoardTypeT) => {
     const res = (await fetch(`http://${BASE}/work/boards`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: boardName.trim(), template }),
+      body: JSON.stringify({ type, workspaceId: scope }),
     })
       .then((r) => r.json())
       .catch(() => ({ error: "unreachable" }))) as WorkBoardT & { error?: string };
@@ -302,15 +286,14 @@ export function BoardStage({ roster, lastBoardUpdate }: BoardStageProps) {
       setError(res.error);
       return;
     }
-    setCreatingBoard(false);
-    setBoardName("");
-    setActiveId(res.id);
+    setActiveKey(type);
     void refetch();
   };
 
   const importFromJira = async () => {
-    if (!board) return;
-    const res = (await fetch(`http://${BASE}/work/boards/${encodeURIComponent(board.id)}/jira/import`, {
+    const target = tabBoards[0];
+    if (!target) return;
+    const res = (await fetch(`http://${BASE}/work/boards/${encodeURIComponent(target.id)}/jira/import`, {
       method: "POST",
     })
       .then((r) => r.json())
@@ -324,65 +307,37 @@ export function BoardStage({ roster, lastBoardUpdate }: BoardStageProps) {
 
   return (
     <main className="board-stage" aria-label="Work boards">
+      <BoardTabs
+        scope={scope}
+        workspaces={workspaces.map((w) => w.name)}
+        tabs={tabs}
+        activeKey={tab?.key ?? null}
+        addable={scope === ALL_WORKSPACES ? [] : addableTypes(boards, scope)}
+        onScope={(s) => {
+          setScope(s);
+          setActiveKey(null);
+        }}
+        onSelect={setActiveKey}
+        onAdd={(t) => void addBoard(t)}
+      />
       <header className="board-stage__bar">
         <SquareKanban size={14} strokeWidth={2} />
-        <select aria-label="Board" value={activeId ?? ""} onChange={(e) => setActiveId(e.target.value)}>
-          <optgroup label="Personal">
-            {boards
-              .filter((b) => !b.workspaceId)
-              .map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name}
-                </option>
-              ))}
-          </optgroup>
-          {[...new Set(boards.filter((b) => b.workspaceId).map((b) => b.workspaceId as string))].map((ws) => (
-            <optgroup key={ws} label={ws}>
-              {boards
-                .filter((b) => b.workspaceId === ws)
-                .map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}
-                  </option>
-                ))}
-            </optgroup>
-          ))}
-        </select>
-        <button type="button" className="settings-btn" onClick={() => setCreatingBoard((v) => !v)}>
-          new board
-        </button>
-        <button type="button" className="settings-btn" onClick={() => setAddingCard((v) => !v)} disabled={!board}>
+        <button
+          type="button"
+          className="settings-btn"
+          onClick={() => setAddingCard((v) => !v)}
+          disabled={tabBoards.length !== 1}
+          title={tabBoards.length > 1 ? "Pick a single workspace to add a card" : undefined}
+        >
           <Plus size={12} strokeWidth={2} /> add card
         </button>
-        {board?.jira && (
+        {tabBoards.length === 1 && tabBoards[0].jira && (
           <button type="button" className="settings-btn" onClick={() => void importFromJira()}>
             <Download size={12} strokeWidth={2} /> import from jira
           </button>
         )}
       </header>
-      {creatingBoard && (
-        <div className="board-stage__composer">
-          <input placeholder="Board name" value={boardName} onChange={(e) => setBoardName(e.target.value)} />
-          <label>
-            Template
-            <select
-              aria-label="Template"
-              value={template}
-              onChange={(e) => setTemplate(e.target.value as BoardTemplate)}
-            >
-              <option value="personal">Personal</option>
-              <option value="capabilities">Capabilities</option>
-              <option value="delivery">Delivery</option>
-              <option value="maintenance">Maintenance</option>
-              <option value="support">Support</option>
-            </select>
-          </label>
-          <button type="button" className="settings-btn settings-btn--primary" onClick={() => void createBoard()}>
-            create board
-          </button>
-        </div>
-      )}
-      {addingCard && board && (
+      {addingCard && tabBoards.length === 1 && (
         <div className="board-stage__composer">
           <input
             placeholder="Card title"
@@ -398,29 +353,30 @@ export function BoardStage({ roster, lastBoardUpdate }: BoardStageProps) {
       {boardErrors.length > 0 && (
         <p className="wizard__hint">Some board files failed to load: {boardErrors.map((e) => e.file).join(", ")}</p>
       )}
-      {board && (
+      {tab && (
         <DndContext sensors={sensors} collisionDetection={pointerWithin} onDragEnd={handleDragEnd}>
           <div className="board-stage__columns">
-            {board.columns.map((col) => (
+            {columns.map((col) => (
               <BoardColumn
                 key={col.id}
                 col={col}
-                cards={board.cards.filter((c) => c.columnId === col.id)}
+                clusters={clusterByWorkspace(collectCards(tabBoards, col.id), tab.clustered)}
+                colorFor={colorFor}
                 agentFor={agentFor}
-                onOpenCard={setOpenCardId}
+                onOpenCard={(boardId, cardId) => setOpen({ boardId, cardId })}
               />
             ))}
           </div>
         </DndContext>
       )}
-      {board && openCard && (
+      {open && boardOf(open.boardId) && (
         <CardSheet
-          key={openCard.id}
-          board={board}
-          card={openCard}
+          key={open.cardId}
+          board={boardOf(open.boardId) as WorkBoardT}
+          card={boardOf(open.boardId)?.cards.find((c) => c.id === open.cardId) as WorkCardT}
           roster={roster}
-          workspaces={workspaces}
-          onClose={() => setOpenCardId(null)}
+          workspaces={workspaces.map((w) => w.name)}
+          onClose={() => setOpen(null)}
           onChanged={() => void refetch()}
         />
       )}

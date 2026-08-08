@@ -2369,6 +2369,20 @@ main.chat-active .composer-dock {
   overflow-y: auto;
   min-height: 24px;
 }
+.board-column__cluster {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.board-column__cluster + .board-column__cluster {
+  margin-top: 8px;
+}
+.board-column__cluster-name {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.8;
+}
 .board-card {
   display: flex;
   flex-direction: column;
