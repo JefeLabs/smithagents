@@ -24,7 +24,7 @@ describe("BoardCard", () => {
 
   it("renders no flag chip when the card is unflagged", () => {
     render(<BoardCard card={card()} onOpen={() => {}} />);
-    expect(screen.queryByRole("img", { name: /blocked|at risk|waiting/i })).toBeNull();
+    expect(screen.queryByRole("group", { name: /blocked|at risk|waiting/i })).toBeNull();
     expect(screen.getByRole("button").className).not.toContain("has-flag");
   });
 

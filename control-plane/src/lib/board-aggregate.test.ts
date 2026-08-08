@@ -3,6 +3,7 @@ import type { WorkBoardT } from "../organisms/BoardStage";
 import {
   ALL_WORKSPACES,
   addableTypes,
+  BOARD_TYPE_ORDER_UI,
   clusterByWorkspace,
   collectCards,
   tabsFor,
@@ -45,6 +46,12 @@ describe("WORKSPACE_BOARD_TYPES_UI", () => {
     expect(WORKSPACE_BOARD_TYPES_UI).toEqual(["ideation", "plan", "deliver", "release", "reactive", "maintenance"]);
     expect(WORKSPACE_BOARD_TYPES_UI).toHaveLength(6);
     expect(WORKSPACE_BOARD_TYPES_UI).not.toContain("personal");
+  });
+
+  it("is the same ordering BOARD_TYPE_ORDER_UI states, with personal last", () => {
+    // Two hand-written lists of the same thing. Nothing reads both today, so
+    // only this assertion stops a seventh type landing in one and not the other.
+    expect(BOARD_TYPE_ORDER_UI).toEqual([...WORKSPACE_BOARD_TYPES_UI, "personal"]);
   });
 });
 
