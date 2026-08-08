@@ -10,15 +10,21 @@
 
 ## Global Constraints
 
-- Package manager is **pnpm**, never npm. Swarm tests: `pnpm --dir swarm test`. Control-plane tests: `pnpm --dir control-plane test`.
-- Swarm has **no biome**. Control plane does — run `pnpm --dir control-plane exec biome check --write src` before committing control-plane changes.
+- **Never run `pnpm` or `npm install` in this repo.** Neither package has a lockfile and both were installed with npm; `pnpm --dir <pkg> <script>` runs a pre-flight install that relocates those modules and then aborts with `[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: esbuild@0.28.1`, exit 1, before your script ever runs. Dependencies are already present and working — invoke the local binaries directly.
+- The four commands, all runnable from the repo root and safe to chain with `&&`:
+  - Swarm tests — `(cd swarm && node --import tsx --test 'src/*.test.ts')`
+  - Swarm typecheck — `(cd swarm && ./node_modules/.bin/tsc --noEmit)`
+  - Control-plane tests — `(cd control-plane && ./node_modules/.bin/vitest run)`
+  - Control-plane typecheck — `(cd control-plane && ./node_modules/.bin/tsc --noEmit)`
+- Green baseline before this branch's UI work: control-plane 234 tests across 33 files, biome clean bar 5 pre-existing warnings.
+- Swarm has **no biome**. Control plane does — run `(cd control-plane && ./node_modules/.bin/biome check --write src)` before committing control-plane changes.
 - Swarm imports use the `.js` extension (`from './work-items.js'`) even for `.ts` sources.
 - Swarm test files are `src/*.test.ts` using `node:test` + `node:assert/strict`. No vitest in the swarm.
 - Board files live at `.smith/work/<id>.json`, resolved from the swarm's cwd via `server.workDir()`.
 - `BOARD_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/` — board ids are filenames; never relax this.
 - Work on branch `workspace-board-tabs`, which already carries the spec at `docs/superpowers/specs/2026-08-07-workspace-board-tabs-design.md`.
 - Never run an unscoped `pkill -f`. The live broker runs in tmux session `smith-broker` on port 7790 from the main checkout.
-- Typecheck both packages before every commit: `pnpm --dir swarm typecheck` and `pnpm --dir control-plane typecheck`.
+- Typecheck both packages before every commit: `(cd swarm && ./node_modules/.bin/tsc --noEmit)` and `(cd control-plane && ./node_modules/.bin/tsc --noEmit)`.
 
 ## File Structure
 
@@ -313,7 +319,7 @@ Also update `swarm/src/capabilities.test.ts`: any `workspaceBoardId(...)` call b
 
 - [ ] **Step 5: Run tests and typecheck**
 
-Run: `pnpm --dir swarm test && pnpm --dir swarm typecheck`
+Run: `(cd swarm && node --import tsx --test 'src/*.test.ts') && (cd swarm && ./node_modules/.bin/tsc --noEmit)`
 Expected: PASS. If `server.test.ts` asserts on the old create-route body, update those assertions to the new `{type, workspaceId}` shape.
 
 - [ ] **Step 6: Commit**
@@ -511,7 +517,7 @@ export function routeCard(
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd swarm && node --import tsx --test src/work-items.test.ts && pnpm --dir swarm typecheck`
+Run: `cd swarm && node --import tsx --test src/work-items.test.ts && (cd swarm && ./node_modules/.bin/tsc --noEmit)`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -639,7 +645,7 @@ And insert this handling just before the existing `if (patch.columnId !== undefi
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd swarm && node --import tsx --test src/work-items.test.ts && pnpm --dir swarm typecheck`
+Run: `cd swarm && node --import tsx --test src/work-items.test.ts && (cd swarm && ./node_modules/.bin/tsc --noEmit)`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -797,7 +803,7 @@ Finally, the slice-send remap at line 2341 — already changed in Task 1 to `boa
 
 - [ ] **Step 5: Run tests and typecheck**
 
-Run: `pnpm --dir swarm test && pnpm --dir swarm typecheck`
+Run: `(cd swarm && node --import tsx --test 'src/*.test.ts') && (cd swarm && ./node_modules/.bin/tsc --noEmit)`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
@@ -852,7 +858,7 @@ describe("workspace-color", () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pnpm --dir control-plane exec vitest run src/lib/workspace-color.test.ts`
+Run: `(cd control-plane && ./node_modules/.bin/vitest run src/lib/workspace-color.test.ts)`
 Expected: FAIL — cannot resolve `./workspace-color`.
 
 - [ ] **Step 3: Create `control-plane/src/lib/workspace-color.ts`**
@@ -887,7 +893,7 @@ export function workspaceColor(ws: { name: string; color?: string }): string {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `pnpm --dir control-plane exec vitest run src/lib/workspace-color.test.ts`
+Run: `(cd control-plane && ./node_modules/.bin/vitest run src/lib/workspace-color.test.ts)`
 Expected: PASS.
 
 - [ ] **Step 5: Add the field to the swarm**
@@ -911,7 +917,7 @@ Also add `color?: string;` to the `WorkspaceRecord` type in `control-plane/src/h
 
 - [ ] **Step 6: Run everything**
 
-Run: `pnpm --dir swarm test && pnpm --dir swarm typecheck && pnpm --dir control-plane test`
+Run: `(cd swarm && node --import tsx --test 'src/*.test.ts') && (cd swarm && ./node_modules/.bin/tsc --noEmit) && (cd control-plane && ./node_modules/.bin/vitest run)`
 Expected: PASS.
 
 - [ ] **Step 7: Commit**
@@ -1079,7 +1085,7 @@ describe("collectCards + clusterByWorkspace", () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pnpm --dir control-plane exec vitest run src/lib/board-aggregate.test.ts`
+Run: `(cd control-plane && ./node_modules/.bin/vitest run src/lib/board-aggregate.test.ts)`
 Expected: FAIL — cannot resolve `./board-aggregate`.
 
 - [ ] **Step 3: Create `control-plane/src/lib/board-aggregate.ts`**
@@ -1197,13 +1203,13 @@ export function clusterByWorkspace(cards: AggCard[], clustered: boolean): Cluste
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `pnpm --dir control-plane exec vitest run src/lib/board-aggregate.test.ts`
+Run: `(cd control-plane && ./node_modules/.bin/vitest run src/lib/board-aggregate.test.ts)`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-pnpm --dir control-plane exec biome check --write src/lib
+(cd control-plane && ./node_modules/.bin/biome check --write src/lib)
 git add control-plane/src/lib/board-aggregate.ts control-plane/src/lib/board-aggregate.test.ts
 git commit -m "feat(ui): pure board aggregation — tabs, addable types, workspace clusters"
 ```
@@ -1282,7 +1288,7 @@ describe("BoardCard", () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pnpm --dir control-plane exec vitest run src/molecules/BoardCard.test.tsx`
+Run: `(cd control-plane && ./node_modules/.bin/vitest run src/molecules/BoardCard.test.tsx)`
 Expected: FAIL — `flagAge` is not exported.
 
 - [ ] **Step 3: Extend the shared types in `BoardStage.tsx`**
@@ -1380,13 +1386,13 @@ Remove the `background: rgba(255, 255, 255, 0.04);` line from the original `.boa
 
 - [ ] **Step 6: Run tests to verify they pass**
 
-Run: `pnpm --dir control-plane exec vitest run src/molecules/BoardCard.test.tsx && pnpm --dir control-plane typecheck`
+Run: `(cd control-plane && ./node_modules/.bin/vitest run src/molecules/BoardCard.test.tsx) && (cd control-plane && ./node_modules/.bin/tsc --noEmit)`
 Expected: PASS.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-pnpm --dir control-plane exec biome check --write src
+(cd control-plane && ./node_modules/.bin/biome check --write src)
 git add control-plane/src/molecules/BoardCard.tsx control-plane/src/molecules/BoardCard.test.tsx control-plane/src/organisms/BoardStage.tsx control-plane/src/styles/components.css
 git commit -m "feat(ui): card flag chip + edge, workspace tint on the fill"
 ```
@@ -1463,7 +1469,7 @@ describe("BoardTabs", () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pnpm --dir control-plane exec vitest run src/molecules/BoardTabs.test.tsx`
+Run: `(cd control-plane && ./node_modules/.bin/vitest run src/molecules/BoardTabs.test.tsx)`
 Expected: FAIL — cannot resolve `./BoardTabs`.
 
 - [ ] **Step 3: Create `control-plane/src/molecules/BoardTabs.tsx`**
@@ -1620,13 +1626,13 @@ Append to `control-plane/src/styles/components.css`:
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `pnpm --dir control-plane exec vitest run src/molecules/BoardTabs.test.tsx && pnpm --dir control-plane typecheck`
+Run: `(cd control-plane && ./node_modules/.bin/vitest run src/molecules/BoardTabs.test.tsx) && (cd control-plane && ./node_modules/.bin/tsc --noEmit)`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-pnpm --dir control-plane exec biome check --write src
+(cd control-plane && ./node_modules/.bin/biome check --write src)
 git add control-plane/src/molecules/BoardTabs.tsx control-plane/src/molecules/BoardTabs.test.tsx control-plane/src/styles/components.css
 git commit -m "feat(ui): workspace dropdown + board tab row with add-board menu"
 ```
@@ -1715,7 +1721,7 @@ Every existing `fireDrop(cardId, columnId, order)` call in the drag-wiring descr
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `pnpm --dir control-plane exec vitest run src/organisms/BoardStage.test.tsx`
+Run: `(cd control-plane && ./node_modules/.bin/vitest run src/organisms/BoardStage.test.tsx)`
 Expected: FAIL — no element with label "Workspace"; `fireDrop` arity mismatch.
 
 - [ ] **Step 3: Create `control-plane/src/molecules/BoardColumn.tsx`**
@@ -2027,13 +2033,13 @@ Add the imports: `BoardTabs`, `BoardColumn`, and `ALL_WORKSPACES, addableTypes, 
 
 - [ ] **Step 6: Run tests to verify they pass**
 
-Run: `pnpm --dir control-plane test && pnpm --dir control-plane typecheck`
+Run: `(cd control-plane && ./node_modules/.bin/vitest run) && (cd control-plane && ./node_modules/.bin/tsc --noEmit)`
 Expected: PASS.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-pnpm --dir control-plane exec biome check --write src
+(cd control-plane && ./node_modules/.bin/biome check --write src)
 git add control-plane/src/molecules/BoardColumn.tsx control-plane/src/organisms/BoardStage.tsx control-plane/src/organisms/BoardStage.test.tsx control-plane/src/styles/components.css
 git commit -m "feat(ui): board tabs, workspace scope, and clustered aggregate columns"
 ```
@@ -2123,7 +2129,7 @@ describe("CardSheet flags", () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pnpm --dir control-plane exec vitest run src/organisms/CardSheet.test.tsx`
+Run: `(cd control-plane && ./node_modules/.bin/vitest run src/organisms/CardSheet.test.tsx)`
 Expected: FAIL — no "To maintenance" button, no "Flag" control.
 
 - [ ] **Step 3: Mirror the route table in `lib/board-aggregate.ts`**
@@ -2237,13 +2243,13 @@ Render before the footer:
 
 - [ ] **Step 6: Run tests to verify they pass**
 
-Run: `pnpm --dir control-plane test && pnpm --dir control-plane typecheck`
+Run: `(cd control-plane && ./node_modules/.bin/vitest run) && (cd control-plane && ./node_modules/.bin/tsc --noEmit)`
 Expected: PASS.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-pnpm --dir control-plane exec biome check --write src
+(cd control-plane && ./node_modules/.bin/biome check --write src)
 git add control-plane/src/organisms/CardSheet.tsx control-plane/src/organisms/CardSheet.test.tsx control-plane/src/lib/board-aggregate.ts control-plane/src/styles/components.css
 git commit -m "feat(ui): card sheet flag control and cross-board route pills"
 ```
@@ -2293,7 +2299,7 @@ Add `import { WORKSPACE_PALETTE } from "../lib/workspace-color";` to that test f
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pnpm --dir control-plane exec vitest run src/organisms/NewWorkspaceModal.test.tsx`
+Run: `(cd control-plane && ./node_modules/.bin/vitest run src/organisms/NewWorkspaceModal.test.tsx)`
 Expected: FAIL — no radio matching "colour 3".
 
 - [ ] **Step 3: Add the swatch row to both modals**
@@ -2350,13 +2356,13 @@ Apply the same block in `WorkspaceManagerModal.tsx`, seeding state from the work
 
 - [ ] **Step 5: Run everything**
 
-Run: `pnpm --dir control-plane test && pnpm --dir control-plane typecheck && pnpm --dir swarm test && pnpm --dir swarm typecheck`
+Run: `(cd control-plane && ./node_modules/.bin/vitest run) && (cd control-plane && ./node_modules/.bin/tsc --noEmit) && (cd swarm && node --import tsx --test 'src/*.test.ts') && (cd swarm && ./node_modules/.bin/tsc --noEmit)`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-pnpm --dir control-plane exec biome check --write src
+(cd control-plane && ./node_modules/.bin/biome check --write src)
 git add control-plane/src/organisms/NewWorkspaceModal.tsx control-plane/src/organisms/WorkspaceManagerModal.tsx control-plane/src/organisms/NewWorkspaceModal.test.tsx control-plane/src/styles/components.css
 git commit -m "feat(ui): workspace colour swatch in the create and manage modals"
 ```
@@ -2367,8 +2373,8 @@ git commit -m "feat(ui): workspace colour swatch in the create and manage modals
 
 Not a task — run this before opening the branch for review.
 
-- [ ] `pnpm --dir swarm test && pnpm --dir swarm typecheck`
-- [ ] `pnpm --dir control-plane test && pnpm --dir control-plane typecheck && pnpm --dir control-plane exec biome check src`
+- [ ] `(cd swarm && node --import tsx --test 'src/*.test.ts') && (cd swarm && ./node_modules/.bin/tsc --noEmit)`
+- [ ] `(cd control-plane && ./node_modules/.bin/vitest run) && (cd control-plane && ./node_modules/.bin/tsc --noEmit) && (cd control-plane && ./node_modules/.bin/biome check src)`
 - [ ] Restart swarm + broker + UI (broker runs in tmux `smith-broker` on 7790 from the main checkout — never an unscoped `pkill -f`).
 - [ ] **UI click-through smoke**, which the last two board cycles both shipped without and both regretted:
   - Dropdown switches between All workspaces and each workspace; tabs change accordingly.
