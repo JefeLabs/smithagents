@@ -1563,7 +1563,7 @@ git commit -m "refactor: board and map stages onto query, drop seq-counter refet
 Seven components, 66 controlled inputs. RHF's `useForm` is per-mount, so wizard state resets on close for free — no store needed.
 
 **Files:**
-- Modify: `src/organisms/AddAgentModal.tsx` (31 `useState` → RHF + ~4), `WorkspaceManagerModal.tsx` (11 → ~2), `NewWorkspaceModal.tsx` (8 → ~1), `CardSheet.tsx` (11 → ~2), `MapStage.tsx` (13 → ~3), `settings/ConnectorFormModal.tsx`, `NewSessionScreen.tsx`
+- Modify: `src/organisms/AddAgentModal.tsx` (31 `useState` → RHF + ~4), `WorkspaceManagerModal.tsx` (11 → ~9; only 2 of the 11 are form state), `NewWorkspaceModal.tsx` (8 → ~1), `CardSheet.tsx` (11 → ~2), `MapStage.tsx` (13 → ~3), `settings/ConnectorFormModal.tsx`, `NewSessionScreen.tsx`
 - Modify: each component's test
 
 **Interfaces:**
@@ -1612,7 +1612,7 @@ Preserve the existing validation exactly. **The two workspace modals do NOT shar
 - `WorkspaceManagerModal.tsx:212` — `name.trim()` plus every repo's `name` and `path`. **2 fields per repo.**
 - `NewWorkspaceModal.tsx:76-77` — `name.trim()` plus every repo's `name`, `path`, `owner`, `repo`, **and a non-empty `connectorId`**. **5 fields per repo**, one of them a select.
 
-Express each with `register(..., { required: true })` on exactly the fields that component checks today. Do not add validation the app did not have, and do not level the two modals to a common rule.
+**Do not use `required: true`** — RHF's `required` passes on whitespace-only input, while the app's `!value.trim()` gates do not. Use `validate: (v) => v.trim().length > 0` on exactly the fields that component checks today. Do not add validation the app did not have, and do not level the two modals to a common rule.
 
 - [ ] **Step 4: Migrate `WorkspaceManagerModal` (16 inputs)**
 
@@ -1626,7 +1626,15 @@ Same `useFieldArray` shape for repos. Keep `canSave` semantics by using `formSta
 
 The biggest one, and the reason RHF earns its place. Fields that become RHF: `name`, `role`, `gender`, `backstory`, `hint`, `model`, `language`, `voiceId`, `voiceSearch`, and the `reactions` / `answers` records. Fields that stay `useState`: `step`, `mode`, `catalog`, `voices`, `generating`, `busy`, `error` — these are wizard machinery and fetched data, not user input.
 
-One `useForm` at the modal root spans all steps; step navigation does not remount it, so values persist across steps and reset on close.
+One `useForm` at the modal root spans all steps; step navigation does not remount it, so values persist across steps.
+
+**It does NOT reset on close, and the premise that it does is false for five of the seven components.** `AddAgentModal`, `WorkspaceManagerModal`, and `NewWorkspaceModal` are rendered unconditionally by `HomePage` (`:299`, `:309`, `:319`) with an `open` prop, and `ConnectorFormModal` likewise by `IntegrationsGroup:126`. All four return `null` from render but **never unmount** — `if (!open) return null` sits *after* every hook. `useForm` is per-mount, so for these it never re-initializes. `AddAgentModal.tsx:157` documents this ("The modal stays mounted across close/reopen") and `AddAgentModal.test.tsx:184` asserts it.
+
+**Therefore: preserve every open-keyed reset effect**, re-expressed as `reset(...)`. Deleting them because "RHF handles it" reintroduces exactly the abandoned-form bleed they exist to prevent.
+
+Only `CardSheet` (`BoardStage:379`, conditional plus `key={openCard.id}`) and `NewSessionScreen` (`HomePage:232`, conditional) genuinely unmount and get reset for free.
+
+The *conclusion* still holds — no scoped Zustand store is needed — but because the existing reset effects do the job, not because `useForm` remounts.
 
 **The wizard's gate is per-step, not whole-form** — `AddAgentModal.tsx:474`:
 
