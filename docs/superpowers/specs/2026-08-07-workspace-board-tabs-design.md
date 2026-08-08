@@ -75,16 +75,24 @@ without `columns`.
 `BoardTemplate` is renamed `BoardType` throughout. It stopped being a
 seed-only concept the moment a board remembers it.
 
-`WorkCard` gains a routing trace, appended on every cross-board move:
+`WorkCard` gains two fields:
 
 ```ts
-/** Appended each time this card is routed to another board. Never rewritten. */
-routedFrom?: Array<{ boardId: string; boardType: BoardType; columnId: string; at: string }>;
+export interface WorkCard {
+  // … unchanged: id, title, notes, columnId, order, createdAt, updatedAt,
+  //    jira, delegation, stories, capabilityRef
+
+  /** Appended each time this card is routed to another board. Never rewritten. */
+  routedFrom?: Array<{ boardId: string; boardType: BoardType; columnId: string; at: string }>;
+
+  /** Orthogonal to columnId. A flagged card keeps its position. */
+  flag?: { kind: 'blocked' | 'at-risk' | 'waiting'; reason?: string; since: string };
+}
 ```
 
-This is what keeps a card's history legible after it has crossed two or three
+`routedFrom` keeps a card's history legible after it has crossed two or three
 boards — the card id is stable across a move, so the trace plus the id is a
-complete provenance chain.
+complete provenance chain. `flag` is covered in Card flags below.
 
 ## Template registry
 
@@ -147,6 +155,44 @@ Two flows in the source diagrams are deliberately not routes:
 - Maintenance's "Scanners, rollbacks, triage" intake is descriptive. The
   Release → Maintenance route is the only code path into that board.
 
+## Card flags
+
+Not every stall warrants leaving the board. A card can be flagged in place for
+delays that resolve on their own timescale.
+
+| Kind | Meaning | Colour |
+| --- | --- | --- |
+| `blocked` | Stopped. Cannot proceed until something external changes. | red |
+| `at-risk` | Still moving, but likely to slip. | amber |
+| `waiting` | Stalled on an external party — a user, a vendor, an approval. | slate |
+
+A flag is deliberately **not** a column. Blocked is orthogonal to progress: a
+blocked card is still *in* In progress, it just isn't moving. Modelling it as a
+column would destroy the one fact most needed when it clears — where the card
+was — and would force every board to answer "which column does it return to?".
+
+The retired `support` template is the evidence. Its columns were Inbox →
+Triaged → **Waiting on User** → In Progress → Resolved, where "Waiting on User"
+was a state wearing a column's clothing: a card sitting there told you nothing
+about how far the work had actually got. As a flag, a waiting card reports both
+facts at once.
+
+`since` is set when the flag is applied and dropped when it is cleared.
+Re-flagging a card starts a fresh clock rather than accumulating — the question
+a board should answer is "how long has this been stuck *now*", not "how long
+cumulatively". The age is what makes the flag an instrument rather than a
+decoration: a column can surface its own staleness without anyone maintaining a
+report.
+
+Rendering: the flag owns the card's **left edge and a chip carrying its age**
+(`⛔ 3d`), with the reason as the chip's title text. Workspace colour owns the
+card **fill**. Two channels, two meanings — in workspace scope the fill is
+uniform and the edge reads against it; in the aggregate view the fill is tinted
+and the edge is still the only coloured border.
+
+A flag has no effect on routing, drag, ordering, or Jira. It is set and cleared
+from `CardSheet`.
+
 ## Board identity and naming
 
 - Workspace board id: `<ws-slug>-<type>`, extending the existing
@@ -195,6 +241,14 @@ recoverable by deleting one; a loss is not.
 
 The card keeps its UUID and carries `stories`, `jira`, `delegation`, and
 `capabilityRef` intact. That is what makes it the same object on the far side.
+
+### `PATCH /work/boards/:id/cards/:cardId`
+
+Accepts `flag` alongside the existing patchable fields. `flag: null` clears it.
+The route stamps `since` server-side on transition into a flagged state and
+leaves it untouched when only `kind` or `reason` changes — so correcting a
+mislabelled `at-risk` to `blocked` does not reset the clock, while clearing and
+re-flagging does.
 
 ### Slice send — unchanged wire, remapped internally
 
@@ -330,6 +384,10 @@ Helpers-only unit tests, matching the existing convention in
 - `assertBoard` rejects a file with a missing or invalid `type`.
 - The routed card keeps its id and carries `stories`/`jira`/`capabilityRef`,
   and `routedFrom` gains exactly one entry per move.
+- Flags: `since` is stamped on transition into a flagged state, preserved when
+  only `kind`/`reason` changes, and dropped on clear — so clear-then-reflag
+  produces a fresh timestamp while an in-place kind correction does not.
+- Flagging leaves `columnId` and `order` untouched.
 - The pure group-by-workspace function behind the aggregate view.
 
 Destination-first write ordering is asserted by unit-testing the move helper's
@@ -339,7 +397,12 @@ returned write plan rather than by simulating a crash.
 
 - Plan → Deliver fan-out (parent retires at Decomposed, spawning linked job
   cards). The next natural increment.
-- WIP limits on Deliver.
+- WIP limits on Deliver. When they land, a `blocked` card should almost
+  certainly not count against the limit — that is the whole point of
+  distinguishing "stopped" from "in flight" — but the rule belongs with the
+  feature that enforces it.
+- Filtering or counting by flag kind (e.g. "show me everything blocked across
+  all workspaces"). The data supports it; no UI is specified here.
 - Release intake — how a release card gets cut in the first place is not drawn
   in the source diagrams. Release cards are hand-authored for now.
 - Cross-workspace card moves.
