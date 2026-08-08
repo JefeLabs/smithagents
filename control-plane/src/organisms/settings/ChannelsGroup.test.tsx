@@ -68,7 +68,9 @@ describe("ChannelsGroup", () => {
     renderWithProviders(<ChannelsGroup />);
     await userEvent.click(await screen.findByText("acme"));
     await userEvent.click(await screen.findByRole("button", { name: /test connection/i }));
-    await waitFor(() => expect(calls.some((c) => c.url.endsWith("/channels/verify-discord"))).toBe(true));
+    await waitFor(() =>
+      expect(calls.some((c) => c.url.endsWith("/workspaces/acme/channels/verify-discord"))).toBe(true),
+    );
     expect(await screen.findByText(/authenticated as smithagents-crew/i)).toBeDefined();
   });
 });

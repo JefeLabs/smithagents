@@ -12,13 +12,15 @@ export function pillForApiKey(l: ApiKeyListing): { label: string; cls: string } 
 
 /** Card grid, one per registry provider — masked key state, save/verify/remove. */
 export function ApiKeysGroup() {
-  const { data: keys = [] } = useApiKeys();
+  const { data: keys = [], error: loadError } = useApiKeys();
   const save = useSaveApiKey();
   const verify = useVerifyApiKey();
   const remove = useDeleteApiKey();
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const displayError = error ?? (loadError ? `Could not load API keys — ${String(loadError)}` : null);
 
   /** Returns whether the op succeeded, so callers can decide what to do only on success (e.g. clear a draft). */
   const apply = async (id: string, op: () => Promise<ApiKeyListing[] | { error: string }>): Promise<boolean> => {
@@ -40,7 +42,7 @@ export function ApiKeysGroup() {
         Provider keys for what subscriptions can’t cover — verified live, stored on this machine only, never shown back.
         Subscription CLIs stay the default for agent work; a Google key here accelerates avatar generation.
       </p>
-      {error && <p className="wizard__error">{error}</p>}
+      {displayError && <p className="wizard__error">{displayError}</p>}
       <div className="connector-grid">
         {keys.map((l) => {
           const pill = pillForApiKey(l);

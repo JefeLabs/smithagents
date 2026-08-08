@@ -114,4 +114,15 @@ describe("ApiKeysGroup", () => {
     await screen.findByText(/invalid key format/);
     expect(input.value).toBe("sk-bad-key");
   });
+
+  it("a load rejection surfaces a visible error instead of a silently empty grid", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("broker unreachable");
+      }),
+    );
+    renderWithProviders(<ApiKeysGroup />);
+    expect(await screen.findByText(/could not load api keys — /i)).toBeDefined();
+  });
 });

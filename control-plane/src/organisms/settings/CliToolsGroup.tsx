@@ -14,11 +14,13 @@ export function pillFor(t: CliToolListing): { label: string; cls: string } {
 
 /** Card grid, one per catalog engine — machine status, refresh probes, and the opt-out toggle. */
 export function CliToolsGroup() {
-  const { data: tools = [] } = useCliTools();
+  const { data: tools = [], error: loadError } = useCliTools();
   const refreshTools = useRefreshCliTools();
   const setEnabled = useSetCliToolEnabled();
   const [busy, setBusy] = useState<string | null>(null); // cli being refreshed, "*" = all
   const [error, setError] = useState<string | null>(null);
+
+  const displayError = error ?? (loadError ? `Could not load CLI tools — ${String(loadError)}` : null);
 
   const refresh = async (tool?: string) => {
     setBusy(tool ?? "*");
@@ -48,7 +50,7 @@ export function CliToolsGroup() {
         Agent CLI tools detected on this machine. Only active tools can be assigned to agents; an agent whose tool goes
         dark is flagged in the rail and blocked from launching.
       </p>
-      {error && <p className="wizard__error">{error}</p>}
+      {displayError && <p className="wizard__error">{displayError}</p>}
       <button type="button" className="settings-btn" onClick={() => void refresh()} disabled={busy !== null}>
         <RefreshCw size={12} strokeWidth={2} /> {busy === "*" ? "checking…" : "refresh all"}
       </button>

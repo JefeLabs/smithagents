@@ -49,17 +49,18 @@ describe("ContainersGroup", () => {
   });
 
   it("toggling calls setDockerEnabled and reflects the response", async () => {
-    const { fn } = stubFetch({ put: { docker: { enabled: true } } });
+    const { calls } = stubFetch({ put: { docker: { enabled: true } } });
     const { client } = renderWithProviders(<ContainersGroup />);
     client.setQueryData(qk.containers, { docker: { enabled: false } });
     const checkbox = (await screen.findByLabelText(/docker/i)) as HTMLInputElement;
     expect(checkbox.checked).toBe(false);
     await userEvent.click(checkbox);
     await waitFor(() =>
-      expect(fn).toHaveBeenCalledWith(
-        expect.stringContaining("/containers"),
-        expect.objectContaining({ method: "PUT" }),
-      ),
+      expect(
+        calls.some(
+          (c) => c.method === "PUT" && (c.body as { docker?: { enabled?: boolean } }).docker?.enabled === true,
+        ),
+      ).toBe(true),
     );
     await waitFor(() => expect(checkbox.checked).toBe(true));
   });
@@ -87,6 +88,9 @@ describe("ContainersGroup", () => {
     const checkbox = (await screen.findByLabelText(/docker/i)) as HTMLInputElement;
     await userEvent.click(checkbox);
     await waitFor(() => expect(checkbox.checked).toBe(true));
+    expect(
+      calls.some((c) => c.method === "PUT" && (c.body as { docker?: { enabled?: boolean } }).docker?.enabled === true),
+    ).toBe(true);
     expect(calls.some((c) => c.url.endsWith("/containers/verify"))).toBe(false);
   });
 

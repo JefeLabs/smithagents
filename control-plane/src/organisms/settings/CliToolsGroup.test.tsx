@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { cleanup, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CliToolListing } from "../../api/types";
-import { pillFor } from "./CliToolsGroup";
+import { renderWithProviders } from "../../test/renderWithProviders";
+import { CliToolsGroup, pillFor } from "./CliToolsGroup";
 
 const listing = (status: CliToolListing["status"], active = false): CliToolListing => ({
   cli: "claude",
@@ -36,5 +38,23 @@ describe("pillFor — precedence: reality before preference (spec §6)", () => {
   it("active otherwise, including authOk unknown", () => {
     expect(pillFor(listing(st(), true)).label).toBe("active");
     expect(pillFor(listing(st({ authOk: "unknown" }), true)).label).toBe("active");
+  });
+});
+
+describe("CliToolsGroup", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("a load rejection surfaces a visible error instead of a silently empty grid", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("broker unreachable");
+      }),
+    );
+    renderWithProviders(<CliToolsGroup />);
+    expect(await screen.findByText(/could not load cli tools — /i)).toBeDefined();
   });
 });
