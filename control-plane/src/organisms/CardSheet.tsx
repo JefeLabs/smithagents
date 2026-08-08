@@ -1,5 +1,6 @@
 import { Send, Trash2, X } from "lucide-react";
 import { useState } from "react";
+import { useFieldArray, useForm } from "react-hook-form";
 import type { RosterAgent } from "../api/types";
 import * as api from "../api/work";
 import { exitsForUI } from "../lib/board-aggregate";
@@ -15,20 +16,43 @@ interface CardSheetProps {
   onChanged: () => void;
 }
 
+type StoryT = NonNullable<WorkCardT["stories"]>[number];
+
+interface CardFormValues {
+  title: string;
+  notes: string;
+  jiraKey: string;
+  stories: StoryT[];
+  storyText: string;
+  agentId: string;
+  workspace: string;
+  prompt: string;
+  flagReason: string;
+}
+
 /** Card detail: edit, Jira link/unlink, explicit Send-to-agent, delete. */
 export function CardSheet({ board, card, roster, workspaces, onClose, onChanged }: CardSheetProps) {
-  const [title, setTitle] = useState(card.title);
-  const [notes, setNotes] = useState(card.notes ?? "");
-  const [jiraKey, setJiraKey] = useState("");
-  const [stories, setStories] = useState(card.stories ?? []);
-  const [storyText, setStoryText] = useState("");
   const [delegating, setDelegating] = useState(false);
-  const [agentId, setAgentId] = useState("");
-  const [workspace, setWorkspace] = useState(workspaces[0] ?? "");
-  const [prompt, setPrompt] = useState(`${card.title}${card.notes ? `\n\n${card.notes}` : ""}`);
   const [error, setError] = useState<string | null>(null);
-  const [flagReason, setFlagReason] = useState(card.flag?.reason ?? "");
   const linked = Boolean(card.capabilityRef);
+
+  // BoardStage mounts this sheet per open card (`key={openCard.id}`), so useForm's
+  // per-mount defaults ARE the seed — no reset effect is needed here.
+  const { register, control, getValues, setValue, watch } = useForm<CardFormValues>({
+    defaultValues: {
+      title: card.title,
+      notes: card.notes ?? "",
+      jiraKey: "",
+      stories: card.stories ?? [],
+      storyText: "",
+      agentId: "",
+      workspace: workspaces[0] ?? "",
+      prompt: `${card.title}${card.notes ? `\n\n${card.notes}` : ""}`,
+      flagReason: card.flag?.reason ?? "",
+    },
+  });
+  const { fields: stories, append, remove: removeStory, update } = useFieldArray({ control, name: "stories" });
+  const [agentId, prompt, storyText] = watch(["agentId", "prompt", "storyText"]);
 
   const patch = async (body: unknown) => {
     try {
@@ -45,17 +69,23 @@ export function CardSheet({ board, card, roster, workspaces, onClose, onChanged 
     // Stories are replaced wholesale — the whole checklist rides the single PATCH.
     // The flag's kind is set instantly via its own select; only its reason text
     // is edited here, and rides along with title/notes/stories on save.
+    const v = getValues();
     if (
-      await patch({ title, notes, stories, flag: card.flag ? { kind: card.flag.kind, reason: flagReason } : undefined })
+      await patch({
+        title: v.title,
+        notes: v.notes,
+        stories: v.stories,
+        flag: card.flag ? { kind: card.flag.kind, reason: v.flagReason } : undefined,
+      })
     )
       onClose();
   };
 
   const linkJira = async () => {
-    const key = jiraKey.trim().toUpperCase();
+    const key = getValues("jiraKey").trim().toUpperCase();
     if (!key || !board.jira) return;
     await patch({ jira: { key, url: `${board.jira.siteUrl.replace(/\/$/, "")}/browse/${key}` } });
-    setJiraKey("");
+    setValue("jiraKey", "");
   };
 
   const unlinkJira = async () => patch({ jira: null });
@@ -74,8 +104,9 @@ export function CardSheet({ board, card, roster, workspaces, onClose, onChanged 
 
   const setFlag = async (kind: string) => {
     // Clearing drops the reason too, so a later re-pick doesn't carry a stale one.
-    if (!kind) setFlagReason("");
-    await patch({ flag: kind ? { kind, reason: flagReason } : null });
+    const reason = getValues("flagReason");
+    if (!kind) setValue("flagReason", "");
+    await patch({ flag: kind ? { kind, reason } : null });
   };
 
   const remove = async () => {
@@ -89,13 +120,14 @@ export function CardSheet({ board, card, roster, workspaces, onClose, onChanged 
   };
 
   const delegate = async () => {
+    const v = getValues();
     try {
       await api.delegateCard({
         boardId: board.id,
         cardId: card.id,
-        agentId,
-        workspace: workspace || undefined,
-        prompt,
+        agentId: v.agentId,
+        workspace: v.workspace || undefined,
+        prompt: v.prompt,
       });
       onChanged();
       onClose();
@@ -114,16 +146,18 @@ export function CardSheet({ board, card, roster, workspaces, onClose, onChanged 
       </header>
       <label>
         Title
-        <input value={title} onChange={(e) => setTitle(e.target.value)} />
+        <input {...register("title")} />
       </label>
       <label>
         Notes
-        <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} />
+        <textarea rows={3} {...register("notes")} />
       </label>
       <div className="card-sheet__stories">
         <span className="card-sheet__stories-head">Stories</span>
         {linked && <span className="wizard__hint">Stories are managed in the map — toggle only.</span>}
-        {stories.map((s) => (
+        {/* `s.id` is useFieldArray's own row key, not the story's id — the real ids
+            ride in the form values and reach the server untouched via getValues(). */}
+        {stories.map((s, i) => (
           <label
             key={s.id}
             className="card-sheet__story"
@@ -133,19 +167,13 @@ export function CardSheet({ board, card, roster, workspaces, onClose, onChanged 
               type="checkbox"
               checked={s.done}
               onChange={(e) =>
-                setStories((list) =>
-                  list.map((x) =>
-                    x.id === s.id
-                      ? {
-                          ...x,
-                          done: e.target.checked,
-                          verifiedBy: e.target.checked
-                            ? (x.verifiedBy ?? `manual ${new Date().toISOString().slice(0, 10)}`)
-                            : undefined,
-                        }
-                      : x,
-                  ),
-                )
+                update(i, {
+                  ...getValues(`stories.${i}`),
+                  done: e.target.checked,
+                  verifiedBy: e.target.checked
+                    ? (s.verifiedBy ?? `manual ${new Date().toISOString().slice(0, 10)}`)
+                    : undefined,
+                })
               }
             />
             <span className={s.done ? "is-done" : ""}>{s.text}</span>
@@ -154,7 +182,7 @@ export function CardSheet({ board, card, roster, workspaces, onClose, onChanged 
                 type="button"
                 className="card-sheet__story-remove"
                 aria-label={`Remove story: ${s.text}`}
-                onClick={() => setStories((list) => list.filter((x) => x.id !== s.id))}
+                onClick={() => removeStory(i)}
               >
                 <X size={10} strokeWidth={2} />
               </button>
@@ -164,12 +192,11 @@ export function CardSheet({ board, card, roster, workspaces, onClose, onChanged 
         {!linked && (
           <input
             placeholder="Add a story…"
-            value={storyText}
-            onChange={(e) => setStoryText(e.target.value)}
+            {...register("storyText")}
             onKeyDown={(e) => {
               if (e.key === "Enter" && storyText.trim()) {
-                setStories((list) => [...list, { id: crypto.randomUUID(), text: storyText.trim(), done: false }]);
-                setStoryText("");
+                append({ id: crypto.randomUUID(), text: storyText.trim(), done: false });
+                setValue("storyText", "");
               }
             }}
           />
@@ -188,7 +215,7 @@ export function CardSheet({ board, card, roster, workspaces, onClose, onChanged 
           </div>
         ) : (
           <div className="card-sheet__row">
-            <input placeholder="PROJ-123" value={jiraKey} onChange={(e) => setJiraKey(e.target.value)} />
+            <input placeholder="PROJ-123" {...register("jiraKey")} />
             <button type="button" className="settings-btn" onClick={() => void linkJira()}>
               link jira
             </button>
@@ -203,7 +230,7 @@ export function CardSheet({ board, card, roster, workspaces, onClose, onChanged 
         <div className="card-sheet__delegate">
           <label>
             Agent
-            <select aria-label="Agent" value={agentId} onChange={(e) => setAgentId(e.target.value)}>
+            <select aria-label="Agent" {...register("agentId")}>
               <option value="">— pick an agent —</option>
               {roster
                 .filter((a) => !a.members)
@@ -217,7 +244,7 @@ export function CardSheet({ board, card, roster, workspaces, onClose, onChanged 
           </label>
           <label>
             Delegate to workspace
-            <select aria-label="Delegate to workspace" value={workspace} onChange={(e) => setWorkspace(e.target.value)}>
+            <select aria-label="Delegate to workspace" {...register("workspace")}>
               {workspaces.map((w) => (
                 <option key={w} value={w}>
                   {w}
@@ -227,7 +254,7 @@ export function CardSheet({ board, card, roster, workspaces, onClose, onChanged 
           </label>
           <label>
             Prompt
-            <textarea rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} />
+            <textarea rows={4} {...register("prompt")} />
           </label>
           <button
             type="button"
@@ -249,7 +276,7 @@ export function CardSheet({ board, card, roster, workspaces, onClose, onChanged 
             <option value="waiting">Waiting</option>
           </select>
         </label>
-        {card.flag && <input placeholder="Why?" value={flagReason} onChange={(e) => setFlagReason(e.target.value)} />}
+        {card.flag && <input placeholder="Why?" {...register("flagReason")} />}
       </div>
       {exits.length > 0 && (
         <div className="card-sheet__routes">

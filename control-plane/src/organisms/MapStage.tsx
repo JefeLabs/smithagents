@@ -11,6 +11,7 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import { Map as MapIcon, Plus, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { useForm } from "react-hook-form";
 import {
   useCapabilities,
   useCreateCapability,
@@ -179,6 +180,16 @@ function MapStepStories({
   );
 }
 
+/** Every composer input on the stage. The three records are keyed by activity / step / slice id. */
+interface MapComposerValues {
+  capName: string;
+  activityName: string;
+  sliceName: string;
+  stepNames: Record<string, string>;
+  storyTexts: Record<string, string>;
+  planTexts: Record<string, string>;
+}
+
 /**
  * The story-map stage — where stories are BORN. Activities → steps → story
  * stacks, with slices carved below. Cards and spec docs are downstream
@@ -199,13 +210,14 @@ export function MapStage() {
   const [workspace, setWorkspace] = useState("");
   const [activeId, setActiveId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const [capName, setCapName] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [activityName, setActivityName] = useState("");
-  const [stepNames, setStepNames] = useState<Record<string, string>>({});
-  const [storyTexts, setStoryTexts] = useState<Record<string, string>>({});
-  const [planTexts, setPlanTexts] = useState<Record<string, string>>({});
-  const [sliceName, setSliceName] = useState("");
+
+  // Every composer on this stage is a write-once text box: type, press Enter, it clears.
+  // The three records are keyed by activity/step/slice id and registered as they render,
+  // which is why they're one form rather than three `Record<string, string>` states.
+  const { register, getValues, setValue } = useForm<MapComposerValues>({
+    defaultValues: { capName: "", activityName: "", sliceName: "", stepNames: {}, storyTexts: {}, planTexts: {} },
+  });
 
   const displayError = error ?? loadError;
 
@@ -290,11 +302,12 @@ export function MapStage() {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
   const createCapability = async () => {
-    if (!capName.trim() || !workspace) return;
+    const capName = getValues("capName").trim();
+    if (!capName || !workspace) return;
     try {
-      const created = await createCapMutation.mutateAsync({ name: capName.trim(), workspaceId: workspace });
+      const created = await createCapMutation.mutateAsync({ name: capName, workspaceId: workspace });
       setCreating(false);
-      setCapName("");
+      setValue("capName", "");
       setActiveId(created.id);
       setError(null);
     } catch (err) {
@@ -311,27 +324,28 @@ export function MapStage() {
   const sliceFor = (storyId: string) => cap?.slices.find((s) => s.storyIds.includes(storyId))?.id ?? "backlog";
 
   const addActivity = () => {
-    if (!cap || !activityName.trim()) return;
+    const activityName = getValues("activityName").trim();
+    if (!cap || !activityName) return;
     void patchCap({
       activities: [
         ...cap.activities,
-        { id: crypto.randomUUID(), name: activityName.trim(), order: cap.activities.length, steps: [] },
+        { id: crypto.randomUUID(), name: activityName, order: cap.activities.length, steps: [] },
       ],
     });
-    setActivityName("");
+    setValue("activityName", "");
   };
   const addStep = (act: CapActivityT) => {
-    const name = (stepNames[act.id] ?? "").trim();
+    const name = (getValues(`stepNames.${act.id}`) ?? "").trim();
     if (!cap || !name) return;
     void patchCap({
       activities: cap.activities.map((a) =>
         a.id === act.id ? { ...a, steps: [...a.steps, { id: crypto.randomUUID(), name, order: a.steps.length }] } : a,
       ),
     });
-    setStepNames((m) => ({ ...m, [act.id]: "" }));
+    setValue(`stepNames.${act.id}`, "");
   };
   const addStory = (stepId: string) => {
-    const text = (storyTexts[stepId] ?? "").trim();
+    const text = (getValues(`storyTexts.${stepId}`) ?? "").trim();
     if (!cap || !text) return;
     void patchCap({
       stories: [
@@ -339,7 +353,7 @@ export function MapStage() {
         { id: crypto.randomUUID(), stepId, order: storiesFor(stepId).length, text, done: false },
       ],
     });
-    setStoryTexts((m) => ({ ...m, [stepId]: "" }));
+    setValue(`storyTexts.${stepId}`, "");
   };
   const removeStory = (story: CapStoryT) => {
     if (!cap) return;
@@ -379,10 +393,10 @@ export function MapStage() {
     }
   };
   const setPlanPath = (slice: CapSliceT) => {
-    const value = (planTexts[slice.id] ?? "").trim();
+    const value = (getValues(`planTexts.${slice.id}`) ?? "").trim();
     if (!cap || !value) return;
     void patchCap({ slices: cap.slices.map((s) => (s.id === slice.id ? { ...s, planPath: value } : s)) });
-    setPlanTexts((m) => ({ ...m, [slice.id]: "" }));
+    setValue(`planTexts.${slice.id}`, "");
   };
   const sendSlice = async (slice: CapSliceT, target: "capabilities" | "delivery") => {
     if (!cap) return;
@@ -394,14 +408,12 @@ export function MapStage() {
     }
   };
   const addSlice = () => {
-    if (!cap || !sliceName.trim()) return;
+    const sliceName = getValues("sliceName").trim();
+    if (!cap || !sliceName) return;
     void patchCap({
-      slices: [
-        ...cap.slices,
-        { id: crypto.randomUUID(), name: sliceName.trim(), order: cap.slices.length, storyIds: [] },
-      ],
+      slices: [...cap.slices, { id: crypto.randomUUID(), name: sliceName, order: cap.slices.length, storyIds: [] }],
     });
-    setSliceName("");
+    setValue("sliceName", "");
   };
 
   const handleDragEnd = (e: DragEndEvent) => {
@@ -449,7 +461,7 @@ export function MapStage() {
       </header>
       {creating && (
         <div className="map-stage__composer">
-          <input placeholder="Capability name" value={capName} onChange={(e) => setCapName(e.target.value)} />
+          <input placeholder="Capability name" {...register("capName")} />
           <button type="button" className="settings-btn settings-btn--primary" onClick={() => void createCapability()}>
             create capability
           </button>
@@ -506,8 +518,7 @@ export function MapStage() {
                             />
                             <input
                               placeholder="Add a story…"
-                              value={storyTexts[step.id] ?? ""}
-                              onChange={(e) => setStoryTexts((m) => ({ ...m, [step.id]: e.target.value }))}
+                              {...register(`storyTexts.${step.id}`)}
                               onKeyDown={(e) => {
                                 if (e.key === "Enter") addStory(step.id);
                               }}
@@ -517,8 +528,7 @@ export function MapStage() {
                       <div className="map-step map-step--composer">
                         <input
                           placeholder="Add a step…"
-                          value={stepNames[act.id] ?? ""}
-                          onChange={(e) => setStepNames((m) => ({ ...m, [act.id]: e.target.value }))}
+                          {...register(`stepNames.${act.id}`)}
                           onKeyDown={(e) => {
                             if (e.key === "Enter") addStep(act);
                           }}
@@ -530,8 +540,7 @@ export function MapStage() {
               <div className="map-activity map-activity--composer">
                 <input
                   placeholder="Add an activity…"
-                  value={activityName}
-                  onChange={(e) => setActivityName(e.target.value)}
+                  {...register("activityName")}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") addActivity();
                   }}
@@ -566,8 +575,7 @@ export function MapStage() {
                   ) : (
                     <input
                       placeholder="plan path…"
-                      value={planTexts[slice.id] ?? ""}
-                      onChange={(e) => setPlanTexts((m) => ({ ...m, [slice.id]: e.target.value }))}
+                      {...register(`planTexts.${slice.id}`)}
                       onKeyDown={(e) => {
                         if (e.key === "Enter") setPlanPath(slice);
                       }}
@@ -600,8 +608,7 @@ export function MapStage() {
             <div className="slice-band slice-band--composer">
               <input
                 placeholder="New slice name…"
-                value={sliceName}
-                onChange={(e) => setSliceName(e.target.value)}
+                {...register("sliceName")}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") addSlice();
                 }}

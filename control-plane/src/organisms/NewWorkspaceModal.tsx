@@ -1,5 +1,6 @@
 import { Plus, X } from "lucide-react";
 import { type MouseEvent, useEffect, useState } from "react";
+import { useFieldArray, useForm } from "react-hook-form";
 import type { ConnectorInstanceRecord, WorkspaceRecord } from "../api/types";
 import { SegmentedControl } from "../atoms/SegmentedControl";
 import { WORKSPACE_PALETTE } from "../lib/workspace-color";
@@ -14,7 +15,26 @@ interface DraftRepo {
   connectorId: string;
 }
 
+interface NewWorkspaceFormValues {
+  name: string;
+  description: string;
+  linksText: string;
+  color: string;
+  repos: DraftRepo[];
+}
+
 const emptyRepo = (): DraftRepo => ({ mode: "existing", name: "", path: "", owner: "", repo: "", connectorId: "" });
+
+const blankForm = (): NewWorkspaceFormValues => ({
+  name: "",
+  description: "",
+  linksText: "",
+  color: "",
+  repos: [emptyRepo()],
+});
+
+/** Non-blank after trimming — every gate in this form is that same check. */
+const filled = (v: string) => v.trim().length > 0;
 
 interface NewWorkspaceModalProps {
   open: boolean;
@@ -38,57 +58,56 @@ export function NewWorkspaceModal({
   pickFolder,
   onCreated,
 }: NewWorkspaceModalProps) {
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [linksText, setLinksText] = useState("");
-  const [color, setColor] = useState<string>("");
-  const [repos, setRepos] = useState<DraftRepo[]>([emptyRepo()]);
   const [connectors, setConnectors] = useState<ConnectorInstanceRecord[]>([]);
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // mode: "onChange" because the create button gates on isValid; under the default
+  // onSubmit mode isValid would stay false until a submit that can never happen.
+  const {
+    register,
+    control,
+    handleSubmit,
+    reset,
+    setValue,
+    watch,
+    formState: { isValid, isSubmitting },
+  } = useForm<NewWorkspaceFormValues>({ mode: "onChange", defaultValues: blankForm() });
+  const { fields, append, remove } = useFieldArray({ control, name: "repos" });
+
+  // HomePage keeps this modal mounted and toggles `open`, so useForm's per-mount
+  // defaults only ever run once — reopening has to reset explicitly.
   // biome-ignore lint/correctness/useExhaustiveDependencies: open-keyed reset, same pattern as WorkspaceManagerModal
   useEffect(() => {
     if (!open) return;
-    setName("");
-    setDescription("");
-    setLinksText("");
-    setColor("");
-    setRepos([emptyRepo()]);
-    setBusy(false);
+    reset(blankForm());
     setError(null);
     void listMyConnectors().then(setConnectors);
   }, [open]);
 
   const githubConnectors = connectors.filter((c) => c.vendorId === "github");
 
-  const updateRepo = (index: number, patch: Partial<DraftRepo>) => {
-    setRepos((rs) => rs.map((r, i) => (i === index ? { ...r, ...patch } : r)));
-  };
+  // Only the repo `mode` needs watching for render: it swaps the path placeholder and
+  // the Browse button. Everything else is uncontrolled and read at submit.
+  const repoModes = watch("repos");
 
   const browse = async (index: number) => {
     if (!pickFolder) return;
     const picked = await pickFolder();
-    if (picked) updateRepo(index, { path: picked });
+    if (picked) setValue(`repos.${index}.path`, picked, { shouldValidate: true });
   };
 
-  const canCreate =
-    name.trim().length > 0 &&
-    repos.every((r) => r.name.trim() && r.path.trim() && r.owner.trim() && r.repo.trim() && r.connectorId);
-
-  const submit = async () => {
-    setBusy(true);
+  const submit = handleSubmit(async (values) => {
     setError(null);
     const record: WorkspaceRecord = {
-      name: name.trim(),
+      name: values.name.trim(),
       default: false, // the first-ever workspace defaults itself server-side
-      description: description.trim(),
-      color: color || undefined,
-      links: linksText
+      description: values.description.trim(),
+      color: values.color || undefined,
+      links: values.linksText
         .split("\n")
         .map((l) => l.trim())
         .filter(Boolean),
-      repos: repos.map((r) => ({
+      repos: values.repos.map((r) => ({
         name: r.name.trim(),
         path: r.path.trim(),
         branch: "main",
@@ -99,7 +118,6 @@ export function NewWorkspaceModal({
     const result = await save(record, true).catch((err: unknown): { error?: string; name?: string } => ({
       error: String(err),
     }));
-    setBusy(false);
     if (result.error) {
       setError(result.error);
       return;
@@ -107,7 +125,7 @@ export function NewWorkspaceModal({
     // The server slugs the name ("My App" -> "my-app") — the first session must target the saved name.
     onCreated(result.name ?? record.name);
     onClose();
-  };
+  });
 
   const onScrimClick = (e: MouseEvent<HTMLDivElement>) => {
     if (e.target === e.currentTarget) onClose();
@@ -133,36 +151,26 @@ export function NewWorkspaceModal({
         </header>
         <div className="account-panel__form">
           <label htmlFor="nw-name">Workspace name</label>
-          <input id="nw-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="acme" />
+          <input id="nw-name" {...register("name", { validate: filled })} placeholder="acme" />
           <label htmlFor="nw-description">Description</label>
-          <input
-            id="nw-description"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Marketing site + storefront"
-          />
+          <input id="nw-description" {...register("description")} placeholder="Marketing site + storefront" />
           <label htmlFor="nw-links">
             Links <span className="wizard__hint">one per line — docs, dashboards, tickets</span>
           </label>
-          <textarea id="nw-links" value={linksText} onChange={(e) => setLinksText(e.target.value)} rows={3} />
+          <textarea id="nw-links" {...register("linksText")} rows={3} />
         </div>
         <fieldset className="swatch-row">
           <legend>Colour</legend>
           {/* "None" is a real option, not just the starting state — without it
-              a picked swatch could never be unpicked. */}
+              a picked swatch could never be unpicked. It carries the empty
+              string so the radio group has a real value to land on. */}
           <label className="swatch swatch--none">
-            <input type="radio" name="nw-color" aria-label="No colour" checked={!color} onChange={() => setColor("")} />
+            <input type="radio" {...register("color")} value="" aria-label="No colour" />
             <span />
           </label>
           {WORKSPACE_PALETTE.map((c, i) => (
             <label key={c} className="swatch">
-              <input
-                type="radio"
-                name="nw-color"
-                aria-label={`Colour ${i + 1}`}
-                checked={color === c}
-                onChange={() => setColor(c)}
-              />
+              <input type="radio" {...register("color")} value={c} aria-label={`Colour ${i + 1}`} />
               <span style={{ background: c }} />
             </label>
           ))}
@@ -171,44 +179,30 @@ export function NewWorkspaceModal({
         {githubConnectors.length === 0 && (
           <p className="wizard__hint">No GitHub connectors yet — add one in Settings → Integrations first.</p>
         )}
-        {repos.map((repo, i) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: rows have no identity until saved; only appended/removed at the ends
-          <div key={i} className="nw-repo-row">
+        {fields.map((field, i) => (
+          <div key={field.id} className="nw-repo-row">
             <SegmentedControl
               ariaLabel={`Repo ${i + 1} source`}
               options={[
                 { id: "existing", label: "Existing repo" },
                 { id: "new", label: "New folder" },
               ]}
-              selected={repo.mode}
-              onSelect={(id) => updateRepo(i, { mode: id as DraftRepo["mode"] })}
+              selected={repoModes[i]?.mode ?? "existing"}
+              onSelect={(id) => setValue(`repos.${i}.mode`, id as DraftRepo["mode"])}
             />
-            <input value={repo.name} onChange={(e) => updateRepo(i, { name: e.target.value })} placeholder="web" />
+            <input {...register(`repos.${i}.name`, { validate: filled })} placeholder="web" />
             <input
-              value={repo.path}
-              onChange={(e) => updateRepo(i, { path: e.target.value })}
-              placeholder={repo.mode === "new" ? "/Users/me/code/new-project" : "/Users/me/code/acme-web"}
+              {...register(`repos.${i}.path`, { validate: filled })}
+              placeholder={repoModes[i]?.mode === "new" ? "/Users/me/code/new-project" : "/Users/me/code/acme-web"}
             />
-            {repo.mode === "new" && pickFolder && (
+            {repoModes[i]?.mode === "new" && pickFolder && (
               <button type="button" className="settings-btn" onClick={() => void browse(i)}>
                 Browse…
               </button>
             )}
-            <input
-              value={repo.owner}
-              onChange={(e) => updateRepo(i, { owner: e.target.value })}
-              placeholder="GitHub owner"
-            />
-            <input
-              value={repo.repo}
-              onChange={(e) => updateRepo(i, { repo: e.target.value })}
-              placeholder="GitHub repo"
-            />
-            <select
-              aria-label="GitHub connector"
-              value={repo.connectorId}
-              onChange={(e) => updateRepo(i, { connectorId: e.target.value })}
-            >
+            <input {...register(`repos.${i}.owner`, { validate: filled })} placeholder="GitHub owner" />
+            <input {...register(`repos.${i}.repo`, { validate: filled })} placeholder="GitHub repo" />
+            <select aria-label="GitHub connector" {...register(`repos.${i}.connectorId`, { required: true })}>
               <option value="" disabled>
                 pick a connector…
               </option>
@@ -221,15 +215,15 @@ export function NewWorkspaceModal({
             <button
               type="button"
               className="repo-row__remove"
-              onClick={() => setRepos((rs) => rs.filter((_, j) => j !== i))}
-              disabled={repos.length <= 1}
+              onClick={() => remove(i)}
+              disabled={fields.length <= 1}
               aria-label="Remove repo"
             >
               <X size={12} strokeWidth={2} />
             </button>
           </div>
         ))}
-        <button type="button" className="settings-btn" onClick={() => setRepos((rs) => [...rs, emptyRepo()])}>
+        <button type="button" className="settings-btn" onClick={() => append(emptyRepo())}>
           <Plus size={11} strokeWidth={2.2} /> add another
         </button>
         {error && <p className="wizard__error">{error}</p>}
@@ -237,9 +231,9 @@ export function NewWorkspaceModal({
           type="button"
           className="settings-btn settings-btn--primary settings-btn--wide"
           onClick={() => void submit()}
-          disabled={busy || !canCreate}
+          disabled={isSubmitting || !isValid}
         >
-          {busy ? "creating…" : "create workspace"}
+          {isSubmitting ? "creating…" : "create workspace"}
         </button>
       </section>
     </div>

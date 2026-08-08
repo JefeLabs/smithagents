@@ -129,6 +129,31 @@ describe("ConnectorFormModal", () => {
     expect(await screen.findByText(/authenticated/i)).toBeDefined();
   });
 
+  it("the save button gates on a non-blank label — whitespace alone does not enable it", async () => {
+    // The gate this covers moved from a hand-written `!label.trim()` onto RHF's isValid.
+    // `required: true` would accept "   ", so the rule behind isValid has to trim.
+    render(<ConnectorFormModal open vendor={GITHUB_VENDOR} onClose={() => {}} onSave={vi.fn()} />);
+    const connect = screen.getByRole("button", { name: /^connect$/i }) as HTMLButtonElement;
+    expect(connect.disabled).toBe(true);
+    await userEvent.type(screen.getByPlaceholderText(/label/i), "   ");
+    expect(connect.disabled).toBe(true);
+    await userEvent.type(screen.getByPlaceholderText(/label/i), "personal");
+    await waitFor(() => expect(connect.disabled).toBe(false));
+  });
+
+  it("keeps the modal open and shows the error when onSave rejects the connector", async () => {
+    // Covers the busy/error path that moved onto RHF's isSubmitting: a failed save must
+    // surface inline and NOT call onClose.
+    const onClose = vi.fn();
+    const onSave = vi.fn(async () => ({ error: "GitHub rejected that token" }));
+    render(<ConnectorFormModal open vendor={GITHUB_VENDOR} onClose={onClose} onSave={onSave} />);
+    await userEvent.type(screen.getByPlaceholderText(/label/i), "personal");
+    await userEvent.type(screen.getByPlaceholderText(/personal access token/i), "bad");
+    await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+    expect(await screen.findByText(/rejected that token/i)).toBeDefined();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it("renders nothing when closed or when vendor is null", () => {
     const { container } = render(
       <ConnectorFormModal open={false} vendor={GITHUB_VENDOR} onClose={() => {}} onSave={vi.fn()} />,

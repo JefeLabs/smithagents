@@ -172,6 +172,92 @@ describe("AddAgentModal chooser", () => {
     expect(screen.queryByText(/join team/i)).toBeNull();
   });
 
+  it("edit mode prefills every step from the STORED record — persona, setup pickers, voice, reactions, answers", async () => {
+    // The whole edit prefill is one reset() now. Nothing else asserts what it lands on, so
+    // a field quietly dropped from that object would show up as a blank box the user
+    // silently saves over.
+    stubFetch({
+      agents: {
+        agents: [
+          {
+            id: "minerva",
+            name: "Minerva",
+            role: "Security Engineer",
+            backstory: "Treats every input as hostile.",
+            gender: "female",
+            language: "en-do",
+            stereotype: "auditor",
+            jobRole: "security",
+            engine: { cli: "claude", model: "claude-opus" },
+            voice: { voiceId: "v-minerva" },
+            reactions: { agree: ["claro"] },
+            quickAnswers: { name: "Call me Minerva." },
+          },
+        ],
+      },
+    });
+    render(<AddAgentModal open onClose={vi.fn()} editingId="minerva" />);
+    // Step 0 — Setup pickers, all catalog-backed. The prefill needs two fetches (catalog,
+    // then the stored record), so the first assertion waits for the reset to land.
+    await waitFor(() => expect((screen.getByLabelText(/job role/i) as HTMLSelectElement).value).toBe("security"));
+    expect((screen.getByLabelText(/^cli$/i) as HTMLSelectElement).value).toBe("claude");
+    expect((screen.getByLabelText(/^model$/i) as HTMLSelectElement).value).toBe("claude-opus");
+    expect((screen.getByLabelText(/personality/i) as HTMLSelectElement).value).toBe("auditor");
+    expect((screen.getByLabelText(/primary language/i) as HTMLSelectElement).value).toBe("en-do");
+
+    await userEvent.click(screen.getByRole("button", { name: /next/i })); // -> Persona
+    expect((screen.getByLabelText(/^name$/i) as HTMLInputElement).value).toBe("Minerva");
+    expect((screen.getByLabelText(/^title$/i) as HTMLInputElement).value).toBe("Security Engineer");
+    expect((screen.getByLabelText(/backstory/i) as HTMLTextAreaElement).value).toContain("hostile");
+    expect(screen.getByRole("button", { name: "female" }).className).toContain("is-picked");
+
+    await userEvent.click(screen.getByRole("button", { name: /next/i })); // -> Voice
+    expect((screen.getByLabelText(/paste a voice id/i) as HTMLInputElement).value).toBe("v-minerva");
+
+    await userEvent.click(screen.getByRole("button", { name: /next/i })); // -> Reactions
+    expect((screen.getByLabelText(/agrees/i) as HTMLInputElement).value).toBe("claro");
+
+    await userEvent.click(screen.getByRole("button", { name: /next/i })); // -> Answers
+    expect((screen.getByLabelText(/what should i call you/i) as HTMLInputElement).value).toBe("Call me Minerva.");
+  });
+
+  it("a Reactions/Answers step walked past untouched submits no blank lines", async () => {
+    // Registering an input seeds its key, so without the blank filter every skipped level
+    // would post as an empty reaction line and swarm would store it as a real one.
+    const { posted } = stubFetch();
+    render(<AddAgentModal open onClose={vi.fn()} />);
+    await userEvent.click(await screen.findByText(/create custom/i));
+    await userEvent.click(screen.getByRole("button", { name: /next/i })); // -> Persona
+    await userEvent.type(screen.getByLabelText(/^name$/i), "Nena");
+    await userEvent.click(screen.getByRole("button", { name: /next/i })); // -> Voice
+    await userEvent.click(screen.getByRole("button", { name: /next/i })); // -> Reactions
+    // Type into the one reaction level the catalog offers, then blank it back out.
+    await userEvent.type(screen.getByLabelText(/agrees/i), "dale");
+    await userEvent.clear(screen.getByLabelText(/agrees/i));
+    await userEvent.click(screen.getByRole("button", { name: /next/i })); // -> Answers (untouched)
+    await userEvent.click(screen.getByRole("button", { name: /create agent/i }));
+    await waitFor(() => expect(posted.length).toBe(1));
+    expect(posted[0].reactions).toEqual({});
+    expect(posted[0].quickAnswers).toEqual({});
+  });
+
+  it("Reactions and Answers that ARE filled in still post, one line per level", async () => {
+    const { posted } = stubFetch();
+    render(<AddAgentModal open onClose={vi.fn()} />);
+    await userEvent.click(await screen.findByText(/create custom/i));
+    await userEvent.click(screen.getByRole("button", { name: /next/i }));
+    await userEvent.type(screen.getByLabelText(/^name$/i), "Nena");
+    await userEvent.click(screen.getByRole("button", { name: /next/i }));
+    await userEvent.click(screen.getByRole("button", { name: /next/i }));
+    await userEvent.type(screen.getByLabelText(/agrees/i), "dale que va");
+    await userEvent.click(screen.getByRole("button", { name: /next/i }));
+    await userEvent.type(screen.getByLabelText(/what should i call you/i), "Nena, please.");
+    await userEvent.click(screen.getByRole("button", { name: /create agent/i }));
+    await waitFor(() => expect(posted.length).toBe(1));
+    expect(posted[0].reactions).toEqual({ agree: ["dale que va"] });
+    expect(posted[0].quickAnswers).toEqual({ name: "Nena, please." });
+  });
+
   it("Create custom starts blank even after an abandoned Customize from a previous open", async () => {
     stubFetch();
     const onClose = vi.fn();
@@ -189,6 +275,27 @@ describe("AddAgentModal chooser", () => {
     await userEvent.click(screen.getByRole("button", { name: /next/i })); // Setup -> Persona
     expect((screen.getByLabelText(/^name$/i) as HTMLInputElement).value).toBe("");
     expect((screen.getByLabelText(/backstory/i) as HTMLTextAreaElement).value).toBe("");
+  });
+
+  it("a name typed into a blank wizard is gone after close and reopen", async () => {
+    // HomePage renders this modal unconditionally and toggles `open`, so it never
+    // unmounts and useForm's per-mount defaults run exactly once for the life of the
+    // page. The open-effect's reset is the only thing standing between a half-typed
+    // agent and the next person who opens the modal.
+    stubFetch();
+    const onClose = vi.fn();
+    const { rerender } = render(<AddAgentModal open onClose={onClose} />);
+    await userEvent.click(await screen.findByText(/create custom/i));
+    await userEvent.click(screen.getByRole("button", { name: /next/i })); // Setup -> Persona
+    await userEvent.type(screen.getByLabelText(/^name$/i), "Radhamés");
+    expect((screen.getByLabelText(/^name$/i) as HTMLInputElement).value).toBe("Radhamés");
+
+    rerender(<AddAgentModal open={false} onClose={onClose} />);
+    rerender(<AddAgentModal open onClose={onClose} />);
+
+    await userEvent.click(await screen.findByText(/create custom/i));
+    await userEvent.click(screen.getByRole("button", { name: /next/i }));
+    expect((screen.getByLabelText(/^name$/i) as HTMLInputElement).value).toBe("");
   });
 
   it("wizard reset defaults the CLI to the first active engine, not catalog.engines[0]", async () => {
@@ -214,6 +321,27 @@ describe("AddAgentModal chooser", () => {
     await userEvent.click(await screen.findByText(/create custom/i));
     const cliSelect = (await screen.findByLabelText(/^cli$/i)) as HTMLSelectElement;
     expect(cliSelect.value).toBe("claude");
+  });
+
+  it("Next gates per STEP, not per form: Setup advances with the name still blank, Persona does not", async () => {
+    // The wizard's gate is deliberately NOT formState.isValid. A whole-form check would
+    // see step 1's empty `name` while the user is on step 0 and disable the only control
+    // that could take them to the field that fixes it — an unreachable wizard, with no
+    // error and no type failure. This pins the per-step semantics directly rather than
+    // leaning on the other tests that merely happen to click through.
+    stubFetch();
+    render(<AddAgentModal open onClose={vi.fn()} />);
+    await userEvent.click(await screen.findByText(/create custom/i));
+    const next = () => screen.getByRole("button", { name: /next/i }) as HTMLButtonElement;
+    // Step 0 (Setup): engine, model and language come from the catalog; `name` is blank.
+    await screen.findByLabelText(/^cli$/i);
+    expect(next().disabled).toBe(false);
+    await userEvent.click(next());
+    // Step 1 (Persona): now the blank name IS the gate.
+    expect((screen.getByLabelText(/^name$/i) as HTMLInputElement).value).toBe("");
+    expect(next().disabled).toBe(true);
+    await userEvent.type(screen.getByLabelText(/^name$/i), "Nena");
+    await waitFor(() => expect(next().disabled).toBe(false));
   });
 
   it("customize without a rename posts the preset's canonical id", async () => {

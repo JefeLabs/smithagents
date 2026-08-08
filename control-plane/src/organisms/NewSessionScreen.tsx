@@ -1,5 +1,6 @@
 import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useForm } from "react-hook-form";
 import type { ExecutionMode, SessionSummary } from "../api/types";
 import { useExecutionModes, useWorkspaceRecords } from "../queries/http";
 import { useSessions, useWorkspaces } from "../queries/pushed";
@@ -54,16 +55,30 @@ export function NewSessionScreen({ lockedWorkspace, forced, onSend, onCancel }: 
   const { data: sessions = NO_SESSIONS } = useSessions();
   const { data: modes = null } = useExecutionModes();
 
-  const [pickedWs, setPickedWs] = useState(lockedWorkspace ?? workspaces[0] ?? "");
+  // This screen is mounted only while the composer is open (HomePage swaps it for the
+  // Outlet), so useForm's per-mount defaults ARE the reset — closing and reopening the
+  // composer starts from a blank prompt with no explicit clearing.
+  const { register, getValues, setValue, watch } = useForm<{
+    pickedWs: string;
+    mode: ExecutionMode;
+    prompt: string;
+  }>({
+    defaultValues: {
+      pickedWs: lockedWorkspace ?? workspaces[0] ?? "",
+      mode: defaultMode(lockedWorkspace ?? workspaces[0] ?? "", sessions, availableModes(modes)),
+      prompt: "",
+    },
+  });
+  // `mode` is deliberately not watched: the radio group is uncontrolled, so RHF writes
+  // the checked flag straight to the DOM and nothing in this render reads the value.
+  const [pickedWs, prompt] = watch(["pickedWs", "prompt"]);
   const ws = lockedWorkspace ?? pickedWs;
   const available = availableModes(modes);
-  const [mode, setMode] = useState<ExecutionMode>(() => defaultMode(ws, sessions, available));
   // True once the user has manually chosen a mode in the radio group — blocks the
   // derivation effects below from clobbering their choice. Reset on workspace change: a
   // manual pick made for one workspace shouldn't survive into another's default (spec §3
   // default is per-workspace, "most recent session's mode in that workspace").
   const [userPickedMode, setUserPickedMode] = useState(false);
-  const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -71,7 +86,7 @@ export function NewSessionScreen({ lockedWorkspace, forced, onSend, onCancel }: 
   // same workspace must stick, so `sessions`/`available` are deliberately excluded from the deps.
   // biome-ignore lint/correctness/useExhaustiveDependencies: workspace-keyed recompute, see comment above
   useEffect(() => {
-    setMode(defaultMode(ws, sessions, available));
+    setValue("mode", defaultMode(ws, sessions, available));
     setUserPickedMode(false);
   }, [ws]);
 
@@ -86,9 +101,9 @@ export function NewSessionScreen({ lockedWorkspace, forced, onSend, onCancel }: 
     const prevWasProbing = prevModesRef.current === null;
     prevModesRef.current = modes;
     if (prevWasProbing && modes !== null && !userPickedMode) {
-      setMode(defaultMode(ws, sessions, availableModes(modes)));
+      setValue("mode", defaultMode(ws, sessions, availableModes(modes)));
     }
-  }, [modes, ws, sessions, userPickedMode]);
+  }, [modes, ws, sessions, userPickedMode, setValue]);
 
   useEffect(() => {
     if (forced) return;
@@ -104,11 +119,11 @@ export function NewSessionScreen({ lockedWorkspace, forced, onSend, onCancel }: 
   const hasContext = Boolean(record?.description || links.length > 0);
 
   const submit = async () => {
-    const text = prompt.trim();
+    const text = getValues("prompt").trim();
     if (!text || busy) return;
     setBusy(true);
     setError(null);
-    const result = await onSend(ws, mode, text);
+    const result = await onSend(ws, getValues("mode"), text);
     setBusy(false);
     if (result?.error) setError(result.error);
   };
@@ -131,7 +146,7 @@ export function NewSessionScreen({ lockedWorkspace, forced, onSend, onCancel }: 
           {lockedWorkspace ? (
             <span className="new-session-screen__workspace-static">{lockedWorkspace}</span>
           ) : (
-            <select aria-label="Workspace" value={pickedWs} onChange={(e) => setPickedWs(e.target.value)}>
+            <select aria-label="Workspace" {...register("pickedWs")}>
               {workspaces.map((w) => (
                 <option key={w} value={w}>
                   {w}
@@ -145,14 +160,13 @@ export function NewSessionScreen({ lockedWorkspace, forced, onSend, onCancel }: 
             <label key={m} className="new-session-screen__mode">
               <input
                 type="radio"
-                name="new-session-mode"
+                {...register("mode")}
                 value={m}
-                checked={mode === m}
                 // onClick (not just onChange) marks the manual pick: a native radio never
                 // fires `change` when re-clicking its own already-checked value, but a click
-                // is still a deliberate user interaction with the group either way.
+                // is still a deliberate user interaction with the group either way. It sits
+                // after the spread because `register` supplies no onClick of its own.
                 onClick={() => setUserPickedMode(true)}
-                onChange={() => setMode(m)}
               />
               {MODE_LABELS[m]}
             </label>
@@ -173,8 +187,7 @@ export function NewSessionScreen({ lockedWorkspace, forced, onSend, onCancel }: 
         <textarea
           className="new-session-screen__prompt"
           aria-label="Describe the task"
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
+          {...register("prompt")}
           placeholder="What should this session work on?"
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {

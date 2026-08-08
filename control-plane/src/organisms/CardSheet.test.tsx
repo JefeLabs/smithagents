@@ -64,6 +64,53 @@ describe("CardSheet routes", () => {
   });
 });
 
+describe("CardSheet stories", () => {
+  const WITH_STORIES = {
+    ...CARD,
+    stories: [
+      { id: "st-alpha", text: "user can log in", done: false },
+      { id: "st-beta", text: "reload keeps session", done: true, verifiedBy: "manual 2026-08-01" },
+    ],
+  } as WorkCardT;
+
+  /** The single PATCH the save button produced, with its story list typed. */
+  async function savedStories(): Promise<Array<{ id: string; text: string; done: boolean; verifiedBy?: string }>> {
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+    await waitFor(() => expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(1));
+    const body = calls.find((c) => c.method === "PATCH")?.body as
+      | { stories: Array<{ id: string; text: string; done: boolean; verifiedBy?: string }> }
+      | undefined;
+    if (!body) throw new Error("no PATCH was sent");
+    return body.stories;
+  }
+
+  it("save round-trips each story's OWN id, not the list widget's row key", async () => {
+    // The story list is a field array whose row key is also called `id`, so a row key
+    // leaking into the payload in place of the real story id is a silent, plausible
+    // failure — and these ids are what a map-linked card is matched on server-side.
+    render(<CardSheet {...props} card={WITH_STORIES} />);
+    const stories = await savedStories();
+    expect(stories.map((s) => s.id)).toEqual(["st-alpha", "st-beta"]);
+  });
+
+  it("removing a story drops that one and leaves the rest, ids intact", async () => {
+    render(<CardSheet {...props} card={WITH_STORIES} />);
+    await userEvent.click(screen.getByRole("button", { name: "Remove story: user can log in" }));
+    const stories = await savedStories();
+    expect(stories.map((s) => [s.id, s.text])).toEqual([["st-beta", "reload keeps session"]]);
+  });
+
+  it("toggling a story off clears its verifiedBy while keeping the story's id", async () => {
+    render(<CardSheet {...props} card={WITH_STORIES} />);
+    // The second story starts done+verified; unchecking must drop the stamp.
+    const boxes = screen.getAllByRole("checkbox");
+    await userEvent.click(boxes[1] as HTMLInputElement);
+    const stories = await savedStories();
+    expect(stories[1]).toMatchObject({ id: "st-beta", done: false });
+    expect(stories[1]?.verifiedBy).toBeUndefined();
+  });
+});
+
 describe("CardSheet flags", () => {
   it("PATCHes the chosen flag kind without a since, which the server stamps", async () => {
     render(<CardSheet {...props} />);

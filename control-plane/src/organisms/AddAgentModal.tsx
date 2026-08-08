@@ -1,6 +1,7 @@
 import { Check, ChevronLeft, ChevronRight, Play, Search, Sparkles } from "lucide-react";
 import type { MouseEvent } from "react";
 import { useEffect, useState } from "react";
+import { useForm } from "react-hook-form";
 import { AvatarGeneratorBlock } from "../molecules/AvatarGeneratorBlock";
 import { AddAgentChooser, type PresetCard } from "./AddAgentChooser";
 
@@ -94,9 +95,67 @@ const LEVEL_LABELS: Record<string, string> = {
 
 const STEPS = ["Setup", "Persona", "Voice", "Reactions", "Answers"] as const;
 
+/**
+ * Every user-typed or user-picked value in the wizard, across all five steps. The three
+ * catalog-backed pickers hold their *id* (`engine` a cli, `stereotype`/`jobRole` an id);
+ * the catalog object each one names is derived at render, so a stored id the catalog no
+ * longer offers resolves to null exactly as it did when these were object state.
+ */
+interface AgentFormValues {
+  name: string;
+  role: string;
+  gender: "male" | "female" | "neutral";
+  backstory: string;
+  hint: string;
+  engine: string;
+  model: string;
+  language: string;
+  stereotype: string;
+  jobRole: string;
+  voiceId: string;
+  voiceSearch: string;
+  reactions: Record<string, string>;
+  quickAnswers: Record<string, string>;
+}
+
 /** Prefer the first CLI the tool registry marked active; fall back to the catalog's first when none are. */
 const defaultEngine = (c: Catalog | null): EngineOption | null =>
   c?.engines?.find((e) => e.active !== false) ?? c?.engines?.[0] ?? null;
+
+/**
+ * A blank wizard, with the catalog's own defaults already applied. Passed to `reset` at
+ * every point the old code ran its `setX` cascade, which is what keeps an abandoned
+ * Customize from bleeding into the next Create custom.
+ */
+function emptyAgent(catalog: Catalog | null): AgentFormValues {
+  const first = defaultEngine(catalog);
+  return {
+    name: "",
+    role: "",
+    gender: "neutral",
+    backstory: "",
+    hint: "",
+    engine: first?.cli ?? "",
+    model: first?.models[0] ?? "",
+    language: catalog?.languages?.[0]?.id ?? "",
+    stereotype: "",
+    jobRole: "",
+    voiceId: "",
+    voiceSearch: "",
+    reactions: {},
+    quickAnswers: {},
+  };
+}
+
+/**
+ * Registering an input seeds its key, so a Reactions/Answers step the user merely walked
+ * past would otherwise submit `{ agree: [""] }` where it used to submit `{}` — and swarm
+ * stores that as a real (empty) line, since `b.reactions ?? seed` only falls back on
+ * undefined. Dropping blanks keeps the old payload; the Answers step already tells the
+ * user "Blank = skip".
+ */
+const withoutBlanks = (r: Record<string, string>): Record<string, string> =>
+  Object.fromEntries(Object.entries(r).filter(([, v]) => v.trim()));
 
 /**
  * Agent creation wizard: setup → persona → voice → reactions → answers.
@@ -112,23 +171,9 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
   const editing = Boolean(editingId);
   const [step, setStep] = useState(0);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
-  const [stereotype, setStereotype] = useState<Stereotype | null>(null);
-  const [jobRole, setJobRole] = useState<JobRole | null>(null);
-  const [hint, setHint] = useState("");
   const [generating, setGenerating] = useState(false);
-  const [name, setName] = useState("");
-  const [role, setRole] = useState("");
-  const [gender, setGender] = useState<"male" | "female" | "neutral">("neutral");
-  const [backstory, setBackstory] = useState("");
-  const [reactions, setReactions] = useState<Record<string, string>>({});
-  const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [engine, setEngine] = useState<EngineOption | null>(null);
-  const [model, setModel] = useState("");
-  const [language, setLanguage] = useState("");
-  const [voiceId, setVoiceId] = useState("");
   const [voices, setVoices] = useState<CatalogVoice[]>([]);
   const [voiceError, setVoiceError] = useState<string | null>(null);
-  const [voiceSearch, setVoiceSearch] = useState("");
   const [generatedStyle, setGeneratedStyle] = useState<string | undefined>();
   const [generatedDirectives, setGeneratedDirectives] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
@@ -152,28 +197,34 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
   /** The stored agent's existing portrait filename, prefilled when editing. */
   const [editingAvatar, setEditingAvatar] = useState<string | null>(null);
 
+  // One form spans all five steps: navigating between them doesn't remount it, so values
+  // persist across steps. It is NOT per-open, though — HomePage keeps this modal mounted
+  // and toggles `open` — which is why the reset below still has to run explicitly.
+  const { register, getValues, setValue, watch, reset } = useForm<AgentFormValues>({
+    defaultValues: emptyAgent(null),
+  });
+
+  // The wizard's gate is per-STEP, not whole-form: formState.isValid is whole-form and
+  // would keep Next disabled on Setup until Persona's name is filled — which the user
+  // can't reach while Next is disabled. These four feed that gate literally.
+  const [engineCli, model, language, name] = watch(["engine", "model", "language", "name"]);
+  const [gender, voiceId, stereotypeId, jobRoleId] = watch(["gender", "voiceId", "stereotype", "jobRole"]);
+
+  // The catalog object behind each id-holding picker. `find` returning undefined is the
+  // same "not in this catalog" case the old object state modelled as null.
+  const engine = catalog?.engines.find((e) => e.cli === engineCli) ?? null;
+  const stereotype = catalog?.stereotypes.find((s) => s.id === stereotypeId) ?? null;
+  const jobRole = catalog?.jobRoles.find((r) => r.id === jobRoleId) ?? null;
+
   /**
    * Every wizard field back to blank/catalog-default. The modal stays mounted
    * across close/reopen, so without this a Customize the user abandoned
    * bleeds into the next Create custom — this is what keeps that path blank.
    */
   const resetWizardFields = () => {
-    setName("");
-    setRole("");
-    setGender("neutral");
-    setBackstory("");
-    setLanguage(catalog?.languages?.[0]?.id ?? "");
-    setVoiceId("");
-    setStereotype(null);
-    setJobRole(null);
-    const first = defaultEngine(catalog);
-    setEngine(first);
-    setModel(first?.models[0] ?? "");
+    reset(emptyAgent(catalog));
     setGeneratedStyle(undefined);
     setGeneratedDirectives(undefined);
-    setReactions({});
-    setAnswers({});
-    setHint("");
     setError(null);
     setAvatarData(null);
     setEditingAvatar(null);
@@ -211,13 +262,13 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
         setCatalog(c);
         const first = defaultEngine(c);
         if (first) {
-          setEngine(first);
-          setModel(first.models[0] ?? "");
+          setValue("engine", first.cli);
+          setValue("model", first.models[0] ?? "");
         }
-        setLanguage(c.languages?.[0]?.id ?? "");
+        setValue("language", c.languages?.[0]?.id ?? "");
       })
       .catch(() => setError("Could not load the persona catalog — is the broker running?"));
-  }, [open, catalog]);
+  }, [open, catalog, setValue]);
 
   // Editing pre-fills from the STORED record, not the roster frame — the
   // frame is a view model and carries none of the persona detail.
@@ -231,29 +282,33 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
           setError(`Could not load ${editingId} — it may have been removed.`);
           return;
         }
-        setName(a.name ?? "");
-        setRole(a.role ?? "");
-        setBackstory(a.backstory ?? "");
-        setGender((a.gender as "male" | "female" | "neutral") ?? "neutral");
-        setLanguage(a.language ?? catalog.languages?.[0]?.id ?? "");
-        setVoiceId(a.voice?.voiceId ?? "");
+        const eng = catalog.engines.find((x) => x.cli === a.engine?.cli) ?? null;
+        reset({
+          name: a.name ?? "",
+          role: a.role ?? "",
+          backstory: a.backstory ?? "",
+          gender: (a.gender as "male" | "female" | "neutral") ?? "neutral",
+          language: a.language ?? catalog.languages?.[0]?.id ?? "",
+          voiceId: a.voice?.voiceId ?? "",
+          voiceSearch: "",
+          hint: "",
+          stereotype: catalog.stereotypes.find((x) => x.id === a.stereotype)?.id ?? "",
+          // Agents created before jobRole was stored have only their free-text
+          // title; recover the dropdown by matching it against the catalog.
+          jobRole:
+            (catalog.jobRoles.find((x) => x.id === a.jobRole) ?? catalog.jobRoles.find((x) => x.label === a.role))
+              ?.id ?? "",
+          engine: eng?.cli ?? "",
+          model: a.engine?.model ?? eng?.models[0] ?? "",
+          reactions: Object.fromEntries(Object.entries(a.reactions ?? {}).map(([k, v]) => [k, v?.[0] ?? ""])),
+          quickAnswers: a.quickAnswers ?? {},
+        });
         setAvatarPresetRef(null);
         setAvatarData(null);
         setEditingAvatar(a.avatar ?? null);
-        setStereotype(catalog.stereotypes.find((x) => x.id === a.stereotype) ?? null);
-        // Agents created before jobRole was stored have only their free-text
-        // title; recover the dropdown by matching it against the catalog.
-        setJobRole(
-          catalog.jobRoles.find((x) => x.id === a.jobRole) ?? catalog.jobRoles.find((x) => x.label === a.role) ?? null,
-        );
-        const eng = catalog.engines.find((x) => x.cli === a.engine?.cli) ?? null;
-        setEngine(eng);
-        setModel(a.engine?.model ?? eng?.models[0] ?? "");
-        setReactions(Object.fromEntries(Object.entries(a.reactions ?? {}).map(([k, v]) => [k, v?.[0] ?? ""])));
-        setAnswers(a.quickAnswers ?? {});
       })
       .catch(() => setError("Could not load this agent — is the broker running?"));
-  }, [open, editingId, catalog]);
+  }, [open, editingId, catalog, reset]);
 
   useEffect(() => {
     if (!open) return;
@@ -287,16 +342,19 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
   // step only: search and gender re-query on submit/toggle, not per keystroke.
   // biome-ignore lint/correctness/useExhaustiveDependencies: see above
   useEffect(() => {
-    if (open && step === 2) void loadVoices(voiceSearch, gender);
+    if (open && step === 2) void loadVoices(getValues("voiceSearch"), getValues("gender"));
   }, [open, step]);
 
   if (!open) return null;
 
   /** Seeds the reaction lines from the archetype; the user edits them later. */
   const pickStereotype = (s: Stereotype | null) => {
-    setStereotype(s);
+    setValue("stereotype", s?.id ?? "");
     if (s) {
-      setReactions(Object.fromEntries(Object.entries(s.reactions).map(([level, lines]) => [level, lines[0] ?? ""])));
+      setValue(
+        "reactions",
+        Object.fromEntries(Object.entries(s.reactions).map(([level, lines]) => [level, lines[0] ?? ""])),
+      );
     }
   };
 
@@ -307,7 +365,13 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
     const draft = (await fetch(`http://${BASE}/agents/generate`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ stereotype: stereotype?.id, jobRole: jobRole?.id, gender, hint, language }),
+      body: JSON.stringify({
+        stereotype: stereotype?.id,
+        jobRole: jobRole?.id,
+        gender,
+        hint: getValues("hint"),
+        language,
+      }),
     })
       .then((r) => r.json())
       .catch((err: unknown) => ({ error: String(err) }))) as {
@@ -325,13 +389,14 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
       setError(draft.error);
       return;
     }
-    setName(draft.name ?? "");
-    setRole(draft.role ?? "");
-    setBackstory(draft.backstory ?? "");
+    setValue("name", draft.name ?? "");
+    setValue("role", draft.role ?? "");
+    setValue("backstory", draft.backstory ?? "");
     setGeneratedStyle(draft.style);
     setGeneratedDirectives(draft.directives);
-    if (draft.reactions) setReactions(Object.fromEntries(draft.reactions.map((r) => [r.level, r.line])));
-    if (draft.quickAnswers) setAnswers(Object.fromEntries(draft.quickAnswers.map((a) => [a.id, a.answer])));
+    if (draft.reactions) setValue("reactions", Object.fromEntries(draft.reactions.map((r) => [r.level, r.line])));
+    if (draft.quickAnswers)
+      setValue("quickAnswers", Object.fromEntries(draft.quickAnswers.map((a) => [a.id, a.answer])));
     setStep(1); // land on Persona with every field filled in and editable
   };
 
@@ -348,11 +413,12 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
   const submit = async () => {
     setBusy(true);
     setError(null);
+    const v = getValues();
     // Customize-without-rename: the name still matches the preset it came from, so send its
     // canonical id — otherwise the server slugs the (possibly accented) name fresh and this
     // agent shadows the real preset as a near-duplicate instead of being recognized as it.
     const idOverride =
-      !editing && customizedPresetOrigin && name === customizedPresetOrigin.name
+      !editing && customizedPresetOrigin && v.name === customizedPresetOrigin.name
         ? customizedPresetOrigin.id
         : undefined;
     const res = (await fetch(`http://${BASE}/agents${editingId ? `/${encodeURIComponent(editingId)}` : ""}`, {
@@ -360,13 +426,13 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         id: idOverride,
-        name,
-        role,
-        gender,
-        backstory,
+        name: v.name,
+        role: v.role,
+        gender: v.gender,
+        backstory: v.backstory,
         stereotype: stereotype?.id,
         jobRole: jobRole?.id,
-        language,
+        language: v.language,
         // When editing, only send prose the user actually changed. Falling back
         // to the stereotype's copy here would silently overwrite the directives
         // and style already saved on this agent.
@@ -374,10 +440,10 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
         directives: editing
           ? (generatedDirectives ?? jobRole?.directives)
           : (generatedDirectives ?? jobRole?.directives ?? stereotype?.directives),
-        engine: engine ? { cli: engine.cli, model } : undefined,
-        voice: voiceId ? { voiceId } : undefined,
-        reactions: Object.fromEntries(Object.entries(reactions).map(([k, v]) => [k, [v]])),
-        quickAnswers: answers,
+        engine: engine ? { cli: engine.cli, model: v.model } : undefined,
+        voice: v.voiceId ? { voiceId: v.voiceId } : undefined,
+        reactions: Object.fromEntries(Object.entries(withoutBlanks(v.reactions)).map(([k, val]) => [k, [val]])),
+        quickAnswers: withoutBlanks(v.quickAnswers),
         avatarData: avatarData ? avatarData.replace(/^data:image\/png;base64,/, "") : undefined,
         avatarPreset: !avatarData && avatarPresetRef ? avatarPresetRef : undefined,
         avatarRing: presetRing ?? undefined,
@@ -388,14 +454,14 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
       setError(res.error);
       return;
     }
-    onCreated?.(name);
+    onCreated?.(v.name);
     onClose();
     setStep(0);
-    setStereotype(null);
-    setName("");
-    setRole("");
-    setBackstory("");
-    setVoiceId("");
+    setValue("stereotype", "");
+    setValue("name", "");
+    setValue("role", "");
+    setValue("backstory", "");
+    setValue("voiceId", "");
     setCustomizedPresetOrigin(null);
   };
 
@@ -439,20 +505,23 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
   /** Refine-via-custom: the preset seeds every wizard field, then it's the normal flow. */
   const customizePreset = (p: PresetCard) => {
     setError(null);
-    setName(p.name);
-    setRole(p.role);
-    setGender((p.gender as "male" | "female" | "neutral") ?? "neutral");
-    setBackstory(p.backstory);
-    setLanguage(p.language);
-    setVoiceId(p.voiceId);
-    setStereotype(catalog?.stereotypes.find((s) => s.id === p.stereotype) ?? null);
-    setJobRole(catalog?.jobRoles.find((r) => r.id === p.jobRole) ?? null);
-    const eng = catalog?.engines.find((e) => e.cli === p.engine.cli) ?? null;
-    setEngine(eng);
-    setModel(p.engine.model);
+    reset({
+      name: p.name,
+      role: p.role,
+      gender: (p.gender as "male" | "female" | "neutral") ?? "neutral",
+      backstory: p.backstory,
+      language: p.language,
+      voiceId: p.voiceId,
+      voiceSearch: "",
+      hint: "",
+      stereotype: catalog?.stereotypes.find((s) => s.id === p.stereotype)?.id ?? "",
+      jobRole: catalog?.jobRoles.find((r) => r.id === p.jobRole)?.id ?? "",
+      engine: catalog?.engines.find((e) => e.cli === p.engine.cli)?.cli ?? "",
+      model: p.engine.model,
+      reactions: p.reactions ? Object.fromEntries(Object.entries(p.reactions).map(([k, v]) => [k, v?.[0] ?? ""])) : {},
+      quickAnswers: p.quickAnswers ?? {},
+    });
     setGeneratedStyle(p.persona.style);
-    if (p.reactions) setReactions(Object.fromEntries(Object.entries(p.reactions).map(([k, v]) => [k, v?.[0] ?? ""])));
-    if (p.quickAnswers) setAnswers(p.quickAnswers);
     setAvatarPresetRef(p.id);
     setPresetRing(p.ring);
     setCustomizedPresetOrigin({ id: p.id, name: p.name });
@@ -570,12 +639,14 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
                     These decide what actually gets launched: the job they own, the CLI process they live in, and the
                     language they speak. Everything after this is flavor.
                   </p>
+                  {/* The catalog-backed pickers stay controlled off `watch` + `setValue`
+                      rather than `register`: each one either derives a second field (CLI
+                      resets the model) or shares its value with another control (the two
+                      model inputs), which an uncontrolled input can't mirror. RHF still
+                      owns every value — this is the same job `Controller` does. */}
                   <label>
                     Job role
-                    <select
-                      value={jobRole?.id ?? ""}
-                      onChange={(e) => setJobRole(catalog?.jobRoles.find((r) => r.id === e.target.value) ?? null)}
-                    >
+                    <select value={jobRoleId} onChange={(e) => setValue("jobRole", e.target.value)}>
                       <option value="">— pick a role —</option>
                       {(catalog?.jobRoles ?? []).map((r) => (
                         <option key={r.id} value={r.id}>
@@ -587,11 +658,11 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
                   <label>
                     CLI
                     <select
-                      value={engine?.cli ?? ""}
+                      value={engineCli}
                       onChange={(e) => {
                         const picked = catalog?.engines.find((x) => x.cli === e.target.value) ?? null;
-                        setEngine(picked);
-                        setModel(picked?.models[0] ?? "");
+                        setValue("engine", picked?.cli ?? "");
+                        setValue("model", picked?.models[0] ?? "");
                       }}
                     >
                       {(catalog?.engines ?? []).map((e) => (
@@ -604,7 +675,7 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
                   </label>
                   <label>
                     Model
-                    <select value={model} onChange={(e) => setModel(e.target.value)}>
+                    <select value={model} onChange={(e) => setValue("model", e.target.value)}>
                       {(engine?.models ?? []).map((m) => (
                         <option key={m} value={m}>
                           {m}
@@ -617,7 +688,11 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
                   </label>
                   <label>
                     Or type any model id {engine?.label ?? "this CLI"} accepts
-                    <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="claude-opus" />
+                    <input
+                      value={model}
+                      onChange={(e) => setValue("model", e.target.value)}
+                      placeholder="claude-opus"
+                    />
                   </label>
                   {engine && (
                     <p className="wizard__hint">
@@ -635,7 +710,7 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
                   <label>
                     Personality
                     <select
-                      value={stereotype?.id ?? ""}
+                      value={stereotypeId}
                       onChange={(e) =>
                         pickStereotype(catalog?.stereotypes.find((x) => x.id === e.target.value) ?? null)
                       }
@@ -650,7 +725,7 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
                   </label>
                   <label>
                     Primary language
-                    <select value={language} onChange={(e) => setLanguage(e.target.value)}>
+                    <select {...register("language")}>
                       {(catalog?.languages ?? []).map((l) => (
                         <option key={l.id} value={l.id}>
                           {l.label}
@@ -670,11 +745,7 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
                   </p>
                   <label>
                     Anything specific? (optional)
-                    <input
-                      value={hint}
-                      onChange={(e) => setHint(e.target.value)}
-                      placeholder="veteran who has seen three failed launches"
-                    />
+                    <input {...register("hint")} placeholder="veteran who has seen three failed launches" />
                   </label>
                   <button
                     type="button"
@@ -691,11 +762,11 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
                   </button>
                   <label>
                     Name
-                    <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Fabian" />
+                    <input {...register("name")} placeholder="Fabian" />
                   </label>
                   <label>
                     Title
-                    <input value={role} onChange={(e) => setRole(e.target.value)} placeholder="The Architect" />
+                    <input {...register("role")} placeholder="The Architect" />
                   </label>
                   <div className="wizard__genders">
                     <span>Voice gender</span>
@@ -704,7 +775,7 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
                         key={g}
                         type="button"
                         className={`chip${gender === g ? " is-picked" : ""}`}
-                        onClick={() => setGender(g)}
+                        onClick={() => setValue("gender", g)}
                       >
                         {g}
                       </button>
@@ -715,8 +786,8 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
                     engine={catalog?.avatarGen ?? null}
                     name={name}
                     gender={gender}
-                    role={role}
-                    backstory={backstory}
+                    role={watch("role")}
+                    backstory={watch("backstory")}
                     stereotype={stereotype?.id}
                     ring={presetRing ?? undefined}
                     value={
@@ -735,8 +806,7 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
                   <label>
                     Backstory
                     <textarea
-                      value={backstory}
-                      onChange={(e) => setBackstory(e.target.value)}
+                      {...register("backstory")}
                       rows={3}
                       placeholder="Grew up debugging his father's POS system in Santiago; believes every outage is a design smell."
                     />
@@ -749,10 +819,9 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
                   <div className="voice-browser__search">
                     <Search size={13} strokeWidth={2} />
                     <input
-                      value={voiceSearch}
-                      onChange={(e) => setVoiceSearch(e.target.value)}
+                      {...register("voiceSearch")}
                       onKeyDown={(e) => {
-                        if (e.key === "Enter") void loadVoices(voiceSearch, gender);
+                        if (e.key === "Enter") void loadVoices(getValues("voiceSearch"), gender);
                       }}
                       placeholder="Search the ElevenLabs catalog — latin, warm, deep…"
                     />
@@ -761,7 +830,11 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
                   <div className="voice-list">
                     {voices.map((v) => (
                       <div key={v.voiceId} className={`voice-row${voiceId === v.voiceId ? " is-picked" : ""}`}>
-                        <button type="button" className="voice-row__pick" onClick={() => setVoiceId(v.voiceId)}>
+                        <button
+                          type="button"
+                          className="voice-row__pick"
+                          onClick={() => setValue("voiceId", v.voiceId)}
+                        >
                           <b>{v.name}</b>
                           <span>{[v.gender, v.accent, v.description].filter(Boolean).join(" · ").slice(0, 70)}</span>
                         </button>
@@ -781,9 +854,11 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
                   </div>
                   <label>
                     Or paste a voice id
+                    {/* Controlled off `watch`, not `register`: picking a voice from the list
+                        above has to show up in this box, which needs a re-render. */}
                     <input
                       value={voiceId}
-                      onChange={(e) => setVoiceId(e.target.value)}
+                      onChange={(e) => setValue("voiceId", e.target.value)}
                       placeholder="bnes5tb6xZ5GxqUjhUSq"
                     />
                   </label>
@@ -798,10 +873,7 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
                   {(catalog?.reactionLevels ?? []).map((level) => (
                     <label key={level}>
                       {LEVEL_LABELS[level] ?? level}
-                      <input
-                        value={reactions[level] ?? ""}
-                        onChange={(e) => setReactions((r) => ({ ...r, [level]: e.target.value }))}
-                      />
+                      <input {...register(`reactions.${level}`)} />
                     </label>
                   ))}
                 </div>
@@ -815,10 +887,7 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
                   {(catalog?.quickQuestions ?? []).map((q) => (
                     <label key={q.id}>
                       {q.question}
-                      <input
-                        value={answers[q.id] ?? ""}
-                        onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: e.target.value }))}
-                      />
+                      <input {...register(`quickAnswers.${q.id}`)} />
                     </label>
                   ))}
                 </div>

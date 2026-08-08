@@ -1,6 +1,7 @@
 import { Plus, X } from "lucide-react";
 import type { MouseEvent } from "react";
 import { useEffect, useState } from "react";
+import { useFieldArray, useForm } from "react-hook-form";
 import type { ConnectorInstanceRecord, WorkspaceRecord } from "../api/types";
 import { WORKSPACE_PALETTE } from "../lib/workspace-color";
 import { ConfirmSheet } from "../molecules/ConfirmSheet";
@@ -18,16 +19,117 @@ interface WorkspaceManagerModalProps {
   listMyConnectors?: () => Promise<ConnectorInstanceRecord[]>;
 }
 
-const emptyRepo = () => ({
-  name: "",
-  path: "",
-  branch: "main",
-  github: undefined as { owner: string; repo: string } | undefined,
-});
+/**
+ * The editable draft. Every field is a plain string so RHF owns it directly: the
+ * record's optional blocks (`atlassian`, a repo's `github`) and its single-element
+ * key arrays are rebuilt in `toRecord` at submit, which is where the "half-filled
+ * block is not a block" rule already lived.
+ */
+interface WorkspaceFormValues {
+  name: string;
+  description: string;
+  /** Raw textarea text — kept separate from the record's `links` so a trailing blank line
+      while typing isn't immediately collapsed away (same pattern as NewWorkspaceModal). */
+  linksText: string;
+  /** "" means no colour picked. */
+  color: string;
+  default: boolean;
+  atlassian: { siteUrl: string; connectorId: string; jiraProjectKey: string; confluenceSpaceKey: string };
+  repos: Array<{
+    name: string;
+    path: string;
+    branch: string;
+    owner: string;
+    repo: string;
+    connectorId: string;
+    initGit?: boolean;
+  }>;
+}
+
+const emptyRepo = () => ({ name: "", path: "", branch: "main", owner: "", repo: "", connectorId: "" });
+
+const noAtlassian = () => ({ siteUrl: "", connectorId: "", jiraProjectKey: "", confluenceSpaceKey: "" });
+
+/** Non-blank after trimming — the two fields per repo, plus the name, that gate saving. */
+const filled = (v: string) => v.trim().length > 0;
 
 /** The "new workspace" starting point — first-ever workspace defaults itself in, mirroring swarm's own rule. */
-function blankForm(noWorkspacesYet: boolean): WorkspaceRecord {
-  return { name: "", default: noWorkspacesYet, repos: [emptyRepo()] };
+function blankForm(noWorkspacesYet: boolean): WorkspaceFormValues {
+  return {
+    name: "",
+    description: "",
+    linksText: "",
+    color: "",
+    default: noWorkspacesYet,
+    atlassian: noAtlassian(),
+    repos: [emptyRepo()],
+  };
+}
+
+/** A stored record, flattened into the editable draft above. */
+function toForm(ws: WorkspaceRecord): WorkspaceFormValues {
+  return {
+    name: ws.name,
+    description: ws.description ?? "",
+    linksText: (ws.links ?? []).join("\n"),
+    color: ws.color ?? "",
+    default: ws.default,
+    atlassian: {
+      siteUrl: ws.atlassian?.siteUrl ?? "",
+      connectorId: ws.atlassian?.connectorId ?? "",
+      jiraProjectKey: ws.atlassian?.jiraProjectKeys?.[0] ?? "",
+      confluenceSpaceKey: ws.atlassian?.confluenceSpaceKeys?.[0] ?? "",
+    },
+    repos: ws.repos.map((r) => ({
+      name: r.name,
+      path: r.path,
+      branch: r.branch,
+      owner: r.github?.owner ?? "",
+      repo: r.github?.repo ?? "",
+      connectorId: r.github?.connectorId ?? "",
+      ...(r.initGit ? { initGit: true } : {}),
+    })),
+  };
+}
+
+/**
+ * The draft, back into a record to save. A half-filled atlassian/github block
+ * (project key typed before site URL, or one of owner/repo left blank) must never
+ * be submitted as if it were configured — that normalization happens here rather
+ * than in each onChange, so typing in any order never appears to drop a field.
+ */
+function toRecord(v: WorkspaceFormValues): WorkspaceRecord {
+  return {
+    name: v.name,
+    description: v.description,
+    default: v.default,
+    // PUT reads an absent colour as "keep the existing one", so unpicking
+    // has to travel as an empty string to actually clear it. Both routes
+    // collapse "" to undefined before saving; the convention is untouched.
+    color: v.color,
+    links: v.linksText
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean),
+    atlassian: v.atlassian.siteUrl.trim()
+      ? {
+          siteUrl: v.atlassian.siteUrl,
+          connectorId: v.atlassian.connectorId || undefined,
+          jiraProjectKeys: v.atlassian.jiraProjectKey ? [v.atlassian.jiraProjectKey] : undefined,
+          confluenceSpaceKeys: v.atlassian.confluenceSpaceKey ? [v.atlassian.confluenceSpaceKey] : undefined,
+        }
+      : undefined,
+    repos: v.repos.map((r) => ({
+      name: r.name,
+      path: r.path,
+      branch: r.branch,
+      github:
+        r.owner.trim() && r.repo.trim()
+          ? { owner: r.owner, repo: r.repo, connectorId: r.connectorId || undefined }
+          : undefined,
+      ...(r.initGit ? { initGit: true } : {}),
+    })),
+  };
 }
 
 /**
@@ -50,17 +152,29 @@ export function WorkspaceManagerModal({
   const [loadError, setLoadError] = useState<string | null>(null);
   /** Workspace name being edited; null means the form is building a new one. */
   const [selected, setSelected] = useState<string | null>(null);
-  const [form, setForm] = useState<WorkspaceRecord>(blankForm(true));
-  /** Raw textarea text — kept separate from `form.links` so a trailing blank line while
-      typing isn't immediately collapsed away (same pattern as NewWorkspaceModal). */
-  const [linksText, setLinksText] = useState("");
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [removing, setRemoving] = useState<{ name: string; busy?: boolean; error?: string } | null>(null);
   const [testResult, setTestResult] = useState<{ target: string; ok: boolean; detail: string } | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
 
+  // mode: "onChange" because the save button gates on isValid — this is the
+  // `canSave` rule (name, plus every repo's name and path) expressed as rules.
+  const {
+    register,
+    control,
+    handleSubmit,
+    reset,
+    watch,
+    formState: { isValid, isSubmitting },
+  } = useForm<WorkspaceFormValues>({ mode: "onChange", defaultValues: blankForm(true) });
+  const { fields, append, remove: removeRepoAt } = useFieldArray({ control, name: "repos" });
+
   const active = workspaces.filter((w) => !w.archived);
+
+  // Owner/repo decide whether a repo row offers its Test button; siteUrl does the same
+  // for the Atlassian block. `name` is read back after a save to re-select the record.
+  const repoValues = watch("repos");
+  const atlassianSiteUrl = watch("atlassian.siteUrl");
 
   const refresh = async (): Promise<WorkspaceRecord[]> => {
     setLoadError(null);
@@ -75,7 +189,9 @@ export function WorkspaceManagerModal({
   // Reset to a blank "new workspace" form every time the modal opens. Also
   // drops any leftover remove-confirmation from the last time this modal was
   // open — otherwise a stale `removing` could resurface a confirmation for a
-  // workspace the user never asked to remove this time around.
+  // workspace the user never asked to remove this time around. HomePage keeps
+  // this modal mounted and toggles `open`, so useForm's per-mount defaults run
+  // only once; the reset here is what actually clears a reopen.
   // Deliberately keyed on `open` only — `list` is a stable-enough prop
   // function and refetching on every parent render would be pointless.
   // biome-ignore lint/correctness/useExhaustiveDependencies: see above
@@ -84,8 +200,7 @@ export function WorkspaceManagerModal({
     setRemoving(null);
     void refresh().then((records) => {
       setSelected(null);
-      setForm(blankForm(records.filter((w) => !w.archived).length === 0));
-      setLinksText("");
+      reset(blankForm(records.filter((w) => !w.archived).length === 0));
       setError(null);
     });
   }, [open]);
@@ -114,25 +229,17 @@ export function WorkspaceManagerModal({
 
   const startNew = () => {
     setSelected(null);
-    setForm(blankForm(active.length === 0));
-    setLinksText("");
+    reset(blankForm(active.length === 0));
     setError(null);
     setTestResult(null);
   };
 
   const selectWorkspace = (ws: WorkspaceRecord) => {
     setSelected(ws.name);
-    setForm({ ...ws, repos: ws.repos.map((r) => ({ ...r })) });
-    setLinksText((ws.links ?? []).join("\n"));
+    reset(toForm(ws));
     setError(null);
     setTestResult(null);
   };
-
-  const updateRepo = (index: number, patch: Partial<WorkspaceRecord["repos"][number]>) => {
-    setForm((f) => ({ ...f, repos: f.repos.map((r, i) => (i === index ? { ...r, ...patch } : r)) }));
-  };
-  const addRepo = () => setForm((f) => ({ ...f, repos: [...f.repos, emptyRepo()] }));
-  const removeRepo = (index: number) => setForm((f) => ({ ...f, repos: f.repos.filter((_, i) => i !== index) }));
 
   const testAtlassian = async () => {
     if (!selected) return;
@@ -150,43 +257,23 @@ export function WorkspaceManagerModal({
     setTestResult({ target: repoName, ok: Boolean(r.ok), detail: r.detail ?? r.error ?? "unknown" });
   };
 
-  const submit = async () => {
-    setBusy(true);
+  const submit = handleSubmit(async (values) => {
     setError(null);
     const isNew = selected === null;
-    // A half-filled atlassian/github block (project key typed before site URL,
-    // or one of owner/repo left blank) must never be submitted as if it were
-    // configured — normalize to undefined here rather than fighting each
-    // onChange handler, so typing in any order never appears to drop a field.
-    const normalized: WorkspaceRecord = {
-      ...form,
-      // PUT reads an absent colour as "keep the existing one", so unpicking
-      // has to travel as an empty string to actually clear it. Both routes
-      // collapse "" to undefined before saving; the convention is untouched.
-      color: form.color ?? "",
-      links: linksText
-        .split("\n")
-        .map((l) => l.trim())
-        .filter(Boolean),
-      atlassian: form.atlassian?.siteUrl?.trim() ? form.atlassian : undefined,
-      repos: form.repos.map((r) => ({
-        ...r,
-        github: r.github?.owner?.trim() && r.github?.repo?.trim() ? r.github : undefined,
-      })),
-    };
-    const result = await save(normalized, isNew).catch((err: unknown): { error?: string } => ({ error: String(err) }));
-    setBusy(false);
+    const result = await save(toRecord(values), isNew).catch((err: unknown): { error?: string } => ({
+      error: String(err),
+    }));
     if (result.error) {
       setError(result.error);
       return;
     }
     const records = await refresh();
-    const saved = records.find((w) => w.name === form.name);
+    const saved = records.find((w) => w.name === values.name);
     if (saved) {
       setSelected(saved.name);
-      setForm({ ...saved, repos: saved.repos.map((r) => ({ ...r })) });
+      reset(toForm(saved));
     }
-  };
+  });
 
   const requestRemoval = (name: string) => setRemoving({ name });
 
@@ -205,11 +292,9 @@ export function WorkspaceManagerModal({
     const records = await refresh();
     if (selected === name) {
       setSelected(null);
-      setForm(blankForm(records.filter((w) => !w.archived).length === 0));
+      reset(blankForm(records.filter((w) => !w.archived).length === 0));
     }
   };
-
-  const canSave = form.name.trim().length > 0 && form.repos.every((r) => r.name.trim() && r.path.trim());
 
   const onScrimClick = (e: MouseEvent<HTMLDivElement>) => {
     if (e.target === e.currentTarget) onClose();
@@ -274,88 +359,49 @@ export function WorkspaceManagerModal({
               <label>
                 Name
                 <input
-                  value={form.name}
+                  {...register("name", { validate: filled })}
                   disabled={selected !== null}
-                  onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                   placeholder="acme-web"
                 />
               </label>
               <label>
                 Description
-                <input
-                  value={form.description ?? ""}
-                  onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-                  placeholder="Marketing site + storefront"
-                />
+                <input {...register("description")} placeholder="Marketing site + storefront" />
               </label>
               <label>
                 Links <span className="wizard__hint">one per line — docs, dashboards, tickets</span>
-                <textarea
-                  value={linksText}
-                  onChange={(e) => setLinksText(e.target.value)}
-                  rows={3}
-                  placeholder="https://github.com/acme/web"
-                />
+                <textarea {...register("linksText")} rows={3} placeholder="https://github.com/acme/web" />
               </label>
               <fieldset className="swatch-row">
                 <legend>Colour</legend>
                 {/* "None" is a real option, not just the starting state — without
-                    it a workspace colour could never be cleared once set. */}
+                    it a workspace colour could never be cleared once set. It
+                    carries the empty string the PUT reads as "clear this". */}
                 <label className="swatch swatch--none">
-                  <input
-                    type="radio"
-                    name="wm-color"
-                    aria-label="No colour"
-                    checked={!form.color}
-                    onChange={() => setForm((f) => ({ ...f, color: undefined }))}
-                  />
+                  <input type="radio" {...register("color")} value="" aria-label="No colour" />
                   <span />
                 </label>
                 {WORKSPACE_PALETTE.map((c, i) => (
                   <label key={c} className="swatch">
-                    <input
-                      type="radio"
-                      name="wm-color"
-                      aria-label={`Colour ${i + 1}`}
-                      checked={form.color === c}
-                      onChange={() => setForm((f) => ({ ...f, color: c }))}
-                    />
+                    <input type="radio" {...register("color")} value={c} aria-label={`Colour ${i + 1}`} />
                     <span style={{ background: c }} />
                   </label>
                 ))}
               </fieldset>
               <label className="check">
-                <input
-                  type="checkbox"
-                  checked={form.default}
-                  onChange={(e) => setForm((f) => ({ ...f, default: e.target.checked }))}
-                />
+                <input type="checkbox" {...register("default")} />
                 default workspace — used when a delegation names none
               </label>
 
               <div className="workspace-manager__atlassian">
                 <span className="wizard__hint">Atlassian (Jira / Confluence)</span>
-                <input
-                  value={form.atlassian?.siteUrl ?? ""}
-                  onChange={(e) => setForm((f) => ({ ...f, atlassian: { ...f.atlassian, siteUrl: e.target.value } }))}
-                  placeholder="https://acme.atlassian.net"
-                />
+                <input {...register("atlassian.siteUrl")} placeholder="https://acme.atlassian.net" />
                 <label htmlFor="atlassian-connector">
                   Atlassian connector
                   <select
                     id="atlassian-connector"
                     aria-label="Atlassian connector"
-                    value={form.atlassian?.connectorId ?? ""}
-                    onChange={(e) =>
-                      setForm((f) => ({
-                        ...f,
-                        atlassian: {
-                          siteUrl: f.atlassian?.siteUrl ?? "",
-                          ...f.atlassian,
-                          connectorId: e.target.value || undefined,
-                        },
-                      }))
-                    }
+                    {...register("atlassian.connectorId")}
                   >
                     <option value="">— none picked —</option>
                     {connectors
@@ -367,35 +413,9 @@ export function WorkspaceManagerModal({
                       ))}
                   </select>
                 </label>
-                <input
-                  value={form.atlassian?.jiraProjectKeys?.[0] ?? ""}
-                  onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      atlassian: {
-                        siteUrl: f.atlassian?.siteUrl ?? "",
-                        ...f.atlassian,
-                        jiraProjectKeys: e.target.value ? [e.target.value] : undefined,
-                      },
-                    }))
-                  }
-                  placeholder="Jira project key (ACME)"
-                />
-                <input
-                  value={form.atlassian?.confluenceSpaceKeys?.[0] ?? ""}
-                  onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      atlassian: {
-                        siteUrl: f.atlassian?.siteUrl ?? "",
-                        ...f.atlassian,
-                        confluenceSpaceKeys: e.target.value ? [e.target.value] : undefined,
-                      },
-                    }))
-                  }
-                  placeholder="Confluence space key (DOCS)"
-                />
-                {selected && form.atlassian?.siteUrl && (
+                <input {...register("atlassian.jiraProjectKey")} placeholder="Jira project key (ACME)" />
+                <input {...register("atlassian.confluenceSpaceKey")} placeholder="Confluence space key (DOCS)" />
+                {selected && atlassianSiteUrl && (
                   <button
                     type="button"
                     className="settings-btn"
@@ -412,55 +432,17 @@ export function WorkspaceManagerModal({
 
               <div className="workspace-manager__repos">
                 <span className="wizard__hint">Repos</span>
-                {form.repos.map((repo, i) => (
-                  // biome-ignore lint/suspicious/noArrayIndexKey: rows have no identity until saved; only appended/removed at the ends
-                  <div key={i} className="repo-row">
+                {fields.map((field, i) => (
+                  <div key={field.id} className="repo-row">
+                    <input {...register(`repos.${i}.name`, { validate: filled })} placeholder="web" />
                     <input
-                      value={repo.name}
-                      onChange={(e) => updateRepo(i, { name: e.target.value })}
-                      placeholder="web"
-                    />
-                    <input
-                      value={repo.path}
-                      onChange={(e) => updateRepo(i, { path: e.target.value })}
+                      {...register(`repos.${i}.path`, { validate: filled })}
                       placeholder="/Users/me/code/acme-web"
                     />
-                    <input
-                      value={repo.branch}
-                      onChange={(e) => updateRepo(i, { branch: e.target.value })}
-                      placeholder="main"
-                    />
-                    <input
-                      value={repo.github?.owner ?? ""}
-                      onChange={(e) =>
-                        updateRepo(i, {
-                          github: { ...repo.github, owner: e.target.value, repo: repo.github?.repo ?? "" },
-                        })
-                      }
-                      placeholder="GitHub owner"
-                    />
-                    <input
-                      value={repo.github?.repo ?? ""}
-                      onChange={(e) =>
-                        updateRepo(i, {
-                          github: { ...repo.github, owner: repo.github?.owner ?? "", repo: e.target.value },
-                        })
-                      }
-                      placeholder="GitHub repo"
-                    />
-                    <select
-                      aria-label="GitHub connector"
-                      value={repo.github?.connectorId ?? ""}
-                      onChange={(e) =>
-                        updateRepo(i, {
-                          github: {
-                            owner: repo.github?.owner ?? "",
-                            repo: repo.github?.repo ?? "",
-                            connectorId: e.target.value || undefined,
-                          },
-                        })
-                      }
-                    >
+                    <input {...register(`repos.${i}.branch`)} placeholder="main" />
+                    <input {...register(`repos.${i}.owner`)} placeholder="GitHub owner" />
+                    <input {...register(`repos.${i}.repo`)} placeholder="GitHub repo" />
+                    <select aria-label="GitHub connector" {...register(`repos.${i}.connectorId`)}>
                       <option value="">— none picked —</option>
                       {connectors
                         .filter((c) => c.vendorId === "github")
@@ -470,28 +452,28 @@ export function WorkspaceManagerModal({
                           </option>
                         ))}
                     </select>
-                    {selected && repo.github?.owner && repo.github?.repo && (
+                    {selected && repoValues[i]?.owner && repoValues[i]?.repo && (
                       <button
                         type="button"
                         className="settings-btn"
-                        onClick={() => void testRepoGithub(repo.name)}
-                        disabled={testing === repo.name}
+                        onClick={() => void testRepoGithub(repoValues[i]?.name ?? "")}
+                        disabled={testing === repoValues[i]?.name}
                       >
-                        {testing === repo.name ? "testing…" : "Test"}
+                        {testing === repoValues[i]?.name ? "testing…" : "Test"}
                       </button>
                     )}
                     <button
                       type="button"
                       className="repo-row__remove"
-                      onClick={() => removeRepo(i)}
-                      disabled={form.repos.length <= 1}
+                      onClick={() => removeRepoAt(i)}
+                      disabled={fields.length <= 1}
                       aria-label="Remove repo"
                     >
                       <X size={12} strokeWidth={2} />
                     </button>
                   </div>
                 ))}
-                <button type="button" className="settings-btn" onClick={addRepo}>
+                <button type="button" className="settings-btn" onClick={() => append(emptyRepo())}>
                   <Plus size={11} strokeWidth={2.2} /> repo
                 </button>
               </div>
@@ -502,9 +484,9 @@ export function WorkspaceManagerModal({
                 type="button"
                 className="settings-btn settings-btn--primary settings-btn--wide"
                 onClick={() => void submit()}
-                disabled={busy || !canSave}
+                disabled={isSubmitting || !isValid}
               >
-                {busy ? "saving…" : selected ? "save changes" : "create workspace"}
+                {isSubmitting ? "saving…" : selected ? "save changes" : "create workspace"}
               </button>
             </div>
           </div>

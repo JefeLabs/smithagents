@@ -47,11 +47,16 @@ describe("WorkspaceManagerModal — connector pickers", () => {
         listMyConnectors={vi.fn(async () => CONNECTORS)}
       />,
     );
-    const repoSelects = await screen.findAllByLabelText(/github connector/i);
-    expect(repoSelects.length).toBeGreaterThanOrEqual(1);
-    const options = Array.from(repoSelects[0]!.querySelectorAll("option")).map((o) => o.textContent);
-    expect(options).toEqual(expect.arrayContaining(["acme-corp", "personal"]));
-    expect(options).not.toContain("personal (atlassian)"); // no atlassian connector leaks into a github picker
+    // Re-query inside waitFor rather than holding a reference: the open-effect's reset()
+    // regenerates useFieldArray's row keys, so a select captured before the connector
+    // roster lands is a detached node that can never gain the options being asserted on.
+    await waitFor(() => {
+      const repoSelects = screen.getAllByLabelText(/github connector/i);
+      expect(repoSelects.length).toBeGreaterThanOrEqual(1);
+      const options = Array.from(repoSelects[0]!.querySelectorAll("option")).map((o) => o.textContent);
+      expect(options).toEqual(expect.arrayContaining(["acme-corp", "personal"]));
+      expect(options).not.toContain("personal (atlassian)"); // no atlassian connector leaks into a github picker
+    });
   });
 
   it("picking a connector for a repo and saving includes that repo's connectorId in the saved payload", async () => {
@@ -86,6 +91,38 @@ describe("WorkspaceManagerModal — connector pickers", () => {
     );
   });
 
+  it("save gates on the workspace name plus EVERY repo's name and path — and on nothing else", async () => {
+    // canSave moved from a hand-written expression onto RHF's whole-form isValid, so the
+    // set of registered rules has to be exactly those three fields per the original: adding
+    // a rule to owner/repo/branch/connector would strand the button, dropping one from
+    // path/name would let a half-filled repo through.
+    render(
+      <WorkspaceManagerModal
+        open
+        onClose={() => {}}
+        list={vi.fn(async () => [])}
+        save={vi.fn()}
+        remove={vi.fn()}
+        verifyAtlassian={vi.fn()}
+        verifyRepoGithub={vi.fn()}
+        listMyConnectors={vi.fn(async () => CONNECTORS)}
+      />,
+    );
+    const create = (await screen.findByRole("button", { name: /create workspace/i })) as HTMLButtonElement;
+    expect(create.disabled).toBe(true);
+    await userEvent.type(screen.getByPlaceholderText("acme-web"), "web");
+    expect(create.disabled).toBe(true); // repo name + path still blank
+    await userEvent.type(screen.getByPlaceholderText("web"), "web");
+    expect(create.disabled).toBe(true); // path still blank
+    await userEvent.type(screen.getByPlaceholderText(/Users\/me\/code/i), "/tmp/web");
+    // Enabled with owner, repo and connector all still empty — those never gated.
+    await waitFor(() => expect(create.disabled).toBe(false));
+
+    // A second, empty repo row re-disables it: the rule is every repo, not the first.
+    await userEvent.click(screen.getByRole("button", { name: /^\s*repo$/i }));
+    await waitFor(() => expect(create.disabled).toBe(true));
+  });
+
   it("editing saves links", async () => {
     const save = vi.fn(async () => ({}));
     const existing = {
@@ -114,6 +151,11 @@ describe("WorkspaceManagerModal — connector pickers", () => {
     await waitFor(() =>
       expect(save).toHaveBeenCalledWith(
         expect.objectContaining({
+          // `name` is asserted alongside links because its input is disabled while editing,
+          // and a disabled input is exactly the kind of field a form library can quietly drop
+          // from the submitted values. Without this the payload could lose its identity and
+          // the links assertion would still pass.
+          name: "acme",
           links: ["https://github.com/acme/web", "https://acme.atlassian.net"],
         }),
         false,
