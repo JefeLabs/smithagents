@@ -12,7 +12,7 @@
 
 - **Never run `pnpm` or `npm install` in this repo.** Neither package has a lockfile and both were installed with npm; `pnpm --dir <pkg> <script>` runs a pre-flight install that relocates those modules and then aborts with `[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: esbuild@0.28.1`, exit 1, before your script ever runs. Dependencies are already present and working — invoke the local binaries directly.
 - The four commands, all runnable from the repo root and safe to chain with `&&`:
-  - Swarm tests — `(cd swarm && node --import tsx --test 'src/*.test.ts')`
+  - Swarm tests — `(cd swarm && node --import tsx --test 'src/*.test.ts' 'src/**/*.test.ts')`
   - Swarm typecheck — `(cd swarm && ./node_modules/.bin/tsc --noEmit)`
   - Control-plane tests — `(cd control-plane && ./node_modules/.bin/vitest run)`
   - Control-plane typecheck — `(cd control-plane && ./node_modules/.bin/tsc --noEmit)`
@@ -319,7 +319,7 @@ Also update `swarm/src/capabilities.test.ts`: any `workspaceBoardId(...)` call b
 
 - [ ] **Step 5: Run tests and typecheck**
 
-Run: `(cd swarm && node --import tsx --test 'src/*.test.ts') && (cd swarm && ./node_modules/.bin/tsc --noEmit)`
+Run: `(cd swarm && node --import tsx --test 'src/*.test.ts' 'src/**/*.test.ts') && (cd swarm && ./node_modules/.bin/tsc --noEmit)`
 Expected: PASS. If `server.test.ts` asserts on the old create-route body, update those assertions to the new `{type, workspaceId}` shape.
 
 - [ ] **Step 6: Commit**
@@ -803,7 +803,7 @@ Finally, the slice-send remap at line 2341 — already changed in Task 1 to `boa
 
 - [ ] **Step 5: Run tests and typecheck**
 
-Run: `(cd swarm && node --import tsx --test 'src/*.test.ts') && (cd swarm && ./node_modules/.bin/tsc --noEmit)`
+Run: `(cd swarm && node --import tsx --test 'src/*.test.ts' 'src/**/*.test.ts') && (cd swarm && ./node_modules/.bin/tsc --noEmit)`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
@@ -917,7 +917,7 @@ Also add `color?: string;` to the `WorkspaceRecord` type in `control-plane/src/h
 
 - [ ] **Step 6: Run everything**
 
-Run: `(cd swarm && node --import tsx --test 'src/*.test.ts') && (cd swarm && ./node_modules/.bin/tsc --noEmit) && (cd control-plane && ./node_modules/.bin/vitest run)`
+Run: `(cd swarm && node --import tsx --test 'src/*.test.ts' 'src/**/*.test.ts') && (cd swarm && ./node_modules/.bin/tsc --noEmit) && (cd control-plane && ./node_modules/.bin/vitest run)`
 Expected: PASS.
 
 - [ ] **Step 7: Commit**
@@ -2356,7 +2356,7 @@ Apply the same block in `WorkspaceManagerModal.tsx`, seeding state from the work
 
 - [ ] **Step 5: Run everything**
 
-Run: `(cd control-plane && ./node_modules/.bin/vitest run) && (cd control-plane && ./node_modules/.bin/tsc --noEmit) && (cd swarm && node --import tsx --test 'src/*.test.ts') && (cd swarm && ./node_modules/.bin/tsc --noEmit)`
+Run: `(cd control-plane && ./node_modules/.bin/vitest run) && (cd control-plane && ./node_modules/.bin/tsc --noEmit) && (cd swarm && node --import tsx --test 'src/*.test.ts' 'src/**/*.test.ts') && (cd swarm && ./node_modules/.bin/tsc --noEmit)`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
@@ -2373,7 +2373,7 @@ git commit -m "feat(ui): workspace colour swatch in the create and manage modals
 
 Not a task — run this before opening the branch for review.
 
-- [ ] `(cd swarm && node --import tsx --test 'src/*.test.ts') && (cd swarm && ./node_modules/.bin/tsc --noEmit)`
+- [ ] `(cd swarm && node --import tsx --test 'src/*.test.ts' 'src/**/*.test.ts') && (cd swarm && ./node_modules/.bin/tsc --noEmit)`
 - [ ] `(cd control-plane && ./node_modules/.bin/vitest run) && (cd control-plane && ./node_modules/.bin/tsc --noEmit) && (cd control-plane && ./node_modules/.bin/biome check src)`
 - [ ] Restart swarm + broker + UI (broker runs in tmux `smith-broker` on 7790 from the main checkout — never an unscoped `pkill -f`).
 - [ ] **UI click-through smoke**, which the last two board cycles both shipped without and both regretted:
