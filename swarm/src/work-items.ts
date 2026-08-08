@@ -16,6 +16,18 @@ export interface WorkColumn {
   jiraStatus?: string;
 }
 
+export type FlagKind = 'blocked' | 'at-risk' | 'waiting';
+
+/** Orthogonal to columnId — a flagged card keeps its position. */
+export interface CardFlag {
+  kind: FlagKind;
+  reason?: string;
+  /** Stamped on entry into a flagged state; survives kind/reason edits, dropped on clear. */
+  since: string;
+}
+
+const FLAG_KINDS: FlagKind[] = ['blocked', 'at-risk', 'waiting'];
+
 export interface WorkCard {
   id: string;
   title: string;
@@ -33,6 +45,7 @@ export interface WorkCard {
   capabilityRef?: { capabilityId: string; sliceId: string };
   /** Appended each time this card is routed to another board. Never rewritten. */
   routedFrom?: Array<{ boardId: string; boardType: BoardType; columnId: string; at: string }>;
+  flag?: CardFlag;
 }
 
 export interface WorkBoard {
@@ -302,7 +315,8 @@ export function addCard(board: WorkBoard, input: { title: string; notes?: string
 export function patchCard(
   board: WorkBoard,
   cardId: string,
-  patch: Partial<Pick<WorkCard, 'title' | 'notes' | 'columnId' | 'order' | 'jira' | 'delegation' | 'stories' | 'capabilityRef'>>,
+  patch: Partial<Pick<WorkCard, 'title' | 'notes' | 'columnId' | 'order' | 'jira' | 'delegation' | 'stories' | 'capabilityRef'>>
+    & { flag?: { kind: FlagKind; reason?: string } | null },
 ): WorkCard {
   const card = board.cards.find((c) => c.id === cardId);
   if (!card) throw new Error(`Unknown card: ${cardId}`);
@@ -316,6 +330,20 @@ export function patchCard(
   if (patch.delegation !== undefined) card.delegation = patch.delegation ?? undefined;
   if (patch.stories !== undefined) card.stories = patch.stories ?? undefined;
   if (patch.capabilityRef !== undefined) card.capabilityRef = patch.capabilityRef ?? undefined;
+  if (patch.flag !== undefined) {
+    if (patch.flag === null) {
+      card.flag = undefined;
+    } else {
+      if (!FLAG_KINDS.includes(patch.flag.kind)) throw new Error(`Unknown flag kind: ${patch.flag.kind}`);
+      // The clock measures how long it has been stuck NOW, so an in-place
+      // correction keeps it and only a clear-then-reflag restarts it.
+      card.flag = {
+        kind: patch.flag.kind,
+        reason: patch.flag.reason?.trim() || undefined,
+        since: card.flag?.since ?? new Date().toISOString(),
+      };
+    }
+  }
   if (patch.columnId !== undefined || patch.order !== undefined) {
     const toColumn = patch.columnId ?? card.columnId;
     const siblings = board.cards.filter((c) => c.columnId === toColumn && c.id !== card.id).sort((a, b) => a.order - b.order);

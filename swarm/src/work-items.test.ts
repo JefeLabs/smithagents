@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import {
-  addCard, BOARD_ROUTES, BOARD_TEMPLATES, BOARD_TYPE_ORDER, boardIdFor, type BoardType, createBoard,
+  addCard, BOARD_ROUTES, BOARD_TEMPLATES, BOARD_TYPE_ORDER, boardIdFor, type BoardType, type CardFlag, createBoard,
   deleteBoardFile, exitsFor, loadBoards, patchCard, removeCard, resolveExit, routeCard, saveBoard,
   WORKSPACE_BOARD_TYPES,
 } from './work-items.js';
@@ -111,6 +111,58 @@ test('stories: replaced wholesale via patchCard, cleared with null-ish, round-tr
     { id: 's2', text: 'session survives reload', done: false },
   ] });
   assert.deepEqual(b.cards[0].stories?.map((s) => [s.done, s.verifiedBy]), [[true, 'manual 2026-08-07'], [false, undefined]]);
+});
+
+test('flags: since is stamped on the transition into a flagged state', () => {
+  const b = createBoard('personal');
+  const c = addCard(b, { title: 'Opt-in UI' });
+  patchCard(b, c.id, { flag: { kind: 'blocked', reason: 'waiting on Edwin' } });
+  const first = b.cards[0].flag;
+  assert.equal(first?.kind, 'blocked');
+  assert.equal(first?.reason, 'waiting on Edwin');
+  assert.ok(first?.since);
+});
+
+test('flags: correcting kind or reason preserves the clock; clear-then-reflag resets it', async () => {
+  const b = createBoard('personal');
+  const c = addCard(b, { title: 'Parser' });
+  patchCard(b, c.id, { flag: { kind: 'at-risk' } });
+  const since = b.cards[0].flag?.since as string;
+
+  patchCard(b, c.id, { flag: { kind: 'blocked', reason: 'upstream down' } });
+  assert.equal(b.cards[0].flag?.since, since, 'an in-place kind correction must not reset the clock');
+  assert.equal(b.cards[0].flag?.kind, 'blocked');
+
+  patchCard(b, c.id, { flag: null });
+  const cleared = b.cards[0].flag;
+  assert.equal(cleared, undefined);
+
+  await new Promise((r) => setTimeout(r, 2));
+  patchCard(b, c.id, { flag: { kind: 'waiting' } });
+  assert.notEqual(b.cards[0].flag?.since, since, 'clear-then-reflag must start a fresh clock');
+});
+
+test('flags: never move the card, and an unknown kind throws', () => {
+  const b = createBoard('deliver', 'acme');
+  const c = addCard(b, { title: 'Webhook', columnId: 'review' });
+  const before = { columnId: c.columnId, order: c.order };
+  patchCard(b, c.id, { flag: { kind: 'waiting' } });
+  assert.deepEqual({ columnId: b.cards[0].columnId, order: b.cards[0].order }, before);
+  assert.throws(() => patchCard(b, c.id, { flag: { kind: 'nope' } as unknown as CardFlag }), /flag/i);
+});
+
+test('flags: reason is trimmed; whitespace-only or omitted collapses to undefined', () => {
+  const b = createBoard('personal');
+  const c = addCard(b, { title: 'Reason trimming' });
+  patchCard(b, c.id, { flag: { kind: 'blocked', reason: '  waiting on Edwin  ' } });
+  assert.equal(b.cards[0].flag?.reason, 'waiting on Edwin');
+
+  patchCard(b, c.id, { flag: { kind: 'blocked', reason: '   ' } });
+  assert.equal(b.cards[0].flag?.reason, undefined);
+
+  patchCard(b, c.id, { flag: null });
+  patchCard(b, c.id, { flag: { kind: 'waiting' } });
+  assert.equal(b.cards[0].flag?.reason, undefined);
 });
 
 test('save/load round-trip; malformed files land in errors without sinking the rest', async () => {
