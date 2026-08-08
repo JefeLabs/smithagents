@@ -2,6 +2,7 @@ import { Plus, X } from "lucide-react";
 import type { MouseEvent } from "react";
 import { useEffect, useState } from "react";
 import type { ConnectorInstanceRecord, WorkspaceRecord } from "../hooks/useBrokerChat";
+import { WORKSPACE_PALETTE } from "../lib/workspace-color";
 import { ConfirmSheet } from "../molecules/ConfirmSheet";
 
 interface WorkspaceManagerModalProps {
@@ -292,6 +293,21 @@ export function WorkspaceManagerModal({
                   placeholder="https://github.com/acme/web"
                 />
               </label>
+              <fieldset className="swatch-row">
+                <legend>Colour</legend>
+                {WORKSPACE_PALETTE.map((c, i) => (
+                  <label key={c} className="swatch">
+                    <input
+                      type="radio"
+                      name="ws-color"
+                      aria-label={`Colour ${i + 1}`}
+                      checked={form.color === c}
+                      onChange={() => setForm((f) => ({ ...f, color: c }))}
+                    />
+                    <span style={{ background: c }} />
+                  </label>
+                ))}
+              </fieldset>
               <label className="check">
                 <input
                   type="checkbox"

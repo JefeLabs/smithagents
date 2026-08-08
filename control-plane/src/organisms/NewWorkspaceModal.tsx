@@ -2,6 +2,7 @@ import { Plus, X } from "lucide-react";
 import { type MouseEvent, useEffect, useState } from "react";
 import { SegmentedControl } from "../atoms/SegmentedControl";
 import type { ConnectorInstanceRecord, WorkspaceRecord } from "../hooks/useBrokerChat";
+import { WORKSPACE_PALETTE } from "../lib/workspace-color";
 
 interface DraftRepo {
   /** Both modes converge on `path`; only the source of the value differs (design §4). */
@@ -40,6 +41,7 @@ export function NewWorkspaceModal({
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [linksText, setLinksText] = useState("");
+  const [color, setColor] = useState<string>("");
   const [repos, setRepos] = useState<DraftRepo[]>([emptyRepo()]);
   const [connectors, setConnectors] = useState<ConnectorInstanceRecord[]>([]);
   const [busy, setBusy] = useState(false);
@@ -51,6 +53,7 @@ export function NewWorkspaceModal({
     setName("");
     setDescription("");
     setLinksText("");
+    setColor("");
     setRepos([emptyRepo()]);
     setBusy(false);
     setError(null);
@@ -80,6 +83,7 @@ export function NewWorkspaceModal({
       name: name.trim(),
       default: false, // the first-ever workspace defaults itself server-side
       description: description.trim(),
+      color: color || undefined,
       links: linksText
         .split("\n")
         .map((l) => l.trim())
@@ -142,6 +146,21 @@ export function NewWorkspaceModal({
           </label>
           <textarea id="nw-links" value={linksText} onChange={(e) => setLinksText(e.target.value)} rows={3} />
         </div>
+        <fieldset className="swatch-row">
+          <legend>Colour</legend>
+          {WORKSPACE_PALETTE.map((c, i) => (
+            <label key={c} className="swatch">
+              <input
+                type="radio"
+                name="ws-color"
+                aria-label={`Colour ${i + 1}`}
+                checked={color === c}
+                onChange={() => setColor(c)}
+              />
+              <span style={{ background: c }} />
+            </label>
+          ))}
+        </fieldset>
         <p className="wizard__hint">Repos — every repo needs a GitHub connector before create enables.</p>
         {githubConnectors.length === 0 && (
           <p className="wizard__hint">No GitHub connectors yet — add one in Settings → Integrations first.</p>

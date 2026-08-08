@@ -2264,6 +2264,27 @@ button.logo {
 .nw-repo-row input:nth-of-type(2) {
   flex: 2 1 220px;
 }
+.swatch-row {
+  display: flex;
+  gap: 6px;
+  border: none;
+  padding: 0;
+}
+.swatch input {
+  position: absolute;
+  opacity: 0;
+}
+.swatch span {
+  display: block;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+}
+.swatch input:checked + span {
+  border-color: var(--text);
+}
 
 /* Chat state: full-height transcript column with a top fade instead of a hard clip. */
 main.chat-active {

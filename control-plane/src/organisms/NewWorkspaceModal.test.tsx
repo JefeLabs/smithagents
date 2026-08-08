@@ -2,6 +2,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceRecord } from "../hooks/useBrokerChat";
+import { WORKSPACE_PALETTE } from "../lib/workspace-color";
 import { NewWorkspaceModal } from "./NewWorkspaceModal";
 
 const CONNECTORS = [
@@ -165,5 +166,26 @@ describe("NewWorkspaceModal", () => {
     expect(screen.queryByRole("button", { name: /browse/i })).toBeNull();
     await userEvent.type(screen.getByPlaceholderText(/new-project/), "/Users/me/dev/typed");
     expect((screen.getByPlaceholderText(/new-project/) as HTMLInputElement).value).toBe("/Users/me/dev/typed");
+  });
+
+  it("sends the chosen colour with the workspace", async () => {
+    const p = props();
+    render(<NewWorkspaceModal {...p} />);
+    await fillOneValidRepo();
+    await userEvent.click(screen.getByLabelText("Colour 3"));
+    await userEvent.click(screen.getByRole("button", { name: /create workspace/i }));
+    await waitFor(() => expect(p.save).toHaveBeenCalled());
+    expect((p.save as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({
+      color: WORKSPACE_PALETTE[2],
+    });
+  });
+
+  it("omits colour entirely when no swatch is picked, so the derived default applies", async () => {
+    const p = props();
+    render(<NewWorkspaceModal {...p} />);
+    await fillOneValidRepo();
+    await userEvent.click(screen.getByRole("button", { name: /create workspace/i }));
+    await waitFor(() => expect(p.save).toHaveBeenCalled());
+    expect((p.save as ReturnType<typeof vi.fn>).mock.calls[0][0].color).toBeUndefined();
   });
 });
