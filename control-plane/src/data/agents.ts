@@ -1,3 +1,5 @@
+import type { BrokerIdentityInfo, RosterAgent } from "../api/types";
+
 export interface AgentSeed {
   id: string;
   name: string;
@@ -44,4 +46,34 @@ export const RING_PALETTE = ["#6f8dff", "#e0a15a", "#d977c8", "#5fd0b0", "#f2778
 
 export function ringForIndex(i: number): string {
   return RING_PALETTE[i % RING_PALETTE.length] ?? "#6f8dff";
+}
+
+/**
+ * The rail's entries for one roster frame: the host first (when the broker
+ * sent an identity), then every agent. A pure function rather than a hook so
+ * the work route can resolve an agent id from the same rules the rail uses,
+ * without duplicating the host/ring logic or the engine-warning join.
+ */
+export function agentSeeds(
+  roster: RosterAgent[],
+  identity: BrokerIdentityInfo | null,
+  engineWarnings: Record<string, string> = {},
+): AgentSeed[] {
+  const host = hostSeed(identity);
+  return [
+    ...(host ? [host] : []),
+    ...roster.map((a, i) => ({
+      id: a.id,
+      name: a.name,
+      role: a.role,
+      ring: a.ring ?? ringForIndex(i),
+      status: a.status,
+      hand: a.hand,
+      listening: a.listening,
+      kind: a.kind,
+      members: a.members,
+      avatar: a.avatar,
+      engineWarning: engineWarnings[a.id],
+    })),
+  ];
 }

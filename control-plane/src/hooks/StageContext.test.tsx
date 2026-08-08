@@ -3,28 +3,18 @@ import { describe, expect, it, vi } from "vitest";
 import { type StageContextValue, StageProvider, useStage } from "./StageContext";
 
 const VALUE: StageContextValue = {
-  messages: [],
   micLive: false,
   onMicToggle: vi.fn(),
-  brokerConnected: true,
-  send: vi.fn(),
   soundOn: false,
   onSoundToggle: vi.fn(),
-  sttEnabled: false,
-  onVoiceBlocked: vi.fn(),
+  sttEnabled: true,
   showMicHero: true,
-  voiceNotice: null,
-  roster: [],
-  lastBoardUpdate: null,
-  lastCapabilityUpdate: null,
-  agents: [],
-  activity: vi.fn(async () => ({ busy: false })),
-  workAction: vi.fn(async () => null),
+  onVoiceBlocked: vi.fn(),
 };
 
 function Probe() {
-  const { brokerConnected } = useStage();
-  return <span>{brokerConnected ? "connected" : "offline"}</span>;
+  const { sttEnabled } = useStage();
+  return <span>{sttEnabled ? "connected" : "offline"}</span>;
 }
 
 describe("StageContext", () => {

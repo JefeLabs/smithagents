@@ -1,23 +1,113 @@
+import { QueryClient } from "@tanstack/react-query";
 import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { useBrokerChat } from "../hooks/useBrokerChat";
 import { useCliToolHealth } from "../hooks/useCliToolHealth";
 import { usePushToTalk } from "../hooks/usePushToTalk";
 import { useSpokenReplies } from "../hooks/useSpokenReplies";
 import { useTheme } from "../hooks/useTheme";
+import { qk } from "../queries/keys";
 import { createAppRouter } from "../router";
+import { renderWithProviders } from "../test/renderWithProviders";
 
-// HomePage owns no injectable props for its dependencies (unlike every other tested
-// component) — it calls these hooks directly, and useBrokerChat opens a real WebSocket
-// on mount. Module-mocking is the only way to render it in isolation; useVoiceStatus is
-// deliberately left real (below) so its own `/agents` fetch is the thing under test.
-vi.mock("../hooks/useBrokerChat");
+// Only the hooks that reach for browser hardware are module-mocked: speech
+// synthesis + AudioContext, getUserMedia, and matchMedia. Everything the page
+// used to get from `useBrokerChat` now comes from the query cache and the
+// socket store, so it is seeded rather than mocked. `useCliToolHealth` is
+// mocked too — it fetches /agents, which would pollute the /agents call
+// counting the Settings-close test does below.
 vi.mock("../hooks/useSpokenReplies");
 vi.mock("../hooks/usePushToTalk");
 vi.mock("../hooks/useCliToolHealth");
 vi.mock("../hooks/useTheme");
+
+/**
+ * Stand-in for the browser WebSocket. A live broker really is listening on
+ * 127.0.0.1:7790 on dev machines — without this every test here would open a
+ * socket to it. `live` counts sockets that were opened and not closed, so a
+ * missing teardown is visible rather than merely a missing construction.
+ */
+class FakeSocket {
+  static OPEN = 1;
+  static CLOSED = 3;
+  static last: FakeSocket | null = null;
+  static count = 0;
+  static live = 0;
+
+  readyState = 0;
+  onopen: (() => void) | null = null;
+  onmessage: ((e: { data: string }) => void) | null = null;
+  onclose: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+
+  constructor(readonly url: string) {
+    FakeSocket.last = this;
+    FakeSocket.count++;
+    FakeSocket.live++;
+  }
+
+  /** The handshake completing — a real socket fires this well after the constructor returns. */
+  open() {
+    this.readyState = FakeSocket.OPEN;
+    this.onopen?.();
+  }
+
+  emit(frame: unknown) {
+    this.onmessage?.({ data: JSON.stringify(frame) });
+  }
+
+  send() {}
+
+  close() {
+    if (this.readyState === FakeSocket.CLOSED) return;
+    this.readyState = FakeSocket.CLOSED;
+    FakeSocket.live--;
+    this.onclose?.();
+  }
+}
+
+const SESSION_FRAME = {
+  type: "session",
+  session: null,
+  sessions: [],
+  workspaces: ["acme"],
+  transcript: [],
+};
+
+let fetchMock: ReturnType<typeof vi.fn>;
+
+function stubBroker() {
+  fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/agents")) return new Response(JSON.stringify({ agents: [], voice: { stt: false, tts: true } }));
+    if (url.endsWith("/workspaces")) return new Response(JSON.stringify({ workspaces: [] }));
+    if (url.endsWith("/cli-tools")) return new Response(JSON.stringify({ tools: [] }));
+    return new Response(JSON.stringify({}));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  vi.stubGlobal("WebSocket", FakeSocket as unknown as typeof WebSocket);
+}
+
+/**
+ * A dedicated client seeded BEFORE the first render: the app's own
+ * QueryClient is created inside `renderWithProviders`, and seeding after the
+ * router's async mount would race its garbage collector for keys no observer
+ * has subscribed to yet.
+ */
+function renderApp(seed?: (c: QueryClient) => void, path = "/") {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: Number.POSITIVE_INFINITY, refetchOnWindowFocus: false } },
+  });
+  seed?.(client);
+  const router = createAppRouter(createMemoryHistory({ initialEntries: [path] }));
+  return { ...renderWithProviders(<RouterProvider router={router} />, { client }), router };
+}
+
+/** The rail renders once the root layout (HomePage) is mounted. */
+const appMounted = () => screen.findByRole("navigation", { name: /tools/i });
+
+const agentsCalls = () => fetchMock.mock.calls.filter((c) => String(c[0]).endsWith("/agents")).length;
 
 beforeAll(() => {
   window.HTMLElement.prototype.scrollIntoView = () => {};
@@ -35,97 +125,118 @@ beforeAll(() => {
   }
 });
 
-function mockBrokerChat(overrides: Record<string, unknown> = {}) {
-  vi.mocked(useBrokerChat).mockReturnValue({
-    messages: [],
-    roster: [],
-    identity: null,
-    connected: true,
-    audioMode: false,
-    session: null,
-    sessionKnown: true, // preserves this suite's intent: session:null is a confirmed zero-session state, not "unknown yet"
-    sessions: [],
-    workspaces: [],
-    send: vi.fn(),
-    compose: vi.fn(),
-    activity: vi.fn(),
-    removalPreview: vi.fn(),
-    removeAgent: vi.fn(),
-    workAction: vi.fn(),
-    micControl: vi.fn(),
-    micAudio: vi.fn(),
-    createSession: vi.fn(),
-    activateSession: vi.fn(),
-    resetSetup: vi.fn(),
-    listExecutionModes: vi.fn(async () => ({})),
-    listWorkspaceRecords: vi.fn(async () => []),
-    saveWorkspace: vi.fn(),
-    removeWorkspace: vi.fn(),
-    verifyWorkspaceAtlassian: vi.fn(),
-    verifyRepoGithub: vi.fn(),
-    getWorkspaceChannels: vi.fn(),
-    saveWorkspaceChannels: vi.fn(),
-    verifyWorkspaceDiscord: vi.fn(),
-    getVoiceSettings: vi.fn(async () => ({ stt: null, tts: null, hideInactive: false })),
-    saveVoiceSettings: vi.fn(),
-    getMe: vi.fn(),
-    updateMe: vi.fn(),
-    listConnectorVendors: vi.fn(async () => []),
-    listMyConnectors: vi.fn(async () => []),
-    addConnector: vi.fn(),
-    updateConnector: vi.fn(),
-    deleteConnector: vi.fn(),
-    verifyConnector: vi.fn(),
-    listCliTools: vi.fn(async () => []),
-    refreshCliTools: vi.fn(),
-    setCliToolEnabled: vi.fn(),
-    listApiKeys: vi.fn(async () => []),
-    saveApiKey: vi.fn(),
-    verifyApiKey: vi.fn(),
-    deleteApiKey: vi.fn(),
-    ...overrides,
-  } as unknown as ReturnType<typeof useBrokerChat>);
-}
+beforeEach(() => {
+  FakeSocket.last = null;
+  FakeSocket.count = 0;
+  FakeSocket.live = 0;
+  vi.mocked(useTheme).mockReturnValue({ theme: "dark", setTheme: vi.fn() });
+  vi.mocked(useCliToolHealth).mockReturnValue({ warnings: {}, refresh: vi.fn() });
+  vi.mocked(useSpokenReplies).mockReturnValue({
+    soundOn: false,
+    toggleSound: vi.fn(),
+    playAudioFrame: vi.fn(),
+    audioBlocked: false,
+  });
+  vi.mocked(usePushToTalk).mockReturnValue({ micLive: false, micError: null, toggleMic: vi.fn() });
+  stubBroker();
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.clearAllMocks();
+});
+
+describe("HomePage — the broker socket", () => {
+  it("opens one socket on mount and closes it on unmount", async () => {
+    const { unmount } = renderApp();
+    await appMounted();
+    expect(FakeSocket.count).toBe(1);
+    expect(FakeSocket.live).toBe(1);
+
+    unmount();
+    expect(FakeSocket.live).toBe(0);
+  });
+
+  it("routes frames into the CURRENT QueryClient after a remount, not the retired one", async () => {
+    // connect() short-circuits while the store is already active, so a teardown
+    // that forgets to disconnect leaves the first mount's socket — and its
+    // captured QueryClient — as the live one forever.
+    const first = renderApp();
+    await appMounted();
+    first.unmount();
+
+    const second = renderApp();
+    await appMounted();
+    act(() => FakeSocket.last?.emit(SESSION_FRAME));
+
+    expect(second.client.getQueryData(qk.workspaces)).toEqual(["acme"]);
+    expect(first.client.getQueryData(qk.workspaces)).toBeUndefined();
+  });
+
+  it("stops the browser speaking replies while the broker's own audio is on", async () => {
+    renderApp();
+    await appMounted();
+    // No config frame yet: the broker has no TTS as far as this page knows, so
+    // the Web Speech fallback is armed.
+    expect(vi.mocked(useSpokenReplies).mock.lastCall?.[2]).toBe(true);
+
+    act(() => FakeSocket.last?.emit({ type: "config", audio: true }));
+
+    await waitFor(() => expect(vi.mocked(useSpokenReplies).mock.lastCall?.[2]).toBe(false));
+  });
+});
+
+describe("HomePage — the zero-session composer", () => {
+  const knownZero = (c: QueryClient) => {
+    c.setQueryData(qk.session, null);
+    c.setQueryData(qk.sessions, []);
+    c.setQueryData(qk.workspaces, ["acme"]);
+  };
+
+  it("forces the composer open when the broker confirms zero sessions", async () => {
+    renderApp(knownZero);
+    await appMounted();
+    act(() => FakeSocket.last?.open());
+
+    expect(await screen.findByRole("heading", { name: /start a session/i })).toBeInTheDocument();
+  });
+
+  it("leaves the stage alone while the broker has not answered yet", async () => {
+    // Nothing seeded: the session query stays `pending`, which is the state the
+    // old `sessionKnown` flag existed to distinguish from a confirmed null.
+    renderApp();
+    await appMounted();
+    act(() => FakeSocket.last?.open());
+
+    await screen.findByRole("main");
+    expect(screen.queryByRole("heading", { name: /start a session/i })).toBeNull();
+  });
+
+  it("leaves the stage alone until the socket is connected", async () => {
+    renderApp(knownZero);
+    await appMounted();
+    // FakeSocket.open() deliberately never called — the handshake has not finished.
+
+    await screen.findByRole("main");
+    expect(screen.queryByRole("heading", { name: /start a session/i })).toBeNull();
+  });
+});
 
 describe("HomePage — voice status refresh on Settings close", () => {
-  beforeEach(() => {
-    vi.mocked(useTheme).mockReturnValue({ theme: "dark", setTheme: vi.fn() });
-    vi.mocked(useCliToolHealth).mockReturnValue({ warnings: {}, refresh: vi.fn() });
-    vi.mocked(useSpokenReplies).mockReturnValue({
-      soundOn: false,
-      toggleSound: vi.fn(),
-      playAudioFrame: vi.fn(),
-      audioBlocked: false,
-    });
-    vi.mocked(usePushToTalk).mockReturnValue({ micLive: false, micError: null, toggleMic: vi.fn() });
-    mockBrokerChat();
-  });
-
-  afterEach(() => {
-    cleanup();
-    vi.unstubAllGlobals();
-    vi.clearAllMocks();
-  });
-
   it("re-fetches /agents when Settings closes, so a key added mid-session takes effect without a reload", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ agents: [], voice: { stt: false, tts: true } })));
-    vi.stubGlobal("fetch", fetchMock);
-
-    const router = createAppRouter(createMemoryHistory({ initialEntries: ["/"] }));
-    render(<RouterProvider router={router} />);
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:7790/agents"));
-    const callsAfterMount = fetchMock.mock.calls.length;
+    renderApp();
+    await appMounted();
+    await waitFor(() => expect(agentsCalls()).toBeGreaterThan(0));
+    const callsAfterMount = agentsCalls();
 
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
     await userEvent.click(screen.getByRole("button", { name: /back to app/i }));
 
-    await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(callsAfterMount));
-    expect(fetchMock).toHaveBeenLastCalledWith("http://127.0.0.1:7790/agents");
+    await waitFor(() => expect(agentsCalls()).toBeGreaterThan(callsAfterMount));
   });
 });
 
 describe("HomePage — composer closes when another session is activated", () => {
-  const activateSession = vi.fn();
   const SESSIONS = [
     {
       id: "s-active",
@@ -133,7 +244,7 @@ describe("HomePage — composer closes when another session is activated", () =>
       workspace: "acme",
       updatedAt: "2026-08-01T00:00:00Z",
       active: true,
-      runtime: "local-in-process",
+      runtime: "local-in-process" as const,
     },
     {
       id: "s-other",
@@ -141,50 +252,33 @@ describe("HomePage — composer closes when another session is activated", () =>
       workspace: "acme",
       updatedAt: "2026-08-02T00:00:00Z",
       active: false,
-      runtime: "local-docker",
+      runtime: "local-docker" as const,
     },
   ];
 
-  beforeEach(() => {
-    vi.mocked(useTheme).mockReturnValue({ theme: "dark", setTheme: vi.fn() });
-    vi.mocked(useCliToolHealth).mockReturnValue({ warnings: {}, refresh: vi.fn() });
-    vi.mocked(useSpokenReplies).mockReturnValue({
-      soundOn: false,
-      toggleSound: vi.fn(),
-      playAudioFrame: vi.fn(),
-      audioBlocked: false,
-    });
-    vi.mocked(usePushToTalk).mockReturnValue({ micLive: false, micError: null, toggleMic: vi.fn() });
-    activateSession.mockClear();
-    mockBrokerChat({
-      session: { id: "s-active", title: "Current work", workspace: "acme", runtime: "local-in-process" },
-      sessions: SESSIONS,
-      workspaces: ["acme"],
-      activateSession,
-    });
-  });
-
-  afterEach(() => {
-    cleanup();
-    vi.unstubAllGlobals();
-    vi.clearAllMocks();
-  });
-
   it("picking another session backs out of an explicitly-opened composer (spec §3)", async () => {
-    const router = createAppRouter(createMemoryHistory({ initialEntries: ["/"] }));
-    render(<RouterProvider router={router} />);
+    renderApp((c) => {
+      c.setQueryData(qk.session, {
+        id: "s-active",
+        title: "Current work",
+        workspace: "acme",
+        runtime: "local-in-process",
+      });
+      c.setQueryData(qk.sessions, SESSIONS);
+      c.setQueryData(qk.workspaces, ["acme"]);
+    });
+    await appMounted();
 
     // Open the sessions panel and start a new session in "acme" — opens the composer explicitly.
-    // findByRole waits out the router's async first mount before the first interaction.
-    await userEvent.click(await screen.findByRole("button", { name: "Sessions" }));
+    await userEvent.click(screen.getByRole("button", { name: "Sessions" }));
     await userEvent.click(screen.getByRole("button", { name: /new session · acme/i }));
-    expect(screen.getByText("Start a session")).toBeDefined();
+    expect(screen.getByRole("heading", { name: /start a session/i })).toBeInTheDocument();
 
     // Reopen sessions and activate the other (inactive) session.
     await userEvent.click(screen.getByRole("button", { name: "Sessions" }));
     await userEvent.click(screen.getByText("Other work"));
 
-    expect(activateSession).toHaveBeenCalledWith("s-other");
-    expect(screen.queryByText("Start a session")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:7790/sessions/s-other/activate", { method: "POST" });
+    expect(screen.queryByRole("heading", { name: /start a session/i })).toBeNull();
   });
 });

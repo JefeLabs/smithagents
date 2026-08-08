@@ -1,35 +1,34 @@
 import { createContext, useContext } from "react";
-import type { ChatMessage, RosterAgent } from "../api/types";
-import type { AgentSeed } from "../data/agents";
 
 /**
- * The slice of broker state the stage routes need. Provided by HomePage (the
- * root layout, which owns the single useBrokerChat WebSocket) and consumed by
- * the thin route components in src/router.tsx. Never fetched via route
- * loaders — the connection lives above the router.
+ * The last values the voice stage cannot read for itself.
+ *
+ * Everything else a stage route needs now comes from a query key or a store
+ * selector. What remains here are the mic/sound/STT controls, and they remain
+ * because their owners still hold React state:
+ *
+ * - `soundOn`/`onSoundToggle` come from `useSpokenReplies`' own `useState`
+ *   (plus its speech/audio queue flush on mute). `audioStore.soundOn` exists
+ *   but nothing writes it yet.
+ * - `micLive`/`onMicToggle` come from `usePushToTalk`, which holds the live
+ *   MediaStream and AudioContext in refs. It must stay mounted at app scope,
+ *   or navigating away from the voice stage orphans a hot mic.
+ * - `sttEnabled`/`showMicHero` derive from `useVoiceStatus`, whose `refresh`
+ *   HomePage fires when Settings closes; a second copy in the route would
+ *   never see that refresh.
+ * - `onVoiceBlocked` owns the 6s dismiss timer, which must survive navigation.
+ *   The notice text itself lives in `uiStore`, and the stage reads it there.
+ *
+ * This file disappears once those three hooks move onto the stores.
  */
 export interface StageContextValue {
-  // voice stage
-  messages: ChatMessage[];
   micLive: boolean;
   onMicToggle: () => void;
-  brokerConnected: boolean;
-  send: (text: string) => void;
   soundOn: boolean;
   onSoundToggle: () => void;
   sttEnabled: boolean;
-  onVoiceBlocked: () => void;
   showMicHero: boolean;
-  voiceNotice: string | null;
-  // board stage
-  roster: RosterAgent[];
-  lastBoardUpdate: { boardId: string; seq: number } | null;
-  // map stage
-  lastCapabilityUpdate: { capabilityId: string; seq: number } | null;
-  // work stage
-  agents: AgentSeed[];
-  activity: (name: string) => Promise<{ busy: boolean; label?: string; output?: string }>;
-  workAction: (name: string, action: "steer" | "cancel", message?: string) => Promise<string | null>;
+  onVoiceBlocked: () => void;
 }
 
 const StageContext = createContext<StageContextValue | null>(null);

@@ -1,21 +1,37 @@
+import { QueryClient } from "@tanstack/react-query";
 import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { useBrokerChat } from "./hooks/useBrokerChat";
 import { useCliToolHealth } from "./hooks/useCliToolHealth";
 import { usePushToTalk } from "./hooks/usePushToTalk";
 import { useSpokenReplies } from "./hooks/useSpokenReplies";
 import { useTheme } from "./hooks/useTheme";
+import { qk } from "./queries/keys";
 import { createAppRouter } from "./router";
+import { renderWithProviders } from "./test/renderWithProviders";
 
-// Same isolation story as HomePage.test.tsx: HomePage calls these hooks
-// directly and useBrokerChat opens a real WebSocket on mount.
-vi.mock("./hooks/useBrokerChat");
+// Same isolation story as HomePage.test.tsx: only the hardware-touching hooks
+// are module-mocked. The roster the work route resolves against is seeded into
+// the query cache, exactly as a roster frame would deliver it.
 vi.mock("./hooks/useSpokenReplies");
 vi.mock("./hooks/usePushToTalk");
 vi.mock("./hooks/useCliToolHealth");
 vi.mock("./hooks/useTheme");
+
+/** Keeps the root layout's `connect()` off the live broker on 127.0.0.1:7790. */
+class FakeSocket {
+  static OPEN = 1;
+  onopen: (() => void) | null = null;
+  onmessage: ((e: { data: string }) => void) | null = null;
+  onclose: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  readyState = 0;
+  send() {}
+  close() {}
+}
+
+const ROSTER = [{ id: "ignacio", name: "Ignacio", role: "Builder", status: "busy" as const, kind: "agent" as const }];
 
 beforeAll(() => {
   window.HTMLElement.prototype.scrollIntoView = () => {};
@@ -33,60 +49,13 @@ beforeAll(() => {
   }
 });
 
-const ROSTER = [{ id: "ignacio", name: "Ignacio", role: "Builder", status: "busy" as const }];
-
-function mockBrokerChat() {
-  vi.mocked(useBrokerChat).mockReturnValue({
-    messages: [],
-    roster: ROSTER,
-    identity: null,
-    connected: true,
-    audioMode: false,
-    session: null,
-    sessions: [],
-    workspaces: [],
-    lastBoardUpdate: null,
-    lastCapabilityUpdate: null,
-    send: vi.fn(),
-    compose: vi.fn(),
-    activity: vi.fn(async () => ({ busy: true, label: "compiling" })),
-    removalPreview: vi.fn(),
-    removeAgent: vi.fn(),
-    workAction: vi.fn(async () => null),
-    micControl: vi.fn(),
-    micAudio: vi.fn(),
-    createSession: vi.fn(),
-    activateSession: vi.fn(),
-    resetSetup: vi.fn(),
-    listWorkspaceRecords: vi.fn(async () => []),
-    saveWorkspace: vi.fn(),
-    removeWorkspace: vi.fn(),
-    verifyWorkspaceAtlassian: vi.fn(),
-    verifyRepoGithub: vi.fn(),
-    getWorkspaceChannels: vi.fn(),
-    saveWorkspaceChannels: vi.fn(),
-    verifyWorkspaceDiscord: vi.fn(),
-    getVoiceSettings: vi.fn(async () => ({ stt: null, tts: null, hideInactive: false })),
-    saveVoiceSettings: vi.fn(),
-    listConnectorVendors: vi.fn(async () => []),
-    listMyConnectors: vi.fn(async () => []),
-    addConnector: vi.fn(),
-    updateConnector: vi.fn(),
-    deleteConnector: vi.fn(),
-    verifyConnector: vi.fn(),
-    listCliTools: vi.fn(async () => []),
-    refreshCliTools: vi.fn(),
-    setCliToolEnabled: vi.fn(),
-    listApiKeys: vi.fn(async () => []),
-    saveApiKey: vi.fn(),
-    verifyApiKey: vi.fn(),
-    deleteApiKey: vi.fn(),
-  } as unknown as ReturnType<typeof useBrokerChat>);
-}
-
 async function renderAt(path: string) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: Number.POSITIVE_INFINITY, refetchOnWindowFocus: false } },
+  });
+  client.setQueryData(qk.roster, { agents: ROSTER, identity: null });
   const router = createAppRouter(createMemoryHistory({ initialEntries: [path] }));
-  render(<RouterProvider router={router} />);
+  renderWithProviders(<RouterProvider router={router} />, { client });
   // The rail renders once the root layout is mounted.
   await screen.findByRole("navigation", { name: /tools/i });
   return router;
@@ -103,8 +72,8 @@ describe("stage routing", () => {
       audioBlocked: false,
     });
     vi.mocked(usePushToTalk).mockReturnValue({ micLive: false, micError: null, toggleMic: vi.fn() });
-    mockBrokerChat();
-    // Board/Map/voice-status fetches all hit the broker; answer them all empty.
+    vi.stubGlobal("WebSocket", FakeSocket as unknown as typeof WebSocket);
+    // Board/Map/voice-status/settings fetches all hit the broker; answer them all empty.
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -120,7 +89,6 @@ describe("stage routing", () => {
   });
 
   afterEach(() => {
-    cleanup();
     vi.unstubAllGlobals();
     vi.clearAllMocks();
   });

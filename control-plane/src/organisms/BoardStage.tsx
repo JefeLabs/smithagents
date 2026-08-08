@@ -49,7 +49,13 @@ export interface WorkBoardT {
 
 interface BoardStageProps {
   roster: RosterAgent[];
-  lastBoardUpdate: { boardId: string; seq: number } | null;
+  /**
+   * Dead as of the socket store: a `board-updated` frame now invalidates
+   * `qk.board(id)` instead of bumping a seq counter, so nothing supplies this
+   * any more. It (and the effect below that reads it) go away with the rest of
+   * the seq mechanism once this stage reads its boards through Query.
+   */
+  lastBoardUpdate?: { boardId: string; seq: number } | null;
 }
 
 /** Optimistic mirror of the server's move: new board object, both columns renumbered. */

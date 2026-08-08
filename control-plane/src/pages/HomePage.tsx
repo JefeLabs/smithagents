@@ -1,11 +1,12 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { AudioFrame, ExecutionMode, VoiceSettingsRecord, WorkspaceRecord } from "../api/types";
-import { type AgentSeed, hostSeed, ringForIndex } from "../data/agents";
+import { useCallback, useEffect, useRef } from "react";
+import * as api from "../api/broker";
+import { BROKER_BASE } from "../api/broker";
+import type { AudioFrame, ChatMessage, RosterAgent, SessionSummary } from "../api/types";
+import { type AgentSeed, agentSeeds } from "../data/agents";
 import { type StageContextValue, StageProvider } from "../hooks/StageContext";
-import { useBrokerChat } from "../hooks/useBrokerChat";
 import { useCliToolHealth } from "../hooks/useCliToolHealth";
-import { GRID_DEFAULTS, type GridParams } from "../hooks/useDotGrid";
 import { usePushToTalk } from "../hooks/usePushToTalk";
 import { useSpokenReplies } from "../hooks/useSpokenReplies";
 import { useTheme } from "../hooks/useTheme";
@@ -21,92 +22,92 @@ import { SessionsPanel } from "../organisms/SessionsPanel";
 import { SettingsPanel } from "../organisms/SettingsPanel";
 import { ToolRail } from "../organisms/ToolRail";
 import { WorkspaceManagerModal } from "../organisms/WorkspaceManagerModal";
+import { useExecutionModes, useVoiceSettings, useWorkspaceRecords } from "../queries/http";
+import { qk } from "../queries/keys";
+import { useRoster, useSession, useSessions, useTranscript, useWorkspaces } from "../queries/pushed";
 import { hasNativeFolderPicker, pickFolder } from "../services/nativeDialog";
+import { useSocketStore } from "../stores/socketStore";
+import { useUiStore } from "../stores/uiStore";
 import { ControlPlaneLayout } from "../templates/ControlPlaneLayout";
 
+// Stable empties for the pushed queries' "frame hasn't landed yet" state. A
+// fresh `[]` per render would re-run every effect downstream that lists one of
+// these in its deps (useSpokenReplies' transcript pass, chiefly).
+const NO_MESSAGES: ChatMessage[] = [];
+const NO_ROSTER: RosterAgent[] = [];
+const NO_SESSIONS: SessionSummary[] = [];
+const NO_WORKSPACES: string[] = [];
+
 export function HomePage() {
-  const [modalOpen, setModalOpen] = useState(false);
-  /** Agent being edited via edit mode; null means the wizard creates a new one. */
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [tunerOpen, setTunerOpen] = useState(false);
-  const [gridParams, setGridParams] = useState<GridParams>(GRID_DEFAULTS);
-  const [sessionsOpen, setSessionsOpen] = useState(false);
-  /** Non-null shows the new-session composer in the stage; `locked` pins its workspace picker. */
-  const [composer, setComposer] = useState<{ locked?: string } | null>(null);
-  const [modes, setModes] = useState<Record<ExecutionMode, boolean> | null>(null);
-  const [wsRecords, setWsRecords] = useState<WorkspaceRecord[] | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [workspacesOpen, setWorkspacesOpen] = useState(false);
-  const [newWorkspaceOpen, setNewWorkspaceOpen] = useState(false);
-  /**
-   * Agent slated for removal — the outcome preview drives the confirm sheet's copy.
-   * `error` holds the last preview/removal failure text; `outcome` stays unset until
-   * a preview succeeds, so the sheet only offers to confirm once it knows what will happen.
-   */
-  const [removing, setRemoving] = useState<{
-    entry: AgentSeed;
-    outcome?: "delete" | "archive";
-    reasons: string[];
-    error?: string;
-    busy?: boolean;
-  } | null>(null);
+  // The broker socket is opened here, at app scope, and closed with the page.
+  // The cleanup MUST disconnect: connect() short-circuits while already active,
+  // so a second connect() with a different QueryClient would silently keep
+  // writing frames into the first one.
+  const qc = useQueryClient();
+  const connect = useSocketStore((s) => s.connect);
+  const disconnect = useSocketStore((s) => s.disconnect);
+  useEffect(() => {
+    connect(qc);
+    return () => disconnect();
+  }, [qc, connect, disconnect]);
+
+  const connected = useSocketStore((s) => s.connected);
+  // True when the BROKER is producing the audio itself; the browser's Web
+  // Speech fallback must stay off in that case or every reply is spoken twice.
+  const audioMode = useSocketStore((s) => s.audioMode);
+  const micControl = useSocketStore((s) => s.micControl);
+  const micAudio = useSocketStore((s) => s.micAudio);
+  const onAudioFrame = useSocketStore((s) => s.onAudioFrame);
+
+  const { data: session = null, status: sessionStatus } = useSession();
+  const { data: sessions = NO_SESSIONS } = useSessions();
+  const { data: workspaces = NO_WORKSPACES } = useWorkspaces();
+  const { data: messages = NO_MESSAGES } = useTranscript();
+  const { data: rosterFrame } = useRoster();
+  const roster = rosterFrame?.agents ?? NO_ROSTER;
+  const identity = rosterFrame?.identity ?? null;
+  const { data: modes } = useExecutionModes();
+  const { data: wsRecords } = useWorkspaceRecords();
+
+  // One field per selector, never the whole store: a whole-store selection
+  // re-renders this page on every unrelated UI change.
+  const modalOpen = useUiStore((s) => s.modalOpen);
+  const editingId = useUiStore((s) => s.editingId);
+  const tunerOpen = useUiStore((s) => s.tunerOpen);
+  const gridParams = useUiStore((s) => s.gridParams);
+  const sessionsOpen = useUiStore((s) => s.sessionsOpen);
+  const composer = useUiStore((s) => s.composer);
+  const settingsOpen = useUiStore((s) => s.settingsOpen);
+  const workspacesOpen = useUiStore((s) => s.workspacesOpen);
+  const newWorkspaceOpen = useUiStore((s) => s.newWorkspaceOpen);
+  const removing = useUiStore((s) => s.removing);
+  const openAddAgent = useUiStore((s) => s.openAddAgent);
+  const openEditAgent = useUiStore((s) => s.openEditAgent);
+  const closeAgentModal = useUiStore((s) => s.closeAgentModal);
+  const toggleTuner = useUiStore((s) => s.toggleTuner);
+  const setGridParam = useUiStore((s) => s.setGridParam);
+  const resetGrid = useUiStore((s) => s.resetGrid);
+  const toggleSessions = useUiStore((s) => s.toggleSessions);
+  const closeSessions = useUiStore((s) => s.closeSessions);
+  const openComposer = useUiStore((s) => s.openComposer);
+  const closeComposer = useUiStore((s) => s.closeComposer);
+  const setSettingsOpen = useUiStore((s) => s.setSettingsOpen);
+  const setWorkspacesOpen = useUiStore((s) => s.setWorkspacesOpen);
+  const setNewWorkspaceOpen = useUiStore((s) => s.setNewWorkspaceOpen);
+  const setRemoving = useUiStore((s) => s.setRemoving);
+  const setVoiceNotice = useUiStore((s) => s.setVoiceNotice);
+
   const { theme, setTheme } = useTheme();
-  // The audio sink is a ref so useBrokerChat (which produces the frames) can be
-  // declared before useSpokenReplies (which consumes them) without a cycle.
+  // The audio sink is a ref so the frame subscription below can be declared
+  // before useSpokenReplies (which produces the player) without a cycle.
   const audioSink = useRef<(frame: AudioFrame) => void>(() => {});
-  const {
-    messages,
-    roster,
-    identity,
-    connected,
-    audioMode,
-    session,
-    sessionKnown,
-    sessions,
-    workspaces,
-    lastBoardUpdate,
-    lastCapabilityUpdate,
-    send,
-    compose,
-    activity,
-    removalPreview,
-    removeAgent,
-    workAction,
-    micControl,
-    micAudio,
-    createSession,
-    activateSession,
-    resetSetup,
-    listExecutionModes,
-    listWorkspaceRecords,
-    saveWorkspace,
-    removeWorkspace,
-    verifyWorkspaceAtlassian,
-    verifyRepoGithub,
-    listConnectorVendors,
-    listMyConnectors,
-    getVoiceSettings,
-    saveVoiceSettings,
-    addConnector,
-    updateConnector,
-    deleteConnector,
-    verifyConnector,
-    listCliTools,
-    refreshCliTools,
-    setCliToolEnabled,
-    listApiKeys,
-    saveApiKey,
-    verifyApiKey,
-    deleteApiKey,
-    getWorkspaceChannels,
-    saveWorkspaceChannels,
-    verifyWorkspaceDiscord,
-    getContainers,
-    setDockerEnabled,
-    verifyContainers,
-  } = useBrokerChat({ onAudio: (frame) => audioSink.current(frame) });
   const { soundOn, toggleSound, playAudioFrame, audioBlocked } = useSpokenReplies(messages, roster, !audioMode);
   audioSink.current = (frame) => void playAudioFrame(frame);
+  // Audio frames are a stream, not cached state — the socket store fans them
+  // out to subscribers. Subscribing through the ref keeps this effect off
+  // playAudioFrame's identity, which changes on every render.
+  useEffect(() => onAudioFrame((frame) => audioSink.current(frame)), [onAudioFrame]);
+
   const { micLive, toggleMic } = usePushToTalk({
     begin: () => micControl("mic-start"),
     audio: micAudio,
@@ -115,18 +116,11 @@ export function HomePage() {
   const { warnings: engineWarnings, refresh: refreshEngineWarnings } = useCliToolHealth();
 
   const { voice, refresh: refreshVoiceStatus } = useVoiceStatus();
-  const [voicePrefs, setVoicePrefs] = useState<VoiceSettingsRecord | null>(null);
-  // Load voice prefs on mount and again whenever Settings closes — hideInactive may have
-  // changed while the panel was open.
-  useEffect(() => {
-    if (!settingsOpen)
-      void getVoiceSettings()
-        .then(setVoicePrefs)
-        .catch(() => setVoicePrefs(null));
-  }, [settingsOpen, getVoiceSettings]);
-
+  // Fetched on mount and invalidated when Settings closes — hideInactive may
+  // have changed while the panel was open.
+  const { data: voicePrefs } = useVoiceSettings();
   const hideMic = Boolean(voicePrefs?.hideInactive) && !voice.stt;
-  const [voiceNotice, setVoiceNotice] = useState<string | null>(null);
+
   // A ref (not state) for the pending dismiss timer: rapid presses must restart the 6s window
   // rather than letting an earlier press's timer cut the latest notice short.
   const voiceNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -136,99 +130,62 @@ export function HomePage() {
     },
     [],
   );
-  const onVoiceBlocked = () => {
+  const onVoiceBlocked = useCallback(() => {
     setVoiceNotice("Add a Deepgram key in Settings → Integrations, then select it under Settings → Voice.");
     if (voiceNoticeTimer.current) clearTimeout(voiceNoticeTimer.current);
     voiceNoticeTimer.current = setTimeout(() => setVoiceNotice(null), 6000);
-  };
+  }, [setVoiceNotice]);
 
-  // Zero-session boot forces the composer open even without an explicit entry-point click. Gated
-  // on `sessionKnown`, not just `session === null` — on every fresh connect there's a beat between
-  // `connected` flipping true and the first 'session' frame landing, and `session` stays null for
-  // that whole beat too. Without the gate the composer would flash open then vanish on every load,
-  // even when the broker already has an active session.
-  const composerVisible = composer !== null || (connected && sessionKnown && session === null);
-  // Refetch every time the composer becomes visible (not just on mount) — a mode that vanished
-  // or a workspace that changed while it was closed must be current the moment it reopens.
-  useEffect(() => {
-    if (!composerVisible) return;
-    void listExecutionModes()
-      .then(setModes)
-      .catch(() => setModes(null));
-    void listWorkspaceRecords()
-      .then(setWsRecords)
-      .catch(() => setWsRecords(null));
-  }, [composerVisible, listExecutionModes, listWorkspaceRecords]);
-  const onComposerCancel = useCallback(() => setComposer(null), []);
+  // A broker that has CONFIRMED zero sessions forces the composer open. "Not heard from yet"
+  // must not: the session query stays `pending` until the first frame lands, and on every fresh
+  // connect there is a beat where `connected` is already true. Reading `status` rather than
+  // `data === null` is what keeps the composer from flashing open on each load.
+  const knownZeroSessions = sessionStatus === "success" && session === null;
+  const composerVisible = composer !== null || (connected && knownZeroSessions);
+
   // Picking another session backs out of an explicitly-opened composer (spec §3) — without
   // this, an explicit composer stays rendered with a possibly-stale locked workspace after
   // the activated session's frame lands.
   const onActivateSession = useCallback(
     (id: string) => {
-      setComposer(null);
-      activateSession(id);
+      closeComposer();
+      void api.activateSession(id);
     },
-    [activateSession],
+    [closeComposer],
   );
 
-  const host = hostSeed(identity);
-  const agents: AgentSeed[] = [
-    ...(host ? [host] : []),
-    ...roster.map((a, i) => ({
-      id: a.id,
-      name: a.name,
-      role: a.role,
-      ring: a.ring ?? ringForIndex(i),
-      status: a.status,
-      hand: a.hand,
-      listening: a.listening,
-      kind: a.kind,
-      members: a.members,
-      avatar: a.avatar,
-      engineWarning: engineWarnings[a.id],
-    })),
-  ];
+  const agents = agentSeeds(roster, identity, engineWarnings);
 
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
   const stageValue: StageContextValue = {
-    messages,
     micLive,
     onMicToggle: () => void toggleMic(),
-    brokerConnected: connected,
-    send,
     soundOn,
     onSoundToggle: toggleSound,
     sttEnabled: voice.stt,
-    onVoiceBlocked,
     showMicHero: !hideMic,
-    voiceNotice,
-    roster,
-    lastBoardUpdate,
-    lastCapabilityUpdate,
-    agents,
-    activity,
-    workAction,
+    onVoiceBlocked,
   };
 
-  const callOn = (name: string) => send(`Go ahead, ${name} — you have the floor.`);
+  const callOn = (name: string) => void api.postUtterance(`Go ahead, ${name} — you have the floor.`);
 
   // A rejected fetch (broker down) and a resolved-but-{error} response (unknown agent,
   // swarm busy-lock) both need to surface — neither can leave the sheet silently stuck.
   const requestRemoval = async (entry: AgentSeed) => {
-    const preview = await removalPreview(entry.id).catch(
-      (err: unknown): { outcome?: "delete" | "archive"; reasons?: string[]; error?: string } => ({
+    const preview = await api
+      .getRemovalPreview(entry.id)
+      .catch((err: unknown): { outcome?: "delete" | "archive"; reasons?: string[]; error?: string } => ({
         error: String(err),
-      }),
-    );
+      }));
     setRemoving({ entry, outcome: preview.outcome, reasons: preview.reasons ?? [], error: preview.error });
   };
 
   const confirmRemoval = async () => {
     if (!removing?.outcome) return; // preview never resolved to a real outcome — nothing to confirm
     setRemoving((r) => (r ? { ...r, busy: true, error: undefined } : r));
-    const result = await removeAgent(removing.entry.id).catch((err: unknown): { outcome?: string; error?: string } => ({
+    const result = await api.deleteAgent(removing.entry.id).catch((err: unknown): { error?: string } => ({
       error: String(err),
     }));
     if (result.error) {
@@ -240,13 +197,11 @@ export function HomePage() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "g" && !/input|textarea/i.test((e.target as HTMLElement).tagName)) {
-        setTunerOpen((open) => !open);
-      }
+      if (e.key === "g" && !/input|textarea/i.test((e.target as HTMLElement).tagName)) toggleTuner();
     };
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
-  }, []);
+  }, [toggleTuner]);
 
   return (
     <StageProvider value={stageValue}>
@@ -257,7 +212,7 @@ export function HomePage() {
             activeRoute={pathname}
             onHome={() => void navigate({ to: "/" })}
             onNewWorkspace={() => setNewWorkspaceOpen(true)}
-            onSessions={() => setSessionsOpen((open) => !open)}
+            onSessions={toggleSessions}
             onBoard={() => void navigate({ to: "/board" })}
             onMap={() => void navigate({ to: "/map" })}
             onSettings={() => setSettingsOpen(true)}
@@ -265,17 +220,11 @@ export function HomePage() {
         }
         rightRail={
           <AgentRoster
-            onEdit={(entry) => {
-              setEditingId(entry.id);
-              setModalOpen(true);
-            }}
+            onEdit={(entry) => openEditAgent(entry.id)}
             agents={agents}
-            onAdd={() => {
-              setEditingId(null); // the + button always creates
-              setModalOpen(true);
-            }}
+            onAdd={openAddAgent} // the + button always creates: openAddAgent clears editingId
             onCall={callOn}
-            onCompose={compose}
+            onCompose={(op) => void api.postCompose(op)}
             onInspect={(entry) => void navigate({ to: "/work/$agentId", params: { agentId: entry.id } })}
             onRemove={requestRemoval}
           />
@@ -284,24 +233,23 @@ export function HomePage() {
           composerVisible ? (
             <NewSessionScreen
               workspaces={workspaces}
-              records={wsRecords}
+              records={wsRecords ?? null}
               sessions={sessions}
-              modes={modes}
+              modes={modes ?? null}
               lockedWorkspace={composer?.locked}
-              forced={sessionKnown && session === null}
+              forced={knownZeroSessions}
               onSend={async (ws, mode, prompt) => {
-                const r = await createSession(ws, mode, prompt);
+                const r = await api.postSession(BROKER_BASE, ws, mode, prompt);
                 if (r.error) {
-                  if (r.status === 409)
-                    void listExecutionModes()
-                      .then(setModes)
-                      .catch(() => {});
+                  // A mode that vanished since the probe is exactly what a 409 reports —
+                  // drop the cached answer so the picker re-reads it.
+                  if (r.status === 409) void qc.invalidateQueries({ queryKey: qk.executionModes });
                   return r;
                 }
-                setComposer(null);
+                closeComposer();
                 return undefined;
               }}
-              onCancel={onComposerCancel}
+              onCancel={closeComposer}
             />
           ) : (
             <Outlet />
@@ -336,81 +284,76 @@ export function HomePage() {
                 setSettingsOpen(false);
                 void refreshEngineWarnings();
                 refreshVoiceStatus();
+                void qc.invalidateQueries({ queryKey: qk.voiceSettings });
               }}
-              onReset={resetSetup}
+              onReset={api.resetSetup}
               theme={theme}
               onThemeChange={setTheme}
-              listConnectorVendors={listConnectorVendors}
-              listMyConnectors={listMyConnectors}
-              getVoiceSettings={getVoiceSettings}
-              saveVoiceSettings={saveVoiceSettings}
-              addConnector={addConnector}
-              updateConnector={updateConnector}
-              deleteConnector={deleteConnector}
-              verifyConnector={verifyConnector}
-              listCliTools={listCliTools}
-              refreshCliTools={refreshCliTools}
-              setCliToolEnabled={setCliToolEnabled}
-              listApiKeys={listApiKeys}
-              saveApiKey={saveApiKey}
-              verifyApiKey={verifyApiKey}
-              deleteApiKey={deleteApiKey}
-              listWorkspaceRecords={listWorkspaceRecords}
-              getWorkspaceChannels={getWorkspaceChannels}
-              saveWorkspaceChannels={saveWorkspaceChannels}
-              verifyWorkspaceDiscord={verifyWorkspaceDiscord}
-              getContainers={getContainers}
-              setDockerEnabled={setDockerEnabled}
-              verifyContainers={verifyContainers}
+              listConnectorVendors={api.getConnectorVendors}
+              listMyConnectors={api.getMyConnectors}
+              getVoiceSettings={api.getVoiceSettings}
+              saveVoiceSettings={api.saveVoiceSettings}
+              addConnector={api.addConnector}
+              updateConnector={api.updateConnector}
+              deleteConnector={api.deleteConnector}
+              verifyConnector={api.verifyConnector}
+              listCliTools={api.getCliTools}
+              refreshCliTools={api.refreshCliTools}
+              setCliToolEnabled={api.setCliToolEnabled}
+              listApiKeys={api.getApiKeys}
+              saveApiKey={api.saveApiKey}
+              verifyApiKey={api.verifyApiKey}
+              deleteApiKey={api.deleteApiKey}
+              listWorkspaceRecords={api.getWorkspaceRecords}
+              getWorkspaceChannels={api.getWorkspaceChannels}
+              saveWorkspaceChannels={api.saveWorkspaceChannels}
+              verifyWorkspaceDiscord={api.verifyWorkspaceDiscord}
+              getContainers={api.getContainers}
+              setDockerEnabled={api.setDockerEnabled}
+              verifyContainers={api.verifyContainers}
             />
             <SessionsPanel
               open={sessionsOpen}
               sessions={sessions}
               workspaces={workspaces}
-              onClose={() => setSessionsOpen(false)}
+              onClose={closeSessions}
               onActivate={onActivateSession}
               onCreate={(ws) => {
-                setSessionsOpen(false);
-                setComposer({ locked: ws || undefined });
+                closeSessions();
+                openComposer(ws || undefined);
               }}
               onManage={() => setWorkspacesOpen(true)}
             />
             <WorkspaceManagerModal
               open={workspacesOpen}
               onClose={() => setWorkspacesOpen(false)}
-              list={listWorkspaceRecords}
-              save={saveWorkspace}
-              remove={removeWorkspace}
-              verifyAtlassian={verifyWorkspaceAtlassian}
-              verifyRepoGithub={verifyRepoGithub}
-              listMyConnectors={listMyConnectors}
+              list={api.getWorkspaceRecords}
+              save={api.saveWorkspace}
+              remove={api.removeWorkspace}
+              verifyAtlassian={api.verifyWorkspaceAtlassian}
+              verifyRepoGithub={api.verifyRepoGithub}
+              listMyConnectors={api.getMyConnectors}
             />
             <NewWorkspaceModal
               open={newWorkspaceOpen}
               onClose={() => setNewWorkspaceOpen(false)}
-              save={saveWorkspace}
-              listMyConnectors={listMyConnectors}
+              save={api.saveWorkspace}
+              listMyConnectors={api.getMyConnectors}
               activeWorkspace={session?.workspace}
               pickFolder={hasNativeFolderPicker() ? pickFolder : undefined}
-              onCreated={(name) => setComposer({ locked: name })}
+              onCreated={(name) => openComposer(name)}
             />
-            <DotGridTuner
-              open={tunerOpen}
-              params={gridParams}
-              onChange={(key, value) => setGridParams((p) => ({ ...p, [key]: value }))}
-              onReset={() => setGridParams(GRID_DEFAULTS)}
-            />
+            <DotGridTuner open={tunerOpen} params={gridParams} onChange={setGridParam} onReset={resetGrid} />
             <AddAgentModal
               open={modalOpen}
               editingId={editingId ?? undefined}
               onClose={() => {
-                setModalOpen(false);
-                setEditingId(null);
+                closeAgentModal();
                 void refreshEngineWarnings();
               }}
-              onCreated={(n) =>
-                editingId ? undefined : send(`${n} just joined the crew — welcome them in one short line.`)
-              }
+              onCreated={(n) => {
+                if (!editingId) void api.postUtterance(`${n} just joined the crew — welcome them in one short line.`);
+              }}
             />
           </>
         }

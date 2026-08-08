@@ -48,7 +48,13 @@ export interface CapabilityT {
 }
 
 interface MapStageProps {
-  lastCapabilityUpdate: { capabilityId: string; seq: number } | null;
+  /**
+   * Dead as of the socket store: a `capability-updated` frame now invalidates
+   * `qk.capability(id)` instead of bumping a seq counter, so nothing supplies
+   * this any more. It (and the effect below that reads it) go away with the
+   * rest of the seq mechanism once this stage reads capabilities through Query.
+   */
+  lastCapabilityUpdate?: { capabilityId: string; seq: number } | null;
 }
 
 /**
