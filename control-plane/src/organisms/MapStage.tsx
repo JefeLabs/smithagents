@@ -210,14 +210,22 @@ export function MapStage() {
   const displayError = error ?? loadError;
 
   // Re-derives on every successful load (including a WS-driven background
-  // refetch), same as the original's `refetch()` — the `?? ` / `||` guards
-  // make it a no-op once the user (or a prior load) has already set either.
+  // refetch) or workspace change, same as the original's `refetch()` — the
+  // `?? ` / `||` guards make it a no-op once the user (or a prior load) has
+  // already set either. The `!workspace ||` filter matters once collection-
+  // level invalidation is in play: without it, a capability-updated frame for
+  // an UNRELATED capability re-runs this effect (capabilitiesQuery.data gets
+  // a new reference), and with activeId still null from I5's "workspace has
+  // no capabilities" case, `caps[0]?.id` would seed a capability from a
+  // DIFFERENT workspace than the one the picker is showing. Filtering by the
+  // currently-selected workspace keeps that path a no-op instead. Behaviour-
+  // identical on first load, where `workspace` is still `""` (no-op filter).
   useEffect(() => {
     const caps = capabilitiesQuery.data?.capabilities;
     if (!caps) return;
-    setActiveId((id) => id ?? caps[0]?.id ?? null);
+    setActiveId((id) => id ?? caps.find((c) => !workspace || c.workspaceId === workspace)?.id ?? null);
     setWorkspace((w) => w || caps[0]?.workspaceId || "");
-  }, [capabilitiesQuery.data]);
+  }, [capabilitiesQuery.data, workspace]);
 
   useEffect(() => {
     fetch(`http://${BASE}/workspaces`)

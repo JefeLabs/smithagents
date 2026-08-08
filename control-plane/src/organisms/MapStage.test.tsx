@@ -168,6 +168,51 @@ describe("MapStage + socket store wiring", () => {
     expect(spy).toHaveBeenCalledWith({ queryKey: qk.capabilities });
     await waitFor(() => expect(fetched()).toBe(before + 1));
   });
+
+  it("a capability-updated frame for another workspace's capability does not un-clear an empty workspace (F1)", async () => {
+    // I5 already nulls activeId when the selected workspace has no
+    // capabilities. Collection-level invalidation means ANY capability
+    // update — even one that belongs to a workspace the user isn't looking
+    // at — now triggers a refetch of the same collection, so the seeding
+    // effect must not treat that null activeId as "still unseeded" and grab
+    // caps[0] from a different workspace.
+    vi.stubGlobal("WebSocket", FakeSocket);
+    const overrides: { capabilities?: unknown } = { capabilities: { capabilities: [CAP], errors: [] } };
+    const { calls } = stubFetch(overrides);
+    const { client } = renderWithProviders(<MapStage />);
+    await screen.findByText("Manage Candidate Tours");
+
+    // "smithagents" has no capabilities of its own — I5 clears the map.
+    await userEvent.selectOptions(screen.getByLabelText("Workspace"), "smithagents");
+    await waitFor(() => expect(screen.queryByText("Manage Candidate Tours")).toBeNull());
+    const capSelect = screen.getByLabelText("Capability") as HTMLSelectElement;
+    expect(capSelect.value).toBe("");
+
+    // The refetch must return genuinely different data — TanStack's
+    // structural sharing would otherwise keep the same `data` reference and
+    // never re-run the seeding effect at all, making this pass vacuously.
+    overrides.capabilities = {
+      capabilities: [
+        { ...CAP, stories: [...CAP.stories, { id: "s9", stepId: "st1", order: 2, text: "new", done: false }] },
+      ],
+      errors: [],
+    };
+
+    useSocketStore.getState().connect(client);
+    const fetched = () => calls.filter((c) => c.url.includes("/work/capabilities") && c.method === "GET").length;
+    const before = fetched();
+    await act(async () => {
+      FakeSocket.last?.onmessage?.({
+        data: JSON.stringify({ type: "capability-updated", capabilityId: "school-feature-set" }),
+      });
+    });
+    await waitFor(() => expect(fetched()).toBeGreaterThan(before));
+
+    // Still cleared — the refetch must not seed a capability from skoolscout
+    // while the workspace picker shows smithagents.
+    expect(capSelect.value).toBe("");
+    expect(screen.queryByText("Manage Candidate Tours")).toBeNull();
+  });
 });
 
 describe("MapStage editing", () => {

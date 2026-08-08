@@ -122,6 +122,10 @@ export function resolveDrop(
  * The dragged card's OWN board is the authority — the PATCH route addresses a
  * single board, so a card dropped onto another board's card has no meaning and
  * is refused rather than silently moved. Grouping doubles as the drag fence.
+ *
+ * Returns `{error}` rather than throwing on purpose: this is a pure domain
+ * predicate over an in-memory list, not I/O — the throw-on-failure convention
+ * `api/work.ts` uses everywhere else applies to network calls, not to this.
  */
 export function resolveCrossBoardDrop(
   boards: WorkBoardT[],
