@@ -1459,9 +1459,13 @@ Apply the identical two-step shape to each, mapping props to hooks:
 |---|---|---|
 | `CliToolsGroup` | `listCliTools`, `refreshCliTools`, `setCliToolEnabled` | `useCliTools`, `useRefreshCliTools`, `useSetCliToolEnabled` |
 | `ChannelsGroup` | `listWorkspaceRecords`, `getWorkspaceChannels`, `saveWorkspaceChannels`, `verifyWorkspaceDiscord` | `useWorkspaceRecords`, `useWorkspaceChannels(name)`, `useSaveWorkspaceChannels`, `useVerifyWorkspaceDiscord` |
-| `VoiceGroup` | `getVoiceSettings`, `saveVoiceSettings`, `listMyConnectors` | `useVoiceSettings`, `useSaveVoiceSettings`, `useMyConnectors` |
+| `VoiceGroup` | `getVoice`, `saveVoice`, `listVendors`, `listConnectors` (4, not 3) | `useVoiceSettings`, `useSaveVoiceSettings`, `useConnectorVendors`, `useMyConnectors` |
 | `ContainersGroup` | `getContainers`, `setDockerEnabled`, `verifyContainers` | `useContainers`, `useSetDockerEnabled`, `useVerifyContainers` |
-| `IntegrationsGroup` | `listConnectorVendors`, `listMyConnectors`, `addConnector`, `updateConnector`, `deleteConnector`, `verifyConnector` | `useConnectorVendors`, `useMyConnectors`, `useAddConnector`, `useUpdateConnector`, `useDeleteConnector`, `useVerifyConnector` |
+| `IntegrationsGroup` | `listVendors`, `listConnectors`, `getVoice`, `addConnector`, `updateConnector`, `deleteConnector`, `verifyConnector` (7, not 6) | `useConnectorVendors`, `useMyConnectors`, `useVoiceSettings`, `useAddConnector`, `useUpdateConnector`, `useDeleteConnector`, `useVerifyConnector` |
+
+**Prop names verified against the real components** — earlier drafts of this table used the `useBrokerChat` export names (`getVoiceSettings`, `listConnectorVendors`, `listMyConnectors`), but the groups receive them under shorter local names. `VoiceGroup` takes a 4th prop (`listVendors`) and `IntegrationsGroup` a 7th (`getVoice`) that the old table omitted entirely.
+
+**Also delete the now-dead `biome-ignore lint/correctness/useExhaustiveDependencies` comments.** Every group carries one above its mount-once `useEffect` (e.g. `ApiKeysGroup.tsx:26`, `CliToolsGroup.tsx:26`, `VoiceGroup.tsx:29`, `ContainersGroup.tsx:21`). Those effects are exactly what the query hooks replace, so the suppressions go with them.
 | `NewSessionScreen` | `workspaces`, `records`, `sessions`, `modes` | `useWorkspaces`, `useWorkspaceRecords`, `useSessions`, `useExecutionModes` |
 
 `NewSessionScreen` keeps `lockedWorkspace`, `forced`, `onSend`, and `onCancel` as props — those are caller intent, not broker data.
