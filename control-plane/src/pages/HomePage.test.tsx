@@ -107,7 +107,7 @@ function renderApp(seed?: (c: QueryClient) => void, path = "/") {
 /** The rail renders once the root layout (HomePage) is mounted. */
 const appMounted = () => screen.findByRole("navigation", { name: /tools/i });
 
-const agentsCalls = () => fetchMock.mock.calls.filter((c) => String(c[0]).endsWith("/agents")).length;
+const callsTo = (suffix: string) => fetchMock.mock.calls.filter((c) => String(c[0]).endsWith(suffix)).length;
 
 beforeAll(() => {
   window.HTMLElement.prototype.scrollIntoView = () => {};
@@ -201,6 +201,50 @@ describe("HomePage — the zero-session composer", () => {
     expect(await screen.findByRole("heading", { name: /start a session/i })).toBeInTheDocument();
   });
 
+  it("holds the execution-mode and workspace-record probes until the composer is on screen", async () => {
+    renderApp(knownZero);
+    await appMounted();
+    await screen.findByRole("main");
+    // The handshake has not finished, so the composer is off screen and neither
+    // probe has any reason to run yet.
+    expect(callsTo("/execution-modes")).toBe(0);
+    expect(callsTo("/workspaces")).toBe(0);
+
+    act(() => FakeSocket.last?.open());
+    await screen.findByRole("heading", { name: /start a session/i });
+
+    await waitFor(() => expect(callsTo("/execution-modes")).toBe(1));
+    expect(callsTo("/workspaces")).toBe(1);
+  });
+
+  it("re-reads the probes every time the composer reopens, not only the first time", async () => {
+    // The hand-rolled effect this replaced refetched on each open, so a mode
+    // that vanished (or a workspace edited) while the composer was closed is
+    // current the moment it comes back. `enabled` flipping false→true has to
+    // carry that, or the picker silently shows a stale answer.
+    renderApp((c) => {
+      c.setQueryData(qk.session, { id: "s1", title: "Current", workspace: "acme", runtime: "local-in-process" });
+      c.setQueryData(qk.sessions, []);
+      c.setQueryData(qk.workspaces, ["acme"]);
+    });
+    await appMounted();
+
+    await userEvent.click(screen.getByRole("button", { name: "Sessions" }));
+    await userEvent.click(screen.getByRole("button", { name: /new session · acme/i }));
+    await screen.findByRole("heading", { name: /start a session/i });
+    await waitFor(() => expect(callsTo("/execution-modes")).toBe(1));
+
+    await userEvent.click(screen.getByRole("button", { name: /cancel new session/i }));
+    await screen.findByRole("main");
+
+    await userEvent.click(screen.getByRole("button", { name: "Sessions" }));
+    await userEvent.click(screen.getByRole("button", { name: /new session · acme/i }));
+    await screen.findByRole("heading", { name: /start a session/i });
+
+    await waitFor(() => expect(callsTo("/execution-modes")).toBe(2));
+    expect(callsTo("/workspaces")).toBe(2);
+  });
+
   it("leaves the stage alone while the broker has not answered yet", async () => {
     // Nothing seeded: the session query stays `pending`, which is the state the
     // old `sessionKnown` flag existed to distinguish from a confirmed null.
@@ -226,13 +270,13 @@ describe("HomePage — voice status refresh on Settings close", () => {
   it("re-fetches /agents when Settings closes, so a key added mid-session takes effect without a reload", async () => {
     renderApp();
     await appMounted();
-    await waitFor(() => expect(agentsCalls()).toBeGreaterThan(0));
-    const callsAfterMount = agentsCalls();
+    await waitFor(() => expect(callsTo("/agents")).toBeGreaterThan(0));
+    const callsAfterMount = callsTo("/agents");
 
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
     await userEvent.click(screen.getByRole("button", { name: /back to app/i }));
 
-    await waitFor(() => expect(agentsCalls()).toBeGreaterThan(callsAfterMount));
+    await waitFor(() => expect(callsTo("/agents")).toBeGreaterThan(callsAfterMount));
   });
 });
 

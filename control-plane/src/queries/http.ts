@@ -21,8 +21,14 @@ import { qk } from "./keys";
 // Query hooks
 // ---------------------------------------------------------------------------
 
-export function useWorkspaceRecords() {
-  return useQuery({ queryKey: qk.workspaceRecords, queryFn: () => api.getWorkspaceRecords() });
+/**
+ * `enabled` exists so a caller can defer the request until the UI that needs
+ * it is actually on screen — Query then fetches on the false→true flip, which
+ * is what a mount-and-refetch-on-open effect used to hand-roll. Defaulting to
+ * true keeps every unconditional caller unchanged.
+ */
+export function useWorkspaceRecords(enabled = true) {
+  return useQuery({ queryKey: qk.workspaceRecords, queryFn: () => api.getWorkspaceRecords(), enabled });
 }
 
 export function useWorkspaceChannels(name: string) {
@@ -57,8 +63,9 @@ export function useMe() {
   return useQuery({ queryKey: qk.me, queryFn: () => api.getMe() });
 }
 
-export function useExecutionModes() {
-  return useQuery({ queryKey: qk.executionModes, queryFn: () => api.getExecutionModes() });
+/** Same visibility gate as `useWorkspaceRecords` — see the note there. */
+export function useExecutionModes(enabled = true) {
+  return useQuery({ queryKey: qk.executionModes, queryFn: () => api.getExecutionModes(), enabled });
 }
 
 export function useActivity(name: string) {

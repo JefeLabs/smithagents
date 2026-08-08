@@ -66,8 +66,6 @@ export function HomePage() {
   const { data: rosterFrame } = useRoster();
   const roster = rosterFrame?.agents ?? NO_ROSTER;
   const identity = rosterFrame?.identity ?? null;
-  const { data: modes } = useExecutionModes();
-  const { data: wsRecords } = useWorkspaceRecords();
 
   // One field per selector, never the whole store: a whole-store selection
   // re-renders this page on every unrelated UI change.
@@ -142,6 +140,13 @@ export function HomePage() {
   // `data === null` is what keeps the composer from flashing open on each load.
   const knownZeroSessions = sessionStatus === "success" && session === null;
   const composerVisible = composer !== null || (connected && knownZeroSessions);
+
+  // Gated on the composer, not fetched at boot: Query runs these on the
+  // false→true flip, so a mode that vanished or a workspace that changed while
+  // the composer was closed is re-read the moment it reopens — the same
+  // contract the hand-rolled refetch effect had, minus the effect.
+  const { data: modes } = useExecutionModes(composerVisible);
+  const { data: wsRecords } = useWorkspaceRecords(composerVisible);
 
   // Picking another session backs out of an explicitly-opened composer (spec §3) — without
   // this, an explicit composer stays rendered with a possibly-stale locked workspace after
