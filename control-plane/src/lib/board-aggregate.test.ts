@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { WorkBoardT } from "../organisms/BoardStage";
-import { ALL_WORKSPACES, addableTypes, clusterByWorkspace, collectCards, tabsFor } from "./board-aggregate";
+import {
+  ALL_WORKSPACES,
+  addableTypes,
+  clusterByWorkspace,
+  collectCards,
+  tabsFor,
+  WORKSPACE_BOARD_TYPES_UI,
+} from "./board-aggregate";
 
 const board = (id: string, type: string, workspaceId?: string, cards: unknown[] = []): WorkBoardT =>
   ({ id, name: id, type, columns: [], cards, workspaceId }) as unknown as WorkBoardT;
@@ -30,6 +37,14 @@ describe("tabsFor", () => {
 
   it("omits the personal tab entirely when no personal board exists", () => {
     expect(tabsFor([BOARDS[0]], "acme").map((t) => t.type)).toEqual(["ideation"]);
+  });
+});
+
+describe("WORKSPACE_BOARD_TYPES_UI", () => {
+  it("has exactly the six workspace types, in canonical order, never personal", () => {
+    expect(WORKSPACE_BOARD_TYPES_UI).toEqual(["ideation", "plan", "deliver", "release", "reactive", "maintenance"]);
+    expect(WORKSPACE_BOARD_TYPES_UI).toHaveLength(6);
+    expect(WORKSPACE_BOARD_TYPES_UI).not.toContain("personal");
   });
 });
 

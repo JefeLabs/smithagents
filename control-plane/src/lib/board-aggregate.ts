@@ -16,6 +16,16 @@ export const BOARD_TYPE_ORDER_UI: BoardTypeT[] = [
   "personal",
 ];
 
+/** The six workspace types. Personal is deliberately absent — it belongs to no workspace. */
+export const WORKSPACE_BOARD_TYPES_UI: Exclude<BoardTypeT, "personal">[] = [
+  "ideation",
+  "plan",
+  "deliver",
+  "release",
+  "reactive",
+  "maintenance",
+];
+
 export const BOARD_TYPE_LABELS_UI: Record<BoardTypeT, string> = {
   personal: "Personal",
   ideation: "Ideation",
@@ -57,8 +67,7 @@ export interface Cluster {
 export function tabsFor(boards: WorkBoardT[], scope: string): TabDescriptor[] {
   const all = scope === ALL_WORKSPACES;
   const tabs: TabDescriptor[] = [];
-  for (const type of BOARD_TYPE_ORDER_UI) {
-    if (type === "personal") continue;
+  for (const type of WORKSPACE_BOARD_TYPES_UI) {
     const matches = boards.filter((b) => b.type === type && (all ? Boolean(b.workspaceId) : b.workspaceId === scope));
     if (matches.length === 0) continue;
     tabs.push({
@@ -85,7 +94,7 @@ export function tabsFor(boards: WorkBoardT[], scope: string): TabDescriptor[] {
 /** The workspace types this workspace does not yet hold. Never offers personal. */
 export function addableTypes(boards: WorkBoardT[], workspaceId: string): BoardTypeT[] {
   const held = new Set(boards.filter((b) => b.workspaceId === workspaceId).map((b) => b.type));
-  return BOARD_TYPE_ORDER_UI.filter((t) => t !== "personal" && !held.has(t));
+  return WORKSPACE_BOARD_TYPES_UI.filter((t) => !held.has(t));
 }
 
 /** Every card in `columnId` across `boards`, tagged with where it came from. */
