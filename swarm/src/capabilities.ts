@@ -189,6 +189,13 @@ export async function ensureWorkspaceBoards(workDir: string, workspaceId: string
   }
 }
 
+/** The single personal board. Workspace-less, so ensureWorkspaceBoards cannot cover it. */
+export async function ensurePersonalBoard(workDir: string): Promise<void> {
+  const { boards } = await loadBoards(workDir);
+  if (boards.some((b) => b.id === 'personal')) return;
+  await saveBoard(workDir, createBoard('personal'));
+}
+
 /** Pure card creation for a slice send: leftmost column, story copies, capabilityRef. Caller saves board + slice ref. */
 export function sendSliceToBoard(cap: Capability, slice: CapSlice, board: WorkBoard): WorkCard {
   const card = addCard(board, { title: slice.name });

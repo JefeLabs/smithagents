@@ -100,14 +100,15 @@ import {
   saveContainersFile,
 } from './containers.js';
 import {
-  addCard, boardIdFor, type BoardType, createBoard, deleteBoardFile, loadBoards, patchCard, removeCard, saveBoard,
-  type WorkBoard,
+  addCard, BOARD_TEMPLATES, BOARD_TYPE_LABELS, boardIdFor, type BoardType, createBoard, deleteBoardFile,
+  findRouteDestination, loadBoards, patchCard, removeCard, resolveExit, routeCard, saveBoard, type WorkBoard,
 } from './work-items.js';
 import { importIssues, searchIssues, transitionIssue } from './jira-sync.js';
 import {
   applyStoryToggles,
   createCapability,
   deleteCapabilityFile,
+  ensurePersonalBoard,
   ensureWorkspaceBoards,
   loadCapabilities,
   patchCapability,
@@ -2034,14 +2035,30 @@ export class OrchestratorServer {
       return board;
     };
 
-    this.app.get('/work/boards', async () => loadBoards(server.workDir()));
+    // Ensuring on read is the only board created as a side effect of a GET:
+    // the Personal tab must always have something behind it, and `+ add`
+    // deliberately does not offer `personal`.
+    this.app.get('/work/boards', async () => {
+      await ensurePersonalBoard(server.workDir());
+      return loadBoards(server.workDir());
+    });
 
     this.app.post('/work/boards', async (req, reply) => {
       const b = req.body as { type?: string; workspaceId?: string };
+      const type = b?.type as BoardType;
+      if (!type || !BOARD_TEMPLATES[type]) return reply.status(400).send({ error: `Unknown board type: ${String(b?.type)}` });
+      if (type === 'personal' && b.workspaceId) return reply.status(400).send({ error: 'The personal board belongs to no workspace' });
+      if (type !== 'personal' && !b.workspaceId?.trim()) return reply.status(400).send({ error: `Board type "${type}" requires a workspaceId` });
       try {
-        const board = createBoard(b.type as BoardType, b.workspaceId);
+        const board = createBoard(type, b.workspaceId?.trim());
         const { boards } = await loadBoards(server.workDir());
-        if (boards.some((x) => x.id === board.id)) return reply.status(409).send({ error: `Board "${board.id}" already exists` });
+        if (boards.some((x) => x.id === board.id)) {
+          return reply.status(409).send({
+            error: type === 'personal'
+              ? 'The personal board already exists'
+              : `Workspace "${b.workspaceId}" already has a ${BOARD_TYPE_LABELS[type]} board`,
+          });
+        }
         await saveBoard(server.workDir(), board);
         return reply.status(201).send(board);
       } catch (err) {
@@ -2203,6 +2220,36 @@ export class OrchestratorServer {
       return { ok: true };
     });
 
+    this.app.post<{ Params: { id: string; cardId: string } }>(
+      '/work/boards/:id/cards/:cardId/route',
+      async (req, reply) => {
+        const source = await boardOr404(req.params.id, reply);
+        if (!source) return;
+        const card = source.cards.find((c) => c.id === req.params.cardId);
+        if (!card) return reply.status(404).send({ error: `Unknown card: ${req.params.cardId}` });
+        const toType = (req.body as { toType?: string })?.toType as BoardType;
+        const exit = toType ? resolveExit(source, card.columnId, toType) : undefined;
+        if (!exit) {
+          return reply.status(400).send({
+            error: `No route from ${source.name}/${card.columnId} to "${String(toType)}"`,
+          });
+        }
+        const { boards } = await loadBoards(server.workDir());
+        const dest = findRouteDestination(boards, source, exit);
+        if (!dest) {
+          return reply.status(404).send({
+            error: `Workspace "${source.workspaceId}" has no ${BOARD_TYPE_LABELS[exit.toType]} board — add it first`,
+          });
+        }
+        const plan = routeCard(source, dest, card.id, exit, new Date().toISOString());
+        // Destination first: a crash between these two writes duplicates the
+        // card (recoverable) rather than losing it (not).
+        await saveBoard(server.workDir(), plan.writeFirst);
+        await saveBoard(server.workDir(), plan.writeSecond);
+        return reply.status(200).send({ card: plan.card, boardId: dest.id });
+      },
+    );
+
     this.app.post<{ Params: { id: string } }>('/work/boards/:id/jira/import', async (req, reply) => {
       const board = await boardOr404(req.params.id, reply);
       if (!board) return;
@@ -2334,6 +2381,8 @@ export class OrchestratorServer {
       if (target === 'delivery' && !slice.specPath) return reply.status(409).send({ error: 'Generate the spec before sending to delivery' });
       await ensureWorkspaceBoards(server.workDir(), cap.workspaceId);
       const { boards } = await loadBoards(server.workDir());
+      // The wire values and the capCardRef/deliveryCardRef keys are persisted
+      // on every capability file; only the board types behind them moved.
       const board = boards.find((b) => b.id === boardIdFor(cap.workspaceId, target === 'capabilities' ? 'plan' : 'deliver'));
       if (!board) return reply.status(400).send({ error: `Workspace board missing: ${cap.workspaceId} ${target}` });
       try {

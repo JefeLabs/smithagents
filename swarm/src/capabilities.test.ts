@@ -4,9 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import {
-  applyStoryToggles, createCapability, deleteCapabilityFile, ensureWorkspaceBoards, loadCapabilities,
-  patchCapability, renderSpecSkeleton, resyncLinkedCards, saveCapability, sendSliceToBoard, sliceStories, slugify,
-  unlinkSliceCard,
+  applyStoryToggles, createCapability, deleteCapabilityFile, ensurePersonalBoard, ensureWorkspaceBoards,
+  loadCapabilities, patchCapability, renderSpecSkeleton, resyncLinkedCards, saveCapability, sendSliceToBoard,
+  sliceStories, slugify, unlinkSliceCard,
 } from './capabilities.js';
 import { boardIdFor, loadBoards, saveBoard } from './work-items.js';
 
@@ -112,6 +112,17 @@ test('ensureWorkspaceBoards: creates the standing three once, idempotent, never 
     ['skoolscout-plan', 'skoolscout'],
   ]);
   assert.deepEqual(boards.find((b) => b.id === 'skoolscout-plan')?.columns.map((c) => c.id)[0], 'spec');
+});
+
+test('ensurePersonalBoard creates exactly one workspace-less board and is idempotent', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'work-'));
+  await ensurePersonalBoard(dir);
+  await ensurePersonalBoard(dir);
+  const { boards } = await loadBoards(dir);
+  assert.equal(boards.length, 1);
+  assert.equal(boards[0].id, 'personal');
+  assert.equal(boards[0].workspaceId, undefined);
+  assert.deepEqual(boards[0].columns.map((c) => c.name), ['Todo', 'Doing', 'Done', 'Not Doing']);
 });
 
 test('sendSliceToBoard: leftmost card, story copies, capabilityRef', async () => {

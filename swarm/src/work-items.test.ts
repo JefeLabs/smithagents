@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import {
   addCard, BOARD_ROUTES, BOARD_TEMPLATES, BOARD_TYPE_ORDER, boardIdFor, type BoardType, type CardFlag, createBoard,
-  deleteBoardFile, exitsFor, loadBoards, patchCard, removeCard, resolveExit, routeCard, saveBoard,
-  WORKSPACE_BOARD_TYPES,
+  deleteBoardFile, exitsFor, findRouteDestination, loadBoards, patchCard, removeCard, resolveExit, routeCard,
+  saveBoard, WORKSPACE_BOARD_TYPES,
 } from './work-items.js';
 
 test('templates: seven typed column sets, ids unique and slug-shaped', () => {
@@ -280,4 +280,27 @@ test('routeCard chains across two real hops: delegation, stories, jira, capabili
     { boardId: 'acme-deliver', boardType: 'deliver', columnId: 'in-progress', at: '2026-08-07T11:00:00.000Z' },
   ]);
   assert.throws(() => routeCard(deliver, plan, 'ghost', exit2, '2026-08-07T11:00:00.000Z'), /card/i);
+});
+
+test('findRouteDestination: matches the exit type in the source board\'s own workspace', () => {
+  const source = createBoard('plan', 'acme');
+  const dest = createBoard('deliver', 'acme');
+  const exit = resolveExit(source, 'ready', 'deliver');
+  assert.ok(exit);
+  assert.equal(findRouteDestination([source, dest], source, exit), dest);
+});
+
+test('findRouteDestination: does not match a same-type board in a different workspace', () => {
+  const source = createBoard('plan', 'acme');
+  const otherWorkspaceDest = createBoard('deliver', 'widgetco');
+  const exit = resolveExit(source, 'ready', 'deliver');
+  assert.ok(exit);
+  assert.equal(findRouteDestination([source, otherWorkspaceDest], source, exit), undefined);
+});
+
+test('findRouteDestination: undefined when the workspace has no board of that type yet', () => {
+  const source = createBoard('plan', 'acme');
+  const exit = resolveExit(source, 'ready', 'deliver');
+  assert.ok(exit);
+  assert.equal(findRouteDestination([source], source, exit), undefined);
 });

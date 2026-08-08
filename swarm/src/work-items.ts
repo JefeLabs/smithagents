@@ -221,6 +221,11 @@ export interface RoutePlan {
   writeSecond: WorkBoard;
 }
 
+/** The board a routed card lands on: same workspace as the source, the exit's destination type. */
+export function findRouteDestination(boards: WorkBoard[], source: WorkBoard, exit: RouteExit): WorkBoard | undefined {
+  return boards.find((b) => b.type === exit.toType && b.workspaceId === source.workspaceId);
+}
+
 export function routeCard(
   source: WorkBoard,
   dest: WorkBoard,
