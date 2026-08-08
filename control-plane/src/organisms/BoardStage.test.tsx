@@ -7,6 +7,7 @@ import { BoardStage, moveCard, resolveDrop } from "./BoardStage";
 const BOARD = {
   id: "alpha",
   name: "Alpha",
+  type: "personal" as const,
   columns: [
     { id: "backlog", name: "Backlog" },
     { id: "ready", name: "Ready" },

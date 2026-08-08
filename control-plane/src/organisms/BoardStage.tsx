@@ -12,6 +12,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { Download, Plus, SquareKanban } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import type { RosterAgent } from "../hooks/useBrokerChat";
+import type { BoardTypeT } from "../lib/board-aggregate";
 import { BoardCard } from "../molecules/BoardCard";
 import { CardSheet } from "./CardSheet";
 
@@ -37,6 +38,7 @@ export interface WorkCardT {
 export interface WorkBoardT {
   id: string;
   name: string;
+  type: BoardTypeT;
   columns: WorkColumn[];
   cards: WorkCardT[];
   jira?: { connectorId: string; siteUrl: string; projectKey: string; jql?: string };
