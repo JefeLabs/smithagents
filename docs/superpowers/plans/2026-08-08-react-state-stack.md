@@ -820,7 +820,7 @@ Owns the WebSocket, the reconnect backoff, `send`/`compose`/mic control, and the
 
 **Interfaces:**
 - Consumes: `qk` (Task 4), `registerStoreReset` (Task 2), types (Task 1)
-- Produces: `useSocketStore` with state `{ connected: boolean }` and actions `connect(qc: QueryClient, base?: string): void`, `disconnect(): void`, `micControl(type: "mic-start" | "mic-stop"): void`, `micAudio(pcm: ArrayBuffer): void`, `onAudioFrame(fn: (frame: AudioFrame) => void): () => void`
+- Produces: `useSocketStore` with state `{ connected: boolean; audioMode: boolean }` and actions `connect(qc: QueryClient, base?: string): void`, `disconnect(): void`, `micControl(type: "mic-start" | "mic-stop"): void`, `micAudio(pcm: ArrayBuffer): void`, `onAudioFrame(fn: (frame: AudioFrame) => void): () => void`
 
 **`send` and `compose` are NOT store actions.** They are HTTP POSTs to `/utterance` and `/compose` (`useBrokerChat.ts:175-198`), so they live in `api/broker.ts` as `postUtterance` / `postCompose` and reach components as Query mutations. Putting them on the socket would silently drop every message: the broker would never receive them, yet nothing would throw.
 
@@ -934,6 +934,13 @@ const RECONNECT_MS = 2000;
 
 interface SocketState {
   connected: boolean;
+  /**
+   * From the broker's `config` frame: true when the BROKER is producing audio
+   * itself. HomePage passes `!audioMode` as useSpokenReplies' `webSpeechEnabled`,
+   * so dropping this would make the browser speak replies aloud on top of the
+   * broker's own TTS — double audio, not silence.
+   */
+  audioMode: boolean;
   connect: (qc: QueryClient, base?: string) => void;
   disconnect: () => void;
   send: (text: string) => void;
@@ -957,6 +964,7 @@ function append(qc: QueryClient, role: ChatMessage["role"], text: string) {
 
 export const useSocketStore = create<SocketState>((set, get) => ({
   connected: false,
+  audioMode: false,
 
   connect: (qc, base = BROKER_BASE) => {
     if (socket) return; // idempotent — StrictMode double-mounts this
@@ -988,6 +996,9 @@ export const useSocketStore = create<SocketState>((set, get) => ({
             return;
           case "roster":
             qc.setQueryData(qk.roster, { agents: frame.agents, identity: frame.identity ?? null });
+            return;
+          case "config":
+            set({ audioMode: frame.audio });
             return;
           case "audio":
             for (const fn of audioSubs) fn(frame);
@@ -1050,7 +1061,7 @@ registerStoreReset(() => {
   useSocketStore.getState().disconnect();
   audioSubs.clear();
   nextId = 0;
-  useSocketStore.setState({ connected: false });
+  useSocketStore.setState({ connected: false, audioMode: false });
 });
 ```
 
