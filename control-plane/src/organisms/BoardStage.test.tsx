@@ -1,6 +1,7 @@
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ALL_WORKSPACES } from "../lib/board-aggregate";
 import type { WorkBoardT } from "./BoardStage";
 import { BoardStage, moveCard, resolveCrossBoardDrop, resolveDrop } from "./BoardStage";
 
@@ -193,13 +194,43 @@ describe("BoardStage", () => {
     });
     render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
     await waitFor(() => expect(screen.getByText("Parent portal")).toBeTruthy());
-    await userEvent.selectOptions(screen.getByLabelText("Workspace"), "*");
+    // Start in a single workspace: acme's card only, and no subheadings.
+    await userEvent.selectOptions(screen.getByLabelText("Workspace"), "acme");
+    await waitFor(() => expect(screen.queryByText("Billing")).toBeNull());
+    expect(document.querySelector(".board-column__cluster-name")).toBeNull();
+    // ...then switch to the aggregate view: both workspaces, each subheaded.
+    await userEvent.selectOptions(screen.getByLabelText("Workspace"), ALL_WORKSPACES);
     // Scoped to the column: "acme" is also an <option> in the workspace
     // dropdown, so an unscoped getByText would match two elements.
     const column = await waitFor(() => screen.getByText("Spec").closest(".board-column") as HTMLElement);
     expect(within(column).getByText("acme")).toBeTruthy();
     expect(within(column).getByText("globex")).toBeTruthy();
     expect(screen.getByText("Billing")).toBeTruthy();
+  });
+
+  it("resets the card composer when the tab or the workspace scope changes", async () => {
+    stubFetch({
+      boards: {
+        boards: [
+          { ...BOARD, id: "acme-plan", name: "Plan", type: "plan", workspaceId: "acme" },
+          { ...BOARD, id: "personal", name: "Personal", type: "personal", workspaceId: undefined },
+        ],
+        errors: [],
+      },
+    });
+    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Personal" })).toBeTruthy());
+    await userEvent.click(screen.getByRole("tab", { name: "Personal" }));
+    await userEvent.click(screen.getByRole("button", { name: /add card/i }));
+    await userEvent.type(screen.getByPlaceholderText(/card title/i), "Half-typed");
+    // Switching tabs must not carry a half-typed card onto another board.
+    await userEvent.click(screen.getByRole("tab", { name: "Plan" }));
+    expect(screen.queryByPlaceholderText(/card title/i)).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /add card/i }));
+    expect((screen.getByPlaceholderText(/card title/i) as HTMLInputElement).value).toBe("");
+    // ...and neither must changing the workspace scope.
+    await userEvent.selectOptions(screen.getByLabelText("Workspace"), "acme");
+    expect(screen.queryByPlaceholderText(/card title/i)).toBeNull();
   });
 
   it("creates a board for the scoped workspace from the add menu", async () => {
@@ -284,10 +315,23 @@ describe("BoardStage drag wiring", () => {
     vi.unstubAllGlobals();
   });
 
+  /**
+   * fireDrop reaches applyMove through a module-level seam that a passive
+   * effect registers. The tab derives synchronously from `boards`, so the
+   * column heading appears in the SAME commit that loads them — findByText can
+   * resolve before the effect has re-registered applyMove over the loaded
+   * boards, leaving the seam holding a closure whose board list is still empty.
+   * applyMove then bails without PATCHing. Flush effects before dropping.
+   */
+  async function readyToDrop(columnName: string) {
+    await screen.findByText(columnName);
+    await act(async () => {});
+  }
+
   it("a cross-column drop PATCHes the moved card with columnId and order and applies optimistically", async () => {
     const { calls } = stubFetch();
     render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
-    await screen.findByText("Todo");
+    await readyToDrop("Todo");
     // Drag simulation via dnd-kit is brittle in jsdom — call the exported
     // handler contract instead: the component wires handleCardDrop(boardId,
     // cardId, columnId, index) into DndContext. Assert through the module seam.
@@ -344,7 +388,7 @@ describe("BoardStage drag wiring", () => {
       },
     });
     render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
-    await screen.findByText("Billing");
+    await readyToDrop("Billing");
     const { fireDrop } = await import("./BoardStage");
     await fireDrop("globex-plan", "g1", "ready", 0);
     await waitFor(() =>
@@ -355,7 +399,7 @@ describe("BoardStage drag wiring", () => {
   it("a same-column reorder PATCHes {order} only, omitting columnId so the swarm's Jira push-on-move never fires", async () => {
     const { calls } = stubFetch();
     render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
-    await screen.findByText("Todo");
+    await readyToDrop("Todo");
     const { fireDrop } = await import("./BoardStage");
     // c1 is already in "todo" — this is a same-column reorder.
     await fireDrop("alpha", "c1", "todo", 0);
@@ -368,7 +412,7 @@ describe("BoardStage drag wiring", () => {
   it("rolls back the optimistic move and surfaces an error when the PATCH fails", async () => {
     const { calls } = stubFetch({ patchStatus: 500 });
     render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
-    await screen.findByText("Write the spec");
+    await readyToDrop("Write the spec");
     const { fireDrop } = await import("./BoardStage");
     await fireDrop("alpha", "c1", "doing", 0);
     await waitFor(() => expect(calls.some((c) => c.method === "PATCH" && c.url.includes("/cards/c1"))).toBe(true));
@@ -603,6 +647,22 @@ describe("CardSheet", () => {
     expect(screen.getByRole("button", { name: /import from jira/i })).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: /import from jira/i }));
     await waitFor(() => expect(calls.some((c) => c.url.includes("/jira/import"))).toBe(true));
+  });
+
+  it("unmounts cleanly when the open card vanishes from its board under a refetch", async () => {
+    // Today this needs a WS race (an agent deletes the card while the sheet is
+    // open); once route pills move a card off open.boardId it is the normal flow.
+    const overrides: Record<string, unknown> = { boards: { boards: [{ ...BOARD }], errors: [] } };
+    stubFetch(overrides);
+    const { rerender } = render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
+    await userEvent.click(await screen.findByText("Write the spec"));
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    overrides.boards = { boards: [{ ...BOARD, cards: BOARD.cards.filter((c) => c.id !== "c1") }], errors: [] };
+    rerender(<BoardStage roster={ROSTER} lastBoardUpdate={{ boardId: "alpha", seq: 1 }} />);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // The stage itself survives — the card is gone, not the whole tree.
+    expect(screen.getByLabelText("Work boards")).toBeTruthy();
+    expect(screen.getByText("Fix login")).toBeTruthy();
   });
 
   it("deletes a card", async () => {

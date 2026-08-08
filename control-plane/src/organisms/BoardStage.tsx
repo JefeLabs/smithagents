@@ -202,6 +202,12 @@ export function BoardStage({ roster, lastBoardUpdate }: BoardStageProps) {
     return workspaceColor(ws ?? { name: workspaceId });
   };
   const agentFor = (id?: string) => (id ? roster.find((a) => a.id === id) : undefined);
+  // Both looked up here, and both guarded at the render site. A refetch can
+  // drop the open card out from under the sheet — an agent deletes it, or a
+  // route moves it to another board — and CardSheet reads `card.title`
+  // unconditionally, so a board-only guard renders it with an undefined card.
+  const openBoard = open ? boardOf(open.boardId) : null;
+  const openCard = open ? (openBoard?.cards.find((c) => c.id === open.cardId) ?? null) : null;
 
   // Keyed on the joined ids, not the tabBoards array: that array is rebuilt on
   // every render, and refetch replaces `boards` with a fresh array, so an
@@ -210,6 +216,14 @@ export function BoardStage({ roster, lastBoardUpdate }: BoardStageProps) {
   useEffect(() => {
     if (lastBoardUpdate && tabBoardIds.split(",").includes(lastBoardUpdate.boardId)) void refetch();
   }, [lastBoardUpdate, tabBoardIds, refetch]);
+
+  // The composer targets tabBoards[0], so a half-typed card must not survive a
+  // move to a different board — same reset BoardTabs does for its add menu.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scope/tab-keyed reset, same pattern as BoardTabs' scope-keyed reset
+  useEffect(() => {
+    setAddingCard(false);
+    setCardTitle("");
+  }, [scope, tab?.key]);
 
   // Optimistic move + PATCH + rollback-on-fail. Same-column reorders PATCH
   // {order} only — omitting columnId keeps the swarm's Jira push-on-move
@@ -369,11 +383,11 @@ export function BoardStage({ roster, lastBoardUpdate }: BoardStageProps) {
           </div>
         </DndContext>
       )}
-      {open && boardOf(open.boardId) && (
+      {openBoard && openCard && (
         <CardSheet
-          key={open.cardId}
-          board={boardOf(open.boardId) as WorkBoardT}
-          card={boardOf(open.boardId)?.cards.find((c) => c.id === open.cardId) as WorkCardT}
+          key={openCard.id}
+          board={openBoard}
+          card={openCard}
           roster={roster}
           workspaces={workspaces.map((w) => w.name)}
           onClose={() => setOpen(null)}
