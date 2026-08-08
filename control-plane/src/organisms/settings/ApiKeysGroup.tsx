@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { ApiKeyListing } from "../../hooks/useBrokerChat";
+import type { ApiKeyListing } from "../../api/types";
 
 interface ApiKeysGroupProps {
   listApiKeys: () => Promise<ApiKeyListing[]>;

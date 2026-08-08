@@ -1,5 +1,5 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import type { ChatMessage } from "../hooks/useBrokerChat";
+import type { ChatMessage } from "../api/types";
 import { Composer } from "../molecules/Composer";
 import { MicHero } from "../molecules/MicHero";
 import { Transcript } from "../molecules/Transcript";

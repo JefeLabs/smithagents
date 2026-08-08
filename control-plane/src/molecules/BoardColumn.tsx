@@ -1,7 +1,7 @@
 import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { RosterAgent } from "../hooks/useBrokerChat";
+import type { RosterAgent } from "../api/types";
 import type { AggCard, Cluster } from "../lib/board-aggregate";
 import type { WorkColumn } from "../organisms/BoardStage";
 import { BoardCard } from "./BoardCard";

@@ -1,6 +1,6 @@
 import { Plus, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { ChannelsRecord, WorkspaceRecord } from "../../hooks/useBrokerChat";
+import type { ChannelsRecord, WorkspaceRecord } from "../../api/types";
 
 interface ChannelsGroupProps {
   listWorkspaces: () => Promise<WorkspaceRecord[]>;

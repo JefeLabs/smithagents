@@ -1,7 +1,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { SessionSummary } from "../hooks/useBrokerChat";
+import type { SessionSummary } from "../api/types";
 import { SessionsPanel } from "./SessionsPanel";
 
 const SESSIONS: SessionSummary[] = [

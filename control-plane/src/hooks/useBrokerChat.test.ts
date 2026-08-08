@@ -1,12 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  type ExecutionMode,
-  fetchExecutionModes,
-  postSession,
-  type SessionFrame,
-  useBrokerChat,
-} from "./useBrokerChat";
+import type { ExecutionMode, SessionFrame } from "../api/types";
+import { fetchExecutionModes, postSession, useBrokerChat } from "./useBrokerChat";
 
 afterEach(() => vi.unstubAllGlobals());
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { ConnectorInstanceRecord, ConnectorVendorMeta, VoiceSettingsRecord } from "../../hooks/useBrokerChat";
+import type { ConnectorInstanceRecord, ConnectorVendorMeta, VoiceSettingsRecord } from "../../api/types";
 
 interface VoiceGroupProps {
   getVoice: () => Promise<VoiceSettingsRecord>;

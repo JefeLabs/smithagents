@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { AudioFrame, ChatMessage, RosterAgent, SpeechProfile } from "./useBrokerChat";
+import type { AudioFrame, ChatMessage, RosterAgent, SpeechProfile } from "../api/types";
 
 const STORE_KEY = "smith.sound";
 const SPEAKER_RE = /^([A-Z][\w-]{1,24}):\s+(.*)$/s;

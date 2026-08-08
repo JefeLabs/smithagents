@@ -1,7 +1,7 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { WorkspaceRecord } from "../hooks/useBrokerChat";
+import type { WorkspaceRecord } from "../api/types";
 import { WORKSPACE_PALETTE } from "../lib/workspace-color";
 import { NewWorkspaceModal } from "./NewWorkspaceModal";
 

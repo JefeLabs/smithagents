@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { CliToolListing } from "./useBrokerChat";
+import type { CliToolListing } from "../api/types";
 
 const BASE = "127.0.0.1:7790";
 

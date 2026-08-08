@@ -1,7 +1,7 @@
 import { Plus, X } from "lucide-react";
 import { type MouseEvent, useEffect, useState } from "react";
+import type { ConnectorInstanceRecord, WorkspaceRecord } from "../api/types";
 import { SegmentedControl } from "../atoms/SegmentedControl";
-import type { ConnectorInstanceRecord, WorkspaceRecord } from "../hooks/useBrokerChat";
 import { WORKSPACE_PALETTE } from "../lib/workspace-color";
 
 interface DraftRepo {

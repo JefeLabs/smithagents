@@ -1,6 +1,6 @@
 import { motion, useReducedMotion } from "motion/react";
 import { useEffect, useRef } from "react";
-import type { ChatMessage } from "../hooks/useBrokerChat";
+import type { ChatMessage } from "../api/types";
 
 interface TranscriptProps {
   messages: ChatMessage[];

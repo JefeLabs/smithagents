@@ -1,7 +1,7 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ConnectorVendorMeta } from "../../hooks/useBrokerChat";
+import type { ConnectorVendorMeta } from "../../api/types";
 import { ConnectorFormModal } from "./ConnectorFormModal";
 
 const GITHUB_VENDOR: ConnectorVendorMeta = {

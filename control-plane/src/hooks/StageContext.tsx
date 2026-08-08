@@ -1,6 +1,6 @@
 import { createContext, useContext } from "react";
+import type { ChatMessage, RosterAgent } from "../api/types";
 import type { AgentSeed } from "../data/agents";
-import type { ChatMessage, RosterAgent } from "./useBrokerChat";
 
 /**
  * The slice of broker state the stage routes need. Provided by HomePage (the

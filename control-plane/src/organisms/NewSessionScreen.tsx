@@ -1,6 +1,6 @@
 import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { ExecutionMode, SessionSummary, WorkspaceRecord } from "../hooks/useBrokerChat";
+import type { ExecutionMode, SessionSummary, WorkspaceRecord } from "../api/types";
 
 export interface NewSessionScreenProps {
   workspaces: string[];

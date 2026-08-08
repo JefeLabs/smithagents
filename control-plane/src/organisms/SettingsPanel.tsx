@@ -18,7 +18,7 @@ import type {
   ConnectorVendorMeta,
   VoiceSettingsRecord,
   WorkspaceRecord,
-} from "../hooks/useBrokerChat";
+} from "../api/types";
 import type { ThemeId } from "../hooks/useTheme";
 import { ApiKeysGroup } from "./settings/ApiKeysGroup";
 import { ChannelsGroup } from "./settings/ChannelsGroup";

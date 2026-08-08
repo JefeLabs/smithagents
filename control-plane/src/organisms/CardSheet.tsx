@@ -1,6 +1,6 @@
 import { Send, Trash2, X } from "lucide-react";
 import { useState } from "react";
-import type { RosterAgent } from "../hooks/useBrokerChat";
+import type { RosterAgent } from "../api/types";
 import { exitsForUI } from "../lib/board-aggregate";
 import type { WorkBoardT, WorkCardT } from "./BoardStage";
 

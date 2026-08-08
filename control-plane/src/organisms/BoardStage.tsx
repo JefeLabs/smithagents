@@ -1,7 +1,7 @@
 import { DndContext, type DragEndEvent, PointerSensor, pointerWithin, useSensor, useSensors } from "@dnd-kit/core";
 import { Download, Plus, SquareKanban } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import type { RosterAgent } from "../hooks/useBrokerChat";
+import type { RosterAgent } from "../api/types";
 import {
   ALL_WORKSPACES,
   addableTypes,

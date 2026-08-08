@@ -1,5 +1,5 @@
+import type { RosterAgent } from "../api/types";
 import { Avatar } from "../atoms/Avatar";
-import type { RosterAgent } from "../hooks/useBrokerChat";
 import type { WorkCardT } from "../organisms/BoardStage";
 
 const BASE = "127.0.0.1:7790";

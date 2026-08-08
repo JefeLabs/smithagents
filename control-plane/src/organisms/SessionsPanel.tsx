@@ -1,6 +1,6 @@
 import { Plus, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { SessionSummary } from "../hooks/useBrokerChat";
+import type { SessionSummary } from "../api/types";
 import { MODE_LABELS } from "./NewSessionScreen";
 
 interface SessionsPanelProps {

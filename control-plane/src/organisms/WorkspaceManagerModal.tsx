@@ -1,7 +1,7 @@
 import { Plus, X } from "lucide-react";
 import type { MouseEvent } from "react";
 import { useEffect, useState } from "react";
-import type { ConnectorInstanceRecord, WorkspaceRecord } from "../hooks/useBrokerChat";
+import type { ConnectorInstanceRecord, WorkspaceRecord } from "../api/types";
 import { WORKSPACE_PALETTE } from "../lib/workspace-color";
 import { ConfirmSheet } from "../molecules/ConfirmSheet";
 

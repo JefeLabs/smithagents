@@ -1,6 +1,6 @@
 import type { MouseEvent } from "react";
 import { useEffect, useState } from "react";
-import type { ConnectorInstanceRecord, ConnectorVendorMeta } from "../../hooks/useBrokerChat";
+import type { ConnectorInstanceRecord, ConnectorVendorMeta } from "../../api/types";
 
 interface ConnectorFormModalProps {
   open: boolean;

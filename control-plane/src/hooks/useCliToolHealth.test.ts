@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { CliToolListing } from "./useBrokerChat";
+import type { CliToolListing } from "../api/types";
 import { computeEngineWarnings } from "./useCliToolHealth";
 
 const tool = (cli: string, active: boolean, detail = ""): CliToolListing => ({

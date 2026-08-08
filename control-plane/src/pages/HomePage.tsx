@@ -1,14 +1,9 @@
 import { Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { AudioFrame, ExecutionMode, VoiceSettingsRecord, WorkspaceRecord } from "../api/types";
 import { type AgentSeed, hostSeed, ringForIndex } from "../data/agents";
 import { type StageContextValue, StageProvider } from "../hooks/StageContext";
-import {
-  type AudioFrame,
-  type ExecutionMode,
-  useBrokerChat,
-  type VoiceSettingsRecord,
-  type WorkspaceRecord,
-} from "../hooks/useBrokerChat";
+import { useBrokerChat } from "../hooks/useBrokerChat";
 import { useCliToolHealth } from "../hooks/useCliToolHealth";
 import { GRID_DEFAULTS, type GridParams } from "../hooks/useDotGrid";
 import { usePushToTalk } from "../hooks/usePushToTalk";

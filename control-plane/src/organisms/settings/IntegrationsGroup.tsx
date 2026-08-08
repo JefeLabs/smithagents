@@ -1,6 +1,6 @@
 import { X } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { ConnectorInstanceRecord, ConnectorVendorMeta, VoiceSettingsRecord } from "../../hooks/useBrokerChat";
+import type { ConnectorInstanceRecord, ConnectorVendorMeta, VoiceSettingsRecord } from "../../api/types";
 import { ConnectorFormModal } from "./ConnectorFormModal";
 
 interface IntegrationsGroupProps {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { CliToolListing } from "../../hooks/useBrokerChat";
+import type { CliToolListing } from "../../api/types";
 import { pillFor } from "./CliToolsGroup";
 
 const listing = (status: CliToolListing["status"], active = false): CliToolListing => ({

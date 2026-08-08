@@ -14,8 +14,8 @@ import { arrayMove, SortableContext, useSortable, verticalListSortingStrategy } 
 import { CSS } from "@dnd-kit/utilities";
 import { Check, GripVertical, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import type { ComposeOp } from "../api/types";
 import type { AgentSeed } from "../data/agents";
-import type { ComposeOp } from "../hooks/useBrokerChat";
 import { useLongPress } from "../hooks/useLongPress";
 import { AgentAvatar } from "../molecules/AgentAvatar";
 

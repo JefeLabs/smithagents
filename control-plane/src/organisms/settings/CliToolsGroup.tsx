@@ -1,6 +1,6 @@
 import { RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { CliToolListing } from "../../hooks/useBrokerChat";
+import type { CliToolListing } from "../../api/types";
 
 interface CliToolsGroupProps {
   listCliTools: () => Promise<CliToolListing[]>;
