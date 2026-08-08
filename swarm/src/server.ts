@@ -1448,6 +1448,14 @@ export class OrchestratorServer {
       } catch (err) {
         return reply.status(400).send({ error: String((err as Error).message) });
       }
+      // A new workspace gets Ideation + Plan + Deliver; the other three via
+      // "+ add". Without this the Board stage shows only the Personal tab
+      // until the user creates a capability or hand-adds every board.
+      // Best-effort: a name too long to fit a board id (createBoard throws)
+      // or a disk hiccup must not fail a workspace that already saved.
+      await ensureWorkspaceBoards(server.workDir(), ws.name).catch((err) => {
+        server.app.log.warn(`Could not provision boards for workspace "${ws.name}": ${String((err as Error).message)}`);
+      });
       await server.reloadWorkspaces();
       return reply.status(201).send(ws);
     });

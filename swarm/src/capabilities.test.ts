@@ -114,6 +114,15 @@ test('ensureWorkspaceBoards: creates the standing three once, idempotent, never 
   assert.deepEqual(boards.find((b) => b.id === 'skoolscout-plan')?.columns.map((c) => c.id)[0], 'spec');
 });
 
+test('ensureWorkspaceBoards: rejects a name too long to fit a board id — why POST /workspaces provisions best-effort', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'work-'));
+  // Workspace names are already slugged by the route, so the only reachable
+  // failure is length: BOARD_ID_RE caps ids at 64 chars. A workspace that has
+  // already saved must not 500 because its boards could not be minted.
+  await assert.rejects(ensureWorkspaceBoards(dir, 'a'.repeat(60)), /board id/i);
+  assert.deepEqual((await loadBoards(dir)).boards, []);
+});
+
 test('ensurePersonalBoard creates exactly one workspace-less board and is idempotent', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'work-'));
   await ensurePersonalBoard(dir);
