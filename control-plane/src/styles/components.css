@@ -2513,6 +2513,11 @@ main.chat-active .composer-dock {
   flex-direction: column;
   gap: 6px;
 }
+.card-sheet__routes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 .card-sheet__stories-head {
   font-size: 10px;
   text-transform: uppercase;

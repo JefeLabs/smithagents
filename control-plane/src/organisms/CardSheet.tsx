@@ -1,6 +1,7 @@
 import { Send, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import type { RosterAgent } from "../hooks/useBrokerChat";
+import { exitsForUI } from "../lib/board-aggregate";
 import type { WorkBoardT, WorkCardT } from "./BoardStage";
 
 const BASE = "127.0.0.1:7790";
@@ -27,6 +28,7 @@ export function CardSheet({ board, card, roster, workspaces, onClose, onChanged 
   const [workspace, setWorkspace] = useState(workspaces[0] ?? "");
   const [prompt, setPrompt] = useState(`${card.title}${card.notes ? `\n\n${card.notes}` : ""}`);
   const [error, setError] = useState<string | null>(null);
+  const [flagReason, setFlagReason] = useState(card.flag?.reason ?? "");
   const linked = Boolean(card.capabilityRef);
 
   const cardUrl = `http://${BASE}/work/boards/${encodeURIComponent(board.id)}/cards/${encodeURIComponent(card.id)}`;
@@ -58,6 +60,27 @@ export function CardSheet({ board, card, roster, workspaces, onClose, onChanged 
   };
 
   const unlinkJira = async () => patch({ jira: null });
+
+  const exits = exitsForUI(board.type, card.columnId);
+
+  const route = async (toType: string) => {
+    const res = await fetch(`${cardUrl}/route`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ toType }),
+    }).catch(() => null);
+    if (!res?.ok) {
+      const payload = (await res?.json().catch(() => null)) as { error?: string } | null;
+      setError(payload?.error ?? "Could not move the card");
+      return;
+    }
+    onChanged();
+    onClose();
+  };
+
+  const setFlag = async (kind: string) => {
+    await patch({ flag: kind ? { kind, reason: flagReason } : null });
+  };
 
   const remove = async () => {
     const res = await fetch(cardUrl, { method: "DELETE" }).catch(() => null);
@@ -195,8 +218,8 @@ export function CardSheet({ board, card, roster, workspaces, onClose, onChanged 
             </select>
           </label>
           <label>
-            Workspace
-            <select aria-label="Workspace" value={workspace} onChange={(e) => setWorkspace(e.target.value)}>
+            Delegate to workspace
+            <select aria-label="Delegate to workspace" value={workspace} onChange={(e) => setWorkspace(e.target.value)}>
               {workspaces.map((w) => (
                 <option key={w} value={w}>
                   {w}
@@ -216,6 +239,34 @@ export function CardSheet({ board, card, roster, workspaces, onClose, onChanged 
           >
             delegate
           </button>
+        </div>
+      )}
+      <div className="card-sheet__row">
+        <label>
+          Flag
+          <select aria-label="Flag" value={card.flag?.kind ?? ""} onChange={(e) => void setFlag(e.target.value)}>
+            <option value="">— none —</option>
+            <option value="blocked">Blocked</option>
+            <option value="at-risk">At risk</option>
+            <option value="waiting">Waiting</option>
+          </select>
+        </label>
+        {card.flag && (
+          <input
+            placeholder="Why?"
+            value={flagReason}
+            onChange={(e) => setFlagReason(e.target.value)}
+            onBlur={() => void setFlag(card.flag?.kind ?? "")}
+          />
+        )}
+      </div>
+      {exits.length > 0 && (
+        <div className="card-sheet__routes">
+          {exits.map((e) => (
+            <button key={e.label} type="button" className="settings-btn" onClick={() => void route(e.toType)}>
+              {e.label}
+            </button>
+          ))}
         </div>
       )}
       {error && <p className="wizard__error">{error}</p>}

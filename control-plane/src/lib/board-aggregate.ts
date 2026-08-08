@@ -118,3 +118,34 @@ export function clusterByWorkspace(cards: AggCard[], clustered: boolean): Cluste
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([label, list]) => ({ label, cards: list.sort(byOrder) }));
 }
+
+export interface RouteExitT {
+  from: string;
+  toType: BoardTypeT;
+  toColumn: string;
+  label: string;
+}
+
+/** Mirrors the swarm's BOARD_ROUTES. The server re-validates every route request. */
+export const BOARD_ROUTES_UI: Record<BoardTypeT, RouteExitT[]> = {
+  plan: [
+    { from: "tech-design", toType: "ideation", toColumn: "scoping", label: "Back to ideation" },
+    { from: "ready", toType: "deliver", toColumn: "ready", label: "Send to deliver" },
+  ],
+  deliver: [{ from: "in-progress", toType: "plan", toColumn: "tech-design", label: "Back to plan" }],
+  release: [
+    { from: "regression", toType: "deliver", toColumn: "in-progress", label: "Drop change to deliver" },
+    { from: "rollback", toType: "maintenance", toColumn: "triage", label: "To maintenance" },
+  ],
+  reactive: [
+    { from: "triage", toType: "maintenance", toColumn: "triage", label: "To maintenance" },
+    { from: "triage", toType: "ideation", toColumn: "intake", label: "To ideation" },
+  ],
+  ideation: [],
+  maintenance: [],
+  personal: [],
+};
+
+export function exitsForUI(type: BoardTypeT, columnId: string): RouteExitT[] {
+  return BOARD_ROUTES_UI[type].filter((e) => e.from === columnId);
+}

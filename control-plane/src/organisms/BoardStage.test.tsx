@@ -607,8 +607,9 @@ describe("CardSheet", () => {
     await openSheet("Write the spec");
     await userEvent.click(screen.getByRole("button", { name: /send to agent/i }));
     await userEvent.selectOptions(screen.getByLabelText(/agent/i), "minerva");
-    // The stage's scope dropdown is also labelled "Workspace" — scope to the sheet.
-    await userEvent.selectOptions(within(screen.getByRole("dialog")).getByLabelText(/workspace/i), "acme");
+    // Labelled "Delegate to workspace" so it never collides with the stage's own
+    // "Workspace" scope dropdown, which is a sibling accessible name on the page.
+    await userEvent.selectOptions(screen.getByLabelText(/delegate to workspace/i), "acme");
     await userEvent.click(screen.getByRole("button", { name: /^delegate$/i }));
     await waitFor(() => {
       const call = calls.find((c) => c.url.endsWith("/work/delegate"));
