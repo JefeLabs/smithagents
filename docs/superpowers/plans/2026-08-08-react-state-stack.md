@@ -131,7 +131,14 @@ Rewrite each import that reads `from "../hooks/useBrokerChat"` (or `"./useBroker
 grep -rln "hooks/useBrokerChat\|\./useBrokerChat" src --include="*.ts" --include="*.tsx"
 ```
 
-Leave `src/pages/HomePage.tsx`, `src/pages/HomePage.test.tsx`, `src/router.test.tsx`, and `src/hooks/useBrokerChat.test.ts` alone — they import the hook itself and get handled in later tasks.
+**Four files import the hook AND types from the same statement** — `src/pages/HomePage.tsx:5-11`, `src/pages/HomePage.test.tsx:5`, `src/router.test.tsx:5`, `src/hooks/useBrokerChat.test.ts:8-9`. Split each into two imports: types from `../api/types`, the `useBrokerChat` value still from `../hooks/useBrokerChat`. For example `HomePage.tsx` becomes:
+
+```ts
+import type { AudioFrame, ExecutionMode, VoiceSettingsRecord, WorkspaceRecord } from "../api/types";
+import { useBrokerChat } from "../hooks/useBrokerChat";
+```
+
+Do not skip these four — Step 5 removes the compatibility re-export, so a type still imported from the hook would fail to compile.
 
 - [ ] **Step 5: Remove the compatibility re-export**
 
@@ -1491,7 +1498,11 @@ interface ConnectorFormValues {
   fields: Record<string, string>;
 }
 
-const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<ConnectorFormValues>({
+// mode: "onChange" is required wherever formState.isValid gates a button.
+// Under RHF's default onSubmit mode, isValid stays false until the first
+// submit — which would leave the save button disabled forever.
+const { register, handleSubmit, formState: { errors, isValid, isSubmitting } } = useForm<ConnectorFormValues>({
+  mode: "onChange",
   defaultValues: { label: existing?.label ?? "", fields: existing?.fields ?? {} },
 });
 
