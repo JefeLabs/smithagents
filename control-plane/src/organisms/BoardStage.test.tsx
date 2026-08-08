@@ -233,6 +233,32 @@ describe("BoardStage", () => {
     expect(screen.queryByPlaceholderText(/card title/i)).toBeNull();
   });
 
+  it("closes an open card sheet when the tab or the workspace scope changes", async () => {
+    // `open` names a card in the FULL boards list, not the tab's — without the
+    // reset, workspace A's card sheet floats over workspace B's board.
+    stubFetch({
+      boards: {
+        boards: [
+          { ...BOARD, id: "acme-plan", name: "Plan", type: "plan", workspaceId: "acme" },
+          { ...BOARD, id: "personal", name: "Personal", type: "personal", workspaceId: undefined },
+        ],
+        errors: [],
+      },
+    });
+    render(<BoardStage roster={ROSTER} lastBoardUpdate={null} />);
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Personal" })).toBeTruthy());
+    await userEvent.click(screen.getByRole("tab", { name: "Personal" }));
+    await userEvent.click(screen.getByText("Write the spec"));
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    await userEvent.click(screen.getByRole("tab", { name: "Plan" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    await userEvent.click(screen.getByText("Write the spec"));
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    await userEvent.selectOptions(screen.getByLabelText("Workspace"), "acme");
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("creates a board for the scoped workspace from the add menu", async () => {
     const { calls } = stubFetch({
       boards: {

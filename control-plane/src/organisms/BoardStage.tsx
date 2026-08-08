@@ -219,10 +219,18 @@ export function BoardStage({ roster, lastBoardUpdate }: BoardStageProps) {
 
   // The composer targets tabBoards[0], so a half-typed card must not survive a
   // move to a different board — same reset BoardTabs does for its add menu.
+  // `open` joins them: it names a card in another collection, so neither tool
+  // alone fits, and without this an A-workspace card sheet floats over B's board.
+  //
+  // The rule, for the next person: use `key=` when the state is SEEDED from the
+  // identity that changed (CardSheet's title/notes/stories all derive from the
+  // card, so key={openCard.id} is complete); use a reset effect when the state
+  // derives from nothing but is only MEANINGFUL in a context.
   // biome-ignore lint/correctness/useExhaustiveDependencies: scope/tab-keyed reset, same pattern as BoardTabs' scope-keyed reset
   useEffect(() => {
     setAddingCard(false);
     setCardTitle("");
+    setOpen(null);
   }, [scope, tab?.key]);
 
   // Optimistic move + PATCH + rollback-on-fail. Same-column reorders PATCH
