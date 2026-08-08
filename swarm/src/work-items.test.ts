@@ -120,7 +120,7 @@ test('flags: since is stamped on the transition into a flagged state', () => {
   const first = b.cards[0].flag;
   assert.equal(first?.kind, 'blocked');
   assert.equal(first?.reason, 'waiting on Edwin');
-  assert.ok(first?.since);
+  assert.equal(new Date(first?.since as string).toISOString(), first?.since, 'since must be a real ISO timestamp, not just truthy');
 });
 
 test('flags: correcting kind or reason preserves the clock; clear-then-reflag resets it', async () => {
@@ -163,6 +163,29 @@ test('flags: reason is trimmed; whitespace-only or omitted collapses to undefine
   patchCard(b, c.id, { flag: null });
   patchCard(b, c.id, { flag: { kind: 'waiting' } });
   assert.equal(b.cards[0].flag?.reason, undefined);
+});
+
+// Regression guard: patchCard's flag handling is gated on `patch.flag !== undefined`,
+// so a patch that never mentions `flag` at all must leave an existing flag — since
+// clock included — completely untouched. That gating is a structural accident today,
+// not an asserted contract: a later refactor that flattened patch handling could
+// reset every blocked clock on every card rename or drag, and nothing else here
+// would catch it. Do not delete this as "redundant" with the tests above.
+test('flags: unrelated patches (rename, drag) leave an existing flag and its since clock untouched', () => {
+  const b = createBoard('deliver', 'acme');
+  const c = addCard(b, { title: 'Webhook', columnId: 'ready' });
+  patchCard(b, c.id, { flag: { kind: 'blocked', reason: 'waiting on Edwin' } });
+  const since = b.cards[0].flag?.since;
+
+  patchCard(b, c.id, { title: 'renamed' });
+  assert.equal(b.cards[0].flag?.since, since, 'a title-only patch must not touch the since clock');
+  assert.equal(b.cards[0].flag?.kind, 'blocked');
+  assert.equal(b.cards[0].flag?.reason, 'waiting on Edwin');
+
+  patchCard(b, c.id, { columnId: 'in-progress', order: 0 }); // a drag
+  assert.equal(b.cards[0].flag?.since, since, 'a column/order patch (a drag) must not touch the since clock');
+  assert.equal(b.cards[0].flag?.kind, 'blocked');
+  assert.equal(b.cards[0].flag?.reason, 'waiting on Edwin');
 });
 
 test('save/load round-trip; malformed files land in errors without sinking the rest', async () => {
