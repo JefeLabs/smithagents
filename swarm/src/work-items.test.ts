@@ -4,8 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import {
-  addCard, BOARD_TEMPLATES, BOARD_TYPE_ORDER, boardIdFor, type BoardType, createBoard,
-  deleteBoardFile, loadBoards, patchCard, removeCard, saveBoard, WORKSPACE_BOARD_TYPES,
+  addCard, BOARD_ROUTES, BOARD_TEMPLATES, BOARD_TYPE_ORDER, boardIdFor, type BoardType, createBoard,
+  deleteBoardFile, exitsFor, loadBoards, patchCard, removeCard, resolveExit, routeCard, saveBoard,
+  WORKSPACE_BOARD_TYPES,
 } from './work-items.js';
 
 test('templates: seven typed column sets, ids unique and slug-shaped', () => {
@@ -137,4 +138,74 @@ test('removeCard deletes and renumbers its column', () => {
   assert.deepEqual(b.cards.map((c) => [c.title, c.order]), [['b', 0]]);
   assert.ok(c2);
   assert.throws(() => removeCard(b, 'ghost'), /card/i);
+});
+
+test('routes: exits are per-column and the forward plan handoff exists', () => {
+  const plan = createBoard('plan', 'acme');
+  assert.deepEqual(exitsFor(plan, 'ready').map((e) => e.label), ['Send to deliver']);
+  assert.deepEqual(exitsFor(plan, 'tech-design').map((e) => e.label), ['Back to ideation']);
+  assert.deepEqual(exitsFor(plan, 'spec'), []);
+  const reactive = createBoard('reactive', 'acme');
+  assert.deepEqual(exitsFor(reactive, 'triage').map((e) => e.toType), ['maintenance', 'ideation']);
+  assert.deepEqual(exitsFor(createBoard('ideation', 'acme'), 'confirm'), []);
+});
+
+test('resolveExit matches on column and destination type', () => {
+  const plan = createBoard('plan', 'acme');
+  assert.equal(resolveExit(plan, 'ready', 'deliver')?.toColumn, 'ready');
+  assert.equal(resolveExit(plan, 'ready', 'ideation'), undefined);   // wrong destination
+  assert.equal(resolveExit(plan, 'spec', 'deliver'), undefined);     // wrong column
+});
+
+test('every route points at a column that exists on its destination template', () => {
+  for (const [type, exits] of Object.entries(BOARD_ROUTES)) {
+    for (const e of exits) {
+      assert.ok(BOARD_TEMPLATES[type as BoardType].some((c) => c.id === e.from), `${type}.${e.from} is not a column`);
+      assert.ok(BOARD_TEMPLATES[e.toType].some((c) => c.id === e.toColumn), `${e.toType}.${e.toColumn} is not a column`);
+    }
+  }
+});
+
+test('routeCard moves the card, preserves identity and payload, and writes destination first', () => {
+  const plan = createBoard('plan', 'acme');
+  const deliver = createBoard('deliver', 'acme');
+  const card = addCard(plan, { title: 'Parser', columnId: 'ready' });
+  patchCard(plan, card.id, {
+    stories: [{ id: 's1', text: 'parses', done: true }],
+    jira: { key: 'P-1', url: 'https://a/browse/P-1' },
+    capabilityRef: { capabilityId: 'acme-store', sliceId: 'sl1' },
+  });
+  const exit = resolveExit(plan, 'ready', 'deliver');
+  assert.ok(exit);
+  const out = routeCard(plan, deliver, card.id, exit, '2026-08-07T10:00:00.000Z');
+
+  assert.equal(out.writeFirst, deliver);   // destination first — a crash duplicates, never loses
+  assert.equal(out.writeSecond, plan);
+  assert.equal(plan.cards.length, 0);
+  assert.equal(deliver.cards.length, 1);
+  assert.equal(out.card.id, card.id);      // same object across the boundary
+  assert.equal(out.card.columnId, 'ready');
+  assert.equal(out.card.order, 0);
+  assert.equal(out.card.jira?.key, 'P-1');
+  assert.equal(out.card.stories?.length, 1);
+  assert.deepEqual(out.card.capabilityRef, { capabilityId: 'acme-store', sliceId: 'sl1' });
+  assert.deepEqual(out.card.routedFrom, [
+    { boardId: 'acme-plan', boardType: 'plan', columnId: 'ready', at: '2026-08-07T10:00:00.000Z' },
+  ]);
+});
+
+test('routeCard appends to routedFrom across successive moves and lands last in the column', () => {
+  const deliver = createBoard('deliver', 'acme');
+  const plan = createBoard('plan', 'acme');
+  addCard(plan, { title: 'sitting there', columnId: 'tech-design' });
+  const card = addCard(deliver, { title: 'Validation', columnId: 'in-progress' });
+  card.routedFrom = [{ boardId: 'acme-plan', boardType: 'plan', columnId: 'ready', at: '2026-08-06T10:00:00.000Z' }];
+  const exit = resolveExit(deliver, 'in-progress', 'plan');
+  assert.ok(exit);
+  const out = routeCard(deliver, plan, card.id, exit, '2026-08-07T11:00:00.000Z');
+  assert.equal(out.card.columnId, 'tech-design');
+  assert.equal(out.card.order, 1); // behind the card already there
+  assert.equal(out.card.routedFrom?.length, 2);
+  assert.equal(out.card.routedFrom?.[1].boardId, 'acme-deliver');
+  assert.throws(() => routeCard(deliver, plan, 'ghost', exit, '2026-08-07T11:00:00.000Z'), /card/i);
 });

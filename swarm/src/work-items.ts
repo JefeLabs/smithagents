@@ -31,6 +31,8 @@ export interface WorkCard {
   stories?: Array<{ id: string; text: string; done: boolean; verifiedBy?: string }>;
   /** Set when this card tracks a capability slice — its checklist becomes a toggle-only view of the capability's stories. */
   capabilityRef?: { capabilityId: string; sliceId: string };
+  /** Appended each time this card is routed to another board. Never rewritten. */
+  routedFrom?: Array<{ boardId: string; boardType: BoardType; columnId: string; at: string }>;
 }
 
 export interface WorkBoard {
@@ -148,6 +150,84 @@ export function createBoard(type: BoardType, workspaceId?: string): WorkBoard {
   };
   if (workspaceId) board.workspaceId = workspaceId;
   return board;
+}
+
+export interface RouteExit {
+  /** Column id on the source board this exit leaves from. */
+  from: string;
+  toType: BoardType;
+  /** Column id on the destination board the card lands in. */
+  toColumn: string;
+  label: string;
+}
+
+/**
+ * Cross-board transitions, static rather than per-board config: there is no UI
+ * to edit a per-board table, so configurable-only-by-hand-editing-JSON is the
+ * trap this avoids. Ideation's Confirm→Scoping loop is a same-board drag, and
+ * Maintenance's scanner intake is descriptive — neither is a route.
+ */
+export const BOARD_ROUTES: Record<BoardType, RouteExit[]> = {
+  plan: [
+    { from: 'tech-design', toType: 'ideation', toColumn: 'scoping', label: 'Back to ideation' },
+    { from: 'ready', toType: 'deliver', toColumn: 'ready', label: 'Send to deliver' },
+  ],
+  deliver: [
+    { from: 'in-progress', toType: 'plan', toColumn: 'tech-design', label: 'Back to plan' },
+  ],
+  release: [
+    { from: 'regression', toType: 'deliver', toColumn: 'in-progress', label: 'Drop change to deliver' },
+    { from: 'rollback', toType: 'maintenance', toColumn: 'triage', label: 'To maintenance' },
+  ],
+  reactive: [
+    { from: 'triage', toType: 'maintenance', toColumn: 'triage', label: 'To maintenance' },
+    { from: 'triage', toType: 'ideation', toColumn: 'intake', label: 'To ideation' },
+  ],
+  ideation: [],
+  maintenance: [],
+  personal: [],
+};
+
+export function exitsFor(board: WorkBoard, columnId: string): RouteExit[] {
+  return BOARD_ROUTES[board.type].filter((e) => e.from === columnId);
+}
+
+export function resolveExit(board: WorkBoard, columnId: string, toType: BoardType): RouteExit | undefined {
+  return BOARD_ROUTES[board.type].find((e) => e.from === columnId && e.toType === toType);
+}
+
+/**
+ * The two boards a routed card touches, in the order they MUST be persisted.
+ * Two file writes cannot be atomic, so the ordering is the failure design:
+ * destination-first means a crash between them leaves a visible duplicate,
+ * source-first would lose the card outright.
+ */
+export interface RoutePlan {
+  card: WorkCard;
+  writeFirst: WorkBoard;
+  writeSecond: WorkBoard;
+}
+
+export function routeCard(
+  source: WorkBoard,
+  dest: WorkBoard,
+  cardId: string,
+  exit: RouteExit,
+  now: string,
+): RoutePlan {
+  const card = source.cards.find((c) => c.id === cardId);
+  if (!card) throw new Error(`Unknown card: ${cardId}`);
+  const trace = { boardId: source.id, boardType: source.type, columnId: card.columnId, at: now };
+  removeCard(source, cardId);
+  const moved: WorkCard = {
+    ...card,
+    columnId: exit.toColumn,
+    order: dest.cards.filter((c) => c.columnId === exit.toColumn).length,
+    updatedAt: now,
+    routedFrom: [...(card.routedFrom ?? []), trace],
+  };
+  dest.cards.push(moved);
+  return { card: moved, writeFirst: dest, writeSecond: source };
 }
 
 function assertBoard(file: string, v: unknown): WorkBoard {
