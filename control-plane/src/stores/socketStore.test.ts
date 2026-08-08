@@ -16,9 +16,11 @@ class FakeSocket {
   static OPEN = 1;
   static CLOSED = 3;
   static last: FakeSocket | null = null;
+  static all: FakeSocket[] = [];
   static count = 0;
 
   readyState = FakeSocket.CONNECTING;
+  closed = false;
   onopen: (() => void) | null = null;
   onmessage: ((e: { data: string }) => void) | null = null;
   onclose: (() => void) | null = null;
@@ -27,6 +29,7 @@ class FakeSocket {
 
   constructor(readonly url: string) {
     FakeSocket.last = this;
+    FakeSocket.all.push(this);
     FakeSocket.count++;
   }
 
@@ -45,10 +48,17 @@ class FakeSocket {
   }
 
   close() {
+    this.closed = true;
     this.readyState = FakeSocket.CLOSED;
     this.onclose?.();
   }
 }
+
+/**
+ * Sockets that are still open. Counting constructions alone would pass a fix
+ * that opens a replacement without closing the socket it replaced.
+ */
+const liveSockets = () => FakeSocket.all.filter((s) => !s.closed);
 
 /** The frames under test are hand-built objects, so the store's parse gets exercised for real. */
 function emit(frame: unknown) {
@@ -60,6 +70,7 @@ const store = () => useSocketStore.getState();
 beforeEach(() => {
   FakeSocket.count = 0;
   FakeSocket.last = null;
+  FakeSocket.all = [];
   vi.stubGlobal("WebSocket", FakeSocket);
   // A live broker really is listening on 127.0.0.1:7790 on this machine. Nothing
   // in this store fetches, and this makes that a testable claim rather than a hope.
@@ -114,6 +125,9 @@ describe("socketStore connection lifecycle", () => {
     FakeSocket.last?.close(); // reconnect now armed, socket handle is null
     store().connect(qc); // a remount landing inside the backoff window
     vi.advanceTimersByTime(5000);
+    // The armed timer must not fire on top of the socket connect() just opened:
+    // exactly one socket is alive, and no third was ever constructed.
+    expect(liveSockets()).toHaveLength(1);
     expect(FakeSocket.count).toBe(2);
   });
 
@@ -130,6 +144,7 @@ describe("socketStore connection lifecycle", () => {
     first?.onclose?.(); // the first socket's close finally lands
     vi.advanceTimersByTime(5000);
     expect(FakeSocket.count).toBe(2); // no duplicate reconnect
+    expect(liveSockets()).toEqual([second]);
 
     second?.open();
     store().micControl("mic-start");
