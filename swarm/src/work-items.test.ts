@@ -194,18 +194,38 @@ test('routeCard moves the card, preserves identity and payload, and writes desti
   ]);
 });
 
-test('routeCard appends to routedFrom across successive moves and lands last in the column', () => {
+test('routeCard chains across two real hops: delegation, stories, jira, capabilityRef survive and routedFrom records both legs', () => {
+  const release = createBoard('release', 'acme');
   const deliver = createBoard('deliver', 'acme');
   const plan = createBoard('plan', 'acme');
   addCard(plan, { title: 'sitting there', columnId: 'tech-design' });
-  const card = addCard(deliver, { title: 'Validation', columnId: 'in-progress' });
-  card.routedFrom = [{ boardId: 'acme-plan', boardType: 'plan', columnId: 'ready', at: '2026-08-06T10:00:00.000Z' }];
-  const exit = resolveExit(deliver, 'in-progress', 'plan');
-  assert.ok(exit);
-  const out = routeCard(deliver, plan, card.id, exit, '2026-08-07T11:00:00.000Z');
-  assert.equal(out.card.columnId, 'tech-design');
-  assert.equal(out.card.order, 1); // behind the card already there
-  assert.equal(out.card.routedFrom?.length, 2);
-  assert.equal(out.card.routedFrom?.[1].boardId, 'acme-deliver');
-  assert.throws(() => routeCard(deliver, plan, 'ghost', exit, '2026-08-07T11:00:00.000Z'), /card/i);
+  const card = addCard(release, { title: 'Hotfix', columnId: 'regression' });
+  patchCard(release, card.id, {
+    stories: [{ id: 's1', text: 'no regressions', done: true }],
+    jira: { key: 'R-1', url: 'https://a/browse/R-1' },
+    capabilityRef: { capabilityId: 'acme-store', sliceId: 'sl1' },
+    delegation: { agentId: 'minerva', taskId: 't1', state: 'working' },
+  });
+
+  const exit1 = resolveExit(release, 'regression', 'deliver');
+  assert.ok(exit1);
+  const hop1 = routeCard(release, deliver, card.id, exit1, '2026-08-07T10:00:00.000Z');
+  assert.equal(hop1.card.columnId, 'in-progress');
+
+  const exit2 = resolveExit(deliver, 'in-progress', 'plan');
+  assert.ok(exit2);
+  const hop2 = routeCard(deliver, plan, hop1.card.id, exit2, '2026-08-07T11:00:00.000Z');
+
+  assert.equal(hop2.card.id, card.id);
+  assert.equal(hop2.card.columnId, 'tech-design');
+  assert.equal(hop2.card.order, 1); // behind the card already there
+  assert.deepEqual(hop2.card.delegation, { agentId: 'minerva', taskId: 't1', state: 'working' });
+  assert.equal(hop2.card.jira?.key, 'R-1');
+  assert.equal(hop2.card.stories?.length, 1);
+  assert.deepEqual(hop2.card.capabilityRef, { capabilityId: 'acme-store', sliceId: 'sl1' });
+  assert.deepEqual(hop2.card.routedFrom, [
+    { boardId: 'acme-release', boardType: 'release', columnId: 'regression', at: '2026-08-07T10:00:00.000Z' },
+    { boardId: 'acme-deliver', boardType: 'deliver', columnId: 'in-progress', at: '2026-08-07T11:00:00.000Z' },
+  ]);
+  assert.throws(() => routeCard(deliver, plan, 'ghost', exit2, '2026-08-07T11:00:00.000Z'), /card/i);
 });
