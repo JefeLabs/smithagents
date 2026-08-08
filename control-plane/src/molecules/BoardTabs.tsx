@@ -1,5 +1,5 @@
 import { Plus } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ALL_WORKSPACES, BOARD_TYPE_LABELS_UI, type BoardTypeT, type TabDescriptor } from "../lib/board-aggregate";
 
 interface BoardTabsProps {
@@ -18,6 +18,34 @@ interface BoardTabsProps {
 /** Workspace context dropdown above the board tab row. */
 export function BoardTabs({ scope, workspaces, tabs, activeKey, addable, onScope, onSelect, onAdd }: BoardTabsProps) {
   const [adding, setAdding] = useState(false);
+  const addRef = useRef<HTMLDivElement>(null);
+
+  // The add control unmounts under ALL_WORKSPACES scope, but `adding` is
+  // component state and survives that — without this, opening the menu,
+  // switching to All workspaces, then switching back resurrects it already open.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scope-keyed reset, same pattern as NewWorkspaceModal's open-keyed reset
+  useEffect(() => {
+    setAdding(false);
+  }, [scope]);
+
+  useEffect(() => {
+    if (!adding) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setAdding(false);
+    };
+    addEventListener("keydown", onKey);
+    return () => removeEventListener("keydown", onKey);
+  }, [adding]);
+
+  useEffect(() => {
+    if (!adding) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (!addRef.current?.contains(e.target as Node)) setAdding(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [adding]);
+
   return (
     <div className="board-tabs">
       <select
@@ -47,7 +75,7 @@ export function BoardTabs({ scope, workspaces, tabs, activeKey, addable, onScope
           </button>
         ))}
         {scope !== ALL_WORKSPACES && addable.length > 0 && (
-          <div className="board-tabs__add">
+          <div className="board-tabs__add" ref={addRef}>
             <button
               type="button"
               className="board-tabs__tab"

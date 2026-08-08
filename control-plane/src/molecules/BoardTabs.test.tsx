@@ -54,4 +54,42 @@ describe("BoardTabs", () => {
     render(<BoardTabs {...base} scope={ALL_WORKSPACES} />);
     expect(screen.queryByRole("button", { name: /add board/i })).toBeNull();
   });
+
+  it("closes the add menu on Escape", async () => {
+    render(<BoardTabs {...base} />);
+    await userEvent.click(screen.getByRole("button", { name: /add board/i }));
+    expect(screen.getByRole("menu")).toBeTruthy();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("closes the add menu on a pointerdown outside it", async () => {
+    render(
+      <div>
+        <BoardTabs {...base} />
+        <div data-testid="outside">elsewhere on the page</div>
+      </div>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /add board/i }));
+    expect(screen.getByRole("menu")).toBeTruthy();
+    await userEvent.click(screen.getByTestId("outside"));
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("does not close the add menu on a pointerdown inside it", async () => {
+    render(<BoardTabs {...base} />);
+    await userEvent.click(screen.getByRole("button", { name: /add board/i }));
+    await userEvent.click(screen.getByRole("menu"));
+    expect(screen.getByRole("menu")).toBeTruthy();
+  });
+
+  it("resets to closed when the scope changes away and back", async () => {
+    const { rerender } = render(<BoardTabs {...base} />);
+    await userEvent.click(screen.getByRole("button", { name: /add board/i }));
+    expect(screen.getByRole("menu")).toBeTruthy();
+    rerender(<BoardTabs {...base} scope={ALL_WORKSPACES} />);
+    expect(screen.queryByRole("button", { name: /add board/i })).toBeNull();
+    rerender(<BoardTabs {...base} />);
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
 });
