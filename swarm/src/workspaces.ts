@@ -35,6 +35,8 @@ export interface Workspace {
   };
   /** Default-context links every session in this workspace inherits (spec 2026-08-07). */
   links?: string[];
+  /** Optional identity colour; the UI falls back to a hash of `name`. */
+  color?: string;
 }
 
 function assertWorkspace(file: string, v: unknown): Workspace {

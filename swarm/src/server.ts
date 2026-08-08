@@ -1431,6 +1431,7 @@ export class OrchestratorServer {
         default: Boolean(b.default) || activeWorkspaces(all).length === 0,
         atlassian: b.atlassian,
         links: sanitizeLinks(b.links),
+        color: b.color?.trim() || undefined,
       };
       try {
         if (ws.default) for (const other of all.filter((w) => w.default)) await saveWorkspace(dir, { ...other, default: undefined });
@@ -1458,6 +1459,7 @@ export class OrchestratorServer {
         archived: b.archived === false ? undefined : existing.archived,
         atlassian: b.atlassian !== undefined ? b.atlassian : existing.atlassian,
         links: b.links !== undefined ? sanitizeLinks(b.links) : existing.links,
+        color: b.color !== undefined ? b.color.trim() || undefined : existing.color,
       };
       if (merged.default && merged.archived) {
         return reply.status(409).send({ error: `"${existing.name}" is archived — un-archive it before making it the default` });
@@ -1532,6 +1534,7 @@ export class OrchestratorServer {
           repos: w.repos.map((r) => ({ name: r.name, path: r.path, repository: r.repository, branch: r.branch ?? 'main', github: r.github })),
           atlassian: w.atlassian,
           links: w.links,
+          color: w.color,
         })),
       };
     });

@@ -117,6 +117,8 @@ export interface WorkspaceRecord {
   atlassian?: { siteUrl: string; jiraProjectKeys?: string[]; confluenceSpaceKeys?: string[]; connectorId?: string };
   /** Reference links (repo, docs, tracker) shown on the workspace card. */
   links?: string[];
+  /** Optional identity colour; the UI falls back to a hash of `name`. */
+  color?: string;
 }
 
 /** The operator's own profile — connector credentials read back redacted, never the secret itself. */
