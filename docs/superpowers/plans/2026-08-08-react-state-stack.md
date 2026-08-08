@@ -1007,11 +1007,16 @@ export const useSocketStore = create<SocketState>((set, get) => ({
           case "audio":
             for (const fn of audioSubs) fn(frame);
             return;
+          // COLLECTION keys, not per-item. Verified: BoardStage.tsx:163 fetches
+          // GET /work/boards and MapStage.tsx:201 fetches GET /work/capabilities —
+          // there is NO per-item GET, so qk.board(id)/qk.capability(id) could never
+          // hold data and invalidating them would match nothing. Boards would stop
+          // refreshing with no error anywhere.
           case "board-updated":
-            qc.invalidateQueries({ queryKey: qk.board(frame.boardId) });
+            qc.invalidateQueries({ queryKey: qk.boards });
             return;
           case "capability-updated":
-            qc.invalidateQueries({ queryKey: qk.capability(frame.capabilityId) });
+            qc.invalidateQueries({ queryKey: qk.capabilities });
             return;
           case "notice":
             append(qc, "notice", frame.text);
@@ -1486,9 +1491,30 @@ Deletes the `lastBoardUpdate` / `lastCapabilityUpdate` seq-counter mechanism —
 - Consumes: `qk.board`, `qk.boards`, `qk.capability`, `qk.capabilities` (Task 4)
 - Produces: `useBoards()`, `useBoard(id)`, `useCapabilities(workspace)`, `useCapability(id)`, plus mutations `useCreateBoard`, `useCreateCard`, `useMoveCard`, `useCreateCapability`
 
-- [ ] **Step 1: Locate the current fetches**
+- [ ] **Step 1: Port the endpoints (already surveyed — verified, not assumed)**
 
-`BoardStage` and `MapStage` fetch through the swarm work API rather than `useBrokerChat`. Read both files' `useEffect` blocks and list every URL before writing hooks — the plan does not assume their shapes, and each must be ported verbatim into `src/api/work.ts` following Task 3's pattern.
+Both stages fetch **collections**, never single items:
+
+| Endpoint | Where | Notes |
+|---|---|---|
+| `GET /work/boards` | `BoardStage.tsx:163` | the whole board collection |
+| `POST /work/boards` | `:300` | create board |
+| `POST /work/boards/:id/cards` | `:289` | add card |
+| `PATCH /work/boards/:id/cards/:cardId` | `:249` | move/edit card |
+| `POST /work/boards/:id/jira/import` | `:318` | jira import |
+| `GET /work/capabilities` | `MapStage.tsx:201` | all capabilities |
+| `POST /work/capabilities` | `:292` | create capability |
+| `PATCH /work/capabilities/:id` | `:238` | edit capability |
+| `PUT /work/capabilities/:id/slices/:sliceId/spec` | `:378` | slice spec |
+| `POST /work/capabilities/:id/slices/:sliceId/send` | `:401` | dispatch slice |
+
+Port each into `src/api/work.ts` verbatim, following Task 3's rules (lift the body unchanged; no improved error handling).
+
+**Because there is no per-item GET, the cache keys are `qk.boards` and `qk.capabilities` — collections.** `qk.board(id)` / `qk.capability(id)` are unused; leave them in the factory or delete them, but do not key queries on them.
+
+**This task also owns a one-line amendment to `src/stores/socketStore.ts`** (shipped in Task 6): its `board-updated` / `capability-updated` cases must invalidate the collection keys, not the per-item keys. Update the matching assertions in `socketStore.test.ts`.
+
+**One deliberate behavior deviation, and it must be stated in the report.** Today `BoardStage.tsx:217` refetches only when the updated board is in the open tab, and `MapStage.tsx:230` only when it is the active capability. Collection-level invalidation drops that filter: an update to any board triggers one refetch of the collection the user is already viewing. Query still refetches only when a component is actually observing the key, so an unmounted stage costs nothing — but a visible stage will refetch on a sibling board's update where it previously would not. This is one extra GET of already-visible data, accepted as simpler than threading per-id relevance through the socket store.
 
 - [ ] **Step 2: Write the query hooks**
 
