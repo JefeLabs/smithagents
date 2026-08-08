@@ -20,6 +20,7 @@
 - Green baseline: swarm 253 tests passing, control-plane 234 tests across 33 files, both typechecks clean, biome clean bar 5 pre-existing warnings. Any of these going red is your regression.
 - Swarm has **no biome**. Control plane does — run `pnpm --dir control-plane exec biome check --write src` before committing control-plane changes.
 - Swarm imports use the `.js` extension (`from './work-items.js'`) even for `.ts` sources.
+- **tsc 6.0.3 narrowing trap in swarm tests:** `assert.equal(<expr>, undefined)` narrows `<expr>` to `never` for every later use of that same expression, so a subsequent `<expr>?.prop` fails to compile ("Property does not exist on type 'never'") — the optional chain does not save you. Capture into a local first: `const cleared = b.cards[0].flag; assert.equal(cleared, undefined);`. Only bites when the same expression is reused after the assert.
 - Swarm test files use `node:test` + `node:assert/strict`; no vitest in the swarm. The suite spans `src/*.test.ts` **and** `src/**/*.test.ts` — `src/drivers/` holds 19 of the 253 tests, so never run only the top-level glob.
 - Board files live at `.smith/work/<id>.json`, resolved from the swarm's cwd via `server.workDir()`.
 - `BOARD_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/` — board ids are filenames; never relax this.
@@ -566,7 +567,11 @@ test('flags: correcting kind or reason preserves the clock; clear-then-reflag re
   assert.equal(b.cards[0].flag?.kind, 'blocked');
 
   patchCard(b, c.id, { flag: null });
-  assert.equal(b.cards[0].flag, undefined);
+  // Capture into a local first: asserting the property-access expression
+  // itself equals undefined narrows it to `never` for every later use of that
+  // same expression, and the `?.since` below then fails to compile.
+  const cleared = b.cards[0].flag;
+  assert.equal(cleared, undefined);
 
   await new Promise((r) => setTimeout(r, 2));
   patchCard(b, c.id, { flag: { kind: 'waiting' } });
