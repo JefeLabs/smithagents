@@ -1347,13 +1347,17 @@ Delete the five-line comment about `sessionKnown` — it documents a flag that n
 
 Remove the `useEffect` at `HomePage.tsx:158-166` and the `modes`/`wsRecords` state. `NewSessionScreen` calls `useExecutionModes()` and `useWorkspaceRecords()` itself in Task 9. Query's `staleTime` handles the "refetch when it reopens" requirement that effect was written for.
 
-- [ ] **Step 5: Delete `StageContext` and rewire the stages**
+- [ ] **Step 5: SHRINK `StageContext` (it cannot be deleted here) and rewire the stages**
 
-```bash
-git rm src/hooks/StageContext.tsx src/hooks/StageContext.test.tsx
-```
+**Do not delete the file in this task.** Six of its fields have no store or query source yet, and their owners must stay at `HomePage` scope:
 
-Remove `<StageProvider value={stageValue}>` and the whole `stageValue` object (`HomePage.tsx:200-218`) from `HomePage`. In `src/router.tsx`, delete the `useStage()` calls and pass nothing — each stage now reads what it needs directly:
+- `soundOn` / `onSoundToggle` — owned by `useSpokenReplies`' own `useState` + localStorage. `audioStore.soundOn` exists but **nothing writes it** until Task 12; calling `audioStore.toggleSound()` from `VoiceStage` would flip a flag the hook never reads, and the browser would keep speaking.
+- `micLive` / `onMicToggle` — owned by `usePushToTalk`, which holds a live `MediaStream`/`AudioContext` in refs. Moving it into the voice route orphans the stream the moment you navigate to `/board` with the mic hot.
+- `sttEnabled` / `showMicHero` — from `useVoiceStatus()`, whose `refresh` HomePage calls on Settings close. Calling the hook again lower down creates a second, unrefreshed copy.
+
+`useSpokenReplies` likewise cannot move into the voice route: broker replies must keep being voiced while the user is on `/board`.
+
+So: shrink `StageContextValue` from 15 fields to those 6, keep `useStage()` for the voice route only, and delete the other 10 (`messages`, `brokerConnected`, `send`, `voiceNotice`, `roster`, `agents`, `activity`, `workAction`, `lastBoardUpdate`, `lastCapabilityUpdate`) — their consumers read queries and stores directly. Trim `StageContext.test.tsx` to match. **Task 12 deletes the file** once it moves the audio hooks onto stores. In `src/router.tsx`, delete the `useStage()` calls and pass nothing — each stage now reads what it needs directly:
 
 - `VoiceStage` → `useTranscript()`, `useRoster()`, `useSocketStore((s) => s.send)`, `useAudioStore`
 - `BoardStage` → `useRoster()` and its own board queries (Task 10)
@@ -1389,7 +1393,7 @@ Preserve every existing assertion's **intent**; only the setup mechanism changes
 - [ ] **Step 7: Verify**
 
 Run: `pnpm typecheck && pnpm lint && pnpm test`
-Expected: all pass. `grep -rn "useStage\|StageContext" src` returns nothing.
+Expected: all pass. `grep -rn "useStage\|StageContext" src` **still returns hits** — the trimmed 6-field context and its voice-route consumer. That grep only goes empty after Task 12.
 
 - [ ] **Step 8: Commit**
 
@@ -1669,6 +1673,16 @@ It hand-rolls request-generation cancellation (`generationRef`, `useSurfacePolic
 - [ ] **Step 3: Rewire `useSpokenReplies`**
 
 It currently takes `(messages, roster, enabled)` positionally from `HomePage`. Change its signature to take no data arguments and read `useTranscript()` and `useRoster()` itself. Subscribe to audio frames via `useSocketStore.getState().onAudioFrame(...)` in an effect, replacing the `audioSink` ref relay at `HomePage.tsx:61` and `:114`.
+
+- [ ] **Step 3b: Delete `StageContext` (deferred here from Task 8)**
+
+Once `useSpokenReplies`, `usePushToTalk`, and `useVoiceStatus` read from `audioStore` / queries, the six surviving context fields have real sources and the file goes:
+
+```bash
+git rm src/hooks/StageContext.tsx src/hooks/StageContext.test.tsx
+```
+
+Rewire the voice route to read `audioStore` selectors directly.
 
 - [ ] **Step 4: Delete the old hook**
 
