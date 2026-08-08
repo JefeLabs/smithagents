@@ -131,7 +131,8 @@ export interface RouteExit {
 }
 
 export const BOARD_ROUTES: Record<BoardType, RouteExit[]> = {
-  plan:     [{ from: 'tech-design', toType: 'ideation',    toColumn: 'scoping',     label: 'Back to ideation' }],
+  plan:     [{ from: 'tech-design', toType: 'ideation',    toColumn: 'scoping',     label: 'Back to ideation' },
+             { from: 'ready',       toType: 'deliver',     toColumn: 'ready',       label: 'Send to deliver' }],
   deliver:  [{ from: 'in-progress', toType: 'plan',        toColumn: 'tech-design', label: 'Back to plan' }],
   release:  [{ from: 'regression',  toType: 'deliver',     toColumn: 'in-progress', label: 'Drop change to deliver' },
              { from: 'rollback',    toType: 'maintenance', toColumn: 'triage',      label: 'To maintenance' }],
@@ -148,6 +149,14 @@ would be more flexible, but there is no UI to edit it — the same dead-config
 trap that board `jira`/rename/delete already fell into, where the only way to
 configure something is to hand-edit JSON. Static keeps every workspace's
 workflow identical and keeps the pills honest.
+
+`plan/ready → deliver/ready` is the forward handoff. Plan's `Ready` is a
+staging buffer the planner fills; Deliver's `Ready` is work the delivery board
+has accepted and can pull. A card exists in exactly one of them at a time, and
+sending is an explicit act rather than a side effect of decomposition.
+
+This route also gives the deferred fan-out somewhere to land: fan-out becomes
+"apply this route once per job card, automatically" rather than a new mechanism.
 
 Two flows in the source diagrams are deliberately not routes:
 
@@ -396,7 +405,8 @@ returned write plan rather than by simulating a crash.
 ## Out of scope
 
 - Plan → Deliver fan-out (parent retires at Decomposed, spawning linked job
-  cards). The next natural increment.
+  cards that then travel the `Send to deliver` route automatically). The next
+  natural increment, and the forward route above is the seam it plugs into.
 - WIP limits on Deliver. When they land, a `blocked` card should almost
   certainly not count against the limit — that is the whole point of
   distinguishing "stopped" from "in flight" — but the rule belongs with the
