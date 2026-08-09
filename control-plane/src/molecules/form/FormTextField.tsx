@@ -28,6 +28,13 @@ interface FormTextFieldProps<T extends FieldValues, TName extends FieldPath<T> =
    * their layout, which Task 6 is screenshot-gated against.
    */
   labelHidden?: boolean;
+  /**
+   * react-aria's TextField supports this natively; it simply was not wired through.
+   * Load-bearing in WorkspaceManagerModal: the edit PUT builds its URL from the form's
+   * current `name`, so an editable Name field during an edit would target a record that
+   * does not exist. See api/broker.ts saveWorkspace.
+   */
+  isDisabled?: boolean;
 }
 
 /**
@@ -54,6 +61,7 @@ export function FormTextField<T extends FieldValues, TName extends FieldPath<T> 
   hint,
   rules,
   labelHidden = false,
+  isDisabled = false,
 }: FormTextFieldProps<T, TName>) {
   const { field, fieldState } = useController({ control, name, rules });
   return (
@@ -66,6 +74,7 @@ export function FormTextField<T extends FieldValues, TName extends FieldPath<T> 
       onChange={field.onChange}
       onBlur={field.onBlur}
       isInvalid={fieldState.invalid}
+      isDisabled={isDisabled}
       aria-label={labelHidden ? label : undefined}
     >
       {!labelHidden && <Label>{label}</Label>}

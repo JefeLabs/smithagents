@@ -1,10 +1,10 @@
+import { Button } from "@heroui/react";
 import { Plus, X } from "lucide-react";
-import type { MouseEvent } from "react";
 import { useEffect, useState } from "react";
 import { useFieldArray, useForm } from "react-hook-form";
 import type { ConnectorInstanceRecord, WorkspaceRecord } from "../api/types";
-import { WORKSPACE_PALETTE } from "../lib/workspace-color";
 import { ConfirmSheet } from "../molecules/ConfirmSheet";
+import { FormCheckbox, FormColorSwatch, FormSelect, FormTextField, ModalShell } from "../molecules/form";
 
 interface WorkspaceManagerModalProps {
   open: boolean;
@@ -159,6 +159,31 @@ function toRecord(v: WorkspaceFormValues): WorkspaceRecord {
 }
 
 /**
+ * NOT part of the model above — a render-layer patch applied only at `reset()` call
+ * sites, never inside `toForm`/`blankForm` themselves.
+ *
+ * The two Atlassian key inputs are bound to a fixed `.0` path on an array that can be
+ * shorter than 1 (no keys stored, or a fresh workspace). The old plain `<input
+ * {...register(...)}>` left an out-of-range index alone until the user typed into it.
+ * `FormTextField` is a *controlled* field (`useController`), and mounting one against
+ * an index that doesn't exist yet materializes `undefined` there — silently growing
+ * `[]` to `[undefined]`. `keyList` (unmodified, and rightly so: it already treats a
+ * blank string exactly like an absent entry) then does `undefined.trim()` and throws.
+ * Padding a length-0 array to `[""]` before it reaches `useForm` heads that off — same
+ * `keyList` result either way — without touching `toForm`/`blankForm`/`keyList` themselves.
+ */
+function padKeys(v: WorkspaceFormValues): WorkspaceFormValues {
+  return {
+    ...v,
+    atlassian: {
+      ...v.atlassian,
+      jiraProjectKeys: v.atlassian.jiraProjectKeys.length > 0 ? v.atlassian.jiraProjectKeys : [""],
+      confluenceSpaceKeys: v.atlassian.confluenceSpaceKeys.length > 0 ? v.atlassian.confluenceSpaceKeys : [""],
+    },
+  };
+}
+
+/**
  * Create, edit and remove workspaces. Left column lists active workspaces
  * (archived ones are hidden here, not deletable — they're history); the
  * right column is the form, reused for both create and edit.
@@ -186,7 +211,6 @@ export function WorkspaceManagerModal({
   // mode: "onChange" because the save button gates on isValid — this is the
   // `canSave` rule (name, plus every repo's name and path) expressed as rules.
   const {
-    register,
     control,
     handleSubmit,
     reset,
@@ -196,6 +220,8 @@ export function WorkspaceManagerModal({
   const { fields, append, remove: removeRepoAt } = useFieldArray({ control, name: "repos" });
 
   const active = workspaces.filter((w) => !w.archived);
+  const atlassianConnectors = connectors.filter((c) => c.vendorId === "atlassian");
+  const githubConnectors = connectors.filter((c) => c.vendorId === "github");
 
   // Owner/repo decide whether a repo row offers its Test button; siteUrl does the same
   // for the Atlassian block. `name` is read back after a save to re-select the record.
@@ -226,7 +252,7 @@ export function WorkspaceManagerModal({
     setRemoving(null);
     void refresh().then((records) => {
       setSelected(null);
-      reset(blankForm(records.filter((w) => !w.archived).length === 0));
+      reset(padKeys(blankForm(records.filter((w) => !w.archived).length === 0)));
       setError(null);
     });
   }, [open]);
@@ -255,14 +281,14 @@ export function WorkspaceManagerModal({
 
   const startNew = () => {
     setSelected(null);
-    reset(blankForm(active.length === 0));
+    reset(padKeys(blankForm(active.length === 0)));
     setError(null);
     setTestResult(null);
   };
 
   const selectWorkspace = (ws: WorkspaceRecord) => {
     setSelected(ws.name);
-    reset(toForm(ws));
+    reset(padKeys(toForm(ws)));
     setError(null);
     setTestResult(null);
   };
@@ -297,7 +323,7 @@ export function WorkspaceManagerModal({
     const saved = records.find((w) => w.name === values.name);
     if (saved) {
       setSelected(saved.name);
-      reset(toForm(saved));
+      reset(padKeys(toForm(saved)));
     }
   });
 
@@ -318,207 +344,196 @@ export function WorkspaceManagerModal({
     const records = await refresh();
     if (selected === name) {
       setSelected(null);
-      reset(blankForm(records.filter((w) => !w.archived).length === 0));
+      reset(padKeys(blankForm(records.filter((w) => !w.archived).length === 0)));
     }
-  };
-
-  const onScrimClick = (e: MouseEvent<HTMLDivElement>) => {
-    if (e.target === e.currentTarget) onClose();
   };
 
   return (
     <>
-      {/* biome-ignore lint/a11y/useKeyWithClickEvents: click-outside dismiss; the keyboard path is the Escape handler bound while open */}
-      <div
-        className="scrim"
-        data-open="true"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Manage workspaces"
-        onClick={onScrimClick}
-      >
-        <section className="workspace-manager">
-          <header className="workspace-manager__head">
-            <h2>workspaces</h2>
-            <button
-              type="button"
-              className="sessions-panel__close"
-              onClick={onClose}
-              aria-label="Close workspace manager"
-            >
-              <X size={13} strokeWidth={2} />
+      <ModalShell open={open} onClose={onClose} title="Workspaces" size="lg">
+        {loadError && <p className="wizard__error">{loadError}</p>}
+        <div className="workspace-manager__body">
+          {/* left column unchanged — it is a list of buttons, not form fields */}
+          <div className="workspace-manager__list">
+            <button type="button" className="settings-btn settings-btn--primary settings-btn--wide" onClick={startNew}>
+              <Plus size={12} strokeWidth={2.2} /> new workspace
             </button>
-          </header>
-          {loadError && <p className="wizard__error">{loadError}</p>}
-          <div className="workspace-manager__body">
-            <div className="workspace-manager__list">
-              <button
-                type="button"
-                className="settings-btn settings-btn--primary settings-btn--wide"
-                onClick={startNew}
-              >
-                <Plus size={12} strokeWidth={2.2} /> new workspace
-              </button>
-              {active.map((ws) => (
-                <div key={ws.name} className={`workspace-row${selected === ws.name ? " workspace-row--active" : ""}`}>
-                  <button type="button" className="workspace-row__pick" onClick={() => selectWorkspace(ws)}>
-                    <span className="workspace-row__name">{ws.name}</span>
-                    <span className="workspace-row__meta">
-                      {ws.repos.length} repo{ws.repos.length === 1 ? "" : "s"}
-                      {ws.default && <span className="sm-chip is-picked">default</span>}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    className="workspace-row__remove"
-                    onClick={() => requestRemoval(ws.name)}
-                    aria-label={`Remove ${ws.name}`}
-                  >
-                    <X size={12} strokeWidth={2} />
-                  </button>
-                </div>
-              ))}
-              {active.length === 0 && <p className="wizard__hint">No workspaces yet — create one to get started.</p>}
-            </div>
-
-            <div className="workspace-manager__form">
-              <label>
-                Name
-                <input
-                  {...register("name", { validate: filled })}
-                  disabled={selected !== null}
-                  placeholder="acme-web"
-                />
-              </label>
-              <label>
-                Description
-                <input {...register("description")} placeholder="Marketing site + storefront" />
-              </label>
-              <label>
-                Links <span className="wizard__hint">one per line — docs, dashboards, tickets</span>
-                <textarea {...register("linksText")} rows={3} placeholder="https://github.com/acme/web" />
-              </label>
-              <fieldset className="swatch-row">
-                <legend>Colour</legend>
-                {/* "None" is a real option, not just the starting state — without
-                    it a workspace colour could never be cleared once set. It
-                    carries the empty string the PUT reads as "clear this". */}
-                <label className="swatch swatch--none">
-                  <input type="radio" {...register("color")} value="" aria-label="No colour" />
-                  <span />
-                </label>
-                {WORKSPACE_PALETTE.map((c, i) => (
-                  <label key={c} className="swatch">
-                    <input type="radio" {...register("color")} value={c} aria-label={`Colour ${i + 1}`} />
-                    <span style={{ background: c }} />
-                  </label>
-                ))}
-              </fieldset>
-              <label className="check">
-                <input type="checkbox" {...register("default")} />
-                default workspace — used when a delegation names none
-              </label>
-
-              <div className="workspace-manager__atlassian">
-                <span className="wizard__hint">Atlassian (Jira / Confluence)</span>
-                <input {...register("atlassian.siteUrl")} placeholder="https://acme.atlassian.net" />
-                <label htmlFor="atlassian-connector">
-                  Atlassian connector
-                  <select
-                    id="atlassian-connector"
-                    aria-label="Atlassian connector"
-                    {...register("atlassian.connectorId")}
-                  >
-                    <option value="">— none picked —</option>
-                    {connectors
-                      .filter((c) => c.vendorId === "atlassian")
-                      .map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.label}
-                        </option>
-                      ))}
-                  </select>
-                </label>
-                {/* Bound to index 0; any further stored keys are preserved by toRecord. */}
-                <input {...register("atlassian.jiraProjectKeys.0")} placeholder="Jira project key (ACME)" />
-                <input {...register("atlassian.confluenceSpaceKeys.0")} placeholder="Confluence space key (DOCS)" />
-                {selected && atlassianSiteUrl && (
-                  <button
-                    type="button"
-                    className="settings-btn"
-                    onClick={() => void testAtlassian()}
-                    disabled={testing === "atlassian"}
-                  >
-                    {testing === "atlassian" ? "testing…" : "Test connection"}
-                  </button>
-                )}
-                {testResult?.target === "atlassian" && (
-                  <p className={testResult.ok ? "wizard__hint" : "wizard__error"}>{testResult.detail}</p>
-                )}
-              </div>
-
-              <div className="workspace-manager__repos">
-                <span className="wizard__hint">Repos</span>
-                {fields.map((field, i) => (
-                  <div key={field.id} className="repo-row">
-                    <input {...register(`repos.${i}.name`, { validate: filled })} placeholder="web" />
-                    <input
-                      {...register(`repos.${i}.path`, { validate: filled })}
-                      placeholder="/Users/me/code/acme-web"
-                    />
-                    <input {...register(`repos.${i}.branch`)} placeholder="main" />
-                    <input {...register(`repos.${i}.owner`)} placeholder="GitHub owner" />
-                    <input {...register(`repos.${i}.repo`)} placeholder="GitHub repo" />
-                    <select aria-label="GitHub connector" {...register(`repos.${i}.connectorId`)}>
-                      <option value="">— none picked —</option>
-                      {connectors
-                        .filter((c) => c.vendorId === "github")
-                        .map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.label}
-                          </option>
-                        ))}
-                    </select>
-                    {selected && repoValues[i]?.owner && repoValues[i]?.repo && (
-                      <button
-                        type="button"
-                        className="settings-btn"
-                        onClick={() => void testRepoGithub(repoValues[i]?.name ?? "")}
-                        disabled={testing === repoValues[i]?.name}
-                      >
-                        {testing === repoValues[i]?.name ? "testing…" : "Test"}
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      className="repo-row__remove"
-                      onClick={() => removeRepoAt(i)}
-                      disabled={fields.length <= 1}
-                      aria-label="Remove repo"
-                    >
-                      <X size={12} strokeWidth={2} />
-                    </button>
-                  </div>
-                ))}
-                <button type="button" className="settings-btn" onClick={() => append(emptyRepo())}>
-                  <Plus size={11} strokeWidth={2.2} /> repo
+            {active.map((ws) => (
+              <div key={ws.name} className={`workspace-row${selected === ws.name ? " workspace-row--active" : ""}`}>
+                <button type="button" className="workspace-row__pick" onClick={() => selectWorkspace(ws)}>
+                  <span className="workspace-row__name">{ws.name}</span>
+                  <span className="workspace-row__meta">
+                    {ws.repos.length} repo{ws.repos.length === 1 ? "" : "s"}
+                    {ws.default && <span className="sm-chip is-picked">default</span>}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="workspace-row__remove"
+                  onClick={() => requestRemoval(ws.name)}
+                  aria-label={`Remove ${ws.name}`}
+                >
+                  <X size={12} strokeWidth={2} />
                 </button>
               </div>
-
-              {error && <p className="wizard__error">{error}</p>}
-
-              <button
-                type="button"
-                className="settings-btn settings-btn--primary settings-btn--wide"
-                onClick={() => void submit()}
-                disabled={isSubmitting || !isValid}
-              >
-                {isSubmitting ? "saving…" : selected ? "save changes" : "create workspace"}
-              </button>
-            </div>
+            ))}
+            {active.length === 0 && <p className="wizard__hint">No workspaces yet — create one to get started.</p>}
           </div>
-        </section>
-      </div>
+
+          <div className="workspace-manager__form">
+            <FormTextField
+              control={control}
+              name="name"
+              label="Workspace name"
+              placeholder="acme-web"
+              rules={{ validate: filled }}
+              isDisabled={selected !== null}
+            />
+            <FormTextField
+              control={control}
+              name="description"
+              label="Description"
+              placeholder="Marketing site + storefront"
+            />
+            <FormTextField
+              control={control}
+              name="linksText"
+              label="Links"
+              hint="one per line — docs, dashboards, tickets"
+              placeholder="https://github.com/acme/web"
+              multiline
+              rows={3}
+            />
+            <FormColorSwatch control={control} name="color" label="Colour" />
+            <FormCheckbox
+              control={control}
+              name="default"
+              label="Default workspace — used when a delegation names none"
+            />
+
+            <div className="workspace-manager__atlassian">
+              <span className="wizard__hint">Atlassian (Jira / Confluence)</span>
+              <FormTextField
+                control={control}
+                name="atlassian.siteUrl"
+                labelHidden
+                label="Atlassian site URL"
+                placeholder="https://acme.atlassian.net"
+              />
+              <FormSelect
+                control={control}
+                name="atlassian.connectorId"
+                label="Atlassian connector"
+                placeholder="pick a connector…"
+                options={atlassianConnectors.map((c) => ({ id: c.id, label: c.label }))}
+              />
+              {/* Index 0 only — entries 1..N ride along untouched. See WorkspaceFormValues. */}
+              <FormTextField
+                control={control}
+                name="atlassian.jiraProjectKeys.0"
+                labelHidden
+                label="Jira project key"
+                placeholder="Jira project key (ACME)"
+              />
+              <FormTextField
+                control={control}
+                name="atlassian.confluenceSpaceKeys.0"
+                labelHidden
+                label="Confluence space key"
+                placeholder="Confluence space key (DOCS)"
+              />
+              {selected && atlassianSiteUrl && (
+                <Button variant="secondary" onPress={() => void testAtlassian()} isDisabled={testing === "atlassian"}>
+                  {testing === "atlassian" ? "testing…" : "Test connection"}
+                </Button>
+              )}
+              {testResult?.target === "atlassian" && (
+                <p className={testResult.ok ? "wizard__hint" : "wizard__error"}>{testResult.detail}</p>
+              )}
+            </div>
+
+            <div className="workspace-manager__repos">
+              <span className="wizard__hint">Repos</span>
+              {fields.map((field, i) => (
+                <div key={field.id} className="repo-row flex flex-wrap items-center gap-2">
+                  <FormTextField
+                    control={control}
+                    name={`repos.${i}.name`}
+                    label="Repo name"
+                    labelHidden
+                    placeholder="web"
+                    rules={{ validate: filled }}
+                  />
+                  <FormTextField
+                    control={control}
+                    name={`repos.${i}.path`}
+                    label="Path"
+                    labelHidden
+                    placeholder="/Users/me/code/acme-web"
+                    rules={{ validate: filled }}
+                  />
+                  <FormTextField
+                    control={control}
+                    name={`repos.${i}.branch`}
+                    label="Branch"
+                    labelHidden
+                    placeholder="main"
+                  />
+                  <FormTextField
+                    control={control}
+                    name={`repos.${i}.owner`}
+                    label="GitHub owner"
+                    labelHidden
+                    placeholder="GitHub owner"
+                  />
+                  <FormTextField
+                    control={control}
+                    name={`repos.${i}.repo`}
+                    label="GitHub repo"
+                    labelHidden
+                    placeholder="GitHub repo"
+                  />
+                  <FormSelect
+                    control={control}
+                    name={`repos.${i}.connectorId`}
+                    labelHidden
+                    label="GitHub connector"
+                    placeholder="pick a connector…"
+                    options={githubConnectors.map((c) => ({ id: c.id, label: c.label }))}
+                  />
+                  {selected && repoValues[i]?.owner && repoValues[i]?.repo && (
+                    <Button
+                      variant="secondary"
+                      onPress={() => void testRepoGithub(repoValues[i]?.name ?? "")}
+                      isDisabled={testing === repoValues[i]?.name}
+                    >
+                      {testing === repoValues[i]?.name ? "testing…" : "Test"}
+                    </Button>
+                  )}
+                  <Button
+                    isIconOnly
+                    variant="ghost"
+                    onPress={() => removeRepoAt(i)}
+                    isDisabled={fields.length <= 1}
+                    aria-label="Remove repo"
+                  >
+                    <X size={12} strokeWidth={2} />
+                  </Button>
+                </div>
+              ))}
+              <Button variant="secondary" onPress={() => append(emptyRepo())}>
+                <Plus size={11} strokeWidth={2.2} /> repo
+              </Button>
+            </div>
+
+            {error && <p className="wizard__error">{error}</p>}
+
+            <Button variant="primary" onPress={() => void submit()} isDisabled={isSubmitting || !isValid}>
+              {isSubmitting ? "saving…" : selected ? "save changes" : "create workspace"}
+            </Button>
+          </div>
+        </div>
+      </ModalShell>
 
       <ConfirmSheet
         open={removing !== null}
