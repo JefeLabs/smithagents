@@ -2805,10 +2805,19 @@ button.logo {
   gap: 6px;
   /* Must equal ACTIVITY_H in organisms/map/layout.ts. Node positions are ABSOLUTE —
      layoutMap puts the step head at ACTIVITY_H + COL_GAP and xyflow translates every
-     node independently — so a card taller than its constant does not push the next
-     one down, it GROWS INTO IT. Unpinned this card drew 39.5 and left 0.5px of the
-     declared 8px COL_GAP. Vertical padding is 0 and the flex centring does that job
-     instead, so the height holds whatever the card ends up containing. */
+     node independently — so height here does not move anything; it decides only how
+     much of its own slot a card fills.
+
+     That is what the pin buys, and it is worth stating exactly: with these heights
+     the rendered gaps are 8 / 8 / 6, precisely COL_GAP, COL_GAP and STORY_GAP.
+     Delete the three height lines and the cards collapse to 16 / 15.5 / 18, opening
+     gaps of 24 / 19.5 / 20 while cellAt still inverts a 38px pitch — so what the user
+     aims at stops matching what the drop math resolves against. Measured against the
+     app's own compiled bundle; a probe without Tailwind preflight reads ~8px high on
+     every card and is worthless here.
+
+     Vertical padding is 0 and the flex centring does that job instead, so the height
+     holds whatever the card ends up containing. */
   height: 32px;
   padding: 0 10px;
   border-radius: 10px;
@@ -2820,11 +2829,10 @@ button.logo {
   display: flex;
   align-items: center;
   gap: 6px;
-  /* Must equal STEP_HEAD_H in organisms/map/layout.ts — STORIES_Y's other term, with
-     the same overlap consequence as .map-activity__name above, and here it was not
-     hypothetical: unpinned this card drew 35.5 at y=40 and crossed story row 0's top
-     edge at y=75. On the canvas this card is a step's head and nothing else — its
-     stories are sibling nodes, not children. */
+  /* Must equal STEP_HEAD_H in organisms/map/layout.ts — STORIES_Y's other term, and
+     the same gap-equality argument as .map-activity__name above. On the canvas this
+     card is a step's head and nothing else: its stories are sibling nodes, not
+     children, which is why its height is a head's and not a column's. */
   height: 27px;
   /* Must equal STEP_W. Only activity nodes carry a MapNode.width (they span their
      step group), so nothing else would give a step card a column's width. */
@@ -2842,10 +2850,13 @@ button.logo {
   /* Must equal STORY_H in organisms/map/layout.ts. cellAt is NOT what is at risk —
      it inverts POSITIONS, which no stylesheet can move. The row below is: layoutMap
      puts the next story exactly SLOT_H (STORY_H + STORY_GAP) lower, so any card
-     taller than STORY_H spends the 6px gap and then overlaps its neighbour. Unpinned,
-     at this column width, the card already wrapped to 56px and overlapped the next
-     row by 18px; one long story reached 154px. The ellipsis on .map-story__handle is
-     what keeps that bounded. Zero vertical padding as in .map-activity__name. */
+     taller than STORY_H spends the 6px gap and then overlaps its neighbour.
+
+     Which is not an edge case. Without the ellipsis below, a story wraps in this
+     180px column at about SEVENTEEN characters — "create tour time slots" draws 42px
+     against a 38px pitch — and a full sentence reaches 182px, four rows deep. Nearly
+     every real story is longer than sixteen characters, so unbounded growth is the
+     normal case and the pin plus the ellipsis are what contain it. */
   height: 32px;
   /* Must equal STEP_W — see .map-step__name. */
   width: 180px;
@@ -2859,9 +2870,11 @@ button.logo {
 .map-card__text {
   flex: 1;
   /* A flex item's min-width is auto, which refuses to shrink below its content — the
-     ellipsis never appears without this. This pair is the actual defence against
-     overlap: a fixed height alone only clips, while wrapping text is what made an
-     unpinned card reach 154px and swallow the rows beneath it. */
+     ellipsis never appears without this. This pair, not the fixed height, is what
+     actually prevents overlap: .map-story sets no `overflow`, so with the height
+     pinned and the ellipsis removed the box stays 32px while its content runs to a
+     scrollHeight of 99 — the text does not clip, it SPILLS, over whatever is beneath.
+     The only overflow:hidden in play is the one on this line. */
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2881,8 +2894,11 @@ button.logo {
 }
 
 /* The trailing card at every level (organisms/map/nodes.tsx). It keeps its level's
-   exact height — it occupies a real cell, and cellAt's arithmetic does not know it is
-   blank — and reads as an invitation rather than as a record left empty. */
+   exact height so it fills its slot like any other card, and reads as an invitation
+   rather than as a record left empty. Note cellAt is not blind to blankness: it
+   rejects a drop whose nearest column is blank (layout.ts, `if (best.blank)`). Only
+   the trailing STORY slot is a real cell — it sits at order === count, which is the
+   append target in a step that already exists. */
 .map-activity__name.is-blank,
 .map-step__name.is-blank,
 .map-story.is-blank {
