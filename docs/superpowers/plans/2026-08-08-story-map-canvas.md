@@ -1586,8 +1586,16 @@ Verify **5 files changed**.
    nodes are actually emitted.
 2. **There is no vertical pitch for stacked artifacts within one slice.** `SLICE_RAIL_X` and
    `ARTIFACT_GAP` exist in `layout.ts` (lines 33, 35) and are unused, so the geometry intent
-   is recorded but incomplete. The missing constant belongs in `layout.ts` with the others,
-   and it is this task's to choose.
+   is recorded but incomplete. The missing constant belongs in `layout.ts` with the others.
+
+   **Name it `ARTIFACT_PITCH` and export it from `layout.ts`.** Step 4's sketch originally
+   hardcoded `y: STORIES_Y + i * 64` — a magic number in a component, which violates this
+   plan's own Global Constraint that geometry constants live only in `layout.ts`. **64 is a
+   starting value, not a decision**: it is roughly `STORY_H` doubled, artifact cards carry
+   two lines (kind and label) where a story carries one, and nobody has seen one rendered.
+   Pick the value from what the smoke actually shows and say why in a comment, the way the
+   other constants do. If it needs to differ from what the sketch assumed, change it — the
+   sketch is not evidence.
 3. **Lay artifacts out using `artifactNodeId(sliceId, kind)` from `layout.ts`** — do not
    re-derive `artifact:${sliceId}:${kind}` from prose. `ArtifactSpec` now carries `sliceId`
    for the same reason blank nodes carry their parent: so no component has to parse an id
@@ -1739,16 +1747,21 @@ when a slice is revealed. Add `revealedSlice` and `decorate` to its dependency a
     setNodes([
       ...decorated,
       {
-        id: `slice:${revealedSlice.id}`,
+        // sliceNodeId, NOT a re-derived `slice:${id}` — item 3 above. The whole point of
+        // the exported helpers is that two modules cannot disagree about a format.
+        id: sliceNodeId(revealedSlice.id),
         type: "slice",
         position: { x: SLICE_RAIL_X, y: STORIES_Y },
         data: { name: revealedSlice.name, fraction: `${done}/${revealedSlice.storyIds.length}` },
         draggable: false,
       },
+      // `a.id` is already minted by `artifactNodeId` inside `artifactNodesFor` — do not
+      // rebuild it here.
       ...artifactNodesFor(revealedSlice).map((a, i) => ({
         id: a.id,
         type: "artifact" as const,
-        position: { x: rightEdge + ARTIFACT_GAP, y: STORIES_Y + i * 64 },
+        // ARTIFACT_PITCH, not a literal — see the note under item 2 above.
+        position: { x: rightEdge + ARTIFACT_GAP, y: STORIES_Y + i * ARTIFACT_PITCH },
         data: { kind: a.kind, label: a.label },
         draggable: false,
       })),
