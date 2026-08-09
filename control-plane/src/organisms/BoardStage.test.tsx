@@ -196,6 +196,37 @@ describe("BoardStage", () => {
     expect(await screen.findByRole("tab", { name: /plan/i })).toBeDefined();
   });
 
+  it("falls back to every workspace, not none, before the session frame has landed", async () => {
+    // useSession() is skipToken-driven: `session` is `undefined` until the
+    // first WS frame arrives, exactly the state a fresh /#/board load is in.
+    // Falling back to an empty Set there would show zero workspace tabs —
+    // fewer boards than before Task 3. The safe degenerate case is every
+    // workspace, the prior default, not none.
+    stubFetch({
+      boards: {
+        boards: [{ ...BOARD, id: "acme-plan", name: "Plan", type: "plan", workspaceId: "acme" }],
+        errors: [],
+      },
+    });
+    renderBoardStage();
+    expect(await screen.findByRole("tab", { name: "Plan" })).toBeTruthy();
+  });
+
+  it("also falls back to every workspace when the session is confirmed to have none", async () => {
+    // HomePage's knownZeroSessions state: the broker answered and confirmed
+    // zero sessions, so `session` is a resolved `null`, not merely pending —
+    // still no workspace to follow, same fallback applies.
+    stubFetch({
+      boards: {
+        boards: [{ ...BOARD, id: "acme-plan", name: "Plan", type: "plan", workspaceId: "acme" }],
+        errors: [],
+      },
+    });
+    const { client } = renderBoardStage();
+    client.setQueryData(qk.session, null);
+    expect(await screen.findByRole("tab", { name: "Plan" })).toBeTruthy();
+  });
+
   it("clusters cards by workspace under a subheading in the aggregate view", async () => {
     stubFetch({
       boards: {

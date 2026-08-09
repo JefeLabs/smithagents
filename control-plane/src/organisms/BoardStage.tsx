@@ -176,14 +176,17 @@ export function BoardStage({ roster }: BoardStageProps) {
   // workspace, and `viewed` only needs to hold state once the user diverges
   // from it — an untouched (empty) selection means "no explicit view yet", so
   // a fresh load follows the active session's one workspace instead of
-  // defaulting to every workspace at once. Memoized so its identity stays
-  // stable across renders where neither input actually changed — the reset
-  // effects below are keyed on it, and a fresh Set() every render would fire
-  // them continuously.
+  // defaulting to every workspace at once. When there is PROVABLY no session
+  // to follow yet (the frame hasn't landed, or it landed confirming zero
+  // sessions), "follow the session" has no meaning — fall back to every
+  // workspace, the prior default, rather than to none. Memoized so its
+  // identity stays stable across renders where neither input actually
+  // changed — the reset effects below are keyed on it, and a fresh Set()
+  // every render would fire them continuously.
   const scope = useMemo<ReadonlySet<string> | typeof ALL_WORKSPACES>(() => {
     if (viewed === ALL_WORKSPACES) return ALL_WORKSPACES;
     if (viewed.size > 0) return viewed;
-    return new Set(session?.workspace ? [session.workspace] : []);
+    return session?.workspace ? new Set([session.workspace]) : ALL_WORKSPACES;
   }, [viewed, session?.workspace]);
   // The one workspace this render may create into, or null when zero or several
   // are in view — "you may look at many, but you may only create in one."
