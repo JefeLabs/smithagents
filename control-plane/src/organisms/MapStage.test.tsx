@@ -162,11 +162,17 @@ describe("MapStage", () => {
     const { client } = renderMapStage();
     seedSessionFrame(client, { workspace: "skoolscout" });
     await screen.findByText("Manage Candidate Tours");
-    act(() => useUiStore.getState().setViewedWorkspaces(new Set(["skoolscout", "smithagents"])));
+    // "smithagents" first, "skoolscout" (the session's) second: Set iteration
+    // is insertion order, so a wrong implementation that picks the first
+    // element of a multi-entry view would show OTHER_CAP here instead — this
+    // ordering is what makes the assertion below actually discriminate.
+    act(() => useUiStore.getState().setViewedWorkspaces(new Set(["smithagents", "skoolscout"])));
     // Still skoolscout's map — a 2-workspace view doesn't name a single one.
     expect(screen.getByText("Manage Candidate Tours")).toBeTruthy();
+    expect(screen.queryByText("Different Activity")).toBeNull();
     act(() => useUiStore.getState().setViewedWorkspaces(ALL_WORKSPACES));
     expect(screen.getByText("Manage Candidate Tours")).toBeTruthy();
+    expect(screen.queryByText("Different Activity")).toBeNull();
   });
 });
 
