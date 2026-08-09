@@ -49,11 +49,18 @@ describe("WorkspaceSelector", () => {
       { workspace: "acme" },
       {
         workspaces: ["acme", "jefelabs"],
-        // s2 (newest) listed FIRST and s1 (oldest) SECOND — array order is deliberately
-        // the reverse of chronological order. If the code took "the last match" instead
-        // of genuinely comparing updatedAt, it would pick s1 here and this test would
-        // catch it; with the array in date order, that bug would pass by coincidence.
+        // s2 (newest) sits in the MIDDLE, not first or last — defeats both a "take the
+        // first match" bug and a "take the last match" bug; only a real updatedAt
+        // comparison picks s2 out of this array.
         sessions: [
+          {
+            id: "s3",
+            workspace: "jefelabs",
+            updatedAt: "2026-08-05T00:00:00Z",
+            title: "middle-aged",
+            active: false,
+            runtime: "local-in-process",
+          },
           {
             id: "s2",
             workspace: "jefelabs",
