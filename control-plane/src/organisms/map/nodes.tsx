@@ -207,7 +207,13 @@ export function ArtifactNode({ data }: { data: { kind: string; label: string } }
   return (
     <div className={`map-artifact map-artifact--${data.kind}`}>
       <span className="map-artifact__kind">{data.kind}</span>
-      <span className="map-artifact__label">{data.label}</span>
+      {/* The label is a PATH, ellipsised into 160px — a 76-character spec path shows
+          perhaps a third of itself, and the tail is the part that identifies it. Every
+          other truncating card here (.map-story, .map-card__text) carries the same
+          hover fallback. */}
+      <span className="map-artifact__label" title={data.label}>
+        {data.label}
+      </span>
     </div>
   );
 }

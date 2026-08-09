@@ -8,6 +8,7 @@ import { useSocketStore } from "../stores/socketStore";
 import { useUiStore } from "../stores/uiStore";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { MapStage } from "./MapStage";
+import { STORIES_Y, stepColumns } from "./map/layout";
 
 const CAP = {
   id: "school-feature-set",
@@ -73,6 +74,34 @@ function stubFetch(overrides: { capabilities?: unknown } = {}) {
 
 function renderMapStage() {
   return renderWithProviders(<MapStage />);
+}
+
+/**
+ * Makes every PATCH fail while still recording it.
+ *
+ * The failing response is substituted AFTER delegating, never instead of it: the
+ * stub installed by stubFetch is what pushes into `calls`, so returning early would
+ * make a "was a PATCH sent?" assertion unsatisfiable no matter how the code behaved.
+ */
+function failEveryPatch() {
+  const original = globalThis.fetch as typeof fetch;
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    const res = await original(input, init);
+    if ((init?.method ?? "GET") === "PATCH") {
+      return { ok: false, status: 500, json: async () => ({}) } as Response;
+    }
+    return res;
+  });
+}
+
+/**
+ * The transform xyflow writes on a node's wrapper — the only place a node's position
+ * is observable from the DOM. Read as an opaque string and compared to itself before
+ * and after, so the assertion says "it went back", not "it is at these pixels".
+ */
+function nodePosition(nodeId: string): string | undefined {
+  const el = document.querySelector<HTMLElement>(`.react-flow__node[data-id="${nodeId}"]`);
+  return el?.style.transform;
 }
 
 /**
@@ -297,6 +326,44 @@ describe("MapStage editing", () => {
     });
   });
 
+  // The other two levels of the SAME wiring. nodes.test.tsx proves the three blank
+  // components call `onCommit`; these prove `decorate` actually supplies one at each
+  // level. A level it forgot would not no-op — `onCommit` is invoked unguarded, so it
+  // throws — and only the story level was covered before.
+  it("the blank ACTIVITY card creates an activity", async () => {
+    const { calls } = stubFetch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    await screen.findByText("Manage Candidate Tours");
+    await userEvent.type(screen.getByPlaceholderText(/add an activity/i), "Run Enrolment{Enter}");
+    await waitFor(() => {
+      const call = calls.find((c) => c.method === "PATCH" && c.url.includes("/work/capabilities/school-feature-set"));
+      const activities = (call?.body as { activities?: Array<{ name: string; steps: unknown[] }> })?.activities;
+      expect(activities?.some((a) => a.name === "Run Enrolment" && a.steps.length === 0)).toBe(true);
+      expect(activities?.length).toBe(2); // wholesale: the existing one rides along
+    });
+  });
+
+  it("the blank STEP card creates a step in ITS OWN activity", async () => {
+    const { calls } = stubFetch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    await screen.findByText("Manage Candidate Tours");
+    // One blank step card per activity; CAP has one activity, so this is act1's.
+    await userEvent.type(screen.getByPlaceholderText(/add a step/i), "Confirm Attendance{Enter}");
+    await waitFor(() => {
+      const call = calls.find((c) => c.method === "PATCH" && c.url.includes("/work/capabilities/school-feature-set"));
+      const body = call?.body as { activities?: Array<{ id: string; steps: Array<{ name: string }> }> };
+      const act = body?.activities?.[0];
+      expect(act?.id).toBe("act1");
+      expect(act?.steps.map((s) => s.name)).toEqual([
+        "Define Tour Schedule",
+        "Analyze Tour Data",
+        "Confirm Attendance",
+      ]);
+    });
+  });
+
   it("fireStoryDrop moves a story between steps via wholesale PATCH", async () => {
     const { calls } = stubFetch();
     const { client } = renderMapStage();
@@ -350,30 +417,56 @@ describe("MapStage editing", () => {
     });
   });
 
-  it("a failed move snaps the story back instead of showing a move that did not happen", async () => {
+  it("a rejected move reports false rather than resolving undefined", async () => {
     const { calls } = stubFetch();
-    // Make the PATCH fail: the model never changes, so the seeding effect never
-    // re-runs, and without an explicit re-seed the node would keep its dropped
-    // position — showing a move the server rejected.
-    //
-    // The failing response is substituted AFTER delegating, not instead of it:
-    // `original` is what records into `calls`, so returning early would make the
-    // PATCH assertion below unsatisfiable no matter how the code behaved.
-    const original = globalThis.fetch as typeof fetch;
-    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
-      const res = await original(input, init);
-      if ((init?.method ?? "GET") === "PATCH") {
-        return { ok: false, status: 500, json: async () => ({}) } as Response;
-      }
-      return res;
-    });
+    failEveryPatch();
     const { client } = renderMapStage();
     seedSessionFrame(client, { workspace: "skoolscout" });
     await screen.findByText("Define Tour Schedule");
     const { fireStoryDrop } = await import("./MapStage");
+    // fireStoryDrop reaches moveStory, NOT the drag-stop path — this pins the boolean
+    // the snap-back depends on. The snap-back itself is the next two tests.
     const moved = await fireStoryDrop("s2", "st2", 0);
     expect(moved).toBe(false);
     expect(calls.some((c) => c.method === "PATCH")).toBe(true);
+  });
+
+  // The two re-seed branches, reached through fireNodeDragStop. Both are the same
+  // shape: the node is displaced to a drop point, the drop does not stick, and the
+  // node must return to the position layoutMap derives for it — otherwise the canvas
+  // shows a move that never happened. Neither branch was executed by any test before.
+  it("a drop outside the grid returns the node to its derived position and writes nothing", async () => {
+    const { calls } = stubFetch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    await screen.findByText("Define Tour Schedule");
+    const { fireNodeDragStop } = await import("./MapStage");
+    const before = nodePosition("s2");
+    // Far left of the first column: cellAt rejects it, so there is no cell to write to.
+    await act(async () => {
+      await fireNodeDragStop("s2", { x: -5000, y: STORIES_Y });
+    });
+    expect(nodePosition("s2")).toBe(before);
+    expect(calls.some((c) => c.method === "PATCH")).toBe(false);
+  });
+
+  it("a rejected move returns the node to its derived position", async () => {
+    stubFetch();
+    failEveryPatch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    await screen.findByText("Define Tour Schedule");
+    const { fireNodeDragStop } = await import("./MapStage");
+    const before = nodePosition("s2");
+    // A VALID cell — st2's column, first slot. The drop resolves, the PATCH fails, and
+    // the model never changes, so the seeding effect cannot put the node back: only
+    // the explicit re-seed can.
+    const st2x = stepColumns(CAP.activities).find((c) => c.stepId === "st2")?.x ?? 0;
+    await act(async () => {
+      await fireNodeDragStop("s2", { x: st2x, y: STORIES_Y });
+    });
+    expect(nodePosition("s2")).toBe(before);
+    await waitFor(() => expect(screen.getByText(/update failed/i)).toBeTruthy());
   });
 
   it("creates a slice", async () => {

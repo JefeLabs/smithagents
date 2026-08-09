@@ -2768,7 +2768,13 @@ button.logo {
   gap: 10px;
   min-height: 0;
   padding: 14px;
-  /* Rendered as the stage's own <main> — see .board-stage. */
+  /* Intended to undo .stage's centring so cards fill the width — see .board-stage,
+     which states it correctly. CORRECTED: this element is a <section> carrying BOTH
+     .stage and .map-stage (MapStage.tsx renders `className="stage map-stage"`), not a
+     <main>; base.css has no `main` selector at all. It is worth being exact, because
+     .stage is UNLAYERED and this rule is in layer(legacy), so the line below LOSES to
+     `.stage { align-items: center }` regardless of specificity and does not currently
+     take effect. .map-stage__canvas sets align-self instead, for that reason. */
   align-items: stretch;
   justify-content: flex-start;
 }
@@ -2788,15 +2794,18 @@ button.logo {
      flex-basis of 0 that is inert, and stating it would only look load-bearing. */
   flex: 1;
   min-height: 0;
-  /* Width, and this one is not decoration. .map-stage renders as the stage's own
-     <main>, and base.css is UNLAYERED while components.css sits in layer(legacy) —
-     so base.css's `main { align-items: center }` beats .map-stage's own
-     `align-items: stretch` regardless of specificity, and every child is
-     shrink-to-fit on the cross axis. .map-stage__grid never noticed, because its
-     activity columns gave it intrinsic width. ReactFlow's root is width:100%, which
-     against a shrink-to-fit parent resolves to ZERO: measured 0x552, with React Flow
-     logging error #004 and rendering nothing. align-self is set on this element, so
-     it answers the parent's align-items without fighting the layer order. */
+  /* Width, and this one is not decoration. The parent is ONE element carrying both
+     .stage and .map-stage (MapStage.tsx: `className="stage map-stage"`), and
+     base.css is UNLAYERED while components.css sits in layer(legacy) — so
+     `.stage { align-items: center }` beats `.map-stage { align-items: stretch }`
+     regardless of specificity, and every child is shrink-to-fit on the cross axis.
+     .map-stage__grid never noticed, because its activity columns gave it intrinsic
+     width. ReactFlow's root is width:100%, which against a shrink-to-fit parent
+     resolves to ZERO: measured 0x552, with React Flow logging error #004 and
+     rendering nothing.
+     align-self is what fixes it, and it is layer-proof for a reason worth stating:
+     it is a different property on a different element, and nothing else declares it,
+     so no unlayered rule is competing for it at all. */
   align-self: stretch;
 }
 .map-activity__name {

@@ -177,4 +177,10 @@ describe("ArtifactNode", () => {
     expect(screen.getByText("x.md")).toBeTruthy();
     expect(screen.getByText("spec")).toBeTruthy();
   });
+
+  it("puts the full path in a title, since the label is ellipsised to 160px", () => {
+    const path = "docs/superpowers/specs/2026-08-06-tour-scheduling-v1-design.md";
+    render(<ArtifactNode data={{ kind: "spec", label: path }} />);
+    expect(screen.getByText(path).getAttribute("title")).toBe(path);
+  });
 });

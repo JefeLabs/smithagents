@@ -45,6 +45,25 @@ export async function fireStoryDrop(storyId: string, stepId: string, order: numb
 }
 
 /**
+ * The OTHER half of the drop path, and it needs its own seam because `fireStoryDrop`
+ * does not reach it: that one calls `moveStory` directly, so neither re-seed branch
+ * in `dropNodeAt` runs in any test that goes through it.
+ *
+ * This one takes a POSITION, not a cell, because resolving the position is the part
+ * under test — `cellAt` deciding the drop is invalid is one of the two branches.
+ *
+ * It displaces the node before resolving, which is xyflow's contribution to a real
+ * gesture (it moves the node while dragging, then fires onNodeDragStop on release).
+ * Without the displacement a re-seed would be indistinguishable from doing nothing,
+ * since the node would already be sitting at its layout position.
+ */
+let nodeDragStopHandler: ((nodeId: string, position: { x: number; y: number }) => Promise<void>) | null = null;
+export async function fireNodeDragStop(nodeId: string, position: { x: number; y: number }): Promise<void> {
+  if (!nodeDragStopHandler) throw new Error("MapStage is not mounted");
+  return nodeDragStopHandler(nodeId, position);
+}
+
+/**
  * The composers that are still text boxes. Activity, step and story names are NOT
  * here any more: each level's trailing blank CARD is its own composer now, holding
  * its own text and handing it back through `onCommit`. Only the capability name and
@@ -333,6 +352,19 @@ export function MapStage() {
    * not merely lose its handler — it would read `story`/`step`/`activity` off data
    * that has none and throw while rendering. The parent id comes off the blank
    * node's own data, which is why the card never has to learn where it belongs.
+   *
+   * DIMMING ARRIVES AS AN ARGUMENT, never as a closure, and that is load-bearing for
+   * the seeding effect's `biome-ignore` below: it is what keeps `decorate` a function
+   * of `cap` alone even though the dim set now comes from a selection that is not.
+   * Closing over the selection here instead would make the omitted dependency a real
+   * stale closure rather than a documented safe one.
+   *
+   * ACTIVITY IS MATCHED EXPLICITLY at both levels, not by falling through. It used to
+   * be the else-branch, which was safe only while the union was exactly three levels;
+   * `"slice"` and `"artifact"` are in it now, so a fallthrough would quietly decorate
+   * one as an activity — reading `data.activity` off a node that has none. Neither
+   * reaches here today (they are appended after `decorate`, not laid out by
+   * `layoutMap`), and that is precisely why the mistake would survive review.
    */
   const decorate = (base: MapNode[], dimmedIds: Set<string>): Node[] =>
     base.map((n) => {
@@ -346,7 +378,10 @@ export function MapStage() {
           const activityId = n.data.activityId as string;
           return { ...n, data: { blank: true, onCommit: (text: string) => addStep(activityId, text) } } as Node;
         }
-        return { ...n, data: { blank: true, onCommit: (text: string) => addActivity(text) } } as Node;
+        if (n.type === "activity") {
+          return { ...n, data: { blank: true, onCommit: (text: string) => addActivity(text) } } as Node;
+        }
+        return n as Node;
       }
       if (n.type === "story") {
         const story = n.data.story as CapStoryT;
@@ -376,23 +411,40 @@ export function MapStage() {
           },
         } as Node;
       }
-      const activity = n.data.activity as CapActivityT;
-      return { ...n, data: { activity, dimmed, onRemove: () => removeActivity(activity) } } as Node;
+      if (n.type === "activity") {
+        const activity = n.data.activity as CapActivityT;
+        return { ...n, data: { activity, dimmed, onRemove: () => removeActivity(activity) } } as Node;
+      }
+      // Slice and artifact nodes need no decoration — they are read-only and carry
+      // their whole payload from the emission site. Returning them untouched is the
+      // honest default now that the union admits levels this function does not handle.
+      return n as Node;
     });
 
   // Positions are derived, never stored — but xyflow needs local node state for a
   // node to follow the cursor mid-drag, so the model is re-seeded into it whenever
   // it changes.
   //
-  // KEYED ON `cap` AND `revealedSlice`, and deliberately NOT on `decorate`. `decorate`
-  // closes over the create and remove helpers, which are plain consts rebuilt on every
-  // render, so it has a fresh identity every render; depending on it here would re-seed
-  // every render, and because re-seeding sets state that is an infinite update loop,
-  // not merely a slow path. Every handler it injects is a function of `cap` and nothing
-  // else, so `cap` is the real dependency. `revealedSlice` is safe to depend on for the
-  // opposite reason: it is an element OF `cap.slices`, so its identity only changes when
-  // the model or the selection does.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: decorate is unstable by construction — see above
+  // KEYED ON `cap` AND `revealedSlice`, and deliberately NOT on `decorate`.
+  //
+  // `decorate` is OMITTED because it is rebuilt every render — it closes over the create
+  // and remove helpers, which are plain consts — so listing it would re-seed on every
+  // render, and since re-seeding sets state that is an infinite update loop, not merely
+  // a slow path. Memoizing it instead would not help: memoizing over helpers that are
+  // themselves rebuilt each render just moves the fresh identity, it does not remove it.
+  //
+  // `revealedSlice` IS LISTED, and that is the half worth stating, because this task is
+  // where the omission above stopped being self-evidently safe. Task 4 could argue that
+  // everything `decorate` injects bottoms out in `cap`; the dim set does not — it comes
+  // from a selection. What keeps the argument alive is that dimming reaches `decorate` as
+  // an ARGUMENT computed inside this effect, never as a closure over the selection, so
+  // `decorate` is still a function of `cap` alone and the effect still re-runs exactly
+  // when the reveal changes. Listing `revealedSlice` costs nothing: it is a plain value —
+  // an element of `cap.slices` — not a rebuilt function.
+  //
+  // If anything `decorate` reads ever stops being a function of `cap` or a listed value,
+  // this suppression stops documenting a safe omission and starts hiding a stale closure.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: decorate is rebuilt every render, so listing it loops; everything it reads is `cap` or an argument — see above
   useEffect(() => {
     if (!cap) {
       setNodes([]);
@@ -445,11 +497,11 @@ export function MapStage() {
     setNodes([...decorated, ...ephemeral]);
   }, [cap, revealedSlice, setNodes]);
 
-  const onNodeDragStop: OnNodeDrag = async (_event, node) => {
+  const dropNodeAt = async (nodeId: string, position: { x: number; y: number }) => {
     if (!cap) return;
     // A story node's id IS its story id (layout.ts's one asymmetry), so it needs no
     // unwrapping here. Only stories are draggable, so nothing else reaches this.
-    const cell = cellAt(node.position, cap);
+    const cell = cellAt(position, cap);
     // Invalid drop, or a rejected mutation: re-seed from the model. Without this the
     // node keeps its dropped position and shows a move that never happened — and the
     // seeding effect cannot cover it, because on both paths the model never changed.
@@ -457,9 +509,26 @@ export function MapStage() {
       setNodes(decorate(layoutMap(cap).nodes, new Set()));
       return;
     }
-    const ok = await moveStory(node.id, cell.stepId, cell.order);
+    const ok = await moveStory(nodeId, cell.stepId, cell.order);
     if (!ok) setNodes(decorate(layoutMap(cap).nodes, new Set()));
   };
+
+  const onNodeDragStop: OnNodeDrag = (_event, node) => void dropNodeAt(node.id, node.position);
+
+  // No dependency array: `dropNodeAt` is a plain const with a fresh identity every
+  // render, so the seam is re-pointed after each one. It only assigns a module
+  // variable — no state is set, so unlike the seeding effect this cannot loop.
+  useEffect(() => {
+    nodeDragStopHandler = async (nodeId, position) => {
+      // xyflow's half of the gesture, reproduced: the node is already sitting at the
+      // drop point by the time onNodeDragStop fires. See fireNodeDragStop.
+      setNodes((ns) => ns.map((n) => (n.id === nodeId ? { ...n, position } : n)));
+      await dropNodeAt(nodeId, position);
+    };
+    return () => {
+      nodeDragStopHandler = null;
+    };
+  });
 
   return (
     <section className="stage map-stage" aria-label="Story map">
