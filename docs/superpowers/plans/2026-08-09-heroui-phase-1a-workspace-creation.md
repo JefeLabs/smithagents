@@ -303,11 +303,23 @@ export function FormTextField<T extends FieldValues>({
         <Input ref={field.ref} placeholder={placeholder} />
       )}
       {hint != null && <Description>{hint}</Description>}
-      <FieldError />
+      {/* Children are REQUIRED. react-aria's FieldError renders its own validation
+          context, and RHF's errors are invisible to it — a bare <FieldError /> is a
+          permanently empty error region. Passing the message explicitly is the only
+          thing that connects the two validation systems. */}
+      <FieldError>{fieldState.error?.message}</FieldError>
     </TextField>
   );
 }
 ```
+
+**Why this matters more than it looks.** Today both target modals validate with
+`filled = (v) => v.trim().length > 0`, which returns a bare boolean and therefore has no
+message — so wiring this changes nothing visible right now. But this adapter is imported
+by every later task and by Phases 1b and 1c. The first validator anywhere that returns a
+string (`{ validate: (v) => filled(v) || "Workspace name is required" }`) would silently
+lose it, and the loss would surface as "why doesn't my error show" three phases from now.
+Connect it once, here.
 
 - [ ] **Step 4: Run the test**
 
@@ -1207,7 +1219,8 @@ component with:
           <FormTextField control={control} name={`repos.${i}.name`} label="Repo name" labelHidden placeholder="web" rules={{ validate: filled }} />
           <FormTextField
             control={control}
-            name={`repos.${i}.path`} labelHidden
+            name={`repos.${i}.path`}
+            labelHidden
             label="Path"
             placeholder={repoModes[i]?.mode === "new" ? "/Users/me/code/new-project" : "/Users/me/code/acme-web"}
             rules={{ validate: filled }}
@@ -1442,7 +1455,7 @@ Inside `.workspace-manager__form`:
   {fields.map((field, i) => (
     <div key={field.id} className="repo-row">
       <FormTextField control={control} name={`repos.${i}.name`} label="Repo name" labelHidden placeholder="web" rules={{ validate: filled }} />
-      <FormTextField control={control} name={`repos.${i}.path`} labelHidden label="Path" placeholder="/Users/me/code/acme-web" rules={{ validate: filled }} />
+      <FormTextField control={control} name={`repos.${i}.path`} label="Path" labelHidden placeholder="/Users/me/code/acme-web" rules={{ validate: filled }} />
       <FormTextField control={control} name={`repos.${i}.branch`} label="Branch" labelHidden placeholder="main" />
       <FormTextField control={control} name={`repos.${i}.owner`} label="GitHub owner" labelHidden placeholder="GitHub owner" />
       <FormTextField control={control} name={`repos.${i}.repo`} label="GitHub repo" labelHidden placeholder="GitHub repo" />
