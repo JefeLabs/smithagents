@@ -1,8 +1,11 @@
+import type { QueryClient } from "@tanstack/react-query";
 import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ALL_WORKSPACES } from "../lib/board-aggregate";
 import { qk } from "../queries/keys";
 import { useSocketStore } from "../stores/socketStore";
+import { useUiStore } from "../stores/uiStore";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { MapStage } from "./MapStage";
 
@@ -38,6 +41,15 @@ const CAP = {
   ],
 };
 
+const OTHER_CAP = {
+  id: "other-cap",
+  name: "Other Product",
+  workspaceId: "smithagents",
+  activities: [{ id: "act2", name: "Different Activity", order: 0, steps: [] }],
+  stories: [],
+  slices: [],
+};
+
 function stubFetch(overrides: { capabilities?: unknown } = {}) {
   const calls: Array<{ url: string; method: string; body?: unknown }> = [];
   const fn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -59,6 +71,19 @@ function stubFetch(overrides: { capabilities?: unknown } = {}) {
   return { fn, calls };
 }
 
+function renderMapStage() {
+  return renderWithProviders(<MapStage />);
+}
+
+/**
+ * Seeds the pushed-query cache the way the socket store would, per
+ * src/test/renderWithProviders.tsx — MapStage's workspace now follows this
+ * instead of an in-stage picker, so this is how tests drive it.
+ */
+function seedSessionFrame(client: QueryClient, session: { workspace: string }) {
+  client.setQueryData(qk.session, { id: "s0", title: "t", workspace: session.workspace, runtime: "local-in-process" });
+}
+
 describe("MapStage", () => {
   afterEach(() => {
     cleanup();
@@ -67,7 +92,8 @@ describe("MapStage", () => {
 
   it("renders the backbone and story stacks for the selected capability", async () => {
     stubFetch();
-    renderWithProviders(<MapStage />);
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
     expect(await screen.findByText("Manage Candidate Tours")).toBeTruthy();
     expect(screen.getByText("Define Tour Schedule")).toBeTruthy();
     expect(screen.getByText("create tour time slots")).toBeTruthy();
@@ -75,7 +101,8 @@ describe("MapStage", () => {
 
   it("creates a capability in the selected workspace", async () => {
     const { calls } = stubFetch();
-    renderWithProviders(<MapStage />);
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
     await screen.findByText("Manage Candidate Tours");
     await userEvent.click(screen.getByRole("button", { name: /new capability/i }));
     await userEvent.type(screen.getByPlaceholderText(/capability name/i), "New Cap");
@@ -88,38 +115,58 @@ describe("MapStage", () => {
 
   it("shows slice bands with done fractions", async () => {
     stubFetch();
-    renderWithProviders(<MapStage />);
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
     await screen.findByText("tour scheduling v1", { selector: ".slice-band__name" });
     expect(screen.getByText("1/2")).toBeTruthy();
   });
 
-  it("switching workspace resets the selected capability to that workspace's own map (I5)", async () => {
-    const OTHER_CAP = {
-      id: "other-cap",
-      name: "Other Product",
-      workspaceId: "smithagents",
-      activities: [{ id: "act2", name: "Different Activity", order: 0, steps: [] }],
-      stories: [],
-      slices: [],
-    };
+  it("the session moving to another workspace resets the selected capability to that workspace's own map (I5)", async () => {
     stubFetch({ capabilities: { capabilities: [CAP, OTHER_CAP], errors: [] } });
-    renderWithProviders(<MapStage />);
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
     await screen.findByText("Manage Candidate Tours");
-    await userEvent.selectOptions(screen.getByLabelText("Workspace"), "smithagents");
+    seedSessionFrame(client, { workspace: "smithagents" });
     await waitFor(() => expect((screen.getByLabelText("Capability") as HTMLSelectElement).value).toBe("other-cap"));
     expect(screen.getByText("Different Activity")).toBeTruthy();
     expect(screen.queryByText("Manage Candidate Tours")).toBeNull();
   });
 
-  it("switching to a workspace with no capabilities clears the map instead of showing the old one", async () => {
+  it("the session moving to a workspace with no capabilities clears the map instead of showing the old one", async () => {
     stubFetch({ capabilities: { capabilities: [CAP], errors: [] } });
-    renderWithProviders(<MapStage />);
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
     await screen.findByText("Manage Candidate Tours");
-    await userEvent.selectOptions(screen.getByLabelText("Workspace"), "smithagents");
+    seedSessionFrame(client, { workspace: "smithagents" });
     await waitFor(() => expect(screen.queryByText("Manage Candidate Tours")).toBeNull());
     const capSelect = screen.getByLabelText("Capability") as HTMLSelectElement;
     expect(capSelect.value).toBe("");
     expect(capSelect.querySelectorAll("option").length).toBe(0);
+  });
+
+  it("an explicit single-workspace view overrides the session's workspace", async () => {
+    // No UI sets a single-element viewedWorkspaces yet (same as BoardStage's
+    // aggregate view) — driven directly, exercising the store's documented
+    // "Board and Map" contract from the Map side.
+    stubFetch({ capabilities: { capabilities: [CAP, OTHER_CAP], errors: [] } });
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    await screen.findByText("Manage Candidate Tours");
+    act(() => useUiStore.getState().setViewedWorkspaces(new Set(["smithagents"])));
+    await waitFor(() => expect(screen.getByText("Different Activity")).toBeTruthy());
+    expect(screen.queryByText("Manage Candidate Tours")).toBeNull();
+  });
+
+  it("viewing several workspaces (or all) has no single map to prefer, so it falls back to the session", async () => {
+    stubFetch({ capabilities: { capabilities: [CAP, OTHER_CAP], errors: [] } });
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    await screen.findByText("Manage Candidate Tours");
+    act(() => useUiStore.getState().setViewedWorkspaces(new Set(["skoolscout", "smithagents"])));
+    // Still skoolscout's map — a 2-workspace view doesn't name a single one.
+    expect(screen.getByText("Manage Candidate Tours")).toBeTruthy();
+    act(() => useUiStore.getState().setViewedWorkspaces(ALL_WORKSPACES));
+    expect(screen.getByText("Manage Candidate Tours")).toBeTruthy();
   });
 });
 
@@ -152,7 +199,8 @@ describe("MapStage + socket store wiring", () => {
     // GET — no prop, no manual refetch() call.
     vi.stubGlobal("WebSocket", FakeSocket);
     const { calls } = stubFetch();
-    const { client } = renderWithProviders(<MapStage />);
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
     await screen.findByText("Manage Candidate Tours");
     const fetched = () => calls.filter((c) => c.url.includes("/work/capabilities") && c.method === "GET").length;
     const before = fetched();
@@ -179,11 +227,12 @@ describe("MapStage + socket store wiring", () => {
     vi.stubGlobal("WebSocket", FakeSocket);
     const overrides: { capabilities?: unknown } = { capabilities: { capabilities: [CAP], errors: [] } };
     const { calls } = stubFetch(overrides);
-    const { client } = renderWithProviders(<MapStage />);
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
     await screen.findByText("Manage Candidate Tours");
 
     // "smithagents" has no capabilities of its own — I5 clears the map.
-    await userEvent.selectOptions(screen.getByLabelText("Workspace"), "smithagents");
+    seedSessionFrame(client, { workspace: "smithagents" });
     await waitFor(() => expect(screen.queryByText("Manage Candidate Tours")).toBeNull());
     const capSelect = screen.getByLabelText("Capability") as HTMLSelectElement;
     expect(capSelect.value).toBe("");
@@ -223,7 +272,8 @@ describe("MapStage editing", () => {
 
   it("adds a story to a step via wholesale PATCH", async () => {
     const { calls } = stubFetch();
-    renderWithProviders(<MapStage />);
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
     await screen.findByText("Define Tour Schedule");
     await userEvent.type(screen.getAllByPlaceholderText(/add a story/i)[0], "delete tour time slots{Enter}");
     await waitFor(() => {
@@ -236,7 +286,8 @@ describe("MapStage editing", () => {
 
   it("fireStoryDrop moves a story between steps via wholesale PATCH", async () => {
     const { calls } = stubFetch();
-    renderWithProviders(<MapStage />);
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
     await screen.findByText("Define Tour Schedule");
     const { fireStoryDrop } = await import("./MapStage");
     await fireStoryDrop("s2", "st2", 0);
@@ -251,7 +302,8 @@ describe("MapStage editing", () => {
 
   it("assigning a story to a slice keeps storyIds disjoint", async () => {
     const { calls } = stubFetch();
-    renderWithProviders(<MapStage />);
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
     await screen.findByText("create tour time slots");
     // Each story renders a slice select; move s1 from sl1 to sl2.
     await userEvent.selectOptions(screen.getAllByLabelText(/slice for/i)[0], "sl2");
@@ -265,7 +317,8 @@ describe("MapStage editing", () => {
 
   it("slice actions: generate spec POSTs; delivery send gated until specPath; sends post the target", async () => {
     const { calls } = stubFetch();
-    renderWithProviders(<MapStage />);
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
     await screen.findByText("tour scheduling v1", { selector: ".slice-band__name" });
     // sl2 has no specPath: generate visible, delivery send disabled with reason.
     expect(screen.getByRole("button", { name: /generate spec for analytics v1/i })).toBeTruthy();
@@ -286,7 +339,8 @@ describe("MapStage editing", () => {
 
   it("creates a slice", async () => {
     const { calls } = stubFetch();
-    renderWithProviders(<MapStage />);
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
     await screen.findByText("tour scheduling v1", { selector: ".slice-band__name" });
     await userEvent.type(screen.getByPlaceholderText(/new slice name/i), "tour scheduling v2{Enter}");
     await waitFor(() => {

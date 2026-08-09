@@ -10,10 +10,10 @@ import {
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Map as MapIcon, Plus, X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
-import type { WorkspaceRecord } from "../api/types";
-import { useWorkspaceRecords } from "../queries/http";
+import { ALL_WORKSPACES } from "../lib/board-aggregate";
+import { useSession } from "../queries/pushed";
 import {
   useCapabilities,
   useCreateCapability,
@@ -21,9 +21,7 @@ import {
   usePatchCapability,
   useSendSlice,
 } from "../queries/work";
-
-/** Stable empty while the records query is pending — it feeds a seeding effect's deps. */
-const NO_WORKSPACES: WorkspaceRecord[] = [];
+import { useUiStore } from "../stores/uiStore";
 
 export interface CapStoryT {
   id: string;
@@ -209,10 +207,22 @@ export function MapStage() {
   const generateSpecMutation = useGenerateSpec();
   const sendSliceMutation = useSendSlice();
 
-  // Shared with BoardStage on one key: same endpoint and envelope the
-  // hand-rolled fetch used, but the two stages now dedupe to one request.
-  const { data: workspaceRecords = NO_WORKSPACES } = useWorkspaceRecords();
-  const [workspace, setWorkspace] = useState("");
+  const { data: session } = useSession();
+  const viewed = useUiStore((s) => s.viewedWorkspaces);
+  // Derived, not stored — same fallback order as BoardStage's `scope`: an
+  // untouched (empty) selection follows the active session's one workspace,
+  // so a fresh load shows that workspace's map instead of none. Unlike
+  // Board, Map renders exactly one capability at a time, so an explicit VIEW
+  // only wins when it names exactly one workspace; "*" or several in view
+  // have no single map to prefer and fall back to the session too — the same
+  // "look at many, act in one" rule BoardStage's singleWorkspace applies to
+  // creation. Memoized so its identity is stable across renders where
+  // neither input changed, since the activeId-reset effect below is keyed
+  // on it.
+  const workspace = useMemo(() => {
+    if (viewed !== ALL_WORKSPACES && viewed.size === 1) return [...viewed][0];
+    return session?.workspace ?? "";
+  }, [viewed, session?.workspace]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -226,31 +236,39 @@ export function MapStage() {
 
   const displayError = error ?? loadError;
 
+  // The active capability must always follow an explicit workspace switch —
+  // reset unconditionally rather than only seed, so a stale capability from
+  // the PREVIOUS workspace never keeps rendering under the new one's name
+  // (I5). This is what the retired workspace picker's onChange handler used
+  // to do directly; now that the workspace comes from the session/store
+  // instead of a local control, the reset has to live here. Deliberately NOT
+  // keyed on capabilitiesQuery.data — an unrelated collection refetch (e.g.
+  // F1's cross-workspace capability-updated frame) must be a no-op here;
+  // that case belongs to the seeding effect below.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: workspace-keyed reset, same pattern as BoardStage's scope-keyed resets
+  useEffect(() => {
+    const caps = capabilitiesQuery.data?.capabilities;
+    if (!caps) return;
+    setActiveId(caps.find((c) => c.workspaceId === workspace)?.id ?? null);
+  }, [workspace]);
+
   // Re-derives on every successful load (including a WS-driven background
-  // refetch) or workspace change, same as the original's `refetch()` — the
-  // `?? ` / `||` guards make it a no-op once the user (or a prior load) has
-  // already set either. The `!workspace ||` filter matters once collection-
-  // level invalidation is in play: without it, a capability-updated frame for
-  // an UNRELATED capability re-runs this effect (capabilitiesQuery.data gets
-  // a new reference), and with activeId still null from I5's "workspace has
-  // no capabilities" case, `caps[0]?.id` would seed a capability from a
-  // DIFFERENT workspace than the one the picker is showing. Filtering by the
-  // currently-selected workspace keeps that path a no-op instead. Behaviour-
-  // identical on first load, where `workspace` is still `""` (no-op filter).
+  // refetch), same as the original's `refetch()` — the `id ??` guard makes
+  // this a no-op once something (a prior load, or the reset effect above) has
+  // already set activeId; this effect only SEEDS. The `!workspace ||` filter
+  // matters once collection-level invalidation is in play: without it, a
+  // capability-updated frame for an UNRELATED capability re-runs this effect
+  // (capabilitiesQuery.data gets a new reference), and with activeId still
+  // null from I5's "workspace has no capabilities" case, `caps[0]?.id` would
+  // seed a capability from a DIFFERENT workspace than the one being shown.
+  // Filtering by the currently-derived workspace keeps that path a no-op
+  // instead. Behaviour-identical on first mount, before `workspace` resolves
+  // from the session (still `""`, so the filter is itself a no-op).
   useEffect(() => {
     const caps = capabilitiesQuery.data?.capabilities;
     if (!caps) return;
     setActiveId((id) => id ?? caps.find((c) => !workspace || c.workspaceId === workspace)?.id ?? null);
-    setWorkspace((w) => w || caps[0]?.workspaceId || "");
   }, [capabilitiesQuery.data, workspace]);
-
-  // Seeds the picker the first time names arrive, exactly as the hand-rolled
-  // fetch did. The `w ||` guard is what lets this coexist with the capability
-  // effect above — whichever supplies a workspace first wins, and the other
-  // becomes a no-op instead of overwriting the user's choice on a refetch.
-  useEffect(() => {
-    setWorkspace((w) => w || workspaceRecords[0]?.name || "");
-  }, [workspaceRecords]);
 
   const cap = capabilities.find((c) => c.id === activeId) ?? null;
 
@@ -431,23 +449,6 @@ export function MapStage() {
     <section className="stage map-stage" aria-label="Story map">
       <header className="map-stage__bar">
         <MapIcon size={14} strokeWidth={2} />
-        <select
-          aria-label="Workspace"
-          value={workspace}
-          onChange={(e) => {
-            const next = e.target.value;
-            setWorkspace(next);
-            // Otherwise the capability picker and grid keep showing whatever
-            // was active in the previous workspace (I5).
-            setActiveId(capabilities.find((c) => c.workspaceId === next)?.id ?? null);
-          }}
-        >
-          {workspaceRecords.map((w) => (
-            <option key={w.name} value={w.name}>
-              {w.name}
-            </option>
-          ))}
-        </select>
         <select aria-label="Capability" value={activeId ?? ""} onChange={(e) => setActiveId(e.target.value)}>
           {capabilities
             .filter((c) => !workspace || c.workspaceId === workspace)
