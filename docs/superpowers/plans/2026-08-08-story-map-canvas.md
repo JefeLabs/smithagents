@@ -1320,7 +1320,28 @@ its `dimmedIds` argument rather than adding a second path:
         }
         if (n.type === "step") {
           const step = n.data.step as { id: string; name: string; order: number };
-          const activity = n.data.activity as CapActivityT;
+          // BLANK CARDS FIRST — without this branch a blank node falls into the
+        // real-record path below, `n.data.story`/`step`/`activity` is undefined, the
+        // component takes the real-card path and throws. That is a WHITE SCREEN ON
+        // MOUNT, not a broken Enter key: layoutMap emits a blank at every level, so
+        // the very first render hits it.
+        if (n.data.blank) {
+          return {
+            ...n,
+            data: {
+              ...n.data,
+              blank: true,
+              // decorate closes over the parent id layoutMap already put in data,
+              // so the component never has to learn or parse it.
+              onCommit: (text: string) => {
+                if (n.type === "activity") return void addActivity(text);
+                if (n.type === "step") return void addStep(n.data.activityId as string, text);
+                return void addStory(n.data.stepId as string, text);
+              },
+            },
+          } as Node;
+        }
+        const activity = n.data.activity as CapActivityT;
           return {
             ...n,
             data: {
@@ -1388,15 +1409,8 @@ Replace the whole `<DndContext>…</DndContext>` block (lines 478-552) with:
               <MiniMap pannable zoomable />
             </ReactFlow>
           </div>
-          <div className="map-stage__composer">
-            <input
-              placeholder="Add an activity…"
-              {...register("activityName")}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") addActivity();
-              }}
-            />
-          </div>
+          {/* NO add-activity composer. The blank activity card on the canvas IS it —
+              rendering both puts the same affordance on screen twice. */}
 ```
 
 **SUPERSEDED — the composers become blank cards, not separate controls.** Edwin,
