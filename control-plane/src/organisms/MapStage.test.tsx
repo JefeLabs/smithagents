@@ -37,6 +37,10 @@ const CAP = {
       order: 0,
       storyIds: ["s1", "s2"],
       specPath: "docs/superpowers/specs/2026-08-06-tour-scheduling-v1-design.md",
+      // TWO artifacts, not one, and the second is what makes the row a row. With only
+      // a spec, `artifactRowX(i, …)` is only ever called at i = 0 — so passing the
+      // index at all, and the whole horizontal layout, would go unexercised.
+      planPath: "docs/superpowers/plans/2026-08-08-tour-scheduling-v1.md",
     },
     { id: "sl2", name: "analytics v1", order: 1, storyIds: [] },
   ],
@@ -506,6 +510,38 @@ describe("MapStage editing", () => {
     expect(screen.getByText("create tour time slots").closest(".map-story")?.classList.contains("is-dimmed")).toBe(
       false,
     );
+    // s2 IS THE ONE THAT DISCRIMINATES, and the other two cannot. s1 is the fixture's
+    // only done:true story and is also in-slice, so against s1 and s3 alone "dim what
+    // the slice does not own" and "dim what is not done" agree exactly — swap the
+    // filter for `!story.done` and this test still passes. That is not a far-fetched
+    // mutation: `done` is read three lines away to build the anchor's fraction. s2 is
+    // owned by sl1 and done:false, so it is dimmed by the wrong rule and lit by the
+    // right one.
+    expect(screen.getByText("edit tour time slots").closest(".map-story")?.classList.contains("is-dimmed")).toBe(false);
+  });
+
+  it("lays the artifacts out as a ROW — same y, different x", async () => {
+    // The numbers belong to layout.test.ts, which owns artifactRowX/artifactRowY as
+    // pure functions. What only this test can see is whether MapStage actually PASSES
+    // THE INDEX through: emit `artifactRowX(0, rowX)` for every artifact and every
+    // other assertion in this file still passes while all four cards stack on the
+    // exact same point. jsdom lays nothing out, but xyflow writes each node's position
+    // into an inline transform, and that needs no stylesheet to read.
+    stubFetch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    await screen.findByText("tour scheduling v1", { selector: ".slice-band__name" });
+    await userEvent.click(screen.getByText("tour scheduling v1", { selector: ".slice-band__name" }));
+
+    await waitFor(() => expect(document.querySelectorAll(".map-artifact").length).toBe(2));
+    const at = [...document.querySelectorAll(".map-artifact")].map((card) => {
+      const node = card.closest(".react-flow__node") as HTMLElement | null;
+      const match = /translate\((-?[\d.]+)px,\s*(-?[\d.]+)px\)/.exec(node?.style.transform ?? "");
+      if (!match) throw new Error(`no transform on artifact node: ${node?.style.transform}`);
+      return { x: Number(match[1]), y: Number(match[2]) };
+    });
+    expect(at[0].y).toBe(at[1].y);
+    expect(at[1].x).toBeGreaterThan(at[0].x);
   });
 
   it("clicking the same slice band again clears the reveal", async () => {

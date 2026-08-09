@@ -2966,6 +2966,21 @@ button.logo {
   font-size: 10px;
   color: var(--text-dim);
 }
+/* NO PER-KIND RULE, and that is a decision rather than an omission. ArtifactNode emits
+   .map-artifact--spec / --plan / --capCard / --deliveryCard, and nothing here styles
+   them, so all four render identically.
+
+   The map already spends colour on LEVEL — activities blue, steps yellow, stories
+   neutral — and that is the encoding a reader learns first. Giving artifact KINDS their
+   own hues would put a second, unrelated colour language on the same canvas, competing
+   with the first for no information gain: every card already names its kind in words on
+   its own first line. The modifier stays because it is a real hook — tests select
+   .map-artifact--spec, and it is where a per-kind rule would go if one is ever wanted.
+
+   If a distinction is ever asked for, the split that means something is FILES ON DISK
+   (spec, plan) versus CARDS ON A BOARD (capCard, deliveryCard) — two groups, not four
+   hues. */
+
 /* A column flex item stretches to the container's width, so unlike .map-story__handle
    these need no min-width:0 — the cross axis is already constrained. Without the
    ellipsis the text does not clip, it spills: .map-artifact sets no overflow. */

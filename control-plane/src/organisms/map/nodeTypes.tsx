@@ -26,14 +26,25 @@ import { ActivityNode, ArtifactNode, SliceNode, StepNode, StoryNode } from "./no
  */
 
 /**
- * Invisible, not absent. The bounds are what xyflow measures, so the handle has to
- * keep its box: `display: none` would zero the rect and put us back where we started,
- * and `opacity` is the one property that hides it without moving it.
+ * Invisible, not absent. The bounds are what xyflow MEASURES, so the handle has to keep
+ * its box, and `opacity` is the one property that hides it without moving it.
  *
- * Inline rather than a rule in components.css, deliberately. xyflow's stylesheet is
- * UNLAYERED and components.css sits in layer(legacy), so an unlayered `.react-flow__handle`
- * beats any selector we could write there no matter how specific — the trap that has
- * already collapsed this canvas once. An inline style is immune to layer order.
+ * `display: none` is the trap, and not for the obvious reason. It does NOT reproduce the
+ * missing-handle bug: `querySelectorAll` is not display-aware, so `getHandleBounds` still
+ * finds the element, takes a 0x0 rect at the viewport origin, and returns bounds. No
+ * error008 is logged at all. Measured: seven edges still render, every path carries
+ * geometry, and every one starts from a coordinate with no relation to its node — they
+ * draw, and they drift as you pan. That is QUIETER than the original failure, which at
+ * least announced itself in the console.
+ *
+ * Inline rather than a rule in components.css — but not because a rule would lose. A
+ * cascade layer is only outranked on the properties the unlayered rule DECLARES
+ * (components.css:184 states this correctly), and xyflow's `.react-flow__handle` sets
+ * position, pointer-events, size, background, border and radius — no `opacity`. A
+ * `layer(legacy)` rule would have applied unopposed. Inline is still preferred: it keeps
+ * the concealment beside the handle that needs it, where the next person to touch this
+ * adapter will see it, instead of in a stylesheet 3,000 lines away whose safety depends
+ * on xyflow never adding an `opacity` of its own.
  *
  * Module scope: a fresh object identity every render would defeat memoization.
  */
