@@ -128,7 +128,14 @@ describe("MapStage", () => {
     await screen.findByText("Manage Candidate Tours");
     seedSessionFrame(client, { workspace: "smithagents" });
     await waitFor(() => expect((screen.getByLabelText("Capability") as HTMLSelectElement).value).toBe("other-cap"));
-    expect(screen.getByText("Different Activity")).toBeTruthy();
+    // AWAITED, where it used to be synchronous. The picker and the canvas settle on
+    // different ticks: the select is plain React, while a node reaches the DOM only
+    // after xyflow has adopted the re-seeded array into its own store. That was true
+    // before too — the assertion passed on an extra render pass it did not ask for,
+    // which `edges={[]}` supplied by handing xyflow a fresh array identity on every
+    // single render. Task 5 passes a memoized set instead, so the free pass is gone.
+    // Same assertion, one tick later; the sibling test below already awaited it.
+    await waitFor(() => expect(screen.getByText("Different Activity")).toBeTruthy());
     expect(screen.queryByText("Manage Candidate Tours")).toBeNull();
   });
 
@@ -380,5 +387,44 @@ describe("MapStage editing", () => {
       const slices = (call?.body as { slices?: Array<{ name: string }> })?.slices;
       expect(slices?.some((s) => s.name === "tour scheduling v2")).toBe(true);
     });
+  });
+
+  it("clicking a slice band reveals its chain and dims the rest", async () => {
+    stubFetch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    await screen.findByText("tour scheduling v1", { selector: ".slice-band__name" });
+
+    // At rest there is no anchor and no artifact node.
+    expect(document.querySelector(".map-slice-anchor")).toBeNull();
+    expect(document.querySelector(".map-artifact")).toBeNull();
+
+    await userEvent.click(screen.getByText("tour scheduling v1", { selector: ".slice-band__name" }));
+
+    // sl1 has a specPath, so a spec artifact materializes; sl1 owns s1 and s2.
+    await waitFor(() => expect(document.querySelector(".map-slice-anchor")).not.toBeNull());
+    expect(document.querySelector(".map-artifact--spec")).not.toBeNull();
+    // s3 belongs to no slice, so it dims.
+    await waitFor(() => {
+      const s3 = screen.getByText("view tour analytics").closest(".map-story");
+      expect(s3?.classList.contains("is-dimmed")).toBe(true);
+    });
+    // …and s1, which the slice owns, does not.
+    expect(screen.getByText("create tour time slots").closest(".map-story")?.classList.contains("is-dimmed")).toBe(
+      false,
+    );
+  });
+
+  it("clicking the same slice band again clears the reveal", async () => {
+    stubFetch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    const band = await screen.findByText("tour scheduling v1", { selector: ".slice-band__name" });
+    await userEvent.click(band);
+    await waitFor(() => expect(document.querySelector(".map-slice-anchor")).not.toBeNull());
+    await userEvent.click(band);
+    await waitFor(() => expect(document.querySelector(".map-slice-anchor")).toBeNull());
+    expect(document.querySelector(".map-artifact")).toBeNull();
+    expect(document.querySelector(".map-story.is-dimmed")).toBeNull();
   });
 });

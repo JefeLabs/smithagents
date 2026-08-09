@@ -1,13 +1,4 @@
-import {
-  Background,
-  Controls,
-  MiniMap,
-  type Node,
-  type NodeTypes,
-  type OnNodeDrag,
-  ReactFlow,
-  useNodesState,
-} from "@xyflow/react";
+import { Background, Controls, MiniMap, type Node, type OnNodeDrag, ReactFlow, useNodesState } from "@xyflow/react";
 // Unlayered on purpose. Every selector in this sheet is `.react-flow`-scoped, so
 // it cannot reach the card rules components.css contributes to layer(legacy) —
 // and being unlayered keeps xyflow's own chrome authoritative over them.
@@ -26,8 +17,21 @@ import {
   useSendSlice,
 } from "../queries/work";
 import { useUiStore } from "../stores/uiStore";
-import { cellAt, layoutMap, type MapNode } from "./map/layout";
-import { nodeTypes } from "./map/nodes";
+import { artifactNodesFor, buildEdges } from "./map/edges";
+import {
+  ARTIFACT_GAP,
+  ARTIFACT_PITCH,
+  cellAt,
+  layoutMap,
+  type MapNode,
+  SLICE_RAIL_X,
+  STEP_W,
+  STORIES_Y,
+  sliceNodeId,
+  stepColumns,
+} from "./map/layout";
+import { nodeTypes } from "./map/nodeTypes";
+import { useMapSelection } from "./map/useMapSelection";
 
 // Test seam: jsdom cannot synthesize xyflow pointer drags any more than it could
 // the pointer sequences of the library this replaced, so the drop handler is
@@ -132,6 +136,24 @@ export function MapStage() {
   }, [capabilitiesQuery.data, workspace]);
 
   const cap = capabilities.find((c) => c.id === activeId) ?? null;
+
+  // What the map is interrogating. Only the slice kind reveals anything today; the
+  // hook's other two exist for the detail views that come later.
+  const { selection, select } = useMapSelection();
+
+  // EVERY edge the model could draw, computed once per capability. Revealing filters
+  // this set rather than rebuilding it — clicking a band must not recompute the
+  // graph, which is why `buildEdges` stamps each edge with its `sliceId`.
+  const allEdges = useMemo(() => (cap ? buildEdges(cap) : []), [cap]);
+
+  const revealed = selection?.kind === "slice" ? selection.id : null;
+  // Resolved against the model rather than trusted from the selection, which is what
+  // makes a stale selection harmless: switch capability with a slice revealed and
+  // this find simply misses, so the reveal collapses instead of describing a slice
+  // that is no longer on screen.
+  const revealedSlice = cap?.slices.find((s) => s.id === revealed) ?? null;
+
+  const edges = useMemo(() => allEdges.filter((e) => e.sliceId === revealed), [allEdges, revealed]);
 
   // Reports whether the write survived. Only the drag path reads it — a rejected
   // move has to re-seed the canvas, because xyflow holds the dragged node's
@@ -362,16 +384,66 @@ export function MapStage() {
   // node to follow the cursor mid-drag, so the model is re-seeded into it whenever
   // it changes.
   //
-  // KEYED ON `cap` ALONE, deliberately. `decorate` closes over the create and remove
-  // helpers, which are plain consts rebuilt on every render, so it has a fresh
-  // identity every render; depending on it here would re-seed every render, and
-  // because re-seeding sets state that is an infinite update loop, not merely a slow
-  // path. Every handler it injects is a function of `cap` and nothing else, so `cap`
-  // is the real dependency.
+  // KEYED ON `cap` AND `revealedSlice`, and deliberately NOT on `decorate`. `decorate`
+  // closes over the create and remove helpers, which are plain consts rebuilt on every
+  // render, so it has a fresh identity every render; depending on it here would re-seed
+  // every render, and because re-seeding sets state that is an infinite update loop,
+  // not merely a slow path. Every handler it injects is a function of `cap` and nothing
+  // else, so `cap` is the real dependency. `revealedSlice` is safe to depend on for the
+  // opposite reason: it is an element OF `cap.slices`, so its identity only changes when
+  // the model or the selection does.
   // biome-ignore lint/correctness/useExhaustiveDependencies: decorate is unstable by construction — see above
   useEffect(() => {
-    setNodes(cap ? decorate(layoutMap(cap).nodes, new Set()) : []);
-  }, [cap, setNodes]);
+    if (!cap) {
+      setNodes([]);
+      return;
+    }
+    const base = layoutMap(cap).nodes;
+    if (!revealedSlice) {
+      setNodes(decorate(base, new Set()));
+      return;
+    }
+
+    // Dim every story the revealed slice does not own. `decorate` is the same bridge
+    // the plain path uses — revealing only changes which ids land in the dimmed set.
+    // Blank story slots match this filter too and it costs nothing: `decorate` handles
+    // blanks first and never gives them a `dimmed` field to read.
+    const inSlice = new Set(revealedSlice.storyIds);
+    const dimmedIds = new Set(base.filter((n) => n.type === "story" && !inSlice.has(n.id)).map((n) => n.id));
+    const decorated = decorate(base, dimmedIds);
+
+    const cols = stepColumns(cap.activities);
+    const rightEdge = cols.length > 0 ? cols[cols.length - 1].x + STEP_W : 0;
+    const done = revealedSlice.storyIds.filter((id) => cap.stories.find((s) => s.id === id)?.done).length;
+
+    // Typed MapNode rather than left to xyflow's Node, whose `type` is any string:
+    // this is the only thing that holds the two new union members to a level that
+    // `nodeTypes` actually registers. A typo here would otherwise render nothing and
+    // report nothing, the same silence a wrong node id buys.
+    const ephemeral: MapNode[] = [
+      {
+        // sliceNodeId, NOT a re-derived `slice:${id}`. `buildEdges` names this node as
+        // its source through the same helper, and an edge whose endpoint does not
+        // exist is silent — xyflow draws nothing and logs nothing about the id.
+        id: sliceNodeId(revealedSlice.id),
+        type: "slice",
+        position: { x: SLICE_RAIL_X, y: STORIES_Y },
+        data: { name: revealedSlice.name, fraction: `${done}/${revealedSlice.storyIds.length}` },
+        draggable: false,
+      },
+      // `a.id` is already minted by `artifactNodeId` inside `artifactNodesFor` — it is
+      // not rebuilt here, for the same reason.
+      ...artifactNodesFor(revealedSlice).map((a, i) => ({
+        id: a.id,
+        type: "artifact" as const,
+        position: { x: rightEdge + ARTIFACT_GAP, y: STORIES_Y + i * ARTIFACT_PITCH },
+        data: { kind: a.kind, label: a.label },
+        draggable: false,
+      })),
+    ];
+
+    setNodes([...decorated, ...ephemeral]);
+  }, [cap, revealedSlice, setNodes]);
 
   const onNodeDragStop: OnNodeDrag = async (_event, node) => {
     if (!cap) return;
@@ -423,13 +495,11 @@ export function MapStage() {
           <div className="map-stage__canvas">
             <ReactFlow
               nodes={nodes}
-              edges={[]}
-              // The node components take deliberately narrower props than xyflow's
-              // NodeProps, whose `data` is Record<string, unknown>. That narrowing is
-              // what lets them be rendered and asserted without xyflow present, so the
-              // cast belongs here at the mount site — widening the components to remove
-              // it would trade one line for untypable components.
-              nodeTypes={nodeTypes as unknown as NodeTypes}
+              edges={edges}
+              // No cast any more. `nodeTypes.tsx` adapts the pure cards to xyflow —
+              // handles for the edges to land on, and the data narrowing done per
+              // level — so what arrives here is already a NodeTypes.
+              nodeTypes={nodeTypes}
               onNodesChange={onNodesChange}
               onNodeDragStop={onNodeDragStop}
               nodesConnectable={false}
@@ -445,7 +515,19 @@ export function MapStage() {
               .sort((a, b) => a.order - b.order)
               .map((slice) => (
                 <div key={slice.id} className="slice-band">
-                  <span className="slice-band__name">{slice.name}</span>
+                  {/* The band is the map's one selection control, and .slice-band__name
+                      stays on the INNER span: three older tests find this band by that
+                      selector, so the click target wraps the name rather than becoming
+                      it. Selecting the same slice twice clears it — that toggle lives in
+                      useMapSelection, not here. */}
+                  <button
+                    type="button"
+                    className="slice-band__select"
+                    aria-pressed={revealed === slice.id}
+                    onClick={() => select({ kind: "slice", id: slice.id })}
+                  >
+                    <span className="slice-band__name">{slice.name}</span>
+                  </button>
                   <span className="slice-band__fraction">{doneFraction(slice)}</span>
                   {slice.specPath ? (
                     <span className="slice-band__path" title={slice.specPath}>

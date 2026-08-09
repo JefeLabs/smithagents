@@ -212,17 +212,9 @@ export function ArtifactNode({ data }: { data: { kind: string; label: string } }
   );
 }
 
-/**
- * Module scope on purpose. A fresh object identity each render makes xyflow remount
- * every node on every render.
- *
- * `slice` and `artifact` have no counterpart in `MapNode["type"]` yet — Task 5 emits
- * them; the other three are reachable today.
+/*
+ * `nodeTypes` used to live here and now lives in `nodeTypes.tsx`, which wraps each of
+ * these in the `<Handle>` pair xyflow needs to land an edge. It could not stay: `Handle`
+ * reads the ReactFlow store, so importing it here would throw in every plain render
+ * below — and this module's whole point is that these cards render without the canvas.
  */
-export const nodeTypes = {
-  activity: ActivityNode,
-  step: StepNode,
-  story: StoryNode,
-  slice: SliceNode,
-  artifact: ArtifactNode,
-} as const;

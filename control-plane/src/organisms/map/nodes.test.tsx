@@ -3,17 +3,16 @@ import userEvent from "@testing-library/user-event";
 import type { ComponentType } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { STEP_W } from "./layout";
-import { ActivityNode, ArtifactNode, type BlankNodeData, nodeTypes, SliceNode, StepNode, StoryNode } from "./nodes";
+import { ActivityNode, ArtifactNode, type BlankNodeData, SliceNode, StepNode, StoryNode } from "./nodes";
 
 const STORY = { id: "s1", stepId: "st1", order: 0, text: "create slots", done: false };
 const STEP = { id: "st1", name: "Define Tour Schedule", order: 0 };
 const ACTIVITY = { id: "act1", name: "Manage Candidate Tours", order: 0, steps: [STEP] };
 
-describe("nodeTypes", () => {
-  it("registers all five node types", () => {
-    expect(Object.keys(nodeTypes).sort()).toEqual(["activity", "artifact", "slice", "step", "story"]);
-  });
-});
+// Every case below renders a card with a plain `render()`, no canvas anywhere. That is
+// the property this module exists to keep, and the reason `nodeTypes` moved out: its
+// components wrap these in <Handle>, which reads the ReactFlow store and would throw
+// here. Its registration test moved with it, to nodeTypes.test.tsx.
 
 describe("StoryNode", () => {
   const data = {

@@ -2923,15 +2923,34 @@ button.logo {
   opacity: 0.3;
 }
 
-/* Slice anchors and artifacts. Task 5 reveals them on demand and positions them
-   (SLICE_RAIL_X / ARTIFACT_GAP); no constant governs their size, so nothing here is
-   pinned to one. */
+/* Slice anchors and artifacts. Revealed on demand and positioned by SLICE_RAIL_X /
+   ARTIFACT_GAP / ARTIFACT_PITCH in organisms/map/layout.ts.
+
+   TWO LINES, not one. Both cards carry a subtitle where a story carries only text —
+   the anchor its done fraction, the artifact its kind — and the second line is what
+   makes ARTIFACT_PITCH bigger than SLOT_H. Stacking them is not cosmetic: an
+   artifact's label is a repo path (76 characters in the test fixture), and laid out
+   as a row with the kind beside it there is nothing to ellipsis against, so the card
+   grows to its content and runs across the map instead of standing in its rail. */
 .map-slice-anchor,
 .map-artifact {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  /* Must equal SLOT_H in organisms/map/layout.ts — one story slot, so the rail
+     rhymes with the story columns beside it — and ARTIFACT_PITCH is this plus
+     STORY_GAP. Same argument as .map-story against SLOT_H: artifacts are stacked one
+     pitch apart, so a card taller than the pitch spends the gap and then overlaps the
+     one below. Measured against the app's compiled bundle, the two lines come to
+     29.5px (11.5 + 2 + 14 + 2 of border), so this contains them with room to spare
+     and the flex centring absorbs the difference. */
+  height: 38px;
+  /* Must equal STEP_W. SLICE_RAIL_X is -(STEP_W + ACTIVITY_GAP * 2), i.e. the rail is
+     one column wide by construction — a card of any other width either overhangs the
+     grid or leaves the rail ragged. */
+  width: 180px;
+  padding: 0 10px;
   border-radius: 10px;
   border: 1px solid var(--pill-br);
   background: rgba(255, 255, 255, 0.04);
@@ -2941,6 +2960,15 @@ button.logo {
 .map-artifact__kind {
   font-size: 10px;
   color: var(--text-dim);
+}
+/* A column flex item stretches to the container's width, so unlike .map-story__handle
+   these need no min-width:0 — the cross axis is already constrained. Without the
+   ellipsis the text does not clip, it spills: .map-artifact sets no overflow. */
+.map-slice-anchor__name,
+.map-artifact__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .map-stage__slices {
   display: flex;
@@ -2955,6 +2983,21 @@ button.logo {
   border: 1px solid var(--pill-br);
   border-radius: 10px;
   font-size: 12px;
+}
+/* The band's name is a button — it reveals the slice's chain on the canvas — but it
+   must not READ as one next to the real actions in the same row, so it inherits
+   everything and keeps only the cursor. */
+.slice-band__select {
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.slice-band__select[aria-pressed="true"] .slice-band__name {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 .slice-band__fraction {
   font-size: 10px;

@@ -33,6 +33,19 @@ export const SLOT_H = STORY_H + STORY_GAP;
 export const SLICE_RAIL_X = -(STEP_W + ACTIVITY_GAP * 2);
 /** Artifact nodes sit right of the last column. */
 export const ARTIFACT_GAP = ACTIVITY_GAP * 2;
+/**
+ * Vertical pitch of the artifact stack hanging off one revealed slice.
+ *
+ * Bigger than SLOT_H because an artifact card carries TWO lines where a story
+ * carries one — its kind above its label — so it is a story slot tall (SLOT_H) and
+ * the pitch adds STORY_GAP on top, exactly as SLOT_H adds it to STORY_H.
+ *
+ * The two lines measure 29.5px against the app's compiled CSS, so SLOT_H contains
+ * them with room; `.map-artifact` is pinned to it. The task sketch guessed 64 on the
+ * reasoning that two lines need roughly double a story's height, which measurement
+ * does not support — the second line is the 10px kind, not another 12px of text.
+ */
+export const ARTIFACT_PITCH = SLOT_H + STORY_GAP;
 
 /** How far outside the grid's horizontal span still counts as a valid drop. */
 const REJECT_MARGIN = STEP_W;
@@ -99,9 +112,21 @@ export interface MapModel {
   slices: CapSliceT[];
 }
 
+/**
+ * NOT every one of these comes out of `layoutMap`. Activities, steps and stories are
+ * the MODEL's levels and are laid out unconditionally; slice anchors and artifacts
+ * are EPHEMERAL — MapStage emits them only while a slice is revealed, and `cellAt`
+ * never has to resolve a drop onto one because neither is draggable.
+ *
+ * They are in the union anyway, and only since something emits them: this is the
+ * shape every node on the canvas has, not the shape `layoutMap` returns, so the
+ * ephemeral nodes are declared `MapNode` at their emission site and typed by it.
+ * While nothing emitted them the honest thing was to leave them out — a union member
+ * no producer can reach looks supported and is worse than a visible gap.
+ */
 export interface MapNode {
   id: string;
-  type: "activity" | "step" | "story";
+  type: "activity" | "step" | "story" | "slice" | "artifact";
   position: { x: number; y: number };
   /** Set for activities, which span their step group plus its trailing blank; steps and stories use STEP_W. */
   width?: number;
