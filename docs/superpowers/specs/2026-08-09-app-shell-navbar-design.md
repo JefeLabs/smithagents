@@ -136,9 +136,12 @@ would export an ambient the channel cannot honour.
 
 - No broker or swarm change. No new endpoints. Every action reuses existing wiring.
 - No change to `api/`, `queries/`, or the socket store's frame handling.
-- Not a redesign of the left rail's tools beyond two changes: the logo moves to the
-  navbar, and the Plus is repurposed from "New workspace" to "New session". Sessions,
-  Board, Map and Settings are untouched.
+- The left rail **is** rebuilt — on HeroUI `Sidebar`, with the logo moved to the navbar
+  and the Plus repurposed from "New workspace" to "New session". What stays out of scope
+  is changing *which* tools it offers: Sessions, Board, Map and Settings keep their
+  meaning and their destinations.
+- The **right** rail (`AgentRoster`) is untouched. It stays fixed-position and is HeroUI
+  Phase 2 work, along with the last dnd-kit usage it carries.
 - Cloud authentication itself. This design reserves the slot; it does not build login.
 
 ---
