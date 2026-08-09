@@ -29,8 +29,19 @@
  * at the import. Wrapping its 2896 lines in `@layer legacy { … }` behaves identically
  * in the browser, but Biome then demands the whole file be re-indented — churning
  * every line and destroying its blame history for a purely mechanical reason.
+ *
+ * `properties` is named here, first, because of @heroui-pro/react/css below: it
+ * declares `@layer properties, theme, components`, and per the cascade-layers spec a
+ * layer name seen for the first time at a *later* import is appended to the END of
+ * the order — silently outranking `overrides`, the one layer that's supposed to beat
+ * everything. Naming it first here keeps it lowest-priority, which is where a
+ * `@property` polyfill fallback belongs: confirmed (by reading the compiled bundle)
+ * that this layer contains exactly one `@supports` fallback rule initializing
+ * Tailwind's internal `--tw-*` custom properties on `*, ::before, ::after,
+ * ::backdrop` — never a real visual property, and nothing in it needs to beat
+ * `theme`.
  */
-@layer theme, base, components, legacy, utilities, overrides;
+@layer properties, theme, base, components, legacy, utilities, overrides;
 
 /* This pulls in Tailwind v4 itself. Do NOT also `@import "tailwindcss"` here, or
    preflight is emitted twice. */
@@ -43,7 +54,9 @@
  * layout was silently absent, and the aside was falling back to plain block flow.
  * This bundle is pre-compiled output (already-expanded Tailwind, not source), and
  * unlike @heroui/styles it declares no `base` layer — no preflight inside it, so no
- * repeat of the double-preflight bug the comment above describes. */
+ * repeat of the double-preflight bug the comment above describes. It DOES declare
+ * `properties, theme, components` — the `properties` name is why it's named first in
+ * the @layer statement above; see that comment. */
 @import "@heroui-pro/react/css";
 
 @import "./components.css" layer(legacy);

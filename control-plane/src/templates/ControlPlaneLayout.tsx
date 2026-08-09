@@ -58,6 +58,11 @@ export function ControlPlaneLayout({
       <Sidebar.Provider defaultOpen={false} collapsible="icon" navigate={(href) => void router.navigate({ to: href })}>
         {leftRail}
         <Sidebar.Main>
+          {/* rightRail (AgentRoster) is still position: fixed and untouched CSS-wise, but its
+              containment changed: it's no longer a root-level sibling, it's nested inside
+              Sidebar.Provider's stacking context. Nothing breaks today (checked the z-index
+              math), but HeroUI Phase 2 — which migrates this rail and retires the last
+              dnd-kit usage — should know that before it starts. */}
           {rightRail}
           {stage}
         </Sidebar.Main>
