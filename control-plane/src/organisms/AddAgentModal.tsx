@@ -774,7 +774,7 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
                       <button
                         key={g}
                         type="button"
-                        className={`chip${gender === g ? " is-picked" : ""}`}
+                        className={`sm-chip${gender === g ? " is-picked" : ""}`}
                         onClick={() => setValue("gender", g)}
                       >
                         {g}

@@ -100,7 +100,7 @@ button.logo {
 }
 
 /* right rail: agent avatars */
-.avatar {
+.sm-avatar {
   position: relative;
   width: 44px;
   height: 44px;
@@ -120,17 +120,17 @@ button.logo {
     transform 0.18s ease,
     box-shadow 0.18s ease;
 }
-.avatar:hover {
+.sm-avatar:hover {
   transform: translateX(-3px) scale(1.05);
   box-shadow:
     inset 0 0 0 1.5px var(--ring),
     0 0 0 4px color-mix(in srgb, var(--ring) 22%, transparent);
 }
-.avatar:focus-visible {
+.sm-avatar:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
 }
-.avatar .status {
+.sm-avatar .status {
   position: absolute;
   right: -1px;
   bottom: -1px;
@@ -140,16 +140,16 @@ button.logo {
   background: var(--online);
   border: 2.5px solid var(--ground);
 }
-.avatar .status--busy {
+.sm-avatar .status--busy {
   background: #e0a15a;
 }
-.avatar .status--in-meeting {
+.sm-avatar .status--in-meeting {
   background: var(--accent);
 }
-.avatar .status--offline {
+.sm-avatar .status--offline {
   background: #9aa3b2;
 }
-.avatar .group-badge {
+.sm-avatar .group-badge {
   position: absolute;
   left: -4px;
   bottom: -4px;
@@ -162,11 +162,11 @@ button.logo {
   color: var(--text-2);
   border: 1.5px solid var(--pill-br);
 }
-.avatar .group-badge svg {
+.sm-avatar .group-badge svg {
   width: 9px;
   height: 9px;
 }
-.avatar .hand {
+.sm-avatar .hand {
   position: absolute;
   left: -5px;
   top: -5px;
@@ -180,7 +180,7 @@ button.logo {
   border: 2px solid var(--ground);
   animation: hand-wave 1.6s ease-in-out infinite;
 }
-.avatar .hand svg {
+.sm-avatar .hand svg {
   width: 10px;
   height: 10px;
 }
@@ -193,7 +193,7 @@ button.logo {
     transform: rotate(14deg);
   }
 }
-.avatar .engine-warning {
+.sm-avatar .engine-warning {
   position: absolute;
   right: -5px;
   top: -5px;
@@ -206,11 +206,11 @@ button.logo {
   color: #fff;
   border: 2px solid var(--ground);
 }
-.avatar .engine-warning svg {
+.sm-avatar .engine-warning svg {
   width: 10px;
   height: 10px;
 }
-.avatar .tip {
+.sm-avatar .tip {
   position: absolute;
   right: 56px;
   top: 50%;
@@ -230,20 +230,20 @@ button.logo {
     transform 0.16s ease;
   z-index: 5;
 }
-.avatar .tip b {
+.sm-avatar .tip b {
   display: block;
   font-weight: 600;
 }
-.avatar .tip span {
+.sm-avatar .tip span {
   color: var(--text-2);
   font-size: 11px;
 }
-.avatar:hover .tip,
-.avatar:focus-visible .tip {
+.sm-avatar:hover .tip,
+.sm-avatar:focus-visible .tip {
   opacity: 1;
   transform: translateY(-50%) translateX(0);
 }
-.avatar__img {
+.sm-avatar__img {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -450,7 +450,7 @@ button.logo {
      working   — on a task, a dotted ring rotates clockwise
    Both are drawn on a ::after overlay rather than the button's own border, so
    the identity ring underneath stays exactly where it is. */
-.avatar[data-state]::after {
+.sm-avatar[data-state]::after {
   content: "";
   position: absolute;
   inset: -5px;
@@ -459,7 +459,7 @@ button.logo {
 }
 
 /* Listening: a soft pulse outward — "I heard my name". */
-.avatar[data-state="listening"]::after {
+.sm-avatar[data-state="listening"]::after {
   border: 2px solid var(--ring, #6f8dff);
   animation: ring-pulse 1.25s ease-out infinite;
 }
@@ -479,7 +479,7 @@ button.logo {
 }
 
 /* Working: a dotted ring turning clockwise — motion means progress. */
-.avatar[data-state="working"]::after {
+.sm-avatar[data-state="working"]::after {
   border: 2px dotted var(--ring, #6f8dff);
   opacity: 0.85;
   animation: ring-spin 3.2s linear infinite;
@@ -493,8 +493,8 @@ button.logo {
 /* Respect a stated preference for less motion: keep the state legible as a
    steady ring rather than animating it. */
 @media (prefers-reduced-motion: reduce) {
-  .avatar[data-state="listening"]::after,
-  .avatar[data-state="working"]::after {
+  .sm-avatar[data-state="listening"]::after,
+  .sm-avatar[data-state="working"]::after {
     animation: none;
     opacity: 0.7;
   }
@@ -593,10 +593,10 @@ button.logo {
   touch-action: none; /* the drag owns the gesture on touch screens */
   cursor: grab;
 }
-.roster-item--wiggle .avatar {
+.roster-item--wiggle .sm-avatar {
   animation: jiggle 0.28s ease-in-out infinite alternate;
 }
-.roster-item:nth-child(even).roster-item--wiggle .avatar {
+.roster-item:nth-child(even).roster-item--wiggle .sm-avatar {
   animation-delay: 0.14s;
 }
 @keyframes jiggle {
@@ -615,17 +615,17 @@ button.logo {
   z-index: 30;
   opacity: 0.85;
 }
-.roster-item--dragging .avatar {
+.roster-item--dragging .sm-avatar {
   animation: none;
 }
-.roster-item--combine .avatar {
+.roster-item--combine .sm-avatar {
   outline: 2.5px solid var(--accent);
   outline-offset: 3px;
   border-radius: 50%;
   transform: scale(1.12);
   transition: transform 120ms ease;
 }
-.roster-item--expanded .avatar {
+.roster-item--expanded .sm-avatar {
   outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
   outline-offset: 2px;
   border-radius: 50%;
@@ -1108,7 +1108,7 @@ button.logo {
   gap: 8px;
   flex-wrap: wrap;
 }
-.chip {
+.sm-chip {
   padding: 7px 12px;
   border-radius: 999px;
   border: 1px solid var(--pill-br);
@@ -1118,7 +1118,7 @@ button.logo {
   font-size: 13px;
   cursor: pointer;
 }
-.chip[aria-pressed="true"] {
+.sm-chip[aria-pressed="true"] {
   border-color: var(--accent);
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
@@ -1204,7 +1204,7 @@ button.logo {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-.hidden {
+.sm-hidden {
   display: none !important;
 }
 
@@ -1528,7 +1528,7 @@ button.logo {
   font-size: 11.5px;
   color: var(--text-2);
 }
-.chip {
+.sm-chip {
   padding: 4px 10px;
   border-radius: 999px;
   border: 1px solid var(--pill-br);
@@ -1538,7 +1538,7 @@ button.logo {
   font-size: 11.5px;
   cursor: pointer;
 }
-.chip.is-picked {
+.sm-chip.is-picked {
   color: var(--accent);
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
@@ -1676,12 +1676,12 @@ button.logo {
   opacity: 0.5;
   cursor: default;
 }
-.avatar-gen {
+.sm-avatar-gen {
   display: flex;
   align-items: center;
   gap: 10px;
 }
-.avatar-gen__preview {
+.sm-avatar-gen__preview {
   display: grid;
   place-items: center;
   width: 48px;
@@ -1692,7 +1692,7 @@ button.logo {
   flex: none;
   color: var(--text-2);
 }
-.avatar-gen__preview img {
+.sm-avatar-gen__preview img {
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -2494,15 +2494,15 @@ main.chat-active .composer-dock {
   align-items: center;
   gap: 4px;
 }
-.board-card__delegation .avatar {
+.board-card__delegation .sm-avatar {
   width: 22px;
   height: 22px;
   font-size: 10px;
 }
-.board-card__delegation.is-completed .avatar {
+.board-card__delegation.is-completed .sm-avatar {
   --ring: #5fd0b0;
 }
-.board-card__delegation.is-failed .avatar {
+.board-card__delegation.is-failed .sm-avatar {
   --ring: #f2778f;
 }
 .board-card__pr {

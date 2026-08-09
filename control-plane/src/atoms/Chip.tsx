@@ -6,7 +6,7 @@ interface ChipProps {
 
 export function Chip({ label, pressed, onToggle }: ChipProps) {
   return (
-    <button type="button" className="chip" aria-pressed={pressed} onClick={onToggle}>
+    <button type="button" className="sm-chip" aria-pressed={pressed} onClick={onToggle}>
       {label}
     </button>
   );

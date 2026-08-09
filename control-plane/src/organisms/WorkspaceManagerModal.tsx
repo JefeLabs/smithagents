@@ -365,7 +365,7 @@ export function WorkspaceManagerModal({
                     <span className="workspace-row__name">{ws.name}</span>
                     <span className="workspace-row__meta">
                       {ws.repos.length} repo{ws.repos.length === 1 ? "" : "s"}
-                      {ws.default && <span className="chip is-picked">default</span>}
+                      {ws.default && <span className="sm-chip is-picked">default</span>}
                     </span>
                   </button>
                   <button

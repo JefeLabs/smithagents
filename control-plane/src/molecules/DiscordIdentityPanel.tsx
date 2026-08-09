@@ -11,7 +11,7 @@ interface DiscordIdentityPanelProps {
 
 export function DiscordIdentityPanel({ mode, onModeChange, hidden = false }: DiscordIdentityPanelProps) {
   return (
-    <div className={hidden ? "field hidden" : "field"}>
+    <div className={hidden ? "field sm-hidden" : "field"}>
       {/* biome-ignore lint/a11y/noLabelWithoutControl: artifact-faithful markup — this label captions the whole segmented group (.field > label styling) */}
       <label>Discord identity — how it appears on the server</label>
       <SegmentedControl
@@ -24,13 +24,13 @@ export function DiscordIdentityPanel({ mode, onModeChange, hidden = false }: Dis
         onSelect={(id) => onModeChange(id as DiscordMode)}
       />
       <div className="discord-panel">
-        <div className={mode === "webhook" ? "" : "hidden"}>
+        <div className={mode === "webhook" ? "" : "sm-hidden"}>
           <p className="note">
             <b>Distinct sender — no token.</b> Posts as this agent’s name &amp; avatar in every channel, seen by
             everyone. Rides the shared bot’s <em>Manage&nbsp;Webhooks</em> permission. No presence in the member list.
           </p>
         </div>
-        <div className={mode === "bot" ? "" : "hidden"}>
+        <div className={mode === "bot" ? "" : "sm-hidden"}>
           <p className="note">
             <b>A real member.</b> Appears in the member list with presence and can join voice — needs its own bot token.
           </p>

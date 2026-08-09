@@ -42,10 +42,10 @@ export function Avatar({
   useEffect(() => setBroken(false), [image]);
   const ringStyle = { ...(ring ? { "--ring": ring } : {}), ...style } as CSSProperties;
   const face =
-    image && !broken ? <img className="avatar__img" src={image} alt="" onError={() => setBroken(true)} /> : initial;
+    image && !broken ? <img className="sm-avatar__img" src={image} alt="" onError={() => setBroken(true)} /> : initial;
   if (!interactive) {
     return (
-      <span className="avatar" role="img" data-state={state} style={ringStyle} title={label} aria-label={label}>
+      <span className="sm-avatar" role="img" data-state={state} style={ringStyle} title={label} aria-label={label}>
         {face}
         {children}
       </span>
@@ -54,7 +54,7 @@ export function Avatar({
   return (
     <button
       type="button"
-      className="avatar"
+      className="sm-avatar"
       data-state={state}
       style={ringStyle}
       title={label}
