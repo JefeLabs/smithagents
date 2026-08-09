@@ -1203,15 +1203,44 @@ Replace the whole `<DndContext>…</DndContext>` block (lines 478-552) with:
           </div>
 ```
 
-**The add-activity and add-step composers leave the canvas.** They were `.map-activity--composer`
-and `.map-step--composer` pseudo-columns whose only job was to sit at the end of a row —
-positions the canvas now derives, so a fake column has nowhere to live. Add-activity moves
-to the row beneath the canvas, shown above. Add-step becomes a `+` button on the activity
-node that appends a step named from the same `register("stepNames.…")` binding.
+**SUPERSEDED — the composers become blank cards, not separate controls.** Edwin,
+2026-08-09: *"I expect the next card expected to be filled to already exist and allow the
+user to fill it in."*
 
-The add-**story** input stays inside `StepNode`, wrapped in `nodrag` (Task 2 already does
-this). It is a single control in a spatially-meaningful place, unlike the slice bands'
-six.
+The original approach here was to move add-activity below the canvas and turn add-step
+into a `+` button. Do neither. Instead, **every level always renders one empty card in
+place**, at the position the next real card would occupy:
+
+- each activity row ends with an empty activity card
+- each activity's step row ends with an empty step card
+- each step's story stack ends with an empty story card
+
+Typing into an empty card and committing (Enter, or blur with non-empty text) creates the
+real record and a fresh empty card appears after it. The three `placeholder="Add a …"`
+inputs are deleted — the card *is* the input.
+
+Why this is better than a composer, and why it suits the canvas specifically:
+
+- **The layout module already knows where it goes.** `layoutMap(model)` derives every
+  position; an empty card is just the next cell in the sequence, so it needs no fake
+  column and no special case below the canvas. The original plan had to relocate
+  add-activity precisely *because* a pseudo-column had nowhere to live — a real cell does.
+- **`cellAt(pos, model)` stays the exact inverse.** A trailing empty cell is a position the
+  model can already name; a floating composer beneath the canvas is not.
+- One interaction for reading and writing, at every level, instead of cards for reading
+  and three differently-shaped controls for writing.
+
+**Three things to get right:**
+
+1. **The empty card is not a record.** It has no id and never reaches the server until
+   committed. `CapStoryT`/`CapActivityT` gain no "draft" field, and `patchCap` sees a
+   normal create. If you find yourself adding an `isDraft` flag to the model, stop — the
+   emptiness is a render concern, not data.
+2. **Committing empty is a no-op**, not an empty record. Blur with no text leaves the card
+   as it was.
+3. **The empty card is not draggable and not a drop target.** Wrap it `nodrag` like the
+   existing story input, and exclude it from `cellAt`'s hit-testing, or a drop can land on
+   a cell that does not exist yet.
 
 **Error surfacing needs no new work:** `patchCap` already calls `setError`, and
 `MapStage` already renders `{displayError && <p className="wizard__error">…}` at line
