@@ -215,6 +215,66 @@ network call.
 viewing lens across every workspace, which is what `BoardStage`'s aggregate scope already
 means.
 
+### The selector is context-aware: one active workspace, many viewed
+
+Edwin, 2026-08-09: *"this would allow to select multiple workspaces on one kanban view."*
+
+This is not two behaviours bolted onto one control. It surfaces a split the rest of this
+design already implies: **the dropdown does two different jobs, and only on the voice
+stage do they coincide.**
+
+| Job                   | Cardinality         | Drives                                                                                |
+| --------------------- | ------------------- | ------------------------------------------------------------------------------------- |
+| **Active workspace**  | exactly one, always | the active session, and therefore every delegation, `lookup_ticket` and `search_docs` |
+| **Viewed workspaces** | one or more         | what Board and Map render — nothing else                                              |
+
+You cannot activate three sessions, so the first can never be a set. But looking at three
+workspaces' boards at once requires activating nothing, so the second was never really
+bound to one.
+
+**Behaviour by stage:**
+
+- **Voice / chat** — single-select only. Picking a workspace activates its newest session,
+  exactly as described above. Viewing and dispatch are the same thing here.
+- **Board / Map** — the active workspace is still single-select and still shown as such,
+  and additional workspaces can be toggled *into the view*. The active session is
+  untouched by those toggles.
+
+**"All workspaces" becomes the degenerate case** of the same mechanism rather than a
+separate mode — it is "every workspace selected", not a magic sentinel. The
+`aggregateView: boolean` this spec proposed earlier is replaced by
+`viewedWorkspaces: ReadonlySet<string> | "*"` in `uiStore`, still view-only, still never
+affecting dispatch.
+
+**Why this is cheap: the rendering already exists.** `tabsFor(boards, scope)`
+(`src/lib/board-aggregate.ts:67`) already emits `clustered: true` tabs that span several
+workspaces' boards — that is what `ALL_WORKSPACES` produces today. Multiselect is a
+narrower input to a path that is already built and already tested. The filter changes
+from an equality check to a set membership check:
+
+```ts
+// today — scope is a single name
+const matchesToday = boards.filter(
+  (b) => b.type === type && (all ? Boolean(b.workspaceId) : b.workspaceId === scope),
+);
+// multi — scope is a set
+const matchesMulti = boards.filter(
+  (b) => b.type === type && (all ? Boolean(b.workspaceId) : selected.has(b.workspaceId ?? "")),
+);
+```
+
+and `clustered` becomes `all || selected.size > 1`.
+
+**Two rules this must not break:**
+
+- **Cards still resolve by `cardId`, never by the tab's board.** A tab spanning three
+  workspaces makes this more load-bearing, not less — `BoardStage` already looks up
+  `boards.find((b) => b.cards.some((c) => c.id === cardId))` for exactly this reason.
+- **Creating a card needs an unambiguous target.** Today the add control is hidden under
+  `ALL_WORKSPACES` scope (`addable={scope === ALL_WORKSPACES ? [] : …}`). The same rule
+  applies whenever more than one workspace is viewed: **you may look at many, but you may
+  only add to one.** Hide the add control unless exactly one workspace is selected.
+
 ### "New workspace…" lives in the selector
 
 The dropdown's last item opens the create-workspace flow (`setNewWorkspaceOpen(true)`).
