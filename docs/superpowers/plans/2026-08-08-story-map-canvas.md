@@ -1329,15 +1329,9 @@ its `dimmedIds` argument rather than adding a second path:
               dimmed,
               storyCount: storiesFor(step.id).length,
               onRemove: () => removeStep(activity, step.id),
-              addStoryInput: (
-                <input
-                  placeholder="Add a story…"
-                  {...register(`storyTexts.${step.id}`)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") addStory(step.id);
-                  }}
-                />
-              ),
+              // NO addStoryInput. The blank story card IS that input — building both
+              // renders the same affordance twice per column. See the amendment at the
+              // top of this task.
             },
           } as Node;
         }
@@ -1523,6 +1517,24 @@ Confirm on the story map stage: the grid renders as a canvas; scroll wheel zooms
 drag on empty space pans; the minimap reflects the map; dragging a story by its text
 handle moves it and it lands in the target column; the slice select and remove button
 inside a story still work and do **not** start a drag.
+
+**The blank cards are the feature, and nothing before this task could test them. All three,
+explicitly:** click into the blank **activity** card, the blank **step** card and the blank
+**story** card; type; press Enter; confirm each creates a record and a fresh blank appears
+after it. Then click into one, type nothing, and click away — it must be a no-op, not an
+empty record.
+
+If a blank card cannot be focused, `nodrag` is not doing what Task 2 assumed. Its tests
+assert only that the class is PRESENT — `@xyflow/react` was not installed then, so nobody
+has ever verified a blank card is typeable on a live canvas. **Do all three levels, not
+just story:** `onCommit` is called unguarded, so a level whose `decorate` forgets to supply
+it throws a TypeError on Enter rather than no-op'ing.
+
+**Also confirm each activity card visibly spans its step group.** `.map-activity__name` has
+no CSS width fallback — the width comes only from the inline `style={{ width }}` fed by
+`NodeProps`. If the installed xyflow does not hand `width` to node components, every
+activity silently collapses to content width and **no unit test catches it**, because the
+tests supply `width` explicitly.
 
 Check all four themes (`data-theme` unset / `light` / `midnight` / `sand`).
 
