@@ -10,6 +10,7 @@ import { useSpokenReplies } from "../hooks/useSpokenReplies";
 import { useTheme } from "../hooks/useTheme";
 import { AlertMenu } from "../molecules/AlertMenu";
 import { ConfirmSheet } from "../molecules/ConfirmSheet";
+import { OperatorAvatar } from "../molecules/OperatorAvatar";
 import { WorkspaceSelector } from "../molecules/WorkspaceSelector";
 import { AddAgentModal } from "../organisms/AddAgentModal";
 import { AgentRoster } from "../organisms/AgentRoster";
@@ -181,6 +182,7 @@ export function HomePage() {
           onHome={() => void navigate({ to: "/" })}
           workspaceSlot={<WorkspaceSelector />}
           alertSlot={<AlertMenu onNavigate={(t) => void navigate({ to: t })} />}
+          avatarSlot={<OperatorAvatar />}
         />
       }
       background={<DotGridCanvas params={gridParams} />}
