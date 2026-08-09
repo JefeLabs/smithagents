@@ -101,3 +101,92 @@ body {
     opacity: 0;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   UNLAYERED ON PURPOSE. Everything below has to beat a stylesheet that is
+   itself unlayered, and no rule in components.css can — that file is wrapped in
+   `layer(legacy)`, and per the cascade-layers spec an unlayered declaration
+   beats every layered one regardless of specificity. Putting these here is the
+   fix; raising specificity in components.css is not, and has already been tried.
+   --------------------------------------------------------------------------- */
+
+/* Stage overrides that .stage's own defaults would otherwise win.
+   `.stage` (above) centres its content and pads 24px, which is right for the
+   voice and work stages — a 720px column centred in the viewport — and wrong
+   for the two stages that lay out columns edge to edge. Those two declared
+   `align-items: stretch` etc. in components.css and NONE of it took effect:
+   measured live, .board-stage computed padding 24px / gap 30px / center /
+   center while its own rule asked for 14px / 10px / stretch / flex-start.
+   Doubling the class (`.stage.board-stage`) also outranks `.stage` on
+   specificity, so this holds regardless of source order. */
+.stage.board-stage,
+.stage.map-stage {
+  align-items: stretch;
+  justify-content: flex-start;
+  padding: 14px;
+  gap: 10px;
+}
+
+/* React Flow's own controls, themed. Its stylesheet is imported from
+   MapStage.tsx as a bare `import "@xyflow/react/dist/style.css"`, which Vite
+   injects UNLAYERED — so it beats components.css too, and its defaults (white
+   buttons, black glyphs, white minimap) sit on our dark ground unchanged.
+   The `.react-flow` ancestor is here to outrank xyflow's single-class rules on
+   specificity, so this does not depend on which stylesheet is injected first. */
+.react-flow .react-flow__controls {
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.35);
+  border: 1px solid var(--pill-br);
+  border-radius: 10px;
+  overflow: hidden;
+  backdrop-filter: blur(12px) saturate(1.2);
+  -webkit-backdrop-filter: blur(12px) saturate(1.2);
+}
+.react-flow .react-flow__controls-button {
+  background: var(--pill);
+  border-bottom: 1px solid var(--pill-br);
+  width: 28px;
+  height: 28px;
+}
+.react-flow .react-flow__controls-button:last-child {
+  border-bottom: none;
+}
+.react-flow .react-flow__controls-button:hover {
+  background: var(--pill-hover, rgb(255 255 255 / 0.08));
+}
+/* xyflow ships its glyphs as <svg> children with a hard-coded black fill. */
+.react-flow .react-flow__controls-button svg {
+  fill: var(--text-2);
+}
+.react-flow .react-flow__controls-button:hover svg {
+  fill: var(--text);
+}
+.react-flow .react-flow__controls-button:disabled svg {
+  fill: var(--text-2);
+  opacity: 0.35;
+}
+
+.react-flow .react-flow__minimap {
+  background: var(--pill);
+  border: 1px solid var(--pill-br);
+  border-radius: 10px;
+  overflow: hidden;
+}
+/* The mask is the dimmed area OUTSIDE the current viewport rectangle, so it
+   wants to read as "not here" against the panel rather than as a highlight. */
+.react-flow .react-flow__minimap-mask {
+  fill: rgb(0 0 0 / 0.45);
+}
+.react-flow .react-flow__minimap-node {
+  fill: var(--text-2);
+  stroke: none;
+}
+
+/* The "React Flow" attribution: keep it (the licence asks for it) but stop it
+   sitting as a bright chip on a dark canvas. */
+.react-flow .react-flow__attribution {
+  background: transparent;
+}
+.react-flow .react-flow__attribution a {
+  color: var(--text-2);
+  opacity: 0.5;
+}

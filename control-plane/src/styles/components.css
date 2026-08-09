@@ -2535,13 +2535,13 @@ button.logo {
 .board-stage {
   display: flex;
   flex-direction: column;
-  gap: 10px;
   min-height: 0;
-  padding: 14px;
-  /* .stage (base.css) centers its content by default; undo that so columns fill
-     the available width instead of clustering in the middle. */
-  align-items: stretch;
-  justify-content: flex-start;
+  /* padding, gap, align-items and justify-content live in base.css as
+     `.stage.board-stage`. They CANNOT work from here: `.stage` is unlayered and this
+     file is `layer(legacy)`, so an unlayered declaration wins whatever the specificity.
+     They sat here inert for as long as this rule existed — measured live, this stage
+     computed padding 24px / gap 30px / center / center while asking for 14/10/stretch/
+     flex-start. Do not move them back. */
 }
 .board-stage__bar {
   display: flex;
@@ -2765,18 +2765,11 @@ button.logo {
 .map-stage {
   display: flex;
   flex-direction: column;
-  gap: 10px;
   min-height: 0;
-  padding: 14px;
-  /* Intended to undo .stage's centring so cards fill the width — see .board-stage,
-     which states it correctly. CORRECTED: this element is a <section> carrying BOTH
-     .stage and .map-stage (MapStage.tsx renders `className="stage map-stage"`), not a
-     <main>; base.css has no `main` selector at all. It is worth being exact, because
-     .stage is UNLAYERED and this rule is in layer(legacy), so the line below LOSES to
-     `.stage { align-items: center }` regardless of specificity and does not currently
-     take effect. .map-stage__canvas sets align-self instead, for that reason. */
-  align-items: stretch;
-  justify-content: flex-start;
+  /* Same as `.board-stage`: padding, gap, align-items and justify-content are in
+     base.css as `.stage.map-stage`, because `.stage` is unlayered and this file is
+     `layer(legacy)`. `.map-stage__canvas` also sets `align-self`, which is a different
+     property on a different element and therefore layer-proof on its own. */
 }
 .map-stage__bar,
 .map-stage__composer {
