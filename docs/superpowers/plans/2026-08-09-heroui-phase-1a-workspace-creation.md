@@ -1404,11 +1404,25 @@ Expected: PASS. Record the count.
 This suite carries three `noNonNullAssertion` lint warnings today (lines 57, 82, 186).
 Leave them — fixing them here mixes a lint cleanup into a migration diff.
 
-- [ ] **Step 2: Capture before-screenshots**
+- [ ] **Step 2: Capture before-screenshots — or declare that you cannot**
 
 ```
 .screenshots/phase1a/workspace-manager-{dark,light,midnight,sand}-before.png
 ```
+
+This needs the app running (`pnpm dev`, plus a broker on 127.0.0.1:7790 for the modal to
+list anything) and a browser. A Playwright MCP server is available if you have it.
+
+**If you cannot run the app, do not skip this silently and do not proceed as though the
+gate passed.** Write `SCREENSHOT GATE NOT RUN — <reason>` at the top of your report, do
+the code work, and say plainly in your summary that the no-redesign constraint is
+**unverified**. A skipped gate reported as a passed gate is worse than no gate: this is
+the only task in the phase whose entire acceptance criterion is visual, and the whole
+point of it is that `WorkspaceManagerModal` must look unchanged while `NewWorkspaceModal`
+(Task 5) deliberately does not.
+
+Task 7's UI smoke is the backstop, and it is a human-run step — so an honest "not run"
+here routes the check to someone who can actually perform it. A false pass does not.
 
 - [ ] **Step 3: Replace the scrim and header**
 
