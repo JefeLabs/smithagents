@@ -1874,6 +1874,7 @@ Confirm in all four themes.
 
 ```bash
 git -C /Users/edwincruz/Development/Workspaces/jefelabs/smithagents add \
+  control-plane/src/organisms/map/layout.ts \
   control-plane/src/organisms/MapStage.tsx control-plane/src/organisms/MapStage.test.tsx \
   control-plane/src/styles/components.css
 git -C /Users/edwincruz/Development/Workspaces/jefelabs/smithagents commit -m "feat: on-demand traceability reveal on the story map
@@ -1886,7 +1887,11 @@ The band keeps .slice-band__name on an inner span — the click target
 wraps it, so the three existing selector-based tests are untouched."
 ```
 
-Verify **3 files changed**.
+Verify **4 files changed** — `layout.ts` included. The original said three and omitted it,
+which would leave `ARTIFACT_PITCH` and the widened `MapNode` union uncommitted while
+`MapStage.tsx` imports them: **the commit would not build, and the "3 files" check would
+pass while the tree was broken.** A verification step that confirms a wrong number is worse
+than no verification step.
 
 ---
 
