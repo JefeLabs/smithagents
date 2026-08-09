@@ -275,6 +275,45 @@ and `clustered` becomes `all || selected.size > 1`.
   applies whenever more than one workspace is viewed: **you may look at many, but you may
   only add to one.** Hide the add control unless exactly one workspace is selected.
 
+### Saved workspace groups — specced, deliberately NOT in this plan
+
+Edwin, 2026-08-09: *"allow user to define custom groupings of workspaces to generate
+custom views, but still allow selecting single workspaces."*
+
+Coherent, and it fits the split above without straining it: **a group is a view, never a
+dispatch target.** Selecting one changes what Board and Map render and leaves the active
+session exactly where it was — the same rule multiselect follows. Single-workspace
+selection is unaffected and still activates a session.
+
+**A saved group is a named multiselect.** That is not a simplification, it is the whole
+implementation: the mechanism it needs is `viewedWorkspaces`, which does not exist yet.
+So this is strictly downstream — not a preference about ordering, a dependency. Build
+multiselect, live with it, then decide whether ad-hoc selection is actually painful
+enough to warrant saved groups and a management UI.
+
+The dropdown would then have three kinds of entry, which is the point at which its
+information design needs real thought rather than another bullet in this spec:
+
+- individual workspaces — single-select, activates a session
+- saved groups — multi-view, activates nothing
+- "All workspaces" — the degenerate group
+
+**The real decision is persistence, and it is not obvious.**
+
+| Option                                   | Cost                                                                                  | Consequence                                                                                                                                           |
+| ---------------------------------------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Client-only (`uiStore` + `localStorage`) | zero broker change; honours this spec's current non-goals                             | groups are per-browser. Lost on another machine, lost on a cache clear. A group you built across eight workspaces is real work to lose.               |
+| On `MeRecord`                            | small broker change — one field; `GET`/`PUT /me` already exist and PUT already merges | groups follow the operator, survive reinstall, and are already in the right shape for the hosted switchboard, where "operator" becomes a real account |
+
+**Recommendation: `MeRecord`.** Groups are operator preference, and operator preference
+should follow the operator rather than the browser. `MeRecord` is `{id, name, connectors}`
+today with a live merging PUT, so this is adding a field to an existing record — not a new
+endpoint, and not a schema invention.
+
+That does break this spec's *"No broker or swarm change"* non-goal. Recorded as a
+decision for Edwin rather than resolved here — and one that only needs making when this
+work actually starts, which is after the navbar ships.
+
 ### "New workspace…" lives in the selector
 
 The dropdown's last item opens the create-workspace flow (`setNewWorkspaceOpen(true)`).
