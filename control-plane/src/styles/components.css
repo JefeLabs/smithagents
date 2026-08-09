@@ -172,6 +172,24 @@
 .sidebar {
   height: auto; /* let flex align-items:stretch fill the provider's real height instead of forcing 100svh */
 }
+/* HeroUI's sidebar.css hides the rail entirely below 768px:
+     @media (max-width:768px){.sidebar,.sidebar__offcanvas-wrapper{display:none}}
+   It expects `Sidebar.Mobile` + `Sidebar.Trigger` to take over, and ToolRail composes
+   neither — so without this rule New session, Sessions, Board, Map and Settings are ALL
+   unreachable below 768px and the only way to change stage is typing a URL hash.
+   (Measured in Chromium at 700px: display:none, width 0, zero reachable controls.)
+
+   Note this is a SECOND instance of the trap that renamed .navbar to .sm-navbar: the rule
+   above wins on `height` and on nothing else, so HeroUI's `display: none` applied
+   unopposed. A cascade layer wins only on the properties it DECLARES.
+
+   Composing Sidebar.Mobile with a trigger is the real fix and is Phase 2 work; a cramped
+   rail beats no navigation until then. */
+@media (max-width: 768px) {
+  .sidebar {
+    display: flex;
+  }
+}
 .sidebar__main {
   min-height: 0; /* same reason as .sidebar above */
   /* The right rail (AgentRoster) is still position:fixed — HeroUI Phase 2 work,

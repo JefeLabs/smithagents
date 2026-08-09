@@ -1089,6 +1089,20 @@ in blank data, so `decorate` closes over the parent and the component never lear
 Wire `onCommit` to the existing create mutations — this is where the three deleted
 composers' behaviour now lives.
 
+**4. THE VISUAL SMOKE MUST TYPE INTO ALL THREE BLANK CARDS.** Task 2 applied `nodrag` to
+the blank input and reasoned carefully about why it should work — the strongest leg being
+that `layoutMap` sets `draggable: false` on blanks, so xyflow attaches no drag gesture to
+compete for the pointerdown at all. But `@xyflow/react` is not installed until this task,
+so Task 2 could neither read its filter implementation nor exercise it, and jsdom would
+have said nothing. **Its tests assert the class is PRESENT — a regression guard, not proof
+it works.**
+
+So this task's smoke must include, explicitly: **click into the blank activity card, the
+blank step card and the blank story card; type; press Enter; confirm each creates a record
+and a fresh blank appears after it.** If a blank card cannot be focused, `nodrag` is not
+doing what it is assumed to do, and the whole blank-card design — which is the feature —
+is dead on the canvas while every unit test passes.
+
 **3. Expect a cast at the `nodeTypes={...}` site, and do NOT "fix" it upward.** The node
 components' props are deliberately narrower than xyflow's `NodeProps` (whose `data` is
 `Record<string, unknown>`). That narrowing is what lets them be rendered and asserted
