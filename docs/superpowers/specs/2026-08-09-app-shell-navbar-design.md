@@ -265,6 +265,34 @@ const matchesMulti = boards.filter(
 
 and `clustered` becomes `all || selected.size > 1`.
 
+**Creating anything while viewing many: one rule, applied everywhere.**
+
+Multiselect makes every *create* affordance ambiguous — if you are looking at three
+workspaces' boards and press "new session", which workspace does it belong to? Edwin
+raised this about the rail's Plus, and it is the same question the add-card control
+already faces.
+
+So it gets one answer, not two:
+
+> **You may look at many, but you may only create in one. When the view is unambiguous,
+> create there silently. When it is not, ask.**
+
+Concretely, and both of these already have the wiring:
+
+- **Rail Plus → new session.** `openComposer(locked?)` locks the workspace when given a
+  name and leaves the picker open when not. So: `openComposer(activeWorkspace)` when
+  exactly one workspace is viewed, `openComposer()` — unlocked, user picks — when several
+  are. `NewSessionScreen` already renders a workspace picker when `lockedWorkspace` is
+  undefined; nothing new is built.
+- **Board add-card.** Already hidden under `ALL_WORKSPACES` scope
+  (`addable={scope === ALL_WORKSPACES ? [] : …}`). Extend the same condition to "more than
+  one workspace viewed" rather than inventing a second rule.
+
+Note this is *not* the same as falling back to the active workspace. Defaulting silently
+to the active session's workspace would be unambiguous to the code and surprising to the
+user, who is looking at three boards and has no reason to expect one of them to win. The
+ambiguity is real, so surface it rather than resolving it by convention.
+
 **Two rules this must not break:**
 
 - **Cards still resolve by `cardId`, never by the tab's board.** A tab spanning three

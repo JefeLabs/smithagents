@@ -277,11 +277,20 @@ const TOOLS = [
 ] as const;
 ```
 
-In `HomePage`, wire it to the composer locked to the current workspace:
+In `HomePage`, wire it to the composer — locked only when the view is unambiguous:
 
 ```tsx
-onNewSession={() => openComposer(session?.workspace)}
+// You may look at many, create in one. With several workspaces viewed there is no
+// non-surprising default, so leave the picker unlocked and let the user say which.
+// NewSessionScreen already renders a picker when lockedWorkspace is undefined.
+onNewSession={() =>
+  openComposer(viewedWorkspaces.size === 1 ? session?.workspace : undefined)
+}
 ```
+
+Falling back to the active session's workspace would be unambiguous to the code and
+surprising to the user, who is looking at three boards with no reason to expect one of
+them to win. The same rule governs the board's add-card control — see the spec.
 
 `openComposer(locked)` already exists and `NewSessionScreen` already reads
 `lockedWorkspace={composer?.locked}` — this is the same call `SessionsPanel` makes today,
