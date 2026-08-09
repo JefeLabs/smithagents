@@ -193,8 +193,9 @@ export function HomePage() {
           // Locks to the workspace already on screen (same rule SessionsPanel's
           // "new session" row uses) only while exactly one is in view — an
           // untouched `viewedWorkspaces` (size 0) still means "just the active
-          // one", same default BoardStage falls back to. Several or "*" is
-          // ambiguous, so the composer opens unlocked instead of guessing.
+          // one", same default BoardStage falls back to. Several workspaces, or
+          // the ALL_WORKSPACES sentinel, is ambiguous — so the composer opens
+          // unlocked instead of guessing.
           onNewSession={() =>
             openComposer(
               viewedWorkspaces !== ALL_WORKSPACES && viewedWorkspaces.size <= 1 ? session?.workspace : undefined,
