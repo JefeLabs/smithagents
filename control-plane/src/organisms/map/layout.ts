@@ -38,6 +38,35 @@ export const ARTIFACT_GAP = ACTIVITY_GAP * 2;
 const REJECT_MARGIN = STEP_W;
 
 /**
+ * Node ids, for every level of the map.
+ *
+ * These are exported rather than written inline at the emission sites because
+ * `layoutMap` is not the only module that names a node: edges carry node ids as
+ * `source`/`target`, and an edge naming a node that does not exist is not an
+ * error anywhere — xyflow simply draws nothing. Two modules agreeing about a
+ * template literal is not the same as there being one format, so there is one
+ * function per level and both callers go through it.
+ *
+ * MIND THE ASYMMETRY: activities and steps are prefixed, stories are NOT. A
+ * story node's id IS the story's id, because a story is the only level the user
+ * drags — `cellAt` resolves a drop by matching node id to `CapStoryT.id`, and a
+ * prefix would have to be stripped at every one of those seams. So "the obvious
+ * thing" is right twice and wrong once, which is exactly the shape of mistake
+ * that survives review.
+ *
+ * `slice` and `artifact` have no nodes yet; the levels are laid out later. They
+ * live here anyway so that whoever adds them imports a format instead of
+ * re-deriving one that has to match edges already in flight.
+ */
+export const activityNodeId = (activityId: string) => `activity:${activityId}`;
+export const stepNodeId = (stepId: string) => `step:${stepId}`;
+export const storyNodeId = (storyId: string) => storyId;
+export const sliceNodeId = (sliceId: string) => `slice:${sliceId}`;
+/** The four artifacts a slice can hang off itself; absent ones get no node. */
+export type ArtifactKind = "spec" | "plan" | "capCard" | "deliveryCard";
+export const artifactNodeId = (sliceId: string, kind: ArtifactKind) => `artifact:${sliceId}:${kind}`;
+
+/**
  * Reserved id prefix for the trailing blank card at each level. Blankness is a
  * LAYOUT concern — the model has no `isDraft` field — so these ids exist only
  * between `layoutMap` and the node components. A real id (a uuid) never begins
@@ -148,7 +177,7 @@ export function layoutMap(model: MapModel): { nodes: MapNode[] } {
     const x = xOf.get(steps[0]?.id ?? blankStepId(act.id));
     if (x !== undefined) {
       nodes.push({
-        id: `activity:${act.id}`,
+        id: activityNodeId(act.id),
         type: "activity",
         position: { x, y: 0 },
         width: span * STEP_W + (span - 1) * STEP_GAP,
@@ -161,7 +190,7 @@ export function layoutMap(model: MapModel): { nodes: MapNode[] } {
       const stepX = xOf.get(step.id);
       if (stepX === undefined) continue;
       nodes.push({
-        id: `step:${step.id}`,
+        id: stepNodeId(step.id),
         type: "step",
         position: { x: stepX, y: ACTIVITY_H + COL_GAP },
         data: { step, activity: act },
@@ -170,7 +199,7 @@ export function layoutMap(model: MapModel): { nodes: MapNode[] } {
       const stories = model.stories.filter((s) => s.stepId === step.id).sort((a, b) => a.order - b.order);
       stories.forEach((story, i) => {
         nodes.push({
-          id: story.id,
+          id: storyNodeId(story.id),
           type: "story",
           position: { x: stepX, y: STORIES_Y + i * SLOT_H },
           data: { story },
