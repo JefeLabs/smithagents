@@ -75,6 +75,29 @@ export interface SessionFrame {
   workspaces: string[];
 }
 
+/**
+ * A stored agent record as `GET /agents` returns it — the full persona detail
+ * the WS roster frame deliberately omits (`broker/src/text-channel.ts:447`).
+ * `RosterAgent` is the roster frame's view model and carries neither `engine`
+ * nor `channels`, so anything joining on those must read this shape instead.
+ * Open-ended by design: only the fields the control plane actually reads are
+ * named, and the rest ride along untouched into the PUT that saves them back.
+ */
+export interface AgentRecord {
+  id?: string;
+  channels?: unknown;
+  engine?: { cli?: string };
+  presence?: Record<string, boolean>;
+  [key: string]: unknown;
+}
+
+/** `GET /agents` in full: the records plus the two siblings the broker adds — surface availability and the voice capability snapshot. */
+export interface AgentRecordsResponse {
+  agents: AgentRecord[];
+  discord?: { configured: boolean; voiceReady: boolean };
+  voice?: { stt: boolean; tts: boolean };
+}
+
 export interface ConnectorFieldDef {
   key: string;
   label: string;

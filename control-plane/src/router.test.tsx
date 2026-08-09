@@ -3,7 +3,6 @@ import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
 import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { useCliToolHealth } from "./hooks/useCliToolHealth";
 import { usePushToTalk } from "./hooks/usePushToTalk";
 import { useSpokenReplies } from "./hooks/useSpokenReplies";
 import { useTheme } from "./hooks/useTheme";
@@ -16,7 +15,6 @@ import { renderWithProviders } from "./test/renderWithProviders";
 // the query cache, exactly as a roster frame would deliver it.
 vi.mock("./hooks/useSpokenReplies");
 vi.mock("./hooks/usePushToTalk");
-vi.mock("./hooks/useCliToolHealth");
 vi.mock("./hooks/useTheme");
 
 /** Keeps the root layout's `connect()` off the live broker on 127.0.0.1:7790. */
@@ -64,13 +62,7 @@ async function renderAt(path: string) {
 describe("stage routing", () => {
   beforeEach(() => {
     vi.mocked(useTheme).mockReturnValue({ theme: "dark", setTheme: vi.fn() });
-    vi.mocked(useCliToolHealth).mockReturnValue({ warnings: {}, refresh: vi.fn() });
-    vi.mocked(useSpokenReplies).mockReturnValue({
-      soundOn: false,
-      toggleSound: vi.fn(),
-      playAudioFrame: vi.fn(),
-      audioBlocked: false,
-    });
+    vi.mocked(useSpokenReplies).mockReturnValue({ playAudioFrame: vi.fn() });
     vi.mocked(usePushToTalk).mockReturnValue({ micLive: false, micError: null, toggleMic: vi.fn() });
     vi.stubGlobal("WebSocket", FakeSocket as unknown as typeof WebSocket);
     // Board/Map/voice-status/settings fetches all hit the broker; answer them all empty.

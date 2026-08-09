@@ -2,7 +2,7 @@ import { DndContext, type DragEndEvent, PointerSensor, pointerWithin, useSensor,
 import { useQueryClient } from "@tanstack/react-query";
 import { Download, Plus, SquareKanban } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import type { RosterAgent } from "../api/types";
+import type { RosterAgent, WorkspaceRecord } from "../api/types";
 import type { BoardsResult } from "../api/work";
 import {
   ALL_WORKSPACES,
@@ -15,11 +15,13 @@ import {
 import { workspaceColor } from "../lib/workspace-color";
 import { BoardColumn } from "../molecules/BoardColumn";
 import { BoardTabs } from "../molecules/BoardTabs";
+import { useWorkspaceRecords } from "../queries/http";
 import { qk } from "../queries/keys";
 import { useBoards, useCreateBoard, useCreateCard, useImportJira, useMoveCard } from "../queries/work";
 import { CardSheet } from "./CardSheet";
 
-const BASE = "127.0.0.1:7790";
+/** Stable empty while the records query is pending — `colorFor` runs per card. */
+const NO_WORKSPACES: WorkspaceRecord[] = [];
 
 export interface WorkColumn {
   id: string;
@@ -172,18 +174,12 @@ export function BoardStage({ roster }: BoardStageProps) {
   const [addingCard, setAddingCard] = useState(false);
   const [cardTitle, setCardTitle] = useState("");
   const [open, setOpen] = useState<{ boardId: string; cardId: string } | null>(null);
-  const [workspaces, setWorkspaces] = useState<Array<{ name: string; color?: string }>>([]);
+  // Same endpoint and envelope the hand-rolled fetch here used, but on the
+  // shared key — so this stage and the map issue one request between them
+  // rather than one each, and a workspace edit invalidates both.
+  const { data: workspaces = NO_WORKSPACES } = useWorkspaceRecords();
 
   const displayError = error ?? loadError;
-
-  useEffect(() => {
-    fetch(`http://${BASE}/workspaces`)
-      .then((r) => r.json())
-      .then((res: { workspaces?: Array<{ name: string; color?: string }> }) =>
-        setWorkspaces((res.workspaces ?? []).map((w) => ({ name: w.name, color: w.color }))),
-      )
-      .catch(() => {});
-  }, []);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 

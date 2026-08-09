@@ -227,6 +227,20 @@ describe("socketStore frame handling", () => {
     expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
   });
 
+  it("an open socket with no frame yet leaves the session key untouched", () => {
+    // The flash window: `connected` is already true for a beat before the
+    // broker speaks. qk.session must have NO cache entry there, because
+    // useSessionKnown() reads status === "success" and a premature write of
+    // any kind — including null — would read as a confirmed zero and force
+    // the composer open on every load.
+    const qc = new QueryClient();
+    store().connect(qc);
+    FakeSocket.last?.open();
+
+    expect(store().connected).toBe(true);
+    expect(qc.getQueryState(qk.session)).toBeUndefined();
+  });
+
   it("treats a null session as known-zero, not as still-unknown", () => {
     const qc = new QueryClient();
     store().connect(qc);
@@ -236,6 +250,30 @@ describe("socketStore frame handling", () => {
     // a frame having landed, which is exactly what the old sessionKnown flag meant.
     expect(qc.getQueryState(qk.session)?.status).toBe("success");
     expect(qc.getQueryData(qk.session)).toBeNull();
+  });
+
+  it("a dropped socket does not un-know the session it already delivered", () => {
+    // The old hook kept `sessionKnown` sticky across close/reconnect on
+    // purpose. The cache inherits that only because no close path writes to
+    // qk.session — clearing it on disconnect would send the composer back to
+    // "unknown" every time the broker restarts.
+    const qc = new QueryClient();
+    store().connect(qc);
+    emit({
+      type: "session",
+      session: { id: "s1", title: "t", workspace: "w", runtime: "local-in-process" },
+      sessions: [],
+      workspaces: [],
+      transcript: [],
+    });
+
+    FakeSocket.last?.close();
+    expect(store().connected).toBe(false);
+    expect(qc.getQueryState(qk.session)?.status).toBe("success");
+    expect(qc.getQueryData(qk.session)).toMatchObject({ id: "s1" });
+
+    store().disconnect(); // the harder case: an explicit teardown, not just a drop
+    expect(qc.getQueryData(qk.session)).toMatchObject({ id: "s1" });
   });
 
   it("appends utterance, speech and notice to the transcript rather than replacing it", () => {

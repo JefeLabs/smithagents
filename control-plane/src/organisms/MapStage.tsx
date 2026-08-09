@@ -12,6 +12,8 @@ import { CSS } from "@dnd-kit/utilities";
 import { Map as MapIcon, Plus, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
+import type { WorkspaceRecord } from "../api/types";
+import { useWorkspaceRecords } from "../queries/http";
 import {
   useCapabilities,
   useCreateCapability,
@@ -20,7 +22,8 @@ import {
   useSendSlice,
 } from "../queries/work";
 
-const BASE = "127.0.0.1:7790";
+/** Stable empty while the records query is pending — it feeds a seeding effect's deps. */
+const NO_WORKSPACES: WorkspaceRecord[] = [];
 
 export interface CapStoryT {
   id: string;
@@ -206,7 +209,9 @@ export function MapStage() {
   const generateSpecMutation = useGenerateSpec();
   const sendSliceMutation = useSendSlice();
 
-  const [workspaces, setWorkspaces] = useState<string[]>([]);
+  // Shared with BoardStage on one key: same endpoint and envelope the
+  // hand-rolled fetch used, but the two stages now dedupe to one request.
+  const { data: workspaceRecords = NO_WORKSPACES } = useWorkspaceRecords();
   const [workspace, setWorkspace] = useState("");
   const [activeId, setActiveId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -239,16 +244,13 @@ export function MapStage() {
     setWorkspace((w) => w || caps[0]?.workspaceId || "");
   }, [capabilitiesQuery.data, workspace]);
 
+  // Seeds the picker the first time names arrive, exactly as the hand-rolled
+  // fetch did. The `w ||` guard is what lets this coexist with the capability
+  // effect above — whichever supplies a workspace first wins, and the other
+  // becomes a no-op instead of overwriting the user's choice on a refetch.
   useEffect(() => {
-    fetch(`http://${BASE}/workspaces`)
-      .then((r) => r.json())
-      .then((res: { workspaces?: Array<{ name: string }> }) => {
-        const names = (res.workspaces ?? []).map((w) => w.name);
-        setWorkspaces(names);
-        setWorkspace((w) => w || names[0] || "");
-      })
-      .catch(() => {});
-  }, []);
+    setWorkspace((w) => w || workspaceRecords[0]?.name || "");
+  }, [workspaceRecords]);
 
   const cap = capabilities.find((c) => c.id === activeId) ?? null;
 
@@ -440,9 +442,9 @@ export function MapStage() {
             setActiveId(capabilities.find((c) => c.workspaceId === next)?.id ?? null);
           }}
         >
-          {workspaces.map((w) => (
-            <option key={w} value={w}>
-              {w}
+          {workspaceRecords.map((w) => (
+            <option key={w.name} value={w.name}>
+              {w.name}
             </option>
           ))}
         </select>

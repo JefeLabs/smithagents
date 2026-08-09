@@ -8,6 +8,7 @@ export const qk = {
   workspaces: ["workspaces"] as const,
   transcript: ["transcript"] as const,
   roster: ["roster"] as const,
+  agentRecords: ["agent-records"] as const,
   workspaceRecords: ["workspace-records"] as const,
   workspaceChannels: (name: string) => ["workspace-channels", name] as const,
   connectorVendors: ["connector-vendors"] as const,

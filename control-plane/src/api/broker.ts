@@ -6,6 +6,7 @@
  */
 
 import type {
+  AgentRecordsResponse,
   ApiKeyListing,
   ChannelsRecord,
   CliToolListing,
@@ -106,6 +107,23 @@ export async function getActivity(
 ): Promise<{ busy: boolean; label?: string; output?: string }> {
   const res = await fetch(`http://${base}/activity/${encodeURIComponent(name)}`);
   return (await res.json()) as { busy: boolean; label?: string; output?: string };
+}
+
+/**
+ * GET /agents — the full stored records, plus the `discord` and `voice`
+ * siblings the broker attaches. Not interchangeable with the WS roster frame:
+ * that frame is a view model carrying none of `engine`, `channels` or
+ * `presence`, which is exactly what every consumer of this endpoint joins on.
+ *
+ * Only `agents` is defaulted here. `discord` and `voice` stay optional on
+ * purpose — absent means "the broker did not say", and each caller has its own
+ * rule for that (surfaces default to unconfigured, voice defaults to ENABLED
+ * so an unknown never gates the mic).
+ */
+export async function getAgentRecords(base: string = BROKER_BASE): Promise<AgentRecordsResponse> {
+  const res = await fetch(`http://${base}/agents`);
+  const body = (await res.json()) as Partial<AgentRecordsResponse>;
+  return { ...body, agents: body.agents ?? [] };
 }
 
 // 404/500 resolve with { error } and no outcome — the broker never fails to return JSON, so

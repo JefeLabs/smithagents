@@ -44,6 +44,20 @@ interface UiState {
   setNewWorkspaceOpen: (open: boolean) => void;
   setRemoving: (next: RemovalTarget | null | ((prev: RemovalTarget | null) => RemovalTarget | null)) => void;
   setVoiceNotice: (text: string | null) => void;
+  /** Shows the "no STT configured" notice and self-dismisses it after 6s. */
+  showVoiceBlockedNotice: () => void;
+}
+
+const VOICE_BLOCKED_NOTICE = "Add a Deepgram key in Settings → Integrations, then select it under Settings → Voice.";
+const VOICE_NOTICE_MS = 6000;
+
+// Module-scoped, not a component ref: the notice outlives the stage that
+// raised it, so a route unmounting mid-countdown must not cut it short.
+let voiceNoticeTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearVoiceNoticeTimer() {
+  if (voiceNoticeTimer) clearTimeout(voiceNoticeTimer);
+  voiceNoticeTimer = null;
 }
 
 const initial = {
@@ -79,6 +93,21 @@ export const useUiStore = create<UiState>((set) => ({
   setNewWorkspaceOpen: (newWorkspaceOpen) => set({ newWorkspaceOpen }),
   setRemoving: (next) => set((s) => ({ removing: typeof next === "function" ? next(s.removing) : next })),
   setVoiceNotice: (voiceNotice) => set({ voiceNotice }),
+  showVoiceBlockedNotice: () => {
+    set({ voiceNotice: VOICE_BLOCKED_NOTICE });
+    // Rapid presses restart the window rather than letting an earlier press's
+    // timer cut the latest notice short.
+    clearVoiceNoticeTimer();
+    voiceNoticeTimer = setTimeout(() => {
+      voiceNoticeTimer = null;
+      useUiStore.setState({ voiceNotice: null });
+    }, VOICE_NOTICE_MS);
+  },
 }));
 
-registerStoreReset(() => useUiStore.setState(initial));
+registerStoreReset(() => {
+  // The timer is module-scoped, so a pending dismissal would otherwise fire
+  // into the next test and blank a notice it never raised.
+  clearVoiceNoticeTimer();
+  useUiStore.setState(initial);
+});

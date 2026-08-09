@@ -40,6 +40,20 @@ export function useWorkspaceChannels(name: string, enabled = true) {
   return useQuery({ queryKey: qk.workspaceChannels(name), queryFn: () => api.getWorkspaceChannels(name), enabled });
 }
 
+/**
+ * `GET /agents` — the one cache entry three consumers share: engine warnings
+ * (`queries/health.ts`), surface policy, and the voice capability gate. It
+ * replaced three independent fetches of the same URL, so a single invalidation
+ * now refreshes all three, and switching which agent a component is looking at
+ * re-selects from cache rather than issuing a request that could land stale.
+ *
+ * Distinct from `useRoster()` (`queries/pushed.ts`) on purpose — see
+ * `api.getAgentRecords` for why the roster frame cannot stand in for this.
+ */
+export function useAgentRecords() {
+  return useQuery({ queryKey: qk.agentRecords, queryFn: () => api.getAgentRecords() });
+}
+
 export function useConnectorVendors() {
   return useQuery({ queryKey: qk.connectorVendors, queryFn: () => api.getConnectorVendors() });
 }

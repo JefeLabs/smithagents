@@ -1,21 +1,20 @@
 // Broker voice capability snapshot from GET /agents (the `voice` sibling,
 // spec §4). Unknown/unreachable → enabled: gate only on confirmed negatives,
-// same rule as useCliToolHealth.
-import { useCallback, useEffect, useState } from "react";
+// same rule as computeEngineWarnings.
+import { useAgentRecords } from "../queries/http";
 
-const BASE = "127.0.0.1:7790";
 const ENABLED = { stt: true, tts: true };
 
-export function useVoiceStatus(): { voice: { stt: boolean; tts: boolean }; refresh: () => void } {
-  const [voice, setVoice] = useState(ENABLED);
-  const refresh = useCallback(() => {
-    void fetch(`http://${BASE}/agents`)
-      .then((r) => r.json())
-      .then((body: { voice?: { stt: boolean; tts: boolean } }) => setVoice(body.voice ?? ENABLED))
-      .catch(() => setVoice(ENABLED));
-  }, []);
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
-  return { voice, refresh };
+/**
+ * A selector over the shared agent-records query, not a fetch of its own —
+ * which is what makes it safe to call from more than one place at once. The
+ * refresh callback it used to expose is gone with it: invalidating
+ * `qk.agentRecords` updates every caller, so no component has to hold a
+ * refresh handle for another one's benefit.
+ */
+export function useVoiceStatus(): { voice: { stt: boolean; tts: boolean } } {
+  const { data } = useAgentRecords();
+  // Covers both "not answered yet" and "answered without a voice sibling" —
+  // neither is a confirmed negative, so neither may gate the mic.
+  return { voice: data?.voice ?? ENABLED };
 }

@@ -3,7 +3,6 @@ import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
 import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { useCliToolHealth } from "../hooks/useCliToolHealth";
 import { usePushToTalk } from "../hooks/usePushToTalk";
 import { useSpokenReplies } from "../hooks/useSpokenReplies";
 import { useTheme } from "../hooks/useTheme";
@@ -15,12 +14,11 @@ import { renderWithProviders } from "../test/renderWithProviders";
 // Only the hooks that reach for browser hardware are module-mocked: speech
 // synthesis + AudioContext, getUserMedia, and matchMedia. Everything the page
 // used to get from `useBrokerChat` now comes from the query cache and the
-// socket store, so it is seeded rather than mocked. `useCliToolHealth` is
-// mocked too — it fetches /agents, which would pollute the /agents call
-// counting the Settings-close test does below.
+// socket store, so it is seeded rather than mocked. What those two hooks DO
+// with the data they read for themselves is covered in their own suites —
+// this file only asserts that the page mounts them at app scope.
 vi.mock("../hooks/useSpokenReplies");
 vi.mock("../hooks/usePushToTalk");
-vi.mock("../hooks/useCliToolHealth");
 vi.mock("../hooks/useTheme");
 
 /**
@@ -75,9 +73,6 @@ const SESSION_FRAME = {
   workspaces: ["acme"],
   transcript: [],
 };
-
-/** Module-scoped so the audio-relay test can assert on it; cleared in afterEach. */
-const playAudioFrame = vi.fn();
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -134,13 +129,7 @@ beforeEach(() => {
   FakeSocket.count = 0;
   FakeSocket.live = 0;
   vi.mocked(useTheme).mockReturnValue({ theme: "dark", setTheme: vi.fn() });
-  vi.mocked(useCliToolHealth).mockReturnValue({ warnings: {}, refresh: vi.fn() });
-  vi.mocked(useSpokenReplies).mockReturnValue({
-    soundOn: false,
-    toggleSound: vi.fn(),
-    playAudioFrame,
-    audioBlocked: false,
-  });
+  vi.mocked(useSpokenReplies).mockReturnValue({ playAudioFrame: vi.fn() });
   vi.mocked(usePushToTalk).mockReturnValue({ micLive: false, micError: null, toggleMic: vi.fn() });
   stubBroker();
 });
@@ -177,29 +166,16 @@ describe("HomePage — the broker socket", () => {
     expect(first.client.getQueryData(qk.workspaces)).toBeUndefined();
   });
 
-  it("stops the browser speaking replies while the broker's own audio is on", async () => {
-    renderApp();
+  it("mounts the two audio hooks at app scope, above the router", async () => {
+    // Both are pinned here for reasons a stage route cannot satisfy:
+    // usePushToTalk holds a live MediaStream in refs, so navigating with a hot
+    // mic would orphan it, and useSpokenReplies must keep voicing replies on
+    // /board and /map, not only on /voice. Neither takes data arguments any
+    // more — what they do with what they read is covered in their own suites.
+    renderApp(undefined, "/board");
     await appMounted();
-    // No config frame yet: the broker has no TTS as far as this page knows, so
-    // the Web Speech fallback is armed.
-    expect(vi.mocked(useSpokenReplies).mock.lastCall?.[2]).toBe(true);
-
-    act(() => FakeSocket.last?.emit({ type: "config", audio: true }));
-
-    await waitFor(() => expect(vi.mocked(useSpokenReplies).mock.lastCall?.[2]).toBe(false));
-  });
-
-  it("hands broker audio frames to the player", async () => {
-    // The socket store fans `audio` frames out to subscribers instead of
-    // invoking a callback the way useBrokerChat's `onAudio` option did. Without
-    // the subscription effect this page renders identically and every other
-    // test still passes — broker-produced speech simply never plays.
-    renderApp();
-    await appMounted();
-
-    act(() => FakeSocket.last?.emit({ type: "audio", mime: "audio/mpeg", dataB64: "x" }));
-
-    expect(playAudioFrame).toHaveBeenCalledWith(expect.objectContaining({ mime: "audio/mpeg", dataB64: "x" }));
+    expect(vi.mocked(useSpokenReplies)).toHaveBeenCalled();
+    expect(vi.mocked(usePushToTalk)).toHaveBeenCalled();
   });
 });
 

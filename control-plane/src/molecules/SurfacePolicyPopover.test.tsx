@@ -1,6 +1,7 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { SurfacePolicyPopover } from "./SurfacePolicyPopover";
 
 const agentsPayload = (channels: unknown, presence: Record<string, boolean>, configured = true) => ({
@@ -38,7 +39,7 @@ describe("SurfacePolicyPopover", () => {
           ),
       ),
     );
-    render(<SurfacePolicyPopover agentId="ignacio" name="Ignacio" onClose={() => {}} />);
+    renderWithProviders(<SurfacePolicyPopover agentId="ignacio" name="Ignacio" onClose={() => {}} />);
     await waitFor(() => expect(screen.getByText("Discord voice")).toBeDefined());
     expect(screen.queryByText("Tauri app")).toBeNull();
     expect(screen.getByText("Discord text")).toBeDefined();
@@ -52,7 +53,7 @@ describe("SurfacePolicyPopover", () => {
       return new Response(JSON.stringify(agentsPayload(["tauri", "discord"], { discord: true })));
     });
     vi.stubGlobal("fetch", fetchMock);
-    render(<SurfacePolicyPopover agentId="ignacio" name="Ignacio" onClose={() => {}} />);
+    renderWithProviders(<SurfacePolicyPopover agentId="ignacio" name="Ignacio" onClose={() => {}} />);
     await waitFor(() => expect(screen.getByText("Discord text")).toBeDefined());
     const disabledTabs = screen.getAllByRole("tab", { name: /disabled/i });
     await userEvent.click(disabledTabs[0] as HTMLElement); // first row = Discord text (autojoin → disabled)
@@ -69,7 +70,7 @@ describe("SurfacePolicyPopover", () => {
       "fetch",
       vi.fn(async () => new Response(JSON.stringify(agentsPayload({}, {}, false)))),
     );
-    render(<SurfacePolicyPopover agentId="ignacio" name="Ignacio" onClose={() => {}} />);
+    renderWithProviders(<SurfacePolicyPopover agentId="ignacio" name="Ignacio" onClose={() => {}} />);
     await waitFor(() => expect(screen.getByText(/not configured/i)).toBeDefined());
   });
 });

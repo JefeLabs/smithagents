@@ -1,4 +1,7 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useAgentRecords } from "../queries/http";
+import { qk } from "../queries/keys";
 
 const BASE = "127.0.0.1:7790";
 
@@ -58,21 +61,26 @@ export function joinNowVisible(mode: SurfaceMode, present: boolean): boolean {
 }
 
 interface StoredAgent {
-  id: string;
+  id?: string;
   channels?: unknown;
   [key: string]: unknown;
 }
 
-interface AgentsResponse {
-  agents?: Array<StoredAgent & { presence?: Record<string, boolean> }>;
-  discord?: { configured: boolean; voiceReady: boolean };
-}
+const NO_DISCORD = { configured: false, voiceReady: false };
+const NO_PRESENCE: Record<string, boolean> = {};
 
 export function useSurfacePolicy(agentId: string) {
-  const [loading, setLoading] = useState(true);
+  // One shared `GET /agents` cache entry, not a per-hook fetch. That is what
+  // retired the request-generation ticket this hook used to carry: switching
+  // `agentId` now re-selects from data already in hand instead of dispatching
+  // a request that could land after the one for the agent we moved to.
+  const qc = useQueryClient();
+  const { data, isPending } = useAgentRecords();
+  const record = data?.agents.find((a) => a.id === agentId);
+  const discord = data?.discord ?? NO_DISCORD;
+  const presence = record?.presence ?? NO_PRESENCE;
+
   const [modes, setModesState] = useState<Record<string, SurfaceMode>>({});
-  const [presence, setPresence] = useState<Record<string, boolean>>({});
-  const [discord, setDiscord] = useState({ configured: false, voiceReady: false });
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   // Mirrors of state that an in-flight request's continuation needs to read
@@ -89,31 +97,17 @@ export function useSurfacePolicy(agentId: string) {
     setModesState(next);
   }, []);
 
-  // Each refresh() takes the next generation ticket; a response only applies
-  // if its ticket is still the newest one issued. A slower GET for an agent
-  // id we've since navigated away from (or a plain double-refresh) is
-  // discarded instead of clobbering whatever the newer request already set.
-  const generationRef = useRef(0);
-
-  const refresh = useCallback(async () => {
-    const generation = ++generationRef.current;
-    const res = (await fetch(`http://${BASE}/agents`).then((r) => r.json())) as AgentsResponse;
-    if (generationRef.current !== generation) return; // superseded by a newer refresh
-    const found = res.agents?.find((a) => a.id === agentId);
-    if (found) {
-      const { presence: foundPresence, ...stored } = found;
-      recordRef.current = stored;
-      setModes(modesFrom(stored));
-      setPresence(foundPresence ?? {});
-    }
-    setDiscord(res.discord ?? { configured: false, voiceReady: false });
-    setLoading(false);
-  }, [agentId, setModes]);
-
+  // `modes` stays local state rather than a pure derivation because setMode
+  // writes to it optimistically and rolls back on failure. Seeding it from the
+  // query keeps the same "an unknown agent leaves the previous one's modes
+  // showing" behaviour the fetch version had — `record` is a stable reference
+  // out of the cached array, so this runs on data change or id change only.
   useEffect(() => {
-    setLoading(true);
-    void refresh();
-  }, [refresh]);
+    if (!record) return;
+    const { presence: _presence, ...stored } = record;
+    recordRef.current = stored;
+    setModes(modesFrom(stored));
+  }, [record, setModes]);
 
   // Per-surface request tickets: the same idea as generationRef, scoped to
   // one surface. A setMode's continuation only reverts/records an error if
@@ -168,11 +162,13 @@ export function useSurfacePolicy(agentId: string) {
           setErrors((e) => ({ ...e, [surface]: body.error ?? `HTTP ${res.status}` }));
           return;
         }
-        void refresh();
+        // A join changes `presence`, which only the records carry — invalidating
+        // refreshes every consumer of that entry, not just this popover.
+        void qc.invalidateQueries({ queryKey: qk.agentRecords });
       });
     },
-    [agentId, refresh],
+    [agentId, qc],
   );
 
-  return { loading, modes, presence, discord, errors, setMode, joinNow };
+  return { loading: isPending, modes, presence, discord, errors, setMode, joinNow };
 }

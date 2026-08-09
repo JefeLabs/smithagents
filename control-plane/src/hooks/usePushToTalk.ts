@@ -1,4 +1,5 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useAudioStore } from "../stores/audioStore";
 
 const TARGET_RATE = 48000; // what the broker's Deepgram session expects (s16le mono)
 
@@ -29,9 +30,14 @@ function toS16le(samples: Float32Array): ArrayBuffer {
  * Push-to-talk: captures the mic and streams s16le 48kHz mono PCM chunks to
  * the broker over the text channel. Toggle on -> mic-start + audio frames;
  * toggle off -> tracks stopped + mic-stop (Deepgram flushes the utterance).
+ *
+ * Mounted once at app scope: the MediaStream and AudioContext below live in
+ * refs, so a copy per stage route would orphan a hot mic on navigation. Stage
+ * routes reach the toggle through `audioStore` instead of a prop chain.
  */
 export function usePushToTalk(controls: { begin: () => void; audio: (pcm: ArrayBuffer) => void; end: () => void }) {
-  const [micLive, setMicLive] = useState(false);
+  const micLive = useAudioStore((s) => s.micLive);
+  const setMicLive = useAudioStore((s) => s.setMicLive);
   const [micError, setMicError] = useState<string | null>(null);
   const stream = useRef<MediaStream | null>(null);
   const ctx = useRef<AudioContext | null>(null);
@@ -75,6 +81,18 @@ export function usePushToTalk(controls: { begin: () => void; audio: (pcm: ArrayB
       setMicLive(false);
     }
   };
+
+  // Registered through a ref, not directly: `toggleMic` is a fresh closure every
+  // render, so registering it as an effect dependency would write to the store
+  // on every render and re-render from that write. The dispatcher is stable and
+  // always calls the newest closure.
+  const latestToggle = useRef(toggleMic);
+  latestToggle.current = toggleMic;
+  useEffect(() => {
+    const { setToggleMic } = useAudioStore.getState();
+    setToggleMic(() => void latestToggle.current());
+    return () => setToggleMic(() => {});
+  }, []);
 
   return { micLive, micError, toggleMic };
 }

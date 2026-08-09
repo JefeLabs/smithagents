@@ -1,4 +1,6 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { joinNowVisible, modesFrom, useSurfacePolicy } from "./useSurfacePolicy";
 
@@ -61,8 +63,16 @@ function errJson(status: number, body: unknown): Response {
   return { ok: false, status, json: async () => body } as Response;
 }
 
-function agentsResponse(id: string, channels: unknown) {
-  return { agents: [{ id, channels }], discord: { configured: true, voiceReady: true } };
+function agentsResponse(...agents: Array<{ id: string; channels: unknown }>) {
+  return { agents, discord: { configured: true, voiceReady: true } };
+}
+
+/** Retry off so a rejected queryFn surfaces immediately rather than after backoff. */
+function providerWrapper() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  return ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  );
 }
 
 // Real timers; a macrotask tick reliably drains any number of chained
@@ -91,10 +101,10 @@ describe("useSurfacePolicy races", () => {
       .mockImplementationOnce(() => putReq1.promise)
       .mockImplementationOnce(() => putReq2.promise);
 
-    const { result } = renderHook(() => useSurfacePolicy("fabian"));
+    const { result } = renderHook(() => useSurfacePolicy("fabian"), { wrapper: providerWrapper() });
 
     act(() => {
-      getReq.resolve(okJson(agentsResponse("fabian", { discord: "autojoin" })));
+      getReq.resolve(okJson(agentsResponse({ id: "fabian", channels: { discord: "autojoin" } })));
     });
     await waitFor(() => expect(result.current.modes.discord).toBe("autojoin"));
 
@@ -125,29 +135,49 @@ describe("useSurfacePolicy races", () => {
     expect(result.current.errors.discord).toBeUndefined();
   });
 
-  it("a stale GET response after an agent-id switch never overwrites the newer agent's state", async () => {
-    const getAlice = deferred<Response>();
-    const getBob = deferred<Response>();
-    fetchMock.mockImplementationOnce(() => getAlice.promise).mockImplementationOnce(() => getBob.promise);
+  it("an agent-id switch re-selects from the one cached response instead of racing a second GET", async () => {
+    // This replaces a request-generation guard. The hook used to issue its own
+    // GET per agent id, so a slow response for the id we navigated AWAY from
+    // could land last and win; the guard discarded it by ticket number. Both
+    // ids now come out of a single shared cache entry, so the stale response
+    // it defended against cannot be constructed — there is only one request.
+    const get = deferred<Response>();
+    fetchMock.mockImplementation(() => get.promise);
 
     const { result, rerender } = renderHook(({ id }) => useSurfacePolicy(id), {
       initialProps: { id: "alice" },
+      wrapper: providerWrapper(),
     });
 
-    rerender({ id: "bob" }); // fires bob's GET while alice's is still in flight
-
-    // Bob's GET (the newer request) settles first.
     await act(async () => {
-      getBob.resolve(okJson(agentsResponse("bob", { discord: "on-request" })));
+      get.resolve(
+        okJson(
+          agentsResponse(
+            { id: "alice", channels: { discord: "autojoin" } },
+            { id: "bob", channels: { discord: "on-request" } },
+          ),
+        ),
+      );
       await flush();
     });
+    await waitFor(() => expect(result.current.modes.discord).toBe("autojoin"));
+
+    rerender({ id: "bob" });
+
+    // Bob's modes, read synchronously from data already in hand.
     await waitFor(() => expect(result.current.modes.discord).toBe("on-request"));
+    // Asserted, not assumed: a per-id fetch would make this 2 and reopen the
+    // exact race the deleted guard existed to lose.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 
-    // Alice's stale GET settles after. It must not overwrite bob's state.
-    await act(async () => {
-      getAlice.resolve(okJson(agentsResponse("alice", { discord: "autojoin" })));
-      await flush();
-    });
-    expect(result.current.modes.discord).toBe("on-request");
+  it("reports the discord availability sibling, which only this endpoint carries", async () => {
+    // `discord` rides GET /agents alongside the records and gates the popover's
+    // rows. The WS roster frame has no such field, so a hook reading the roster
+    // would report unconfigured for a perfectly healthy Discord.
+    fetchMock.mockResolvedValue(okJson(agentsResponse({ id: "fabian", channels: {} })));
+    const { result } = renderHook(() => useSurfacePolicy("fabian"), { wrapper: providerWrapper() });
+    await waitFor(() => expect(result.current.discord).toEqual({ configured: true, voiceReady: true }));
+    expect(result.current.loading).toBe(false);
   });
 });

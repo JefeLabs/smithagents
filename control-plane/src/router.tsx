@@ -9,13 +9,15 @@ import {
 import * as api from "./api/broker";
 import type { ChatMessage, RosterAgent } from "./api/types";
 import { agentSeeds } from "./data/agents";
-import { useStage } from "./hooks/StageContext";
+import { useVoiceStatus } from "./hooks/useVoiceStatus";
 import { BoardStage } from "./organisms/BoardStage";
 import { MapStage } from "./organisms/MapStage";
 import { VoiceStage } from "./organisms/VoiceStage";
 import { WorkStage } from "./organisms/WorkStage";
 import { HomePage } from "./pages/HomePage";
+import { useVoiceSettings } from "./queries/http";
 import { useRoster, useTranscript } from "./queries/pushed";
+import { useAudioStore } from "./stores/audioStore";
 import { useSocketStore } from "./stores/socketStore";
 import { useUiStore } from "./stores/uiStore";
 
@@ -30,26 +32,38 @@ const NO_ROSTER: RosterAgent[] = [];
  * No route loaders — data rides the WebSocket above the router, and mounting
  * it per-route would reconnect on every navigation.
  *
- * `useStage()` survives for the mic/sound/STT controls alone; see
- * `hooks/StageContext.tsx` for why they cannot be read here yet.
+ * The mic/sound/STT controls come from `audioStore` and two ordinary queries.
+ * Calling `useVoiceStatus`/`useVoiceSettings` here rather than receiving them
+ * as props is safe precisely because they are queries: this route and anything
+ * else asking share one cache entry, so an invalidation reaches both.
  */
 function VoiceRoute() {
-  const s = useStage();
   const { data: messages = NO_MESSAGES } = useTranscript();
   const connected = useSocketStore((c) => c.connected);
   const voiceNotice = useUiStore((u) => u.voiceNotice);
+  const showVoiceBlockedNotice = useUiStore((u) => u.showVoiceBlockedNotice);
+  const micLive = useAudioStore((a) => a.micLive);
+  // Registered by `usePushToTalk`, which owns the hardware at app scope — this
+  // route asks for the toggle, it never holds the MediaStream.
+  const toggleMic = useAudioStore((a) => a.toggleMic);
+  const soundOn = useAudioStore((a) => a.soundOn);
+  const toggleSound = useAudioStore((a) => a.toggleSound);
+  const { voice } = useVoiceStatus();
+  const { data: voicePrefs } = useVoiceSettings();
+  // Hide the hero only on a CONFIRMED no-STT broker the user asked to hide.
+  const hideMic = Boolean(voicePrefs?.hideInactive) && !voice.stt;
   return (
     <VoiceStage
-      micLive={s.micLive}
-      onMicToggle={s.onMicToggle}
+      micLive={micLive}
+      onMicToggle={toggleMic}
       messages={messages}
       brokerConnected={connected}
       onSend={api.postUtterance}
-      soundOn={s.soundOn}
-      onSoundToggle={s.onSoundToggle}
-      sttEnabled={s.sttEnabled}
-      onVoiceBlocked={s.onVoiceBlocked}
-      showMicHero={s.showMicHero}
+      soundOn={soundOn}
+      onSoundToggle={toggleSound}
+      sttEnabled={voice.stt}
+      onVoiceBlocked={showVoiceBlockedNotice}
+      showMicHero={!hideMic}
       voiceNotice={voiceNotice}
     />
   );
