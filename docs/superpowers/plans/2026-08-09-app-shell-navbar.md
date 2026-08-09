@@ -175,15 +175,45 @@ render it **first**, before `background`:
 Order matters only for the DOM and therefore for tab order: the bar should come before
 the canvas underlay and the rails so keyboard focus reaches it first.
 
-- [ ] **Step 5: Remove the logo from `ToolRail`**
+- [ ] **Step 5: Move the logo out of `ToolRail`, and repurpose its Plus**
 
-Delete the logo `<button>` and the `Logo` import from `src/organisms/ToolRail.tsx`. Keep
-`onHome` in its props **only if** something still calls it — run
+Two changes to `src/organisms/ToolRail.tsx`:
+
+**(a) Delete the logo `<button>` and the `Logo` import.** Keep `onHome` in its props
+**only if** something still calls it — run
 `grep -n "onHome" src/organisms/ToolRail.tsx src/pages/HomePage.tsx` and remove the prop
 entirely if the navbar is now its only caller. A prop no one passes is dead weight.
 
-`ToolRail.test.tsx` likely asserts the logo. Update those assertions to the navbar's
-logo in **this** commit — the element moved, so the test moves with it.
+**(b) The Plus tool stops meaning "New workspace" and becomes "New session".** Rename the
+entry at `ToolRail.tsx:7`, rename the `onNewWorkspace` prop to `onNewSession`, and update
+the dispatch at `:53`:
+
+```tsx
+const TOOLS = [
+  { icon: Plus, label: "New session", route: null },
+  { icon: History, label: "Sessions", route: null },
+  { icon: SquareKanban, label: "Board", route: "/board" },
+  { icon: MapIcon, label: "Map", route: "/map" },
+] as const;
+```
+
+In `HomePage`, wire it to the composer locked to the current workspace:
+
+```tsx
+onNewSession={() => openComposer(session?.workspace)}
+```
+
+`openComposer(locked)` already exists and `NewSessionScreen` already reads
+`lockedWorkspace={composer?.locked}` — this is the same call `SessionsPanel` makes today,
+so there is no new wiring. Workspace *creation* moves to the navbar dropdown in Task 2.
+
+The resulting split is the reason the shell has two chrome surfaces at all: the navbar
+answers **which workspace**, the rail answers **what to do in it**. Creating a workspace
+is a switching action; creating a session is work inside the current one.
+
+`ToolRail.test.tsx` asserts the logo and probably the Plus's label/handler. Update those
+in **this** commit — the elements moved and changed meaning, so the tests move with them.
+Do not delete a Plus assertion: repoint it at `onNewSession`.
 
 - [ ] **Step 6: Compose it in `HomePage`**
 
@@ -271,6 +301,16 @@ describe("WorkspaceSelector", () => {
     expect(activate).not.toHaveBeenCalled();
   });
 
+  it("offers New workspace as the last item, opening the create flow", async () => {
+    const setNewWorkspaceOpen = vi.fn();
+    renderWithSession({ workspace: "acme" }, { workspaces: ["acme"], setNewWorkspaceOpen });
+    await userEvent.click(screen.getByRole("button", { name: /acme/ }));
+    await userEvent.click(await screen.findByRole("option", { name: /new workspace/i }));
+    expect(setNewWorkspaceOpen).toHaveBeenCalledWith(true);
+    // It is a command, not a workspace — it must never be treated as a selection.
+    expect(useUiStore.getState().composer).toBeNull();
+  });
+
   it("selecting the workspace already active is a no-op", async () => {
     const activate = vi.fn();
     renderWithSession({ workspace: "acme" }, { workspaces: ["acme"], sessions: [{ id: "s1", workspace: "acme", updatedAt: "2026-08-08T00:00:00Z", title: "t", active: true, runtime: "local-in-process" }], activate });
@@ -318,7 +358,16 @@ export function WorkspaceSelector() {
 
   const current = session?.workspace ?? null;
 
+  // "New workspace…" is a COMMAND in the list, not a workspace. It is sentinel-keyed
+  // rather than matched on its label so a workspace literally named "New workspace"
+  // cannot shadow it — the same class of bug the colour picker's sentinel avoids.
+  const NEW_WORKSPACE = " new-workspace";
+
   const select = (name: string) => {
+    if (name === NEW_WORKSPACE) {
+      setNewWorkspaceOpen(true);
+      return; // never falls through to session activation
+    }
     // Re-activating the current session reloads brain history and re-broadcasts
     // a frame for no gain.
     if (name === current) return;
