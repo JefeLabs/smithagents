@@ -235,9 +235,9 @@ session to it. No new wiring.
 This gives the shell a clean split, which is the reason to have two chrome surfaces at
 all rather than one:
 
-| Surface | Question it answers |
-|---|---|
-| Navbar | **Which workspace** am I in — switch it, or make a new one |
+| Surface   | Question it answers                                                         |
+| --------- | --------------------------------------------------------------------------- |
+| Navbar    | **Which workspace** am I in — switch it, or make a new one                  |
 | Left rail | **What do I do in it** — new session, browse sessions, board, map, settings |
 
 Creating a workspace is a switching action, so it sits in the switcher. Creating a session
@@ -254,12 +254,12 @@ arrives there without a special case.
 
 ### What follows the session's workspace
 
-| Surface | Today | After |
-|---|---|---|
-| `BoardStage` | own `scope` state + in-stage picker | reads the session's workspace (or `aggregateView`); **picker deleted** |
-| `MapStage` | own workspace filter | reads the session's workspace |
-| `SessionsPanel` | workspace filter chips | chips follow the session's workspace |
-| Voice / chat | follows the active session | unchanged — the session follows the selection instead |
+| Surface         | Today                               | After                                                                  |
+| --------------- | ----------------------------------- | ---------------------------------------------------------------------- |
+| `BoardStage`    | own `scope` state + in-stage picker | reads the session's workspace (or `aggregateView`); **picker deleted** |
+| `MapStage`      | own workspace filter                | reads the session's workspace                                          |
+| `SessionsPanel` | workspace filter chips              | chips follow the session's workspace                                   |
+| Voice / chat    | follows the active session          | unchanged — the session follows the selection instead                  |
 
 `BoardStage`'s existing scope-keyed reset effect (which clears `addingCard`, `cardTitle`
 and `open` when scope changes) must now key on the session's workspace. Its reasoning is
@@ -285,12 +285,12 @@ distinct from the rail's `"Tools and activity"`.
 The alert icon aggregates conditions that already exist and are surfaced inconsistently
 or not at all. It introduces **no new detection** — it is a view over derived state:
 
-| Condition | Source today | Surfaced today |
-|---|---|---|
-| Agent's CLI engine inactive | `useEngineWarnings()` (`queries/health.ts`) | per-agent badge in the roster |
-| Boards failed to load | `boardErrors` from `useBoards()` | inline in `BoardStage` |
-| Jira push failed for a card | `card.jira.lastPushError` | a card-level class + title attribute |
-| Broker disconnected | `socketStore.connected` | the composer goes quiet |
+| Condition                   | Source today                                | Surfaced today                       |
+| --------------------------- | ------------------------------------------- | ------------------------------------ |
+| Agent's CLI engine inactive | `useEngineWarnings()` (`queries/health.ts`) | per-agent badge in the roster        |
+| Boards failed to load       | `boardErrors` from `useBoards()`            | inline in `BoardStage`               |
+| Jira push failed for a card | `card.jira.lastPushError`                   | a card-level class + title attribute |
+| Broker disconnected         | `socketStore.connected`                     | the composer goes quiet              |
 
 Derive the aggregate the way `useEngineWarnings` already does — a pure function over
 existing query data, in `queries/`, not a fetch. Invalidating any underlying key then
