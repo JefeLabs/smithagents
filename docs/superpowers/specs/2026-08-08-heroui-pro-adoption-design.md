@@ -17,8 +17,9 @@ Migrate `control-plane` from hand-written global CSS to `@heroui-pro/react` +
 - `control-plane/src/`: **zero** heroui imports. 86 `.tsx`, ~16.5k LOC.
 - `src/styles/components.css`: 2,896 lines, **235 root classes**, of which only 26 are
   single-word.
-- `src/styles/tokens.css`: 65 tokens, three themes — default dark, `[data-theme="light"]`
-  (+ `prefers-color-scheme` fallback), `[data-theme="midnight"]`.
+- `src/styles/tokens.css`: 65 tokens, **four** themes — default dark (`:root`),
+  `[data-theme="light"]` (+ `prefers-color-scheme` fallback), `[data-theme="midnight"]`,
+  `[data-theme="sand"]`.
 - The untracked `package.json` + `package-lock.json` at **repo root** carrying
   `@heroui-pro/react@1.0.0-beta.8` is a **scratch install, not wired to anything**.
   It is not the target and must not be used.
@@ -87,10 +88,15 @@ HeroUI variables with no current equivalent (`--radius`, `--border-width`,
 `--backdrop`, `--scrollbar`, `--segment`) are added to each theme block with values
 chosen to match today's rendered appearance.
 
-**All three themes survive unchanged, including `midnight`.** HeroUI's variables are
-plain custom properties with no switching mechanism of their own, so
-`:root[data-theme="midnight"]` simply sets more of them. A third theme is not a HeroUI
-feature to find — it is a selector already written.
+**All four themes survive unchanged, including `midnight` and `sand`.** HeroUI's
+variables are plain custom properties with no switching mechanism of their own, so
+`:root[data-theme="midnight"]` simply sets more of them. Extra themes are not a HeroUI
+feature to find — they are selectors already written.
+
+Every theme block must define the **full** HeroUI variable set. A theme that defines
+only some inherits the rest from `:root` (dark), which silently produces unreadable
+light-on-light or dark-on-dark components. Task 3 of the Phase 0 plan enforces this
+with a test rather than review discipline.
 
 ---
 
@@ -136,8 +142,12 @@ predecessor merges.
    `@layer legacy, heroui, overrides;` with `components.css` in `legacy`.
 4. Token bridge: extend all three theme blocks in `tokens.css` with HeroUI variables.
 5. Rename the three colliding classes.
-6. Verify: `pnpm typecheck`, `pnpm lint`, `pnpm test` all green, app renders
-   pixel-identical. No component uses HeroUI yet.
+6. A throwaway canary component importing one HeroUI `Button`. Steps 1–5 all pass with
+   a completely broken install, because nothing imports HeroUI — the canary makes that
+   fail here rather than midway through Phase 1, where a pipeline bug and a migration
+   bug are indistinguishable. Deleted at the start of Phase 1.
+7. Verify: `pnpm typecheck`, `pnpm lint`, `pnpm test` all green, app renders
+   pixel-identical. No production component uses HeroUI yet.
 
 ### Phase 1 — Dense surfaces
 
@@ -200,9 +210,9 @@ makes the tests survive the restyle that follows.
 Per phase:
 - `pnpm typecheck`, `pnpm lint`, `pnpm test` green before the phase is called done.
 - Phases 0–2 additionally require **visual parity**, verified by manual smoke against
-  a before-screenshot of each migrated surface in all three themes (dark, light,
-  midnight). Screenshots go in `.screenshots/`, which already exists. Phase 3 does not
-  require parity.
+  a before-screenshot of each migrated surface in all four themes (dark, light,
+  midnight, sand). Screenshots go in `.screenshots/`, which already exists. Phase 3
+  does not require parity.
 - Kanban requires a keyboard-drag check: select a card, move it with the keyboard,
   confirm the mutation fires. This is new capability, so it needs a new test.
 
