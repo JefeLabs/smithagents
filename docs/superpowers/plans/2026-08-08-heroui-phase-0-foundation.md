@@ -725,6 +725,42 @@ Verify the reported file count is **2**.
 
 ---
 
+## What actually happened (2026-08-09)
+
+All four tasks landed. Five corrections against the plan as written, kept here so the
+document stays a faithful record rather than an aspiration:
+
+1. **Task 1 layer order was backwards.** The plan declared `legacy, heroui, overrides`.
+   Earliest-declared *loses*, and `@heroui/styles` imports Tailwind itself — so
+   preflight landed in `base` after `legacy` and beat `components.css`, stripping the
+   background, border and radius off every chat bubble (36.84% of the viewport).
+   Correct order is `theme, base, components, legacy, utilities, overrides`. Also:
+   do **not** `@import "tailwindcss"` separately; `@heroui/styles` already does.
+
+2. **`components.css` is imported with `layer(legacy)`, not wrapped.** Wrapping it in
+   `@layer legacy { … }` made Biome demand all 2,896 lines be re-indented. Assigning
+   the layer at the import keeps the file byte-identical.
+
+3. **`pnpm add` is not enough** — see the `allowBuilds` correction in Task 1 Step 1b.
+
+4. **Task 3 was rewritten to Edwin's steer: "keep the theme, use HeroUI defaults."**
+   The original mapped ~28 variables across five theme blocks. The shipped bridge is
+   **seven variables declared once**, because every theme block targets the same
+   element (`:root`), so `--background: var(--ground)` re-resolves per theme by itself.
+   Radius, status colours, field chrome, segment and scrollbar are inherited from
+   HeroUI. `--accent` needed no line at all: it already exists under HeroUI's own name
+   and `tokens.css` is unlayered, so it wins over `layer(theme)` automatically — the
+   only name the two vocabularies share. Light/dark reuses HeroUI's own `.dark` hook,
+   mirrored from our five themes in `useTheme.ts`.
+
+5. **Task 4's canary immediately found a real gap.** Importing `@heroui-pro/react`
+   throws in jsdom: its barrel reaches `sheet/use-scale-background`, which calls
+   `window.matchMedia` at module-eval time. `src/test/setup.ts` now shims it hoisted,
+   for the same reason `localStorage` is shimmed there. Every Pro component Phase 1
+   touches would have hit this.
+
+Test count went 362 → 395. The parity criterion was amended mid-task; see the spec.
+
 ## Phase 0 Done Criteria
 
 - [ ] `pnpm typecheck`, `pnpm lint`, `pnpm test` all pass from `control-plane/`.
