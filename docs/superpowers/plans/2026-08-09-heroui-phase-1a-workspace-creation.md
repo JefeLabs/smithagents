@@ -1285,7 +1285,7 @@ component with:
             {isSubmitting ? "creating…" : "create workspace"}
           </Button>
         ) : (
-          <Button variant="primary" onPress={() => void goNext()}>
+          <Button variant="primary" onPress={() => void goNext()} isDisabled={!canLeaveStep}>
             next
           </Button>
         )}
@@ -1295,21 +1295,36 @@ component with:
 }
 ```
 
-`next` is **not** given `isDisabled`. It gates inside `goNext` via `trigger`, so a press
-on an incomplete step surfaces RHF's field errors instead of leaving the user with a dead
-button and no explanation. The first new test asserts `next` is *disabled* on an empty
-name, so wire that one case explicitly:
+`canLeaveStep` is what disables `next`, and it is computed from watched values — not from
+`formState.errors`, which is only populated *after* a validation run and would leave
+`next` enabled on a pristine empty form until the user had already pressed it once.
+
+Add beside `goNext`:
 
 ```tsx
-<Button variant="primary" onPress={() => void goNext()} isDisabled={!canLeaveStep}>
-  next
-</Button>
+  // Watched values, not formState.errors: errors only exist after a validation run,
+  // so gating on them would leave `next` enabled on a pristine form — exactly the
+  // state the first new test exercises. `useWatch` re-renders on every keystroke,
+  // which is what makes the button enable as soon as the field is filled.
+  const values = useWatch({ control });
+  const canLeaveStep = STEPS[step].gates.every((g) => filled(String(values[g] ?? "")));
 ```
 
-where `canLeaveStep` derives from RHF's `formState.errors` and the current step's gates.
-Read `formState` for the field's dirty/error state rather than adding a second source of
-truth — if this proves awkward in practice, change the **test** to assert the error
-message appears on press, and record the swap in the task report.
+Import `useWatch` from `react-hook-form` alongside `useForm` and `useFieldArray`.
+
+Two constraints this places on `STEPS`, both currently satisfied:
+
+- **Every `gates` entry must be a top-level field name.** `values[g]` is a plain property
+  read, so a dotted path like `"atlassian.siteUrl"` would silently resolve to
+  `undefined` and gate the step shut forever. Only `"name"` is gated today. If a nested
+  field ever needs gating, switch that entry to `useWatch({ control, name: g })` rather
+  than making the index lookup smarter.
+- **A step with no gates is always passable** — `[].every(...)` is `true`, which is the
+  behaviour the Colour step needs and gets for free.
+
+`goNext` keeps its `trigger` call as well. The two are not redundant: `canLeaveStep`
+disables the button, and `trigger` runs the real validators and surfaces field errors if
+the button is ever reached another way (Enter key, a future keyboard shortcut).
 
 Five deliberate changes to note in review:
 - `if (!open) return null` is **gone** — `ModalShell` owns that, and the open-keyed
