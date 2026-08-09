@@ -217,6 +217,13 @@ export function HomePage() {
                 return r;
               }
               closeComposer();
+              // Land in the conversation you just started. The broker has already
+              // made the new session active (SessionManager.create sets activeId)
+              // and replayed the prompt as an utterance, so the turn is in flight
+              // before this navigation resolves — without it we would fall through
+              // to whatever stage happened to be routed, and the reply would arrive
+              // on a screen the user isn't looking at.
+              void navigate({ to: "/" });
               return undefined;
             }}
             onCancel={closeComposer}

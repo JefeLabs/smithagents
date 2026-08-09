@@ -334,3 +334,71 @@ describe("HomePage — composer closes when another session is activated", () =>
     expect(screen.queryByRole("heading", { name: /start a session/i })).toBeNull();
   });
 });
+
+describe("HomePage — creating a session lands in its conversation", () => {
+  const ONE_SESSION = [
+    {
+      id: "s1",
+      title: "Current work",
+      workspace: "acme",
+      updatedAt: "2026-08-01T00:00:00Z",
+      active: true,
+      runtime: "local-in-process" as const,
+    },
+  ];
+
+  const seedOneSession = (c: QueryClient) => {
+    c.setQueryData(qk.session, { id: "s1", title: "Current work", workspace: "acme", runtime: "local-in-process" });
+    c.setQueryData(qk.sessions, ONE_SESSION);
+    c.setQueryData(qk.workspaces, ["acme"]);
+  };
+
+  /** Open the composer explicitly and send a prompt, from wherever we currently are. */
+  async function createSession() {
+    await userEvent.click(screen.getByRole("row", { name: "Sessions" }));
+    await userEvent.click(screen.getByRole("button", { name: /new session · acme/i }));
+    await userEvent.type(await screen.findByRole("textbox"), "fix the build");
+    await userEvent.click(screen.getByRole("button", { name: /send|start/i }));
+  }
+
+  it("routes to the conversation on success, leaving whatever stage was showing", async () => {
+    // Starting on /board is the whole point: the composer replaces the stage, so
+    // without an explicit navigation, closing it drops the user back on the board
+    // while the broker is already streaming the reply into the transcript.
+    const { router } = renderApp(seedOneSession, "/board");
+    await appMounted();
+    expect(router.state.location.pathname).toBe("/board");
+
+    await createSession();
+
+    await waitFor(() => expect(router.state.location.pathname).toBe("/"));
+  });
+
+  it("stays put when the broker rejects the create, so the error stays on screen", async () => {
+    // The failure path returns before closeComposer/navigate. Navigating anyway
+    // would unmount the composer holding the message explaining what went wrong.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/sessions")) {
+          return new Response(JSON.stringify({ error: 'execution mode "local-docker" is not available' }), {
+            status: 409,
+          });
+        }
+        if (url.endsWith("/agents"))
+          return new Response(JSON.stringify({ agents: [], voice: { stt: false, tts: true } }));
+        if (url.endsWith("/workspaces")) return new Response(JSON.stringify({ workspaces: [] }));
+        if (url.endsWith("/cli-tools")) return new Response(JSON.stringify({ tools: [] }));
+        return new Response(JSON.stringify({}));
+      }),
+    );
+    const { router } = renderApp(seedOneSession, "/board");
+    await appMounted();
+
+    await createSession();
+
+    expect(await screen.findByText(/not available/)).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/board");
+  });
+});
