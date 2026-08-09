@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkBoardT } from "../organisms/BoardStage";
 import { useSocketStore } from "../stores/socketStore";
 import { type Alert, computeAlerts, useAlerts } from "./alerts";
@@ -25,6 +25,8 @@ describe("computeAlerts", () => {
       boardErrors: [],
     });
     expect(alerts).toHaveLength(1);
+    expect(alerts[0].id).toBe("engine-ana");
+    expect(alerts[0].severity).toBe("warn");
     expect(alerts[0].text).toContain("ana");
     expect(alerts[0].target).toBe("/work/ana");
   });
@@ -62,6 +64,8 @@ describe("computeAlerts", () => {
       boardErrors: [],
     });
     expect(alerts).toHaveLength(1);
+    expect(alerts[0].id).toBe("jira-push-c1");
+    expect(alerts[0].severity).toBe("error");
     expect(alerts[0].text).toBe("422 from Jira");
     expect(alerts[0].target).toBe("/board");
   });
@@ -110,6 +114,7 @@ function seededClient(seed: (c: QueryClient) => void) {
 describe("useAlerts", () => {
   afterEach(() => {
     useSocketStore.setState({ connected: false });
+    vi.unstubAllGlobals();
   });
 
   it("joins the socket store, the boards query and the engine-warnings join into one list", async () => {
@@ -145,6 +150,16 @@ describe("useAlerts", () => {
 
   it("a disconnected socket collapses everything to the one broker alert", async () => {
     useSocketStore.setState({ connected: false });
+    // qk.cliTools/qk.agentRecords are deliberately left unseeded — the early return
+    // discards whatever useEngineWarnings comes up with — but that leaves the
+    // underlying queries to fire real fetches unless stubbed, same as
+    // health.test.tsx's "flags nobody while either half of the join is still unknown".
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("broker unreachable");
+      }),
+    );
     const client = seededClient((c) => {
       c.setQueryData(qk.boards, { boards: [], errors: [{ file: "boards.json", error: "nope" }] });
     });
