@@ -73,7 +73,11 @@ const CORS = {
   // CORS-enforcing client — only from tests, since Node's fetch doesn't enforce
   // preflight. GET is CORS-safelisted for simple requests but listed anyway for any
   // GET that ever adds a custom header (e.g. an Authorization header) later.
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+  // PATCH is required: the control plane patches capabilities and reorders story cards
+  // with it (control-plane/src/api/work.ts:90 and :184). Omitting it here blocks every
+  // browser write at preflight while `curl -X PATCH` succeeds, because curl sends no
+  // preflight — so the route looks healthy from the terminal and is dead in the app.
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'content-type',
 };
 
@@ -98,7 +102,7 @@ function isAllowedOrigin(req: IncomingMessage): boolean {
 function credentialCors(req: IncomingMessage): Record<string, string> {
   const origin = req.headers.origin;
   const headers: Record<string, string> = {
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'content-type',
   };
   if (origin && ALLOWED_ORIGINS.has(origin)) headers['Access-Control-Allow-Origin'] = origin;
