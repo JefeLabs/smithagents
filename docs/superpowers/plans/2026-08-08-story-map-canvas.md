@@ -1074,6 +1074,27 @@ Verify **3 files changed**.
 
 ### Task 4: Canvas integration
 
+**AMENDED 2026-08-09, after Task 2's interface decisions. Two things below are now wrong.**
+
+**1. `decorate` must NOT build an add-story input.** Task 2 dropped `addStoryInput` from
+`StepNodeData`: the blank story card *is* that input, so building both renders the same
+affordance twice per column, which is exactly what Edwin's ruling removes. Any sketch below
+that constructs an input for `StepNode` is superseded — `StepNode` is name plus remove
+button, parallel to `ActivityNode`.
+
+**2. `decorate` supplies `onCommit` to every blank node.** Blank cards own their own input
+state and call `data.onCommit(text: string)` on Enter, or on blur with non-empty text; they
+trim, no-op on empty, and clear themselves. `layoutMap` already puts `activityId`/`stepId`
+in blank data, so `decorate` closes over the parent and the component never learns it.
+Wire `onCommit` to the existing create mutations — this is where the three deleted
+composers' behaviour now lives.
+
+**3. Expect a cast at the `nodeTypes={...}` site, and do NOT "fix" it upward.** The node
+components' props are deliberately narrower than xyflow's `NodeProps` (whose `data` is
+`Record<string, unknown>`). That narrowing is what lets them be rendered and asserted
+without xyflow present. Cast at the mount site; do not loosen the component types to make
+the cast go away — that trades a one-line cast for untypable components.
+
 **Files:**
 - Modify: `control-plane/package.json`
 - Modify: `control-plane/src/organisms/MapStage.tsx`
