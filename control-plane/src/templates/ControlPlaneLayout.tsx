@@ -33,7 +33,7 @@ interface ControlPlaneLayoutProps {
  * `position: fixed` — which `Sidebar.Provider` now carries — always opens its own
  * stacking context, even at `z-index: auto`. Everything inside it, no matter how high
  * an overlay's own z-index climbs (SettingsPanel's full-screen shell is 200), is
- * compared against `.navbar` as a *single unit* at that auto/0 level — and loses to the
+ * compared against `.sm-navbar` as a *single unit* at that auto/0 level — and loses to the
  * navbar's z-index: 4 every time. Nested there, the Settings screen rendered on top
  * visually but the navbar silently ate every click in its own 56px band. Rendering
  * `overlays` as a sibling of the Provider (like `topBar` and `background`) puts them

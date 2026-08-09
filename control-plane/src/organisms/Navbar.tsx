@@ -18,7 +18,7 @@ interface NavbarProps {
  */
 export function Navbar({ onHome, workspaceSlot, alertSlot, avatarSlot }: NavbarProps) {
   return (
-    <nav className="navbar" aria-label="Workspace and account">
+    <nav className="sm-navbar" aria-label="Workspace and account">
       <button type="button" className="logo" title="smithagents" aria-label="Home" onClick={onHome}>
         <Logo />
       </button>
