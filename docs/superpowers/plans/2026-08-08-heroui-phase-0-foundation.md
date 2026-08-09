@@ -84,6 +84,10 @@ Biome, pnpm. Adding: `tailwindcss@4`, `@tailwindcss/vite`, `@heroui/react`,
   order `legacy, heroui, overrides`. Task 3 relies on `heroui.css` existing. Task 4
   relies on Tailwind utilities compiling.
 
+> **Executed 2026-08-09.** Steps below are the corrected versions; three things the
+> original plan got wrong are marked **[CORRECTION]**. Anyone re-running this should
+> follow the text as it now stands.
+
 - [ ] **Step 1: Install dependencies**
 
 ```bash
@@ -91,6 +95,28 @@ cd /Users/edwincruz/Development/Workspaces/jefelabs/smithagents/control-plane
 pnpm add @heroui/react @heroui/styles @heroui-pro/react react-aria-components
 pnpm add -D tailwindcss@4 @tailwindcss/vite
 ```
+
+**[CORRECTION] Step 1b: approve the blocked build scripts.** `@heroui-pro/react` on
+npm is a **20KB stub** — no `main`, no `exports`, just a postinstall that
+authenticates against HeroUI's CDN and downloads the real ~3.9M package.
+`@zowe/secrets-for-zowe-sdk` is the keyring module that postinstall reads the licensed
+credentials from. pnpm blocks postinstall scripts by default, so without this the
+install *succeeds* with zero Pro components and the failure only surfaces later as a
+missing module.
+
+Set both to `true` in `control-plane/pnpm-workspace.yaml` (pnpm writes the keys in
+as placeholders for you), then re-run `pnpm install`:
+
+```yaml
+allowBuilds:
+  '@heroui-pro/react': true
+  '@zowe/secrets-for-zowe-sdk': true
+  esbuild: true
+```
+
+Expect `Installed HeroUI React Pro ✓`. Verify with
+`du -sh node_modules/@heroui-pro/react/` — roughly 3.9M, not 20K. A licensed account
+must already be logged in via `npx heroui-pro login`; CI needs `HEROUI_AUTH_TOKEN`.
 
 - [ ] **Step 2: Add the Tailwind Vite plugin**
 

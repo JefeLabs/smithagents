@@ -1,3 +1,4 @@
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
@@ -8,7 +9,7 @@ import { defineConfig } from "vite";
 //   - clearScreen: false so Rust compiler output stays visible
 //   - envPrefix TAURI_ exposes Tauri env vars to the front-end
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   clearScreen: false,
   server: {
     port: 1420,

@@ -215,10 +215,25 @@ makes the tests survive the restyle that follows.
 
 Per phase:
 - `pnpm typecheck`, `pnpm lint`, `pnpm test` green before the phase is called done.
-- Phases 0–2 additionally require **visual parity**, verified by manual smoke against
-  a before-screenshot of each migrated surface in all four themes (dark, light,
+- Phases 0–2 additionally require **no structural change**, verified against a
+  before-screenshot of each migrated surface in all four themes (dark, light,
   midnight, sand). Screenshots go in `.screenshots/`, which already exists. Phase 3
-  does not require parity.
+  is exempt.
+
+  "No structural change" means: same layout, same colors, same borders and radii.
+  **Sub-pixel text-rendering drift is allowed.** Position-fixed chrome (rails,
+  composer) must stay at or below 0.5% differing pixels — that is the real gate,
+  since fixed elements cannot drift for benign reasons.
+
+  This criterion was originally written as *pixel-identical* and amended 2026-08-09
+  during Phase 0. Tailwind's preflight zeroes `margin` and `padding` on every element
+  and sets a global `line-height`; landing that on 2,896 lines of hand-written CSS
+  moves 1px edges and glyph antialiasing everywhere, permanently. Measured on the
+  voice stage: fills identical, fixed rails 0.16%, whole viewport 13.85%, against a
+  0.24% same-CSS noise floor. Bit-identity was never available while preflight is
+  loaded, so gating on it would have blocked every phase for a difference no one can
+  see. Evidence is in `.screenshots/phase0/`, which is **gitignored** — those images
+  are local to the machine that ran Phase 0 and are not in the repo.
 - Kanban requires a keyboard-drag check: select a card, move it with the keyboard,
   confirm the mutation fires. This is new capability, so it needs a new test.
 

@@ -1,0 +1,39 @@
+/*
+ * The CSS pipeline's entry point. The @layer line below is the whole ballgame:
+ * declared order IS precedence order, earliest loses, and the FIRST declaration in
+ * the document wins. @heroui/styles re-declares `theme, base, components, utilities`
+ * internally, but ours is already established by then, so ours governs.
+ *
+ * Why legacy sits AFTER base:
+ *   @heroui/styles imports Tailwind, which brings preflight — a global reset — in
+ *   layer(base). With legacy declared before it, preflight beat components.css and
+ *   stripped the background, border, and border-radius off every chat bubble: 37% of
+ *   the viewport changed. Declaring legacy after base means preflight still applies
+ *   everywhere the app has no opinion, and loses everywhere it does.
+ *
+ * Why legacy sits AFTER components:
+ *   Until the .chip / .avatar renames land, HeroUI's bare blocks would otherwise
+ *   restyle our elements. Post-rename there is no overlap and this is moot, but it
+ *   costs nothing to be safe in both directions.
+ *
+ * Why utilities sits AFTER legacy:
+ *   Tailwind utilities must win — that is their entire purpose. A migrated component
+ *   styled with utilities has to beat whatever components.css still says about it.
+ *
+ * overrides is the escape hatch: empty for now, and beats everything.
+ *
+ * tokens.css and base.css stay UNLAYERED (imported from main.tsx). Unlayered rules
+ * beat every layered one, which keeps base.css's body/main selectors authoritative.
+ *
+ * components.css is imported here rather than from main.tsx so its layer is assigned
+ * at the import. Wrapping its 2896 lines in `@layer legacy { … }` behaves identically
+ * in the browser, but Biome then demands the whole file be re-indented — churning
+ * every line and destroying its blame history for a purely mechanical reason.
+ */
+@layer theme, base, components, legacy, utilities, overrides;
+
+/* This pulls in Tailwind v4 itself. Do NOT also `@import "tailwindcss"` here, or
+   preflight is emitted twice. */
+@import "@heroui/styles";
+
+@import "./components.css" layer(legacy);

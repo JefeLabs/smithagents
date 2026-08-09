@@ -18,6 +18,9 @@
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
+    "@heroui-pro/react": "1.0.0-beta.8",
+    "@heroui/react": "^3.2.4",
+    "@heroui/styles": "^3.2.4",
     "@tanstack/react-query": "5.101.4",
     "@tanstack/react-router": "1.170.23",
     "@tauri-apps/api": "^2.0.0",
@@ -25,12 +28,14 @@
     "lucide-react": "^1.25.0",
     "motion": "^13.0.0",
     "react": "^19.0.0",
+    "react-aria-components": "^1.20.0",
     "react-dom": "^19.0.0",
     "react-hook-form": "7.85.0",
     "zustand": "5.0.14"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.0.0",
+    "@tailwindcss/vite": "^4.3.3",
     "@tanstack/react-query-devtools": "5.101.4",
     "@tauri-apps/cli": "^2.0.0",
     "@testing-library/jest-dom": "^7.0.0",
@@ -40,6 +45,7 @@
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.0",
     "jsdom": "^30.0.0",
+    "tailwindcss": "^4.3.3",
     "typescript": "^5.6.0",
     "vite": "^6.0.0",
     "vitest": "^4.1.10"

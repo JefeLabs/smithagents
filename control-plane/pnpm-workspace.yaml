@@ -1,4 +1,11 @@
 allowBuilds:
+  # @heroui-pro/react ships a 20KB stub. Its postinstall authenticates against the
+  # HeroUI CDN and downloads the real ~3.8M package. Without this the install
+  # "succeeds" with zero components, and the failure only surfaces at the first Pro
+  # import as a missing module. The keyring module is how that postinstall reads the
+  # licensed credentials out of the macOS Keychain.
+  '@heroui-pro/react': true
+  '@zowe/secrets-for-zowe-sdk': true
   esbuild: true
 minimumReleaseAgeExclude:
   - '@tanstack/react-router@1.170.23'
