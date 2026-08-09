@@ -2797,12 +2797,12 @@ button.logo {
   display: flex;
   align-items: center;
   gap: 6px;
-  /* Must equal ACTIVITY_H in organisms/map/layout.ts. It is one of the two terms in
-     STORIES_Y, the y where every story stack's first slot begins — let content size
-     this card and every stack sits lower than cellAt believes, so drops resolve a
-     row off from what the user sees, with every test still passing because no test
-     reads CSS. Vertical padding is 0 and the flex centring does that job instead, so
-     the height holds whatever the card ends up containing. */
+  /* Must equal ACTIVITY_H in organisms/map/layout.ts. Node positions are ABSOLUTE —
+     layoutMap puts the step head at ACTIVITY_H + COL_GAP and xyflow translates every
+     node independently — so a card taller than its constant does not push the next
+     one down, it GROWS INTO IT. Unpinned this card drew 39.5 and left 0.5px of the
+     declared 8px COL_GAP. Vertical padding is 0 and the flex centring does that job
+     instead, so the height holds whatever the card ends up containing. */
   height: 32px;
   padding: 0 10px;
   border-radius: 10px;
@@ -2825,8 +2825,10 @@ button.logo {
   align-items: center;
   gap: 6px;
   /* Must equal STEP_HEAD_H in organisms/map/layout.ts — STORIES_Y's other term, with
-     the same consequence as .map-activity__name above. On the canvas this card is a
-     step's head and nothing else: its stories are sibling nodes, not children. */
+     the same overlap consequence as .map-activity__name above, and here it was not
+     hypothetical: unpinned this card drew 35.5 at y=40 and crossed story row 0's top
+     edge at y=75. On the canvas this card is a step's head and nothing else — its
+     stories are sibling nodes, not children. */
   height: 27px;
   /* Must equal STEP_W. Only activity nodes carry a MapNode.width (they span their
      step group), so nothing else would give a step card a column's width. */
@@ -2849,9 +2851,13 @@ button.logo {
   display: flex;
   align-items: center;
   gap: 6px;
-  /* Must equal STORY_H in organisms/map/layout.ts — cellAt resolves a drop by
-     dividing y by SLOT_H (STORY_H + STORY_GAP) and cannot measure a pitch it did not
-     declare. Same reasoning as .map-activity__name for the zero vertical padding. */
+  /* Must equal STORY_H in organisms/map/layout.ts. cellAt is NOT what is at risk —
+     it inverts POSITIONS, which no stylesheet can move. The row below is: layoutMap
+     puts the next story exactly SLOT_H (STORY_H + STORY_GAP) lower, so any card
+     taller than STORY_H spends the 6px gap and then overlaps its neighbour. Unpinned,
+     at this column width, the card already wrapped to 56px and overlapped the next
+     row by 18px; one long story reached 154px. The ellipsis on .map-story__handle is
+     what keeps that bounded. Zero vertical padding as in .map-activity__name. */
   height: 32px;
   /* Must equal STEP_W — see .map-step__name. */
   width: 180px;
@@ -2865,8 +2871,9 @@ button.logo {
 .map-card__text {
   flex: 1;
   /* A flex item's min-width is auto, which refuses to shrink below its content — the
-     ellipsis never appears without this, and a long name overflows a card whose
-     height is now fixed. */
+     ellipsis never appears without this. This pair is the actual defence against
+     overlap: a fixed height alone only clips, while wrapping text is what made an
+     unpinned card reach 154px and swallow the rows beneath it. */
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

@@ -79,6 +79,17 @@ describe("ActivityNode", () => {
     render(<ActivityNode width={STEP_W} data={data} />);
     expect(screen.getByLabelText("Remove activity: Manage Candidate Tours")).toBeDisabled();
   });
+
+  // The pair matters: without an enabled case, `disabled={activity.steps.length > 0}`
+  // passes just as well hardcoded to true.
+  it("removes on click once the activity has no steps left", async () => {
+    const onRemove = vi.fn();
+    render(<ActivityNode width={STEP_W} data={{ ...data, activity: { ...ACTIVITY, steps: [] }, onRemove }} />);
+    const button = screen.getByLabelText("Remove activity: Manage Candidate Tours");
+    expect(button).toBeEnabled();
+    await userEvent.click(button);
+    expect(onRemove).toHaveBeenCalled();
+  });
 });
 
 /**

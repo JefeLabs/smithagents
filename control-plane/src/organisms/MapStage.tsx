@@ -451,7 +451,9 @@ export function MapStage() {
                 .map((act) => (
                   <div key={act.id} className="map-activity">
                     <div className="map-activity__name">
-                      {act.name}
+                      <span className="map-card__text" title={act.name}>
+                        {act.name}
+                      </span>
                       <button
                         type="button"
                         aria-label={`Remove activity: ${act.name}`}
@@ -468,7 +470,9 @@ export function MapStage() {
                         .map((step) => (
                           <div key={step.id} className="map-step">
                             <div className="map-step__name">
-                              {step.name}
+                              <span className="map-card__text" title={step.name}>
+                                {step.name}
+                              </span>
                               <button
                                 type="button"
                                 aria-label={`Remove step: ${step.name}`}
