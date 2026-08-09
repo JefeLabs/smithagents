@@ -13,6 +13,7 @@ import { AddAgentModal } from "../organisms/AddAgentModal";
 import { AgentRoster } from "../organisms/AgentRoster";
 import { DotGridCanvas } from "../organisms/DotGridCanvas";
 import { DotGridTuner } from "../organisms/DotGridTuner";
+import { Navbar } from "../organisms/Navbar";
 import { NewSessionScreen } from "../organisms/NewSessionScreen";
 import { NewWorkspaceModal } from "../organisms/NewWorkspaceModal";
 import { SessionsPanel } from "../organisms/SessionsPanel";
@@ -172,15 +173,18 @@ export function HomePage() {
 
   return (
     <ControlPlaneLayout
+      topBar={<Navbar onHome={() => void navigate({ to: "/" })} />}
       background={<DotGridCanvas params={gridParams} />}
       leftRail={
         <ToolRail
           activeRoute={pathname}
-          onHome={() => void navigate({ to: "/" })}
-          onNewWorkspace={() => setNewWorkspaceOpen(true)}
+          // Locks to the workspace already on screen (same rule SessionsPanel's
+          // "new session" row uses) — there is no multiselect yet, so exactly one
+          // workspace is ever in view and locking to it is the non-surprising
+          // default. `viewedWorkspaces` (Task 3) will make this conditional once
+          // more than one workspace can be in view at a time.
+          onNewSession={() => openComposer(session?.workspace)}
           onSessions={toggleSessions}
-          onBoard={() => void navigate({ to: "/board" })}
-          onMap={() => void navigate({ to: "/map" })}
           onSettings={() => setSettingsOpen(true)}
         />
       }

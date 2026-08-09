@@ -103,8 +103,11 @@ function renderApp(seed?: (c: QueryClient) => void, path = "/") {
   return { ...renderWithProviders(<RouterProvider router={router} />, { client }), router };
 }
 
-/** The rail renders once the root layout (HomePage) is mounted. */
-const appMounted = () => screen.findByRole("navigation", { name: /tools/i });
+/**
+ * The rail renders once the root layout (HomePage) is mounted. Sidebar.Menu is
+ * RAC Tree built as a treegrid, not a <nav> — see ToolRail.tsx.
+ */
+const appMounted = () => screen.findByRole("treegrid", { name: /tools/i });
 
 const callsTo = (suffix: string) => fetchMock.mock.calls.filter((c) => String(c[0]).endsWith(suffix)).length;
 
@@ -197,7 +200,9 @@ describe("HomePage — the zero-session composer", () => {
   it("holds the execution-mode and workspace-record probes until the composer is on screen", async () => {
     renderApp(knownZero);
     await appMounted();
-    await screen.findByRole("main");
+    // VoiceStage is a labelled <section> (role="region"), not <main> — HeroUI's
+    // required Sidebar.Main already claims the page's one, un-nested <main>.
+    await screen.findByRole("region", { name: "Voice" });
     // The handshake has not finished, so the composer is off screen and neither
     // probe has any reason to run yet.
     expect(callsTo("/execution-modes")).toBe(0);
@@ -222,15 +227,17 @@ describe("HomePage — the zero-session composer", () => {
     });
     await appMounted();
 
-    await userEvent.click(screen.getByRole("button", { name: "Sessions" }));
+    await userEvent.click(screen.getByRole("row", { name: "Sessions" }));
     await userEvent.click(screen.getByRole("button", { name: /new session · acme/i }));
     await screen.findByRole("heading", { name: /start a session/i });
     await waitFor(() => expect(callsTo("/execution-modes")).toBe(1));
 
     await userEvent.click(screen.getByRole("button", { name: /cancel new session/i }));
-    await screen.findByRole("main");
+    // VoiceStage is a labelled <section> (role="region"), not <main> — HeroUI's
+    // required Sidebar.Main already claims the page's one, un-nested <main>.
+    await screen.findByRole("region", { name: "Voice" });
 
-    await userEvent.click(screen.getByRole("button", { name: "Sessions" }));
+    await userEvent.click(screen.getByRole("row", { name: "Sessions" }));
     await userEvent.click(screen.getByRole("button", { name: /new session · acme/i }));
     await screen.findByRole("heading", { name: /start a session/i });
 
@@ -249,7 +256,9 @@ describe("HomePage — the zero-session composer", () => {
     // gate rather than the status gate it exists to isolate.
     expect(useSocketStore.getState().connected).toBe(true);
 
-    await screen.findByRole("main");
+    // VoiceStage is a labelled <section> (role="region"), not <main> — HeroUI's
+    // required Sidebar.Main already claims the page's one, un-nested <main>.
+    await screen.findByRole("region", { name: "Voice" });
     expect(screen.queryByRole("heading", { name: /start a session/i })).toBeNull();
   });
 
@@ -258,7 +267,9 @@ describe("HomePage — the zero-session composer", () => {
     await appMounted();
     // FakeSocket.open() deliberately never called — the handshake has not finished.
 
-    await screen.findByRole("main");
+    // VoiceStage is a labelled <section> (role="region"), not <main> — HeroUI's
+    // required Sidebar.Main already claims the page's one, un-nested <main>.
+    await screen.findByRole("region", { name: "Voice" });
     expect(screen.queryByRole("heading", { name: /start a session/i })).toBeNull();
   });
 });
@@ -270,7 +281,7 @@ describe("HomePage — voice status refresh on Settings close", () => {
     await waitFor(() => expect(callsTo("/agents")).toBeGreaterThan(0));
     const callsAfterMount = callsTo("/agents");
 
-    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(screen.getByRole("row", { name: "Settings" }));
     await userEvent.click(screen.getByRole("button", { name: /back to app/i }));
 
     await waitFor(() => expect(callsTo("/agents")).toBeGreaterThan(callsAfterMount));
@@ -311,12 +322,12 @@ describe("HomePage — composer closes when another session is activated", () =>
     await appMounted();
 
     // Open the sessions panel and start a new session in "acme" — opens the composer explicitly.
-    await userEvent.click(screen.getByRole("button", { name: "Sessions" }));
+    await userEvent.click(screen.getByRole("row", { name: "Sessions" }));
     await userEvent.click(screen.getByRole("button", { name: /new session · acme/i }));
     expect(screen.getByRole("heading", { name: /start a session/i })).toBeInTheDocument();
 
     // Reopen sessions and activate the other (inactive) session.
-    await userEvent.click(screen.getByRole("button", { name: "Sessions" }));
+    await userEvent.click(screen.getByRole("row", { name: "Sessions" }));
     await userEvent.click(screen.getByText("Other work"));
 
     expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:7790/sessions/s-other/activate", { method: "POST" });

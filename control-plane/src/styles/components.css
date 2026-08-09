@@ -15,10 +15,60 @@
   pointer-events: none;
 }
 
+:root {
+  /* Shared between .navbar and the Sidebar.Provider/.rail overrides below — the
+     sidebar, the right rail, and the stage all need to start clear of the bar. */
+  --navbar-h: 56px;
+}
+
+/* ---- top bar (navbar) ---- */
+.navbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--navbar-h);
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  background: var(--pill);
+  border-bottom: 1px solid var(--rail-br);
+  backdrop-filter: blur(16px) saturate(1.3);
+  -webkit-backdrop-filter: blur(16px) saturate(1.3);
+}
+.navbar .logo {
+  margin-bottom: 0; /* the rail's logo had bottom margin for the tool stack below it; the bar has none */
+}
+
+/* HeroUI's Sidebar.Provider owns the layout below the navbar — <Sidebar> (the
+   left rail) and Sidebar.Main (everything else) are its flex row. HeroUI sizes
+   both against a full 100svh viewport, which is now `var(--navbar-h)` too tall
+   once the fixed bar sits above them, so both need a height override alongside
+   the Provider's own. */
+.sidebar__provider {
+  position: fixed;
+  inset: var(--navbar-h) 0 0 0;
+  min-height: 0;
+  width: auto;
+}
+.sidebar {
+  height: auto; /* let flex align-items:stretch fill the provider's real height instead of forcing 100svh */
+}
+.sidebar__main {
+  min-height: 0; /* same reason as .sidebar above */
+  /* The right rail (AgentRoster) is still position:fixed — HeroUI Phase 2 work,
+     not touched here. Every in-flow child of Sidebar.Main (the stage, and
+     new-session-screen) clears it from this one place instead of each
+     repeating the same 72px. */
+  padding-right: 72px;
+}
+
 /* ---- shared rails ---- */
 .rail {
   position: fixed;
-  top: 0;
+  top: var(--navbar-h);
   bottom: 0;
   z-index: 3;
   width: 72px;
@@ -28,11 +78,7 @@
   gap: 12px;
   padding: 16px 0;
 }
-.rail--left {
-  left: 0;
-  border-right: 1px solid var(--rail-br);
-  background: linear-gradient(90deg, rgba(0, 0, 0, 0.18), transparent);
-}
+/* .rail--left retired: the left rail is the HeroUI Sidebar now (see ToolRail.tsx). */
 .rail--right {
   right: 0;
   border-left: 1px solid var(--rail-br);
@@ -358,9 +404,14 @@ button.logo {
 
 /* --- sessions panel (left rail's New session tool) --- */
 .sessions-panel {
-  position: absolute;
-  left: 76px;
-  top: 84px;
+  /* fixed, not absolute: it's rendered inside Sidebar.Main (position: relative),
+     so an absolute here would anchor to that box instead of the viewport — this
+     keeps the same viewport-relative anchor it always had. Left/top clear the
+     collapsed (48px) sidebar and the navbar, same "just past the rail" gap the
+     original 76px/84px gave past the old fixed 72px-wide rail. */
+  position: fixed;
+  left: 56px;
+  top: calc(var(--navbar-h) + 28px);
   width: 230px;
   padding: 10px;
   border-radius: 14px;
@@ -942,7 +993,7 @@ button.logo {
 /* tiny hidden tuner (press g) */
 .tuner {
   position: fixed;
-  top: 14px;
+  top: calc(var(--navbar-h) + 14px);
   right: 88px;
   z-index: 6;
   width: 208px;
@@ -2299,7 +2350,7 @@ button.logo {
 }
 
 /* Chat state: full-height transcript column with a top fade instead of a hard clip. */
-main.chat-active {
+.chat-active {
   gap: 16px;
 }
 .chat-log {
@@ -2325,7 +2376,7 @@ main.chat-active {
 .composer-dock .composer {
   width: 100%;
 }
-main.chat-active .composer-dock {
+.chat-active .composer-dock {
   width: min(680px, 92%);
   padding-bottom: 8px;
 }
@@ -2353,8 +2404,8 @@ main.chat-active .composer-dock {
   gap: 10px;
   min-height: 0;
   padding: 14px;
-  /* Rendered as the stage's own <main> (base.css gives main `inset: 0 72px`
-     rail clearance); undo main's centering so columns fill the stage. */
+  /* .stage (base.css) centers its content by default; undo that so columns fill
+     the available width instead of clustering in the middle. */
   align-items: stretch;
   justify-content: flex-start;
 }

@@ -36,4 +36,14 @@
    preflight is emitted twice. */
 @import "@heroui/styles";
 
+/* @heroui/styles (above) only bundles the OSS component set — Phase 0 verified Pro's
+ * JS resolves (the postinstall stub-to-real-package swap) but never actually wired up
+ * Pro's OWN separate CSS bundle, so every Pro component (Sidebar included) had been
+ * rendering with zero layout styling until Task 1 caught it: Sidebar.Provider's flex
+ * layout was silently absent, and the aside was falling back to plain block flow.
+ * This bundle is pre-compiled output (already-expanded Tailwind, not source), and
+ * unlike @heroui/styles it declares no `base` layer — no preflight inside it, so no
+ * repeat of the double-preflight bug the comment above describes. */
+@import "@heroui-pro/react/css";
+
 @import "./components.css" layer(legacy);

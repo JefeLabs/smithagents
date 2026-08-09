@@ -428,7 +428,7 @@ export function MapStage() {
   };
 
   return (
-    <main className="map-stage" aria-label="Story map">
+    <section className="stage map-stage" aria-label="Story map">
       <header className="map-stage__bar">
         <MapIcon size={14} strokeWidth={2} />
         <select
@@ -619,6 +619,6 @@ export function MapStage() {
           </div>
         </>
       )}
-    </main>
+    </section>
   );
 }

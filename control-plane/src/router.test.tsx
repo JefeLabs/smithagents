@@ -54,8 +54,9 @@ async function renderAt(path: string) {
   client.setQueryData(qk.roster, { agents: ROSTER, identity: null });
   const router = createAppRouter(createMemoryHistory({ initialEntries: [path] }));
   renderWithProviders(<RouterProvider router={router} />, { client });
-  // The rail renders once the root layout is mounted.
-  await screen.findByRole("navigation", { name: /tools/i });
+  // The rail renders once the root layout is mounted. Sidebar.Menu is RAC Tree
+  // built as a treegrid, not a <nav> — see ToolRail.tsx.
+  await screen.findByRole("treegrid", { name: /tools/i });
   return router;
 }
 
@@ -85,42 +86,49 @@ describe("stage routing", () => {
     vi.clearAllMocks();
   });
 
-  it("renders the voice stage at / — no board main", async () => {
+  // BoardStage/MapStage render <section aria-label="..."> now, not <main> — a page
+  // may only have one, un-nested <main> landmark, and HeroUI's required
+  // Sidebar.Main already claims it (see base.css's .stage rule). A labelled
+  // <section> maps to role="region", the same pattern NewSessionScreen already uses.
+  it("renders the voice stage at / — no board region", async () => {
     await renderAt("/");
-    expect(screen.queryByRole("main", { name: "Work boards" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Work boards" })).toBeNull();
   });
 
   it("board tool navigates to /board and highlights itself", async () => {
     const router = await renderAt("/");
-    await userEvent.click(screen.getByRole("button", { name: /^board$/i }));
-    expect(await screen.findByRole("main", { name: "Work boards" })).toBeTruthy();
+    // Sidebar.MenuItem is RAC TreeItem — role="row", never "button" or a link.
+    await userEvent.click(screen.getByRole("row", { name: /^board$/i }));
+    expect(await screen.findByRole("region", { name: "Work boards" })).toBeTruthy();
     expect(router.state.location.pathname).toBe("/board");
-    expect(screen.getByRole("button", { name: /^board$/i }).getAttribute("aria-current")).toBe("true");
+    // isCurrent marks data-current, not aria-current, despite what the docs prose
+    // claims — confirmed against the rendered DOM.
+    expect(screen.getByRole("row", { name: /^board$/i }).getAttribute("data-current")).toBe("true");
   });
 
   it("clicking the active board tool stays on the board (no toggle)", async () => {
     const router = await renderAt("/");
-    await userEvent.click(screen.getByRole("button", { name: /^board$/i }));
-    await screen.findByRole("main", { name: "Work boards" });
-    await userEvent.click(screen.getByRole("button", { name: /^board$/i }));
+    await userEvent.click(screen.getByRole("row", { name: /^board$/i }));
+    await screen.findByRole("region", { name: "Work boards" });
+    await userEvent.click(screen.getByRole("row", { name: /^board$/i }));
     // Give a would-be toggle navigation time to land before asserting it didn't.
     await new Promise((r) => setTimeout(r, 50));
     expect(router.state.location.pathname).toBe("/board");
-    expect(screen.getByRole("main", { name: "Work boards" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Work boards" })).toBeTruthy();
   });
 
   it("browser back restores the previous stage", async () => {
     const router = await renderAt("/");
-    await userEvent.click(screen.getByRole("button", { name: /^map$/i }));
-    await screen.findByRole("main", { name: "Story map" });
+    await userEvent.click(screen.getByRole("row", { name: /^map$/i }));
+    await screen.findByRole("region", { name: "Story map" });
     act(() => router.history.back());
     await waitFor(() => expect(router.state.location.pathname).toBe("/"));
-    expect(screen.queryByRole("main", { name: "Story map" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Story map" })).toBeNull();
   });
 
   it("logo navigates home from a stage", async () => {
     const router = await renderAt("/map");
-    await screen.findByRole("main", { name: "Story map" });
+    await screen.findByRole("region", { name: "Story map" });
     await userEvent.click(screen.getByRole("button", { name: /home/i }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/"));
   });
@@ -137,7 +145,7 @@ describe("stage routing", () => {
 
   it("a known roster agent renders the work stage", async () => {
     const router = await renderAt("/work/ignacio");
-    await waitFor(() => expect(document.querySelector("main.work-stage")).toBeTruthy());
+    await screen.findByRole("region", { name: "Work: Ignacio" });
     expect(router.state.location.pathname).toBe("/work/ignacio");
   });
 });

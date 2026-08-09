@@ -28,9 +28,20 @@ body {
   z-index: 0;
 }
 
-main {
-  position: fixed;
-  inset: 0 72px;
+/* .stage — VoiceStage/BoardStage/MapStage/WorkStage's root element (a <section>,
+   not <main>: HeroUI's required Sidebar.Main is ALSO a literal <main>, and a
+   page must have exactly one, un-nested <main> landmark). A normal flow child of
+   Sidebar.Main now, no longer position:fixed — the left rail's real flow width
+   clears it automatically, and the right rail's clearance is handled once, in
+   components.css, on .sidebar__main itself. */
+.stage {
+  /* Restores what `position: fixed` used to provide for free: a containing block
+     for this stage's own absolutely-positioned overlays (e.g. .card-sheet, which
+     anchors to the stage's own edges, not the viewport's). Without it they'd
+     resolve against Sidebar.Main instead, the next positioned ancestor up. */
+  position: relative;
+  flex: 1;
+  min-height: 0;
   z-index: 2;
   display: flex;
   flex-direction: column;

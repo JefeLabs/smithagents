@@ -308,7 +308,7 @@ export function BoardStage({ roster }: BoardStageProps) {
   };
 
   return (
-    <main className="board-stage" aria-label="Work boards">
+    <section className="stage board-stage" aria-label="Work boards">
       <BoardTabs
         scope={scope}
         workspaces={workspaces.map((w) => w.name)}
@@ -382,6 +382,6 @@ export function BoardStage({ roster }: BoardStageProps) {
           onChanged={() => void qc.invalidateQueries({ queryKey: qk.boards })}
         />
       )}
-    </main>
+    </section>
   );
 }
