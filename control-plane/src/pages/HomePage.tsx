@@ -9,6 +9,7 @@ import { usePushToTalk } from "../hooks/usePushToTalk";
 import { useSpokenReplies } from "../hooks/useSpokenReplies";
 import { useTheme } from "../hooks/useTheme";
 import { ConfirmSheet } from "../molecules/ConfirmSheet";
+import { WorkspaceSelector } from "../molecules/WorkspaceSelector";
 import { AddAgentModal } from "../organisms/AddAgentModal";
 import { AgentRoster } from "../organisms/AgentRoster";
 import { DotGridCanvas } from "../organisms/DotGridCanvas";
@@ -173,7 +174,7 @@ export function HomePage() {
 
   return (
     <ControlPlaneLayout
-      topBar={<Navbar onHome={() => void navigate({ to: "/" })} />}
+      topBar={<Navbar onHome={() => void navigate({ to: "/" })} workspaceSlot={<WorkspaceSelector />} />}
       background={<DotGridCanvas params={gridParams} />}
       leftRail={
         <ToolRail
