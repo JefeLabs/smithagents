@@ -56,6 +56,16 @@ Testing Library, Biome, pnpm.
   the stepper ruling as licence to restyle anything else.
 - **Interactive elements use `onPress`, not `onClick`.** HeroUI v3 is react-aria based.
   A handler passed as `onClick` to a HeroUI `Button` silently never fires.
+- **`useForm` / `useFieldArray` and the open-keyed `reset()` effect MUST stay in the
+  top-level modal component, above `ModalShell`.** Established by Task 4's review, which
+  read the source rather than the docs: `Modal.Backdrop` wraps react-aria's
+  `ModalOverlay` and **unmounts its DOM subtree** when closed — it does not hide it with
+  CSS. Today's form state survives a close only because both modals hold it in the
+  permanently-mounted parent, above the old `if (!open) return null`, and `register()`'s
+  ref callback re-hydrates fresh inputs from it on reopen. Moving `useForm` inside
+  `ModalShell`'s children would wipe every field on close, and the existing tests would
+  not catch it — they render the modal already open. The natural port preserves this;
+  the failure mode is "tidying" the hooks downward.
 - `pnpm typecheck` (`tsc --noEmit`), `pnpm lint`, and `pnpm test` must all pass before
   every commit. Currently green at 395 tests / 46 files — the count only goes up.
 - Branch is `heroui-phase-1a`, created off `main` after Phase 0 merges.
