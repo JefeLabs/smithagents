@@ -201,9 +201,15 @@ export function NewWorkspaceModal({
       </Stepper>
 
       {/* Every step's fields stay MOUNTED and are hidden with `hidden`, never
-          unmounted. FormTextField holds RHF state through useController, and
-          unmounting a controlled field unregisters it — stepping forward and back
-          would silently clear what the user typed. The `back` test asserts this. */}
+          unmounted. NOT because unmounting would clear the value today — verified
+          directly: RHF v7 defaults `shouldUnregister` to false, and under that default
+          a field's cleanup effect only flips its internal mount flag (`control.register`'s
+          teardown calls `updateMounted(name, false)`, never `control.unregister(name)`),
+          so `control._formValues` is untouched and a real conditional-unmount/remount
+          preserves the typed value too. `hidden` is still the right call regardless: it
+          keeps this correct without depending on that default staying what it is — on
+          `useForm`, per-field on `useController`, or in a future RHF major. The `back`
+          test asserts the value survives; it doesn't distinguish which mechanism did it. */}
       <div ref={detailsRef} hidden={step !== 0}>
         <FormTextField
           control={control}

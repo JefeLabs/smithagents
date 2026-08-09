@@ -7,6 +7,16 @@ interface ModalShellProps {
   title: string;
   size?: "sm" | "md" | "lg" | "cover" | "full";
   children: ReactNode;
+  /**
+   * Forwarded to react-aria's useModalOverlay (via react-aria-components' ModalOverlay,
+   * via HeroUI's Modal.Backdrop — confirmed on AriaModalOverlayProps, default false).
+   * A caller needs this when it owns a second, nested confirmation surface that must
+   * itself get the first crack at Escape: react-aria's overlay handles Escape and calls
+   * stopPropagation before any window-level keydown listener the caller might have sees
+   * it, so without this, Escape always closes THIS modal first regardless of what else
+   * is open on top of it.
+   */
+  isKeyboardDismissDisabled?: boolean;
 }
 
 /**
@@ -19,14 +29,26 @@ interface ModalShellProps {
  * so there is no trigger to pair with and `isOpen`/`onOpenChange` drive it directly.
  * Verified against the docs' own "Controlled State" example, which does the same.
  *
- * Rendering null when closed preserves today's behaviour exactly: HomePage keeps
- * both modals permanently mounted and toggles `open`, and their open-keyed
- * `reset()` effects depend on the hooks above the early return still running.
+ * `ModalShell` itself always renders `Modal.Backdrop` — it has no early return of its
+ * own; `isOpen={open}` is what react-aria uses to decide whether to mount the portaled
+ * dialog. The early return lives in the caller (e.g. WorkspaceManagerModal's `if (!open)
+ * return null`, after its hooks), which is what preserves today's behaviour: HomePage
+ * keeps these modals permanently mounted and toggles `open`, and their open-keyed
+ * `reset()` effects depend on the hooks above that caller-side early return still running
+ * on every render, closed or not.
  */
-export function ModalShell({ open, onClose, title, size = "md", children }: ModalShellProps) {
+export function ModalShell({
+  open,
+  onClose,
+  title,
+  size = "md",
+  children,
+  isKeyboardDismissDisabled = false,
+}: ModalShellProps) {
   return (
     <Modal.Backdrop
       isOpen={open}
+      isKeyboardDismissDisabled={isKeyboardDismissDisabled}
       onOpenChange={(next) => {
         if (!next) onClose();
       }}

@@ -349,191 +349,195 @@ export function WorkspaceManagerModal({
   };
 
   return (
-    <>
-      <ModalShell open={open} onClose={onClose} title="Workspaces" size="lg">
-        {loadError && <p className="wizard__error">{loadError}</p>}
-        <div className="workspace-manager__body">
-          {/* left column unchanged — it is a list of buttons, not form fields */}
-          <div className="workspace-manager__list">
-            <button type="button" className="settings-btn settings-btn--primary settings-btn--wide" onClick={startNew}>
-              <Plus size={12} strokeWidth={2.2} /> new workspace
-            </button>
-            {active.map((ws) => (
-              <div key={ws.name} className={`workspace-row${selected === ws.name ? " workspace-row--active" : ""}`}>
-                <button type="button" className="workspace-row__pick" onClick={() => selectWorkspace(ws)}>
-                  <span className="workspace-row__name">{ws.name}</span>
-                  <span className="workspace-row__meta">
-                    {ws.repos.length} repo{ws.repos.length === 1 ? "" : "s"}
-                    {ws.default && <span className="sm-chip is-picked">default</span>}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  className="workspace-row__remove"
-                  onClick={() => requestRemoval(ws.name)}
-                  aria-label={`Remove ${ws.name}`}
+    <ModalShell
+      open={open}
+      onClose={onClose}
+      title="Workspaces"
+      size="lg"
+      isKeyboardDismissDisabled={removing !== null}
+    >
+      {loadError && <p className="wizard__error">{loadError}</p>}
+      <div className="workspace-manager__body">
+        {/* left column unchanged — it is a list of buttons, not form fields */}
+        <div className="workspace-manager__list">
+          <button type="button" className="settings-btn settings-btn--primary settings-btn--wide" onClick={startNew}>
+            <Plus size={12} strokeWidth={2.2} /> new workspace
+          </button>
+          {active.map((ws) => (
+            <div key={ws.name} className={`workspace-row${selected === ws.name ? " workspace-row--active" : ""}`}>
+              <button type="button" className="workspace-row__pick" onClick={() => selectWorkspace(ws)}>
+                <span className="workspace-row__name">{ws.name}</span>
+                <span className="workspace-row__meta">
+                  {ws.repos.length} repo{ws.repos.length === 1 ? "" : "s"}
+                  {ws.default && <span className="sm-chip is-picked">default</span>}
+                </span>
+              </button>
+              <button
+                type="button"
+                className="workspace-row__remove"
+                onClick={() => requestRemoval(ws.name)}
+                aria-label={`Remove ${ws.name}`}
+              >
+                <X size={12} strokeWidth={2} />
+              </button>
+            </div>
+          ))}
+          {active.length === 0 && <p className="wizard__hint">No workspaces yet — create one to get started.</p>}
+        </div>
+
+        <div className="workspace-manager__form">
+          <FormTextField
+            control={control}
+            name="name"
+            label="Workspace name"
+            placeholder="acme-web"
+            rules={{ validate: filled }}
+            isDisabled={selected !== null}
+          />
+          <FormTextField
+            control={control}
+            name="description"
+            label="Description"
+            placeholder="Marketing site + storefront"
+          />
+          <FormTextField
+            control={control}
+            name="linksText"
+            label="Links"
+            hint="one per line — docs, dashboards, tickets"
+            placeholder="https://github.com/acme/web"
+            multiline
+            rows={3}
+          />
+          <FormColorSwatch control={control} name="color" label="Colour" />
+          <FormCheckbox
+            control={control}
+            name="default"
+            label="Default workspace — used when a delegation names none"
+          />
+
+          <div className="workspace-manager__atlassian">
+            <span className="wizard__hint">Atlassian (Jira / Confluence)</span>
+            <FormTextField
+              control={control}
+              name="atlassian.siteUrl"
+              labelHidden
+              label="Atlassian site URL"
+              placeholder="https://acme.atlassian.net"
+            />
+            <FormSelect
+              control={control}
+              name="atlassian.connectorId"
+              label="Atlassian connector"
+              placeholder="pick a connector…"
+              options={atlassianConnectors.map((c) => ({ id: c.id, label: c.label }))}
+            />
+            {/* Index 0 only — entries 1..N ride along untouched. See WorkspaceFormValues. */}
+            <FormTextField
+              control={control}
+              name="atlassian.jiraProjectKeys.0"
+              labelHidden
+              label="Jira project key"
+              placeholder="Jira project key (ACME)"
+            />
+            <FormTextField
+              control={control}
+              name="atlassian.confluenceSpaceKeys.0"
+              labelHidden
+              label="Confluence space key"
+              placeholder="Confluence space key (DOCS)"
+            />
+            {selected && atlassianSiteUrl && (
+              <Button variant="secondary" onPress={() => void testAtlassian()} isDisabled={testing === "atlassian"}>
+                {testing === "atlassian" ? "testing…" : "Test connection"}
+              </Button>
+            )}
+            {testResult?.target === "atlassian" && (
+              <p className={testResult.ok ? "wizard__hint" : "wizard__error"}>{testResult.detail}</p>
+            )}
+          </div>
+
+          <div className="workspace-manager__repos">
+            <span className="wizard__hint">Repos</span>
+            {fields.map((field, i) => (
+              <div key={field.id} className="repo-row flex flex-wrap items-center gap-2">
+                <FormTextField
+                  control={control}
+                  name={`repos.${i}.name`}
+                  label="Repo name"
+                  labelHidden
+                  placeholder="web"
+                  rules={{ validate: filled }}
+                />
+                <FormTextField
+                  control={control}
+                  name={`repos.${i}.path`}
+                  label="Path"
+                  labelHidden
+                  placeholder="/Users/me/code/acme-web"
+                  rules={{ validate: filled }}
+                />
+                <FormTextField
+                  control={control}
+                  name={`repos.${i}.branch`}
+                  label="Branch"
+                  labelHidden
+                  placeholder="main"
+                />
+                <FormTextField
+                  control={control}
+                  name={`repos.${i}.owner`}
+                  label="GitHub owner"
+                  labelHidden
+                  placeholder="GitHub owner"
+                />
+                <FormTextField
+                  control={control}
+                  name={`repos.${i}.repo`}
+                  label="GitHub repo"
+                  labelHidden
+                  placeholder="GitHub repo"
+                />
+                <FormSelect
+                  control={control}
+                  name={`repos.${i}.connectorId`}
+                  labelHidden
+                  label="GitHub connector"
+                  placeholder="pick a connector…"
+                  options={githubConnectors.map((c) => ({ id: c.id, label: c.label }))}
+                />
+                {selected && repoValues[i]?.owner && repoValues[i]?.repo && (
+                  <Button
+                    variant="secondary"
+                    onPress={() => void testRepoGithub(repoValues[i]?.name ?? "")}
+                    isDisabled={testing === repoValues[i]?.name}
+                  >
+                    {testing === repoValues[i]?.name ? "testing…" : "Test"}
+                  </Button>
+                )}
+                <Button
+                  isIconOnly
+                  variant="ghost"
+                  onPress={() => removeRepoAt(i)}
+                  isDisabled={fields.length <= 1}
+                  aria-label="Remove repo"
                 >
                   <X size={12} strokeWidth={2} />
-                </button>
+                </Button>
               </div>
             ))}
-            {active.length === 0 && <p className="wizard__hint">No workspaces yet — create one to get started.</p>}
-          </div>
-
-          <div className="workspace-manager__form">
-            <FormTextField
-              control={control}
-              name="name"
-              label="Workspace name"
-              placeholder="acme-web"
-              rules={{ validate: filled }}
-              isDisabled={selected !== null}
-            />
-            <FormTextField
-              control={control}
-              name="description"
-              label="Description"
-              placeholder="Marketing site + storefront"
-            />
-            <FormTextField
-              control={control}
-              name="linksText"
-              label="Links"
-              hint="one per line — docs, dashboards, tickets"
-              placeholder="https://github.com/acme/web"
-              multiline
-              rows={3}
-            />
-            <FormColorSwatch control={control} name="color" label="Colour" />
-            <FormCheckbox
-              control={control}
-              name="default"
-              label="Default workspace — used when a delegation names none"
-            />
-
-            <div className="workspace-manager__atlassian">
-              <span className="wizard__hint">Atlassian (Jira / Confluence)</span>
-              <FormTextField
-                control={control}
-                name="atlassian.siteUrl"
-                labelHidden
-                label="Atlassian site URL"
-                placeholder="https://acme.atlassian.net"
-              />
-              <FormSelect
-                control={control}
-                name="atlassian.connectorId"
-                label="Atlassian connector"
-                placeholder="pick a connector…"
-                options={atlassianConnectors.map((c) => ({ id: c.id, label: c.label }))}
-              />
-              {/* Index 0 only — entries 1..N ride along untouched. See WorkspaceFormValues. */}
-              <FormTextField
-                control={control}
-                name="atlassian.jiraProjectKeys.0"
-                labelHidden
-                label="Jira project key"
-                placeholder="Jira project key (ACME)"
-              />
-              <FormTextField
-                control={control}
-                name="atlassian.confluenceSpaceKeys.0"
-                labelHidden
-                label="Confluence space key"
-                placeholder="Confluence space key (DOCS)"
-              />
-              {selected && atlassianSiteUrl && (
-                <Button variant="secondary" onPress={() => void testAtlassian()} isDisabled={testing === "atlassian"}>
-                  {testing === "atlassian" ? "testing…" : "Test connection"}
-                </Button>
-              )}
-              {testResult?.target === "atlassian" && (
-                <p className={testResult.ok ? "wizard__hint" : "wizard__error"}>{testResult.detail}</p>
-              )}
-            </div>
-
-            <div className="workspace-manager__repos">
-              <span className="wizard__hint">Repos</span>
-              {fields.map((field, i) => (
-                <div key={field.id} className="repo-row flex flex-wrap items-center gap-2">
-                  <FormTextField
-                    control={control}
-                    name={`repos.${i}.name`}
-                    label="Repo name"
-                    labelHidden
-                    placeholder="web"
-                    rules={{ validate: filled }}
-                  />
-                  <FormTextField
-                    control={control}
-                    name={`repos.${i}.path`}
-                    label="Path"
-                    labelHidden
-                    placeholder="/Users/me/code/acme-web"
-                    rules={{ validate: filled }}
-                  />
-                  <FormTextField
-                    control={control}
-                    name={`repos.${i}.branch`}
-                    label="Branch"
-                    labelHidden
-                    placeholder="main"
-                  />
-                  <FormTextField
-                    control={control}
-                    name={`repos.${i}.owner`}
-                    label="GitHub owner"
-                    labelHidden
-                    placeholder="GitHub owner"
-                  />
-                  <FormTextField
-                    control={control}
-                    name={`repos.${i}.repo`}
-                    label="GitHub repo"
-                    labelHidden
-                    placeholder="GitHub repo"
-                  />
-                  <FormSelect
-                    control={control}
-                    name={`repos.${i}.connectorId`}
-                    labelHidden
-                    label="GitHub connector"
-                    placeholder="pick a connector…"
-                    options={githubConnectors.map((c) => ({ id: c.id, label: c.label }))}
-                  />
-                  {selected && repoValues[i]?.owner && repoValues[i]?.repo && (
-                    <Button
-                      variant="secondary"
-                      onPress={() => void testRepoGithub(repoValues[i]?.name ?? "")}
-                      isDisabled={testing === repoValues[i]?.name}
-                    >
-                      {testing === repoValues[i]?.name ? "testing…" : "Test"}
-                    </Button>
-                  )}
-                  <Button
-                    isIconOnly
-                    variant="ghost"
-                    onPress={() => removeRepoAt(i)}
-                    isDisabled={fields.length <= 1}
-                    aria-label="Remove repo"
-                  >
-                    <X size={12} strokeWidth={2} />
-                  </Button>
-                </div>
-              ))}
-              <Button variant="secondary" onPress={() => append(emptyRepo())}>
-                <Plus size={11} strokeWidth={2.2} /> repo
-              </Button>
-            </div>
-
-            {error && <p className="wizard__error">{error}</p>}
-
-            <Button variant="primary" onPress={() => void submit()} isDisabled={isSubmitting || !isValid}>
-              {isSubmitting ? "saving…" : selected ? "save changes" : "create workspace"}
+            <Button variant="secondary" onPress={() => append(emptyRepo())}>
+              <Plus size={11} strokeWidth={2.2} /> repo
             </Button>
           </div>
+
+          {error && <p className="wizard__error">{error}</p>}
+
+          <Button variant="primary" onPress={() => void submit()} isDisabled={isSubmitting || !isValid}>
+            {isSubmitting ? "saving…" : selected ? "save changes" : "create workspace"}
+          </Button>
         </div>
-      </ModalShell>
+      </div>
 
       <ConfirmSheet
         open={removing !== null}
@@ -545,6 +549,6 @@ export function WorkspaceManagerModal({
         onConfirm={() => void confirmRemoval()}
         onCancel={() => setRemoving(null)}
       />
-    </>
+    </ModalShell>
   );
 }

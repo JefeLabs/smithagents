@@ -377,3 +377,33 @@ describe("WorkspaceManagerModal — colour", () => {
     await waitFor(() => expect(p.save).toHaveBeenCalledWith(expect.objectContaining({ color: "" }), false));
   });
 });
+
+describe("WorkspaceManagerModal — removal", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("the removal confirmation is reachable while the manager is open", async () => {
+    render(
+      <WorkspaceManagerModal
+        open
+        onClose={() => {}}
+        list={vi.fn(async () => [{ name: "acme", default: true, repos: [] }])}
+        save={vi.fn()}
+        remove={vi.fn()}
+        verifyAtlassian={vi.fn()}
+        verifyRepoGithub={vi.fn()}
+        listMyConnectors={vi.fn(async () => CONNECTORS)}
+      />,
+    );
+    await userEvent.click(await screen.findByRole("button", { name: /remove acme/i }));
+    // Regression: ModalShell portals its dialog and hides everything left behind in #root
+    // from the accessibility tree (react-aria's ariaHideOutside — jsdom falls back to
+    // aria-hidden="true" in place of real `inert`, which is enough to reproduce this).
+    // ConfirmSheet used to render as a sibling of ModalShell, landing in that hidden
+    // subtree: present in the DOM, but invisible to getByRole and to a real user's click
+    // or Tab order alike. It must be a child of ModalShell so it lives inside the portal.
+    expect(screen.getByRole("button", { name: /^cancel$/ })).toBeDefined();
+    expect(screen.getByRole("button", { name: /^remove$/ })).toBeDefined();
+  });
+});
