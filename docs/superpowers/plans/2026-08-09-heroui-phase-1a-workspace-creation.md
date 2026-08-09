@@ -1599,6 +1599,24 @@ git commit -m "refactor: WorkspaceManagerModal onto heroui fields and modal shel
 - Consumes: `RadioButtonGroup` from `@heroui-pro/react`, used the same way as Task 5.
 - Produces: nothing.
 
+**RESOLVED 2026-08-09 — the atom does NOT get deleted in this phase.** Steps 1-3 are
+answered; skip to Step 4.
+
+`grep -rn "SegmentedControl" src/` returns two live consumers:
+
+```
+src/molecules/DiscordIdentityPanel.tsx:2,17
+src/molecules/SurfacePolicyPopover.tsx:2,73
+```
+
+Both are surface-policy / Discord molecules, which are **HeroUI Phase 2** surfaces, not
+Phase 1a's. Step 1 below already directs that this case leaves the atom in place —
+deleting it out from under another phase's branch manufactures a merge conflict for no
+gain. `NewWorkspaceModal` (Task 5) is the only consumer this phase retired.
+
+Phase 2 owns the deletion, once it migrates those two molecules to `RadioButtonGroup`
+using the pattern Task 5 established.
+
 - [ ] **Step 1: Find the remaining consumers**
 
 Run: `grep -rn "SegmentedControl" src`
