@@ -1,7 +1,7 @@
 import { Button } from "@heroui/react";
 import { RadioButtonGroup, Stepper } from "@heroui-pro/react";
 import { Plus, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { type FieldPath, useFieldArray, useForm, useWatch } from "react-hook-form";
 import type { ConnectorInstanceRecord, WorkspaceRecord } from "../api/types";
 import { FormColorSwatch, FormSelect, FormTextField, ModalShell } from "../molecules/form";
@@ -80,6 +80,9 @@ export function NewWorkspaceModal({
   const [connectors, setConnectors] = useState<ConnectorInstanceRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState(0);
+  const detailsRef = useRef<HTMLDivElement>(null);
+  const colourRef = useRef<HTMLDivElement>(null);
+  const reposRef = useRef<HTMLDivElement>(null);
 
   // mode: "onChange" because the create button gates on isValid; under the default
   // onSubmit mode isValid would stay false until a submit that can never happen.
@@ -125,6 +128,23 @@ export function NewWorkspaceModal({
     if (gates.length > 0 && !(await trigger([...gates]))) return;
     setStep((s) => Math.min(s + 1, STEPS.length - 1));
   };
+
+  // Move focus into the step whenever it changes. Without this, clicking `back` to
+  // a lower step disables the very button holding focus — isDisabled becomes the
+  // native `disabled` attribute, and a real browser blurs a focused element the
+  // instant it's disabled, dropping focus to <body>. That escapes the dialog's
+  // focus trap and silently kills ESC: caught only by manual smoke against a live
+  // browser. jsdom does not model that blur (verified directly — a focused
+  // element's activeElement survives `.disabled = true` unchanged), so no test
+  // could have caught it by construction. This also announces the new step to
+  // screen readers, which the stepper alone does not do.
+  useEffect(() => {
+    const stepEls = [detailsRef.current, colourRef.current, reposRef.current];
+    const first = stepEls[step]?.querySelector<HTMLElement>(
+      'input:not([disabled]), textarea, [role="listbox"], button:not([disabled])',
+    );
+    first?.focus();
+  }, [step]);
 
   const browse = async (index: number) => {
     if (!pickFolder) return;
@@ -184,7 +204,7 @@ export function NewWorkspaceModal({
           unmounted. FormTextField holds RHF state through useController, and
           unmounting a controlled field unregisters it — stepping forward and back
           would silently clear what the user typed. The `back` test asserts this. */}
-      <div hidden={step !== 0}>
+      <div ref={detailsRef} hidden={step !== 0}>
         <FormTextField
           control={control}
           name="name"
@@ -208,11 +228,11 @@ export function NewWorkspaceModal({
         />
       </div>
 
-      <div hidden={step !== 1}>
+      <div ref={colourRef} hidden={step !== 1}>
         <FormColorSwatch control={control} name="color" label="Colour" />
       </div>
 
-      <div hidden={step !== 2}>
+      <div ref={reposRef} hidden={step !== 2}>
         <p className="wizard__hint">Repos — every repo needs a GitHub connector before create enables.</p>
         {githubConnectors.length === 0 && (
           <p className="wizard__hint">No GitHub connectors yet — add one in Settings → Integrations first.</p>

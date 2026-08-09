@@ -263,6 +263,25 @@ describe("NewWorkspaceModal", () => {
     expect(screen.getByLabelText("Workspace name")).toHaveValue("acme");
   });
 
+  // `back` uses the native `disabled` attribute (isDisabled -> disabled, not
+  // aria-disabled). Landing on step 0 disables the very button that just received
+  // focus from the click. In a real browser that blurs it to <body>, escaping the
+  // dialog's focus trap and silently killing ESC — caught only by manual smoke
+  // against a live browser. jsdom does not model that blur (verified directly: a
+  // focused element's activeElement survives `.disabled = true` unchanged), so a
+  // test asserting the dialog still *contains* activeElement can never fail here —
+  // the disabled button never actually leaves the DOM subtree it started in. Assert
+  // the fix's actual mechanism instead: focus moves to the new step's first control.
+  // That assertion is false without the fix (nothing moves focus, so it stays on the
+  // now-disabled back button) and true with it — confirmed red before green.
+  it("back moves focus to the new step's first control, not the now-disabled button", async () => {
+    renderModal();
+    await userEvent.type(screen.getByLabelText("Workspace name"), "acme");
+    await userEvent.click(screen.getByRole("button", { name: "next" }));
+    await userEvent.click(screen.getByRole("button", { name: "back" }));
+    expect(document.activeElement).toBe(screen.getByLabelText("Workspace name"));
+  });
+
   // The submit button exists only on the last step; a stepper that let Enter
   // submit from step 0 would POST a half-filled workspace.
   it("does not offer create until the final step", async () => {
