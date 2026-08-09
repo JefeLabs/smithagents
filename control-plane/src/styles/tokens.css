@@ -13,6 +13,33 @@
   --rail-br: rgba(255, 255, 255, 0.06);
   --online: #46d19e;
   color-scheme: dark;
+
+  /* ---------------------------------------------------------------------------
+   * HeroUI bridge — identity only.
+   *
+   * Written ONCE, not per theme: every theme block below targets this same element
+   * (:root), so a var() reference re-resolves against whichever block is active.
+   * Repeating these in each block would be duplication that can only drift.
+   *
+   * Only the variables that make the app look like itself are bridged. Radius,
+   * status colours, field chrome, segment, scrollbar and focus-ring metrics are
+   * deliberately left to HeroUI's default theme — adopting a design system and then
+   * re-deriving it defeats the point. tokens.test.ts enforces both halves.
+   *
+   * --accent needs no line here: it already exists above under HeroUI's own name,
+   * and tokens.css is UNLAYERED while HeroUI's theme sits in layer(theme), so ours
+   * wins automatically. It is the only name the two vocabularies share.
+   *
+   * Light/dark selection is not done here either — useTheme.ts toggles the `.dark`
+   * class HeroUI's default theme keys on.
+   * ------------------------------------------------------------------------- */
+  --background: var(--ground);
+  --foreground: var(--text);
+  --surface: var(--ground-2);
+  --overlay: var(--ground-2);
+  --muted: var(--text-2);
+  --border: var(--pill-br);
+  --separator: var(--rail-br);
 }
 :root[data-theme="light"] {
   --ground: #f3f5f9;

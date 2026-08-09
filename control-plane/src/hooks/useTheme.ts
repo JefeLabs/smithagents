@@ -12,6 +12,9 @@ export const THEMES: Array<{ id: ThemeId; label: string; swatch: string }> = [
   { id: "sand", label: "Sand", swatch: "#f6f1e7" },
 ];
 
+/** Which of our themes are dark. `system` is decided at runtime from the OS. */
+const DARK_THEMES: ReadonlySet<ThemeId> = new Set<ThemeId>(["dark", "midnight"]);
+
 /**
  * Theme switcher. Palettes live in tokens.css keyed on `data-theme`; this
  * only decides which key is on <html> and remembers the choice. "system"
@@ -26,6 +29,28 @@ export function useTheme() {
     if (theme === "system") root.removeAttribute("data-theme");
     else root.setAttribute("data-theme", theme);
     localStorage.setItem(STORE_KEY, theme);
+  }, [theme]);
+
+  /**
+   * HeroUI's default theme keys its dark palette on `.dark` (and its own
+   * [data-theme="dark"], which only lines up for one of our five themes). Mirroring
+   * our light/dark intent onto that class is what lets us inherit HeroUI's status
+   * colours, field chrome and radii instead of re-deriving them per theme.
+   *
+   * Separate effect from the one above because `system` has to keep tracking the OS
+   * after mount — a one-shot read would strand HeroUI in the wrong palette the moment
+   * the user flips their OS appearance.
+   */
+  useEffect(() => {
+    const root = document.documentElement;
+    const prefersLight = window.matchMedia("(prefers-color-scheme: light)");
+    const apply = () => {
+      const dark = theme === "system" ? !prefersLight.matches : DARK_THEMES.has(theme);
+      root.classList.toggle("dark", dark);
+    };
+    apply();
+    prefersLight.addEventListener("change", apply);
+    return () => prefersLight.removeEventListener("change", apply);
   }, [theme]);
 
   const choose = useCallback((next: ThemeId) => setTheme(next), []);
