@@ -855,6 +855,44 @@ Verify **3 files changed**.
 
 Edges carry `sliceId` so Task 5 can filter by selection without rebuilding the set.
 
+**TASK 3 HAS ONE GAP, and it is the kind that stays invisible until Task 4 wires the
+canvas.**
+
+**`buildEdges` produces `source`/`target` as NODE IDS, and nothing makes them match the ids
+`layoutMap` actually emits.** Those formats are inline template literals in `layout.ts`,
+unexported:
+
+```ts
+id: `activity:${act.id}`   // layout.ts:151
+id: `step:${step.id}`      // layout.ts:164
+id: story.id               // layout.ts:173 — RAW, no prefix
+```
+
+Note they are not uniform: activities and steps are prefixed, stories are not. An
+implementer writing the obvious `source: step.id` produces an edge pointing at a node that
+does not exist — and **`edges.test.ts` cannot catch it**, because it tests edges in
+isolation against a model, never against `layoutMap`'s output. It would surface as edges
+silently missing from the canvas in Task 4, with every unit test green.
+
+Two things close it:
+
+1. **Export the real-node id helpers from `layout.ts` and have `buildEdges` use them** —
+   `activityNodeId(id)`, `stepNodeId(id)`, `storyNodeId(id)`. `layout.ts` already exports
+   `BLANK_ACTIVITY_ID`/`blankStepId`/`blankStoryId` for exactly this reason; the real ones
+   were left inline. Make both halves of the namespace equally addressable, and change
+   `layoutMap` to call them so there is one definition, not two that agree today.
+2. **Pin the correspondence with a cross-module test:** build a model, run BOTH `layoutMap`
+   and `buildEdges` over it, and assert every edge's `source` and `target` is an id present
+   in `layoutMap`'s node set. That is the assertion that would have failed, and it keeps
+   failing if either side's format ever drifts.
+
+**Blank cards are deliberately absent here and that is correct — say so rather than adding
+them.** `buildEdges` takes a `MapModel`, which contains only real records; blanks are a
+layout concern that `layoutMap` synthesises. So no edge can reach a blank, which is right:
+an edge to a card that represents nothing would have nothing to mean. Likewise `Selection`
+covers `slice | story | step` only — **a blank card is never selectable**, because
+selecting it would put the map into a state describing a record that does not exist.
+
 - [ ] **Step 1: Write the failing test**
 
 Create `control-plane/src/organisms/map/edges.test.ts`:
