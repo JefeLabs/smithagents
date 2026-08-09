@@ -19,6 +19,18 @@ describe("useMapSelection", () => {
     expect(result.current.selection).toBeNull();
   });
 
+  it("clears when handed null directly", () => {
+    // `Selection` includes null and `select` takes a `Selection`, so a caller
+    // may legitimately pass it — a node handler that computes its target and
+    // finds none does exactly that. `clear()` takes the other path
+    // (`setSelection(null)`), so its tests say nothing about this branch.
+    const { result } = renderHook(() => useMapSelection());
+
+    act(() => result.current.select({ kind: "slice", id: "sl1" }));
+    act(() => result.current.select(null));
+    expect(result.current.selection).toBeNull();
+  });
+
   it("replaces rather than clears when the kind matches but the id does not", () => {
     // Both halves of the identity have to agree for a reselect. A story and a
     // step can share neither, but two slices differ only by id — comparing kind

@@ -15,6 +15,27 @@ const SLICE: CapSliceT = {
 
 const BARE: CapSliceT = { id: "sl2", name: "empty", order: 1, storyIds: [] };
 
+/**
+ * All four artifacts, with boardId and cardId DELIBERATELY DIFFERENT at both
+ * card levels.
+ *
+ * `SLICE` has no `planPath` and no `capCardRef`, so two of the four branches
+ * only ever run in their absent form — a label taken from the wrong field there
+ * is unobservable. Distinct board/card values are what make the two
+ * distinguishable at all: with `{ boardId: "b1", cardId: "b1" }` the assertion
+ * would hold either way.
+ */
+const FULL: CapSliceT = {
+  id: "sl3",
+  name: "everything",
+  order: 2,
+  storyIds: [],
+  specPath: "docs/specs/x.md",
+  planPath: "docs/plans/x.md",
+  capCardRef: { boardId: "cap-board", cardId: "cap-card" },
+  deliveryCardRef: { boardId: "del-board", cardId: "del-card" },
+};
+
 const MODEL: MapModel = {
   activities: [],
   stories: [
@@ -91,6 +112,25 @@ describe("artifactNodesFor", () => {
 
   it("returns nothing for a bare slice", () => {
     expect(artifactNodesFor(BARE)).toEqual([]);
+  });
+
+  it("labels each artifact with the text a node renders, not the id beside it", () => {
+    expect(artifactNodesFor(SLICE).map((a) => a.label)).toEqual(["docs/specs/x.md", "c1"]);
+    // `boardId` where `cardId` belongs is the slip that ships: right shape,
+    // right type, wrong value. It is only observable where the two differ AND
+    // the branch actually runs, which is why FULL exists.
+    expect(artifactNodesFor(FULL).map((a) => a.label)).toEqual([
+      "docs/specs/x.md",
+      "docs/plans/x.md",
+      "cap-card",
+      "del-card",
+    ]);
+  });
+
+  it("emits the four kinds in a fixed order", () => {
+    // Task 5 stacks these down a slice's row, so the order is what the user
+    // sees. Nothing else pins it once every branch is live.
+    expect(artifactNodesFor(FULL).map((a) => a.kind)).toEqual(["spec", "plan", "capCard", "deliveryCard"]);
   });
 
   it("carries its slice, so nothing downstream has to take the id apart", () => {
