@@ -55,12 +55,13 @@ HeroUI Phase 1a is independent and may run in parallel — it touches neither st
 | `src/queries/alerts.ts` | `useAlerts()` + the pure `computeAlerts()` it wraps. |
 | `src/lib/cloud.ts` | `CLOUD_MODE`. One constant, one reason. |
 | `src/templates/ControlPlaneLayout.tsx` | Modified — gains a `topBar` slot. |
-| `src/organisms/ToolRail.tsx` | Modified — loses the logo. |
+| `src/organisms/ToolRail.tsx` | Modified — rebuilt on `Sidebar`; logo out, Plus becomes New session. |
 | `src/pages/HomePage.tsx` | Modified — composes the navbar. |
 | `src/organisms/BoardStage.tsx` | Modified — `scope` state deleted. |
 | `src/molecules/BoardTabs.tsx` | Modified — scope picker deleted. |
 | `src/organisms/MapStage.tsx` | Modified — `workspace` state deleted. |
-| `src/stores/uiStore.ts` | Modified — gains `aggregateView`. |
+| `src/stores/uiStore.ts` | Modified — gains `viewedWorkspaces`. |
+| `src/lib/board-aggregate.ts` | Modified — `tabsFor` takes a set, not a single scope. |
 
 ---
 
@@ -508,13 +509,15 @@ git show --stat HEAD
 - Test: `src/organisms/BoardStage.test.tsx` (809 lines), `src/molecules/BoardTabs.test.tsx`
 
 **Interfaces:**
-- Consumes: `useSession` from `../queries/pushed`; `uiStore.aggregateView`.
-- Produces: `uiStore` gains `aggregateView: boolean` and `setAggregateView(v: boolean)`.
+- Consumes: `useSession` from `../queries/pushed`; `uiStore.viewedWorkspaces`.
+- Produces: `uiStore` gains `viewedWorkspaces: ReadonlySet<string> | "*"` and
+  `setViewedWorkspaces(next)`. `tabsFor` in `src/lib/board-aggregate.ts` changes signature
+  from a single `scope: string` to the same set type.
 
 **This is a behaviour change, not a refactor.** Aggregate scope stops being per-stage.
 Say so in the commit message.
 
-- [ ] **Step 1: Add `aggregateView` to `uiStore`**
+- [ ] **Step 1: Add `viewedWorkspaces` to `uiStore`**
 
 Add to the interface, the `initial` object, and the creator:
 
@@ -525,9 +528,40 @@ Add to the interface, the `initial` object, and the creator:
    * View-only: it never affects dispatch and never changes the active session —
    * work still lands in the active session's workspace regardless.
    */
-  aggregateView: boolean;
-  setAggregateView: (aggregateView: boolean) => void;
+  /**
+   * Which workspaces Board and Map RENDER. View-only: it never affects dispatch and
+   * never changes the active session — work still lands in the active session's
+   * workspace regardless of how many are on screen.
+   *
+   * `"*"` is every workspace. A set is an explicit selection. The old
+   * `aggregateView: boolean` was the degenerate two-state version of this.
+   */
+  viewedWorkspaces: ReadonlySet<string> | "*";
+  setViewedWorkspaces: (next: ReadonlySet<string> | "*") => void;
 ```
+
+- [ ] **Step 1b: Widen `tabsFor` to take a set**
+
+`src/lib/board-aggregate.ts:67` takes a single `scope: string` and compares with equality.
+Multiselect makes that a set membership test. The rendering it feeds already handles
+several workspaces — `clustered: true` is exactly what `ALL_WORKSPACES` produces today —
+so this is a narrower input to a built path, not new behaviour.
+
+```ts
+export function tabsFor(boards: WorkBoardT[], scope: ReadonlySet<string> | typeof ALL_WORKSPACES): TabDescriptor[] {
+  const all = scope === ALL_WORKSPACES;
+  // …
+  const matches = boards.filter(
+    (b) => b.type === type && (all ? Boolean(b.workspaceId) : scope.has(b.workspaceId ?? "")),
+  );
+  // …
+  clustered: all || scope.size > 1,
+```
+
+`board-aggregate.test.ts` exists and is table-driven — extend it with a two-workspace case
+asserting `clustered` is true and both boards' ids appear in `boardIds`. Keep every
+existing case; single-workspace selection is now `new Set(["acme"])` rather than
+`"acme"`, which is a call-shape change, not an assertion change.
 
 - [ ] **Step 2: Rewrite `BoardStage`'s scope source**
 
@@ -535,10 +569,11 @@ Replace `const [scope, setScope] = useState<string>(ALL_WORKSPACES)` (line 171) 
 
 ```tsx
   const { data: session } = useSession();
-  const aggregateView = useUiStore((s) => s.aggregateView);
-  // Derived, not stored: the session frame is the source of truth, and the
-  // aggregate toggle is the one case it cannot express.
-  const scope = aggregateView ? ALL_WORKSPACES : (session?.workspace ?? ALL_WORKSPACES);
+  const viewed = useUiStore((s) => s.viewedWorkspaces);
+  // Derived, not stored: the session frame is the source of truth, and the viewed
+  // set is the one thing it cannot express. Default is "just the active workspace",
+  // so a fresh load shows one board rather than all of them.
+  const scope = viewed === "*" ? ALL_WORKSPACES : viewed;
 ```
 
 Everything downstream of `scope` — `tabsFor(boards, scope)`, the reset effect at line
@@ -547,6 +582,21 @@ Everything downstream of `scope` — `tabsFor(boards, scope)`, the reset effect 
 
 The reset effect's dependency stays `[scope, tab?.key]`; `scope` is now derived, so it
 changes when the session frame does, which is exactly when the reset should fire.
+
+- [ ] **Step 2b: Hide the add control unless exactly one workspace is viewed**
+
+`addable={scope === ALL_WORKSPACES ? [] : addableTypes(boards, scope)}` at
+`BoardStage.tsx:317` already hides add-card in aggregate scope, because there is no
+unambiguous target board. Multiselect creates the same ambiguity with two workspaces, so
+extend the same condition rather than inventing a second rule:
+
+```tsx
+const oneViewed = viewed !== "*" && viewed.size === 1;
+addable={oneViewed ? addableTypes(boards, [...viewed][0]) : []}
+```
+
+This is the board half of the spec's rule — *you may look at many, but you may only
+create in one.* The rail's Plus is the other half and is handled in Task 1.
 
 - [ ] **Step 3: Delete the picker from `BoardTabs`**
 
@@ -563,7 +613,7 @@ unexplainable.
 - [ ] **Step 4: Update the tests**
 
 `BoardStage.test.tsx` drives the picker to change scope. Those tests change to setting
-the session frame's workspace (or `aggregateView`) instead. **The assertions must not
+the session frame's workspace (or `viewedWorkspaces`) instead. **The assertions must not
 change** — only how the workspace gets chosen. If an assertion needs changing, stop:
 that is a behaviour change beyond the one this task sanctions.
 
