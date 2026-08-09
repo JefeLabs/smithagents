@@ -1,9 +1,9 @@
 import { Label, ListBox, Select } from "@heroui/react";
 import { type Control, type FieldPath, type FieldValues, type RegisterOptions, useController } from "react-hook-form";
 
-interface FormSelectProps<T extends FieldValues> {
+interface FormSelectProps<T extends FieldValues, TName extends FieldPath<T> = FieldPath<T>> {
   control: Control<T>;
-  name: FieldPath<T>;
+  name: TName;
   label: string;
   /** Same contract as FormTextField's — see Task 1. Both GitHub-connector selects
       use a bare aria-label today (NewWorkspaceModal.tsx:205,
@@ -12,7 +12,8 @@ interface FormSelectProps<T extends FieldValues> {
   /** Shown while the field is `""`. The old markup's disabled first <option>. */
   placeholder: string;
   options: Array<{ id: string; label: string }>;
-  rules?: RegisterOptions<T, FieldPath<T>>;
+  /** Parameterized over `TName` — see `FormTextField`'s `rules` doc for why. */
+  rules?: RegisterOptions<T, TName>;
 }
 
 /**
@@ -28,7 +29,7 @@ interface FormSelectProps<T extends FieldValues> {
  * 3. Options render through `ListBox`/`ListBox.Item`, not a `Select`-owned
  *    list — `Select.Popover` just hosts a `ListBox` like any other picker.
  */
-export function FormSelect<T extends FieldValues>({
+export function FormSelect<T extends FieldValues, TName extends FieldPath<T> = FieldPath<T>>({
   control,
   name,
   label,
@@ -36,7 +37,7 @@ export function FormSelect<T extends FieldValues>({
   placeholder,
   options,
   rules,
-}: FormSelectProps<T>) {
+}: FormSelectProps<T, TName>) {
   const { field, fieldState } = useController({ control, name, rules });
   const current = (field.value as string | undefined) ?? "";
   return (

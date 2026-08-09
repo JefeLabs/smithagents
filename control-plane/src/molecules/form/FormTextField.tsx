@@ -2,9 +2,9 @@ import { Description, FieldError, Input, Label, TextArea, TextField } from "@her
 import type { ReactNode } from "react";
 import { type Control, type FieldPath, type FieldValues, type RegisterOptions, useController } from "react-hook-form";
 
-interface FormTextFieldProps<T extends FieldValues> {
+interface FormTextFieldProps<T extends FieldValues, TName extends FieldPath<T> = FieldPath<T>> {
   control: Control<T>;
-  name: FieldPath<T>;
+  name: TName;
   label: string;
   placeholder?: string;
   /** Renders a TextArea instead of an Input. */
@@ -12,7 +12,15 @@ interface FormTextFieldProps<T extends FieldValues> {
   rows?: number;
   /** Secondary text under the label — the old `.wizard__hint` span. */
   hint?: ReactNode;
-  rules?: RegisterOptions<T, FieldPath<T>>;
+  /**
+   * Parameterized over `TName`, not the general `FieldPath<T>` — `validate` needs the
+   * *specific* field's value type, not the union of every field's value type across the
+   * whole form. On a mixed-shape form (a string field beside an array field, say) the
+   * general form degrades `validate`'s parameter toward `unknown`, forcing callers to
+   * cast. `FormTextField.test.tsx` has a harness proving this: a validator typed
+   * `(v: string) => …` compiles here with no cast, on a form that also has an array field.
+   */
+  rules?: RegisterOptions<T, TName>;
   /**
    * Renders the accessible name without a visible <Label>. The dense rows this
    * adapter has to serve — repo rows, Atlassian keys — name their fields by
@@ -36,7 +44,7 @@ interface FormTextFieldProps<T extends FieldValues> {
  * RHF release that tightened the check would fail loudly here rather than
  * silently writing `undefined` into every migrated form.
  */
-export function FormTextField<T extends FieldValues>({
+export function FormTextField<T extends FieldValues, TName extends FieldPath<T> = FieldPath<T>>({
   control,
   name,
   label,
@@ -46,7 +54,7 @@ export function FormTextField<T extends FieldValues>({
   hint,
   rules,
   labelHidden = false,
-}: FormTextFieldProps<T>) {
+}: FormTextFieldProps<T, TName>) {
   const { field, fieldState } = useController({ control, name, rules });
   return (
     <TextField

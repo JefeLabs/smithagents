@@ -38,17 +38,6 @@ const blankForm = (): NewWorkspaceFormValues => ({
 const filled = (v: string) => v.trim().length > 0;
 
 /**
- * `FormTextField`'s `rules` prop is typed `RegisterOptions<T, FieldPath<T>>` — generic
- * over every field path in T, not just the one `name` this call site uses. On a
- * single-shape form that collapses to `string` and `filled` fits directly; on this
- * form, `repos: DraftRepo[]` widens `validate`'s parameter to `string | DraftRepo |
- * DraftRepo[]`, which `filled`'s `(v: string) => boolean` can no longer satisfy.
- * Every field this wraps (name, and each repo's name/path/owner/repo) is always a
- * string at runtime — `filled` itself is untouched; this only satisfies the checker.
- */
-const validateFilled = (v: unknown) => filled(String(v));
-
-/**
  * The wizard's three steps and the fields each one gates on.
  *
  * `gates` lists the fields RHF must find valid before `next` enables. Repos are
@@ -201,7 +190,7 @@ export function NewWorkspaceModal({
           name="name"
           label="Workspace name"
           placeholder="acme"
-          rules={{ validate: validateFilled }}
+          rules={{ validate: filled }}
         />
         <FormTextField
           control={control}
@@ -257,7 +246,7 @@ export function NewWorkspaceModal({
               label="Repo name"
               labelHidden
               placeholder="web"
-              rules={{ validate: validateFilled }}
+              rules={{ validate: filled }}
             />
             <FormTextField
               control={control}
@@ -265,7 +254,7 @@ export function NewWorkspaceModal({
               labelHidden
               label="Path"
               placeholder={repoModes[i]?.mode === "new" ? "/Users/me/code/new-project" : "/Users/me/code/acme-web"}
-              rules={{ validate: validateFilled }}
+              rules={{ validate: filled }}
             />
             {repoModes[i]?.mode === "new" && pickFolder && (
               <Button variant="secondary" onPress={() => void browse(i)}>
@@ -278,7 +267,7 @@ export function NewWorkspaceModal({
               label="GitHub owner"
               labelHidden
               placeholder="GitHub owner"
-              rules={{ validate: validateFilled }}
+              rules={{ validate: filled }}
             />
             <FormTextField
               control={control}
@@ -286,7 +275,7 @@ export function NewWorkspaceModal({
               label="GitHub repo"
               labelHidden
               placeholder="GitHub repo"
-              rules={{ validate: validateFilled }}
+              rules={{ validate: filled }}
             />
             <FormSelect
               control={control}
@@ -317,8 +306,11 @@ export function NewWorkspaceModal({
 
       {/* One footer for all three steps. `create workspace` renders only on the
           last step — a stepper that offered submit from step 0 would POST a
-          half-filled workspace, which is what the third new test guards. */}
-      <div className="nw-wizard__nav">
+          half-filled workspace, which is what the third new test guards.
+          `nw-wizard__nav` never had a rule in components.css (a doomed file —
+          scheduled for deletion in Phase 3) and never will; Tailwind utilities
+          directly on the element instead. */}
+      <div className="mt-4 flex items-center justify-between gap-3">
         <Button variant="secondary" onPress={() => setStep((s) => Math.max(s - 1, 0))} isDisabled={step === 0}>
           back
         </Button>

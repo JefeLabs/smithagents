@@ -44,6 +44,28 @@ function HarnessWithRule({ rules }: { rules: RegisterOptions<Values, "name"> }) 
   );
 }
 
+interface MixedShapeValues {
+  name: string;
+  tags: string[];
+}
+
+/**
+ * `name`'s value is a string, but the form also has an array field (`tags`) — if
+ * `rules` were typed against the general `FieldPath<T>` instead of the specific
+ * `name` prop's type, `validate`'s parameter would widen toward the union of every
+ * field's value (`string | string[]`), and this `(v: string) => …` validator would
+ * fail `tsc`. No cast anywhere below — that's the assertion this harness exists to
+ * make: it either compiles or it doesn't.
+ */
+function MixedShapeHarness() {
+  const { control } = useForm<MixedShapeValues>({
+    mode: "onChange",
+    defaultValues: { name: "", tags: [] },
+  });
+  const validate = (v: string) => v.trim().length > 0 || "required";
+  return <FormTextField control={control} name="name" label="Name" rules={{ validate }} />;
+}
+
 function HarnessWithReset() {
   const { control, reset } = useForm<Values>({
     mode: "onChange",
@@ -104,5 +126,10 @@ describe("FormTextField", () => {
     await userEvent.type(screen.getByLabelText("Workspace name"), "acme");
     await userEvent.click(screen.getByRole("button", { name: "reset" }));
     expect(screen.getByLabelText("Workspace name")).toHaveValue("");
+  });
+
+  it("a field-typed validator compiles with no cast on a form that also has an array field", () => {
+    render(<MixedShapeHarness />);
+    expect(screen.getByLabelText("Name")).toBeDefined();
   });
 });
