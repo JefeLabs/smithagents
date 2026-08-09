@@ -2925,32 +2925,35 @@ button.logo {
   opacity: 0.3;
 }
 
-/* Slice anchors and artifacts. Revealed on demand and positioned by SLICE_RAIL_X /
-   ARTIFACT_GAP / ARTIFACT_PITCH in organisms/map/layout.ts.
+/* Slice anchors and artifacts. Revealed on demand; the anchor is positioned by
+   SLICE_RAIL_X and the artifact ROW by artifactRowY / artifactRowX, all in
+   organisms/map/layout.ts.
 
    TWO LINES, not one. Both cards carry a subtitle where a story carries only text —
-   the anchor its done fraction, the artifact its kind — and the second line is what
-   makes ARTIFACT_PITCH bigger than SLOT_H. Stacking them is not cosmetic: an
-   artifact's label is a repo path (76 characters in the test fixture), and laid out
-   as a row with the kind beside it there is nothing to ellipsis against, so the card
-   grows to its content and runs across the map instead of standing in its rail. */
+   the anchor its done fraction, the artifact its kind. Stacking them is not cosmetic:
+   an artifact's label is a repo path (76 characters in the test fixture), and laid out
+   as a single line with the kind beside it there is nothing to ellipsis against, so
+   the card grows to its content and runs across the map instead of holding its slot. */
 .map-slice-anchor,
 .map-artifact {
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 2px;
-  /* Must equal SLOT_H in organisms/map/layout.ts — one story slot, so the rail
-     rhymes with the story columns beside it — and ARTIFACT_PITCH is this plus
-     STORY_GAP. Same argument as .map-story against SLOT_H: artifacts are stacked one
-     pitch apart, so a card taller than the pitch spends the gap and then overlaps the
-     one below. Measured against the app's compiled bundle, the two lines come to
-     29.5px (11.5 + 2 + 14 + 2 of border), so this contains them with room to spare
-     and the flex centring absorbs the difference. */
+  /* Must equal SLOT_H in organisms/map/layout.ts — one story slot, so these cards
+     rhyme with the story columns rather than introducing a third height. Measured
+     against the app's compiled bundle, the two lines come to 29.5px (11.5 + 2 + 14 +
+     2 of border), so this contains them with room to spare and the flex centring
+     absorbs the difference.
+
+     It no longer has to clear a neighbour below: the artifacts are a ROW now, spaced
+     horizontally, so nothing sits one pitch beneath them. That is what retired
+     ARTIFACT_PITCH. */
   height: 38px;
-  /* Must equal STEP_W. SLICE_RAIL_X is -(STEP_W + ACTIVITY_GAP * 2), i.e. the rail is
-     one column wide by construction — a card of any other width either overhangs the
-     grid or leaves the rail ragged. */
+  /* Must equal STEP_W, and for two independent reasons now. SLICE_RAIL_X is
+     -(STEP_W + ACTIVITY_GAP * 2), so the anchor's rail is one column wide by
+     construction; and artifactRowX advances by STEP_W + STEP_GAP, so any other width
+     would either overlap the next card in the row or open a ragged gap. */
   width: 180px;
   padding: 0 10px;
   border-radius: 10px;

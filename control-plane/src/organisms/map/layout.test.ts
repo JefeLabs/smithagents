@@ -1,14 +1,19 @@
 import { describe, expect, it } from "vitest";
 import type { MapModel, MapNode } from "./layout";
 import {
+  artifactRowStartX,
+  artifactRowX,
+  artifactRowY,
   BLANK_ACTIVITY_ID,
   blankStepId,
   blankStoryId,
   cellAt,
   layoutMap,
   SLOT_H,
+  STEP_GAP,
   STEP_W,
   STORIES_Y,
+  STORY_H,
   stepColumns,
 } from "./layout";
 
@@ -280,5 +285,122 @@ describe("cellAt and blank cells", () => {
     // would delete drag-to-end-of-column.
     const blank = nodeById(nodes, blankStoryId("st1")).position;
     expect(cellAt(blank, MODEL)).toEqual({ stepId: "st1", order: 2 });
+  });
+});
+
+/**
+ * The artifact row for a revealed slice. It sits BELOW the story stacks — it used to
+ * be a vertical rail past the right edge, which made every edge traverse the whole
+ * map, so the lines measured the map's width rather than saying anything about the
+ * model.
+ */
+describe("artifactRowY clears the story stacks", () => {
+  /** Bottom edge of the lowest card in a column: its trailing blank composer. */
+  const deepestCardBottom = (model: MapModel) => {
+    const nodes = layoutMap(model).nodes;
+    return Math.max(...nodes.filter((n) => n.type === "story").map((n) => n.position.y + STORY_H));
+  };
+
+  it("clears the deepest column's trailing blank composer, not just its last real story", () => {
+    // The property, not the number. Measuring to the last REAL story would land the
+    // row on top of the composer — an overlap that only appears once a column is
+    // full, which is the worst time to discover it.
+    expect(artifactRowY(MODEL)).toBeGreaterThan(deepestCardBottom(MODEL));
+  });
+
+  it("follows the DEEPEST stack, not the first column's", () => {
+    // st1 has 2 stories and st2 has 1. Deepening st2 must move the row, or the row
+    // is really keyed on whichever column happens to come first.
+    const deeper: MapModel = {
+      ...MODEL,
+      stories: [
+        ...MODEL.stories,
+        { id: "s4", stepId: "st2", order: 1, text: "b", done: false },
+        { id: "s5", stepId: "st2", order: 2, text: "c", done: false },
+      ],
+    };
+    expect(artifactRowY(deeper)).toBeGreaterThan(artifactRowY(MODEL));
+    expect(artifactRowY(deeper)).toBeGreaterThan(deepestCardBottom(deeper));
+  });
+
+  it("ignores a story whose step no longer exists — it renders nowhere", () => {
+    // layoutMap iterates STEPS, so a story pointing at a deleted step draws no card.
+    // Counting it here would push the row down to clear something invisible.
+    const orphaned: MapModel = {
+      ...MODEL,
+      stories: [
+        ...MODEL.stories,
+        { id: "s9", stepId: "gone", order: 0, text: "orphan", done: false },
+        { id: "s10", stepId: "gone", order: 1, text: "orphan", done: false },
+        { id: "s11", stepId: "gone", order: 2, text: "orphan", done: false },
+      ],
+    };
+    expect(artifactRowY(orphaned)).toBe(artifactRowY(MODEL));
+  });
+
+  it("still clears the header when no step has any stories", () => {
+    const empty: MapModel = { ...MODEL, stories: [] };
+    expect(artifactRowY(empty)).toBeGreaterThan(STORIES_Y);
+  });
+});
+
+describe("artifactRowX lays a row on the step pitch", () => {
+  it("starts under the first column and advances one column at a time", () => {
+    const first = stepColumns(MODEL.activities)[0].x;
+    expect(artifactRowX(0)).toBe(first);
+    expect(artifactRowX(1) - artifactRowX(0)).toBe(STEP_W + STEP_GAP);
+  });
+
+  it("leaves a real gap between cards rather than butting or overlapping them", () => {
+    expect(artifactRowX(1)).toBeGreaterThan(artifactRowX(0) + STEP_W);
+  });
+
+  it("starts where the slice does, so the row can be placed under its own stories", () => {
+    const slice = { id: "sl1", name: "v1", order: 0, storyIds: ["s3"] };
+    const start = artifactRowStartX(MODEL, slice);
+    expect(artifactRowX(0, start)).toBe(start);
+    expect(artifactRowX(1, start)).toBe(start + STEP_W + STEP_GAP);
+  });
+
+  it("does NOT track columns across an activity boundary — pinned, not endorsed", () => {
+    // st3 belongs to act2, so `columns` put a blank step slot and ACTIVITY_GAP in
+    // front of it and the third column is far right of a uniform third slot. The row
+    // is deliberately uniform: an artifact belongs to the slice, not to whatever step
+    // it happens to sit under. This pins the divergence so that "align them" is a
+    // decision someone makes, not a bug someone reports.
+    const third = stepColumns(MODEL.activities)[2].x;
+    expect(artifactRowX(2)).toBeLessThan(third);
+  });
+});
+
+/**
+ * WHERE the row begins. Chosen by looking at both options in the browser against a
+ * slice whose stories all sit in the second activity: anchoring at the map's origin
+ * put that slice's spec and card under two columns whose stories were, at that moment,
+ * all dimmed — the reveal split into two bright clusters in opposite corners with
+ * nothing tying them together. Anchoring to the slice keeps the documents under the
+ * stories they belong to, and the whole chain reads as one thing.
+ */
+describe("artifactRowStartX anchors the row to the slice, not to the map", () => {
+  it("starts under the LEFTMOST column holding one of the slice's stories", () => {
+    const cols = stepColumns(MODEL.activities);
+    // s3 lives in st2, the second column; s1 lives in st1, the first.
+    expect(artifactRowStartX(MODEL, { id: "a", name: "a", order: 0, storyIds: ["s3"] })).toBe(cols[1].x);
+    expect(artifactRowStartX(MODEL, { id: "b", name: "b", order: 0, storyIds: ["s3", "s1"] })).toBe(cols[0].x);
+  });
+
+  it("falls back to the origin for a slice that owns nothing yet", () => {
+    // Exactly what a slice looks like between being created and having a story
+    // dragged in — the common state, not an edge case.
+    expect(artifactRowStartX(MODEL, { id: "c", name: "c", order: 0, storyIds: [] })).toBe(0);
+  });
+
+  it("ignores story ids the model no longer has", () => {
+    // A slice can outlive a story it names; edges.ts drops those for the same reason.
+    // Left in, `xOf.get(undefined)` would contribute nothing but a silent NaN risk.
+    expect(artifactRowStartX(MODEL, { id: "d", name: "d", order: 0, storyIds: ["gone", "s3"] })).toBe(
+      stepColumns(MODEL.activities)[1].x,
+    );
+    expect(artifactRowStartX(MODEL, { id: "e", name: "e", order: 0, storyIds: ["gone"] })).toBe(0);
   });
 });

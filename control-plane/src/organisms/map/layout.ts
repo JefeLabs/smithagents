@@ -38,21 +38,16 @@ export const STORIES_Y = ACTIVITY_H + COL_GAP + STEP_HEAD_H + COL_GAP;
 export const SLOT_H = STORY_H + STORY_GAP;
 /** Slice anchor nodes sit left of the grid. */
 export const SLICE_RAIL_X = -(STEP_W + ACTIVITY_GAP * 2);
-/** Artifact nodes sit right of the last column. */
-export const ARTIFACT_GAP = ACTIVITY_GAP * 2;
 /**
- * Vertical pitch of the artifact stack hanging off one revealed slice.
+ * Separates the artifact row from the story stacks above it.
  *
- * Bigger than SLOT_H because an artifact card carries TWO lines where a story
- * carries one — its kind above its label — so it is a story slot tall (SLOT_H) and
- * the pitch adds STORY_GAP on top, exactly as SLOT_H adds it to STORY_H.
- *
- * The two lines measure 29.5px against the app's compiled CSS, so SLOT_H contains
- * them with room; `.map-artifact` is pinned to it. The task sketch guessed 64 on the
- * reasoning that two lines need roughly double a story's height, which measurement
- * does not support — the second line is the 10px kind, not another 12px of text.
+ * This used to be a HORIZONTAL gap — artifacts sat right of the last column, in a
+ * vertical stack. That is why the edges were the loudest thing on the map: reaching a
+ * rail past the right edge, every line had to traverse every column, so its length
+ * measured the width of the map rather than anything about the model. The row moved
+ * underneath; the constant kept its name and its value and changed axis.
  */
-export const ARTIFACT_PITCH = SLOT_H + STORY_GAP;
+export const ARTIFACT_GAP = ACTIVITY_GAP * 2;
 
 /** How far outside the grid's horizontal span still counts as a valid drop. */
 const REJECT_MARGIN = STEP_W;
@@ -189,6 +184,75 @@ export function stepColumns(activities: CapActivityT[]): Array<{ stepId: string;
   return columns(activities)
     .filter((c) => !c.blank)
     .map((c) => ({ stepId: c.id, x: c.x }));
+}
+
+/**
+ * Where the revealed slice's artifact row sits, measured from the DEEPEST story
+ * stack rather than from a fixed offset — anything fixed would either float far above
+ * a tall column or be buried by it.
+ *
+ * `+ 1` counts the trailing blank composer, which is a real card at the bottom of
+ * every column including an empty one. Measuring to the last REAL story instead lands
+ * the row exactly on top of that composer, which is the kind of overlap that only
+ * shows up with a full column and reads as a rendering bug when it does.
+ *
+ * Stories are counted only against steps that exist. A story whose step has been
+ * removed renders nowhere — `layoutMap` iterates steps, not stories — so letting one
+ * count here would push the row down to clear a card nobody can see.
+ */
+export function artifactRowY(model: MapModel): number {
+  const realSteps = new Set(stepColumns(model.activities).map((c) => c.stepId));
+  const perStep = new Map<string, number>();
+  for (const story of model.stories) {
+    if (!realSteps.has(story.stepId)) continue;
+    perStep.set(story.stepId, (perStep.get(story.stepId) ?? 0) + 1);
+  }
+  const deepest = Math.max(0, ...perStep.values());
+  return STORIES_Y + (deepest + 1) * SLOT_H + ARTIFACT_GAP;
+}
+
+/**
+ * Where the artifact at `index` sits horizontally: a plain row on the step pitch,
+ * starting under the first column.
+ *
+ * UNIFORM, and it does not track the columns past the first activity — deliberately.
+ * Real columns are not evenly spaced: `columns` inserts a whole blank step slot plus
+ * ACTIVITY_GAP at every activity boundary, so by the second activity a uniform row
+ * has drifted a full column left of the step above it. Chasing that with
+ * `stepColumns(...)[index].x` would look tidier and claim something false — an
+ * artifact belongs to the SLICE, not to the step it happens to sit beneath, and
+ * lining them up would invite exactly that reading. It also runs out: a slice has up
+ * to four artifacts and a map may have one step.
+ *
+ * There is no ARTIFACT_PITCH any more. It spaced a VERTICAL stack, and a row is
+ * spaced by the column pitch — `STEP_W + STEP_GAP`, the same expression `columns`
+ * advances by. Keeping it would have left a constant nothing computes with.
+ */
+export function artifactRowX(index: number, startX = 0): number {
+  return startX + index * (STEP_W + STEP_GAP);
+}
+
+/**
+ * Where a revealed slice's artifact row BEGINS: under the leftmost column holding one
+ * of its own stories.
+ *
+ * Anchoring the row to the slice rather than to the map's origin is what keeps the
+ * cards next to the thing they describe. A slice whose stories all sit in the second
+ * activity would otherwise hang its spec and its cards under the FIRST activity's
+ * columns — whose stories are, at that moment, all dimmed — so the map would show a
+ * document under a column it has nothing to do with.
+ *
+ * Falls back to the origin for a slice that owns no stories, which is what a slice
+ * looks like between being created and having anything dragged into it.
+ */
+export function artifactRowStartX(model: MapModel, slice: CapSliceT): number {
+  const owned = new Set(slice.storyIds);
+  const xOf = new Map(stepColumns(model.activities).map((c) => [c.stepId, c.x]));
+  const xs = model.stories
+    .filter((s) => owned.has(s.id))
+    .map((s) => xOf.get(s.stepId))
+    .filter((x): x is number => x !== undefined);
+  return xs.length > 0 ? Math.min(...xs) : 0;
 }
 
 /** Derives every node's position from the model. Layout is never stored. */

@@ -19,16 +19,15 @@ import {
 import { useUiStore } from "../stores/uiStore";
 import { artifactNodesFor, buildEdges } from "./map/edges";
 import {
-  ARTIFACT_GAP,
-  ARTIFACT_PITCH,
+  artifactRowStartX,
+  artifactRowX,
+  artifactRowY,
   cellAt,
   layoutMap,
   type MapNode,
   SLICE_RAIL_X,
-  STEP_W,
   STORIES_Y,
   sliceNodeId,
-  stepColumns,
 } from "./map/layout";
 import { nodeTypes } from "./map/nodeTypes";
 import { useMapSelection } from "./map/useMapSelection";
@@ -464,8 +463,10 @@ export function MapStage() {
     const dimmedIds = new Set(base.filter((n) => n.type === "story" && !inSlice.has(n.id)).map((n) => n.id));
     const decorated = decorate(base, dimmedIds);
 
-    const cols = stepColumns(cap.activities);
-    const rightEdge = cols.length > 0 ? cols[cols.length - 1].x + STEP_W : 0;
+    // One y for the whole row, computed once: it depends on the deepest story stack,
+    // which is a property of the model and not of any single artifact.
+    const rowY = artifactRowY(cap);
+    const rowX = artifactRowStartX(cap, revealedSlice);
     const done = revealedSlice.storyIds.filter((id) => cap.stories.find((s) => s.id === id)?.done).length;
 
     // Typed MapNode rather than left to xyflow's Node, whose `type` is any string:
@@ -488,7 +489,7 @@ export function MapStage() {
       ...artifactNodesFor(revealedSlice).map((a, i) => ({
         id: a.id,
         type: "artifact" as const,
-        position: { x: rightEdge + ARTIFACT_GAP, y: STORIES_Y + i * ARTIFACT_PITCH },
+        position: { x: artifactRowX(i, rowX), y: rowY },
         data: { kind: a.kind, label: a.label },
         draggable: false,
       })),
