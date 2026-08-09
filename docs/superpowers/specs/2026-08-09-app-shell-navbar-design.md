@@ -37,14 +37,16 @@ workspace context, retiring the per-stage filters that own it today.
 `broker/src/main.ts:1030`:
 
 ```ts
-activate(id) {
-  const s = sessionManager.activate(id);   // this.activeId = id — a pointer swap
-  if (!s) return `unknown session: ${id}`;
-  brain.loadHistory(s.brainHistory);
-  switchDiscord(s.workspace);
-  textChannel.broadcast(sessionFrame());
-  return null;
-}
+const sessionRoutes = {
+  activate(id) {
+    const s = sessionManager.activate(id);   // this.activeId = id — a pointer swap
+    if (!s) return `unknown session: ${id}`;
+    brain.loadHistory(s.brainHistory);
+    switchDiscord(s.workspace);
+    textChannel.broadcast(sessionFrame());
+    return null;
+  },
+};
 ```
 
 Cheap. No process is spawned. **Do not confuse the broker's conversation sessions with
@@ -218,6 +220,51 @@ it — so the control that switches workspaces is where it belongs, and it is th
 conventional place users look for it.
 
 **`ToolRail`'s Plus tool is repurposed, not deleted** — see below.
+
+### The rail becomes a HeroUI `Sidebar`
+
+Edwin, 2026-08-09. `ToolRail` is rebuilt on `Sidebar` rather than kept as a hand-rolled
+`<nav className="rail rail--left">`. This pulls the rail's migration forward out of HeroUI
+Phase 2 — correct, because this design already restructures it (logo out, Plus
+repurposed) and doing both at once avoids touching it twice.
+
+**The one thing that makes this bigger than a component swap.** `Sidebar.Provider` owns
+layout: `.sidebar__provider` is `flex min-h-svh w-full` and `Sidebar.Main` is `flex-1`.
+The current shell is fixed-position throughout — `.rail--left` and `.rail--right` are
+fixed, the dot-grid canvas is a fixed underlay, and the board/map stages clear the rails
+with `inset 0 72px`. Adopting `Sidebar` converts the left side of the shell from
+fixed-position to flow.
+
+Consequences, all of which are work rather than blockers:
+
+- `ControlPlaneLayout` restructures: `Sidebar.Provider` wraps, `Sidebar` replaces the
+  `leftRail` slot, and `Sidebar.Main` holds everything else. The `topBar`, `rightRail`,
+  `stage` and `overlays` slots keep their meaning.
+- **The stages' `inset 0 72px` no longer applies on the left** — the sidebar takes real
+  width instead of being overlaid. The right inset still clears the roster rail, which
+  stays fixed and is Phase 2 work.
+- The **dot-grid canvas must stay a fixed underlay behind everything**, not a flow child.
+  It is `position: fixed` today and should remain so.
+
+**What comes for free, and is why this is worth doing:**
+
+- `collapsible="icon"` collapses to a 48px icon-only rail with automatic tooltips per
+  item — which is what the rail already is at 72px, except it now also has a real
+  expanded state with labels. `defaultOpen={false}` preserves today's icon-only feel.
+- Client-side routing is documented for TanStack Router specifically:
+  `<Sidebar.Provider navigate={(href) => router.navigate({ to: href })}>` with `href` and
+  `isCurrent` on items. That **retires `ToolRail`'s `activeRoute` string comparison** —
+  the `tool.route !== null && tool.route === activeRoute` check becomes `isCurrent`.
+- `Sidebar.Mobile` renders a Sheet below 768px, which the fixed rail never did.
+
+**Two things to decide during implementation, not now:**
+
+- `toggleShortcut` defaults to `mod+b`. The app already binds a bare `g` for the grid
+  tuner (`HomePage.tsx:165-171`), so there is no collision today — but if the app ever
+  grows a command palette, disable it with `toggleShortcut={false}` rather than fighting it.
+- `Sidebar.MenuItem` is built on RAC `TreeItem`, which **cannot render as an `<a>`** by
+  HTML spec. Navigation is programmatic. Any test asserting a link role must become a
+  press assertion.
 
 ### The rail's Plus becomes "New session"
 

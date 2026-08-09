@@ -64,22 +64,37 @@ HeroUI Phase 1a is independent and may run in parallel — it touches neither st
 
 ---
 
-### Task 1: The layout slot and the navbar shell
+### Task 1: The shell — `Sidebar` rail, layout restructure, navbar slot
 
 **Files:**
 - Modify: `src/templates/ControlPlaneLayout.tsx`, `src/organisms/ToolRail.tsx`,
-  `src/pages/HomePage.tsx`
+  `src/pages/HomePage.tsx`, `src/styles/components.css`
 - Create: `src/organisms/Navbar.tsx`
-- Test: `src/organisms/Navbar.test.tsx`, and `src/organisms/ToolRail.test.tsx` (existing)
+- Test: `src/organisms/Navbar.test.tsx`, `src/organisms/ToolRail.test.tsx` (existing)
 
 **Interfaces:**
-- Consumes: `Logo` from `../atoms/Logo`.
+- Consumes: `Logo` from `../atoms/Logo`; `Sidebar` from `@heroui-pro/react`.
 - Produces: `Navbar(props: { onHome?: () => void; workspaceSlot?: ReactNode;
   alertSlot?: ReactNode; avatarSlot?: ReactNode })`, and a `topBar` slot on
   `ControlPlaneLayout`. Later tasks fill the three slots.
 
-The navbar is built slot-first so each later task lands one child without restructuring
-the bar. `Navbar` itself never reads a query — every child arrives as a node.
+**This is the biggest task in the plan** — it converts the left side of the shell from
+fixed-position to flow layout. The three files are touched together on purpose: splitting
+the `Sidebar` conversion from the navbar would mean restructuring `ControlPlaneLayout`,
+`ToolRail` and `HomePage` twice.
+
+**The layout collision, stated up front.** `Sidebar.Provider` owns layout —
+`.sidebar__provider` is `flex min-h-svh w-full`, `Sidebar.Main` is `flex-1`. Today
+`.rail--left` and `.rail--right` are fixed, the dot-grid canvas is a fixed underlay, and
+the board/map stages clear the rails with `inset 0 72px`. After this task:
+
+- The **left** rail takes real width in flow; the stages' left inset goes away.
+- The **right** roster rail stays fixed — it is HeroUI Phase 2 work. The right inset stays.
+- The **canvas stays `position: fixed`** as an underlay behind everything. It is not a
+  flow child, and making it one will break the fisheye's coordinate math.
+
+Verify the stages in a real window, not only in tests. `pnpm dev` works and a broker is
+typically listening on 127.0.0.1:7790.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -174,6 +189,71 @@ render it **first**, before `background`:
 
 Order matters only for the DOM and therefore for tab order: the bar should come before
 the canvas underlay and the rails so keyboard focus reaches it first.
+
+- [ ] **Step 4b: Rebuild `ToolRail` on `Sidebar`**
+
+Replace the hand-rolled `<nav className="rail rail--left">` with the real anatomy —
+verified against the docs, not guessed:
+
+```tsx
+<Sidebar collapsible="icon">
+  <Sidebar.Header>{/* empty — the logo lives in the navbar now */}</Sidebar.Header>
+  <Sidebar.Content>
+    <Sidebar.Menu aria-label="Tools and activity">
+      <Sidebar.MenuItem onAction={onNewSession}>
+        <Sidebar.MenuIcon><Plus /></Sidebar.MenuIcon>
+        <Sidebar.MenuLabel>New session</Sidebar.MenuLabel>
+      </Sidebar.MenuItem>
+      <Sidebar.MenuItem onAction={onSessions}>
+        <Sidebar.MenuIcon><History /></Sidebar.MenuIcon>
+        <Sidebar.MenuLabel>Sessions</Sidebar.MenuLabel>
+      </Sidebar.MenuItem>
+      <Sidebar.MenuItem href="/board" isCurrent={activeRoute === "/board"}>
+        <Sidebar.MenuIcon><SquareKanban /></Sidebar.MenuIcon>
+        <Sidebar.MenuLabel>Board</Sidebar.MenuLabel>
+      </Sidebar.MenuItem>
+      <Sidebar.MenuItem href="/map" isCurrent={activeRoute === "/map"}>
+        <Sidebar.MenuIcon><MapIcon /></Sidebar.MenuIcon>
+        <Sidebar.MenuLabel>Map</Sidebar.MenuLabel>
+      </Sidebar.MenuItem>
+    </Sidebar.Menu>
+  </Sidebar.Content>
+  <Sidebar.Footer>
+    <Sidebar.Menu aria-label="Settings">
+      <Sidebar.MenuItem onAction={onSettings}>
+        <Sidebar.MenuIcon><Settings /></Sidebar.MenuIcon>
+        <Sidebar.MenuLabel>Settings</Sidebar.MenuLabel>
+      </Sidebar.MenuItem>
+    </Sidebar.Menu>
+  </Sidebar.Footer>
+</Sidebar>
+```
+
+Wire routing on the provider in `ControlPlaneLayout`:
+
+```tsx
+<Sidebar.Provider
+  defaultOpen={false}
+  collapsible="icon"
+  navigate={(href) => void router.navigate({ to: href })}
+>
+```
+
+Five things this changes, each of which a test or a comment currently depends on:
+
+1. **`activeRoute` string comparison is retired** in favour of `isCurrent`. The
+   `tool.route !== null && tool.route === activeRoute` logic at `ToolRail.tsx:47` goes.
+2. **The `TOOLS` array goes** — items are now JSX, because each has a different shape
+   (two dispatch handlers, two hrefs). The `if (tool.label === "…")` dispatch chain at
+   `:53` was only ever a workaround for a uniform array.
+3. **`defaultOpen={false}`** keeps today's icon-only feel. `collapsible="icon"` gives a
+   48px rail with automatic per-item tooltips, plus an expanded state the rail never had.
+4. **`Sidebar.MenuItem` cannot render as an `<a>`** — RAC `TreeItem`, HTML spec
+   limitation. Navigation is programmatic. Any test asserting a link role must become a
+   press assertion.
+5. **`toggleShortcut` defaults to `mod+b`.** No collision today — the app binds a bare
+   `g` for the grid tuner (`HomePage.tsx:165-171`). Leave the default; if a command
+   palette ever lands, disable it with `toggleShortcut={false}` rather than fighting it.
 
 - [ ] **Step 5: Move the logo out of `ToolRail`, and repurpose its Plus**
 
