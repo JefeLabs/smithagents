@@ -1594,6 +1594,13 @@ Verify **5 files changed**.
    to find its owner.
 
 **Files:**
+- Modify: `control-plane/src/organisms/map/layout.ts` — **required by items 1 and 2 above**
+  (widen `MapNode["type"]`, add the artifact pitch constant). The original file list omitted
+  it while the requirements mandated it; an implementer following the list would either
+  stall or edit an unlisted file, which the commit-discipline check reads as scope creep.
+- Modify: `control-plane/src/organisms/map/layout.test.ts` — only if widening the union or
+  adding the constant needs new coverage. It is otherwise Task 1's and its existing
+  assertions must keep passing untouched; if any fail, behaviour changed — stop and report.
 - Modify: `control-plane/src/organisms/MapStage.tsx`
 - Modify: `control-plane/src/organisms/MapStage.test.tsx`
 - Modify: `control-plane/src/styles/components.css`
@@ -1601,6 +1608,14 @@ Verify **5 files changed**.
 **Interfaces:**
 - Consumes: `buildEdges`, `artifactNodesFor`, `useMapSelection` (Task 3); `SLICE_RAIL_X`,
   `ARTIFACT_GAP`, `STEP_W`, `SLOT_H`, `STORIES_Y`, `stepColumns` (Task 1).
+- **`ArtifactKind` is exported from `./map/layout`, NOT from `./map/edges`** — `edges.ts`
+  imports it and does not re-export it. Import it from `layout`.
+- **`Selection` covers `"slice" | "story" | "step"` and deliberately has NO `"artifact"`
+  kind.** The sketch below only ever calls `select({ kind: "slice", … })`, so artifacts are
+  display-only and the union needs no change. **If you decide to make artifact nodes
+  clickable, stop and tell me first** — widening `Selection` is a real interface change, not
+  an implementation detail, and it is the kind of thing that should be decided rather than
+  discovered mid-build.
 - Produces: nothing further; this is the last task.
 
 - [ ] **Step 1: Write the failing test**
