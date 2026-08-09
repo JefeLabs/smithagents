@@ -51,9 +51,23 @@ Cheap. No process is spawned. **Do not confuse the broker's conversation session
 the swarm's agent sessions** — only the latter are one-CLI-agent-each, and that invariant
 is not in play here. This is why auto-activating on workspace selection is safe.
 
-It is *not* side-effect-free, though: `switchDiscord(s.workspace)` rebinds the Discord
-channel. Selecting a workspace therefore moves the crew's Discord presence. Intended, but
-it means the selector reaches outside the UI.
+`switchDiscord(s.workspace)` is worth understanding precisely, because it is easy to
+read as more than it is. It sets `attendedDiscordWorkspace` and calls
+`switchDiscordForWorkspace(name)` (`broker/src/main.ts:518-528`) — that is, it rebinds
+**which workspace's Discord configuration the broker attends**: the bot token and the
+text/voice channel lists that live on the workspace record and are edited in
+`WorkspaceManagerModal`. Its documented purpose is so that a Discord-originated turn with
+no active session lands in the workspace Discord is already attending rather than the
+global default.
+
+**It does not change which agents are in Discord.** Agent participation is per-agent
+surface policy — `channels: {discord: "autojoin" | "on-request" | "disabled"}` on the
+agent record, plus `POST /agents/:id/surfaces/:surface/join` — and is entirely
+independent of workspaces. A workspace switch leaves every agent's surface policy and
+presence untouched.
+
+So the coupling is workspace → Discord *binding*, which is a workspace-level concern by
+construction. Nothing about it is surprising and nothing about it needs UI copy.
 
 ---
 
@@ -75,6 +89,47 @@ it means the selector reaches outside the UI.
 2. A home for alert conditions that currently have none.
 3. A shell whose layout does not need reshuffling when cloud identity lands.
 
+## Two axes that must not be conflated
+
+This design touches one of them and must leave the other alone.
+
+**Workspace is a work-context lens.** Which boards, which story maps, which sessions.
+It answers "what am I looking at". The navbar selector operates here, and nowhere else.
+
+**Channels — Discord and the ones that follow — are how humans participate with the
+crew.** They answer "how does a person reach these agents". Which agents appear on a
+channel is per-agent surface policy (`channels: {discord: "autojoin" | "on-request" |
+"disabled"}` on the agent record), set in the surface-policy popover, and it is
+independent of workspaces entirely.
+
+The one place the two touch is the broker's Discord *binding* — which workspace's bot
+token and channel lists it is attending — and that is a workspace-level configuration by
+construction, edited on the workspace record. It is not participation.
+
+Concretely: **selecting a workspace must never change who is in a channel.** If a future
+change to this surface would add or remove an agent from Discord, it has crossed into the
+other axis and is out of scope.
+
+### Why the control plane can be ambient and a channel cannot
+
+In this app there is always an active session, so workspace context is **ambient** — the
+user never states it, and `delegate` reads it off the session. That is the whole reason
+this navbar can be a selector rather than a field on every instruction.
+
+A channel has no such ambient. A Discord-originated turn arrives with no session of its
+own, and today it falls back to `attendedDiscordWorkspace` — whichever workspace the
+broker last switched to (`broker/src/main.ts:518-522`). That fallback is a guess, and a
+guess about which workspace work lands in is the expensive kind.
+
+**So on Discord the workspace context has to travel with the instruction**, not be
+inferred from broker state. That is channel-adapter work and is **out of scope here** —
+recorded because it is the boundary condition that explains why this design is safe: the
+control plane may rely on ambient context precisely because it guarantees a session
+exists, and no channel can make that guarantee.
+
+A future channel-side change must not be built by making the navbar's lens global — that
+would export an ambient the channel cannot honour.
+
 ## Non-goals
 
 - No broker or swarm change. No new endpoints. Every action reuses existing wiring.
@@ -86,19 +141,50 @@ it means the selector reaches outside the UI.
 
 ## Architecture
 
-### `activeWorkspace` — one new piece of client state
+### There is already a source of truth: the active session
 
-Lives in `uiStore` as `activeWorkspace: string | null`, where `null` means
-"All workspaces". Client-only: a workspace is a lens, not a runtime thing, and the broker
-has no concept to persist against.
+The workspace that matters is not a UI concept. It is already authoritative in the
+broker, and it already governs real work (`broker/src/main.ts:288-298`):
 
-**Seeding.** On the first session frame, initialise it to that session's `workspace`. A
-navbar selection overrides it thereafter. This is what avoids a "pick a workspace" empty
-state on open — you land wherever you were working.
+```js
+// Delegations land in the active session's workspace unless the brain names one.
+delegate: (input) => broker.executors.delegate({
+  ...input,
+  workspace: input.workspace ?? sessionManager.activeOrNull()?.workspace ?? defaultWorkspaceName
+}),
+// Scoped to the current conversation's workspace only — never model-choosable.
+lookup_ticket: (input) => broker.executors.lookup_ticket({
+  ...input, workspace: sessionManager.activeOrNull()?.workspace ?? defaultWorkspaceName
+}),
+```
 
-The seed must fire once, not on every frame, or a session frame arriving after a manual
-selection would silently yank the lens back. Gate it on the store's own value still being
-un-set rather than on a render-count ref.
+So the chain **instruction → session → workspace → dispatched work** exists and is
+enforced server-side. Agents therefore do **not** carry a workspace of their own, and this
+design must not give them one. An agent's current workspace is a property of the work it
+was handed, derived from the session that handed it over.
+
+**Consequence for this design: the navbar introduces no new source of truth.** The lens
+*is* the active session's workspace, read from the session frame the socket store already
+writes into the query cache:
+
+```ts
+const { data: session } = useSession();
+const lensWorkspace = session?.workspace ?? null;
+```
+
+Selecting a workspace does not set a variable — it activates a session, the broker
+broadcasts a new session frame, and every surface follows. One direction of flow, no
+client copy to drift.
+
+This is also the real justification for Decision 2. Selecting a workspace *must* activate
+a session, because otherwise the thing you are looking at and the thing your next
+instruction would act on could disagree — and the instruction would silently win.
+
+**"All workspaces"** is the one thing with no session to represent it. It is a
+**view-only** override in `uiStore` (`aggregateView: boolean`), read exclusively by
+`BoardStage`'s aggregate rendering. It never affects dispatch, and it never changes the
+active session. If that override is on, the navbar still shows which session is active,
+because that is still where work would land.
 
 ### Selecting a workspace
 
@@ -124,13 +210,13 @@ means.
 
 | Surface | Today | After |
 |---|---|---|
-| `BoardStage` | own `scope` state + in-stage picker | reads `activeWorkspace`; **picker deleted** |
-| `MapStage` | own workspace filter | reads `activeWorkspace` |
-| `SessionsPanel` | workspace filter chips | chips follow `activeWorkspace` |
+| `BoardStage` | own `scope` state + in-stage picker | reads the session's workspace (or `aggregateView`); **picker deleted** |
+| `MapStage` | own workspace filter | reads the session's workspace |
+| `SessionsPanel` | workspace filter chips | chips follow the session's workspace |
 | Voice / chat | follows the active session | unchanged — the session follows the selection instead |
 
 `BoardStage`'s existing scope-keyed reset effect (which clears `addingCard`, `cardTitle`
-and `open` when scope changes) must now key on `activeWorkspace`. Its reasoning is
+and `open` when scope changes) must now key on the session's workspace. Its reasoning is
 unchanged and documented at `BoardStage.tsx:213-219`; only the input moves.
 
 ### Navbar composition
@@ -189,8 +275,8 @@ its menu, its login affordance — is written against the flag, not against the 
 
 ## Testing
 
-- `activeWorkspace` seeding: asserts it takes the first session frame's workspace, and
-  that a **later** frame does not overwrite a manual selection.
+- The lens follows the session frame: a frame naming workspace X puts Board, Map and the
+  sessions list on X, with no client-side workspace variable involved.
 - Selecting a workspace with sessions activates the most recent by `updatedAt`.
 - Selecting a workspace with no sessions opens the composer locked to it and activates
   nothing.
@@ -219,13 +305,9 @@ touches neither stage.
 
 ## Risks
 
-1. **The Discord side effect.** `activate()` rebinds Discord to the session's workspace,
-   so a workspace selection moves the crew's presence in a way the UI does not currently
-   explain. Consider whether the selector should say so.
-2. **Retiring `BoardStage`'s picker is a behaviour change**, not a refactor: aggregate
+1. **Retiring `BoardStage`'s picker is a behaviour change**, not a refactor: aggregate
    scope stops being per-stage. Someone watching an aggregate board while chatting in one
    workspace will find the board follows the chat now.
-3. **`CLOUD_MODE = false` is dead code until cloud lands.** Acceptable because it is one
+2. **`CLOUD_MODE = false` is dead code until cloud lands.** Acceptable because it is one
    constant and one branch, but if the hosted switchboard slips indefinitely, this should
    be deleted rather than left as permanent scaffolding.
-</content>
