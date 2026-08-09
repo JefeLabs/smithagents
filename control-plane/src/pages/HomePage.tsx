@@ -8,6 +8,7 @@ import { type AgentSeed, agentSeeds } from "../data/agents";
 import { usePushToTalk } from "../hooks/usePushToTalk";
 import { useSpokenReplies } from "../hooks/useSpokenReplies";
 import { useTheme } from "../hooks/useTheme";
+import { AlertMenu } from "../molecules/AlertMenu";
 import { ConfirmSheet } from "../molecules/ConfirmSheet";
 import { WorkspaceSelector } from "../molecules/WorkspaceSelector";
 import { AddAgentModal } from "../organisms/AddAgentModal";
@@ -175,7 +176,13 @@ export function HomePage() {
 
   return (
     <ControlPlaneLayout
-      topBar={<Navbar onHome={() => void navigate({ to: "/" })} workspaceSlot={<WorkspaceSelector />} />}
+      topBar={
+        <Navbar
+          onHome={() => void navigate({ to: "/" })}
+          workspaceSlot={<WorkspaceSelector />}
+          alertSlot={<AlertMenu onNavigate={(t) => void navigate({ to: t })} />}
+        />
+      }
       background={<DotGridCanvas params={gridParams} />}
       leftRail={
         <ToolRail

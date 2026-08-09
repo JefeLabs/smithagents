@@ -42,6 +42,107 @@
   margin-bottom: 0; /* the rail's logo had bottom margin for the tool stack below it; the bar has none */
 }
 
+/* ---- alert menu (navbar) ---- */
+.alert-menu {
+  position: relative; /* anchors the popover below the bell */
+  flex: none;
+}
+.alert-menu__trigger {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  color: var(--text-2);
+  transition:
+    background 0.18s ease,
+    color 0.18s ease;
+}
+.alert-menu__trigger:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+}
+.alert-menu__badge {
+  position: absolute;
+  right: -1px;
+  top: -1px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  /* Same red the rail's engine-warning badge uses — one "something is wrong"
+     colour across the app rather than a second one invented here. */
+  background: #e05a5a;
+  color: #fff;
+  border: 2px solid var(--ground);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+.alert-menu__popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 5; /* above .navbar's own z-index: 4 */
+  width: 300px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 8px;
+  border-radius: 14px;
+  background: var(--pill);
+  border: 1px solid var(--pill-br);
+  backdrop-filter: blur(16px) saturate(1.3);
+  -webkit-backdrop-filter: blur(16px) saturate(1.3);
+}
+.alert-menu__empty {
+  margin: 0;
+  padding: 6px 8px;
+}
+.alert-menu__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.alert-menu__body {
+  width: 100%;
+  display: block;
+  text-align: left;
+  padding: 8px 10px;
+  border: none;
+  border-left: 2px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.alert-menu__row--error .alert-menu__body {
+  border-left-color: #e05a5a;
+}
+.alert-menu__row--warn .alert-menu__body {
+  border-left-color: #e0a15a;
+}
+.alert-menu__body--pressable {
+  cursor: pointer;
+}
+.alert-menu__body--pressable:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.alert-menu__text {
+  overflow-wrap: anywhere; /* broker error strings arrive unwrapped and can be long */
+}
+
 /* HeroUI's Sidebar.Provider owns the layout below the navbar — <Sidebar> (the
    left rail) and Sidebar.Main (everything else) are its flex row. HeroUI sizes
    both against a full 100svh viewport, which is now `var(--navbar-h)` too tall
