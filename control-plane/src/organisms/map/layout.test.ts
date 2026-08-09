@@ -90,19 +90,43 @@ describe("layoutMap sizes an activity to its step group", () => {
     expect(node.position).toEqual({ x: 0, y: 0 });
   });
 
-  it("contains its own blank step card, so the affordance is never unparented", () => {
-    // The property, not the arithmetic: typing into a blank step card creates a
-    // step in THAT activity, so it must render within that activity's span or
-    // the user cannot tell which of several side-by-side activities they are
-    // adding to.
+  it("contains every column it owns — real steps AND the blank", () => {
+    // The property, not the arithmetic. A child rendering outside its parent's
+    // span is the defect, whichever child it is: typing into a blank step card
+    // creates a step in THAT activity, and a real step column that escapes its
+    // card is the same failure mirrored — the user cannot tell which of several
+    // side-by-side activities a column belongs to. Bounding only the blank left
+    // the real columns free to drift left when the card moved right.
+    const cols = stepColumns(MODEL.activities);
     for (const actId of ["act1", "act2"]) {
       const card = nodeById(nodes, `activity:${actId}`);
-      const blank = nodeById(nodes, blankStepId(actId));
       const width = card.width;
       if (width === undefined) throw new Error(`activity ${actId} has no width`);
-      expect(blank.position.x).toBeGreaterThanOrEqual(card.position.x);
-      expect(blank.position.x + STEP_W).toBeLessThanOrEqual(card.position.x + width);
+      const own = MODEL.activities.find((a) => a.id === actId);
+      if (!own) throw new Error(`no activity ${actId}`);
+      const stepIds = new Set(own.steps.map((s) => s.id));
+      const children = [
+        ...cols.filter((c) => stepIds.has(c.stepId)).map((c) => c.x),
+        nodeById(nodes, blankStepId(actId)).position.x,
+      ];
+      expect(children).toHaveLength(own.steps.length + 1);
+      for (const x of children) {
+        expect(x).toBeGreaterThanOrEqual(card.position.x);
+        expect(x + STEP_W).toBeLessThanOrEqual(card.position.x + width);
+      }
     }
+  });
+});
+
+describe("layoutMap node emission order", () => {
+  it("emits activities in order, because node order is paint and tab order", () => {
+    // The only thing layoutMap's activities sort controls: every position comes
+    // from `xOf`, so this array's order is all that is left of it. xyflow renders
+    // nodes in array order, making this the DOM order a keyboard user tabs
+    // through — user-facing, and otherwise unpinned. MODEL lists act2 first.
+    const { nodes } = layoutMap(MODEL);
+    const activityIds = nodes.filter((n) => n.type === "activity").map((n) => n.id);
+    expect(activityIds).toEqual(["activity:act1", "activity:act2", BLANK_ACTIVITY_ID]);
   });
 });
 
