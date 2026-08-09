@@ -37,10 +37,10 @@ async function goToStep(n: number) {
 /** Fills the currently-visible repo row with valid data and picks the
     "personal" GitHub connector. Assumes the caller is already on Repos. */
 async function fillRepoRow() {
-  await userEvent.type(screen.getByPlaceholderText("web"), "web");
-  await userEvent.type(screen.getByPlaceholderText(/acme-web/), "/Users/me/code/acme-web");
-  await userEvent.type(screen.getByPlaceholderText("GitHub owner"), "acme");
-  await userEvent.type(screen.getByPlaceholderText("GitHub repo"), "web");
+  await userEvent.type(screen.getByLabelText("Repo name"), "web");
+  await userEvent.type(screen.getByLabelText("Path"), "/Users/me/code/acme-web");
+  await userEvent.type(screen.getByLabelText("GitHub owner"), "acme");
+  await userEvent.type(screen.getByLabelText("GitHub repo"), "web");
   await userEvent.click(screen.getByRole("button", { name: /github connector/i }));
   await userEvent.click(await screen.findByRole("option", { name: "personal" }));
 }
@@ -78,10 +78,10 @@ describe("NewWorkspaceModal", () => {
     await goToStep(2);
     const create = (await screen.findByRole("button", { name: /create workspace/i })) as HTMLButtonElement;
     expect(create.disabled).toBe(true);
-    await userEvent.type(screen.getByPlaceholderText("web"), "web");
-    await userEvent.type(screen.getByPlaceholderText(/acme-web/), "/Users/me/code/acme-web");
-    await userEvent.type(screen.getByPlaceholderText("GitHub owner"), "acme");
-    await userEvent.type(screen.getByPlaceholderText("GitHub repo"), "web");
+    await userEvent.type(screen.getByLabelText("Repo name"), "web");
+    await userEvent.type(screen.getByLabelText("Path"), "/Users/me/code/acme-web");
+    await userEvent.type(screen.getByLabelText("GitHub owner"), "acme");
+    await userEvent.type(screen.getByLabelText("GitHub repo"), "web");
     expect(create.disabled).toBe(true); // connector still unpicked — the required gate
     await userEvent.click(screen.getByRole("button", { name: /github connector/i }));
     await userEvent.click(await screen.findByRole("option", { name: "personal" }));
@@ -163,12 +163,10 @@ describe("NewWorkspaceModal", () => {
     await goToStep(2);
     await userEvent.click(screen.getByRole("radio", { name: "New folder" }));
     await userEvent.click(await screen.findByRole("button", { name: /browse/i }));
-    await waitFor(() =>
-      expect((screen.getByPlaceholderText(/new-project/) as HTMLInputElement).value).toBe("/Users/me/dev/fresh"),
-    );
-    await userEvent.type(screen.getByPlaceholderText("web"), "app");
-    await userEvent.type(screen.getByPlaceholderText("GitHub owner"), "me");
-    await userEvent.type(screen.getByPlaceholderText("GitHub repo"), "fresh");
+    await waitFor(() => expect((screen.getByLabelText("Path") as HTMLInputElement).value).toBe("/Users/me/dev/fresh"));
+    await userEvent.type(screen.getByLabelText("Repo name"), "app");
+    await userEvent.type(screen.getByLabelText("GitHub owner"), "me");
+    await userEvent.type(screen.getByLabelText("GitHub repo"), "fresh");
     await userEvent.click(screen.getByRole("button", { name: /github connector/i }));
     await userEvent.click(await screen.findByRole("option", { name: "personal" }));
     await userEvent.click(screen.getByRole("button", { name: /create workspace/i }));
@@ -201,8 +199,8 @@ describe("NewWorkspaceModal", () => {
     await goToStep(2);
     await userEvent.click(screen.getByRole("radio", { name: "New folder" }));
     expect(screen.queryByRole("button", { name: /browse/i })).toBeNull();
-    await userEvent.type(screen.getByPlaceholderText(/new-project/), "/Users/me/dev/typed");
-    expect((screen.getByPlaceholderText(/new-project/) as HTMLInputElement).value).toBe("/Users/me/dev/typed");
+    await userEvent.type(screen.getByLabelText("Path"), "/Users/me/dev/typed");
+    expect((screen.getByLabelText("Path") as HTMLInputElement).value).toBe("/Users/me/dev/typed");
   });
 
   it("sends the chosen colour with the workspace", async () => {
