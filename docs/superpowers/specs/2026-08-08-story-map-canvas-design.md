@@ -61,7 +61,7 @@ No `x`/`y` ever reaches the server. Two consequences follow, and both are load-b
 | `activity` | no        | yes        | Backbone header, spans its steps         |
 | `step`     | no        | yes        | Column header; the drop container        |
 | `story`    | **yes**   | yes        | The only thing that moves                |
-| `slice`    | no        | yes        | Left rail; entry point for reveal        |
+| `slice`    | no        | **no**     | Read-only edge anchor; name + fraction only |
 | `artifact` | no        | **no**     | spec / plan / capCard / deliveryCard     |
 
 Activities and steps are non-draggable *nodes* rather than a background layer, so they
@@ -77,21 +77,55 @@ handle at `MapStage.tsx:131`.
 ```
    x < 0              x = step columns                 x > last step
  ┌───────────┬──────────────────────────────────┬────────────────────┐
- │  SLICES   │  activity ▸ step ▸ story grid    │  ARTIFACTS         │
- │  rail     │                                  │  ephemeral         │
- │ persistent│  the thing you read              │  only while a      │
+ │  SLICE    │  activity ▸ step ▸ story grid    │  ARTIFACTS         │
+ │  ANCHOR   │                                  │  ephemeral         │
+ │ ephemeral │  the thing you read              │  only while a      │
  │           │                                  │  slice is selected │
  └───────────┴──────────────────────────────────┴────────────────────┘
+
+ ┌────────────────────────────────────────────────────────────────────┐
+ │  .map-stage__slices — ordinary DOM, BELOW the canvas, UNCHANGED    │
+ │  slice bands: name · fraction · spec · plan input · send buttons   │
+ └────────────────────────────────────────────────────────────────────┘
 ```
 
-Slices move out of `.map-stage__slices` into a canvas rail, because edges require
-endpoints and slices are the hub of every chain.
+**The slice bands stay in the DOM exactly where they are** (`MapStage.tsx:553-619`).
+They are dense control rows — a plan-path text input, two send buttons with
+disabled/title gating, a generate-spec button — not labels. Moving them onto the
+canvas would mean `nodrag nopan nowheel` on every interactive child and a text input
+competing with pan, paid for **zero spatial gain**: slices are an ordered list with no
+meaningful position. Three existing tests query `{ selector: ".slice-band__name" }`
+and survive untouched as a result.
 
-Artifact nodes are **absent from the node array at rest**. They materialize on
-selection and vanish on deselect — no reserved empty space, and the map reads clean
-when you are not interrogating it.
+Clicking a band sets the selection. The canvas then renders a **compact read-only
+`slice` anchor node** (name + done fraction, no controls) in the left rail, purely so
+edges have a source endpoint. The band remains the control surface; the anchor is a
+view of the slice for graph purposes only.
+
+Both anchor and artifact nodes are **absent from the node array at rest**. They
+materialize on selection and vanish on deselect — no reserved empty space, and the map
+reads clean when you are not interrogating it.
 
 ---
+
+## Composers
+
+Only `.map-stage__grid` becomes `<ReactFlow>`. Composers split by whether their
+position carries meaning:
+
+| Composer | Where it goes | Why |
+|---|---|---|
+| add story | inside `StepNode`, wrapped in `nodrag` | belongs to one step; position is meaningful |
+| add step | a `+` on the activity node | belongs to one activity |
+| add activity | DOM row beneath the canvas | appends to the whole map |
+| add slice, new capability | DOM, unchanged | already outside the grid |
+
+`.map-activity--composer` and `.map-step--composer` are **deleted**. They were fake
+columns whose only job was to occupy the end of a flex row — a position the canvas now
+derives from the model, so a column with no model entry has nowhere to be.
+
+One control inside a node is worth the `nodrag` wrapper; the slice bands' six are not,
+which is why those stay in the DOM.
 
 ## On-demand reveal
 
@@ -99,7 +133,11 @@ when you are not interrogating it.
 type Selection = { kind: 'slice' | 'story' | 'step'; id: string } | null
 ```
 
+Selection originates from **clicking a slice band in the DOM**, not from the canvas —
+the band is the control surface. Story and step selection originate from canvas clicks.
+
 Selecting a slice:
+- a read-only `slice` anchor node materializes in the left rail,
 - its `storyIds` highlight across columns,
 - artifact nodes materialize to the right,
 - edges draw: `slice → story*`, `slice → spec → plan`, `slice → capCard`,
@@ -214,13 +252,28 @@ makes the inverse property testable without a DOM.
 
 ## Failure handling
 
-Because positions are derived and never stored, **failure recovery requires no
-rollback code**. Drop a story, xyflow paints it at the drop point, `moveStory` fires.
-If the mutation fails the query never updates, `layoutMap` runs against the unchanged
-model, and the node renders back at its original coordinates. The snap-back *is* the
-absence of a state change.
+Positions are never stored **on the server**, and that invariant holds. But xyflow
+needs local node state for a node to follow the cursor during a drag, so recovery is
+*not* free — an earlier draft of this spec claimed it was, and that was wrong.
 
-One addition: an error toast on mutation failure. A silent snap-back is otherwise
+The failure path in detail:
+
+1. `onNodeDragStop` fires; xyflow's local `nodes` state holds the dropped position.
+2. `cellAt` returns `null` (invalid drop) → re-seed `nodes` from `layoutMap(cap)`
+   immediately. Snap-back.
+3. `cellAt` returns a cell → `await moveStory(...)`.
+   - **Success:** the query invalidates, `cap` gets a new reference, the seeding
+     effect re-runs `layoutMap` and the node lands at its new computed position.
+   - **Failure:** `cap` is unchanged, so the seeding effect does **not** re-run, and
+     the node would keep its dropped position — showing a move that never happened.
+     The handler must re-seed explicitly.
+
+`moveStory` therefore returns `Promise<boolean>` rather than `Promise<void>`, and
+`patchCap` returns whether the mutation succeeded. Today both swallow errors into
+`setError` and return `void`; that is sufficient for dnd-kit, where the DOM never
+moved in the first place, and insufficient here.
+
+Also required: an error toast on mutation failure. A silent snap-back is otherwise
 indistinguishable from "you dropped it somewhere invalid."
 
 ---
