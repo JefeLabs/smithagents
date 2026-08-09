@@ -1,15 +1,18 @@
 import {
-  DndContext,
-  type DragEndEvent,
-  PointerSensor,
-  pointerWithin,
-  useDroppable,
-  useSensor,
-  useSensors,
-} from "@dnd-kit/core";
-import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
-import { Map as MapIcon, Plus, X } from "lucide-react";
+  Background,
+  Controls,
+  MiniMap,
+  type Node,
+  type NodeTypes,
+  type OnNodeDrag,
+  ReactFlow,
+  useNodesState,
+} from "@xyflow/react";
+// Unlayered on purpose. Every selector in this sheet is `.react-flow`-scoped, so
+// it cannot reach the card rules components.css contributes to layer(legacy) —
+// and being unlayered keeps xyflow's own chrome authoritative over them.
+import "@xyflow/react/dist/style.css";
+import { Map as MapIcon, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import type { CapActivityT, CapabilityT, CapSliceT, CapStoryT } from "../api/types";
@@ -23,139 +26,29 @@ import {
   useSendSlice,
 } from "../queries/work";
 import { useUiStore } from "../stores/uiStore";
+import { cellAt, layoutMap, type MapNode } from "./map/layout";
+import { nodeTypes } from "./map/nodes";
+
+// Test seam: jsdom cannot synthesize xyflow pointer drags any more than it could
+// the pointer sequences of the library this replaced, so the drop handler is
+// registered here for tests to invoke the exact code path a real drop takes. It
+// reports whether the move survived the server, which is what lets a test tell a
+// rejected move from an applied one.
+let storyDropHandler: ((storyId: string, stepId: string, order: number) => Promise<boolean>) | null = null;
+export async function fireStoryDrop(storyId: string, stepId: string, order: number): Promise<boolean> {
+  if (!storyDropHandler) throw new Error("MapStage is not mounted");
+  return storyDropHandler(storyId, stepId, order);
+}
 
 /**
- * Resolves a raw dnd-kit drop target (`over.id`) into the step + insertion
- * index moveStory expects. Mirrors BoardStage's resolveDrop: moveStory's
- * `order` always indexes into the target step's siblings with the active
- * story already excluded, so a same-step forward drag (active story started
- * before the target) must land one slot AFTER the target's position in that
- * excluded list — landing AT it is a no-op, since that's exactly where the
- * active story already sits once excluded. A backward drag (or a
- * cross-step drop) lands AT the target's position, i.e. right before it.
+ * The composers that are still text boxes. Activity, step and story names are NOT
+ * here any more: each level's trailing blank CARD is its own composer now, holding
+ * its own text and handing it back through `onCommit`. Only the capability name and
+ * the slice band's two fields remain, and the records are keyed by slice id.
  */
-function resolveStoryDrop(
-  stories: CapStoryT[],
-  activeStoryId: string,
-  overId: string,
-): { stepId: string; order: number } | null {
-  if (overId === activeStoryId) return null;
-  const active = stories.find((s) => s.id === activeStoryId);
-  if (!active) return null;
-
-  if (overId.startsWith("step:")) {
-    const stepId = overId.slice("step:".length);
-    const order = stories.filter((s) => s.stepId === stepId && s.id !== activeStoryId).length;
-    return { stepId, order };
-  }
-
-  const overStory = stories.find((s) => s.id === overId);
-  if (!overStory) return null;
-  const stepId = overStory.stepId;
-  const siblings = stories
-    .filter((s) => s.stepId === stepId && s.id !== activeStoryId)
-    .sort((a, b) => a.order - b.order);
-  const idx = siblings.findIndex((s) => s.id === overId);
-  if (idx < 0) return null;
-
-  const forward = active.stepId === stepId && active.order < overStory.order;
-  return { stepId, order: forward ? idx + 1 : idx };
-}
-
-// Test seam: jsdom cannot synthesize dnd-kit pointer sequences; the drop
-// handler is registered here so tests can invoke the exact code path a real
-// drop takes.
-let storyDropHandler: ((storyId: string, stepId: string, order: number) => Promise<void>) | null = null;
-export async function fireStoryDrop(storyId: string, stepId: string, order: number): Promise<void> {
-  if (!storyDropHandler) throw new Error("MapStage is not mounted");
-  await storyDropHandler(storyId, stepId, order);
-}
-
-/** One sortable story chip — the drag handle is the whole chip. */
-function SortableStory({
-  story,
-  sliceOptions,
-  sliceValue,
-  onSliceChange,
-  onRemove,
-}: {
-  story: CapStoryT;
-  sliceOptions: CapSliceT[];
-  sliceValue: string;
-  onSliceChange: (id: string) => void;
-  onRemove: () => void;
-}) {
-  const sortable = useSortable({ id: story.id });
-  const style = { transform: CSS.Transform.toString(sortable.transform), transition: sortable.transition };
-  return (
-    <div
-      ref={sortable.setNodeRef}
-      style={style}
-      className={`map-story${story.done ? " is-done" : ""}${sortable.isDragging ? " is-dragging" : ""}`}
-      title={story.verifiedBy}
-    >
-      <span className="map-story__handle" {...sortable.attributes} {...sortable.listeners}>
-        {story.text}
-      </span>
-      <select aria-label={`Slice for ${story.text}`} value={sliceValue} onChange={(e) => onSliceChange(e.target.value)}>
-        <option value="backlog">backlog</option>
-        {sliceOptions.map((s) => (
-          <option key={s.id} value={s.id}>
-            {s.name}
-          </option>
-        ))}
-      </select>
-      <button type="button" aria-label={`Remove story: ${story.text}`} onClick={onRemove}>
-        <X size={10} strokeWidth={2} />
-      </button>
-    </div>
-  );
-}
-
-/** One step's story stack: a droppable zone (for empty-step drops) containing a sortable story list. */
-function MapStepStories({
-  stepId,
-  stories,
-  sliceOptions,
-  sliceFor,
-  onSliceChange,
-  onRemove,
-}: {
-  stepId: string;
-  stories: CapStoryT[];
-  sliceOptions: CapSliceT[];
-  sliceFor: (storyId: string) => string;
-  onSliceChange: (storyId: string, sliceId: string) => void;
-  onRemove: (story: CapStoryT) => void;
-}) {
-  const droppable = useDroppable({ id: `step:${stepId}` });
-  // `stories` is already sorted (storiesFor sorts before passing it down).
-  const sorted = stories;
-  return (
-    <div ref={droppable.setNodeRef} className={`map-step__stories${droppable.isOver ? " is-over" : ""}`}>
-      <SortableContext items={sorted.map((s) => s.id)} strategy={verticalListSortingStrategy}>
-        {sorted.map((story) => (
-          <SortableStory
-            key={story.id}
-            story={story}
-            sliceOptions={sliceOptions}
-            sliceValue={sliceFor(story.id)}
-            onSliceChange={(sliceId) => onSliceChange(story.id, sliceId)}
-            onRemove={() => onRemove(story)}
-          />
-        ))}
-      </SortableContext>
-    </div>
-  );
-}
-
-/** Every composer input on the stage. The three records are keyed by activity / step / slice id. */
 interface MapComposerValues {
   capName: string;
-  activityName: string;
   sliceName: string;
-  stepNames: Record<string, string>;
-  storyTexts: Record<string, string>;
   planTexts: Record<string, string>;
 }
 
@@ -195,11 +88,11 @@ export function MapStage() {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Every composer on this stage is a write-once text box: type, press Enter, it clears.
-  // The three records are keyed by activity/step/slice id and registered as they render,
-  // which is why they're one form rather than three `Record<string, string>` states.
+  // Each remaining composer is a write-once text box: type, press Enter, it clears.
+  // planTexts is keyed by slice id and registered as the bands render, which is why
+  // this is one form rather than a `Record<string, string>` state.
   const { register, getValues, setValue } = useForm<MapComposerValues>({
-    defaultValues: { capName: "", activityName: "", sliceName: "", stepNames: {}, storyTexts: {}, planTexts: {} },
+    defaultValues: { capName: "", sliceName: "", planTexts: {} },
   });
 
   const displayError = error ?? loadError;
@@ -240,14 +133,19 @@ export function MapStage() {
 
   const cap = capabilities.find((c) => c.id === activeId) ?? null;
 
+  // Reports whether the write survived. Only the drag path reads it — a rejected
+  // move has to re-seed the canvas, because xyflow holds the dragged node's
+  // position locally and would otherwise keep showing a move the server refused.
   const patchCap = useCallback(
     async (body: Partial<Pick<CapabilityT, "name" | "activities" | "stories" | "slices">>) => {
-      if (!cap) return;
+      if (!cap) return false;
       try {
         await patchCapMutation.mutateAsync({ id: cap.id, body });
         setError(null);
+        return true;
       } catch (err) {
         setError(err instanceof Error ? err.message : "Update failed");
+        return false;
       }
     },
     [cap, patchCapMutation],
@@ -255,10 +153,10 @@ export function MapStage() {
 
   const moveStory = useCallback(
     async (storyId: string, stepId: string, order: number) => {
-      if (!cap) return;
+      if (!cap) return false;
       const stories = cap.stories.map((s) => ({ ...s }));
       const story = stories.find((s) => s.id === storyId);
-      if (!story) return;
+      if (!story) return false;
       const from = story.stepId;
       const siblings = stories.filter((s) => s.stepId === stepId && s.id !== storyId).sort((a, b) => a.order - b.order);
       const at = Math.max(0, Math.min(order, siblings.length));
@@ -275,7 +173,7 @@ export function MapStage() {
             s.order = i;
           });
       }
-      await patchCap({ stories });
+      return patchCap({ stories });
     },
     [cap, patchCap],
   );
@@ -286,8 +184,6 @@ export function MapStage() {
       storyDropHandler = null;
     };
   }, [moveStory]);
-
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
   const createCapability = async () => {
     const capName = getValues("capName").trim();
@@ -311,29 +207,27 @@ export function MapStage() {
   };
   const sliceFor = (storyId: string) => cap?.slices.find((s) => s.storyIds.includes(storyId))?.id ?? "backlog";
 
-  const addActivity = () => {
-    const activityName = getValues("activityName").trim();
-    if (!cap || !activityName) return;
+  // The three creates take their text as an argument now. Each level's trailing
+  // blank card owns its own input state and hands the trimmed value over through
+  // `onCommit`, so there is no form field left to read or to clear — the card
+  // clears itself, and an empty commit never reaches here at all.
+  const addActivity = (name: string) => {
+    if (!cap || !name) return;
     void patchCap({
-      activities: [
-        ...cap.activities,
-        { id: crypto.randomUUID(), name: activityName, order: cap.activities.length, steps: [] },
-      ],
+      activities: [...cap.activities, { id: crypto.randomUUID(), name, order: cap.activities.length, steps: [] }],
     });
-    setValue("activityName", "");
   };
-  const addStep = (act: CapActivityT) => {
-    const name = (getValues(`stepNames.${act.id}`) ?? "").trim();
+  const addStep = (activityId: string, name: string) => {
     if (!cap || !name) return;
     void patchCap({
       activities: cap.activities.map((a) =>
-        a.id === act.id ? { ...a, steps: [...a.steps, { id: crypto.randomUUID(), name, order: a.steps.length }] } : a,
+        a.id === activityId
+          ? { ...a, steps: [...a.steps, { id: crypto.randomUUID(), name, order: a.steps.length }] }
+          : a,
       ),
     });
-    setValue(`stepNames.${act.id}`, "");
   };
-  const addStory = (stepId: string) => {
-    const text = (getValues(`storyTexts.${stepId}`) ?? "").trim();
+  const addStory = (stepId: string, text: string) => {
     if (!cap || !text) return;
     void patchCap({
       stories: [
@@ -341,7 +235,6 @@ export function MapStage() {
         { id: crypto.randomUUID(), stepId, order: storiesFor(stepId).length, text, done: false },
       ],
     });
-    setValue(`storyTexts.${stepId}`, "");
   };
   const removeStory = (story: CapStoryT) => {
     if (!cap) return;
@@ -404,13 +297,96 @@ export function MapStage() {
     setValue("sliceName", "");
   };
 
-  const handleDragEnd = (e: DragEndEvent) => {
-    if (!cap || !e.over) return;
-    const storyId = String(e.active.id);
-    const overId = String(e.over.id);
-    const target = resolveStoryDrop(cap.stories, storyId, overId);
-    if (!target) return;
-    void moveStory(storyId, target.stepId, target.order);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+
+  /**
+   * Injects handlers and dim state into the pure layout's node data. `layoutMap`
+   * cannot do this itself without importing React, which would cost the DOM-free
+   * property test that makes `cellAt` trustworthy. Task 5 extends `dimmedIds`
+   * rather than adding a second path.
+   *
+   * BLANK CARDS ARE MATCHED FIRST, and every one of them gets an `onCommit`.
+   * `BlankCard` calls `data.onCommit(text)` unguarded while `layoutMap` emits blank
+   * data without it, so a blank that fell through to a real-card branch below would
+   * not merely lose its handler — it would read `story`/`step`/`activity` off data
+   * that has none and throw while rendering. The parent id comes off the blank
+   * node's own data, which is why the card never has to learn where it belongs.
+   */
+  const decorate = (base: MapNode[], dimmedIds: Set<string>): Node[] =>
+    base.map((n) => {
+      const dimmed = dimmedIds.has(n.id);
+      if (n.data.blank) {
+        if (n.type === "story") {
+          const stepId = n.data.stepId as string;
+          return { ...n, data: { blank: true, onCommit: (text: string) => addStory(stepId, text) } } as Node;
+        }
+        if (n.type === "step") {
+          const activityId = n.data.activityId as string;
+          return { ...n, data: { blank: true, onCommit: (text: string) => addStep(activityId, text) } } as Node;
+        }
+        return { ...n, data: { blank: true, onCommit: (text: string) => addActivity(text) } } as Node;
+      }
+      if (n.type === "story") {
+        const story = n.data.story as CapStoryT;
+        return {
+          ...n,
+          data: {
+            story,
+            dimmed,
+            sliceOptions: [...(cap?.slices ?? [])].sort((a, b) => a.order - b.order),
+            sliceValue: sliceFor(story.id),
+            onSliceChange: (sliceId: string) => assignSlice(story.id, sliceId),
+            onRemove: () => removeStory(story),
+          },
+        } as Node;
+      }
+      if (n.type === "step") {
+        const step = n.data.step as { id: string; name: string; order: number };
+        const activity = n.data.activity as CapActivityT;
+        return {
+          ...n,
+          data: {
+            step,
+            activity,
+            dimmed,
+            storyCount: storiesFor(step.id).length,
+            onRemove: () => removeStep(activity, step.id),
+          },
+        } as Node;
+      }
+      const activity = n.data.activity as CapActivityT;
+      return { ...n, data: { activity, dimmed, onRemove: () => removeActivity(activity) } } as Node;
+    });
+
+  // Positions are derived, never stored — but xyflow needs local node state for a
+  // node to follow the cursor mid-drag, so the model is re-seeded into it whenever
+  // it changes.
+  //
+  // KEYED ON `cap` ALONE, deliberately. `decorate` closes over the create and remove
+  // helpers, which are plain consts rebuilt on every render, so it has a fresh
+  // identity every render; depending on it here would re-seed every render, and
+  // because re-seeding sets state that is an infinite update loop, not merely a slow
+  // path. Every handler it injects is a function of `cap` and nothing else, so `cap`
+  // is the real dependency.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: decorate is unstable by construction — see above
+  useEffect(() => {
+    setNodes(cap ? decorate(layoutMap(cap).nodes, new Set()) : []);
+  }, [cap, setNodes]);
+
+  const onNodeDragStop: OnNodeDrag = async (_event, node) => {
+    if (!cap) return;
+    // A story node's id IS its story id (layout.ts's one asymmetry), so it needs no
+    // unwrapping here. Only stories are draggable, so nothing else reaches this.
+    const cell = cellAt(node.position, cap);
+    // Invalid drop, or a rejected mutation: re-seed from the model. Without this the
+    // node keeps its dropped position and shows a move that never happened — and the
+    // seeding effect cannot cover it, because on both paths the model never changed.
+    if (!cell) {
+      setNodes(decorate(layoutMap(cap).nodes, new Set()));
+      return;
+    }
+    const ok = await moveStory(node.id, cell.stepId, cell.order);
+    if (!ok) setNodes(decorate(layoutMap(cap).nodes, new Set()));
   };
 
   return (
@@ -444,85 +420,26 @@ export function MapStage() {
       )}
       {cap && (
         <>
-          <DndContext sensors={sensors} collisionDetection={pointerWithin} onDragEnd={handleDragEnd}>
-            <div className="map-stage__grid">
-              {[...cap.activities]
-                .sort((a, b) => a.order - b.order)
-                .map((act) => (
-                  <div key={act.id} className="map-activity">
-                    <div className="map-activity__name">
-                      <span className="map-card__text" title={act.name}>
-                        {act.name}
-                      </span>
-                      <button
-                        type="button"
-                        aria-label={`Remove activity: ${act.name}`}
-                        disabled={act.steps.length > 0}
-                        title={act.steps.length > 0 ? "Remove its stories first" : undefined}
-                        onClick={() => removeActivity(act)}
-                      >
-                        <X size={10} strokeWidth={2} />
-                      </button>
-                    </div>
-                    <div className="map-activity__steps">
-                      {[...act.steps]
-                        .sort((a, b) => a.order - b.order)
-                        .map((step) => (
-                          <div key={step.id} className="map-step">
-                            <div className="map-step__name">
-                              <span className="map-card__text" title={step.name}>
-                                {step.name}
-                              </span>
-                              <button
-                                type="button"
-                                aria-label={`Remove step: ${step.name}`}
-                                disabled={storiesFor(step.id).length > 0}
-                                title={storiesFor(step.id).length > 0 ? "Remove its stories first" : undefined}
-                                onClick={() => removeStep(act, step.id)}
-                              >
-                                <X size={10} strokeWidth={2} />
-                              </button>
-                            </div>
-                            <MapStepStories
-                              stepId={step.id}
-                              stories={storiesFor(step.id)}
-                              sliceOptions={[...cap.slices].sort((a, b) => a.order - b.order)}
-                              sliceFor={sliceFor}
-                              onSliceChange={assignSlice}
-                              onRemove={removeStory}
-                            />
-                            <input
-                              placeholder="Add a story…"
-                              {...register(`storyTexts.${step.id}`)}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") addStory(step.id);
-                              }}
-                            />
-                          </div>
-                        ))}
-                      <div className="map-step map-step--composer">
-                        <input
-                          placeholder="Add a step…"
-                          {...register(`stepNames.${act.id}`)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") addStep(act);
-                          }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              <div className="map-activity map-activity--composer">
-                <input
-                  placeholder="Add an activity…"
-                  {...register("activityName")}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") addActivity();
-                  }}
-                />
-              </div>
-            </div>
-          </DndContext>
+          <div className="map-stage__canvas">
+            <ReactFlow
+              nodes={nodes}
+              edges={[]}
+              // The node components take deliberately narrower props than xyflow's
+              // NodeProps, whose `data` is Record<string, unknown>. That narrowing is
+              // what lets them be rendered and asserted without xyflow present, so the
+              // cast belongs here at the mount site — widening the components to remove
+              // it would trade one line for untypable components.
+              nodeTypes={nodeTypes as unknown as NodeTypes}
+              onNodesChange={onNodesChange}
+              onNodeDragStop={onNodeDragStop}
+              nodesConnectable={false}
+              fitView
+            >
+              <Background />
+              <Controls />
+              <MiniMap pannable zoomable />
+            </ReactFlow>
+          </div>
           <div className="map-stage__slices">
             {[...cap.slices]
               .sort((a, b) => a.order - b.order)

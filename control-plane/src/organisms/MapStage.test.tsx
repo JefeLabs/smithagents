@@ -343,6 +343,32 @@ describe("MapStage editing", () => {
     });
   });
 
+  it("a failed move snaps the story back instead of showing a move that did not happen", async () => {
+    const { calls } = stubFetch();
+    // Make the PATCH fail: the model never changes, so the seeding effect never
+    // re-runs, and without an explicit re-seed the node would keep its dropped
+    // position — showing a move the server rejected.
+    //
+    // The failing response is substituted AFTER delegating, not instead of it:
+    // `original` is what records into `calls`, so returning early would make the
+    // PATCH assertion below unsatisfiable no matter how the code behaved.
+    const original = globalThis.fetch as typeof fetch;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const res = await original(input, init);
+      if ((init?.method ?? "GET") === "PATCH") {
+        return { ok: false, status: 500, json: async () => ({}) } as Response;
+      }
+      return res;
+    });
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    await screen.findByText("Define Tour Schedule");
+    const { fireStoryDrop } = await import("./MapStage");
+    const moved = await fireStoryDrop("s2", "st2", 0);
+    expect(moved).toBe(false);
+    expect(calls.some((c) => c.method === "PATCH")).toBe(true);
+  });
+
   it("creates a slice", async () => {
     const { calls } = stubFetch();
     const { client } = renderMapStage();

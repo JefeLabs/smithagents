@@ -55,11 +55,14 @@ function BlankCard({
   return (
     <div className={`${className} is-blank`} style={{ width }}>
       <input
-        // Without this xyflow claims the pointerdown for its own gesture and the
-        // field can never be focused — a card that looks right and cannot be typed
-        // into. No unit test can catch its absence: there is no xyflow pointer
-        // handling in jsdom.
-        className="map-blank__input nodrag"
+        // BOTH classes, and `nopan` is the load-bearing one. They gate different
+        // gestures: `nodrag` suppresses the NODE drag, which a blank card never had
+        // (layoutMap gives it draggable:false), while `nopan` suppresses the PANE's
+        // d3-zoom gesture — and that is the one that competes for a pointerdown in
+        // this field. Measured against @xyflow/system 0.0.79, whose zoom filter tests
+        // `noPanClassName` and never looks at `nodrag`: without `nopan`, dragging to
+        // select text in this input pans the whole canvas instead.
+        className="map-blank__input nodrag nopan"
         placeholder={placeholder}
         value={text}
         onChange={(e) => setText(e.target.value)}

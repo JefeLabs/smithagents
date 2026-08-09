@@ -115,9 +115,16 @@ describe.each(BLANK_LEVELS)("blank $level card", ({ Node, placeholder, card }) =
     expect(container.querySelector(card)?.classList.contains("is-blank")).toBe(true);
   });
 
-  it("marks that input nodrag, without which it can never be focused on the canvas", () => {
+  it("marks that input BOTH nodrag and nopan — they gate different gestures", () => {
     render(<Node data={{ blank: true, onCommit: vi.fn() }} />);
-    expect(screen.getByPlaceholderText(placeholder).classList.contains("nodrag")).toBe(true);
+    const input = screen.getByPlaceholderText(placeholder);
+    expect(input.classList.contains("nodrag")).toBe(true);
+    // `nopan` is the one that matters here, and it was missing until Task 4 mounted
+    // the canvas and could measure it. xyflow's zoom filter tests noPanClassName and
+    // never looks at nodrag, so without this the pane's d3-zoom gesture claims the
+    // pointerdown and dragging to select text pans the map. Losing it also puts an
+    // unhandled d3 error into the suite, which fails the run while every test passes.
+    expect(input.classList.contains("nopan")).toBe(true);
   });
 
   it("commits the trimmed text on Enter and clears itself for the next one", async () => {
