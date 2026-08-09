@@ -31,6 +31,14 @@ function HiddenLabelHarness() {
   return <FormTextField control={control} name="name" label="Workspace name" placeholder="acme" labelHidden />;
 }
 
+function HarnessOneField({ isDisabled }: { isDisabled?: boolean }) {
+  const { control } = useForm<Values>({
+    mode: "onChange",
+    defaultValues: { name: "", bio: "" },
+  });
+  return <FormTextField control={control} name="name" label="Workspace name" isDisabled={isDisabled} />;
+}
+
 function HarnessWithRule({ rules }: { rules: RegisterOptions<Values, "name"> }) {
   const { control, handleSubmit } = useForm<Values>({
     mode: "onChange",
@@ -131,5 +139,12 @@ describe("FormTextField", () => {
   it("a field-typed validator compiles with no cast on a form that also has an array field", () => {
     render(<MixedShapeHarness />);
     expect(screen.getByLabelText("Name")).toBeDefined();
+  });
+
+  it("isDisabled prevents input, which WorkspaceManagerModal relies on to pin the name during an edit", async () => {
+    render(<HarnessOneField isDisabled />);
+    const input = screen.getByLabelText("Workspace name");
+    await userEvent.type(input, "acme");
+    expect(input).toHaveValue("");
   });
 });

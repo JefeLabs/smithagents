@@ -11,6 +11,24 @@ const CONNECTORS = [
   { id: "conn-c", vendorId: "github", label: "personal", fields: {} },
 ];
 
+/**
+ * Opens a FormSelect (react-aria's Select — trigger is role="button", options render as
+ * role="option" in a popover) by its trigger's accessible name, retrying the click itself
+ * rather than just the read afterwards. This modal's own open-effect calls reset() shortly
+ * after mount (loading workspaces, which regenerates useFieldArray's row keys), and can
+ * swap out the very trigger just clicked mid-interaction — silently discarding the popover
+ * that had just opened. Waiting for a specific expected option, not merely "some option",
+ * matters too: FormColorSwatch's ColorSwatchPicker also renders always-mounted role="option"
+ * items elsewhere on this single-page form, so a bare non-empty check would pass before the
+ * targeted popover ever opens.
+ */
+async function openSelect(triggerName: RegExp, expectOptionName: string) {
+  await waitFor(async () => {
+    await userEvent.click(screen.getByRole("button", { name: triggerName }));
+    expect(screen.queryByRole("option", { name: expectOptionName })).not.toBeNull();
+  });
+}
+
 describe("WorkspaceManagerModal — connector pickers", () => {
   afterEach(() => {
     cleanup();
@@ -29,8 +47,8 @@ describe("WorkspaceManagerModal — connector pickers", () => {
         listMyConnectors={vi.fn(async () => CONNECTORS)}
       />,
     );
-    const atlassianSelect = await screen.findByLabelText(/atlassian connector/i);
-    const options = Array.from(atlassianSelect.querySelectorAll("option")).map((o) => o.textContent);
+    await openSelect(/atlassian connector/i, "personal");
+    const options = screen.getAllByRole("option").map((o) => o.textContent);
     expect(options).toContain("personal");
     expect(options).not.toContain("acme-corp"); // that's a github-vendor connector, must not appear here
   });
@@ -48,16 +66,10 @@ describe("WorkspaceManagerModal — connector pickers", () => {
         listMyConnectors={vi.fn(async () => CONNECTORS)}
       />,
     );
-    // Re-query inside waitFor rather than holding a reference: the open-effect's reset()
-    // regenerates useFieldArray's row keys, so a select captured before the connector
-    // roster lands is a detached node that can never gain the options being asserted on.
-    await waitFor(() => {
-      const repoSelects = screen.getAllByLabelText(/github connector/i);
-      expect(repoSelects.length).toBeGreaterThanOrEqual(1);
-      const options = Array.from(repoSelects[0]!.querySelectorAll("option")).map((o) => o.textContent);
-      expect(options).toEqual(expect.arrayContaining(["acme-corp", "personal"]));
-      expect(options).not.toContain("personal (atlassian)"); // no atlassian connector leaks into a github picker
-    });
+    await openSelect(/github connector/i, "acme-corp");
+    const options = screen.getAllByRole("option").map((o) => o.textContent);
+    expect(options).toEqual(expect.arrayContaining(["acme-corp", "personal"]));
+    expect(options).not.toContain("personal (atlassian)"); // no atlassian connector leaks into a github picker
   });
 
   it("picking a connector for a repo and saving includes that repo's connectorId in the saved payload", async () => {
@@ -79,8 +91,10 @@ describe("WorkspaceManagerModal — connector pickers", () => {
     await userEvent.type(screen.getByPlaceholderText(/Users\/me\/code/i), "/tmp/web");
     await userEvent.type(screen.getByPlaceholderText("GitHub owner"), "acme");
     await userEvent.type(screen.getByPlaceholderText("GitHub repo"), "web");
-    const repoSelect = (await screen.findAllByLabelText(/github connector/i))[0]!;
-    await userEvent.selectOptions(repoSelect, "conn-b");
+    // "acme-corp" is conn-b's label — pick it by that name rather than setting a native
+    // select's value, since FormSelect is react-aria's Select, not a <select>.
+    await openSelect(/github connector/i, "acme-corp");
+    await userEvent.click(screen.getByRole("option", { name: "acme-corp" }));
     await userEvent.click(screen.getByRole("button", { name: /create workspace/i }));
     await waitFor(() =>
       expect(save).toHaveBeenCalledWith(
@@ -183,8 +197,10 @@ describe("WorkspaceManagerModal — connector pickers", () => {
     await userEvent.type(screen.getByPlaceholderText(/Users\/me\/code/i), "/tmp/web");
     await userEvent.type(screen.getByPlaceholderText("GitHub owner"), "acme");
     await userEvent.type(screen.getByPlaceholderText("GitHub repo"), "web");
-    const repoSelect = (await screen.findAllByLabelText(/github connector/i))[0]!;
-    await userEvent.selectOptions(repoSelect, "conn-b");
+    // "acme-corp" is conn-b's label — pick it by that name rather than setting a native
+    // select's value, since FormSelect is react-aria's Select, not a <select>.
+    await openSelect(/github connector/i, "acme-corp");
+    await userEvent.click(screen.getByRole("option", { name: "acme-corp" }));
     // Edit owner AFTER the connector is already picked — this must not wipe connectorId.
     await userEvent.type(screen.getByPlaceholderText("GitHub owner"), "2");
     await userEvent.click(screen.getByRole("button", { name: /create workspace/i }));
@@ -316,15 +332,17 @@ describe("WorkspaceManagerModal — colour", () => {
     const p = withColour(WORKSPACE_PALETTE[2]);
     render(<WorkspaceManagerModal {...p} />);
     await userEvent.click(await screen.findByText("acme"));
-    expect((screen.getByLabelText("Colour 3") as HTMLInputElement).checked).toBe(true);
-    expect((screen.getByLabelText("No colour") as HTMLInputElement).checked).toBe(false);
+    // FormColorSwatch is react-aria's ColorSwatchPicker — a listbox of role="option"
+    // items marking selection with aria-selected, not native radio inputs with .checked.
+    expect(await screen.findByRole("option", { name: "Colour 3" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("option", { name: "No colour" })).toHaveAttribute("aria-selected", "false");
   });
 
   it("saves a changed colour", async () => {
     const p = withColour(WORKSPACE_PALETTE[2]);
     render(<WorkspaceManagerModal {...p} />);
     await userEvent.click(await screen.findByText("acme"));
-    await userEvent.click(screen.getByLabelText("Colour 5"));
+    await userEvent.click(await screen.findByRole("option", { name: "Colour 5" }));
     await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
     await waitFor(() =>
       expect(p.save).toHaveBeenCalledWith(expect.objectContaining({ color: WORKSPACE_PALETTE[4] }), false),
@@ -335,8 +353,8 @@ describe("WorkspaceManagerModal — colour", () => {
     const p = withColour(WORKSPACE_PALETTE[2]);
     render(<WorkspaceManagerModal {...p} />);
     await userEvent.click(await screen.findByText("acme"));
-    await userEvent.click(screen.getByLabelText("No colour"));
-    expect((screen.getByLabelText("Colour 3") as HTMLInputElement).checked).toBe(false);
+    await userEvent.click(await screen.findByRole("option", { name: "No colour" }));
+    expect(screen.getByRole("option", { name: "Colour 3" })).toHaveAttribute("aria-selected", "false");
     await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
     await waitFor(() => expect(p.save).toHaveBeenCalledWith(expect.objectContaining({ color: "" }), false));
   });
@@ -345,7 +363,7 @@ describe("WorkspaceManagerModal — colour", () => {
     const p = withColour(undefined);
     render(<WorkspaceManagerModal {...p} />);
     await userEvent.click(await screen.findByText("acme"));
-    expect((screen.getByLabelText("No colour") as HTMLInputElement).checked).toBe(true);
+    expect(await screen.findByRole("option", { name: "No colour" })).toHaveAttribute("aria-selected", "true");
     await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
     await waitFor(() => expect(p.save).toHaveBeenCalledWith(expect.objectContaining({ color: "" }), false));
   });
