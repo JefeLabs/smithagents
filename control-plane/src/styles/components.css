@@ -2776,7 +2776,17 @@ button.logo {
   gap: 8px;
 }
 .map-activity__name {
-  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* Must equal ACTIVITY_H in organisms/map/layout.ts. It is one of the two terms in
+     STORIES_Y, the y where every story stack's first slot begins — let content size
+     this card and every stack sits lower than cellAt believes, so drops resolve a
+     row off from what the user sees, with every test still passing because no test
+     reads CSS. Vertical padding is 0 and the flex centring does that job instead, so
+     the height holds whatever the card ends up containing. */
+  height: 32px;
+  padding: 0 10px;
   border-radius: 10px;
   background: rgba(110, 140, 255, 0.16);
   border: 1px solid var(--pill-br);
@@ -2793,7 +2803,17 @@ button.logo {
   gap: 8px;
 }
 .map-step__name {
-  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* Must equal STEP_HEAD_H in organisms/map/layout.ts — STORIES_Y's other term, with
+     the same consequence as .map-activity__name above. On the canvas this card is a
+     step's head and nothing else: its stories are sibling nodes, not children. */
+  height: 27px;
+  /* Must equal STEP_W. Only activity nodes carry a MapNode.width (they span their
+     step group), so nothing else would give a step card a column's width. */
+  width: 180px;
+  padding: 0 10px;
   border-radius: 10px;
   background: rgba(240, 220, 120, 0.14);
   border: 1px solid var(--pill-br);
@@ -2811,14 +2831,30 @@ button.logo {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 10px;
+  /* Must equal STORY_H in organisms/map/layout.ts — cellAt resolves a drop by
+     dividing y by SLOT_H (STORY_H + STORY_GAP) and cannot measure a pitch it did not
+     declare. Same reasoning as .map-activity__name for the zero vertical padding. */
+  height: 32px;
+  /* Must equal STEP_W — see .map-step__name. */
+  width: 180px;
+  padding: 0 10px;
   border-radius: 10px;
   border: 1px solid var(--pill-br);
   background: rgba(255, 255, 255, 0.04);
   font-size: 12px;
 }
-.map-story__handle {
+.map-story__handle,
+.map-card__text {
   flex: 1;
+  /* A flex item's min-width is auto, which refuses to shrink below its content — the
+     ellipsis never appears without this, and a long name overflows a card whose
+     height is now fixed. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.map-story__handle {
   cursor: grab;
 }
 .map-story.is-done .map-story__handle {
@@ -2830,6 +2866,53 @@ button.logo {
 }
 .map-step__stories.is-over {
   border-color: var(--accent);
+}
+
+/* The trailing card at every level (organisms/map/nodes.tsx). It keeps its level's
+   exact height — it occupies a real cell, and cellAt's arithmetic does not know it is
+   blank — and reads as an invitation rather than as a record left empty. */
+.map-activity__name.is-blank,
+.map-step__name.is-blank,
+.map-story.is-blank {
+  background: none;
+  border-style: dashed;
+}
+.map-blank__input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+}
+.map-activity__name.is-dimmed,
+.map-step__name.is-dimmed,
+.map-story.is-dimmed,
+.map-slice-anchor.is-dimmed,
+.map-artifact.is-dimmed {
+  opacity: 0.3;
+}
+
+/* Slice anchors and artifacts. Task 5 reveals them on demand and positions them
+   (SLICE_RAIL_X / ARTIFACT_GAP); no constant governs their size, so nothing here is
+   pinned to one. */
+.map-slice-anchor,
+.map-artifact {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--pill-br);
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 12px;
+}
+.map-slice-anchor__fraction,
+.map-artifact__kind {
+  font-size: 10px;
+  color: var(--text-dim);
 }
 .map-stage__slices {
   display: flex;

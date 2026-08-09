@@ -1,0 +1,225 @@
+import { X } from "lucide-react";
+import { useState } from "react";
+import type { CapActivityT, CapSliceT, CapStoryT } from "../../api/types";
+
+/**
+ * The cards the story-map canvas renders. Geometry lives in `layout.ts` and
+ * nothing here recomputes it: an activity's width arrives as a prop, and the
+ * three pinned heights live in components.css against the constants.
+ *
+ * This module imports no @xyflow/react. The only thing it owes the canvas is the
+ * `nodrag` class, which xyflow reads off the DOM — depending on the package for a
+ * string would cost these components their ability to render in a plain test.
+ */
+
+/**
+ * What every blank card carries. `layoutMap` emits `blank` (blankness is a LAYOUT
+ * concern — the model has no draft field) alongside the parent id; MapStage's
+ * decorator closes over that parent to build `onCommit`, so the card itself never
+ * needs to know which step or activity it belongs to.
+ */
+export interface BlankNodeData {
+  blank: true;
+  onCommit: (text: string) => void;
+}
+
+/**
+ * The trailing card at every level, and the reason there is no "add" control
+ * anywhere on the map: the card IS the composer. Typing into it and committing
+ * creates the record, after which a fresh blank card appears in the next slot.
+ *
+ * It holds its own text rather than the stage's form. Node ids are stable across
+ * re-seeds (`new:story:<stepId>` is derived, not generated), so React keeps this
+ * instance and its text through the re-render every model change causes.
+ */
+function BlankCard({
+  className,
+  placeholder,
+  width,
+  onCommit,
+}: {
+  className: string;
+  placeholder: string;
+  width?: number;
+  onCommit: (text: string) => void;
+}) {
+  const [text, setText] = useState("");
+  const commit = () => {
+    const value = text.trim();
+    // Committing empty is a no-op — Enter or blur on an untouched card leaves it
+    // exactly as it was and creates no record.
+    if (!value) return;
+    setText("");
+    onCommit(value);
+  };
+  return (
+    <div className={`${className} is-blank`} style={{ width }}>
+      <input
+        // Without this xyflow claims the pointerdown for its own gesture and the
+        // field can never be focused — a card that looks right and cannot be typed
+        // into. No unit test can catch its absence: there is no xyflow pointer
+        // handling in jsdom.
+        className="map-blank__input nodrag"
+        placeholder={placeholder}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+        }}
+        onBlur={commit}
+      />
+    </div>
+  );
+}
+
+export interface StoryNodeData {
+  blank?: false;
+  story: CapStoryT;
+  sliceOptions: CapSliceT[];
+  sliceValue: string;
+  onSliceChange: (sliceId: string) => void;
+  onRemove: () => void;
+  dimmed: boolean;
+}
+
+/**
+ * One story. The handle is the drag target (layout sets
+ * `dragHandle: ".map-story__handle"`); the select and remove button carry `nodrag`
+ * so xyflow leaves their pointer events alone. The handle deliberately does not.
+ */
+export function StoryNode({ data }: { data: StoryNodeData | BlankNodeData }) {
+  if (data.blank) return <BlankCard className="map-story" placeholder="Add a story…" onCommit={data.onCommit} />;
+  const { story, sliceOptions, sliceValue, onSliceChange, onRemove, dimmed } = data;
+  return (
+    <div className={`map-story${story.done ? " is-done" : ""}${dimmed ? " is-dimmed" : ""}`} title={story.verifiedBy}>
+      <span className="map-story__handle">{story.text}</span>
+      <select
+        className="nodrag"
+        aria-label={`Slice for ${story.text}`}
+        value={sliceValue}
+        onChange={(e) => onSliceChange(e.target.value)}
+      >
+        <option value="backlog">backlog</option>
+        {sliceOptions.map((s) => (
+          <option key={s.id} value={s.id}>
+            {s.name}
+          </option>
+        ))}
+      </select>
+      <button className="nodrag" type="button" aria-label={`Remove story: ${story.text}`} onClick={onRemove}>
+        <X size={10} strokeWidth={2} />
+      </button>
+    </div>
+  );
+}
+
+export interface StepNodeData {
+  blank?: false;
+  step: { id: string; name: string; order: number };
+  activity: CapActivityT;
+  storyCount: number;
+  onRemove: () => void;
+  dimmed: boolean;
+}
+
+/**
+ * A step's head, and only its head: its stories are sibling nodes on the canvas,
+ * not children of this card. That is why the card's height is STEP_HEAD_H rather
+ * than a whole column's.
+ */
+export function StepNode({ data }: { data: StepNodeData | BlankNodeData }) {
+  if (data.blank) return <BlankCard className="map-step__name" placeholder="Add a step…" onCommit={data.onCommit} />;
+  const { step, storyCount, onRemove, dimmed } = data;
+  return (
+    <div className={`map-step__name${dimmed ? " is-dimmed" : ""}`}>
+      <span className="map-card__text" title={step.name}>
+        {step.name}
+      </span>
+      <button
+        className="nodrag"
+        type="button"
+        aria-label={`Remove step: ${step.name}`}
+        disabled={storyCount > 0}
+        title={storyCount > 0 ? "Remove its stories first" : undefined}
+        onClick={onRemove}
+      >
+        <X size={10} strokeWidth={2} />
+      </button>
+    </div>
+  );
+}
+
+export interface ActivityNodeData {
+  blank?: false;
+  activity: CapActivityT;
+  onRemove: () => void;
+  dimmed: boolean;
+}
+
+/**
+ * An activity spans its whole step group plus that group's trailing blank. The span
+ * depends on the step count and on STEP_W/STEP_GAP, so `layoutMap` computes it and
+ * xyflow hands it down as `width` — deriving it here would put geometry in two
+ * places and let them disagree.
+ */
+export function ActivityNode({ width, data }: { width?: number; data: ActivityNodeData | BlankNodeData }) {
+  if (data.blank)
+    return (
+      <BlankCard className="map-activity__name" placeholder="Add an activity…" width={width} onCommit={data.onCommit} />
+    );
+  const { activity, onRemove, dimmed } = data;
+  return (
+    <div className={`map-activity__name${dimmed ? " is-dimmed" : ""}`} style={{ width }}>
+      <span className="map-card__text" title={activity.name}>
+        {activity.name}
+      </span>
+      <button
+        className="nodrag"
+        type="button"
+        aria-label={`Remove activity: ${activity.name}`}
+        disabled={activity.steps.length > 0}
+        title={activity.steps.length > 0 ? "Remove its stories first" : undefined}
+        onClick={onRemove}
+      >
+        <X size={10} strokeWidth={2} />
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Read-only anchor for a selected slice. The interactive slice band stays in the DOM
+ * below the canvas — this exists only so edges have a source endpoint.
+ */
+export function SliceNode({ data }: { data: { name: string; fraction: string } }) {
+  return (
+    <div className="map-slice-anchor">
+      <span className="map-slice-anchor__name">{data.name}</span>
+      <span className="map-slice-anchor__fraction">{data.fraction}</span>
+    </div>
+  );
+}
+
+export function ArtifactNode({ data }: { data: { kind: string; label: string } }) {
+  return (
+    <div className={`map-artifact map-artifact--${data.kind}`}>
+      <span className="map-artifact__kind">{data.kind}</span>
+      <span className="map-artifact__label">{data.label}</span>
+    </div>
+  );
+}
+
+/**
+ * Module scope on purpose. A fresh object identity each render makes xyflow remount
+ * every node on every render.
+ *
+ * `slice` and `artifact` have no counterpart in `MapNode["type"]` yet — Task 5 emits
+ * them; the other three are reachable today.
+ */
+export const nodeTypes = {
+  activity: ActivityNode,
+  step: StepNode,
+  story: StoryNode,
+  slice: SliceNode,
+  artifact: ArtifactNode,
+} as const;
