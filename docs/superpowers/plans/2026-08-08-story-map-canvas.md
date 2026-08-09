@@ -506,6 +506,42 @@ Verify **5 files changed** (3 modified + 2 created under `map/`), plus `api/type
 **Critical:** `nodeTypes` must be defined at module scope, never inside a component.
 A new object identity each render makes xyflow remount every node on every render.
 
+**TASK 2 HAS THREE GAPS, same cause as Task 1's — it was written before the blank-card and
+visual-target rulings. Fix these before dispatching it.**
+
+**Gap A — blank cards are not mentioned at all, and they are half of what these components
+do.** Task 1 emits trailing cells carrying `data.blank === true` at every level. The node
+components must branch on it: a blank card renders **an input, not text** — the card *is*
+the composer, which is the entire point of Edwin's ruling. Requirements:
+
+- Blank activity, step and story nodes render an `<input>` with the placeholder text the
+  old composers used (`Add an activity…`, `Add a step…`, `Add a story…`), so nothing about
+  the affordance is lost in the move.
+- **Committing empty is a no-op.** Enter or blur with no text leaves the card as it was and
+  creates no record.
+- The input must be wrapped `nodrag` — the same class the existing story input already
+  uses — or xyflow swallows the click and the field can never be focused. This is the single
+  most likely way to ship a blank card that looks right and cannot be typed into.
+- A blank card is **not draggable and not a drop target.** `layoutMap` already sets
+  `draggable: false`; do not re-derive it here.
+
+**Gap B — only ONE of three heights is pinned, and the other two silently break `cellAt`.**
+Step 5 pins `.map-story` to `STORY_H`. But `STEP_HEAD_H = 27` and `ACTIVITY_H = 32` are
+equally load-bearing and `components.css`'s current padding implies roughly 30 and 31 — so
+they are already wrong. `cellAt` divides `y` by a pitch it cannot measure; if CSS lets
+content size these cards, drops resolve one row off from what the user sees, **with every
+test passing, because no test consults CSS.** Pin all three explicitly, each with the same
+comment style as `.map-story`, naming the constant it must equal.
+
+**Gap C — the activity node must consume `MapNode.width`.** Task 1 computes it
+(`Math.max(steps.length, 1)` in both terms) precisely so an activity spans its step group,
+which is the reference layout's defining feature. The node component must apply it rather
+than assuming `STEP_W`. Do not recompute the width here — read it from the node.
+
+**Note on `nodeTypes`' five keys:** `slice` and `artifact` have no counterpart in Task 1's
+`MapNode["type"]` union, which is `"activity" | "step" | "story"`. That is expected — Task 5
+introduces artifacts. Build all five components now; only three are reachable until then.
+
 - [ ] **Step 1: Write the failing test**
 
 Create `control-plane/src/organisms/map/nodes.test.tsx`:
