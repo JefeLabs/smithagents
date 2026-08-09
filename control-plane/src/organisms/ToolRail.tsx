@@ -12,8 +12,8 @@ interface ToolRailProps {
   onSettings?: () => void;
 }
 
-// No operator avatar: there's no "account" concept in an all-local, single-operator
-// app — reintroduce it when cloud hosting makes identity meaningful.
+// The operator avatar lives in the Navbar (src/molecules/OperatorAvatar.tsx),
+// gated on CLOUD_MODE. The rail is tools only.
 //
 // Board and Map navigate via `href` + the ancestor Sidebar.Provider's `navigate`
 // callback (wired in ControlPlaneLayout) rather than an onClick prop here — that is

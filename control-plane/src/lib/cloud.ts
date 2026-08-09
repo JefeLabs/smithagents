@@ -1,0 +1,9 @@
+/**
+ * Cloud mode is not implemented. The hosted switchboard is what will make operator
+ * identity meaningful; until then this is false and the avatar never renders.
+ *
+ * Deliberately a constant rather than a query: there is no endpoint to ask, and
+ * inventing one would build the seam twice. Everything downstream reads the flag,
+ * never the literal, so making it real later is a one-line change here.
+ */
+export const CLOUD_MODE = false;
