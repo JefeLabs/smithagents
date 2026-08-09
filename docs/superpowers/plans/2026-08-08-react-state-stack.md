@@ -1398,7 +1398,7 @@ Expected: all pass. `grep -rn "useStage\|StageContext" src` **still returns hits
 - [ ] **Step 8: Commit**
 
 ```bash
-git add -A src
+git add <explicit paths>   # never -A; other agents may have uncommitted work
 git commit -m "refactor: move HomePage to stores and queries, delete StageContext"
 ```
 
@@ -1480,7 +1480,7 @@ Run: `pnpm typecheck && pnpm lint && pnpm test`
 Expected: all pass. `grep -n "listApiKeys\|listCliTools\|getVoiceSettings" src/pages/HomePage.tsx` returns nothing.
 
 ```bash
-git add -A src
+git add <explicit paths>   # never -A; other agents may have uncommitted work
 git commit -m "refactor: settings groups fetch their own data via query hooks"
 ```
 
@@ -1552,7 +1552,7 @@ it("refetches the board when a board-updated frame arrives", async () => {
 Run: `pnpm typecheck && pnpm lint && pnpm test`
 
 ```bash
-git add -A src
+git add <explicit paths>   # never -A; other agents may have uncommitted work
 git commit -m "refactor: board and map stages onto query, drop seq-counter refetch"
 ```
 
@@ -1664,7 +1664,7 @@ Run: `pnpm typecheck && pnpm lint && pnpm test`
 Expected: all pass. Manually confirm the wizard resets: open, type a name, close, reopen — the field must be empty.
 
 ```bash
-git add -A src
+git add <explicit paths>   # never -A; other agents may have uncommitted work
 git commit -m "refactor: migrate forms to react-hook-form"
 ```
 
@@ -1685,15 +1685,28 @@ git commit -m "refactor: migrate forms to react-hook-form"
 
 `computeEngineWarnings` (`useCliToolHealth.ts:11`) is already a pure function — keep it verbatim, move it to `src/queries/health.ts`, and derive the join from two existing queries instead of a bespoke double-fetch:
 
-```ts
-import { computeEngineWarnings } from "./health";
+**`useRoster()` cannot back this — it holds a VIEW MODEL, not agent records.** It is fed only by the WS `roster` frame (`broker/src/main.ts:475-512`), and `RosterAgent` (`api/types.ts:26-40`) has no `engine` field. The broker says so itself at `broker/src/text-channel.ts:447`: *"the roster frame is a view model and deliberately carries none of the persona detail."* Reading `roster?.agents` here returns `{}` forever — and the ported pure-function tests still pass, because they call `computeEngineWarnings` directly with hand-built records.
 
+First add a query over the real source, `GET /agents`, which returns the full `{agents, discord, voice}` envelope:
+
+```ts
+// api/broker.ts
+export async function getAgentRecords(base = BROKER_BASE): Promise<AgentRecordsResponse>
+// queries/keys.ts   → qk.agentRecords
+// queries/http.ts   → useAgentRecords()
+```
+
+Then:
+
+```ts
 export function useEngineWarnings(): Record<string, string> {
   const { data: tools = [] } = useCliTools();
-  const { data: roster } = useRoster();
-  return computeEngineWarnings(tools, roster?.agents ?? []);
+  const { data: records } = useAgentRecords();
+  return computeEngineWarnings(tools, records?.agents ?? []);
 }
 ```
+
+`useAgentRecords` backs all three of the hooks below, which **dedupes three separate `/agents` fetches** (`useCliToolHealth`, `useSurfacePolicy`, `useVoiceStatus`) into one cache entry.
 
 Move `computeEngineWarnings`'s existing tests over unchanged — it is a pure function and its test needs no provider.
 
@@ -1705,7 +1718,13 @@ Use `useWorkspaceRecords()` (`queries/http.ts:30`). It hits the same URL with th
 
 - [ ] **Step 2: Simplify `useSurfacePolicy`**
 
-It hand-rolls request-generation cancellation (`generationRef`, `useSurfacePolicy.ts:88-96`) to discard stale `/agents` responses. Query does that natively via query keys. Replace the fetch and the generation guard with `useRoster()`, keeping the pure `joinNowVisible` helper and the mutation paths as-is.
+It hand-rolls request-generation cancellation (`generationRef`, `useSurfacePolicy.ts:88-96`) to discard stale `/agents` responses. Query does that natively via query keys. Replace the fetch and the generation guard with **`useAgentRecords()`** — not `useRoster()`, which lacks the three things this hook needs: per-agent `channels` (feeding `modesFrom`), per-agent `presence`, and top-level `discord: {configured, voiceReady}`. All three are added by `GET /agents` at `broker/src/text-channel.ts:452-465` and none ride the roster frame. Using `useRoster()` would render every surface popover all-disabled, with no presence and Discord unconfigured.
+
+Keep the pure `joinNowVisible` helper and the mutation paths as-is.
+
+- [ ] **Step 2b: `useVoiceStatus` onto the same query**
+
+It reads `body.voice` from `GET /agents`, also absent from the roster frame. Point it at `useAgentRecords()` too. Sharing one cache entry is what makes it safe for a route to call `useVoiceStatus()` directly — the old "a second copy would never see the refresh" objection dies with the bespoke fetch.
 
 - [ ] **Step 3: Rewire `useSpokenReplies`**
 
@@ -1757,7 +1776,7 @@ Start the broker, then `pnpm dev`, and confirm each behaves exactly as on `main`
 - [ ] **Step 8: Commit**
 
 ```bash
-git add -A src
+git add <explicit paths>   # never -A; other agents may have uncommitted work
 git commit -m "refactor: delete useBrokerChat, fold remaining fetchers into queries"
 ```
 
