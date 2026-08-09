@@ -119,10 +119,36 @@ concern and `layoutMap` must emit these cells itself. Requirements, all three te
    `new:step:<activityId>`, `new:story:<stepId>`. A real id must never begin `new:`.
 2. **`data.blank: true` and `draggable: false`.** The node component branches on `blank` to
    render an input instead of text; `draggable: false` is what keeps it out of drag.
-3. **`cellAt` MUST NOT return a blank cell.** It is the inverse of `layoutMap` over REAL
-   positions only; a drop resolving onto a cell that does not exist yet is the failure the
-   amendment names. Add a test that drops on the blank trailing cell's coordinates and
-   asserts `cellAt` returns `null` — that test is the guard, and it must exist.
+3. **`cellAt` must never resolve to a blank COLUMN.** *(Corrected 2026-08-09 — the first
+   wording of this item said "must not return a blank cell", which was wrong. It conflated
+   two different blanks that deserve opposite answers.)*
+
+   - A blank **story slot** at index `count` is NOT a nonexistent cell. The step exists and
+     `order = count` is an ordinary append. Rejecting it would delete drag-to-end-of-column
+     outright; rejecting only `slot == count` while `slot >= count + 1` still appends would
+     carve a **non-monotonic dead zone** into the middle of a drag — a control that stops
+     working in a band and resumes past it. Worse than the bug being guarded against.
+   - A blank **column** (`new:step:*`, `new:activity`) IS the hazard: it means "file this
+     story under a step that does not exist," which cannot be persisted.
+
+   So: `cellAt` finds the nearest column over the full list **including** blanks, and
+   returns `null` when the nearest is blank. Real story nodes keep an exact inverse, append
+   keeps working, and the rule is monotonic across the whole gesture.
+
+   **The guard test:** drop at the blank step column's CENTRE (`blankX + STEP_W / 2`) and
+   assert `null`. The centre matters — at the edge, the `±STEP_W` nearest-column margin
+   could produce the `null` on its own and the test would prove nothing.
+
+4. **Zero-step activities must render.** `Math.max(steps.length, 1)` in both terms of the
+   width. The raw formula gives `-8` at zero steps, and typing into the blank activity card
+   produces exactly a zero-step activity — so the headline creation flow rendered nothing.
+   One step must still be exactly `STEP_W`. Pin 0, 1 and 2 steps.
+
+5. **Blank cells need reserved space.** `stepColumns`' cursor must advance a full slot per
+   activity for its trailing blank (`STEP_W + STEP_GAP`, then `ACTIVITY_GAP - STEP_GAP`),
+   or blank columns overlap the next activity's real ones by 176px. `stepColumns` keeps its
+   public signature returning REAL columns only; an internal `columns()` returns
+   `{stepId, x, blank}` that BOTH `layoutMap` and `cellAt` consume, so the two cannot drift.
 
 **Gap C — the capability level is deliberately NOT in `layoutMap`.** Edwin's rule covers
 capability too, but the capability row lives in the stage header, not on the canvas (the
