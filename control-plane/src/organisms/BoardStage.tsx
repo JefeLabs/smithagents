@@ -1,7 +1,7 @@
 import { DndContext, type DragEndEvent, PointerSensor, pointerWithin, useSensor, useSensors } from "@dnd-kit/core";
 import { useQueryClient } from "@tanstack/react-query";
 import { Download, Plus, SquareKanban } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { RosterAgent, WorkspaceRecord } from "../api/types";
 import type { BoardsResult } from "../api/work";
 import {
@@ -17,7 +17,9 @@ import { BoardColumn } from "../molecules/BoardColumn";
 import { BoardTabs } from "../molecules/BoardTabs";
 import { useWorkspaceRecords } from "../queries/http";
 import { qk } from "../queries/keys";
+import { useSession } from "../queries/pushed";
 import { useBoards, useCreateBoard, useCreateCard, useImportJira, useMoveCard } from "../queries/work";
+import { useUiStore } from "../stores/uiStore";
 import { CardSheet } from "./CardSheet";
 
 /** Stable empty while the records query is pending — `colorFor` runs per card. */
@@ -168,10 +170,28 @@ export function BoardStage({ roster }: BoardStageProps) {
   const moveCardMutation = useMoveCard();
   const importJiraMutation = useImportJira();
 
-  const [scope, setScope] = useState<string>(ALL_WORKSPACES);
+  const { data: session } = useSession();
+  const viewed = useUiStore((s) => s.viewedWorkspaces);
+  // Derived, not stored: the session frame is authoritative for the active
+  // workspace, and `viewed` only needs to hold state once the user diverges
+  // from it — an untouched (empty) selection means "no explicit view yet", so
+  // a fresh load follows the active session's one workspace instead of
+  // defaulting to every workspace at once. Memoized so its identity stays
+  // stable across renders where neither input actually changed — the reset
+  // effects below are keyed on it, and a fresh Set() every render would fire
+  // them continuously.
+  const scope = useMemo<ReadonlySet<string> | typeof ALL_WORKSPACES>(() => {
+    if (viewed === ALL_WORKSPACES) return ALL_WORKSPACES;
+    if (viewed.size > 0) return viewed;
+    return new Set(session?.workspace ? [session.workspace] : []);
+  }, [viewed, session?.workspace]);
+  // The one workspace this render may create into, or null when zero or several
+  // are in view — "you may look at many, but you may only create in one."
+  const singleWorkspace = scope !== ALL_WORKSPACES && scope.size === 1 ? [...scope][0] : null;
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [addingCard, setAddingCard] = useState(false);
+  const [addingBoard, setAddingBoard] = useState(false);
   const [cardTitle, setCardTitle] = useState("");
   const [open, setOpen] = useState<{ boardId: string; cardId: string } | null>(null);
   // Same endpoint and envelope the hand-rolled fetch here used, but on the
@@ -218,6 +238,16 @@ export function BoardStage({ roster }: BoardStageProps) {
     setCardTitle("");
     setOpen(null);
   }, [scope, tab?.key]);
+
+  // Lifted from BoardTabs: the add-board menu unmounts whenever `addable` is
+  // empty, but `adding` was component state there and survived that —
+  // without this, opening the menu, viewing several workspaces, then
+  // returning to one resurrects it already open. Kept scope-only (not
+  // tab-keyed) to match what it replaces.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scope-keyed reset, same pattern as the effect above
+  useEffect(() => {
+    setAddingBoard(false);
+  }, [scope]);
 
   // Optimistic move + PATCH + rollback-on-fail. Same-column reorders PATCH
   // {order} only — omitting columnId keeps the swarm's Jira push-on-move
@@ -287,8 +317,9 @@ export function BoardStage({ roster }: BoardStageProps) {
   };
 
   const addBoard = async (type: BoardTypeT) => {
+    if (!singleWorkspace) return; // the add control is hidden in this case; guard the mutation too
     try {
-      await createBoardMutation.mutateAsync({ type, workspaceId: scope });
+      await createBoardMutation.mutateAsync({ type, workspaceId: singleWorkspace });
       setActiveKey(type);
       setError(null);
     } catch (err) {
@@ -310,15 +341,11 @@ export function BoardStage({ roster }: BoardStageProps) {
   return (
     <section className="stage board-stage" aria-label="Work boards">
       <BoardTabs
-        scope={scope}
-        workspaces={workspaces.map((w) => w.name)}
         tabs={tabs}
         activeKey={tab?.key ?? null}
-        addable={scope === ALL_WORKSPACES ? [] : addableTypes(boards, scope)}
-        onScope={(s) => {
-          setScope(s);
-          setActiveKey(null);
-        }}
+        addable={singleWorkspace ? addableTypes(boards, singleWorkspace) : []}
+        adding={addingBoard}
+        onAddingChange={setAddingBoard}
         onSelect={setActiveKey}
         onAdd={(t) => void addBoard(t)}
       />

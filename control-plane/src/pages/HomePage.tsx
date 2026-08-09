@@ -87,6 +87,7 @@ export function HomePage() {
   const setWorkspacesOpen = useUiStore((s) => s.setWorkspacesOpen);
   const setNewWorkspaceOpen = useUiStore((s) => s.setNewWorkspaceOpen);
   const setRemoving = useUiStore((s) => s.setRemoving);
+  const viewedWorkspaces = useUiStore((s) => s.viewedWorkspaces);
 
   // The audio hint is the page's only read of audio state — the mic and mute
   // controls themselves live in the voice route and read the store there.
@@ -180,11 +181,13 @@ export function HomePage() {
         <ToolRail
           activeRoute={pathname}
           // Locks to the workspace already on screen (same rule SessionsPanel's
-          // "new session" row uses) — there is no multiselect yet, so exactly one
-          // workspace is ever in view and locking to it is the non-surprising
-          // default. `viewedWorkspaces` (Task 3) will make this conditional once
-          // more than one workspace can be in view at a time.
-          onNewSession={() => openComposer(session?.workspace)}
+          // "new session" row uses) only while exactly one is in view — an
+          // untouched `viewedWorkspaces` (size 0) still means "just the active
+          // one", same default BoardStage falls back to. Several or "*" is
+          // ambiguous, so the composer opens unlocked instead of guessing.
+          onNewSession={() =>
+            openComposer(viewedWorkspaces !== "*" && viewedWorkspaces.size <= 1 ? session?.workspace : undefined)
+          }
           onSessions={toggleSessions}
           onSettings={() => setSettingsOpen(true)}
         />
