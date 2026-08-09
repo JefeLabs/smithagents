@@ -922,6 +922,11 @@ export function ModalShell({ open, onClose, title, size = "md", children }: Moda
       }}
     >
       <Modal.Container size={size}>
+        {/* `aria-label` AND a visible `Modal.Heading` is deliberate, not an oversight.
+            Both read from the same `title` prop so they cannot diverge, and the explicit
+            label means the dialog has an accessible name even if a caller later passes
+            custom header content. Verified against the docs: Modal.Dialog accepts
+            `aria-label`, and Modal.Heading exists. Do not "simplify" one of them away. */}
         <Modal.Dialog aria-label={title}>
           <Modal.CloseTrigger />
           <Modal.Header>
