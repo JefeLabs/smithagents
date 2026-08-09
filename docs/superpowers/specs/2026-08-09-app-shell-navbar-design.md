@@ -134,7 +134,9 @@ would export an ambient the channel cannot honour.
 
 - No broker or swarm change. No new endpoints. Every action reuses existing wiring.
 - No change to `api/`, `queries/`, or the socket store's frame handling.
-- Not a redesign of the left rail's tools. The rail keeps its tools; only the logo moves.
+- Not a redesign of the left rail's tools beyond two changes: the logo moves to the
+  navbar, and the Plus is repurposed from "New workspace" to "New session". Sessions,
+  Board, Map and Settings are untouched.
 - Cloud authentication itself. This design reserves the slot; it does not build login.
 
 ---
@@ -147,6 +149,7 @@ The workspace that matters is not a UI concept. It is already authoritative in t
 broker, and it already governs real work (`broker/src/main.ts:288-298`):
 
 ```js
+const executors = {
 // Delegations land in the active session's workspace unless the brain names one.
 delegate: (input) => broker.executors.delegate({
   ...input,
@@ -156,6 +159,7 @@ delegate: (input) => broker.executors.delegate({
 lookup_ticket: (input) => broker.executors.lookup_ticket({
   ...input, workspace: sessionManager.activeOrNull()?.workspace ?? defaultWorkspaceName
 }),
+};
 ```
 
 So the chain **instruction → session → workspace → dispatched work** exists and is
@@ -213,13 +217,35 @@ Creating a workspace is a workspace-switching action — you make one in order t
 it — so the control that switches workspaces is where it belongs, and it is the
 conventional place users look for it.
 
-**This retires `ToolRail`'s "New workspace" Plus tool** (`ToolRail.tsx:7`) and its
-`onNewWorkspace` prop. Keeping both would be two entry points to one flow, which is the
-same duplication this design removes for workspace *scope*; there is no reason to accept
-it for workspace *creation*.
+**`ToolRail`'s Plus tool is repurposed, not deleted** — see below.
 
-The rail is then unambiguously "places and tools" — Sessions, Board, Map, Settings —
-while the navbar owns workspace identity. That split is the point of having both.
+### The rail's Plus becomes "New session"
+
+The Plus at `ToolRail.tsx:7` stops meaning "New workspace" and becomes **"New session"**,
+opening the composer locked to the current workspace:
+
+```tsx
+<ToolRail onNewSession={() => openComposer(session?.workspace)} />
+```
+
+`openComposer(locked)` already exists and already does exactly this — `NewSessionScreen`
+reads `lockedWorkspace={composer?.locked}`, so passing the current workspace pins the new
+session to it. No new wiring.
+
+This gives the shell a clean split, which is the reason to have two chrome surfaces at
+all rather than one:
+
+| Surface | Question it answers |
+|---|---|
+| Navbar | **Which workspace** am I in — switch it, or make a new one |
+| Left rail | **What do I do in it** — new session, browse sessions, board, map, settings |
+
+Creating a workspace is a switching action, so it sits in the switcher. Creating a session
+is work *inside* the current workspace, so it sits with the tools. Neither surface has an
+affordance that belongs to the other.
+
+`SessionsPanel` keeps its own create entry — that is browse-then-create, a different
+intent from the rail's create-now, and both already route through `openComposer`.
 
 `NewWorkspaceModal` itself is unchanged. Its `onCreated(name)` already calls
 `openComposer(name)`, so a workspace created from the selector lands the user in a
