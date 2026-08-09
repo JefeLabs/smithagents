@@ -53,7 +53,8 @@ export function AlertMenu({ onNavigate }: AlertMenuProps) {
    */
   // useCallback so the keydown effect below can depend on it honestly. Both
   // `setOpen` and the ref are stable, so the empty dep list is the real answer,
-  // not a silenced one — and the listener stops being torn down every render.
+  // not a silenced one. It also keeps that dep stable now that the effect lists
+  // it: an inline function there would reattach the listeners every render.
   const closeAndRestoreFocus = useCallback(() => {
     setOpen(false);
     trigger.current?.focus();
@@ -118,11 +119,17 @@ export function AlertMenu({ onNavigate }: AlertMenuProps) {
                       <button
                         type="button"
                         // An explicit label, NOT a visually-hidden prefix span. The
-                        // accessible-name algorithm trims each text node before
-                        // concatenating, so "Error: " + "could not load boards"
-                        // computes as "Error:could not load boards" — the separating
-                        // space is discarded and the words run together. Naming the
-                        // button outright is the only way to control the string.
+                        // name algorithm trims each child's text and rejoins with a
+                        // separator that is "" when that child's COMPUTED DISPLAY is
+                        // inline (dom-accessibility-api 0.5.16,
+                        // accessible-name-and-description.js:253). jsdom applies no
+                        // stylesheet, so `.sr-only` reports display:inline there and a
+                        // "Error: " prefix span computed as "Error:could not load
+                        // boards". A real browser blockifies .sr-only (position:
+                        // absolute) and would have produced the space — so that span
+                        // was probably fine in the browser and broken only where the
+                        // guarantee is ENFORCED. aria-label does not depend on
+                        // computed display, so it is correct in both.
                         aria-label={`${SEVERITY_WORD[severity]}: ${text}`}
                         className="alert-menu__body alert-menu__body--pressable"
                         onClick={() => {

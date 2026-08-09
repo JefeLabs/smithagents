@@ -196,6 +196,20 @@ describe("AlertMenu — the menu", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: /alerts/i })).toBeNull());
     expect(document.activeElement).toBe(bell);
   });
+
+  it("pressing a row returns focus to the trigger too, not only Escape", async () => {
+    // The pressed row IS the element that unmounts, and the route it navigates
+    // to claims no focus of its own — the same defect as the Escape path, so it
+    // needs the same guarantee and its own test rather than riding on that one.
+    const { onNavigate } = renderMenu(seedTwoAlerts);
+    const bell = await screen.findByRole("button", { name: "2 alerts" });
+    await userEvent.click(bell);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Error: could not load boards" }));
+
+    expect(onNavigate).toHaveBeenCalledWith("/board");
+    expect(document.activeElement).toBe(bell);
+  });
 });
 
 // ---------------------------------------------------------------------------
