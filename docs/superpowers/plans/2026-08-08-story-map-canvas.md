@@ -1715,7 +1715,10 @@ query `{ selector: ".slice-band__name" }` keep passing.
 - [ ] **Step 4: Add the ephemeral nodes to the seeding effect**
 
 Replace the seeding effect from Task 4 with one that appends anchor and artifact nodes
-when a slice is revealed. Add `revealedSlice` and `decorate` to its dependency array;
+when a slice is revealed. Add `revealedSlice` to its dependency array — **NOT `decorate`**, and keep Task 4's
+`biome-ignore` on this effect. `decorate` is rebuilt every render, so listing it is an
+infinite update loop rather than merely a slow path (the effect sets state). The code block
+below is correct; this sentence used to say otherwise.;
 `decorate` itself is unchanged from Task 4:
 
 ```ts
@@ -1770,6 +1773,40 @@ when a slice is revealed. Add `revealedSlice` and `decorate` to its dependency a
 ```
 
 Pass `edges` to `<ReactFlow edges={edges} …>` in place of the empty array from Task 4.
+
+**TWO THINGS FOUND BEFORE CODING, both correct, both amending this task.**
+
+**(A) The edges cannot draw at all as briefed — a `nodeTypes.tsx` adapter is required.**
+`nodes.tsx` renders plain divs and imports nothing from `@xyflow/react`, so no node has a
+`<Handle>`. Verified against the installed `@xyflow/system@0.0.79`: `getEdgePosition`
+returns `null` and calls `onError('008')` when either endpoint lacks handle bounds, and the
+node-object `handles` field is not a workaround — the ResizeObserver pass overwrites
+`internals.handleBounds` with DOM-derived values, and `getHandleBounds` returns `null` when
+the element contains no `.source`/`.target` descendant. So the edge set would compute, pass
+to `<ReactFlow edges={…}>`, and **silently draw nothing**, while the new tests still pass
+because they assert nodes and dimming.
+
+Putting `<Handle>` into `nodes.tsx` is the wrong fix: `HandleComponent` calls `useStoreApi`
+and `useStore`, so every plain `render(<StoryNode …>)` would throw — about 15 existing tests
+— and it spends the DOM-free property Tasks 2-4 deliberately bought.
+
+**Create `control-plane/src/organisms/map/nodeTypes.tsx`**: import the five pure components
+from `nodes.tsx`, wrap each in a `<Handle type="target" position={Position.Left}>` /
+`source`/`Right` pair, and export the module-scope `nodeTypes` from there. `nodes.tsx` stays
+xyflow-free; only the `nodeTypes` export moves, and the "registers all five node types" test
+moves with it. Two files beyond the list, and not scope creep.
+
+**(B) This step's CSS sketch is a REGRESSION, not an addition.** Task 4 already shipped
+`.map-slice-anchor` / `.map-artifact` as a single centred row (`components.css:2926-2944`)
+plus `.is-dimmed` rules naming both. The sketch silently swaps `var(--text-dim)` →
+`var(--text-2)` and the `.map-story` background → `var(--pill)` **for no stated reason** —
+that is a copy-paste, not a decision. **Keep Task 4's tokens.**
+
+Do take the sketch's **column-plus-ellipsis** shape, for a reason worth recording: the
+artifact label is a spec path — 76 characters in the fixture — and Task 4's rule sets no
+width and no ellipsis, so that card renders roughly 500px wide and overruns the artifact
+rail. That is a real defect in what shipped. It is also what decides `ARTIFACT_PITCH`:
+measure the two-line card in the browser and set the constant from what you see.
 
 - [ ] **Step 5: Style the ephemeral nodes**
 
