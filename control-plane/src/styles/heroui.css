@@ -36,4 +36,16 @@
    preflight is emitted twice. */
 @import "@heroui/styles";
 
+/* @heroui/styles above bundles only the OSS component set. Pro ships its own separate
+ * stylesheet, and nothing imported it — Phase 0 verified Pro's JS resolves (the
+ * postinstall stub-to-real-package swap) and stopped there. The consequence was that
+ * every Pro component rendered with ZERO styling: this phase's Stepper and
+ * RadioButtonGroup included. Found on the navbar branch, where Sidebar.Provider's flex
+ * layout was silently absent — Sidebar breaks visibly without its CSS, Stepper only
+ * degrades quietly, which is why it went unnoticed here.
+ *
+ * Safe to import after @heroui/styles: this bundle is pre-compiled output and declares
+ * NO `base` layer, so it cannot repeat the double-preflight bug described above. */
+@import "@heroui-pro/react/css";
+
 @import "./components.css" layer(legacy);
