@@ -98,9 +98,12 @@ Testing Library, Biome, pnpm.
 - `pnpm typecheck` (`tsc --noEmit`), `pnpm lint`, and `pnpm test` must all pass before
   every commit. Currently green at 395 tests / 46 files — the count only goes up.
 - Branch is `heroui-phase-1a`, created off `main` after Phase 0 merges.
-- **Do not touch `components.css` yet.** Classes for these two modals become dead but
-  stay until Phase 3 deletes the file wholesale. Deleting them piecemeal makes the
-  screenshot diff for *other* surfaces unexplainable.
+- **Do not add rules to `components.css`.** It is scheduled for deletion in Phase 3, so
+  new rules there are work that gets thrown away. Existing classes for these modals
+  become dead but stay — removing them piecemeal is churn.
+  **New styling goes in Tailwind utilities on the element.** Task 5 shipped a
+  `nw-wizard__nav` class with no rule behind it because this constraint originally
+  read "do not touch" without saying where styling should go instead.
 
 ---
 
