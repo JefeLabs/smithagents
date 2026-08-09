@@ -881,10 +881,28 @@ Two things close it:
    `BLANK_ACTIVITY_ID`/`blankStepId`/`blankStoryId` for exactly this reason; the real ones
    were left inline. Make both halves of the namespace equally addressable, and change
    `layoutMap` to call them so there is one definition, not two that agree today.
-2. **Pin the correspondence with a cross-module test:** build a model, run BOTH `layoutMap`
-   and `buildEdges` over it, and assert every edge's `source` and `target` is an id present
-   in `layoutMap`'s node set. That is the assertion that would have failed, and it keeps
-   failing if either side's format ever drifts.
+2. **Pin the correspondence with a cross-module test.** *(Corrected 2026-08-09 — the first
+   wording asked to assert that EVERY edge endpoint is in `layoutMap`'s node set. That is
+   **unsatisfiable**: every edge is slice→story or slice→artifact, so `source` is always
+   `slice:<id>`, and `layoutMap` emits no slice nodes at all. The assertion would fail on
+   100% of sources.)*
+
+   Do it in two halves:
+   - **Story endpoints** — assert against `layoutMap`'s real node set. This is the live
+     half and it genuinely pins `storyNodeId`.
+   - **Slice and artifact endpoints** — mint them through `sliceNodeId(id)` and
+     `artifactNodeId(sliceId, kind)`, also exported from `layout.ts`, and assert every
+     non-story endpoint is exactly one of those helper outputs. This pins the half nobody
+     has written yet, so **Task 5 lays out against the helper instead of re-deriving
+     `slice:${id}` from this prose** — without it, Task 5 has nothing to import and would
+     be guessing the format.
+
+**How strong this hazard actually is — stated honestly, because the first wording
+overstated it.** The drafted `edges.ts` writes `target: storyId` RAW, which is *correct*,
+because stories happen to be the unprefixed level. **So the specific defect described above
+does not manifest in the code as drafted.** It agrees today by luck. The hazard is real but
+LATENT: it breaks the moment anyone adds a step→story or activity→step edge, and the test
+is what makes that failure loud instead of silent.
 
 **Blank cards are deliberately absent here and that is correct — say so rather than adding
 them.** `buildEdges` takes a `MapModel`, which contains only real records; blanks are a
@@ -1532,6 +1550,22 @@ Verify **5 files changed**.
 ---
 
 ### Task 5: On-demand reveal
+
+**THREE THINGS TASK 3 SURFACED THAT THIS TASK OWNS.** Recorded so they are not rediscovered:
+
+1. **`MapNode["type"]` must widen to include `"slice"` and `"artifact"`.** Task 1's union is
+   `"activity" | "step" | "story"`, and `artifactNodesFor` returns a level nothing can
+   position. Task 3 deliberately did NOT widen it — an unused union member with nothing
+   emitting it looks supported and is worse than an honest gap. Widen it here, where the
+   nodes are actually emitted.
+2. **There is no vertical pitch for stacked artifacts within one slice.** `SLICE_RAIL_X` and
+   `ARTIFACT_GAP` exist in `layout.ts` (lines 33, 35) and are unused, so the geometry intent
+   is recorded but incomplete. The missing constant belongs in `layout.ts` with the others,
+   and it is this task's to choose.
+3. **Lay artifacts out using `artifactNodeId(sliceId, kind)` from `layout.ts`** — do not
+   re-derive `artifact:${sliceId}:${kind}` from prose. `ArtifactSpec` now carries `sliceId`
+   for the same reason blank nodes carry their parent: so no component has to parse an id
+   to find its owner.
 
 **Files:**
 - Modify: `control-plane/src/organisms/MapStage.tsx`
