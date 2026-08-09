@@ -55,7 +55,21 @@ export function ControlPlaneLayout({
     <>
       {topBar}
       {background}
-      <Sidebar.Provider defaultOpen={false} collapsible="icon" navigate={(href) => void router.navigate({ to: href })}>
+      {/* toggleShortcut={false} turns OFF HeroUI's default "mod+b". Nobody chose that
+          binding, and it does more than it looks: it preventDefault()s Cmd/Ctrl+B with no
+          input-element guard, expands the rail to 240px, and persists that in a
+          `sidebar_state` cookie, so one stray keypress survives reload. `.sessions-panel`
+          is hardcoded `left: 56px` on the premise of a collapsed 48px rail — true until
+          the shortcut fires, then permanently false, with the panel painting over 184px of
+          expanded rail. An expandable rail is a real feature worth having; it just needs
+          the panel offset to track `--sidebar-width`, which is a later phase's work. Until
+          then it should not arrive by accident through a library default. */}
+      <Sidebar.Provider
+        defaultOpen={false}
+        collapsible="icon"
+        toggleShortcut={false}
+        navigate={(href) => void router.navigate({ to: href })}
+      >
         {leftRail}
         <Sidebar.Main>
           {/* rightRail (AgentRoster) is still position: fixed and untouched CSS-wise, but its

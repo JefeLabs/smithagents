@@ -197,6 +197,59 @@ describe("AlertMenu — the menu", () => {
     expect(document.activeElement).toBe(bell);
   });
 
+  it("closes when focus tabs out of the panel, and leaves focus where it landed", async () => {
+    // The panel is not modal and does not trap the keyboard, so Tab from the last
+    // row walks clean out of it — previously leaving a role="dialog" mounted and
+    // announced behind the user. Leaving IS the close gesture here, the same one
+    // an outside click already performs.
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: Number.POSITIVE_INFINITY } },
+    });
+    seedTwoAlerts(client);
+    // A real neighbour to tab INTO. Focusing <body> would also blur the panel, but
+    // it would not reproduce the defect: the complaint is that focus lands on some
+    // other app control while the dialog stays open behind it.
+    renderWithProviders(
+      <>
+        <AlertMenu onNavigate={vi.fn()} />
+        <button type="button">somewhere else</button>
+      </>,
+      { client },
+    );
+
+    await userEvent.click(await screen.findByRole("button", { name: "2 alerts" }));
+    await screen.findByRole("dialog", { name: /alerts/i });
+
+    // The board-error row is LAST (computeAlerts emits engine warnings first), so
+    // one Tab from it is exactly the keystroke that leaves the panel.
+    screen.getByRole("button", { name: "Error: could not load boards" }).focus();
+    await userEvent.tab();
+
+    const outside = screen.getByRole("button", { name: "somewhere else" });
+    expect(document.activeElement).toBe(outside);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /alerts/i })).toBeNull());
+    // `setOpen`, NOT `closeAndRestoreFocus` — the assertion that distinguishes the
+    // two. Restoring focus here would rip it back out of the control the user just
+    // reached under their own keystroke.
+    expect(document.activeElement).toBe(outside);
+  });
+
+  it("moving focus BETWEEN rows leaves the panel open", async () => {
+    // The guard above rides on `currentTarget.contains(relatedTarget)`. Without
+    // that check, an onBlur close would fire on every internal focus move and the
+    // panel would collapse the instant a keyboard user tabbed from row one to row
+    // two — a fix strictly worse than the leak it replaced.
+    renderMenu(seedTwoAlerts);
+    await userEvent.click(await screen.findByRole("button", { name: "2 alerts" }));
+
+    const first = await screen.findByRole("button", { name: "Warning: ana — claude: not logged in" });
+    first.focus();
+    await userEvent.tab();
+
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Error: could not load boards" }));
+    expect(screen.getByRole("dialog", { name: /alerts/i })).toBeInTheDocument();
+  });
+
   it("pressing a row returns focus to the trigger too, not only Escape", async () => {
     // The pressed row IS the element that unmounts, and the route it navigates
     // to claims no focus of its own — the same defect as the Escape path, so it

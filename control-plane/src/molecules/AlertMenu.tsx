@@ -100,7 +100,27 @@ export function AlertMenu({ onNavigate }: AlertMenuProps) {
         )}
       </button>
       {open && (
-        <div className="alert-menu__popover" role="dialog" aria-label="Alerts">
+        <div
+          className="alert-menu__popover"
+          role="dialog"
+          aria-label="Alerts"
+          // Tabbing past the last row used to walk straight out of the panel into
+          // the sidebar tree with this dialog still open and still announced. The
+          // fix is NOT focus containment: nothing here is modal, and trapping the
+          // keyboard would make the panel harder to leave than it is to open.
+          // Leaving IS the close gesture, exactly as it already is for a click
+          // outside — so this is deliberately `setOpen`, not
+          // `closeAndRestoreFocus`. The user has just arrived somewhere by their
+          // own keystroke; yanking focus back would steal it from them.
+          // React's onBlur is the delegated focusout, so it fires for descendants
+          // too; `currentTarget.contains(relatedTarget)` is what tells moving
+          // BETWEEN rows apart from leaving. relatedTarget is null when focus goes
+          // nowhere at all (window blur), which `contains` reads as "outside" —
+          // right answer by luck, but the right answer.
+          onBlur={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget)) setOpen(false);
+          }}
+        >
           {count === 0 ? (
             <p className="note alert-menu__empty">Nothing to report</p>
           ) : (

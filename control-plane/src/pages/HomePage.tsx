@@ -8,6 +8,7 @@ import { type AgentSeed, agentSeeds } from "../data/agents";
 import { usePushToTalk } from "../hooks/usePushToTalk";
 import { useSpokenReplies } from "../hooks/useSpokenReplies";
 import { useTheme } from "../hooks/useTheme";
+import { ALL_WORKSPACES } from "../lib/board-aggregate";
 import { AlertMenu } from "../molecules/AlertMenu";
 import { ConfirmSheet } from "../molecules/ConfirmSheet";
 import { OperatorAvatar } from "../molecules/OperatorAvatar";
@@ -195,7 +196,9 @@ export function HomePage() {
           // one", same default BoardStage falls back to. Several or "*" is
           // ambiguous, so the composer opens unlocked instead of guessing.
           onNewSession={() =>
-            openComposer(viewedWorkspaces !== "*" && viewedWorkspaces.size <= 1 ? session?.workspace : undefined)
+            openComposer(
+              viewedWorkspaces !== ALL_WORKSPACES && viewedWorkspaces.size <= 1 ? session?.workspace : undefined,
+            )
           }
           onSessions={toggleSessions}
           onSettings={() => setSettingsOpen(true)}
