@@ -13,8 +13,8 @@
  * `getBoards`/`getCapabilities` already threw in the original — unchanged.
  */
 
+import type { CapabilityT } from "../api/types";
 import type { WorkBoardT } from "../organisms/BoardStage";
-import type { CapabilityT } from "../organisms/MapStage";
 import { BROKER_BASE } from "./broker";
 
 export interface BoardsResult {

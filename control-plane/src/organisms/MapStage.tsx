@@ -12,6 +12,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { Map as MapIcon, Plus, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
+import type { CapActivityT, CapabilityT, CapSliceT, CapStoryT } from "../api/types";
 import { ALL_WORKSPACES } from "../lib/board-aggregate";
 import { useSession } from "../queries/pushed";
 import {
@@ -22,39 +23,6 @@ import {
   useSendSlice,
 } from "../queries/work";
 import { useUiStore } from "../stores/uiStore";
-
-export interface CapStoryT {
-  id: string;
-  stepId: string;
-  order: number;
-  text: string;
-  done: boolean;
-  verifiedBy?: string;
-}
-export interface CapActivityT {
-  id: string;
-  name: string;
-  order: number;
-  steps: Array<{ id: string; name: string; order: number }>;
-}
-export interface CapSliceT {
-  id: string;
-  name: string;
-  order: number;
-  storyIds: string[];
-  specPath?: string;
-  planPath?: string;
-  capCardRef?: { boardId: string; cardId: string };
-  deliveryCardRef?: { boardId: string; cardId: string };
-}
-export interface CapabilityT {
-  id: string;
-  name: string;
-  workspaceId: string;
-  activities: CapActivityT[];
-  stories: CapStoryT[];
-  slices: CapSliceT[];
-}
 
 /**
  * Resolves a raw dnd-kit drop target (`over.id`) into the step + insertion
