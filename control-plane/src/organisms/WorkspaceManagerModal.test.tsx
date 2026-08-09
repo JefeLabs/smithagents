@@ -21,10 +21,19 @@ const CONNECTORS = [
  * matters too: FormColorSwatch's ColorSwatchPicker also renders always-mounted role="option"
  * items elsewhere on this single-page form, so a bare non-empty check would pass before the
  * targeted popover ever opens.
+ *
+ * Re-queries the trigger fresh every attempt (handles the remount above), but only clicks
+ * it when `aria-expanded` (confirmed on the rendered DOM, not assumed) reads "false".
+ * `Select.Trigger` is a toggle: re-clicking one that is already open — because the popover
+ * just hasn't rendered its options yet on this attempt — closes it, turning an ordinary
+ * render-timing gap into an open/close cycle that can eat the whole retry budget.
  */
 async function openSelect(triggerName: RegExp, expectOptionName: string) {
   await waitFor(async () => {
-    await userEvent.click(screen.getByRole("button", { name: triggerName }));
+    const trigger = screen.getByRole("button", { name: triggerName });
+    if (trigger.getAttribute("aria-expanded") !== "true") {
+      await userEvent.click(trigger);
+    }
     expect(screen.queryByRole("option", { name: expectOptionName })).not.toBeNull();
   });
 }
