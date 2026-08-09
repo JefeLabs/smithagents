@@ -49,6 +49,21 @@ export const BLANK_ACTIVITY_ID = `${BLANK_PREFIX}activity`;
 export const blankStepId = (activityId: string) => `${BLANK_PREFIX}step:${activityId}`;
 export const blankStoryId = (stepId: string) => `${BLANK_PREFIX}story:${stepId}`;
 
+/**
+ * The model layout reads. Positions are derived from it and never stored back.
+ *
+ * INVARIANT — story `order` within a step is DENSE and 0-based (0, 1, 2, …).
+ * `layoutMap` places stories by ARRAY INDEX after sorting, while `cellAt` returns
+ * a SLOT INDEX; both coincide with `order` only while that holds. Given sparse
+ * orders (say 0 and 5) the second story renders in slot 1 and `cellAt` reports
+ * `order: 1`, not 5 — pinned by the sparse-order test, which asserts the current
+ * behaviour rather than a preferred one.
+ *
+ * Nothing here normalises, deliberately: whether the broker can emit sparse
+ * orders is not knowable from this module, and guessing a normalisation would
+ * invent a contract rather than honour one. If it turns out it can, the fix
+ * belongs where the model is written, not in geometry.
+ */
 export interface MapModel {
   activities: CapActivityT[];
   stories: CapStoryT[];
@@ -59,7 +74,7 @@ export interface MapNode {
   id: string;
   type: "activity" | "step" | "story";
   position: { x: number; y: number };
-  /** Set for activities, which span their step group; steps and stories use STEP_W. */
+  /** Set for activities, which span their step group plus its trailing blank; steps and stories use STEP_W. */
   width?: number;
   data: Record<string, unknown>;
   draggable: boolean;
@@ -122,11 +137,14 @@ export function layoutMap(model: MapModel): { nodes: MapNode[] } {
 
   for (const act of [...model.activities].sort((a, b) => a.order - b.order)) {
     const steps = [...act.steps].sort((a, b) => a.order - b.order);
-    // An activity card spans its step group. `Math.max(…, 1)` is what keeps a
-    // just-created, step-less activity on the canvas: it spans the one slot its
-    // blank step composer sits in, rather than the -STEP_GAP the bare formula
-    // would give. At one step the span term is exactly STEP_W.
-    const span = Math.max(steps.length, 1);
+    // An activity card spans its real steps AND its trailing blank. The blank is
+    // inside the span because typing into it creates a step in THIS activity: an
+    // affordance that belongs to a parent has to render under that parent, or
+    // with several activities side by side the user cannot tell which one they
+    // are adding to. `+ 1` also makes the step-less case fall out on its own —
+    // span 1, exactly STEP_W — which is what the old Math.max was there to
+    // protect.
+    const span = steps.length + 1;
     const x = xOf.get(steps[0]?.id ?? blankStepId(act.id));
     if (x !== undefined) {
       nodes.push({
@@ -225,6 +243,15 @@ export function cellAt(pos: { x: number; y: number }, model: MapModel): { stepId
 
   const left = real[0].x;
   const right = real[real.length - 1].x + STEP_W;
+  // Asymmetric in practice, and deliberately kept that way. The LEFT half is
+  // live — nothing sits left of the first column. The RIGHT half is currently
+  // unreachable as a cause: the last real column is always followed by its
+  // activity's blank step at `right + STEP_GAP`, and STEP_GAP < STEP_W, so this
+  // threshold falls INSIDE that blank column and the `best.blank` guard below
+  // returns null first. Deleting this term changes no behaviour today, which is
+  // why no test can pin it. It stays because it does not depend on the blank
+  // invariant: a mode that stops emitting trailing composers would make it live
+  // again, and correct.
   if (pos.x < left - REJECT_MARGIN || pos.x > right + REJECT_MARGIN) return null;
   if (pos.y < STORIES_Y - SLOT_H) return null;
 
