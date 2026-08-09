@@ -26,6 +26,29 @@ vi.hoisted(() => {
       return map.size;
     },
   } as Storage;
+
+  /**
+   * jsdom implements no `matchMedia`, and `@heroui-pro/react`'s barrel reaches
+   * `sheet/use-scale-background` which calls it at MODULE-EVAL time — so importing
+   * ANY Pro component throws while a test file's imports resolve, exactly like the
+   * audioStore case above. Hoisted for the same reason.
+   *
+   * Deliberately inert: never matches, and its listeners are no-ops. A suite that
+   * cares about media state stubs over it (see useTheme.test.tsx) rather than
+   * inheriting a guess from here.
+   */
+  if (typeof globalThis.matchMedia !== "function") {
+    globalThis.matchMedia = ((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    })) as typeof globalThis.matchMedia;
+  }
 });
 
 beforeEach(() => resetAllStores());
