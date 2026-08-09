@@ -1206,6 +1206,11 @@ component with:
       )}
       {fields.map((field, i) => (
         <div key={field.id} className="nw-repo-row">
+          {/* `value` / `onChange(value: string)` and `Item value=` are VERIFIED against
+              the docs' Controlled example. `orientation` is NOT: the Pro component's own
+              API table lists only `layout: 'flex' | 'grid'` and inherits the rest from
+              RadioGroup. If `orientation` does not pass through, use `layout="flex"` and
+              set the direction in CSS — do not leave a prop that silently does nothing. */}
           <RadioButtonGroup
             aria-label={`Repo ${i + 1} source`}
             value={repoModes[i]?.mode ?? "existing"}
