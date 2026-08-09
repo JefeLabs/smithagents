@@ -2,13 +2,25 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Claimed by:** unclaimed — claim this header before executing
+**Claimed by:** Claude session d21f90fd on branch `heroui-phase-1a`, 2026-08-09.
+In progress — do not execute in parallel from another checkout.
 
-**BLOCKED ON A DECISION THAT IS NOT TECHNICAL.** The spec's status header says
-*"Phases 1–3 are NOT approved to start,"* deferred pending (a) confirmation of what a Pro
-seat entitles past beta and (b) evidence the library is still shipping
-(`@heroui-pro/react@1.0.0-beta.8` was published 2026-03-30 and is still `latest`).
-This plan is drafted, not authorised. Do not execute until Edwin clears both gates.
+**APPROVED 2026-08-09.** The spec's deferral gates are both cleared, and one of them
+rested on a factual error that the spec still carries — amend it before quoting it:
+
+- *"Evidence the library still ships."* The spec reads `1.0.0-beta.8` as published
+  **2026-03-30**. That is npm's `time.created` field — the date `1.0.0-alpha.0` first
+  published. `npm view @heroui-pro/react time` gives beta.8 = **2026-08-03**. Cadence is
+  roughly monthly (beta.5 May 28 → beta.6 Jun 16 → beta.7 Jul 8 → beta.8 Aug 3), and OSS
+  `@heroui/react@3.2.4` shipped 2026-08-07. **Judge cadence from `time["<version>"]`,
+  never `time.created`.**
+- *"What a Pro seat entitles past beta."* Wrong question — entitlement is not
+  version-gated. One-time purchase, a **1-year Updates Window**, and perpetual access to
+  whatever shipped inside it. Declining renewal freezes you at the latest eligible
+  version rather than breaking anything.
+
+Spec Risk 1 (a pre-1.0 library owning the whole view layer) still stands on its own
+merits; only the stagnation evidence for it was false.
 
 **Goal:** Migrate `NewWorkspaceModal` and `WorkspaceManagerModal` (776 LOC, 26 form
 inputs) to HeroUI, establishing the react-hook-form ↔ react-aria adapter layer that
@@ -132,9 +144,18 @@ Tauri is a retired surface, so that is a product decision, not a migration step.
 - Consumes: nothing from earlier tasks.
 - Produces: `FormTextField<T extends FieldValues>(props: FormTextFieldProps<T>)` where
   `FormTextFieldProps<T> = { control: Control<T>; name: FieldPath<T>; label: string;
-  placeholder?: string; multiline?: boolean; rows?: number; hint?: ReactNode;
-  rules?: RegisterOptions<T, FieldPath<T>>; "aria-label"?: string }`.
+  labelHidden?: boolean; placeholder?: string; multiline?: boolean; rows?: number;
+  hint?: ReactNode; rules?: RegisterOptions<T, FieldPath<T>> }`.
   Every later task and Phases 1b/1c import this.
+
+  **`label` is required, `labelHidden` controls whether it is *visible*.** Twelve inputs
+  across the two modals have no visible label today — dense repo rows and the Atlassian
+  key fields name themselves by placeholder (`NewWorkspaceModal.tsx:193,203,204`;
+  `WorkspaceManagerModal.tsx:395,424,443,444,464,469,470,471`). Always rendering a
+  `<Label>` would add six visible labels per repo row and break Task 6's screenshot gate.
+  Requiring `label` anyway means no field can ship unnamed, and `getByLabelText` resolves
+  it in both modes because testing-library matches `aria-label` too — so tests query the
+  same way regardless.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -221,6 +242,13 @@ interface FormTextFieldProps<T extends FieldValues> {
   control: Control<T>;
   name: FieldPath<T>;
   label: string;
+  /**
+   * Renders the accessible name without a visible <Label>. The dense rows this
+   * adapter serves — repo rows, Atlassian keys — name their fields by placeholder
+   * today and have no visible label; rendering one would change their layout,
+   * which Task 6 is screenshot-gated against.
+   */
+  labelHidden?: boolean;
   placeholder?: string;
   /** Renders a TextArea instead of an Input. */
   multiline?: boolean;
@@ -248,6 +276,7 @@ export function FormTextField<T extends FieldValues>({
   control,
   name,
   label,
+  labelHidden = false,
   placeholder,
   multiline = false,
   rows,
@@ -265,8 +294,9 @@ export function FormTextField<T extends FieldValues>({
       onChange={field.onChange}
       onBlur={field.onBlur}
       isInvalid={fieldState.invalid}
+      aria-label={labelHidden ? label : undefined}
     >
-      <Label>{label}</Label>
+      {!labelHidden && <Label>{label}</Label>}
       {multiline ? (
         <TextArea ref={field.ref} placeholder={placeholder} rows={rows} />
       ) : (
@@ -405,6 +435,10 @@ interface FormSelectProps<T extends FieldValues> {
   control: Control<T>;
   name: FieldPath<T>;
   label: string;
+  /** Same contract as FormTextField's — see Task 1. Both GitHub-connector selects
+      use a bare aria-label today (NewWorkspaceModal.tsx:205,
+      WorkspaceManagerModal.tsx:472), so both pass this. */
+  labelHidden?: boolean;
   /** Shown while the field is `""`. The old markup's disabled first <option>. */
   placeholder: string;
   options: Array<{ id: string; label: string }>;
@@ -440,9 +474,9 @@ export function FormSelect<T extends FieldValues>({
       onBlur={field.onBlur}
       isInvalid={fieldState.invalid}
       placeholder={placeholder}
-      aria-label={label}
+      aria-label={labelHidden ? label : undefined}
     >
-      <Label>{label}</Label>
+      {!labelHidden && <Label>{label}</Label>}
       <Select.Trigger />
       <Select.Popover>
         <Select.List>
@@ -1170,10 +1204,10 @@ component with:
               <RadioButtonGroup.Indicator />
             </RadioButtonGroup.Item>
           </RadioButtonGroup>
-          <FormTextField control={control} name={`repos.${i}.name`} label="Repo name" placeholder="web" rules={{ validate: filled }} />
+          <FormTextField control={control} name={`repos.${i}.name`} label="Repo name" labelHidden placeholder="web" rules={{ validate: filled }} />
           <FormTextField
             control={control}
-            name={`repos.${i}.path`}
+            name={`repos.${i}.path`} labelHidden
             label="Path"
             placeholder={repoModes[i]?.mode === "new" ? "/Users/me/code/new-project" : "/Users/me/code/acme-web"}
             rules={{ validate: filled }}
@@ -1183,11 +1217,12 @@ component with:
               Browse…
             </Button>
           )}
-          <FormTextField control={control} name={`repos.${i}.owner`} label="GitHub owner" placeholder="GitHub owner" rules={{ validate: filled }} />
-          <FormTextField control={control} name={`repos.${i}.repo`} label="GitHub repo" placeholder="GitHub repo" rules={{ validate: filled }} />
+          <FormTextField control={control} name={`repos.${i}.owner`} label="GitHub owner" labelHidden placeholder="GitHub owner" rules={{ validate: filled }} />
+          <FormTextField control={control} name={`repos.${i}.repo`} label="GitHub repo" labelHidden placeholder="GitHub repo" rules={{ validate: filled }} />
           <FormSelect
             control={control}
             name={`repos.${i}.connectorId`}
+        labelHidden
             label="GitHub connector"
             placeholder="pick a connector…"
             options={githubConnectors.map((c) => ({ id: c.id, label: c.label }))}
@@ -1373,6 +1408,7 @@ Inside `.workspace-manager__form`:
   <FormTextField
     control={control}
     name="atlassian.siteUrl"
+    labelHidden
     label="Atlassian site URL"
     placeholder="https://acme.atlassian.net"
   />
@@ -1387,12 +1423,14 @@ Inside `.workspace-manager__form`:
   <FormTextField
     control={control}
     name="atlassian.jiraProjectKeys.0"
+    labelHidden
     label="Jira project key"
     placeholder="Jira project key (ACME)"
   />
   <FormTextField
     control={control}
     name="atlassian.confluenceSpaceKeys.0"
+    labelHidden
     label="Confluence space key"
     placeholder="Confluence space key (DOCS)"
   />
@@ -1403,14 +1441,15 @@ Inside `.workspace-manager__form`:
   <span className="wizard__hint">Repos</span>
   {fields.map((field, i) => (
     <div key={field.id} className="repo-row">
-      <FormTextField control={control} name={`repos.${i}.name`} label="Repo name" placeholder="web" rules={{ validate: filled }} />
-      <FormTextField control={control} name={`repos.${i}.path`} label="Path" placeholder="/Users/me/code/acme-web" rules={{ validate: filled }} />
-      <FormTextField control={control} name={`repos.${i}.branch`} label="Branch" placeholder="main" />
-      <FormTextField control={control} name={`repos.${i}.owner`} label="GitHub owner" placeholder="GitHub owner" />
-      <FormTextField control={control} name={`repos.${i}.repo`} label="GitHub repo" placeholder="GitHub repo" />
+      <FormTextField control={control} name={`repos.${i}.name`} label="Repo name" labelHidden placeholder="web" rules={{ validate: filled }} />
+      <FormTextField control={control} name={`repos.${i}.path`} labelHidden label="Path" placeholder="/Users/me/code/acme-web" rules={{ validate: filled }} />
+      <FormTextField control={control} name={`repos.${i}.branch`} label="Branch" labelHidden placeholder="main" />
+      <FormTextField control={control} name={`repos.${i}.owner`} label="GitHub owner" labelHidden placeholder="GitHub owner" />
+      <FormTextField control={control} name={`repos.${i}.repo`} label="GitHub repo" labelHidden placeholder="GitHub repo" />
       <FormSelect
         control={control}
         name={`repos.${i}.connectorId`}
+        labelHidden
         label="GitHub connector"
         placeholder="pick a connector…"
         options={githubConnectors.map((c) => ({ id: c.id, label: c.label }))}
