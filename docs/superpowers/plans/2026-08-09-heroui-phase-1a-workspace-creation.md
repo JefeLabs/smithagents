@@ -460,13 +460,11 @@ interface FormSelectProps<T extends FieldValues> {
 /**
  * Same seam as FormTextField. Two differences worth knowing:
  *
- * 1. react-aria's Select uses `selectedKey`/`onSelectionChange` with a `Key`
- *    (string | number), not `value`/`onChange` with a string. The `String()`
- *    coercion on the way back into the form keeps the model all-strings, which
- *    is what `toRecord` assumes.
- * 2. `""` is not a valid Key — react-aria treats it as "nothing selected". So
- *    the empty form value maps to `null`, and the placeholder renders. That is
- *    the same behaviour the old disabled `<option value="">` produced.
+ * `""` is not a selectable value — react-aria reads it as "nothing selected". So
+ * the empty form value maps to `null` on the way in and back to `""` on the way
+ * out, which is what makes the placeholder render and keeps the model all-strings
+ * for `toRecord`. That round-trip is the whole point of this adapter; the prop
+ * names around it are incidental.
  */
 export function FormSelect<T extends FieldValues>({
   control,
@@ -481,8 +479,8 @@ export function FormSelect<T extends FieldValues>({
   return (
     <Select
       name={field.name}
-      selectedKey={current === "" ? null : current}
-      onSelectionChange={(key) => field.onChange(key == null ? "" : String(key))}
+      value={current === "" ? null : current}
+      onChange={(key) => field.onChange(key == null ? "" : String(key))}
       onBlur={field.onBlur}
       isInvalid={fieldState.invalid}
       placeholder={placeholder}
@@ -491,23 +489,25 @@ export function FormSelect<T extends FieldValues>({
       {!labelHidden && <Label>{label}</Label>}
       <Select.Trigger />
       <Select.Popover>
-        <Select.List>
+        <ListBox>
           {options.map((o) => (
-            <Select.Option key={o.id} id={o.id}>
+            <ListBox.Item key={o.id} id={o.id} textValue={o.label}>
               {o.label}
-            </Select.Option>
+            </ListBox.Item>
           ))}
-        </Select.List>
+        </ListBox>
       </Select.Popover>
     </Select>
   );
 }
 ```
 
-> **If `Select`'s compound names differ from the above**, run
-> `mcp__heroui-pro__get_component_docs(["select"])` and correct the four
-> subcomponent names — the `useController` wiring above is what matters and does
-> not change. Do not invent names; read them.
+> The names above are the REAL API, corrected 2026-08-09 after the first draft got
+> all three wrong. `Select.Trigger` wraps `Select.Value` + `Select.Indicator`, and
+> options live in a plain `ListBox`. `Checkbox` is likewise
+> `Checkbox.Content > Checkbox.Control > Checkbox.Indicator`, not flat children.
+> Verify with `mcp__heroui-pro__get_component_docs` before writing anyway — reading
+> the docs is what caught this.
 
 - [ ] **Step 4: Run the select test**
 
