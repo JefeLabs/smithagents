@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useForm } from "react-hook-form";
+import { type RegisterOptions, useForm } from "react-hook-form";
 import { describe, expect, it, vi } from "vitest";
 import { FormTextField } from "./FormTextField";
 
@@ -29,6 +29,34 @@ function HiddenLabelHarness() {
     defaultValues: { name: "", bio: "" },
   });
   return <FormTextField control={control} name="name" label="Workspace name" placeholder="acme" labelHidden />;
+}
+
+function HarnessWithRule({ rules }: { rules: RegisterOptions<Values, "name"> }) {
+  const { control, handleSubmit } = useForm<Values>({
+    mode: "onChange",
+    defaultValues: { name: "", bio: "" },
+  });
+  return (
+    <form onSubmit={handleSubmit(vi.fn())}>
+      <FormTextField control={control} name="name" label="Workspace name" rules={rules} />
+      <button type="submit">save</button>
+    </form>
+  );
+}
+
+function HarnessWithReset() {
+  const { control, reset } = useForm<Values>({
+    mode: "onChange",
+    defaultValues: { name: "", bio: "" },
+  });
+  return (
+    <>
+      <FormTextField control={control} name="name" label="Workspace name" />
+      <button type="button" onClick={() => reset()}>
+        reset
+      </button>
+    </>
+  );
 }
 
 describe("FormTextField", () => {
@@ -61,5 +89,20 @@ describe("FormTextField", () => {
     // getByLabelText matches aria-label too, so tests query the same way either mode.
     expect(screen.getByLabelText("Workspace name")).toBeDefined();
     expect(screen.queryByText("Workspace name")).toBeNull();
+  });
+
+  it("surfaces a validator's message, which react-aria's FieldError cannot derive on its own", async () => {
+    render(
+      <HarnessWithRule rules={{ validate: (v: string) => v.trim().length > 0 || "Workspace name is required" }} />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "save" }));
+    expect(await screen.findByText("Workspace name is required")).toBeDefined();
+  });
+
+  it('reset() clears the input — the ?? "" guard keeps the field controlled', async () => {
+    render(<HarnessWithReset />);
+    await userEvent.type(screen.getByLabelText("Workspace name"), "acme");
+    await userEvent.click(screen.getByRole("button", { name: "reset" }));
+    expect(screen.getByLabelText("Workspace name")).toHaveValue("");
   });
 });

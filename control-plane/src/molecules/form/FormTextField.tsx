@@ -67,7 +67,11 @@ export function FormTextField<T extends FieldValues>({
         <Input ref={field.ref} placeholder={placeholder} />
       )}
       {hint != null && <Description>{hint}</Description>}
-      <FieldError />
+      {/* Children are REQUIRED. react-aria's FieldError renders its own validation
+          context, and RHF's errors are invisible to it — a bare <FieldError /> is a
+          permanently empty error region. Passing the message explicitly is the only
+          thing that connects the two validation systems. */}
+      <FieldError>{fieldState.error?.message}</FieldError>
     </TextField>
   );
 }
