@@ -82,6 +82,55 @@ Biome, pnpm, TanStack Query. Adding: `@xyflow/react`.
     - `interface MapModel { activities: CapActivityT[]; stories: CapStoryT[]; slices: CapSliceT[] }`
     - `type MapNode = { id: string; type: "activity" | "step" | "story"; position: { x: number; y: number }; data: Record<string, unknown>; draggable: boolean; dragHandle?: string }`
 
+**TASK 1 IS NOT EXECUTABLE AS WRITTEN — three gaps, found in a coherence scan on
+2026-08-09 after Edwin's blank-card and visual-target rulings. Fix these before dispatching
+it; an implementer following the signatures above will build something the later tasks
+cannot use.**
+
+**Gap A — `MapNode` cannot express a spanning activity.** The visual target requires each
+activity card to span the group of steps beneath it, but `MapNode` carries only
+`position`. Width is not derivable by the node component: it depends on the activity's step
+count and on `STEP_W`/`STEP_GAP`, which are `layout.ts`'s constants and must not be
+duplicated in CSS (see Global Constraints — "Geometry constants live only in `layout.ts`").
+So `MapNode` gains a width:
+
+```ts
+type MapNode = {
+  id: string;
+  type: "activity" | "step" | "story";
+  position: { x: number; y: number };
+  /** Set for activities, which span their step group; steps and stories use STEP_W. */
+  width?: number;
+  data: Record<string, unknown>;
+  draggable: boolean;
+  dragHandle?: string;
+};
+```
+
+`layoutMap` computes it as `steps.length * STEP_W + (steps.length - 1) * STEP_GAP`. An
+activity with one step is exactly `STEP_W` wide — assert that case, it is the boundary
+where a wrong `- 1` disappears.
+
+**Gap B — blank cards have no representation.** Every level ends with an empty card, and
+the amendment above forbids an `isDraft` field on the model. So blankness is a LAYOUT
+concern and `layoutMap` must emit these cells itself. Requirements, all three testable:
+
+1. **Synthetic ids, never colliding with real ones.** Use a reserved prefix — `new:activity`,
+   `new:step:<activityId>`, `new:story:<stepId>`. A real id must never begin `new:`.
+2. **`data.blank: true` and `draggable: false`.** The node component branches on `blank` to
+   render an input instead of text; `draggable: false` is what keeps it out of drag.
+3. **`cellAt` MUST NOT return a blank cell.** It is the inverse of `layoutMap` over REAL
+   positions only; a drop resolving onto a cell that does not exist yet is the failure the
+   amendment names. Add a test that drops on the blank trailing cell's coordinates and
+   asserts `cellAt` returns `null` — that test is the guard, and it must exist.
+
+**Gap C — the capability level is deliberately NOT in `layoutMap`.** Edwin's rule covers
+capability too, but the capability row lives in the stage header, not on the canvas (the
+OPEN item above; recommended (b)). So `MapModel` is unchanged and Task 1 owns none of it.
+Stated explicitly because "the rule is universal" otherwise reads as "add a fourth node
+type", which would be wrong. **If Edwin picks (a) instead, Task 1 changes and this note is
+void.**
+
 **Why the type move:** `queries/work.ts` and `api/work.ts` import `CapabilityT` from an
 **organism**, inverting the dependency direction. `layout.ts` needs those types and must
 not import a React component to get them. Moving them to `api/types.ts`, where
