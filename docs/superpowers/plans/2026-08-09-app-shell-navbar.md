@@ -450,7 +450,7 @@ export function WorkspaceSelector() {
   // "New workspace…" is a COMMAND in the list, not a workspace. It is sentinel-keyed
   // rather than matched on its label so a workspace literally named "New workspace"
   // cannot shadow it — the same class of bug the colour picker's sentinel avoids.
-  const NEW_WORKSPACE = " new-workspace";
+  const NEW_WORKSPACE = "new-workspace";
 
   const select = (name: string) => {
     if (name === NEW_WORKSPACE) {
