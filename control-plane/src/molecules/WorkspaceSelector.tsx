@@ -35,9 +35,15 @@ export function WorkspaceSelector() {
       setNewWorkspaceOpen(true);
       return; // never falls through to session activation
     }
-    // Re-activating the current session would reload brain history and
-    // re-broadcast a frame for no gain.
-    if (name === current) return;
+    // No guard for "already selected" is needed here: <Select> is controlled
+    // (`value={current}`), and react-stately's useControlledState only fires
+    // onChange when the value actually changes (verified against its source —
+    // it diffs with Object.is before calling onChange at all) — so `select()`
+    // never runs with `name === current`; the redundant re-activation this
+    // would otherwise cause (reloading brain history, rebroadcasting a frame
+    // for nothing) is suppressed upstream of this function. If Select ever
+    // becomes uncontrolled, that guarantee disappears and a guard here
+    // becomes load-bearing again.
     const newest = sessions
       .filter((s) => s.workspace === name)
       .reduce<(typeof sessions)[number] | null>(

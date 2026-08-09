@@ -49,20 +49,24 @@ describe("WorkspaceSelector", () => {
       { workspace: "acme" },
       {
         workspaces: ["acme", "jefelabs"],
+        // s2 (newest) listed FIRST and s1 (oldest) SECOND — array order is deliberately
+        // the reverse of chronological order. If the code took "the last match" instead
+        // of genuinely comparing updatedAt, it would pick s1 here and this test would
+        // catch it; with the array in date order, that bug would pass by coincidence.
         sessions: [
-          {
-            id: "s1",
-            workspace: "jefelabs",
-            updatedAt: "2026-08-01T00:00:00Z",
-            title: "old",
-            active: false,
-            runtime: "local-in-process",
-          },
           {
             id: "s2",
             workspace: "jefelabs",
             updatedAt: "2026-08-08T00:00:00Z",
             title: "new",
+            active: false,
+            runtime: "local-in-process",
+          },
+          {
+            id: "s1",
+            workspace: "jefelabs",
+            updatedAt: "2026-08-01T00:00:00Z",
+            title: "old",
             active: false,
             runtime: "local-in-process",
           },
@@ -72,7 +76,7 @@ describe("WorkspaceSelector", () => {
     );
     await userEvent.click(await screen.findByRole("button", { name: /acme/ }));
     await userEvent.click(await screen.findByRole("option", { name: "jefelabs" }));
-    expect(activate).toHaveBeenCalledWith("s2"); // most recent by updatedAt, not first in the array
+    expect(activate).toHaveBeenCalledWith("s2"); // most recent by updatedAt, not array position
   });
 
   it("selecting a workspace with no sessions opens the composer locked to it and activates nothing", async () => {
@@ -94,7 +98,14 @@ describe("WorkspaceSelector", () => {
     expect(useUiStore.getState().composer).toBeNull();
   });
 
-  it("selecting the workspace already active is a no-op", async () => {
+  it("selecting the workspace already active fires no activation", async () => {
+    // This isn't guarding a branch in select() — there isn't one. <Select> is
+    // controlled (value={current}), and react-stately's useControlledState only
+    // calls onChange when the value actually differs (verified against its
+    // source: it diffs with Object.is before calling onChange at all), so
+    // clicking the already-selected option never reaches select() in the first
+    // place. This test documents that observable contract and would catch a
+    // regression if a future refactor ever made the Select uncontrolled.
     const activate = vi.fn();
     renderWithSession(
       { workspace: "acme" },
@@ -116,5 +127,38 @@ describe("WorkspaceSelector", () => {
     await userEvent.click(await screen.findByRole("button", { name: /acme/ }));
     await userEvent.click(await screen.findByRole("option", { name: "acme" }));
     expect(activate).not.toHaveBeenCalled();
+  });
+
+  it("a workspace literally named 'New workspace' is still a real selection, not the create-workspace command", async () => {
+    // The command renders as "New workspace…" (with an ellipsis) and is keyed by the
+    // NEW_WORKSPACE sentinel id, disjoint from any real workspace's id — so a workspace
+    // literally named "New workspace" (no ellipsis) gets its own, separate option and
+    // must activate a session like any other workspace.
+    const activate = vi.fn();
+    const setNewWorkspaceOpen = vi.fn();
+    renderWithSession(
+      { workspace: "acme" },
+      {
+        workspaces: ["acme", "New workspace"],
+        sessions: [
+          {
+            id: "s9",
+            workspace: "New workspace",
+            updatedAt: "2026-08-08T00:00:00Z",
+            title: "t",
+            active: false,
+            runtime: "local-in-process",
+          },
+        ],
+        activate,
+        setNewWorkspaceOpen,
+      },
+    );
+    await userEvent.click(await screen.findByRole("button", { name: /acme/ }));
+    // Exact match: distinguishes the real workspace's "New workspace" option from the
+    // sentinel command's "New workspace…" option, which regex /new workspace/i would not.
+    await userEvent.click(await screen.findByRole("option", { name: "New workspace" }));
+    expect(activate).toHaveBeenCalledWith("s9");
+    expect(setNewWorkspaceOpen).not.toHaveBeenCalled();
   });
 });
