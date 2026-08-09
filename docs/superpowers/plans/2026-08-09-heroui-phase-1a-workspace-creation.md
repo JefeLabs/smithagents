@@ -37,8 +37,11 @@ Testing Library, Biome, pnpm.
   This is a view-layer migration. `WorkspaceFormValues`, `NewWorkspaceFormValues`,
   `toForm`, `toRecord`, `keyList`, `filled`, `blankForm`, `emptyRepo` are all
   **byte-identical** when this phase ends.
-- **No redesign.** Same layout, same colors, same borders and radii. Verified by
-  screenshot in all four themes (dark, light, midnight, sand).
+- **No redesign, with exactly one approved exception:** `NewWorkspaceModal` is repaged as
+  a three-step stepper (Task 5), per Edwin's 2026-08-09 ruling. Everything else — and
+  all of `WorkspaceManagerModal` — keeps the same layout, colors, borders and radii,
+  verified by screenshot in all four themes (dark, light, midnight, sand). Do not treat
+  the stepper ruling as licence to restyle anything else.
 - **Interactive elements use `onPress`, not `onClick`.** HeroUI v3 is react-aria based.
   A handler passed as `onClick` to a HeroUI `Button` silently never fires.
 - `pnpm typecheck` (`tsc --noEmit`), `pnpm lint`, and `pnpm test` must all pass before
@@ -70,23 +73,36 @@ before reaching for `.target.value`, so a plain string passes through untouched.
 one fact is the whole seam. Task 1 encodes it once, with a test that would fail if a
 future RHF version changed it.
 
-## Two components the spec lists that this plan does not use
+## The two components the spec lists beyond a straight migration
 
-The spec's Phase 1 table names `stepper` and `drop-zone` for this surface. Neither is
-used here, because both would be a **redesign**, and the same spec says Phases 0–2
-preserve current appearance. Recorded as an open question rather than silently dropped:
+Resolved with Edwin 2026-08-09. He chose to **widen this phase**: repage
+`NewWorkspaceModal` as a stepper rather than migrate it as-is.
 
-- **`stepper`** — `NewWorkspaceModal` is a single-page form today. Introducing a stepper
-  would restructure it into paged sections: a real UX change, and one the existing
-  204-line test suite (which fills every field then submits) would not survive.
-- **`drop-zone`** — folder selection today is a native Tauri picker behind
-  `hasNativeFolderPicker()`, and it is absent in the browser build. A drop-zone would be
-  a *second*, browser-only path to the same field. It is a genuine improvement and a
-  genuine scope increase.
+**`stepper` — IN SCOPE.** Task 5 repages the form into three steps (Details, Colour,
+Repos). This is a deliberate, approved appearance change, and it is the **only** one in
+Phase 1a — `WorkspaceManagerModal` (Task 6) still preserves its current layout exactly.
+The existing 204-line test suite is expected to be rewritten; Task 5 Step 1 handles that
+as its own commit, before any component change.
 
-**Ask Edwin before executing** which he wants: (a) migrate as-is now and treat stepper /
-drop-zone as a follow-up, or (b) widen this phase to include the redesign and accept the
-test churn. This plan implements (a). Everything below assumes it.
+**`drop-zone` — OUT OF SCOPE, and not by preference.** It cannot do the job:
+
+`DropZone` is a **file-upload** component. Its API is `DropZone.Input` with
+`accept` / `multiple` / `onSelect(files: FileList)`, plus `FileList`, `FileName`,
+`FileProgress` and an upload `status` of `'uploading' | 'complete' | 'failed'`. There is
+no directory mode anywhere in its documented surface.
+
+The field it would fill is `repos.N.path` — an **absolute filesystem path**
+(`/Users/me/code/acme-web`) that the broker hands to git. A browser `File` object exposes
+`name` and `webkitRelativePath` and **never** an absolute path; that is a browser
+security boundary, not a library limitation. A drop-zone here would collect an upload the
+broker cannot act on.
+
+The native Tauri picker behind `hasNativeFolderPicker()` already returns real paths and
+stays as-is. If a browser-side drop target is wanted later, the only mechanism that can
+work is Tauri's `getCurrentWebview().onDragDropEvent()`, which yields real paths — but
+Tauri is a retired surface, so that is a product decision, not a migration step.
+
+**Recorded for Edwin. Not blocking; nothing else in this plan depends on it.**
 
 ## File Structure
 
@@ -907,26 +923,92 @@ git commit -m "feat: modal shell on Modal.Backdrop, replacing the hand-rolled sc
 
 ---
 
-### Task 5: Migrate `NewWorkspaceModal`
+### Task 5: Repage `NewWorkspaceModal` as a stepper
 
 **Files:**
-- Modify: `src/organisms/NewWorkspaceModal.tsx` (markup only, lines 134-241)
-- Test: `src/organisms/NewWorkspaceModal.test.tsx` (existing, 204 lines — must keep passing)
+- Modify: `src/organisms/NewWorkspaceModal.tsx` (markup + a `step` state; the form model
+  and `submit` are unchanged)
+- Test: `src/organisms/NewWorkspaceModal.test.tsx` (existing, 204 lines — **rewritten**
+  in Step 1, as its own commit)
 
 **Interfaces:**
 - Consumes: `FormTextField`, `FormSelect`, `FormColorSwatch`, `ModalShell` from
-  `../molecules/form`; `RadioButtonGroup` from `@heroui-pro/react`.
-- Produces: nothing new. The component's props are unchanged.
+  `../molecules/form`; `RadioButtonGroup` and `Stepper` from `@heroui-pro/react`.
+- Produces: nothing new. The component's props are unchanged — `HomePage` is not touched,
+  and `onCreated(name)` still fires with the server-slugged name.
 
-- [ ] **Step 1: Run the existing test and record the baseline**
+**This is the one task in Phase 1a that changes how something looks**, per Edwin's
+2026-08-09 ruling. `WorkspaceManagerModal` in Task 6 does not: it keeps its current
+layout and is screenshot-gated against it. Do not let the stepper leak into that task.
 
-Run: `pnpm vitest run src/organisms/NewWorkspaceModal.test.tsx`
-Expected: PASS. Write the passing test count into the commit message in Step 7.
+The `submit` handler, `NewWorkspaceFormValues`, `blankForm`, `emptyRepo` and `filled` are
+**byte-identical** when this task ends. Only how the fields are laid out changes. Verify
+with `git diff` before committing.
 
-This suite is the specification for this task. It was verified class-selector-free on
-2026-08-09 (it queries by role, label and placeholder), so it should survive the
-migration **unmodified**. If a test needs changing, stop and read why — a required
-change is evidence of a behaviour change, which this phase forbids.
+- [ ] **Step 1: Rewrite the test suite for the stepped flow — as its own commit**
+
+Run first: `pnpm vitest run src/organisms/NewWorkspaceModal.test.tsx` and record the
+baseline count.
+
+Unlike every other task in Phase 1, this suite **must** change: today's tests fill every
+field on one page and submit, and after this task the fields live on three steps. Do the
+rewrite **before** touching the component and commit it separately, so the component diff
+carries no test edits and a reviewer can see exactly what behaviour was renegotiated.
+
+Every existing assertion must survive in some form — the step it now runs on may change,
+but the thing being asserted may not be dropped. Walk the current file test by test and
+map each one; if an assertion has no home in the stepped flow, that is a behaviour
+regression, not a test that outlived its purpose.
+
+Add a `goToStep` helper at the top of the file so the rewrite does not repeat navigation
+in every test:
+
+```tsx
+/** Advances the wizard by pressing "next" n times. Each press gates on the
+    current step being valid, so callers must fill the fields first. */
+async function goToStep(n: number) {
+  for (let i = 0; i < n; i++) {
+    await userEvent.click(screen.getByRole("button", { name: "next" }));
+  }
+}
+```
+
+Then add the three tests the stepper itself needs — these are new behaviour, so they are
+written here, before the implementation:
+
+```tsx
+it("starts on Details with next disabled until the name is filled", async () => {
+  renderModal();
+  expect(screen.getByRole("button", { name: "next" })).toBeDisabled();
+  await userEvent.type(screen.getByLabelText("Workspace name"), "acme");
+  expect(screen.getByRole("button", { name: "next" })).toBeEnabled();
+});
+
+it("back returns to the previous step without losing what was typed", async () => {
+  renderModal();
+  await userEvent.type(screen.getByLabelText("Workspace name"), "acme");
+  await goToStep(1);
+  await userEvent.click(screen.getByRole("button", { name: "back" }));
+  expect(screen.getByLabelText("Workspace name")).toHaveValue("acme");
+});
+
+// The submit button exists only on the last step; a stepper that let Enter
+// submit from step 0 would POST a half-filled workspace.
+it("does not offer create until the final step", async () => {
+  renderModal();
+  expect(screen.queryByRole("button", { name: /create workspace/i })).toBeNull();
+});
+```
+
+Use the suite's existing render helper rather than inventing `renderModal` if one is
+already there — read the top of the file first and match its name.
+
+Commit this alone:
+
+```bash
+git add src/organisms/NewWorkspaceModal.test.tsx
+git commit -m "test: rewrite new-workspace suite for the stepped flow"
+```
 
 - [ ] **Step 2: Capture the before-screenshots**
 
@@ -942,47 +1024,131 @@ local evidence, not artifacts.
 .screenshots/phase1a/new-workspace-{dark,light,midnight,sand}-before.png
 ```
 
-- [ ] **Step 3: Replace the imports**
+- [ ] **Step 3: Replace the imports and add the step model**
 
 In `src/organisms/NewWorkspaceModal.tsx`, replace lines 1-6:
 
 ```tsx
-import { RadioButtonGroup } from "@heroui-pro/react";
+import { RadioButtonGroup, Stepper } from "@heroui-pro/react";
 import { Button } from "@heroui/react";
 import { Plus, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useFieldArray, useForm } from "react-hook-form";
+import { type FieldPath, useFieldArray, useForm } from "react-hook-form";
 import type { ConnectorInstanceRecord, WorkspaceRecord } from "../api/types";
 import { FormColorSwatch, FormSelect, FormTextField, ModalShell } from "../molecules/form";
 ```
 
-Note `SegmentedControl` and `WORKSPACE_PALETTE` are no longer imported here —
+`SegmentedControl` and `WORKSPACE_PALETTE` are no longer imported here —
 `RadioButtonGroup` replaces the first, `FormColorSwatch` owns the second.
 
-- [ ] **Step 4: Replace the render body**
+Then add the step model above the component. Keeping it a module constant rather than
+inlining it in JSX is what lets the "which fields gate this step" question have one
+answer instead of three:
+
+```tsx
+/**
+ * The wizard's three steps and the fields each one gates on.
+ *
+ * `gates` lists the fields RHF must find valid before `next` enables. Repos are
+ * absent from every entry on purpose: they are a field array whose length changes
+ * at runtime, so the last step gates on `isValid` for the whole form instead —
+ * which is exactly what the single-page version's create button already did.
+ */
+const STEPS = [
+  { title: "Details", description: "Name and links", gates: ["name"] },
+  { title: "Colour", description: "Optional identity", gates: [] },
+  { title: "Repos", description: "At least one", gates: [] },
+] as const satisfies ReadonlyArray<{
+  title: string;
+  description: string;
+  gates: ReadonlyArray<FieldPath<NewWorkspaceFormValues>>;
+}>;
+```
+
+- [ ] **Step 4: Add the step state and the navigation gate**
+
+Add to the component body, beside the existing `useState`s:
+
+```tsx
+  const [step, setStep] = useState(0);
+  // `trigger` validates a subset of fields on demand — that is what lets `next`
+  // gate on THIS step's fields rather than the whole form, which would keep it
+  // disabled until the repos on step 2 were filled.
+  const { trigger } = form; // add `trigger` to the useForm destructure
+
+  const goNext = async () => {
+    const gates = STEPS[step].gates;
+    // A step with no gates (Colour) is always passable. `trigger([])` returns
+    // true for an empty list, but calling it at all is wasted work.
+    if (gates.length > 0 && !(await trigger([...gates]))) return;
+    setStep((s) => Math.min(s + 1, STEPS.length - 1));
+  };
+```
+
+The open-keyed reset effect must also reset the step, or reopening the modal lands on
+whatever step the last session ended on. Add one line inside the existing effect — do
+**not** add a second effect:
+
+```tsx
+  useEffect(() => {
+    if (!open) return;
+    reset(blankForm());
+    setStep(0); // ← add this
+    setError(null);
+    void listMyConnectors().then(setConnectors);
+  }, [open]);
+```
+
+- [ ] **Step 5: Replace the render body**
 
 Replace everything from `if (!open) return null;` (line 134) to the closing `}` of the
 component with:
 
 ```tsx
+  const isLastStep = step === STEPS.length - 1;
+
   return (
     <ModalShell open={open} onClose={onClose} title="New workspace">
-      <FormTextField control={control} name="name" label="Workspace name" placeholder="acme" rules={{ validate: filled }} />
-      <FormTextField
-        control={control}
-        name="description"
-        label="Description"
-        placeholder="Marketing site + storefront"
-      />
-      <FormTextField
-        control={control}
-        name="linksText"
-        label="Links"
-        hint="one per line — docs, dashboards, tickets"
-        multiline
-        rows={3}
-      />
-      <FormColorSwatch control={control} name="color" label="Colour" />
+      <Stepper currentStep={step}>
+        {STEPS.map((s) => (
+          <Stepper.Step key={s.title}>
+            <Stepper.Indicator />
+            <Stepper.Content>
+              <Stepper.Title>{s.title}</Stepper.Title>
+              <Stepper.Description>{s.description}</Stepper.Description>
+            </Stepper.Content>
+            <Stepper.Separator />
+          </Stepper.Step>
+        ))}
+      </Stepper>
+
+      {/* Every step's fields stay MOUNTED and are hidden with `hidden`, never
+          unmounted. FormTextField holds RHF state through useController, and
+          unmounting a controlled field unregisters it — stepping forward and back
+          would silently clear what the user typed. The `back` test asserts this. */}
+      <div hidden={step !== 0}>
+        <FormTextField control={control} name="name" label="Workspace name" placeholder="acme" rules={{ validate: filled }} />
+        <FormTextField
+          control={control}
+          name="description"
+          label="Description"
+          placeholder="Marketing site + storefront"
+        />
+        <FormTextField
+          control={control}
+          name="linksText"
+          label="Links"
+          hint="one per line — docs, dashboards, tickets"
+          multiline
+          rows={3}
+        />
+      </div>
+
+      <div hidden={step !== 1}>
+        <FormColorSwatch control={control} name="color" label="Colour" />
+      </div>
+
+      <div hidden={step !== 2}>
       <p className="wizard__hint">Repos — every repo needs a GitHub connector before create enables.</p>
       {githubConnectors.length === 0 && (
         <p className="wizard__hint">No GitHub connectors yet — add one in Settings → Integrations first.</p>
@@ -1041,21 +1207,53 @@ component with:
       <Button variant="secondary" onPress={() => append(emptyRepo())}>
         <Plus size={11} strokeWidth={2.2} /> add another
       </Button>
+      </div>
+
       {error && <p className="wizard__error">{error}</p>}
-      <Button
-        variant="primary"
-        fullWidth
-        onPress={() => void submit()}
-        isDisabled={isSubmitting || !isValid}
-      >
-        {isSubmitting ? "creating…" : "create workspace"}
-      </Button>
+
+      {/* One footer for all three steps. `create workspace` renders only on the
+          last step — a stepper that offered submit from step 0 would POST a
+          half-filled workspace, which is what the third new test guards. */}
+      <div className="nw-wizard__nav">
+        <Button variant="secondary" onPress={() => setStep((s) => Math.max(s - 1, 0))} isDisabled={step === 0}>
+          back
+        </Button>
+        {isLastStep ? (
+          <Button
+            variant="primary"
+            onPress={() => void submit()}
+            isDisabled={isSubmitting || !isValid}
+          >
+            {isSubmitting ? "creating…" : "create workspace"}
+          </Button>
+        ) : (
+          <Button variant="primary" onPress={() => void goNext()}>
+            next
+          </Button>
+        )}
+      </div>
     </ModalShell>
   );
 }
 ```
 
-Four deliberate changes to note in review:
+`next` is **not** given `isDisabled`. It gates inside `goNext` via `trigger`, so a press
+on an incomplete step surfaces RHF's field errors instead of leaving the user with a dead
+button and no explanation. The first new test asserts `next` is *disabled* on an empty
+name, so wire that one case explicitly:
+
+```tsx
+<Button variant="primary" onPress={() => void goNext()} isDisabled={!canLeaveStep}>
+  next
+</Button>
+```
+
+where `canLeaveStep` derives from RHF's `formState.errors` and the current step's gates.
+Read `formState` for the field's dirty/error state rather than adding a second source of
+truth — if this proves awkward in practice, change the **test** to assert the error
+message appears on press, and record the swap in the task report.
+
+Five deliberate changes to note in review:
 - `if (!open) return null` is **gone** — `ModalShell` owns that, and the open-keyed
   `useEffect` above it must keep running on every render (it already did; the early
   return sat after all hooks).
@@ -1064,29 +1262,37 @@ Four deliberate changes to note in review:
   comments that apologised for the hand-rolled version's a11y violations.
 - `register` is no longer destructured from `useForm` — remove it from the destructure
   on line 67 or `tsc` will flag it unused. `control`, `handleSubmit`, `reset`,
-  `setValue`, `watch`, `formState` all stay.
+  `setValue`, `watch`, `formState`, `trigger` all stay.
 - `onClick`→`onPress` and `disabled`→`isDisabled` on every `Button`. A `Button` given
   `onClick` renders fine and silently does nothing.
+- **Steps hide with `hidden`, they do not unmount.** `FormTextField` holds its value
+  through `useController`; unmounting unregisters the field and loses the input. This is
+  the single most likely way to break the stepper, and the `back` test is what catches it.
 
-- [ ] **Step 5: Run the test**
+- [ ] **Step 6: Run the test**
 
 Run: `pnpm vitest run src/organisms/NewWorkspaceModal.test.tsx`
-Expected: PASS, same count as Step 1, **with no edits to the test file**.
+Expected: PASS — the rewritten suite from Step 1, plus its three new stepper tests, with
+**no further edits to the test file**. A test needing changes now (rather than in Step 1)
+means the implementation drifted from the flow the tests agreed on.
 
-- [ ] **Step 6: Screenshot comparison**
+- [ ] **Step 7: Screenshot capture**
 
-Capture `new-workspace-{dark,light,midnight,sand}-after.png` and compare against Step 2.
-Gate: same layout, same colors, same borders and radii. Sub-pixel text drift is allowed.
-This modal is not position-fixed chrome, so the 0.5% fixed-element gate does not apply
-to it; judge structurally.
+Capture `new-workspace-{dark,light,midnight,sand}-after.png`, one per step (12 shots).
 
-- [ ] **Step 7: Verify and commit**
+**This modal is the phase's one approved appearance change**, so there is no
+before/after equality gate for it. Capture the shots as the record of what the stepper
+now looks like, and check each theme for the things a restyle breaks silently: unreadable
+indicator text, a separator that vanishes on a light ground, a footer that overlaps the
+body at small heights.
+
+- [ ] **Step 8: Verify and commit**
 
 Run: `pnpm typecheck && pnpm lint && pnpm test`
 
 ```bash
 git add src/organisms/NewWorkspaceModal.tsx
-git commit -m "refactor: NewWorkspaceModal onto heroui fields and modal shell"
+git commit -m "feat: repage NewWorkspaceModal as a three-step wizard on heroui"
 ```
 
 ---
