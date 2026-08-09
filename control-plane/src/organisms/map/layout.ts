@@ -7,10 +7,17 @@ import type { CapActivityT, CapSliceT, CapStoryT } from "../../api/types";
  * them. `layoutMap` and `cellAt` both consume them, which is what makes the two
  * functions exact inverses rather than two implementations that drift.
  *
- * Gap values are read from components.css. Note STEP_GAP and ACTIVITY_GAP are
- * different: 8px separates steps inside one activity (.map-activity__steps), 12px
- * separates activities (.map-stage__grid). Conflating them misplaces every column
- * past the first.
+ * Note STEP_GAP and ACTIVITY_GAP are different: 8px separates steps inside one
+ * activity, 12px separates activities. Conflating them misplaces every column past
+ * the first.
+ *
+ * That pair used to be documented as "read from components.css (.map-activity__steps
+ * / .map-stage__grid)". Both selectors were the flexbox backbone and Task 4 deleted
+ * them with it — nothing lays these cards out now, xyflow translates each node to a
+ * position computed here. So the provenance is inverted, in fact and now in print:
+ * these numbers are the source, and the card CSS is written to match them. A constant
+ * whose stated origin points at nothing is worse than an undocumented one, because it
+ * sends the next reader looking for a rule that cannot be found.
  *
  * This module imports no React and no @xyflow/react, deliberately: the inverse
  * property below is a property of the numbers, and it must be testable without a
