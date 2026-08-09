@@ -49,11 +49,40 @@ Testing Library, Biome, pnpm.
   This is a view-layer migration. `WorkspaceFormValues`, `NewWorkspaceFormValues`,
   `toForm`, `toRecord`, `keyList`, `filled`, `blankForm`, `emptyRepo` are all
   **byte-identical** when this phase ends.
-- **No redesign, with exactly one approved exception:** `NewWorkspaceModal` is repaged as
-  a three-step stepper (Task 5), per Edwin's 2026-08-09 ruling. Everything else — and
-  all of `WorkspaceManagerModal` — keeps the same layout, colors, borders and radii,
-  verified by screenshot in all four themes (dark, light, midnight, sand). Do not treat
-  the stepper ruling as licence to restyle anything else.
+- **Visual deviation is ALLOWED** (Edwin, 2026-08-09 — this supersedes the spec's
+  "Phases 0–2 preserve current appearance" rule for Phase 1a). Let HeroUI's components
+  look like themselves rather than reproducing the hand-rolled CSS. The screenshot
+  equality gate on `WorkspaceManagerModal` is **dropped**; capture after-shots as a
+  record of what shipped, not as a pass/fail comparison.
+
+- **Function beats fidelity** (Edwin, 2026-08-09): *"the original was not functional."*
+  This is not permission to be careless — it is a different target. Do not ask "does this
+  match what was there"; ask "does this work". Where the original is bad, improve it and
+  say so.
+
+  Concrete deficiencies in the current modals, all of which the adapters already fix and
+  none of which should be reproduced out of loyalty to the original:
+  - No focus trap, no ESC, no scroll lock — the `.scrim` is a bare `<div>` with two
+    `biome-ignore` lines apologising for the a11y rules it breaks.
+  - No per-field error messages anywhere; the only feedback is one form-level paragraph
+    after a failed submit.
+  - Dense repo rows whose fields are named by placeholder alone, which vanishes on focus.
+  - A 16-input single-page form with no grouping or progressive disclosure.
+
+  **What still may not drift, because it is data and not design:**
+  - The **form model is byte-identical**: `NewWorkspaceFormValues`, `WorkspaceFormValues`,
+    `toForm`, `toRecord`, `keyList`, `filled`, `blankForm`, `emptyRepo`. What reaches
+    `PUT /workspaces/:name` and `.smith/workspaces/*.json` cannot change because a modal
+    was restyled.
+  - The Atlassian key fields keep their `.0` array paths — flattening drops entries 1..N
+    on the next save (see `WorkspaceFormValues`' own comment).
+  - RHF state stays above `ModalShell` (see the constraint below).
+
+  **On existing tests:** an assertion may be changed or dropped **only** by naming, in the
+  report, the defect it encoded and why the new behaviour is better. A test that encodes
+  bad behaviour is not sacred — but "the test was in the way" is not a reason, and a
+  silent drop is never acceptable. If you cannot articulate why the old behaviour was
+  wrong, keep it.
 - **Interactive elements use `onPress`, not `onClick`.** HeroUI v3 is react-aria based.
   A handler passed as `onClick` to a HeroUI `Button` silently never fires.
 - **`useForm` / `useFieldArray` and the open-keyed `reset()` effect MUST stay in the
