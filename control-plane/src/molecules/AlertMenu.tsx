@@ -1,5 +1,5 @@
 import { Bell } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { type Alert, useAlerts } from "../queries/alerts";
 
 interface AlertMenuProps {
@@ -41,11 +41,28 @@ export function AlertMenu({ onNavigate }: AlertMenuProps) {
   const alerts = useAlerts();
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+
+  /**
+   * Closing while a ROW holds focus unmounts the focused element underneath the
+   * user, dropping focus to <body> and losing their place in the tab order
+   * entirely. Every close path that the keyboard can reach therefore hands focus
+   * back to the trigger, which always survives. Outside-click is deliberately
+   * NOT one of them: there the user is already moving somewhere else, and
+   * pulling focus back would fight them.
+   */
+  // useCallback so the keydown effect below can depend on it honestly. Both
+  // `setOpen` and the ref are stable, so the empty dep list is the real answer,
+  // not a silenced one — and the listener stops being torn down every render.
+  const closeAndRestoreFocus = useCallback(() => {
+    setOpen(false);
+    trigger.current?.focus();
+  }, []);
 
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") closeAndRestoreFocus();
     };
     // mousedown, not click: the press that OPENED the panel has already fired
     // its mousedown by the time this effect runs, so the panel cannot close
@@ -59,7 +76,7 @@ export function AlertMenu({ onNavigate }: AlertMenuProps) {
       removeEventListener("keydown", onKey);
       removeEventListener("mousedown", onPointerDown);
     };
-  }, [open]);
+  }, [open, closeAndRestoreFocus]);
 
   const count = alerts.length;
 
@@ -67,6 +84,7 @@ export function AlertMenu({ onNavigate }: AlertMenuProps) {
     <div className="alert-menu" ref={root}>
       <button
         type="button"
+        ref={trigger}
         className="alert-menu__trigger"
         aria-label={triggerLabel(count)}
         aria-haspopup="dialog"
@@ -87,26 +105,35 @@ export function AlertMenu({ onNavigate }: AlertMenuProps) {
           ) : (
             <ul className="alert-menu__list">
               {alerts.map(({ id, severity, text, target }) => {
-                const body = (
-                  <>
-                    <span className="sr-only">{SEVERITY_WORD[severity]}: </span>
-                    <span className="alert-menu__text">{text}</span>
-                  </>
-                );
                 return (
                   <li key={id} className={`alert-menu__row alert-menu__row--${severity}`}>
                     {target === undefined ? (
-                      <span className="alert-menu__body">{body}</span>
+                      // No accessible NAME to carry the severity here — a plain span
+                      // has none — so it rides the reading order as its own text node.
+                      <span className="alert-menu__body">
+                        <span className="sr-only">{SEVERITY_WORD[severity]}: </span>
+                        <span className="alert-menu__text">{text}</span>
+                      </span>
                     ) : (
                       <button
                         type="button"
+                        // An explicit label, NOT a visually-hidden prefix span. The
+                        // accessible-name algorithm trims each text node before
+                        // concatenating, so "Error: " + "could not load boards"
+                        // computes as "Error:could not load boards" — the separating
+                        // space is discarded and the words run together. Naming the
+                        // button outright is the only way to control the string.
+                        aria-label={`${SEVERITY_WORD[severity]}: ${text}`}
                         className="alert-menu__body alert-menu__body--pressable"
                         onClick={() => {
-                          setOpen(false);
+                          // Same unmount-under-focus problem as Escape: the row
+                          // pressed is the element about to disappear, and the
+                          // route it navigates to claims no focus of its own.
+                          closeAndRestoreFocus();
                           onNavigate(target);
                         }}
                       >
-                        {body}
+                        <span className="alert-menu__text">{text}</span>
                       </button>
                     )}
                   </li>

@@ -127,12 +127,32 @@ describe("AlertMenu — the menu", () => {
     expect(screen.getByText("could not load boards")).toBeInTheDocument();
   });
 
+  it("carries severity in the accessible name, not only in the border colour", async () => {
+    // Asserted as an EXACT name on purpose. A substring regex would match with
+    // or without the visually-hidden prefix, so the prefix could be deleted
+    // without failing anything — which is not a guarantee at all.
+    renderMenu(seedTwoAlerts);
+    await userEvent.click(await screen.findByRole("button", { name: "2 alerts" }));
+
+    expect(await screen.findByRole("button", { name: "Warning: ana — claude: not logged in" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Error: could not load boards" })).toBeInTheDocument();
+  });
+
   it("pressing a row with a target calls onNavigate with that target", async () => {
     const { onNavigate } = renderMenu(seedTwoAlerts);
     await userEvent.click(await screen.findByRole("button", { name: "2 alerts" }));
 
-    await userEvent.click(await screen.findByRole("button", { name: /could not load boards/ }));
+    await userEvent.click(await screen.findByRole("button", { name: "Error: could not load boards" }));
     expect(onNavigate).toHaveBeenCalledWith("/board");
+  });
+
+  it("opening with nothing wrong says so, rather than showing an empty panel", async () => {
+    renderMenu(seedNoAlerts);
+    await userEvent.click(await screen.findByRole("button", { name: "No alerts" }));
+
+    await screen.findByRole("dialog", { name: /alerts/i });
+    expect(screen.getByText("Nothing to report")).toBeInTheDocument();
+    expect(screen.queryAllByRole("listitem")).toHaveLength(0);
   });
 
   it("a row with no target is not a button", async () => {
@@ -145,6 +165,9 @@ describe("AlertMenu — the menu", () => {
     await userEvent.click(await screen.findByRole("button", { name: "1 alert" }));
     expect(screen.getByText("Broker disconnected")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Broker disconnected/ })).toBeNull();
+    // The severity prefix still has to reach the row that is NOT a button —
+    // it has no accessible name of its own to carry it.
+    expect(screen.getByRole("listitem").textContent).toBe("Error: Broker disconnected");
     expect(onNavigate).not.toHaveBeenCalled();
   });
 
@@ -155,6 +178,23 @@ describe("AlertMenu — the menu", () => {
 
     await userEvent.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog", { name: /alerts/i })).toBeNull());
+  });
+
+  it("Escape from inside a row returns focus to the trigger, not to <body>", async () => {
+    // Closing while a row holds focus unmounts the focused element underneath
+    // the user. Without an explicit restore, focus falls to <body> and the
+    // keyboard user loses their place in the tab order entirely.
+    renderMenu(seedTwoAlerts);
+    const bell = await screen.findByRole("button", { name: "2 alerts" });
+    await userEvent.click(bell);
+
+    const row = await screen.findByRole("button", { name: "Error: could not load boards" });
+    row.focus();
+    expect(document.activeElement).toBe(row);
+
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /alerts/i })).toBeNull());
+    expect(document.activeElement).toBe(bell);
   });
 });
 

@@ -98,7 +98,14 @@
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
-  z-index: 5; /* above .sm-navbar's own z-index: 4 */
+  /* NOT "above the navbar's z-index: 4" — that comparison cannot happen. This is a
+     DESCENDANT of .sm-navbar, which is position:fixed with a z-index and so opens its
+     own stacking context; a child is never compared against its parent's z-index, only
+     against its navbar siblings (logo, workspace selector, avatar). The popover clears
+     the rails and the stage for a different reason entirely: ControlPlaneLayout renders
+     topBar as a SIBLING of Sidebar.Provider, so the navbar's whole subtree paints above
+     them as one unit (see the comment in ControlPlaneLayout.tsx). */
+  z-index: 5;
   width: 300px;
   max-height: 60vh;
   overflow-y: auto;
