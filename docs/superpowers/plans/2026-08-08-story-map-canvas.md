@@ -1211,6 +1211,7 @@ The original approach here was to move add-activity below the canvas and turn ad
 into a `+` button. Do neither. Instead, **every level always renders one empty card in
 place**, at the position the next real card would occupy:
 
+- the capability set ends with an empty capability card
 - each activity row ends with an empty activity card
 - each activity's step row ends with an empty step card
 - each step's story stack ends with an empty story card
@@ -1229,6 +1230,36 @@ Why this is better than a composer, and why it suits the canvas specifically:
   model can already name; a floating composer beneath the canvas is not.
 - One interaction for reading and writing, at every level, instead of cards for reading
   and three differently-shaped controls for writing.
+
+**EXTENDED TO THE CAPABILITY LEVEL.** Edwin, 2026-08-09: *"adding a new card, whether it
+is capability, activity or step, should be a card waiting to be filled out."* The rule is
+universal — there is no "add" control anywhere in the map, at any level.
+
+Capability is the one level where this is not just deleting a composer, because a
+capability is not a card today. It is a `<select aria-label="Capability">` plus a
+`+ new capability` button toggling a `creating` composer (`MapStage.tsx:450-470`). Both go.
+**Capabilities become a row of cards: selecting one is clicking it, and the row ends with
+an empty card that creates the next one.** `creating`, `capName`, and the toggle button are
+deleted along with the other three composers.
+
+Two consequences worth stating before anyone implements it:
+
+- **The dropdown was also the workspace filter's output surface.** `activeId` is reset on
+  workspace change (`MapStage.tsx:440`). A card row must keep that behaviour or a stale
+  capability from another workspace stays selected — the same bug the comment at that line
+  already names.
+- **Selection and editing now share one control.** A capability card must distinguish a
+  click (select) from a click-into-text (rename), the way the story cards already
+  distinguish drag from edit. Reuse whatever the story card settles on; do not invent a
+  second gesture vocabulary.
+
+**OPEN — where the capability row lives.** Two readings, and the plan should not guess:
+**(a)** a band on the canvas above the activities, so all four levels are one surface; or
+**(b)** a row in the stage header, above the canvas, leaving the canvas to the three
+levels the reference image shows. **Recommend (b).** The reference has no capability band,
+capabilities are the map's identity rather than part of its content, and a capability
+band on the canvas would scroll away from the map it names. (a) is defensible if
+capabilities are few and switching between them is frequent. Edwin decides.
 
 **Three things to get right:**
 
@@ -1549,6 +1580,34 @@ wraps it, so the three existing selector-based tests are untouched."
 Verify **3 files changed**.
 
 ---
+
+## The visual target
+
+Edwin supplied a reference story map (2026-08-09) and confirmed it belongs **on a canvas**,
+which is this plan's premise. The information design to match:
+
+- **Activities** across the top as wide cards, each spanning the group of steps beneath it.
+- **Steps** in a row under their activity, colour-distinct from activities.
+- A labelled **"Story cards"** band separating the map's skeleton from its stories.
+- **Stories** in vertical columns under their step, so a column reads as "everything to
+  build for this step".
+
+`MapStage` already has this skeleton — `.map-activity` → `.map-activity__steps` →
+`.map-step` → `.map-step__stories`. So this is a **restyle plus the blank-card change**,
+not a restructure. Three things the reference has that the current UI does not:
+
+1. the level-distinguishing colour treatment,
+2. the explicit "Story cards" band label,
+3. activities sized to span their step group rather than sitting as one more equal column.
+
+Only 3 has layout consequences: `.map-step` is `flex: 0 0 180px` today, so an activity
+spanning its steps needs a width derived from its step count. On the canvas that falls out
+of `layoutMap` for free — it already computes every position — which is another reason to
+do the restyle *with* the migration rather than before it.
+
+**The reference is information design, not pixel spec.** It is a different product with
+its own chrome. Edwin's standing ruling applies: *"the function is more important than the
+fidelity to the original."*
 
 ## Done Criteria
 
