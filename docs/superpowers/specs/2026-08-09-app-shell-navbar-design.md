@@ -206,7 +206,27 @@ network call.
 viewing lens across every workspace, which is what `BoardStage`'s aggregate scope already
 means.
 
-### What reads `activeWorkspace`
+### "New workspace…" lives in the selector
+
+The dropdown's last item opens the create-workspace flow (`setNewWorkspaceOpen(true)`).
+Creating a workspace is a workspace-switching action — you make one in order to work in
+it — so the control that switches workspaces is where it belongs, and it is the
+conventional place users look for it.
+
+**This retires `ToolRail`'s "New workspace" Plus tool** (`ToolRail.tsx:7`) and its
+`onNewWorkspace` prop. Keeping both would be two entry points to one flow, which is the
+same duplication this design removes for workspace *scope*; there is no reason to accept
+it for workspace *creation*.
+
+The rail is then unambiguously "places and tools" — Sessions, Board, Map, Settings —
+while the navbar owns workspace identity. That split is the point of having both.
+
+`NewWorkspaceModal` itself is unchanged. Its `onCreated(name)` already calls
+`openComposer(name)`, so a workspace created from the selector lands the user in a
+composer for it — which is exactly the "select a workspace with no sessions" path, and
+arrives there without a special case.
+
+### What follows the session's workspace
 
 | Surface | Today | After |
 |---|---|---|
@@ -225,7 +245,8 @@ Left to right:
 
 1. **Logo** — moved out of `ToolRail`. Keeps its Home behaviour and its
    `aria-label="Home"`. The rail then starts with its first tool.
-2. **Workspace selector** — lists un-archived workspaces plus "All workspaces".
+2. **Workspace selector** — lists un-archived workspaces, "All workspaces", and
+   **"New workspace…"** as its final item.
 3. *(spacer)*
 4. **Alert icon** — count badge; press opens a list; each row navigates to its subject.
 5. **Avatar** — renders only when `cloudMode` is true.
