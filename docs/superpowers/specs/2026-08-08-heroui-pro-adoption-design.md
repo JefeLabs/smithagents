@@ -1,6 +1,12 @@
 # HeroUI Pro Adoption — Design
 
-**Status:** approved, not yet implemented
+**Status:** Phase 0 in progress on branch `heroui-phase-0` (2026-08-09).
+**Phases 1–3 are NOT approved to start.** Edwin deferred them pending (a) confirmation
+of what a Pro seat entitles past beta, and (b) evidence the library is still shipping:
+`@heroui-pro/react@1.0.0-beta.8` is the `latest` dist-tag and was published
+2026-03-30 — over four months before this line was written, with no beta.9 and no
+1.0.0. Risk 1 below was written assuming beta *churn*; the observed risk is closer to
+*stagnation*, which makes Risk 4 the load-bearing question rather than a footnote.
 **Claimed by:** unclaimed — claim this header before executing
 **Date:** 2026-08-08
 **Surface:** `control-plane/` — full view-layer migration
