@@ -22,13 +22,35 @@ function props(overrides: Record<string, unknown> = {}) {
   };
 }
 
-async function fillOneValidRepo() {
-  await userEvent.type(screen.getByPlaceholderText("acme"), "My App");
+function renderModal(overrides: Record<string, unknown> = {}) {
+  return render(<NewWorkspaceModal {...props(overrides)} />);
+}
+
+/** Advances the wizard by pressing "next" n times. Each press gates on the
+    current step being valid, so callers must fill the fields first. */
+async function goToStep(n: number) {
+  for (let i = 0; i < n; i++) {
+    await userEvent.click(screen.getByRole("button", { name: "next" }));
+  }
+}
+
+/** Fills the currently-visible repo row with valid data and picks the
+    "personal" GitHub connector. Assumes the caller is already on Repos. */
+async function fillRepoRow() {
   await userEvent.type(screen.getByPlaceholderText("web"), "web");
   await userEvent.type(screen.getByPlaceholderText(/acme-web/), "/Users/me/code/acme-web");
   await userEvent.type(screen.getByPlaceholderText("GitHub owner"), "acme");
   await userEvent.type(screen.getByPlaceholderText("GitHub repo"), "web");
-  await userEvent.selectOptions(await screen.findByLabelText(/github connector/i), "gh-1");
+  await userEvent.click(screen.getByRole("button", { name: /github connector/i }));
+  await userEvent.click(await screen.findByRole("option", { name: "personal" }));
+}
+
+/** Fills Details (name only), advances through Colour untouched, then fills
+    one valid repo row — lands on the final step ready to submit. */
+async function fillOneValidRepo() {
+  await userEvent.type(screen.getByPlaceholderText("acme"), "My App");
+  await goToStep(2);
+  await fillRepoRow();
 }
 
 describe("NewWorkspaceModal", () => {
@@ -37,26 +59,32 @@ describe("NewWorkspaceModal", () => {
   });
 
   it("connector select lists only github-vendor connectors and offers no pickable empty option", async () => {
-    render(<NewWorkspaceModal {...props()} />);
-    const select = await screen.findByLabelText(/github connector/i);
-    const options = Array.from(select.querySelectorAll("option")).map((o) => o.textContent);
-    expect(options).toContain("personal");
-    expect(options).toContain("acme-corp");
-    expect(options).not.toContain("— none picked —");
-    expect(select.querySelector<HTMLOptionElement>('option[value=""]')?.disabled).toBe(true);
+    renderModal();
+    await userEvent.type(screen.getByPlaceholderText("acme"), "My App");
+    await goToStep(2);
+    await userEvent.click(screen.getByRole("button", { name: /github connector/i }));
+    // Exactly the two github connectors — atl-1 excluded, and no synthetic
+    // "none picked" option is ever added to the list (FormSelect renders
+    // only what `options` contains; the empty state is the placeholder).
+    const options = await screen.findAllByRole("option");
+    expect(options.map((o) => o.textContent)).toEqual(["personal", "acme-corp"]);
   });
 
-  it("create stays disabled until name, repo fields, and the connector are all present", async () => {
-    render(<NewWorkspaceModal {...props()} />);
+  it("create stays disabled until repo fields and the connector are all present", async () => {
+    renderModal();
+    // Reaching the Repos step at all requires the name gate on Details —
+    // that half of the old title now lives in "starts on Details..." below.
+    await userEvent.type(screen.getByPlaceholderText("acme"), "My App");
+    await goToStep(2);
     const create = (await screen.findByRole("button", { name: /create workspace/i })) as HTMLButtonElement;
     expect(create.disabled).toBe(true);
-    await userEvent.type(screen.getByPlaceholderText("acme"), "My App");
     await userEvent.type(screen.getByPlaceholderText("web"), "web");
     await userEvent.type(screen.getByPlaceholderText(/acme-web/), "/Users/me/code/acme-web");
     await userEvent.type(screen.getByPlaceholderText("GitHub owner"), "acme");
     await userEvent.type(screen.getByPlaceholderText("GitHub repo"), "web");
     expect(create.disabled).toBe(true); // connector still unpicked — the required gate
-    await userEvent.selectOptions(await screen.findByLabelText(/github connector/i), "gh-1");
+    await userEvent.click(screen.getByRole("button", { name: /github connector/i }));
+    await userEvent.click(await screen.findByRole("option", { name: "personal" }));
     expect(create.disabled).toBe(false);
   });
 
@@ -64,7 +92,7 @@ describe("NewWorkspaceModal", () => {
     const save = vi.fn(async () => ({ name: "my-app" }));
     const onCreated = vi.fn();
     const onClose = vi.fn();
-    render(<NewWorkspaceModal {...props({ save, onCreated, onClose })} />);
+    renderModal({ save, onCreated, onClose });
     await fillOneValidRepo();
     await userEvent.click(screen.getByRole("button", { name: /create workspace/i }));
     await waitFor(() =>
@@ -88,13 +116,16 @@ describe("NewWorkspaceModal", () => {
 
   it("submits description and newline-split links", async () => {
     const save = vi.fn(async () => ({ name: "acme" }));
-    render(<NewWorkspaceModal {...props({ save })} />);
-    await fillOneValidRepo();
+    renderModal({ save });
+    // Description and Links live on Details — fill them before leaving the step.
+    await userEvent.type(screen.getByPlaceholderText("acme"), "My App");
     await userEvent.type(screen.getByLabelText(/description/i), "Marketing site");
     await userEvent.type(
       screen.getByLabelText(/links/i),
       "https://github.com/acme/web\nhttps://acme.atlassian.net\n\n",
     );
+    await goToStep(2);
+    await fillRepoRow();
     await userEvent.click(screen.getByRole("button", { name: /create workspace/i }));
     await waitFor(() =>
       expect(save).toHaveBeenCalledWith(
@@ -108,7 +139,7 @@ describe("NewWorkspaceModal", () => {
   });
 
   it("no execution mode control renders", async () => {
-    render(<NewWorkspaceModal {...props()} />);
+    renderModal();
     await screen.findByPlaceholderText("acme");
     expect(screen.queryByText(/execution mode/i)).toBeNull();
     expect(screen.queryByRole("tab", { name: "Local Docker" })).toBeNull();
@@ -117,7 +148,7 @@ describe("NewWorkspaceModal", () => {
   it("a save error is shown inline and onCreated never fires", async () => {
     const save = vi.fn(async () => ({ error: 'Repo "web": /nope is not a git repository' }));
     const onCreated = vi.fn();
-    render(<NewWorkspaceModal {...props({ save, onCreated })} />);
+    renderModal({ save, onCreated });
     await fillOneValidRepo();
     await userEvent.click(screen.getByRole("button", { name: /create workspace/i }));
     expect(await screen.findByText(/is not a git repository/)).toBeDefined();
@@ -127,17 +158,19 @@ describe("NewWorkspaceModal", () => {
   it("new-folder mode with a native picker: Browse fills the path and submit carries initGit", async () => {
     const save = vi.fn(async () => ({ name: "fresh" }));
     const pickFolder = vi.fn(async () => "/Users/me/dev/fresh");
-    render(<NewWorkspaceModal {...props({ save, pickFolder })} />);
-    await userEvent.click(screen.getByRole("tab", { name: "New folder" }));
+    renderModal({ save, pickFolder });
+    await userEvent.type(screen.getByPlaceholderText("acme"), "Fresh");
+    await goToStep(2);
+    await userEvent.click(screen.getByRole("radio", { name: "New folder" }));
     await userEvent.click(await screen.findByRole("button", { name: /browse/i }));
     await waitFor(() =>
       expect((screen.getByPlaceholderText(/new-project/) as HTMLInputElement).value).toBe("/Users/me/dev/fresh"),
     );
-    await userEvent.type(screen.getByPlaceholderText("acme"), "Fresh");
     await userEvent.type(screen.getByPlaceholderText("web"), "app");
     await userEvent.type(screen.getByPlaceholderText("GitHub owner"), "me");
     await userEvent.type(screen.getByPlaceholderText("GitHub repo"), "fresh");
-    await userEvent.selectOptions(await screen.findByLabelText(/github connector/i), "gh-1");
+    await userEvent.click(screen.getByRole("button", { name: /github connector/i }));
+    await userEvent.click(await screen.findByRole("option", { name: "personal" }));
     await userEvent.click(screen.getByRole("button", { name: /create workspace/i }));
     await waitFor(() =>
       expect(save).toHaveBeenCalledWith(
@@ -151,7 +184,7 @@ describe("NewWorkspaceModal", () => {
 
   it("existing-repo mode never sends initGit", async () => {
     const save = vi.fn(async (_ws: WorkspaceRecord, _isNew: boolean) => ({ name: "acme" }));
-    render(<NewWorkspaceModal {...props({ save })} />);
+    renderModal({ save });
     await fillOneValidRepo();
     await userEvent.click(screen.getByRole("button", { name: /create workspace/i }));
     await waitFor(() => expect(save).toHaveBeenCalled());
@@ -161,8 +194,12 @@ describe("NewWorkspaceModal", () => {
   });
 
   it("without a native picker the Browse button is absent; a typed path still works in new-folder mode", async () => {
-    render(<NewWorkspaceModal {...props()} />);
-    await userEvent.click(screen.getByRole("tab", { name: "New folder" }));
+    renderModal();
+    // Reaching Repos requires the name gate — the old test skipped this
+    // because the segmented control was reachable with no gate at all.
+    await userEvent.type(screen.getByPlaceholderText("acme"), "Fresh");
+    await goToStep(2);
+    await userEvent.click(screen.getByRole("radio", { name: "New folder" }));
     expect(screen.queryByRole("button", { name: /browse/i })).toBeNull();
     await userEvent.type(screen.getByPlaceholderText(/new-project/), "/Users/me/dev/typed");
     expect((screen.getByPlaceholderText(/new-project/) as HTMLInputElement).value).toBe("/Users/me/dev/typed");
@@ -170,9 +207,12 @@ describe("NewWorkspaceModal", () => {
 
   it("sends the chosen colour with the workspace", async () => {
     const p = props();
-    render(<NewWorkspaceModal {...p} />);
-    await fillOneValidRepo();
-    await userEvent.click(screen.getByLabelText("Colour 3"));
+    renderModal(p);
+    await userEvent.type(screen.getByPlaceholderText("acme"), "My App");
+    await goToStep(1); // -> Colour
+    await userEvent.click(screen.getByRole("option", { name: "Colour 3" }));
+    await goToStep(1); // -> Repos
+    await fillRepoRow();
     await userEvent.click(screen.getByRole("button", { name: /create workspace/i }));
     await waitFor(() => expect(p.save).toHaveBeenCalled());
     expect((p.save as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({
@@ -182,9 +222,14 @@ describe("NewWorkspaceModal", () => {
 
   it("omits colour entirely when no swatch is picked, so the derived default applies", async () => {
     const p = props();
-    render(<NewWorkspaceModal {...p} />);
-    await fillOneValidRepo();
-    expect((screen.getByLabelText("No colour") as HTMLInputElement).checked).toBe(true);
+    renderModal(p);
+    await userEvent.type(screen.getByPlaceholderText("acme"), "My App");
+    await goToStep(1); // -> Colour
+    // The listbox/option pattern marks selection with aria-selected, not
+    // aria-checked — .toBeChecked() only recognizes the latter and throws.
+    expect(screen.getByRole("option", { name: "No colour" })).toHaveAttribute("aria-selected", "true");
+    await goToStep(1); // -> Repos
+    await fillRepoRow();
     await userEvent.click(screen.getByRole("button", { name: /create workspace/i }));
     await waitFor(() => expect(p.save).toHaveBeenCalled());
     expect((p.save as ReturnType<typeof vi.fn>).mock.calls[0][0].color).toBeUndefined();
@@ -192,13 +237,38 @@ describe("NewWorkspaceModal", () => {
 
   it("the None swatch unpicks a chosen colour", async () => {
     const p = props();
-    render(<NewWorkspaceModal {...p} />);
-    await fillOneValidRepo();
-    await userEvent.click(screen.getByLabelText("Colour 3"));
-    await userEvent.click(screen.getByLabelText("No colour"));
-    expect((screen.getByLabelText("Colour 3") as HTMLInputElement).checked).toBe(false);
+    renderModal(p);
+    await userEvent.type(screen.getByPlaceholderText("acme"), "My App");
+    await goToStep(1); // -> Colour
+    await userEvent.click(screen.getByRole("option", { name: "Colour 3" }));
+    await userEvent.click(screen.getByRole("option", { name: "No colour" }));
+    expect(screen.getByRole("option", { name: "Colour 3" })).toHaveAttribute("aria-selected", "false");
+    await goToStep(1); // -> Repos
+    await fillRepoRow();
     await userEvent.click(screen.getByRole("button", { name: /create workspace/i }));
     await waitFor(() => expect(p.save).toHaveBeenCalled());
     expect((p.save as ReturnType<typeof vi.fn>).mock.calls[0][0].color).toBeUndefined();
+  });
+
+  it("starts on Details with next disabled until the name is filled", async () => {
+    renderModal();
+    expect(screen.getByRole("button", { name: "next" })).toBeDisabled();
+    await userEvent.type(screen.getByLabelText("Workspace name"), "acme");
+    expect(screen.getByRole("button", { name: "next" })).toBeEnabled();
+  });
+
+  it("back returns to the previous step without losing what was typed", async () => {
+    renderModal();
+    await userEvent.type(screen.getByLabelText("Workspace name"), "acme");
+    await goToStep(1);
+    await userEvent.click(screen.getByRole("button", { name: "back" }));
+    expect(screen.getByLabelText("Workspace name")).toHaveValue("acme");
+  });
+
+  // The submit button exists only on the last step; a stepper that let Enter
+  // submit from step 0 would POST a half-filled workspace.
+  it("does not offer create until the final step", async () => {
+    renderModal();
+    expect(screen.queryByRole("button", { name: /create workspace/i })).toBeNull();
   });
 });
