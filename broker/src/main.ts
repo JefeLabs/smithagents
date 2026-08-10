@@ -44,6 +44,8 @@ import { TextChannel, type ChannelFrame, type RosterEntry } from './text-channel
 import { createRemovalService } from './removal.ts';
 import { mintRoomToken } from './token.ts';
 import { isDiscordTextActive } from './discord-state.ts';
+import { DocumentManager, type Doc } from './documents.ts';
+import { loadBlueprints } from './blueprints.ts';
 
 // Defense in depth: the brain-turn queue in broker.ts isolates errors from
 // every turn it runs, but this catches anything outside that queue so a
@@ -341,6 +343,31 @@ const sessionStore = {
 };
 const sessionManager = new SessionManager(sessionStore);
 
+// Documents — blueprint-instantiated work products persisted under .smith/documents/.
+const documentsDir = process.env.BROKER_DOCUMENTS_DIR ?? '.smith/documents';
+const documentStore = {
+  loadAll(): Doc[] {
+    try {
+      return readdirSync(documentsDir)
+        .filter((f) => f.endsWith('.json'))
+        .map((f) => JSON.parse(readFileSync(join(documentsDir, f), 'utf8')) as Doc);
+    } catch {
+      return [];
+    }
+  },
+  save(doc: Doc): void {
+    try {
+      mkdirSync(documentsDir, { recursive: true });
+      writeFileSync(join(documentsDir, `${doc.id}.json`), JSON.stringify(doc, null, 2));
+    } catch (err) {
+      console.error('[documents] persist failed:', err);
+    }
+  },
+};
+const documentManager = new DocumentManager(documentStore);
+documentManager.init();
+const blueprints = loadBlueprints();
+
 // Crew memory — durable facts recalled into every turn. One inspectable JSON
 // file; the crew's continuity across conversations lives here.
 const memoryFile = process.env.BROKER_MEMORY_FILE ?? '.smith/memory.json';
@@ -543,6 +570,11 @@ function sessionFrame() {
     transcript: (s?.transcript ?? []).map((t) => ({ role: t.role, text: t.text })),
     workspaces: workspaceNames,
   };
+}
+
+/** Full-frame-on-change, like `sessionFrame()` — every document, not a diff. */
+function documentsFrame() {
+  return { type: 'documents' as const, documents: documentManager.list() };
 }
 
 // Re-fetch workspace records (active only — archived workspaces can't host new
@@ -968,6 +1000,7 @@ const textChannel = new TextChannel(
     { type: 'config', audio: voiceKeys.statusSync().tts },
     rosterFrame(broker.uiRoster()),
     sessionFrame(),
+    documentsFrame(),
   ],
   (body) => {
     const op = body as { op?: string; agents?: unknown; target?: unknown; agent?: unknown };
@@ -1143,6 +1176,29 @@ const textChannel = new TextChannel(
     const s = sessionManager.activeOrNull();
     const context = s?.transcript.slice(-6).map((t) => `${t.role}: ${t.text}`).join('\n');
     return polishText(streamFactory, 'claude-haiku-4-5', text, context);
+  },
+  () => blueprints,
+  {
+    create: async (body) => {
+      const bp = blueprints.find((b) => b.id === body.blueprintId);
+      if (!bp) return { error: `unknown blueprint: ${body.blueprintId ?? '(none)'}` };
+      if (!body.workType || !bp.workTypes.includes(body.workType))
+        return { error: `workType must be one of: ${bp.workTypes.join(', ')}` };
+      const doc = documentManager.create(bp, body.workType, body.title ?? '');
+      if (!doc) return { error: 'could not create document' };
+      // The document session is the collaboration episode on this doc (spec:
+      // session kinds). Created active so the docked chat is live on arrival.
+      sessionManager.create(defaultWorkspaceName, { kind: 'document', docId: doc.id, title: doc.title });
+      textChannel.broadcast(documentsFrame());
+      textChannel.broadcast(sessionFrame());
+      return { doc };
+    },
+    patchSection: (docId, sectionId, body) => {
+      const doc = documentManager.patchSection(docId, sectionId, body);
+      if (!doc) return `unknown document or section: ${docId}/${sectionId}`;
+      textChannel.broadcast(documentsFrame());
+      return null;
+    },
   },
 );
 const micSessions = new MicSessionGate<DeepgramSttStream>();

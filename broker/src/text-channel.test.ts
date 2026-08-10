@@ -76,6 +76,8 @@ function channelWith(opts: {
   execModes?: ConstructorParameters<typeof TextChannel>[19];
   containers?: ConstructorParameters<typeof TextChannel>[20];
   polish?: ConstructorParameters<typeof TextChannel>[21];
+  blueprints?: ConstructorParameters<typeof TextChannel>[22];
+  documents?: ConstructorParameters<typeof TextChannel>[23];
 }): TextChannel {
   return new TextChannel(
     () => {},
@@ -100,6 +102,8 @@ function channelWith(opts: {
     opts.execModes,
     opts.containers,
     opts.polish,
+    opts.blueprints,
+    opts.documents,
   );
 }
 
@@ -1361,6 +1365,71 @@ test('POST /polish returns the rewrite, 400 on empty text, 502 when the rewrite 
       body: JSON.stringify({ text: 'x' }),
     });
     assert.equal(down.status, 502);
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('GET /blueprints returns the loaded set', async () => {
+  const channel = channelWith({
+    blueprints: () => [{ id: 'spec', name: 'Design Spec', workTypes: ['feature'], sections: [] }],
+  });
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/blueprints`);
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { blueprints: Array<{ id: string }> };
+    assert.deepEqual(body.blueprints.map((b) => b.id), ['spec']);
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('POST /documents forwards the body and returns the created doc; PATCH updates a section', async () => {
+  const patches: unknown[] = [];
+  const channel = channelWith({
+    documents: {
+      create: async (body: { blueprintId?: string; workType?: string; title?: string }) =>
+        body.blueprintId === 'spec'
+          ? { doc: { id: 'd1', title: body.title ?? '', blueprintId: 'spec', workType: body.workType ?? '', sections: [], participants: [], proposals: [], status: 'drafting', createdAt: 't', updatedAt: 't' } }
+          : { error: `unknown blueprint: ${body.blueprintId ?? '(none)'}` },
+      patchSection: (docId: string, sectionId: string, body: string) => {
+        patches.push([docId, sectionId, body]);
+        return docId === 'd1' ? null : `unknown document: ${docId}`;
+      },
+    },
+  });
+  const port = await channel.start(0);
+  try {
+    const created = await fetch(`http://127.0.0.1:${port}/documents`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ blueprintId: 'spec', workType: 'feature', title: 'Login spec' }),
+    });
+    assert.equal(created.status, 200);
+    assert.equal(((await created.json()) as { doc: { id: string } }).doc.id, 'd1');
+
+    const bad = await fetch(`http://127.0.0.1:${port}/documents`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ blueprintId: 'nope', workType: 'feature', title: 'x' }),
+    });
+    assert.equal(bad.status, 400);
+
+    const patched = await fetch(`http://127.0.0.1:${port}/documents/d1/sections/overview`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ body: 'It does the thing.' }),
+    });
+    assert.equal(patched.status, 200);
+    assert.deepEqual(patches[0], ['d1', 'overview', 'It does the thing.']);
+
+    const missing = await fetch(`http://127.0.0.1:${port}/documents/d9/sections/overview`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ body: 'x' }),
+    });
+    assert.equal(missing.status, 404);
   } finally {
     await channel.stop();
   }

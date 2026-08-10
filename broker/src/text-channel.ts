@@ -7,6 +7,8 @@
  */
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
+import type { Blueprint } from './blueprints.ts';
+import type { Doc } from './documents.ts';
 
 export interface RosterEntry {
   id: string;
@@ -61,7 +63,13 @@ export type ChannelFrame =
   /** A work-board card changed (moved, delegated, or a delegated task completed/failed) — the board stage refetches. */
   | { type: 'board-updated'; boardId: string }
   /** A capability (or one of its slices, or a card linked to it) changed — the story map stage refetches. */
-  | { type: 'capability-updated'; capabilityId: string };
+  | { type: 'capability-updated'; capabilityId: string }
+  /**
+   * All documents, full-frame-on-change — the roster idiom, not a diff. Also
+   * delivered to every fresh WS client the moment it connects, same as
+   * `session` (see the hello-frame closure in main.ts).
+   */
+  | { type: 'documents'; documents: Doc[] };
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -270,6 +278,18 @@ export class TextChannel {
     },
     /** Polish-my-input (POST /polish): one standalone rewrite call before dispatch. Null = the model call failed; the caller keeps the draft. */
     private readonly polish?: (text: string) => Promise<string | null>,
+    /** Blueprint catalog for GET /blueprints (the document-creation picker). */
+    private readonly blueprints?: () => Blueprint[],
+    /**
+     * Document lifecycle (POST /documents, PATCH /documents/:id/sections/:id).
+     * `create` mirrors `sessions.create`'s async/error-with-status shape;
+     * `patchSection` is synchronous like `sessions.activate` — an error
+     * string or null, mapped to 404/200.
+     */
+    private readonly documents?: {
+      create(body: { blueprintId?: string; workType?: string; title?: string }): Promise<{ doc?: Doc; error?: string; status?: number }>;
+      patchSection(docId: string, sectionId: string, body: string): string | null;
+    },
   ) {}
 
   private clientSeq = 0;
@@ -913,6 +933,74 @@ export class TextChannel {
           );
         });
         return;
+      }
+      {
+        // Blueprints/documents: GET /blueprints is read-only (no guard); the
+        // two mutating routes use the same originBlocked() guard POST
+        // /sessions uses above — an absent Origin passes, a present-and-
+        // disallowed one 403s.
+        const url = new URL(req.url ?? '/', 'http://localhost');
+        const json = (status: number, payload: unknown) =>
+          res.writeHead(status, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify(payload));
+        const originBlocked = (): boolean => {
+          if (isAllowedOrigin(req)) return false;
+          res.writeHead(403, { ...credentialCors(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: 'origin not allowed' }));
+          return true;
+        };
+
+        if (req.method === 'GET' && url.pathname === '/blueprints' && this.blueprints) {
+          json(200, { blueprints: this.blueprints() });
+          return;
+        }
+
+        if (req.method === 'POST' && url.pathname === '/documents' && this.documents) {
+          if (originBlocked()) return;
+          let body = '';
+          req.on('data', (c) => {
+            body += c;
+          });
+          req.on('end', () => {
+            let parsed: { blueprintId?: unknown; workType?: unknown; title?: unknown } = {};
+            try {
+              parsed = JSON.parse(body || '{}') as typeof parsed;
+            } catch {
+              /* empty body handled by the closure's validation */
+            }
+            void this.documents!.create({
+              blueprintId: typeof parsed.blueprintId === 'string' ? parsed.blueprintId : undefined,
+              workType: typeof parsed.workType === 'string' ? parsed.workType : undefined,
+              title: typeof parsed.title === 'string' ? parsed.title : undefined,
+            }).then(
+              (r) => (r.doc ? json(200, { doc: r.doc }) : json(r.status ?? 400, { error: r.error ?? 'invalid request' })),
+              (err: unknown) => json(500, { error: String((err as Error).message ?? err) }),
+            );
+          });
+          return;
+        }
+
+        const docSectionMatch = /^\/documents\/([^/]+)\/sections\/([^/]+)$/.exec(url.pathname);
+        if (req.method === 'PATCH' && docSectionMatch && this.documents) {
+          if (originBlocked()) return;
+          let body = '';
+          req.on('data', (c) => {
+            body += c;
+          });
+          req.on('end', () => {
+            let text = '';
+            try {
+              text = String((JSON.parse(body || '{}') as { body?: unknown }).body ?? '');
+            } catch {
+              /* empty = clear the section, which is legal */
+            }
+            const error = this.documents!.patchSection(
+              decodeURIComponent(docSectionMatch[1]!),
+              decodeURIComponent(docSectionMatch[2]!),
+              text,
+            );
+            json(error ? 404 : 200, error ? { error } : { ok: true });
+          });
+          return;
+        }
       }
       if (req.method === 'POST' && req.url === '/polish' && this.polish) {
         const json = (status: number, payload: unknown) =>
