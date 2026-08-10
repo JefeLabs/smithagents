@@ -110,10 +110,16 @@ export const ARTIFACT_STACK_PITCH = ARTIFACT_H + STORY_GAP;
  *
  * 192, which is Edwin's number: he asked for 20% off the 240 he was looking at.
  *
- * It sits 12px above STEP_W's 180, so the "a capability card is visibly a level above a
- * step card" reading that the earlier widths were buying is thin at this margin — see the
- * report for how the row actually reads. Recorded because it is the thing most likely to
- * be re-litigated, not as an argument against the number.
+ * IT IS NOT 12PX ABOVE A STEP CARD, which is the trap this comment exists to close. 192
+ * against STEP_W's 180 looks like nothing, and every argument about whether a capability
+ * reads as a level above an activity was made against that pair. They are not comparable:
+ * STEP_W is a FLOW-SPACE constant and only equals screen pixels at zoom 1, which is not a
+ * state this canvas is normally in — `fitView` settles around 0.71 on real data, where a
+ * step card draws 128px. The header is not zoomed at all. So the comparison a reader
+ * actually sees is 192 against ~128, and the hierarchy holds comfortably.
+ *
+ * Measure the rendered widths, not the constants, before concluding this number is too
+ * small.
  *
  * THE ROW HOLDS THE BLANK CARD TOO, which is the arithmetic worth keeping: three
  * capabilities need FOUR slots, so the number of cards a normal window shows turns over at
