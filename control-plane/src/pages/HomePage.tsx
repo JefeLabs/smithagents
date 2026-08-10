@@ -140,8 +140,7 @@ export function HomePage() {
       // session kinds): document sessions live at their doc, chat at "/".
       const target = sessions.find((s) => s.id === id);
       if (target?.kind === "document" && target.docId) {
-        // Task 9 registers this route
-        void navigate({ to: "/doc/$docId", params: { docId: target.docId } } as never);
+        void navigate({ to: "/doc/$docId", params: { docId: target.docId } });
       } else {
         void navigate({ to: "/" });
       }
@@ -230,6 +229,14 @@ export function HomePage() {
           <NewSessionScreen
             lockedWorkspace={composer?.locked}
             forced={knownZeroSessions}
+            listBlueprints={api.getBlueprints}
+            onCreateDocument={async (blueprintId, workType, title) => {
+              const r = await api.postDocument(blueprintId, workType, title);
+              if (r.error) return { error: r.error };
+              closeComposer();
+              if (r.doc) void navigate({ to: "/doc/$docId", params: { docId: r.doc.id } });
+              return undefined;
+            }}
             onSend={async (ws, mode, prompt) => {
               const r = await api.postSession(BROKER_BASE, ws, mode, prompt);
               if (r.error) {

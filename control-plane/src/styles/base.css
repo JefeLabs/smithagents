@@ -121,7 +121,8 @@ body {
    specificity, so this holds regardless of source order. */
 .stage.board-stage,
 .stage.map-stage,
-.stage.dashboards-stage {
+.stage.dashboards-stage,
+.stage.document-stage {
   align-items: stretch;
   justify-content: flex-start;
   padding: 14px;

@@ -171,4 +171,43 @@ describe("stage routing", () => {
     const panel = await screen.findByRole("dialog");
     expect(within(panel).getByText("acme")).toBeTruthy();
   });
+
+  it("a document session activation lands on its document", async () => {
+    const router = await renderAt("/", (client) => {
+      client.setQueryData(qk.documents, [
+        {
+          id: "d1",
+          title: "Login spec",
+          blueprintId: "spec",
+          workType: "feature",
+          sections: [{ id: "overview", heading: "What this is", body: "Words." }],
+          participants: [],
+          status: "drafting",
+          createdAt: "t",
+          updatedAt: "t",
+        },
+      ]);
+      client.setQueryData(qk.sessions, [
+        {
+          id: "s-doc",
+          title: "Login spec",
+          workspace: "acme",
+          updatedAt: "t",
+          active: false,
+          runtime: "local-in-process",
+          kind: "document",
+          docId: "d1",
+        },
+      ]);
+    });
+    await userEvent.click(screen.getByRole("row", { name: /^sessions$/i }));
+    await userEvent.click(screen.getByText("Login spec"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/doc/d1"));
+    expect(await screen.findByRole("region", { name: "Document" })).toBeTruthy();
+  });
+
+  it("an unknown docId redirects home", async () => {
+    const router = await renderAt("/doc/d404");
+    await waitFor(() => expect(router.state.location.pathname).toBe("/"));
+  });
 });
