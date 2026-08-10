@@ -66,38 +66,105 @@ export function SlicePanel({ slices, invalidIds, activeSliceId, onHover, onOpen,
           </button>
         </header>
         {!open ? null : (
-          <>
-            <ul className="slice-panel__list" onMouseLeave={() => onHover(null)}>
-              {slices.map((slice) => (
-                <li
-                  key={slice.id}
-                  data-invalid={invalidIds.has(slice.id) ? "true" : undefined}
-                  className={slice.id === activeSliceId ? "is-open" : undefined}
+          <ul className="slice-panel__list" onMouseLeave={() => onHover(null)}>
+            {slices.map((slice) => (
+              <li
+                key={slice.id}
+                data-invalid={invalidIds.has(slice.id) ? "true" : undefined}
+                className={slice.id === activeSliceId ? "is-open" : undefined}
+              >
+                <button
+                  type="button"
+                  onMouseEnter={() => onHover(slice.id)}
+                  onFocus={() => onHover(slice.id)}
+                  onClick={() => onOpen(slice.id)}
                 >
-                  <button
-                    type="button"
-                    onMouseEnter={() => onHover(slice.id)}
-                    onFocus={() => onHover(slice.id)}
-                    onClick={() => onOpen(slice.id)}
-                  >
-                    <span className="slice-panel__name">{slice.name}</span>
-                    <span className="slice-panel__count">{slice.storyIds.length}</span>
-                    {invalidIds.has(slice.id) && (
-                      <span
-                        className="slice-panel__warn"
-                        title="Every story here belongs to another slice too. Give it one of its own."
-                      >
-                        ⚠
-                      </span>
-                    )}
-                  </button>
-                </li>
-              ))}
-            </ul>
-            {footer}
-          </>
+                  <span className="slice-panel__name">{slice.name}</span>
+                  <span className="slice-panel__count">{slice.storyIds.length}</span>
+                  {invalidIds.has(slice.id) && (
+                    <span
+                      className="slice-panel__warn"
+                      title="Every story here belongs to another slice too. Give it one of its own."
+                    >
+                      ⚠
+                    </span>
+                  )}
+                </button>
+              </li>
+            ))}
+          </ul>
         )}
+        {/* OUTSIDE the collapsed branch on purpose. A user who selects three stories with
+            the panel shut has a live selection, one way to act on it, and — if this lived
+            inside — nothing on screen. The composer is about the SELECTION, not the list,
+            so it stays reachable whatever the list is doing. It costs nothing when idle:
+            SliceComposer renders null at zero selected, so a collapsed panel with no
+            selection is still a single header row. */}
+        {footer}
       </section>
     </Panel>
+  );
+}
+
+interface FooterProps {
+  count: number;
+  /**
+   * PRE-EXISTING slices this selection would strip, named in the message.
+   *
+   * Deliberately NOT "every blocked slice": the slice being created is blocked more often
+   * than any neighbour is, and it has no name yet — including it renders "…is the only
+   * story tour scheduling v1,  owns." with a hole where a name should be. Whether the
+   * write is refused at all is `disabled`, which is a different question.
+   */
+  blocked: CapSliceT[];
+  /** True when the write would be rejected — including when the only casualty is the new slice. */
+  disabled: boolean;
+  blockingStory: string | null;
+  naming: boolean;
+  onStart: () => void;
+  onName: (name: string) => void;
+}
+
+/**
+ * The create control. A SECOND export rather than markup inside SlicePanel, so the panel
+ * still knows nothing about selection — MapStage renders this and hands it over as
+ * `footer`.
+ */
+export function SliceComposer({ count, blocked, disabled, blockingStory, naming, onStart, onName }: FooterProps) {
+  if (count === 0) return null;
+  if (naming) {
+    return (
+      <input
+        className="slice-panel__name-input"
+        placeholder="Name this slice…"
+        // The button that revealed this input has left the DOM, so without autoFocus the
+        // focus lands on <body> and the gesture stalls with nowhere to type.
+        // biome-ignore lint/a11y/noAutofocus: focus would otherwise land on body mid-gesture
+        autoFocus
+        onKeyDown={(e) => {
+          if (e.key === "Enter") onName((e.target as HTMLInputElement).value.trim());
+        }}
+      />
+    );
+  }
+  return (
+    <div className="slice-panel__composer">
+      <button type="button" disabled={disabled} onClick={onStart}>
+        + slice from {count} selected
+      </button>
+      {disabled && (
+        <p className="slice-panel__blocked">
+          {/* TWO FORMS, split by whether the blocked slice is the one being created.
+              Creating a slice whose every story is already spoken for takes nothing from
+              anyone — the neighbours stay healthy and there is no victim to name, so the
+              honest sentence is about the selection. That is also the more actionable one:
+              the fix is to change what you selected. `storiesLost` returns empty in
+              exactly that case, which is what `blockingStory === null` means here. */}
+          {blockingStory
+            ? `"${blockingStory}" is the only story ${blocked.map((s) => s.name).join(", ")} owns.`
+            : "Every story you selected already belongs to another slice — add one that does not."}
+        </p>
+      )}
+    </div>
   );
 }

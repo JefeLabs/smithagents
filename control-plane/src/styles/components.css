@@ -3576,3 +3576,43 @@ button.logo {
   flex: 0 0 auto;
   color: #e0a15a;
 }
+.slice-panel__composer {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--separator);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.slice-panel__composer button {
+  width: 100%;
+  padding: 5px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--pill-br);
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+}
+.slice-panel__composer button:disabled {
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+/* The reason the button is dead, next to the button. Wraps rather than truncating —
+   it names a slice and a story, and a clipped explanation is no explanation. */
+.slice-panel__blocked {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.35;
+  color: #e0a15a;
+}
+.slice-panel__name-input {
+  width: 100%;
+  margin-top: 6px;
+  padding: 5px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--pill-br);
+  background: none;
+  color: var(--text);
+  font-size: 12px;
+}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CapSliceT } from "../../api/types";
-import { blockedBy, slicesWithoutExclusiveStory } from "./slices";
+import { blockedBy, slicesWithoutExclusiveStory, storiesLost } from "./slices";
 
 const sl = (id: string, storyIds: string[]): CapSliceT => ({ id, name: id, order: 0, storyIds });
 
@@ -64,5 +64,65 @@ describe("blockedBy", () => {
     const before = [sl("BROKEN", []), sl("HEALTHY", ["s2"])];
     const after = [sl("BROKEN", ["s1", "s2"]), sl("HEALTHY", ["s2"])];
     expect(blockedBy(before, after).map((s) => s.id)).toEqual(["HEALTHY"]);
+  });
+});
+
+describe("storiesLost", () => {
+  it("names the story a neighbour took, not merely one they share", () => {
+    // X owned s1 alone and also shared s2 with Y. The new slice takes BOTH.
+    // Only s1 was ever exclusive, so only s1 was lost — a `find` over the
+    // selection names whichever comes first and is wrong half the time.
+    const current = [sl("X", ["s1", "s2"]), sl("Y", ["s2", "s3"])];
+    const proposed = [...current, sl("NEW", ["s1", "s2"])];
+    expect(storiesLost(current, proposed, current[0])).toEqual(["s1"]);
+  });
+
+  it("returns every exclusive story lost, not just the first", () => {
+    const current = [sl("X", ["s1", "s2"])];
+    const proposed = [...current, sl("NEW", ["s1", "s2"])];
+    expect(storiesLost(current, proposed, current[0])).toEqual(["s1", "s2"]);
+  });
+
+  it("names the story even when the slice was emptied rather than raided", () => {
+    // X is emptied outright. It still LOST s1 as an exclusive story — it no
+    // longer holds it at all — so the story is nameable here too.
+    const current = [sl("X", ["s1"]), sl("Y", ["s2"])];
+    const proposed = [sl("X", []), sl("Y", ["s2"])];
+    expect(storiesLost(current, proposed, current[0])).toEqual(["s1"]);
+  });
+
+  it("is never empty for a blocked slice that EXISTED before the write", () => {
+    // Asserted rather than assumed. Note the quantifier: pre-existing slices
+    // only. The first version of this search permuted just X and Y — slices
+    // present in both states — so it could not reach a CREATED slice, and
+    // "never empty" looked universal when it is not. See the next test.
+    const sets = ["s1", "s2", "s3"].reduce<string[][]>((acc, x) => acc.concat(acc.map((s) => [...s, x])), [[]]);
+    let examined = 0;
+    for (const a of sets)
+      for (const b of sets)
+        for (const c of sets)
+          for (const d of sets) {
+            const current = [sl("X", a), sl("Y", b)];
+            const proposed = [sl("X", c), sl("Y", d)];
+            for (const slice of blockedBy(current, proposed)) {
+              examined++;
+              expect(storiesLost(current, proposed, slice).length).toBeGreaterThan(0);
+            }
+          }
+    expect(examined).toBeGreaterThan(0);
+  });
+
+  it("IS empty for a newly created blocked slice — the feature's main flow", () => {
+    // The case table's own last row, turned into a creation. A and B stay
+    // healthy; C is blocked because every story selected for it is already
+    // spoken for. C lost nothing — it never had anything — so no story can be
+    // named and nothing was taken from anyone. This is why the panel copy
+    // branches on whether the blocked slice is new.
+    const current = [sl("A", ["s1", "s3"]), sl("B", ["s2", "s4"])];
+    const proposed = [...current, sl("C", ["s1", "s2"])];
+    expect(blockedBy(current, proposed).map((s) => s.id)).toEqual(["C"]);
+    expect(storiesLost(current, proposed, proposed[2])).toEqual([]);
+    // and the neighbours are untouched, so there is no victim to name either
+    expect(slicesWithoutExclusiveStory(proposed).map((s) => s.id)).toEqual(["C"]);
   });
 });

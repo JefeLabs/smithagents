@@ -98,7 +98,7 @@ export interface StoryNodeData {
   sliceValue: string;
   onSliceChange: (sliceId: string) => void;
   onRemove: () => void;
-  onSelect: () => void;
+  onReveal: () => void;
   selected: boolean;
   dimmed: boolean;
 }
@@ -129,7 +129,7 @@ export interface StoryNodeData {
  */
 export function StoryNode({ data }: { data: StoryNodeData | BlankNodeData }) {
   if (data.blank) return <BlankCard className="map-story" placeholder="Add a story…" onCommit={data.onCommit} />;
-  const { story, sliceOptions, sliceValue, onSliceChange, onRemove, onSelect, selected, dimmed } = data;
+  const { story, sliceOptions, sliceValue, onSliceChange, onRemove, onReveal, selected, dimmed } = data;
   return (
     <div
       className={`map-story${story.done ? " is-done" : ""}${dimmed ? " is-dimmed" : ""}${
@@ -142,7 +142,23 @@ export function StoryNode({ data }: { data: StoryNodeData | BlankNodeData }) {
           reveal for free, where a span would have needed role, tabIndex and a key handler
           to reach the same place. It is still the drag handle: xyflow matches
           `dragHandle` against the DOM and does not care what element it finds. */}
-      <button type="button" className="map-story__handle" onClick={onSelect}>
+      <button
+        type="button"
+        className="map-story__handle"
+        onClick={(e) => {
+          // Shift is the add-to-selection modifier, so the title must DECLINE it and let
+          // the event reach React Flow. Without this the 44% of the card that reveals
+          // would be shift-click-dead, and a user sweeping up a selection would silently
+          // open a band instead.
+          if (e.shiftKey) return;
+          // A plain click reveals and must NOT also change the selection: React Flow
+          // selects a node on click, which would clear a selection being assembled every
+          // time the user inspected a story. Stopping here is what keeps the two gestures
+          // on the same pixels without either eating the other.
+          e.stopPropagation();
+          onReveal();
+        }}
+      >
         {story.text}
       </button>
       <div className="map-story__meta">

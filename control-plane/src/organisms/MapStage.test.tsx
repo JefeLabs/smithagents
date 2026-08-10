@@ -690,19 +690,6 @@ describe("MapStage editing", () => {
     await waitFor(() => expect(screen.getByText(/update failed/i)).toBeTruthy());
   });
 
-  it("creates a slice", async () => {
-    const { calls } = stubFetch();
-    const { client } = renderMapStage();
-    seedSessionFrame(client, { workspace: "skoolscout" });
-    await screen.findByText("tour scheduling v1", { selector: ".slice-band__name" });
-    await userEvent.type(screen.getByPlaceholderText(/new slice name/i), "tour scheduling v2{Enter}");
-    await waitFor(() => {
-      const call = calls.find((c) => c.method === "PATCH" && c.url.includes("/work/capabilities/school-feature-set"));
-      const slices = (call?.body as { slices?: Array<{ name: string }> })?.slices;
-      expect(slices?.some((s) => s.name === "tour scheduling v2")).toBe(true);
-    });
-  });
-
   it("clicking a slice band reveals its chain and dims the rest", async () => {
     stubFetch();
     const { client } = renderMapStage();
@@ -919,5 +906,148 @@ describe("MapStage editing", () => {
     // to un-hover.
     await userEvent.click(within(panel).getByRole("button", { name: /collapse slices/i }));
     await waitFor(() => expect(document.querySelector(".map-story.is-dimmed")).toBeNull());
+  });
+  /**
+   * Selection, driven the way a user drives it: Shift held (React Flow tracks
+   * `multiSelectionKeyCode` through a document-level key listener, not through the click
+   * event) and the click landing on the story's TITLE — the same 44% of the card that
+   * reveals. That routes through the title's shift-decline, so these tests fail if the
+   * two gestures ever start eating each other.
+   *
+   * Nodes are found by `data-id` rather than by role: xyflow marks unmeasured nodes
+   * `visibility: hidden`, and jsdom measures nothing, so `getByRole` cannot see them.
+   */
+  function selectStories(ids: string[]) {
+    fireEvent.keyDown(document, { key: "Shift", shiftKey: true });
+    for (const id of ids) {
+      const handle = document.querySelector(`.react-flow__node[data-id="${id}"] .map-story__handle`);
+      if (!handle) throw new Error(`no story node ${id} on the canvas`);
+      fireEvent.click(handle, { shiftKey: true });
+    }
+    fireEvent.keyUp(document, { key: "Shift" });
+  }
+
+  const blockedText = () => document.querySelector(".slice-panel__blocked")?.textContent ?? "";
+
+  it("creating a slice from the selection sends one PATCH with the whole array", async () => {
+    const { calls } = stubFetch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    const panel = await screen.findByRole("region", { name: "Slices" });
+    // s2 is ALREADY in sl1 and s3 is in none. Overlapping is the point of the feature, and
+    // sl1 keeps s1 so nothing is stripped — so this is a write the rule allows.
+    selectStories(["s2", "s3"]);
+
+    const create = await within(panel).findByText(/slice from 2 selected/i);
+    expect((create.closest("button") as HTMLButtonElement).disabled).toBe(false);
+    await userEvent.click(create);
+    await userEvent.type(screen.getByPlaceholderText("Name this slice…"), "analytics v2{Enter}");
+
+    await waitFor(() => {
+      expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(1);
+    });
+    const body = calls.find((c) => c.method === "PATCH")?.body as { slices: Array<Record<string, unknown>> };
+    // WHOLESALE: the existing three ride along, or the server would read their absence as
+    // a deletion.
+    expect(body.slices).toHaveLength(4);
+    expect(body.slices[3]).toMatchObject({ name: "analytics v2", storyIds: ["s2", "s3"] });
+  });
+
+  it("disables the button and names the slice a selection would strip", async () => {
+    stubFetch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    const panel = await screen.findByRole("region", { name: "Slices" });
+    // sl1 owns s1 AND s2 exclusively, so taking BOTH is what strips it — taking one alone
+    // leaves it the other. Measured against blockedBy rather than assumed.
+    selectStories(["s1", "s2"]);
+
+    const create = await within(panel).findByText(/slice from 2 selected/i);
+    expect((create.closest("button") as HTMLButtonElement).disabled).toBe(true);
+    // Asserted on the MESSAGE, not on the panel: "tour scheduling v1" also appears in the
+    // list row above, so a panel-wide text query passes no matter what the message says.
+    await waitFor(() => expect(blockedText()).toMatch(/is the only story tour scheduling v1 owns/i));
+    expect(blockedText()).toContain("create tour time slots");
+    // The slice being created is blocked here too, and it has no name yet — if it reached
+    // the sentence there would be a hole where a name should be.
+    expect(blockedText()).not.toMatch(/,\s+owns/);
+  });
+
+  it("blames the selection, not a neighbour, when only the NEW slice would be invalid", async () => {
+    stubFetch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    const panel = await screen.findByRole("region", { name: "Slices" });
+    // s1 is already in sl1, and sl1 keeps s2 — so nothing is taken from anyone and the new
+    // slice is the only casualty. There is no victim to name.
+    selectStories(["s1"]);
+
+    const create = await within(panel).findByText(/slice from 1 selected/i);
+    expect((create.closest("button") as HTMLButtonElement).disabled).toBe(true);
+    await waitFor(() => expect(blockedText()).toMatch(/already belongs to another slice/i));
+    expect(blockedText()).not.toMatch(/is the only story/i);
+  });
+
+  it("offers nothing when nothing is selected", async () => {
+    stubFetch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    const panel = await screen.findByRole("region", { name: "Slices" });
+    expect(within(panel).queryByText(/slice from/i)).toBeNull();
+  });
+
+  it("the New slice name box is gone — selection is the only way a slice is born", async () => {
+    stubFetch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    await screen.findByRole("region", { name: "Slices" });
+    expect(screen.queryByPlaceholderText("New slice name…")).toBeNull();
+  });
+
+  it("a reveal does not clear the selection", async () => {
+    stubFetch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    const panel = await screen.findByRole("region", { name: "Slices" });
+    selectStories(["s1", "s2"]);
+    expect(await within(panel).findByText(/slice from 2 selected/i)).toBeDefined();
+
+    // Revealing rebuilds every node from the model, which is exactly what wipes React
+    // Flow's own `selected` flags — the selection has to be written back.
+    //
+    // fireEvent, not userEvent: a story node is draggable, so userEvent's fuller pointer
+    // sequence reaches d3-drag's `nodrag`, which dereferences `event.view.document` and
+    // throws under jsdom. The throw is UNHANDLED, so the suite reports 44 passed and
+    // still exits 1.
+    fireEvent.click(screen.getByText("view tour analytics"));
+    await waitFor(() => expect(document.querySelector(".map-slice-anchor, .map-artifact")).not.toBeNull());
+    expect(within(panel).getByText(/slice from 2 selected/i)).toBeDefined();
+  });
+
+  it("shift-clicking a story title adds it rather than revealing", async () => {
+    stubFetch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    const panel = await screen.findByRole("region", { name: "Slices" });
+    selectStories(["s1"]);
+    expect(await within(panel).findByText(/slice from 1 selected/i)).toBeDefined();
+
+    selectStories(["s2"]);
+    expect(await within(panel).findByText(/slice from 2 selected/i)).toBeDefined();
+    // …and it did NOT reveal: no chain opened for the story that was shift-clicked.
+    expect(document.querySelector(".map-slice-anchor")).toBeNull();
+  });
+
+  it("keeps the create control reachable while the panel is collapsed", async () => {
+    stubFetch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    const panel = await screen.findByRole("region", { name: "Slices" });
+    selectStories(["s1", "s2"]);
+    await within(panel).findByText(/slice from 2 selected/i);
+
+    await userEvent.click(within(panel).getByRole("button", { name: /collapse slices/i }));
+    expect(within(panel).queryByText("tour scheduling v1")).toBeNull();
+    expect(within(panel).getByText(/slice from 2 selected/i)).toBeDefined();
   });
 });

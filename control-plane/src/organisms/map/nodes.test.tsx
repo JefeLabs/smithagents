@@ -21,7 +21,7 @@ describe("StoryNode", () => {
     sliceValue: "backlog",
     onSliceChange: vi.fn(),
     onRemove: vi.fn(),
-    onSelect: vi.fn(),
+    onReveal: vi.fn(),
     selected: false,
     dimmed: false,
   };
@@ -44,20 +44,20 @@ describe("StoryNode", () => {
   });
 
   it("selects the story when its title is clicked, and only its title", async () => {
-    const onSelect = vi.fn();
+    const onReveal = vi.fn();
     const onSliceChange = vi.fn();
-    render(<StoryNode data={{ ...data, onSelect, onSliceChange }} />);
+    render(<StoryNode data={{ ...data, onReveal, onSliceChange }} />);
     await userEvent.click(screen.getByRole("button", { name: "create slots" }));
-    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onReveal).toHaveBeenCalledTimes(1);
 
     // The card carries a <select>; opening it must NOT also reveal a chain. This is the
     // case that made the title the target instead of the whole card.
     await userEvent.selectOptions(screen.getByLabelText("Slice for create slots"), "sl1");
     expect(onSliceChange).toHaveBeenCalledWith("sl1");
-    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onReveal).toHaveBeenCalledTimes(1);
 
     await userEvent.click(screen.getByLabelText("Remove story: create slots"));
-    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onReveal).toHaveBeenCalledTimes(1);
   });
 
   it("puts the controls in their own row, so the title gets the card's width", async () => {

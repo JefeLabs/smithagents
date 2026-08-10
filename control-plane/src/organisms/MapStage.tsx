@@ -36,8 +36,8 @@ import {
 } from "./map/layout";
 import { BlankCard } from "./map/nodes";
 import { nodeTypes } from "./map/nodeTypes";
-import { SlicePanel } from "./map/SlicePanel";
-import { slicesWithoutExclusiveStory } from "./map/slices";
+import { SliceComposer, SlicePanel } from "./map/SlicePanel";
+import { blockedBy, slicesWithoutExclusiveStory, storiesLost } from "./map/slices";
 import { useMapSelection } from "./map/useMapSelection";
 
 // Test seam: jsdom cannot synthesize xyflow pointer drags any more than it could
@@ -71,15 +71,15 @@ export async function fireNodeDragStop(nodeId: string, position: { x: number; y:
 }
 
 /**
- * The composers that are still text boxes — the slice band's two, and nothing else.
+ * The one composer that is still a text box — the slice band's plan path, and nothing else.
  *
  * All FOUR levels of the map are blank cards now: capability, activity, step and story
  * each end their row or column with one, holding their own text and handing back the
- * trimmed value through `onCommit`. `capName` used to live here and was the last of
- * them to go; the slice band is what remains, and its records are keyed by slice id.
+ * trimmed value through `onCommit`. `capName` was the last of those to go, and
+ * `sliceName` followed it: a slice named into existence has no stories, so it owns
+ * nothing and is invalid the moment it exists. Slices are made from a selection now.
  */
 interface MapComposerValues {
-  sliceName: string;
   planTexts: Record<string, string>;
 }
 
@@ -88,6 +88,13 @@ interface MapComposerValues {
  * stacks, with slices carved below. Cards and spec docs are downstream
  * views; every text edit happens here and only here.
  */
+/**
+ * Stand-in id for the slice the composer WOULD create. It never reaches the server; it
+ * only has to be absent from `cap.slices` so the differential treats the write as a
+ * creation rather than an edit.
+ */
+const PROPOSED_ID = "__proposed__";
+
 export function MapStage() {
   const capabilitiesQuery = useCapabilities();
   const capabilities = capabilitiesQuery.data?.capabilities ?? [];
@@ -122,7 +129,7 @@ export function MapStage() {
   // planTexts is keyed by slice id and registered as the bands render, which is why
   // this is one form rather than a `Record<string, string>` state.
   const { register, getValues, setValue } = useForm<MapComposerValues>({
-    defaultValues: { sliceName: "", planTexts: {} },
+    defaultValues: { planTexts: {} },
   });
 
   const displayError = error ?? loadError;
@@ -259,6 +266,33 @@ export function MapStage() {
   // no longer names a record in `cap` simply misses, and the reveal collapses.
   const [hoveredSliceId, setHoveredSliceId] = useState<string | null>(null);
 
+  /**
+   * THE SELECTION LIVES HERE, NOT IN REACT FLOW — and the spec said the opposite.
+   *
+   * React Flow keeps `selected` on the node objects, and this component rebuilds those
+   * wholesale from the model on every reveal, hover, reorder and WS update. Measured in
+   * Task 3: select two stories, click a story title to reveal, and the selection goes
+   * from two to none. So React Flow REPORTS the gesture and MapStage stores the answer,
+   * which `decorate` writes back on each rebuild — the same argument-passed shape the dim
+   * set uses, for the same reason.
+   */
+  const [selectedStoryIds, setSelectedStoryIds] = useState<string[]>([]);
+  const selectedIdSet = useMemo(() => new Set(selectedStoryIds), [selectedStoryIds]);
+
+  /**
+   * The write-back would otherwise be a loop: `decorate` sets `selected`, React Flow
+   * reports that as a selection change, which sets state, which re-seeds. The guard bails
+   * when the set has not actually changed.
+   *
+   * Compared as a SET, not element-wise. React Flow reports selected nodes in node order,
+   * which is not the order they were clicked in, so an element-wise comparison would see
+   * a difference on every multi-select and churn an extra render before settling.
+   */
+  const onSelectionChange = useCallback(({ nodes: sel }: { nodes: Node[] }) => {
+    const ids = sel.map((n) => n.id);
+    setSelectedStoryIds((prev) => (prev.length === ids.length && prev.every((id) => ids.includes(id)) ? prev : ids));
+  }, []);
+
   // Hovering a slice dims every story it does NOT own. Same argument-passed dim set the
   // slice reveal already uses, so there is one dimming mechanism rather than two that can
   // disagree. Keyed on ids, not on positions, so it survives any relayout.
@@ -274,6 +308,38 @@ export function MapStage() {
     () => new Set(slicesWithoutExclusiveStory(cap?.slices ?? []).map((s) => s.id)),
     [cap],
   );
+
+  const [naming, setNaming] = useState(false);
+
+  // The write the button would send, evaluated before it is sent. `__proposed__` is a
+  // stand-in id: it never reaches the server, it only has to be absent from `cap.slices`
+  // so the differential treats it as CREATED rather than edited.
+  const proposed = useMemo(
+    () =>
+      cap ? [...cap.slices, { id: PROPOSED_ID, name: "", order: cap.slices.length, storyIds: selectedStoryIds }] : [],
+    [cap, selectedStoryIds],
+  );
+  const blocked = cap ? blockedBy(cap.slices, proposed) : [];
+  // Split, because the two halves answer different questions. ANY blocked slice refuses
+  // the write, but only a slice that existed before can be NAMED as having lost something
+  // — the new one has no name yet, and putting it in the sentence leaves a hole where a
+  // name should be.
+  const victims = blocked.filter((s) => s.id !== PROPOSED_ID);
+  // The stories the raided slice is LOSING — a second differential, this time over
+  // stories. Not a `find` over the selection: that names whichever story happens to come
+  // first, which is wrong whenever the selection also takes a story that was already
+  // shared. Empty when no pre-existing slice was raided, which is the common case and the
+  // reason the message has two forms.
+  const lost = victims.length > 0 && cap ? storiesLost(cap.slices, proposed, victims[0]) : [];
+  const blockingStory = lost.length > 0 ? (cap?.stories.find((s) => s.id === lost[0])?.text ?? null) : null;
+
+  const createSliceFromSelection = (name: string) => {
+    if (!cap || !name || selectedStoryIds.length === 0) return;
+    void patchCap({
+      slices: [...cap.slices, { id: crypto.randomUUID(), name, order: cap.slices.length, storyIds: selectedStoryIds }],
+    });
+    setNaming(false);
+  };
 
   const revealedStoryId = selection?.kind === "story" ? selection.id : null;
   const revealedStory = cap?.stories.find((s) => s.id === revealedStoryId) ?? null;
@@ -444,15 +510,6 @@ export function MapStage() {
       setError(err instanceof Error ? err.message : "unreachable");
     }
   };
-  const addSlice = () => {
-    const sliceName = getValues("sliceName").trim();
-    if (!cap || !sliceName) return;
-    void patchCap({
-      slices: [...cap.slices, { id: crypto.randomUUID(), name: sliceName, order: cap.slices.length, storyIds: [] }],
-    });
-    setValue("sliceName", "");
-  };
-
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
 
   /**
@@ -481,8 +538,8 @@ export function MapStage() {
    * reaches here today (they are appended after `decorate`, not laid out by
    * `layoutMap`), and that is precisely why the mistake would survive review.
    */
-  const decorate = (base: MapNode[], dimmedIds: Set<string>): Node[] =>
-    base.map((n) => {
+  const decorateNode = (n: MapNode, dimmedIds: Set<string>): Node => {
+    {
       const dimmed = dimmedIds.has(n.id);
       if (n.data.blank) {
         if (n.type === "story") {
@@ -510,7 +567,7 @@ export function MapStage() {
             sliceValue: sliceFor(story.id),
             onSliceChange: (sliceId: string) => assignSlice(story.id, sliceId),
             onRemove: () => removeStory(story),
-            onSelect: () => select({ kind: "story", id: story.id }),
+            onReveal: () => select({ kind: "story", id: story.id }),
           },
         } as Node;
       }
@@ -536,7 +593,20 @@ export function MapStage() {
       // their whole payload from the emission site. Returning them untouched is the
       // honest default now that the union admits levels this function does not handle.
       return n as Node;
-    });
+    }
+  };
+
+  /**
+   * `selected` here is React Flow's NODE-LEVEL flag — not the `data.selected` a story card
+   * reads for its reveal outline. Two different things one word apart, so: this one is the
+   * lasso/shift-click selection, that one is "this story's chain is open".
+   *
+   * It is written on EVERY rebuild because MapStage owns the selection and these node
+   * objects are thrown away and remade on every model change, reveal and hover. React Flow
+   * reports selection gestures; it does not store the selection across a re-seed.
+   */
+  const decorate = (base: MapNode[], dimmedIds: Set<string>, selectedIds: Set<string>): Node[] =>
+    base.map((n) => ({ ...decorateNode(n, dimmedIds), selected: selectedIds.has(n.id) }));
 
   // Positions are derived, never stored — but xyflow needs local node state for a
   // node to follow the cursor mid-drag, so the model is re-seeded into it whenever
@@ -583,7 +653,7 @@ export function MapStage() {
       // specced", which is a narrow question that has no business restyling the map. The
       // story's own `is-selected` says which one is asking.
       const at = base.find((n) => n.type === "story" && n.id === revealedStory.id)?.position;
-      const decorated = decorate(base, hoverDimmed);
+      const decorated = decorate(base, hoverDimmed, selectedIdSet);
       if (!at) {
         // The story is in the model but not on the canvas — its step was removed. There
         // is nowhere to hang a stack, so show the map unchanged rather than guessing.
@@ -632,7 +702,7 @@ export function MapStage() {
     }
 
     if (!revealedSlice) {
-      setNodes(decorate(base, hoverDimmed));
+      setNodes(decorate(base, hoverDimmed, selectedIdSet));
       return;
     }
 
@@ -644,7 +714,7 @@ export function MapStage() {
     // Unioned rather than replaced: a hover while a band is open should not LIGHT a story
     // the open slice does not own. Dim is the safe direction to combine in.
     const dimmedIds = new Set(base.filter((n) => n.type === "story" && !inSlice.has(n.id)).map((n) => n.id));
-    const decorated = decorate(base, new Set([...dimmedIds, ...hoverDimmed]));
+    const decorated = decorate(base, new Set([...dimmedIds, ...hoverDimmed]), selectedIdSet);
 
     // One y for the whole row, computed once: it depends on the deepest story stack,
     // which is a property of the model and not of any single artifact.
@@ -688,7 +758,7 @@ export function MapStage() {
     setNodes([...decorated, ...ephemeral]);
     // `hoverDimmed` is listed for the same reason `revealedSlice` is: it is a plain value
     // this effect reads, and leaving it out would show the previous hover's dimming.
-  }, [cap, revealedSlice, revealedStory, revealedStoryId, storySlice, select, setNodes, hoverDimmed]);
+  }, [cap, revealedSlice, revealedStory, revealedStoryId, storySlice, select, setNodes, hoverDimmed, selectedIdSet]);
 
   /**
    * Moves an activity to `index`, renumbering `order` densely.
@@ -737,7 +807,7 @@ export function MapStage() {
     // Invalid drop, or a rejected mutation: re-seed from the model. Without this the
     // node keeps its dropped position and shows a move that never happened — and the
     // seeding effect cannot cover it, because on both paths the model never changed.
-    const reseed = () => setNodes(decorate(layoutMap(cap).nodes, new Set()));
+    const reseed = () => setNodes(decorate(layoutMap(cap).nodes, new Set(), selectedIdSet));
     // The TYPE comes from the node, never from parsing the id. layout.ts owns those
     // formats and is the only place allowed to take one apart.
     const dragged = nodes.find((n) => n.id === nodeId);
@@ -898,6 +968,11 @@ export function MapStage() {
               nodeTypes={nodeTypes}
               onNodesChange={onNodesChange}
               onNodeDragStop={onNodeDragStop}
+              // The PROP, not `useOnSelectionChange`. That hook reads React Flow's store
+              // from context, and `<ReactFlow>` creates that provider inside its own
+              // render — so a hook called here, in the component that renders it, sits
+              // above the provider and has no store. Same SelectionListener either way.
+              onSelectionChange={onSelectionChange}
               nodesConnectable={false}
               // Selection is how a slice gets its stories. Which nodes can be picked is
               // decided in layout.ts by `selectable`, not here — these props only turn the
@@ -942,6 +1017,17 @@ export function MapStage() {
                 // the slice already open closes it and the two controls cannot disagree
                 // about what is revealed.
                 onOpen={(id) => select({ kind: "slice", id })}
+                footer={
+                  <SliceComposer
+                    count={selectedStoryIds.length}
+                    blocked={victims}
+                    disabled={blocked.length > 0}
+                    blockingStory={blockingStory}
+                    naming={naming}
+                    onStart={() => setNaming(true)}
+                    onName={createSliceFromSelection}
+                  />
+                }
               />
             </ReactFlow>
           </div>
@@ -1014,15 +1100,6 @@ export function MapStage() {
                   </button>
                 </div>
               ))}
-            <div className="slice-band slice-band--composer">
-              <input
-                placeholder="New slice name…"
-                {...register("sliceName")}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") addSlice();
-                }}
-              />
-            </div>
           </div>
         </>
       )}
