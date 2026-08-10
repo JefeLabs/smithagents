@@ -4,7 +4,7 @@ import { Background, Controls, MiniMap, type Node, type OnNodeDrag, ReactFlow, u
 // and being unlayered keeps xyflow's own chrome authoritative over them.
 import "@xyflow/react/dist/style.css";
 import { Map as MapIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import type { CapActivityT, CapabilityT, CapSliceT, CapStoryT } from "../api/types";
 import { ALL_WORKSPACES } from "../lib/board-aggregate";
@@ -22,6 +22,7 @@ import {
   artifactRowStartX,
   artifactRowX,
   artifactRowY,
+  capabilityCardsThatFit,
   cellAt,
   layoutMap,
   type MapNode,
@@ -161,6 +162,35 @@ export function MapStage() {
   // a workspace yet and everything shows. That is the seam the navbar work put in, and
   // the seeding effect below relies on the same expression.
   const visibleCapabilities = capabilities.filter((c) => !workspace || c.workspaceId === workspace);
+
+  // MEASURED, never assumed. The stage sits inside a navbar, a rail and a right rail, and
+  // its own padding has already turned out once not to be what its rule said — so a
+  // breakpoint tuned at one viewport would be a guess that happens to hold there. The
+  // observer reports the row's real content box and the pure fit function decides from it.
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  const [rowWidth, setRowWidth] = useState<number | null>(null);
+  useEffect(() => {
+    const el = rowRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (typeof width === "number") setRowWidth(width);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // `null` means nobody has measured yet — first paint, and every jsdom test, where the
+  // ResizeObserver stub never calls back. Showing everything is the right answer for both:
+  // no flash of collapsed cards, and no test silently asserting against a collapsed row.
+  const shownCount =
+    rowWidth === null ? visibleCapabilities.length : capabilityCardsThatFit(rowWidth, visibleCapabilities.length);
+  const shownCapabilities = visibleCapabilities.slice(0, shownCount);
+  const hiddenCapabilities = visibleCapabilities.slice(shownCount);
+  // The selection can end up inside the menu, and then the row would show no selected card
+  // at all. The `+N` control carries the marker instead — cheaper than reordering the row,
+  // which would move cards under the cursor every time one was picked.
+  const selectionIsHidden = hiddenCapabilities.some((c) => c.id === activeId);
 
   // What the map is interrogating. TWO SCOPES, TWO SHAPES, deliberately: a slice
   // answers "what is in this release" and gets a horizontal band under the whole map;
@@ -635,20 +665,58 @@ export function MapStage() {
             reachable at any list length — the row still ends with it, it just never
             leaves. Wrapping instead would grow the header and shove the canvas down by a
             variable amount every time someone adds a capability. */}
-        <div className="map-capability-row">
-          <div className="map-capability-row__scroll">
-            {visibleCapabilities.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                className={`map-capability${c.id === activeId ? " is-selected" : ""}`}
-                aria-pressed={c.id === activeId}
-                onClick={() => setActiveId(c.id)}
+        <div className="map-capability-row" ref={rowRef}>
+          {shownCapabilities.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              className={`map-capability${c.id === activeId ? " is-selected" : ""}`}
+              aria-pressed={c.id === activeId}
+              onClick={() => setActiveId(c.id)}
+            >
+              {c.name}
+            </button>
+          ))}
+          {hiddenCapabilities.length > 0 && (
+            // <details>, so open/close and keyboard both come from the browser rather than
+            // from state and a click-outside listener. Selecting closes it — a menu that
+            // stays open over the map after you have answered it is just in the way.
+            <details className={`map-capability-more${selectionIsHidden ? " is-selected" : ""}`}>
+              {/* NAMES THE SELECTION when the selection is one of the collapsed ones.
+                  A bare "+2" is what the row degrades to at narrow widths, and measured
+                  at 700px that left the header with no capability name on it at all —
+                  the single most useful thing it carries. Showing the name is also what
+                  makes this a dropdown rather than an overflow bin, which is what was
+                  asked for; the count stays beside it so the row still says how much is
+                  hidden. */}
+              <summary
+                aria-label={
+                  selectionIsHidden
+                    ? `${cap?.name ?? "Selected"} — ${hiddenCapabilities.length} capabilities hidden`
+                    : `${hiddenCapabilities.length} more capabilities`
+                }
               >
-                {c.name}
-              </button>
-            ))}
-          </div>
+                {selectionIsHidden && <span className="map-capability-more__name">{cap?.name}</span>}
+                <span className="map-capability-more__count">+{hiddenCapabilities.length}</span>
+              </summary>
+              <div className="map-capability-more__menu">
+                {hiddenCapabilities.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    className={`map-capability-more__item${c.id === activeId ? " is-selected" : ""}`}
+                    aria-pressed={c.id === activeId}
+                    onClick={(e) => {
+                      setActiveId(c.id);
+                      e.currentTarget.closest("details")?.removeAttribute("open");
+                    }}
+                  >
+                    {c.name}
+                  </button>
+                ))}
+              </div>
+            </details>
+          )}
           {/* Same component the three canvas levels use. Committing empty is a no-op and
               the card clears itself, both inside BlankCard — there is nothing to repeat
               here, which is the point of it being one implementation. */}

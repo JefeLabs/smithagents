@@ -102,6 +102,40 @@ export const ARTIFACT_H = 38;
  */
 export const ARTIFACT_STACK_PITCH = ARTIFACT_H + STORY_GAP;
 
+/**
+ * The capability row in the stage header. CHROME, not canvas — nothing here positions a
+ * node — but it lives with the other geometry because the width is needed twice: the CSS
+ * draws the card and the fit calculation below counts them. Two copies of a number that
+ * must agree is exactly what this module exists to prevent.
+ *
+ * 240 against STEP_W's 180. A capability sits a level above the activities beneath it and
+ * a card the same width as a step read as one more step; wider gives the row its own
+ * weight. Compared 200, 240 and 280 in the browser against the real names — 200 was barely
+ * distinguishable from the cards below, 280 pushed the third card off a 1025px viewport
+ * for no gain, since no real name comes close to filling either.
+ */
+export const CAPABILITY_CARD_W = 240;
+export const CAPABILITY_GAP = 6;
+/** The `+N` disclosure that holds whatever did not fit. */
+export const CAPABILITY_MORE_W = 44;
+
+/**
+ * How many capability cards fit before the rest have to collapse into the `+N` menu.
+ *
+ * THE BLANK CARD IS RESERVED FIRST and is never part of the count, so it cannot be the
+ * thing that collapses — creating a capability must not require opening a menu to find
+ * the composer. When anything is hidden, the `+N` control has to be paid for too, which
+ * is why the second branch reserves it before dividing.
+ *
+ * Pure and DOM-free like the rest of this module: the caller measures, this decides.
+ */
+export function capabilityCardsThatFit(rowWidth: number, total: number): number {
+  const slot = CAPABILITY_CARD_W + CAPABILITY_GAP;
+  if (total * slot + CAPABILITY_CARD_W <= rowWidth) return total;
+  const forCards = rowWidth - CAPABILITY_CARD_W - (CAPABILITY_MORE_W + CAPABILITY_GAP);
+  return Math.max(0, Math.floor(forCards / slot));
+}
+
 /** How far outside the grid's horizontal span still counts as a valid drop. */
 const REJECT_MARGIN = STEP_W;
 

@@ -2777,61 +2777,129 @@ button.logo {
   gap: 8px;
 }
 /* The capability row. `.map-stage__composer` used to sit here too — the toggle-open
-   "new capability" panel — and went with the picker it belonged to. */
+   "new capability" panel — and went with the picker it belonged to.
+
+   Nothing here scrolls or wraps: the row renders only as many cards as its measured
+   width holds and the rest go into the `+N` menu, so it is always exactly one line of
+   whole cards. Gap must equal CAPABILITY_GAP in organisms/map/layout.ts. */
 .map-capability-row {
   display: flex;
   align-items: center;
   gap: 6px;
-  /* Bounded so the scroller inside can actually overflow: a flex item's min-width is
-     auto, which would let the row grow to its content and push the header wide instead
-     of scrolling. */
+  /* A flex item's min-width is auto, which would let the row report its content width
+     and never appear constrained — the observer would then measure a box that grows
+     with the card count instead of the space actually available. */
   min-width: 0;
   flex: 1;
-}
-/* Only the CARDS scroll. The blank composer is a sibling of this, not a child, so it
-   stays put at the end of the row however many capabilities there are — which is the
-   whole reason the row scrolls rather than wraps. */
-.map-capability-row__scroll {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  overflow-x: auto;
-  /* Vertical is hidden rather than auto: with only horizontal overflow declared, a
-     scrollbar gutter can still be reserved on the cross axis and clip the card's
-     border. */
-  overflow-y: hidden;
-  /* NO SCROLLBAR, and it is the header height that decides this rather than taste.
-     Measured: with a classic scrollbar the bar goes from 24px to 35px the moment a
-     third capability makes the row overflow — the header would grow and shrink the
-     canvas as capabilities come and go, which is the same variable-height objection
-     that ruled out wrapping. Hiding it holds 24px at any list length.
-
-     macOS overlay scrollbars already take no space, so on Edwin's machine this changes
-     nothing; it is the platforms with classic scrollbars that need it. The row still
-     scrolls by wheel and trackpad, and a card clipped at the edge is the affordance. */
-  scrollbar-width: none;
-}
-.map-capability-row__scroll::-webkit-scrollbar {
-  display: none;
 }
 .map-capability {
   /* A card, and a real <button> — selecting a capability is clicking it, the same
      interaction the slice band uses. Nothing here says "control": the row reads as
-     cards, so the button inherits and keeps only the cursor. */
+     cards, so the button inherits and keeps only the cursor.
+
+     Width must equal CAPABILITY_CARD_W in organisms/map/layout.ts, which is what the
+     fit calculation counts in. FIXED, not max-width: cards that sized to their text
+     would make the row's capacity depend on the names in it, so the same three
+     capabilities would collapse at one width and not another. */
   flex: 0 0 auto;
-  max-width: 200px;
+  width: 240px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  padding: 4px 10px;
+  padding: 4px 12px;
   border-radius: 10px;
   border: 1px solid var(--pill-br);
   background: var(--pill);
   color: inherit;
   font: inherit;
   font-size: 12px;
+  text-align: left;
   cursor: pointer;
+}
+/* Whatever did not fit. A <details>, so the browser owns open/close and keyboard. */
+.map-capability-more {
+  position: relative;
+  flex: 0 0 auto;
+}
+.map-capability-more > summary {
+  /* Must be at least CAPABILITY_MORE_W, which is what the fit calculation reserves.
+     `min-width` rather than `width` because the summary grows to hold the selected
+     capability's name when the selection is collapsed — and it only does that when
+     there are no cards left to carry it, so the extra width is space the cards were
+     not using. */
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 44px;
+  max-width: 240px;
+  padding: 4px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--pill-br);
+  background: var(--pill);
+  font-size: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+.map-capability-more__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.map-capability-more__count {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--text-dim);
+  font-size: 10px;
+}
+.map-capability-more > summary::-webkit-details-marker {
+  display: none;
+}
+.map-capability-more.is-selected > summary {
+  /* The selection can be inside the menu, and then no card in the row carries it. */
+  border-color: var(--dot-hi);
+}
+/* EXPLICIT, not inherited from the UA. A closed <details> hides its non-summary children
+   by a mechanism that has moved between Chrome versions (display:none, then a
+   ::details-content slot with content-visibility) — and an absolutely positioned child
+   escapes some of them: measured non-zero height while closed. Stating it removes the
+   dependency on which browser is reading this. */
+.map-capability-more:not([open]) .map-capability-more__menu {
+  display: none;
+}
+.map-capability-more__menu {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 4px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 10px;
+  border: 1px solid var(--pill-br);
+  background: var(--ground-2);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+.map-capability-more__item {
+  width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 5px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.map-capability-more__item:hover {
+  background: var(--pill);
+}
+.map-capability-more__item.is-selected {
+  border-color: var(--dot-hi);
 }
 /* The SAME idiom as a selected story — an accent border, no fill — rather than a third
    selection language on a screen that already has two. --dot-hi, not --accent, for the

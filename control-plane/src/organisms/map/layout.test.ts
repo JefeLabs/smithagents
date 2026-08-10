@@ -7,6 +7,10 @@ import {
   BLANK_ACTIVITY_ID,
   blankStepId,
   blankStoryId,
+  CAPABILITY_CARD_W,
+  CAPABILITY_GAP,
+  CAPABILITY_MORE_W,
+  capabilityCardsThatFit,
   cellAt,
   layoutMap,
   SLOT_H,
@@ -337,6 +341,53 @@ describe("cellAt and blank cells", () => {
  * map, so the lines measured the map's width rather than saying anything about the
  * model.
  */
+describe("capabilityCardsThatFit", () => {
+  const slot = CAPABILITY_CARD_W + CAPABILITY_GAP;
+
+  it("shows every card when they all fit beside the blank one", () => {
+    // Three cards plus the blank, exactly: 3 slots + one card's width.
+    expect(capabilityCardsThatFit(3 * slot + CAPABILITY_CARD_W, 3)).toBe(3);
+  });
+
+  it("RESERVES the blank card's width before allocating any, at every width", () => {
+    // The property that matters most here: whenever the row shows cards at all, it has
+    // already set aside a card's width for the composer — so the composer is never the
+    // thing that collapses, and creating a capability never requires opening a menu.
+    //
+    // Stated for `shown > 0` because below that there is nothing to reserve FROM: at a
+    // width narrower than one card the row cannot honour anything, and asserting that it
+    // does would be asking the arithmetic for a guarantee the pixels cannot give.
+    for (const width of [0, 100, 250, 400, 600, 900, 1400, 2000]) {
+      const shown = capabilityCardsThatFit(width, 12);
+      expect(shown).toBeLessThanOrEqual(12);
+      if (shown > 0) expect(shown * slot + CAPABILITY_CARD_W).toBeLessThanOrEqual(width);
+    }
+  });
+
+  it("pays for the +N control out of the cards' space, not the blank's", () => {
+    // One slot short of fitting all three. The answer is not simply "two": the menu
+    // control has to be afforded as well, and it comes out of the card budget.
+    const width = 3 * slot + CAPABILITY_CARD_W - 1;
+    const shown = capabilityCardsThatFit(width, 3);
+    expect(shown).toBeLessThan(3);
+    expect(shown * slot + CAPABILITY_MORE_W + CAPABILITY_GAP + CAPABILITY_CARD_W).toBeLessThanOrEqual(width);
+  });
+
+  it("collapses everything rather than reporting a negative count", () => {
+    expect(capabilityCardsThatFit(0, 5)).toBe(0);
+    expect(capabilityCardsThatFit(120, 5)).toBe(0);
+  });
+
+  it("is monotonic in width — more room never shows fewer cards", () => {
+    let last = -1;
+    for (let w = 0; w <= 2000; w += 17) {
+      const shown = capabilityCardsThatFit(w, 8);
+      expect(shown).toBeGreaterThanOrEqual(last);
+      last = shown;
+    }
+  });
+});
+
 describe("artifactRowY clears the story stacks", () => {
   /** Bottom edge of the lowest card in a column: its trailing blank composer. */
   const deepestCardBottom = (model: MapModel) => {
