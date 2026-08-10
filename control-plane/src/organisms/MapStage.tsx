@@ -23,7 +23,7 @@ import {
   artifactRowStartX,
   artifactRowX,
   artifactRowY,
-  CAPABILITY_CARD_W,
+  CAPABILITY_CARD_MIN_W,
   capabilityCardsThatFit,
   cellAt,
   layoutMap,
@@ -772,7 +772,7 @@ export function MapStage() {
           // in both places. layout.ts owns the number, the fit calculation counts in it,
           // and every card rule reads it back — so the CSS cannot drift from the maths
           // that decides how many of those cards fit.
-          style={{ "--cap-card-w": `${CAPABILITY_CARD_W}px` } as CSSProperties}
+          style={{ "--cap-card-w": `${CAPABILITY_CARD_MIN_W}px` } as CSSProperties}
         >
           {shownCapabilities.map((c) => (
             <button

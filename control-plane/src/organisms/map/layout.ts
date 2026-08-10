@@ -103,31 +103,39 @@ export const ARTIFACT_H = 38;
 export const ARTIFACT_STACK_PITCH = ARTIFACT_H + STORY_GAP;
 
 /**
- * The capability row in the stage header. CHROME, not canvas — nothing here positions a
- * node — but it lives with the other geometry because the width is needed twice: the CSS
- * draws the card and the fit calculation below counts them. Two copies of a number that
- * must agree is exactly what this module exists to prevent.
+ * The FLOOR a capability card may shrink to, not the width it is drawn at.
  *
- * 192, which is Edwin's number: he asked for 20% off the 240 he was looking at.
+ * Cards are fluid: they divide the whole row between them, so the rendered width is
+ * whatever the row has to give — roughly 303 each at a 1230px row, roughly 203 at 830.
+ * This number is the point below which a card must COLLAPSE into the `+N` menu instead
+ * of getting narrower, which is why `capabilityCardsThatFit` still counts in it and why
+ * it did not change when the layout became fluid: the same arithmetic answers a
+ * different question. It reaches the CSS as `--cap-card-w`, a `min-width` and a
+ * flex-basis rather than a `width`.
  *
- * IT IS NOT 12PX ABOVE A STEP CARD, which is the trap this comment exists to close. 192
- * against STEP_W's 180 looks like nothing, and every argument about whether a capability
- * reads as a level above an activity was made against that pair. They are not comparable:
- * STEP_W is a FLOW-SPACE constant and only equals screen pixels at zoom 1, which is not a
- * state this canvas is normally in — `fitView` settles around 0.71 on real data, where a
- * step card draws 128px. The header is not zoomed at all. So the comparison a reader
- * actually sees is 192 against ~128, and the hierarchy holds comfortably.
+ * CHROME, not canvas — nothing here positions a node — but it lives with the other
+ * geometry because the value is needed twice: the CSS draws against it and the fit
+ * calculation counts in it. Two copies of a number that must agree is exactly what this
+ * module exists to prevent.
  *
- * Measure the rendered widths, not the constants, before concluding this number is too
- * small.
+ * 192 is Edwin's number: he asked for 20% off the 240 he was looking at, back when this
+ * was a fixed width. The two findings from choosing it are kept because they explain
+ * where the floor sits, not because the choice is still live:
  *
- * THE ROW HOLDS THE BLANK CARD TOO, which is the arithmetic worth keeping: three
- * capabilities need FOUR slots, so the number of cards a normal window shows turns over at
+ * IT IS NOT 12PX ABOVE A STEP CARD. 192 against STEP_W's 180 looks like nothing, and
+ * every argument about whether a capability reads as a level above an activity was made
+ * against that pair. They are not comparable: STEP_W is a FLOW-SPACE constant and only
+ * equals screen pixels at zoom 1, which is not a state this canvas is normally in —
+ * `fitView` settles around 0.71 on real data, where a step card draws 128px. The header
+ * is not zoomed at all. Measure the rendered widths, not the constants.
+ *
+ * THE ROW HOLDS THE BLANK CARD TOO, which is what makes the floor bite where it does:
+ * three capabilities need FOUR slots, so the count a window shows turns over at
  * `4W + 3 * CAPABILITY_GAP <= rowWidth`. Against a measured row of 855 that boundary is
- * W <= 209.25 — which is why 210 hid a capability behind the menu on a full window and 192
- * does not. Re-measure rather than nudge.
+ * W <= 209.25 — which is why a 210 floor hid a capability behind the menu on a full
+ * window and 192 does not. Re-measure rather than nudge.
  */
-export const CAPABILITY_CARD_W = 192;
+export const CAPABILITY_CARD_MIN_W = 192;
 export const CAPABILITY_GAP = 6;
 /** The `+N` disclosure that holds whatever did not fit. */
 export const CAPABILITY_MORE_W = 44;
@@ -143,9 +151,9 @@ export const CAPABILITY_MORE_W = 44;
  * Pure and DOM-free like the rest of this module: the caller measures, this decides.
  */
 export function capabilityCardsThatFit(rowWidth: number, total: number): number {
-  const slot = CAPABILITY_CARD_W + CAPABILITY_GAP;
-  if (total * slot + CAPABILITY_CARD_W <= rowWidth) return total;
-  const forCards = rowWidth - CAPABILITY_CARD_W - (CAPABILITY_MORE_W + CAPABILITY_GAP);
+  const slot = CAPABILITY_CARD_MIN_W + CAPABILITY_GAP;
+  if (total * slot + CAPABILITY_CARD_MIN_W <= rowWidth) return total;
+  const forCards = rowWidth - CAPABILITY_CARD_MIN_W - (CAPABILITY_MORE_W + CAPABILITY_GAP);
   return Math.max(0, Math.floor(forCards / slot));
 }
 

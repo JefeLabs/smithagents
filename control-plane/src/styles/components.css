@@ -2797,14 +2797,20 @@ button.logo {
      interaction the slice band uses. Nothing here says "control": the row reads as
      cards, so the button inherits and keeps only the cursor.
 
-     Width comes from CAPABILITY_CARD_W in organisms/map/layout.ts, handed down as a
-     custom property on the row rather than repeated here — the fit calculation counts in
-     that same constant, and a second copy in this file would be free to drift from it.
-     FIXED, not max-width: cards that sized to their text would make the row's capacity
-     depend on the names in it, so the same three capabilities would collapse at one width
-     and not another. */
-  flex: 0 0 auto;
-  width: var(--cap-card-w);
+     FLUID: the cards divide the whole row between them, so the row is exactly full at
+     every width and a card's rendered size is whatever the window has to give. What
+     `--cap-card-w` carries is the FLOOR, not the size — it is CAPABILITY_CARD_MIN_W from
+     organisms/map/layout.ts, handed down as a custom property rather than repeated here
+     so the fit calculation and the CSS cannot disagree about where that floor is.
+
+     `min-width` is the load-bearing half. Below it a card must COLLAPSE into the `+N`
+     menu rather than keep shrinking, and `capabilityCardsThatFit` decides that from the
+     same number — so the flex basis and the collapse threshold are one value by
+     construction. Still not a content width: cards that sized to their text would make
+     the row's capacity depend on the names in it, and the same three capabilities would
+     collapse at one width and not another. */
+  flex: 1 1 var(--cap-card-w);
+  min-width: var(--cap-card-w);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2818,7 +2824,13 @@ button.logo {
   text-align: left;
   cursor: pointer;
 }
-/* Whatever did not fit. A <details>, so the browser owns open/close and keyboard. */
+/* Whatever did not fit. A <details>, so the browser owns open/close and keyboard.
+
+   `flex: 0 0 auto` and NOT fluid, which matters more now that the cards are: this
+   control only exists when space has run out, so letting it grow with them would take
+   room at exactly the widths where there is least of it. It sizes to its own content —
+   `+2`, or the selected capability's name when the selection is one of the collapsed
+   ones — and the cards divide whatever is left. */
 .map-capability-more {
   position: relative;
   flex: 0 0 auto;
@@ -2913,6 +2925,13 @@ button.logo {
   background: none;
   border-style: dashed;
   cursor: text;
+  /* A FLEX CONTAINER, so the input inside grows with the card. `.map-blank__input`
+     already asks for `flex: 1; min-width: 0`, and got neither while this was a plain
+     block — the input sat at its intrinsic 135px. That was survivable at a fixed 192
+     card and is not now: measured at a 1600px viewport the card is 353px, leaving 218px
+     of dashed box that looks like part of the field and does not take a click. */
+  display: flex;
+  align-items: center;
 }
 .map-stage__bar .spacer {
   flex: 1;

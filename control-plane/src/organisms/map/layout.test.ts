@@ -8,7 +8,7 @@ import {
   BLANK_ACTIVITY_ID,
   blankStepId,
   blankStoryId,
-  CAPABILITY_CARD_W,
+  CAPABILITY_CARD_MIN_W,
   CAPABILITY_GAP,
   CAPABILITY_MORE_W,
   capabilityCardsThatFit,
@@ -409,11 +409,11 @@ describe("activityAt and stepAt invert the backbone", () => {
 });
 
 describe("capabilityCardsThatFit", () => {
-  const slot = CAPABILITY_CARD_W + CAPABILITY_GAP;
+  const slot = CAPABILITY_CARD_MIN_W + CAPABILITY_GAP;
 
   it("shows every card when they all fit beside the blank one", () => {
     // Three cards plus the blank, exactly: 3 slots + one card's width.
-    expect(capabilityCardsThatFit(3 * slot + CAPABILITY_CARD_W, 3)).toBe(3);
+    expect(capabilityCardsThatFit(3 * slot + CAPABILITY_CARD_MIN_W, 3)).toBe(3);
   });
 
   it("RESERVES the blank card's width before allocating any, at every width", () => {
@@ -427,17 +427,17 @@ describe("capabilityCardsThatFit", () => {
     for (const width of [0, 100, 250, 400, 600, 900, 1400, 2000]) {
       const shown = capabilityCardsThatFit(width, 12);
       expect(shown).toBeLessThanOrEqual(12);
-      if (shown > 0) expect(shown * slot + CAPABILITY_CARD_W).toBeLessThanOrEqual(width);
+      if (shown > 0) expect(shown * slot + CAPABILITY_CARD_MIN_W).toBeLessThanOrEqual(width);
     }
   });
 
   it("pays for the +N control out of the cards' space, not the blank's", () => {
     // One slot short of fitting all three. The answer is not simply "two": the menu
     // control has to be afforded as well, and it comes out of the card budget.
-    const width = 3 * slot + CAPABILITY_CARD_W - 1;
+    const width = 3 * slot + CAPABILITY_CARD_MIN_W - 1;
     const shown = capabilityCardsThatFit(width, 3);
     expect(shown).toBeLessThan(3);
-    expect(shown * slot + CAPABILITY_MORE_W + CAPABILITY_GAP + CAPABILITY_CARD_W).toBeLessThanOrEqual(width);
+    expect(shown * slot + CAPABILITY_MORE_W + CAPABILITY_GAP + CAPABILITY_CARD_MIN_W).toBeLessThanOrEqual(width);
   });
 
   it("collapses everything rather than reporting a negative count", () => {
