@@ -1933,6 +1933,14 @@ From `control-plane/`: `pnpm typecheck && pnpm lint && pnpm test && pnpm build`.
 
 A LOCAL broker instance — do NOT restart the live tmux broker. From `broker/`: `BROKER_TEXT_PORT=7791 BROKER_SESSIONS_DIR=/tmp/smoke-sessions BROKER_DOCUMENTS_DIR=/tmp/smoke-docs npm run serve` (needs the repo `.env`; if required env is unavailable in this session, say so plainly and smoke against the live broker on 7790 WITHOUT restarting it, skipping the polish step if its cost is a concern). Dev server on 1421 pointed at the chosen broker (check how BROKER_BASE is derived; `VITE_`-style override or the default 7790).
 
+**KNOWN CORS WALL (found in 1b's smoke):** the broker's origin allowlist on
+mutating routes (`isAllowedOrigin`) hardcodes `:1420` — a browser on `:1421`
+gets 403 on session/document creation. Either extend the smoke broker's
+allowlist via its supported env (check `isAllowedOrigin`'s source for the
+override), serve the dev build on 1420 (only when the Tauri pair isn't
+using it), or drive mutations via `curl` with no Origin header (the CLI-bridge
+trust path) and the browser for everything read/WS. Say which you used.
+
 Walk: create a document from the new-session screen (blueprint spec, work type feature) → land on `/doc/…` → edit a section, save, reload the page, confirm persistence → sessions panel shows the doc badge + workspace header → activate a chat session (lands on `/`), re-activate the document session (lands back on the doc) → type a rough draft, polish, confirm replacement, send. For anything not exercisable, state it plainly.
 
 - [ ] **Step 4: Report**
