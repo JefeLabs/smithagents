@@ -833,6 +833,17 @@ it("disables the button and names the slice a selection would strip", async () =
   expect(within(panel).getByText(/tour scheduling v1/)).toBeDefined();
 });
 
+it("blames the selection, not a neighbour, when only the NEW slice would be invalid", async () => {
+  renderMap();
+  // Every selected story is already in some slice, but each of those slices keeps
+  // an exclusive story of its own — so nothing is taken and no neighbour is named.
+  await selectStories(["s1", "s2"]);
+  const panel = await screen.findByRole("region", { name: "Slices" });
+  expect(within(panel).getByRole("button", { name: /slice from 2 selected/i })).toHaveProperty("disabled", true);
+  expect(within(panel).getByText(/already belongs to another slice/i)).toBeDefined();
+  expect(within(panel).queryByText(/is the only story/i)).toBeNull();
+});
+
 it("offers nothing when nothing is selected", async () => {
   renderMap();
   const panel = await screen.findByRole("region", { name: "Slices" });
@@ -903,13 +914,11 @@ describe("storiesLost", () => {
     expect(storiesLost(current, proposed, current[0])).toEqual(["s1"]);
   });
 
-  it("is never empty for a slice blockedBy returned", () => {
-    // The invariant the panel copy depends on, asserted rather than assumed:
-    // blockedBy only returns slices that were VALID before (so they had an
-    // exclusive story) and are INVALID after (so they have none) — the
-    // difference is therefore always non-empty. Brute-forced over every
-    // arrangement of two slices across three stories: 1998 blocked slices, zero
-    // empty results.
+  it("is never empty for a blocked slice that EXISTED before the write", () => {
+    // Asserted rather than assumed. Note the quantifier: pre-existing slices
+    // only. The first version of this search permuted just X and Y — slices
+    // present in both states — so it could not reach a CREATED slice, and
+    // "never empty" looked universal when it is not. See the next test.
     const sets = ["s1", "s2", "s3"].reduce<string[][]>((acc, x) => acc.concat(acc.map((s) => [...s, x])), [[]]);
     let examined = 0;
     for (const a of sets) for (const b of sets) for (const c of sets) for (const d of sets) {
@@ -921,6 +930,20 @@ describe("storiesLost", () => {
       }
     }
     expect(examined).toBeGreaterThan(0);
+  });
+
+  it("IS empty for a newly created blocked slice — the feature's main flow", () => {
+    // The case table's own last row, turned into a creation. A and B stay
+    // healthy; C is blocked because every story selected for it is already
+    // spoken for. C lost nothing — it never had anything — so no story can be
+    // named and nothing was taken from anyone. This is why the panel copy
+    // branches on whether the blocked slice is new.
+    const current = [sl("A", ["s1", "s3"]), sl("B", ["s2", "s4"])];
+    const proposed = [...current, sl("C", ["s1", "s2"])];
+    expect(blockedBy(current, proposed).map((s) => s.id)).toEqual(["C"]);
+    expect(storiesLost(current, proposed, proposed[2])).toEqual([]);
+    // and the neighbours are untouched, so there is no victim to name either
+    expect(slicesWithoutExclusiveStory(proposed).map((s) => s.id)).toEqual(["C"]);
   });
 });
 ```
@@ -935,11 +958,17 @@ Then implement:
  * Differential for the same reason blockedBy is: in `proposed` a blocked slice
  * has NO exclusive story, so `proposed` alone can never name what it lost.
  *
- * NON-EMPTY for any slice `blockedBy` returned, and the panel copy depends on
- * that: such a slice was valid before (so it held an exclusive story) and is
- * invalid after (so it holds none), making the difference necessarily non-empty.
- * Pinned by the brute-force test rather than left as reasoning. For an arbitrary
- * slice that blockedBy did NOT return, the result may be empty.
+ * NON-EMPTY for a blocked slice THAT EXISTED IN `current`: it was valid before,
+ * so it held an exclusive story, and is invalid after, so it holds none.
+ *
+ * EMPTY for a blocked slice the write CREATES — and that is this feature's main
+ * flow, not an edge case. A new slice held nothing before, so the premise above
+ * is unavailable: it lost nothing, and its neighbours may all still be healthy.
+ * Creating C[s1,s2] over A[s1,s3] B[s2,s4] blocks C while A and B stay valid, so
+ * there is no "you took X from Y" to report. Callers MUST branch on whether the
+ * blocked slice is new; see the panel copy in Task 5.
+ *
+ * Both halves are pinned by tests rather than left as reasoning.
  */
 export function storiesLost(current: CapSliceT[], proposed: CapSliceT[], slice: CapSliceT): string[] {
   const exclusiveIn = (slices: CapSliceT[], id: string): Set<string> => {
@@ -993,13 +1022,16 @@ export function SliceComposer({ count, blocked, blockingStory, naming, onStart, 
       <button type="button" disabled={blocked.length > 0} onClick={onStart}>
         + slice from {count} selected
       </button>
-      {blocked.length > 0 && blockingStory && (
-        // One form only. blockingStory is always present here: storiesLost is
-        // non-empty for any slice blockedBy returned, pinned by the brute-force
-        // test in slices.test.ts. The && guard is a type narrowing, not a
-        // fallback for a case that can occur.
+      {blocked.length > 0 && (
         <p className="slice-panel__blocked">
-          "{blockingStory}" is the only story {blocked.map((s) => s.name).join(", ")} owns.
+          {/* TWO FORMS, split by whether the blocked slice is the one being created.
+              Creating a slice whose every story is already spoken for takes nothing
+              from anyone — the neighbours stay healthy and there is no victim to
+              name, so the honest sentence is about the selection. That is also the
+              more actionable one: the fix is to change what you selected. */}
+          {blockingStory
+            ? `"${blockingStory}" is the only story ${blocked.map((s) => s.name).join(", ")} owns.`
+            : "Every story you selected already belongs to another slice — add one that does not."}
         </p>
       )}
     </div>
