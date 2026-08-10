@@ -75,6 +75,18 @@ vi.hoisted(() => {
   if (typeof Element.prototype.scrollTo !== "function") {
     Element.prototype.scrollTo = () => {};
   }
+
+  /**
+   * jsdom implements no Pointer Capture API at all. `Sheet`'s drag-to-dismiss
+   * gesture calls `setPointerCapture` from its `onPointerDown` handler on
+   * every press (not just drags on the handle) — so any test that clicks
+   * inside a mounted `Sheet` throws, even ones that never touch dragging.
+   */
+  if (typeof Element.prototype.setPointerCapture !== "function") {
+    Element.prototype.setPointerCapture = () => {};
+    Element.prototype.releasePointerCapture = () => {};
+    Element.prototype.hasPointerCapture = () => false;
+  }
 });
 
 beforeEach(() => resetAllStores());
