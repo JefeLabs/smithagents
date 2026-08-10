@@ -119,10 +119,36 @@ concern and `layoutMap` must emit these cells itself. Requirements, all three te
    `new:step:<activityId>`, `new:story:<stepId>`. A real id must never begin `new:`.
 2. **`data.blank: true` and `draggable: false`.** The node component branches on `blank` to
    render an input instead of text; `draggable: false` is what keeps it out of drag.
-3. **`cellAt` MUST NOT return a blank cell.** It is the inverse of `layoutMap` over REAL
-   positions only; a drop resolving onto a cell that does not exist yet is the failure the
-   amendment names. Add a test that drops on the blank trailing cell's coordinates and
-   asserts `cellAt` returns `null` — that test is the guard, and it must exist.
+3. **`cellAt` must never resolve to a blank COLUMN.** *(Corrected 2026-08-09 — the first
+   wording of this item said "must not return a blank cell", which was wrong. It conflated
+   two different blanks that deserve opposite answers.)*
+
+   - A blank **story slot** at index `count` is NOT a nonexistent cell. The step exists and
+     `order = count` is an ordinary append. Rejecting it would delete drag-to-end-of-column
+     outright; rejecting only `slot == count` while `slot >= count + 1` still appends would
+     carve a **non-monotonic dead zone** into the middle of a drag — a control that stops
+     working in a band and resumes past it. Worse than the bug being guarded against.
+   - A blank **column** (`new:step:*`, `new:activity`) IS the hazard: it means "file this
+     story under a step that does not exist," which cannot be persisted.
+
+   So: `cellAt` finds the nearest column over the full list **including** blanks, and
+   returns `null` when the nearest is blank. Real story nodes keep an exact inverse, append
+   keeps working, and the rule is monotonic across the whole gesture.
+
+   **The guard test:** drop at the blank step column's CENTRE (`blankX + STEP_W / 2`) and
+   assert `null`. The centre matters — at the edge, the `±STEP_W` nearest-column margin
+   could produce the `null` on its own and the test would prove nothing.
+
+4. **Zero-step activities must render.** `Math.max(steps.length, 1)` in both terms of the
+   width. The raw formula gives `-8` at zero steps, and typing into the blank activity card
+   produces exactly a zero-step activity — so the headline creation flow rendered nothing.
+   One step must still be exactly `STEP_W`. Pin 0, 1 and 2 steps.
+
+5. **Blank cells need reserved space.** `stepColumns`' cursor must advance a full slot per
+   activity for its trailing blank (`STEP_W + STEP_GAP`, then `ACTIVITY_GAP - STEP_GAP`),
+   or blank columns overlap the next activity's real ones by 176px. `stepColumns` keeps its
+   public signature returning REAL columns only; an internal `columns()` returns
+   `{stepId, x, blank}` that BOTH `layoutMap` and `cellAt` consume, so the two cannot drift.
 
 **Gap C — the capability level is deliberately NOT in `layoutMap`.** Edwin's rule covers
 capability too, but the capability row lives in the stage header, not on the canvas (the
@@ -480,6 +506,42 @@ Verify **5 files changed** (3 modified + 2 created under `map/`), plus `api/type
 **Critical:** `nodeTypes` must be defined at module scope, never inside a component.
 A new object identity each render makes xyflow remount every node on every render.
 
+**TASK 2 HAS THREE GAPS, same cause as Task 1's — it was written before the blank-card and
+visual-target rulings. Fix these before dispatching it.**
+
+**Gap A — blank cards are not mentioned at all, and they are half of what these components
+do.** Task 1 emits trailing cells carrying `data.blank === true` at every level. The node
+components must branch on it: a blank card renders **an input, not text** — the card *is*
+the composer, which is the entire point of Edwin's ruling. Requirements:
+
+- Blank activity, step and story nodes render an `<input>` with the placeholder text the
+  old composers used (`Add an activity…`, `Add a step…`, `Add a story…`), so nothing about
+  the affordance is lost in the move.
+- **Committing empty is a no-op.** Enter or blur with no text leaves the card as it was and
+  creates no record.
+- The input must be wrapped `nodrag` — the same class the existing story input already
+  uses — or xyflow swallows the click and the field can never be focused. This is the single
+  most likely way to ship a blank card that looks right and cannot be typed into.
+- A blank card is **not draggable and not a drop target.** `layoutMap` already sets
+  `draggable: false`; do not re-derive it here.
+
+**Gap B — only ONE of three heights is pinned, and the other two silently break `cellAt`.**
+Step 5 pins `.map-story` to `STORY_H`. But `STEP_HEAD_H = 27` and `ACTIVITY_H = 32` are
+equally load-bearing and `components.css`'s current padding implies roughly 30 and 31 — so
+they are already wrong. `cellAt` divides `y` by a pitch it cannot measure; if CSS lets
+content size these cards, drops resolve one row off from what the user sees, **with every
+test passing, because no test consults CSS.** Pin all three explicitly, each with the same
+comment style as `.map-story`, naming the constant it must equal.
+
+**Gap C — the activity node must consume `MapNode.width`.** Task 1 computes it
+(`Math.max(steps.length, 1)` in both terms) precisely so an activity spans its step group,
+which is the reference layout's defining feature. The node component must apply it rather
+than assuming `STEP_W`. Do not recompute the width here — read it from the node.
+
+**Note on `nodeTypes`' five keys:** `slice` and `artifact` have no counterpart in Task 1's
+`MapNode["type"]` union, which is `"activity" | "step" | "story"`. That is expected — Task 5
+introduces artifacts. Build all five components now; only three are reachable until then.
+
 - [ ] **Step 1: Write the failing test**
 
 Create `control-plane/src/organisms/map/nodes.test.tsx`:
@@ -793,6 +855,62 @@ Verify **3 files changed**.
 
 Edges carry `sliceId` so Task 5 can filter by selection without rebuilding the set.
 
+**TASK 3 HAS ONE GAP, and it is the kind that stays invisible until Task 4 wires the
+canvas.**
+
+**`buildEdges` produces `source`/`target` as NODE IDS, and nothing makes them match the ids
+`layoutMap` actually emits.** Those formats are inline template literals in `layout.ts`,
+unexported:
+
+```ts
+id: `activity:${act.id}`   // layout.ts:151
+id: `step:${step.id}`      // layout.ts:164
+id: story.id               // layout.ts:173 — RAW, no prefix
+```
+
+Note they are not uniform: activities and steps are prefixed, stories are not. An
+implementer writing the obvious `source: step.id` produces an edge pointing at a node that
+does not exist — and **`edges.test.ts` cannot catch it**, because it tests edges in
+isolation against a model, never against `layoutMap`'s output. It would surface as edges
+silently missing from the canvas in Task 4, with every unit test green.
+
+Two things close it:
+
+1. **Export the real-node id helpers from `layout.ts` and have `buildEdges` use them** —
+   `activityNodeId(id)`, `stepNodeId(id)`, `storyNodeId(id)`. `layout.ts` already exports
+   `BLANK_ACTIVITY_ID`/`blankStepId`/`blankStoryId` for exactly this reason; the real ones
+   were left inline. Make both halves of the namespace equally addressable, and change
+   `layoutMap` to call them so there is one definition, not two that agree today.
+2. **Pin the correspondence with a cross-module test.** *(Corrected 2026-08-09 — the first
+   wording asked to assert that EVERY edge endpoint is in `layoutMap`'s node set. That is
+   **unsatisfiable**: every edge is slice→story or slice→artifact, so `source` is always
+   `slice:<id>`, and `layoutMap` emits no slice nodes at all. The assertion would fail on
+   100% of sources.)*
+
+   Do it in two halves:
+   - **Story endpoints** — assert against `layoutMap`'s real node set. This is the live
+     half and it genuinely pins `storyNodeId`.
+   - **Slice and artifact endpoints** — mint them through `sliceNodeId(id)` and
+     `artifactNodeId(sliceId, kind)`, also exported from `layout.ts`, and assert every
+     non-story endpoint is exactly one of those helper outputs. This pins the half nobody
+     has written yet, so **Task 5 lays out against the helper instead of re-deriving
+     `slice:${id}` from this prose** — without it, Task 5 has nothing to import and would
+     be guessing the format.
+
+**How strong this hazard actually is — stated honestly, because the first wording
+overstated it.** The drafted `edges.ts` writes `target: storyId` RAW, which is *correct*,
+because stories happen to be the unprefixed level. **So the specific defect described above
+does not manifest in the code as drafted.** It agrees today by luck. The hazard is real but
+LATENT: it breaks the moment anyone adds a step→story or activity→step edge, and the test
+is what makes that failure loud instead of silent.
+
+**Blank cards are deliberately absent here and that is correct — say so rather than adding
+them.** `buildEdges` takes a `MapModel`, which contains only real records; blanks are a
+layout concern that `layoutMap` synthesises. So no edge can reach a blank, which is right:
+an edge to a card that represents nothing would have nothing to mean. Likewise `Selection`
+covers `slice | story | step` only — **a blank card is never selectable**, because
+selecting it would put the map into a state describing a record that does not exist.
+
 - [ ] **Step 1: Write the failing test**
 
 Create `control-plane/src/organisms/map/edges.test.ts`:
@@ -1012,6 +1130,41 @@ Verify **3 files changed**.
 
 ### Task 4: Canvas integration
 
+**AMENDED 2026-08-09, after Task 2's interface decisions. Two things below are now wrong.**
+
+**1. `decorate` must NOT build an add-story input.** Task 2 dropped `addStoryInput` from
+`StepNodeData`: the blank story card *is* that input, so building both renders the same
+affordance twice per column, which is exactly what Edwin's ruling removes. Any sketch below
+that constructs an input for `StepNode` is superseded — `StepNode` is name plus remove
+button, parallel to `ActivityNode`.
+
+**2. `decorate` supplies `onCommit` to every blank node.** Blank cards own their own input
+state and call `data.onCommit(text: string)` on Enter, or on blur with non-empty text; they
+trim, no-op on empty, and clear themselves. `layoutMap` already puts `activityId`/`stepId`
+in blank data, so `decorate` closes over the parent and the component never learns it.
+Wire `onCommit` to the existing create mutations — this is where the three deleted
+composers' behaviour now lives.
+
+**4. THE VISUAL SMOKE MUST TYPE INTO ALL THREE BLANK CARDS.** Task 2 applied `nodrag` to
+the blank input and reasoned carefully about why it should work — the strongest leg being
+that `layoutMap` sets `draggable: false` on blanks, so xyflow attaches no drag gesture to
+compete for the pointerdown at all. But `@xyflow/react` is not installed until this task,
+so Task 2 could neither read its filter implementation nor exercise it, and jsdom would
+have said nothing. **Its tests assert the class is PRESENT — a regression guard, not proof
+it works.**
+
+So this task's smoke must include, explicitly: **click into the blank activity card, the
+blank step card and the blank story card; type; press Enter; confirm each creates a record
+and a fresh blank appears after it.** If a blank card cannot be focused, `nodrag` is not
+doing what it is assumed to do, and the whole blank-card design — which is the feature —
+is dead on the canvas while every unit test passes.
+
+**3. Expect a cast at the `nodeTypes={...}` site, and do NOT "fix" it upward.** The node
+components' props are deliberately narrower than xyflow's `NodeProps` (whose `data` is
+`Record<string, unknown>`). That narrowing is what lets them be rendered and asserted
+without xyflow present. Cast at the mount site; do not loosen the component types to make
+the cast go away — that trades a one-line cast for untypable components.
+
 **Files:**
 - Modify: `control-plane/package.json`
 - Modify: `control-plane/src/organisms/MapStage.tsx`
@@ -1167,7 +1320,28 @@ its `dimmedIds` argument rather than adding a second path:
         }
         if (n.type === "step") {
           const step = n.data.step as { id: string; name: string; order: number };
-          const activity = n.data.activity as CapActivityT;
+          // BLANK CARDS FIRST — without this branch a blank node falls into the
+        // real-record path below, `n.data.story`/`step`/`activity` is undefined, the
+        // component takes the real-card path and throws. That is a WHITE SCREEN ON
+        // MOUNT, not a broken Enter key: layoutMap emits a blank at every level, so
+        // the very first render hits it.
+        if (n.data.blank) {
+          return {
+            ...n,
+            data: {
+              ...n.data,
+              blank: true,
+              // decorate closes over the parent id layoutMap already put in data,
+              // so the component never has to learn or parse it.
+              onCommit: (text: string) => {
+                if (n.type === "activity") return void addActivity(text);
+                if (n.type === "step") return void addStep(n.data.activityId as string, text);
+                return void addStory(n.data.stepId as string, text);
+              },
+            },
+          } as Node;
+        }
+        const activity = n.data.activity as CapActivityT;
           return {
             ...n,
             data: {
@@ -1176,15 +1350,9 @@ its `dimmedIds` argument rather than adding a second path:
               dimmed,
               storyCount: storiesFor(step.id).length,
               onRemove: () => removeStep(activity, step.id),
-              addStoryInput: (
-                <input
-                  placeholder="Add a story…"
-                  {...register(`storyTexts.${step.id}`)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") addStory(step.id);
-                  }}
-                />
-              ),
+              // NO addStoryInput. The blank story card IS that input — building both
+              // renders the same affordance twice per column. See the amendment at the
+              // top of this task.
             },
           } as Node;
         }
@@ -1241,15 +1409,8 @@ Replace the whole `<DndContext>…</DndContext>` block (lines 478-552) with:
               <MiniMap pannable zoomable />
             </ReactFlow>
           </div>
-          <div className="map-stage__composer">
-            <input
-              placeholder="Add an activity…"
-              {...register("activityName")}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") addActivity();
-              }}
-            />
-          </div>
+          {/* NO add-activity composer. The blank activity card on the canvas IS it —
+              rendering both puts the same affordance on screen twice. */}
 ```
 
 **SUPERSEDED — the composers become blank cards, not separate controls.** Edwin,
@@ -1371,6 +1532,24 @@ drag on empty space pans; the minimap reflects the map; dragging a story by its 
 handle moves it and it lands in the target column; the slice select and remove button
 inside a story still work and do **not** start a drag.
 
+**The blank cards are the feature, and nothing before this task could test them. All three,
+explicitly:** click into the blank **activity** card, the blank **step** card and the blank
+**story** card; type; press Enter; confirm each creates a record and a fresh blank appears
+after it. Then click into one, type nothing, and click away — it must be a no-op, not an
+empty record.
+
+If a blank card cannot be focused, `nodrag` is not doing what Task 2 assumed. Its tests
+assert only that the class is PRESENT — `@xyflow/react` was not installed then, so nobody
+has ever verified a blank card is typeable on a live canvas. **Do all three levels, not
+just story:** `onCommit` is called unguarded, so a level whose `decorate` forgets to supply
+it throws a TypeError on Enter rather than no-op'ing.
+
+**Also confirm each activity card visibly spans its step group.** `.map-activity__name` has
+no CSS width fallback — the width comes only from the inline `style={{ width }}` fed by
+`NodeProps`. If the installed xyflow does not hand `width` to node components, every
+activity silently collapses to content width and **no unit test catches it**, because the
+tests supply `width` explicitly.
+
 Check all four themes (`data-theme` unset / `light` / `midnight` / `sand`).
 
 - [ ] **Step 10: Commit**
@@ -1398,7 +1577,38 @@ Verify **5 files changed**.
 
 ### Task 5: On-demand reveal
 
+**THREE THINGS TASK 3 SURFACED THAT THIS TASK OWNS.** Recorded so they are not rediscovered:
+
+1. **`MapNode["type"]` must widen to include `"slice"` and `"artifact"`.** Task 1's union is
+   `"activity" | "step" | "story"`, and `artifactNodesFor` returns a level nothing can
+   position. Task 3 deliberately did NOT widen it — an unused union member with nothing
+   emitting it looks supported and is worse than an honest gap. Widen it here, where the
+   nodes are actually emitted.
+2. **There is no vertical pitch for stacked artifacts within one slice.** `SLICE_RAIL_X` and
+   `ARTIFACT_GAP` exist in `layout.ts` (lines 33, 35) and are unused, so the geometry intent
+   is recorded but incomplete. The missing constant belongs in `layout.ts` with the others.
+
+   **Name it `ARTIFACT_PITCH` and export it from `layout.ts`.** Step 4's sketch originally
+   hardcoded `y: STORIES_Y + i * 64` — a magic number in a component, which violates this
+   plan's own Global Constraint that geometry constants live only in `layout.ts`. **64 is a
+   starting value, not a decision**: it is roughly `STORY_H` doubled, artifact cards carry
+   two lines (kind and label) where a story carries one, and nobody has seen one rendered.
+   Pick the value from what the smoke actually shows and say why in a comment, the way the
+   other constants do. If it needs to differ from what the sketch assumed, change it — the
+   sketch is not evidence.
+3. **Lay artifacts out using `artifactNodeId(sliceId, kind)` from `layout.ts`** — do not
+   re-derive `artifact:${sliceId}:${kind}` from prose. `ArtifactSpec` now carries `sliceId`
+   for the same reason blank nodes carry their parent: so no component has to parse an id
+   to find its owner.
+
 **Files:**
+- Modify: `control-plane/src/organisms/map/layout.ts` — **required by items 1 and 2 above**
+  (widen `MapNode["type"]`, add the artifact pitch constant). The original file list omitted
+  it while the requirements mandated it; an implementer following the list would either
+  stall or edit an unlisted file, which the commit-discipline check reads as scope creep.
+- Modify: `control-plane/src/organisms/map/layout.test.ts` — only if widening the union or
+  adding the constant needs new coverage. It is otherwise Task 1's and its existing
+  assertions must keep passing untouched; if any fail, behaviour changed — stop and report.
 - Modify: `control-plane/src/organisms/MapStage.tsx`
 - Modify: `control-plane/src/organisms/MapStage.test.tsx`
 - Modify: `control-plane/src/styles/components.css`
@@ -1406,6 +1616,14 @@ Verify **5 files changed**.
 **Interfaces:**
 - Consumes: `buildEdges`, `artifactNodesFor`, `useMapSelection` (Task 3); `SLICE_RAIL_X`,
   `ARTIFACT_GAP`, `STEP_W`, `SLOT_H`, `STORIES_Y`, `stepColumns` (Task 1).
+- **`ArtifactKind` is exported from `./map/layout`, NOT from `./map/edges`** — `edges.ts`
+  imports it and does not re-export it. Import it from `layout`.
+- **`Selection` covers `"slice" | "story" | "step"` and deliberately has NO `"artifact"`
+  kind.** The sketch below only ever calls `select({ kind: "slice", … })`, so artifacts are
+  display-only and the union needs no change. **If you decide to make artifact nodes
+  clickable, stop and tell me first** — widening `Selection` is a real interface change, not
+  an implementation detail, and it is the kind of thing that should be decided rather than
+  discovered mid-build.
 - Produces: nothing further; this is the last task.
 
 - [ ] **Step 1: Write the failing test**
@@ -1497,7 +1715,10 @@ query `{ selector: ".slice-band__name" }` keep passing.
 - [ ] **Step 4: Add the ephemeral nodes to the seeding effect**
 
 Replace the seeding effect from Task 4 with one that appends anchor and artifact nodes
-when a slice is revealed. Add `revealedSlice` and `decorate` to its dependency array;
+when a slice is revealed. Add `revealedSlice` to its dependency array — **NOT `decorate`**, and keep Task 4's
+`biome-ignore` on this effect. `decorate` is rebuilt every render, so listing it is an
+infinite update loop rather than merely a slow path (the effect sets state). The code block
+below is correct; this sentence used to say otherwise.;
 `decorate` itself is unchanged from Task 4:
 
 ```ts
@@ -1529,16 +1750,21 @@ when a slice is revealed. Add `revealedSlice` and `decorate` to its dependency a
     setNodes([
       ...decorated,
       {
-        id: `slice:${revealedSlice.id}`,
+        // sliceNodeId, NOT a re-derived `slice:${id}` — item 3 above. The whole point of
+        // the exported helpers is that two modules cannot disagree about a format.
+        id: sliceNodeId(revealedSlice.id),
         type: "slice",
         position: { x: SLICE_RAIL_X, y: STORIES_Y },
         data: { name: revealedSlice.name, fraction: `${done}/${revealedSlice.storyIds.length}` },
         draggable: false,
       },
+      // `a.id` is already minted by `artifactNodeId` inside `artifactNodesFor` — do not
+      // rebuild it here.
       ...artifactNodesFor(revealedSlice).map((a, i) => ({
         id: a.id,
         type: "artifact" as const,
-        position: { x: rightEdge + ARTIFACT_GAP, y: STORIES_Y + i * 64 },
+        // ARTIFACT_PITCH, not a literal — see the note under item 2 above.
+        position: { x: rightEdge + ARTIFACT_GAP, y: STORIES_Y + i * ARTIFACT_PITCH },
         data: { kind: a.kind, label: a.label },
         draggable: false,
       })),
@@ -1547,6 +1773,40 @@ when a slice is revealed. Add `revealedSlice` and `decorate` to its dependency a
 ```
 
 Pass `edges` to `<ReactFlow edges={edges} …>` in place of the empty array from Task 4.
+
+**TWO THINGS FOUND BEFORE CODING, both correct, both amending this task.**
+
+**(A) The edges cannot draw at all as briefed — a `nodeTypes.tsx` adapter is required.**
+`nodes.tsx` renders plain divs and imports nothing from `@xyflow/react`, so no node has a
+`<Handle>`. Verified against the installed `@xyflow/system@0.0.79`: `getEdgePosition`
+returns `null` and calls `onError('008')` when either endpoint lacks handle bounds, and the
+node-object `handles` field is not a workaround — the ResizeObserver pass overwrites
+`internals.handleBounds` with DOM-derived values, and `getHandleBounds` returns `null` when
+the element contains no `.source`/`.target` descendant. So the edge set would compute, pass
+to `<ReactFlow edges={…}>`, and **silently draw nothing**, while the new tests still pass
+because they assert nodes and dimming.
+
+Putting `<Handle>` into `nodes.tsx` is the wrong fix: `HandleComponent` calls `useStoreApi`
+and `useStore`, so every plain `render(<StoryNode …>)` would throw — about 15 existing tests
+— and it spends the DOM-free property Tasks 2-4 deliberately bought.
+
+**Create `control-plane/src/organisms/map/nodeTypes.tsx`**: import the five pure components
+from `nodes.tsx`, wrap each in a `<Handle type="target" position={Position.Left}>` /
+`source`/`Right` pair, and export the module-scope `nodeTypes` from there. `nodes.tsx` stays
+xyflow-free; only the `nodeTypes` export moves, and the "registers all five node types" test
+moves with it. Two files beyond the list, and not scope creep.
+
+**(B) This step's CSS sketch is a REGRESSION, not an addition.** Task 4 already shipped
+`.map-slice-anchor` / `.map-artifact` as a single centred row (`components.css:2926-2944`)
+plus `.is-dimmed` rules naming both. The sketch silently swaps `var(--text-dim)` →
+`var(--text-2)` and the `.map-story` background → `var(--pill)` **for no stated reason** —
+that is a copy-paste, not a decision. **Keep Task 4's tokens.**
+
+Do take the sketch's **column-plus-ellipsis** shape, for a reason worth recording: the
+artifact label is a spec path — 76 characters in the fixture — and Task 4's rule sets no
+width and no ellipsis, so that card renders roughly 500px wide and overruns the artifact
+rail. That is a real defect in what shipped. It is also what decides `ARTIFACT_PITCH`:
+measure the two-line card in the browser and set the constant from what you see.
 
 - [ ] **Step 5: Style the ephemeral nodes**
 
@@ -1614,6 +1874,7 @@ Confirm in all four themes.
 
 ```bash
 git -C /Users/edwincruz/Development/Workspaces/jefelabs/smithagents add \
+  control-plane/src/organisms/map/layout.ts \
   control-plane/src/organisms/MapStage.tsx control-plane/src/organisms/MapStage.test.tsx \
   control-plane/src/styles/components.css
 git -C /Users/edwincruz/Development/Workspaces/jefelabs/smithagents commit -m "feat: on-demand traceability reveal on the story map
@@ -1626,7 +1887,11 @@ The band keeps .slice-band__name on an inner span — the click target
 wraps it, so the three existing selector-based tests are untouched."
 ```
 
-Verify **3 files changed**.
+Verify **4 files changed** — `layout.ts` included. The original said three and omitted it,
+which would leave `ARTIFACT_PITCH` and the widened `MapNode` union uncommitted while
+`MapStage.tsx` imports them: **the commit would not build, and the "3 files" check would
+pass while the tree was broken.** A verification step that confirms a wrong number is worse
+than no verification step.
 
 ---
 

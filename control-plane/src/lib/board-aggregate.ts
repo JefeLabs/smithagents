@@ -64,18 +64,20 @@ export interface Cluster {
  * out of a `workspaceId === undefined` filter — which is how it would get
  * folded into the aggregate by accident later.
  */
-export function tabsFor(boards: WorkBoardT[], scope: string): TabDescriptor[] {
+export function tabsFor(boards: WorkBoardT[], scope: ReadonlySet<string> | typeof ALL_WORKSPACES): TabDescriptor[] {
   const all = scope === ALL_WORKSPACES;
   const tabs: TabDescriptor[] = [];
   for (const type of WORKSPACE_BOARD_TYPES_UI) {
-    const matches = boards.filter((b) => b.type === type && (all ? Boolean(b.workspaceId) : b.workspaceId === scope));
+    const matches = boards.filter(
+      (b) => b.type === type && (all ? Boolean(b.workspaceId) : scope.has(b.workspaceId ?? "")),
+    );
     if (matches.length === 0) continue;
     tabs.push({
       key: type,
       label: all ? BOARD_TYPE_LABELS_UI[type] : matches[0].name,
       type,
       boardIds: matches.map((b) => b.id),
-      clustered: all,
+      clustered: all || scope.size > 1,
     });
   }
   const personal = boards.find((b) => b.type === "personal");

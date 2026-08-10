@@ -31,7 +31,7 @@ export interface CapSlice {
   id: string;
   name: string;
   order: number;
-  /** Disjoint across slices; a story in no slice is backlog. */
+  /** May overlap other slices, but each slice must own at least one story no other slice has. A story in no slice is backlog. */
   storyIds: string[];
   specPath?: string;
   planPath?: string;
@@ -43,6 +43,17 @@ export interface Capability {
   id: string;
   name: string;
   workspaceId: string;
+  /**
+   * Where this capability sits in the row, and OPTIONAL on purpose: every capability
+   * file written before this existed has no `order`, and rejecting those would empty
+   * the map rather than migrate it. `loadCapabilities` gives them a deterministic place
+   * instead, and the value is written the first time something reorders them.
+   *
+   * Unlike activities, steps and stories — which are dense 0..n inside ONE document —
+   * a capability is its own file, so renumbering the set is a write per capability.
+   * The client still keeps them dense; it just costs more than the others do.
+   */
+  order?: number;
   activities: CapActivity[];
   stories: CapStory[];
   slices: CapSlice[];
@@ -58,12 +69,12 @@ export function slugify(name: string): string {
   return id;
 }
 
-export function createCapability(name: string, workspaceId: string): Capability {
+export function createCapability(name: string, workspaceId: string, order = 0): Capability {
   const now = new Date().toISOString();
   // Namespaced like boardIdFor: the id is the on-disk filename, and two
   // workspaces must be able to each have their own "Onboarding".
   const id = `${slugify(workspaceId)}-${slugify(name)}`;
-  return { id, name: name.trim(), workspaceId, activities: [], stories: [], slices: [], createdAt: now, updatedAt: now };
+  return { id, name: name.trim(), workspaceId, order, activities: [], stories: [], slices: [], createdAt: now, updatedAt: now };
 }
 
 function assertCapability(file: string, v: unknown): Capability {
@@ -91,6 +102,13 @@ export async function loadCapabilities(dir: string): Promise<{ capabilities: Cap
       errors.push({ file, error: String((err as Error).message) });
     }
   }
+  // SORTED, and by (order, id) rather than by order alone. A file written before
+  // `order` existed has none, and it has to land somewhere stable: `id` is the
+  // filename, so unordered capabilities keep a fixed alphabetical sequence after the
+  // ordered ones instead of moving whenever the directory is read in a different
+  // sequence. Nothing is renumbered here — load does not write, and a value invented
+  // on read would look persisted without being.
+  capabilities.sort((a, b) => (a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER) || a.id.localeCompare(b.id));
   return { capabilities, errors };
 }
 
@@ -105,7 +123,30 @@ export async function deleteCapabilityFile(dir: string, id: string): Promise<voi
   await rm(join(dir, `${id}.json`));
 }
 
-export function patchCapability(cap: Capability, patch: Partial<Pick<Capability, 'name' | 'activities' | 'stories' | 'slices'>>): Capability {
+/**
+ * Slices whose every story also appears in another slice. Pure, total, and
+ * evaluated over the WHOLE set — a slice is invalidated by what its neighbours
+ * contain, so this can never be answered one slice at a time. Empty storyIds
+ * owns nothing, so a storyless slice is reported here rather than needing its
+ * own check.
+ *
+ * Counts each story across all slices FIRST, then asks each slice whether it
+ * holds one with a count of 1. Marking duplicates while iterating would report
+ * only the later of two identical slices, when both are equally unowned.
+ *
+ * Mirrored in control-plane/src/organisms/map/slices.ts — that copy disables a
+ * button, this one decides what persists. Both are tested against the same
+ * case table; keep them in step.
+ */
+export function slicesWithoutExclusiveStory(slices: CapSlice[]): CapSlice[] {
+  const uses = new Map<string, number>();
+  for (const slice of slices) {
+    for (const id of new Set(slice.storyIds)) uses.set(id, (uses.get(id) ?? 0) + 1);
+  }
+  return slices.filter((slice) => !slice.storyIds.some((id) => uses.get(id) === 1));
+}
+
+export function patchCapability(cap: Capability, patch: Partial<Pick<Capability, 'name' | 'order' | 'activities' | 'stories' | 'slices'>>): Capability {
   const activities = patch.activities ?? cap.activities;
   const stories = patch.stories ?? cap.stories;
   const slices = patch.slices ?? cap.slices;
@@ -114,15 +155,29 @@ export function patchCapability(cap: Capability, patch: Partial<Pick<Capability,
     if (!stepIds.has(s.stepId)) throw new Error(`Story "${s.text}" references unknown step ${s.stepId}`);
   }
   const storyIds = new Set(stories.map((s) => s.id));
-  const claimed = new Set<string>();
   for (const slice of slices) {
     for (const id of slice.storyIds) {
       if (!storyIds.has(id)) throw new Error(`Slice "${slice.name}" references unknown story ${id}`);
-      if (claimed.has(id)) throw new Error(`Story ${id} is in two slices — storyIds must be disjoint`);
-      claimed.add(id);
     }
   }
+  // Slices MAY overlap. What they may not do is leave a neighbour owning nothing
+  // of its own — and because a slice is invalidated by what its neighbours hold,
+  // the comparison is between the whole set before and the whole set after.
+  //
+  // Keyed by id, never by count: a write that repairs one slice while breaking
+  // another leaves the count level and the set changed. Already-invalid slices
+  // are grandfathered because two of them are live on the Plan and Deliver
+  // boards, and deleting slices with cards would destroy work.
+  const invalidBefore = new Set(slicesWithoutExclusiveStory(cap.slices).map((s) => s.id));
+  const newlyInvalid = slicesWithoutExclusiveStory(slices).filter((s) => !invalidBefore.has(s.id));
+  if (newlyInvalid.length > 0) {
+    const names = newlyInvalid.map((s) => `"${s.name}"`).join(', ');
+    throw new Error(`${names} would own no story that no other slice has — every slice needs one of its own`);
+  }
   if (patch.name?.trim()) cap.name = patch.name.trim();
+  // Guarded on `undefined`, not on truthiness: order 0 is the first slot and the most
+  // common value a reorder writes, and `if (patch.order)` would silently drop it.
+  if (patch.order !== undefined) cap.order = patch.order;
   cap.activities = activities;
   cap.stories = stories;
   cap.slices = slices;

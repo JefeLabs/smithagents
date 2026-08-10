@@ -3,12 +3,44 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import type { CapSlice } from './capabilities.js';
 import {
   applyStoryToggles, createCapability, deleteCapabilityFile, ensurePersonalBoard, ensureWorkspaceBoards,
   loadCapabilities, patchCapability, renderSpecSkeleton, repointSliceCardRef, resyncLinkedCards, saveCapability,
-  sendSliceToBoard, sliceStories, slugify, unlinkCapabilityCards, unlinkSliceCard,
+  sendSliceToBoard, sliceStories, slicesWithoutExclusiveStory, slugify, unlinkCapabilityCards, unlinkSliceCard,
 } from './capabilities.js';
 import { boardIdFor, loadBoards, resolveExit, routeCard, saveBoard } from './work-items.js';
+
+const sl = (id: string, storyIds: string[]): CapSlice => ({ id, name: id, order: 0, storyIds });
+
+test('slicesWithoutExclusiveStory: the shared case table', () => {
+  const cases: Array<{ name: string; slices: CapSlice[]; invalid: string[] }> = [
+    { name: 'single slice owns everything', slices: [sl('A', ['s1', 's2', 's3'])], invalid: [] },
+    { name: 'overlap, each owns one', slices: [sl('A', ['s1', 's2']), sl('B', ['s2', 's3'])], invalid: [] },
+    { name: 'identical single story', slices: [sl('A', ['s1']), sl('B', ['s1'])], invalid: ['A', 'B'] },
+    { name: 'identical sets', slices: [sl('A', ['s1', 's2']), sl('B', ['s1', 's2'])], invalid: ['A', 'B'] },
+    { name: 'subset', slices: [sl('A', ['s1']), sl('B', ['s1', 's2'])], invalid: ['A'] },
+    { name: 'storyless', slices: [sl('A', [])], invalid: ['A'] },
+    { name: 'no slices at all', slices: [], invalid: [] },
+    // FIXTURE REPAIRED, expectation kept. The brief wrote this as A[s1] B[s2]
+    // C[s1,s2] expecting ['C'], but in that arrangement A's only story is in C and
+    // B's only story is in C, so NO slice owns anything and the honest answer is
+    // ['A','B','C'] — verified against the rule directly, not just against the
+    // implementation. Answering ['A','B','C'] would have made this row a duplicate
+    // of 'identical sets'; the property it is here to prove is that a slice can be
+    // invalidated by the COMBINATION of two neighbours that are each healthy, which
+    // is what stops anyone rewriting the check as a pairwise containment test. So A
+    // and B get a story of their own and the expectation stands.
+    {
+      name: 'covered by two neighbours',
+      slices: [sl('A', ['s1', 's3']), sl('B', ['s2', 's4']), sl('C', ['s1', 's2'])],
+      invalid: ['C'],
+    },
+  ];
+  for (const c of cases) {
+    assert.deepEqual(slicesWithoutExclusiveStory(c.slices).map((s) => s.id), c.invalid, c.name);
+  }
+});
 
 function fixture() {
   const cap = createCapability('School Feature Set', 'skoolscout');
@@ -47,6 +79,118 @@ test('createCapability: id is workspace-namespaced — two workspaces can share 
   assert.equal(b.name, 'Onboarding');
 });
 
+test('capability order: new ones go last in their own workspace, legacy files keep a stable place', async () => {
+  // The migration case, which is the one that breaks a running install: every
+  // capability file written before `order` existed has none. Loading must place them
+  // deterministically rather than reject them or shuffle with the directory read.
+  const dir = await mkdtemp(join(tmpdir(), 'caps-order-'));
+  const legacyA = { ...createCapability('Zeta', 'ws'), id: 'ws-zeta' } as Record<string, unknown>;
+  const legacyB = { ...createCapability('Alpha', 'ws'), id: 'ws-alpha' } as Record<string, unknown>;
+  delete legacyA.order;
+  delete legacyB.order;
+  await saveCapability(dir, legacyA as unknown as Parameters<typeof saveCapability>[1]);
+  await saveCapability(dir, legacyB as unknown as Parameters<typeof saveCapability>[1]);
+
+  const first = await loadCapabilities(dir);
+  assert.equal(first.errors.length, 0, 'a file without order is not an invalid file');
+  assert.deepEqual(first.capabilities.map((c) => c.id), ['ws-alpha', 'ws-zeta'], 'unordered fall back to id order');
+
+  // An ordered one sorts ahead of both, however late its id is alphabetically.
+  const ordered = createCapability('Middle', 'ws', 0);
+  await saveCapability(dir, ordered);
+  const second = await loadCapabilities(dir);
+  assert.deepEqual(second.capabilities.map((c) => c.id), ['ws-middle', 'ws-alpha', 'ws-zeta']);
+});
+
+test('patchCapability: order 0 is writable, which truthiness would drop', () => {
+  // The first slot is the commonest value a reorder writes and the one a
+  // `if (patch.order)` guard silently ignores.
+  const cap = createCapability('A', 'ws', 3);
+  patchCapability(cap, { order: 0 });
+  assert.equal(cap.order, 0);
+  // Absent means untouched, rather than reset.
+  patchCapability(cap, { name: 'B' });
+  assert.equal(cap.order, 0);
+});
+
+test('patchCapability: overlapping slices are allowed when each owns something', () => {
+  const cap = createCapability('jefelabs', 'c');
+  cap.activities = [{ id: 'a1', name: 'a', order: 0, steps: [{ id: 'st1', name: 's', order: 0 }] }];
+  cap.stories = [
+    { id: 's1', stepId: 'st1', order: 0, text: 'one', done: false },
+    { id: 's2', stepId: 'st1', order: 1, text: 'two', done: false },
+    { id: 's3', stepId: 'st1', order: 2, text: 'three', done: false },
+  ];
+  const patched = patchCapability(cap, {
+    slices: [
+      { id: 'A', name: 'A', order: 0, storyIds: ['s1', 's2'] },
+      { id: 'B', name: 'B', order: 1, storyIds: ['s2', 's3'] },
+    ],
+  });
+  assert.equal(patched.slices.length, 2);
+});
+
+test('patchCapability: refuses a write that newly invalidates a slice, naming it', () => {
+  const cap = createCapability('jefelabs', 'c');
+  cap.activities = [{ id: 'a1', name: 'a', order: 0, steps: [{ id: 'st1', name: 's', order: 0 }] }];
+  cap.stories = [
+    { id: 's1', stepId: 'st1', order: 0, text: 'one', done: false },
+    { id: 's2', stepId: 'st1', order: 1, text: 'two', done: false },
+  ];
+  cap.slices = [{ id: 'A', name: 'tour sched v1', order: 0, storyIds: ['s1'] }];
+  assert.throws(
+    () => patchCapability(cap, {
+      slices: [
+        { id: 'A', name: 'tour sched v1', order: 0, storyIds: ['s1'] },
+        { id: 'B', name: 'B', order: 1, storyIds: ['s1', 's2'] },
+      ],
+    }),
+    /tour sched v1/,
+  );
+});
+
+test('patchCapability: an already-invalid slice is grandfathered', () => {
+  const cap = createCapability('jefelabs', 'c');
+  cap.activities = [{ id: 'a1', name: 'a', order: 0, steps: [{ id: 'st1', name: 's', order: 0 }] }];
+  cap.stories = [{ id: 's1', stepId: 'st1', order: 0, text: 'one', done: false }];
+  cap.slices = [{ id: 'OLD', name: 'slice test 3', order: 0, storyIds: [] }];
+  const patched = patchCapability(cap, { name: 'renamed' });
+  assert.equal(patched.name, 'renamed');
+  assert.equal(patched.slices[0].storyIds.length, 0);
+});
+
+test('patchCapability: refuses a write that repairs one slice while breaking another', () => {
+  const cap = createCapability('jefelabs', 'c');
+  cap.activities = [{ id: 'a1', name: 'a', order: 0, steps: [{ id: 'st1', name: 's', order: 0 }] }];
+  cap.stories = [
+    { id: 's1', stepId: 'st1', order: 0, text: 'one', done: false },
+    { id: 's2', stepId: 'st1', order: 1, text: 'two', done: false },
+  ];
+  // BROKEN owns nothing; HEALTHY owns s2. The write gives BROKEN a story of its
+  // own AND takes HEALTHY's only exclusive one: the invalid COUNT stays at 1
+  // while the invalid SET flips from {BROKEN} to {HEALTHY}, so a check that
+  // compares lengths waves it through.
+  //
+  // FIXTURE REPAIRED. The brief's write was BROKEN[s1], HEALTHY[s1,s2] — which
+  // leaves s2 exclusive to HEALTHY, so HEALTHY stays valid and nothing is
+  // broken at all. That version passes against a length comparison too, which is
+  // the one thing this test exists to fail. BROKEN has to take s2 for HEALTHY to
+  // lose it.
+  cap.slices = [
+    { id: 'BROKEN', name: 'broken', order: 0, storyIds: [] },
+    { id: 'HEALTHY', name: 'healthy', order: 1, storyIds: ['s2'] },
+  ];
+  assert.throws(
+    () => patchCapability(cap, {
+      slices: [
+        { id: 'BROKEN', name: 'broken', order: 0, storyIds: ['s1', 's2'] },
+        { id: 'HEALTHY', name: 'healthy', order: 1, storyIds: ['s2'] },
+      ],
+    }),
+    /healthy/,
+  );
+});
+
 test('patchCapability: wholesale replace with validation', () => {
   const cap = fixture();
   const before = cap.updatedAt;
@@ -54,10 +198,12 @@ test('patchCapability: wholesale replace with validation', () => {
   assert.equal(cap.name, 'Renamed');
   assert.ok(cap.updatedAt >= before);
   assert.throws(() => patchCapability(cap, { stories: [{ id: 'x', stepId: 'ghost', order: 0, text: 't', done: false }] }), /step/i);
+  // Was /disjoint/i. Sharing a story is legal now; what this pair does wrong is
+  // share their ONLY story, so neither owns anything and both are refused.
   assert.throws(() => patchCapability(cap, { slices: [
     { id: 'a', name: 'a', order: 0, storyIds: ['s1'] },
     { id: 'b', name: 'b', order: 1, storyIds: ['s1'] },
-  ] }), /disjoint/i);
+  ] }), /own no story that no other slice has/);
   assert.throws(() => patchCapability(cap, { slices: [{ id: 'a', name: 'a', order: 0, storyIds: ['ghost'] }] }), /story/i);
 });
 
@@ -177,7 +323,14 @@ test('resyncLinkedCards: editing a slice after sending refreshes both linked car
   assert.doesNotThrow(() => applyStoryToggles(cap, 'sl1', [{ id: 's1', text: 'create tour time slots', done: true }]));
 
   // Unassigning every remaining story leaves an empty checklist, not a stale one.
-  patchCapability(cap, { slices: [{ ...cap.slices[0], storyIds: [] }] });
+  //
+  // Set DIRECTLY rather than through patchCapability, which now refuses to empty a
+  // healthy slice — emptying it is precisely what leaves it owning nothing. The
+  // state is still reachable in production and this test still matters: the two
+  // storyless slices live in jefelabs-school-visits are grandfathered, so resync
+  // has to keep handling exactly this shape. patchCapability was only ever the
+  // convenient way to reach it, and resyncLinkedCards is the unit under test.
+  cap.slices = [{ ...cap.slices[0], storyIds: [] }];
   await resyncLinkedCards(dir, cap);
   const { boards: emptied } = await loadBoards(dir);
   const emptiedCard = emptied.find((b) => b.id === capBoard.id)!.cards.find((c) => c.id === capCard.id)!;

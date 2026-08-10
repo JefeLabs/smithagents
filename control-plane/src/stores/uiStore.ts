@@ -29,6 +29,17 @@ interface UiState {
   newWorkspaceOpen: boolean;
   removing: RemovalTarget | null;
   voiceNotice: string | null;
+  /**
+   * Which workspaces Board and Map RENDER. View-only: it never affects dispatch and
+   * never changes the active session — work still lands in the active session's
+   * workspace regardless of how many are on screen.
+   *
+   * `"*"` is every workspace. A set is an explicit selection; an EMPTY set means no
+   * explicit selection has been made, which is how the consuming stage knows to fall
+   * back to the active session's one workspace instead of defaulting to all of them.
+   */
+  viewedWorkspaces: ReadonlySet<string> | "*";
+  setViewedWorkspaces: (next: ReadonlySet<string> | "*") => void;
   openAddAgent: () => void;
   openEditAgent: (id: string) => void;
   closeAgentModal: () => void;
@@ -72,6 +83,7 @@ const initial = {
   newWorkspaceOpen: false,
   removing: null,
   voiceNotice: null,
+  viewedWorkspaces: new Set<string>(),
 } satisfies Partial<UiState>;
 
 export const useUiStore = create<UiState>((set) => ({
@@ -93,6 +105,7 @@ export const useUiStore = create<UiState>((set) => ({
   setNewWorkspaceOpen: (newWorkspaceOpen) => set({ newWorkspaceOpen }),
   setRemoving: (next) => set((s) => ({ removing: typeof next === "function" ? next(s.removing) : next })),
   setVoiceNotice: (voiceNotice) => set({ voiceNotice }),
+  setViewedWorkspaces: (viewedWorkspaces) => set({ viewedWorkspaces }),
   showVoiceBlockedNotice: () => {
     set({ voiceNotice: VOICE_BLOCKED_NOTICE });
     // Rapid presses restart the window rather than letting an earlier press's

@@ -56,7 +56,11 @@ export function WorkStage({ name, ring, onBack, fetchActivity, onWorkAction }: W
   };
 
   return (
-    <main className="work-stage" style={ring ? ({ "--ring": ring } as React.CSSProperties) : undefined}>
+    <section
+      className="stage work-stage"
+      aria-label={`Work: ${name}`}
+      style={ring ? ({ "--ring": ring } as React.CSSProperties) : undefined}
+    >
       <header className="work-stage__header">
         <button type="button" className="work-stage__back" onClick={onBack} aria-label="Back to the meeting">
           <ArrowLeft size={15} strokeWidth={2} />
@@ -97,6 +101,6 @@ export function WorkStage({ name, ring, onBack, fetchActivity, onWorkAction }: W
           <SendHorizontal strokeWidth={1.7} />
         </button>
       </form>
-    </main>
+    </section>
   );
 }

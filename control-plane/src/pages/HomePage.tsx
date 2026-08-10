@@ -8,11 +8,16 @@ import { type AgentSeed, agentSeeds } from "../data/agents";
 import { usePushToTalk } from "../hooks/usePushToTalk";
 import { useSpokenReplies } from "../hooks/useSpokenReplies";
 import { useTheme } from "../hooks/useTheme";
+import { ALL_WORKSPACES } from "../lib/board-aggregate";
+import { AlertMenu } from "../molecules/AlertMenu";
 import { ConfirmSheet } from "../molecules/ConfirmSheet";
+import { OperatorAvatar } from "../molecules/OperatorAvatar";
+import { WorkspaceSelector } from "../molecules/WorkspaceSelector";
 import { AddAgentModal } from "../organisms/AddAgentModal";
 import { AgentRoster } from "../organisms/AgentRoster";
 import { DotGridCanvas } from "../organisms/DotGridCanvas";
 import { DotGridTuner } from "../organisms/DotGridTuner";
+import { Navbar } from "../organisms/Navbar";
 import { NewSessionScreen } from "../organisms/NewSessionScreen";
 import { NewWorkspaceModal } from "../organisms/NewWorkspaceModal";
 import { SessionsPanel } from "../organisms/SessionsPanel";
@@ -85,6 +90,7 @@ export function HomePage() {
   const setWorkspacesOpen = useUiStore((s) => s.setWorkspacesOpen);
   const setNewWorkspaceOpen = useUiStore((s) => s.setNewWorkspaceOpen);
   const setRemoving = useUiStore((s) => s.setRemoving);
+  const viewedWorkspaces = useUiStore((s) => s.viewedWorkspaces);
 
   // The audio hint is the page's only read of audio state — the mic and mute
   // controls themselves live in the voice route and read the store there.
@@ -172,15 +178,30 @@ export function HomePage() {
 
   return (
     <ControlPlaneLayout
+      topBar={
+        <Navbar
+          onHome={() => void navigate({ to: "/" })}
+          workspaceSlot={<WorkspaceSelector />}
+          alertSlot={<AlertMenu onNavigate={(t) => void navigate({ to: t })} />}
+          avatarSlot={<OperatorAvatar />}
+        />
+      }
       background={<DotGridCanvas params={gridParams} />}
       leftRail={
         <ToolRail
           activeRoute={pathname}
-          onHome={() => void navigate({ to: "/" })}
-          onNewWorkspace={() => setNewWorkspaceOpen(true)}
+          // Locks to the workspace already on screen (same rule SessionsPanel's
+          // "new session" row uses) only while exactly one is in view — an
+          // untouched `viewedWorkspaces` (size 0) still means "just the active
+          // one", same default BoardStage falls back to. Several workspaces, or
+          // the ALL_WORKSPACES sentinel, is ambiguous — so the composer opens
+          // unlocked instead of guessing.
+          onNewSession={() =>
+            openComposer(
+              viewedWorkspaces !== ALL_WORKSPACES && viewedWorkspaces.size <= 1 ? session?.workspace : undefined,
+            )
+          }
           onSessions={toggleSessions}
-          onBoard={() => void navigate({ to: "/board" })}
-          onMap={() => void navigate({ to: "/map" })}
           onSettings={() => setSettingsOpen(true)}
         />
       }
@@ -209,6 +230,13 @@ export function HomePage() {
                 return r;
               }
               closeComposer();
+              // Land in the conversation you just started. The broker has already
+              // made the new session active (SessionManager.create sets activeId)
+              // and replayed the prompt as an utterance, so the turn is in flight
+              // before this navigation resolves — without it we would fall through
+              // to whatever stage happened to be routed, and the reply would arrive
+              // on a screen the user isn't looking at.
+              void navigate({ to: "/" });
               return undefined;
             }}
             onCancel={closeComposer}

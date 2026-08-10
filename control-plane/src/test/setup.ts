@@ -49,6 +49,20 @@ vi.hoisted(() => {
       dispatchEvent: () => false,
     })) as typeof globalThis.matchMedia;
   }
+
+  /**
+   * jsdom implements no `ResizeObserver`. `Sidebar.Content` wraps HeroUI's
+   * `ScrollShadow`, which observes its own size to decide when to show the
+   * fade — mounting any `Sidebar` throws without this, same failure mode as
+   * `matchMedia` above.
+   */
+  if (typeof globalThis.ResizeObserver !== "function") {
+    globalThis.ResizeObserver = class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver;
+  }
 });
 
 beforeEach(() => resetAllStores());

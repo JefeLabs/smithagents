@@ -39,7 +39,7 @@ export function VoiceStage({
   const spring = reduceMotion ? { duration: 0 } : { type: "spring" as const, duration: 0.5, bounce: 0 };
 
   return (
-    <main className={chatActive ? "chat-active" : undefined}>
+    <section className={chatActive ? "stage chat-active" : "stage"} aria-label="Voice">
       <AnimatePresence mode="popLayout" initial={false}>
         {!chatActive && (
           <motion.div
@@ -84,6 +84,6 @@ export function VoiceStage({
           onVoiceBlocked={onVoiceBlocked}
         />
       </motion.div>
-    </main>
+    </section>
   );
 }

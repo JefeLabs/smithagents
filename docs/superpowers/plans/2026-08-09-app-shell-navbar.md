@@ -2,7 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Claimed by:** unclaimed — claim this header before executing
+**Claimed by:** Claude session d21f90fd on branch `app-shell-navbar`, 2026-08-09.
+In progress — do not execute in parallel from another checkout.
 
 **Goal:** Add a top navbar carrying logo, workspace selector, alert icon and a
 cloud-gated avatar, making the selector the app's single workspace control and retiring
@@ -69,7 +70,7 @@ HeroUI Phase 1a is independent and may run in parallel — it touches neither st
 
 **Files:**
 - Modify: `src/templates/ControlPlaneLayout.tsx`, `src/organisms/ToolRail.tsx`,
-  `src/pages/HomePage.tsx`, `src/styles/components.css`
+  `src/pages/HomePage.tsx`, `src/styles/components.css`, `src/styles/base.css`
 - Create: `src/organisms/Navbar.tsx`
 - Test: `src/organisms/Navbar.test.tsx`, `src/organisms/ToolRail.test.tsx` (existing)
 
@@ -96,6 +97,28 @@ the board/map stages clear the rails with `inset 0 72px`. After this task:
 
 Verify the stages in a real window, not only in tests. `pnpm dev` works and a broker is
 typically listening on 127.0.0.1:7790.
+
+**The `<main>` collision — resolved 2026-08-09, do not rediscover it.**
+
+`base.css:31` carries a blanket `main { position: fixed; inset: 0 72px; … }`, and all four
+stages (`VoiceStage`, `BoardStage:311`, `WorkStage:59`, `MapStage:431`) render a bare
+`<main>`. HeroUI's `Sidebar.Main` *also* renders a literal `<main>`.
+
+**Do not render `Sidebar.Main`.** `Sidebar.Provider` needs a flex child, not that specific
+component — `.sidebar__provider` is `flex min-h-svh w-full`. Let the stage's existing
+`<main>` be the flex sibling of `<Sidebar>`. That keeps exactly one `<main>` per page
+(nesting them is invalid HTML and yields two landmarks), turns `base.css`'s rule into the
+flow conversion this task wants anyway — drop `position: fixed; inset`, add `flex: 1`,
+keep `padding-right: 72px` for the still-fixed right rail — and needs no `:not()` scoping.
+
+It also protects `src/router.test.tsx`, which has **seven** assertions on
+`getByRole("main", { name: "Work boards" | "Story map" })` plus
+`document.querySelector("main.work-stage")` at line 140. Changing the stages away from
+`<main>` breaks all of them.
+
+Verify `Sidebar.Main` is genuinely optional before relying on this. If it is load-bearing,
+the fallback is scoping to `main:not(.sidebar__main)` AND converting the four stages to
+`<div>` — which requires converting those seven router assertions in the same commit.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -281,12 +304,10 @@ const TOOLS = [
 In `HomePage`, wire it to the composer — locked only when the view is unambiguous:
 
 ```tsx
-// You may look at many, create in one. With several workspaces viewed there is no
-// non-surprising default, so leave the picker unlocked and let the user say which.
-// NewSessionScreen already renders a picker when lockedWorkspace is undefined.
-onNewSession={() =>
-  openComposer(viewedWorkspaces.size === 1 ? session?.workspace : undefined)
-}
+// Task 1: exactly one workspace is ever in view, so lock to it. This is the same
+// call SessionsPanel already makes. Task 3 introduces `viewedWorkspaces` and
+// upgrades this to the conditional — do NOT reference it here, it does not exist yet.
+onNewSession={() => openComposer(session?.workspace)}
 ```
 
 Falling back to the active session's workspace would be unambiguous to the code and
@@ -582,6 +603,21 @@ Everything downstream of `scope` — `tabsFor(boards, scope)`, the reset effect 
 
 The reset effect's dependency stays `[scope, tab?.key]`; `scope` is now derived, so it
 changes when the session frame does, which is exactly when the reset should fire.
+
+- [ ] **Step 2c: Upgrade `HomePage`'s `onNewSession` to the conditional**
+
+Task 1 wired `onNewSession={() => openComposer(session?.workspace)}` because
+`viewedWorkspaces` did not exist yet. Now it does, so apply the real rule:
+
+```tsx
+onNewSession={() =>
+  openComposer(viewed !== "*" && viewed.size === 1 ? session?.workspace : undefined)
+}
+```
+
+This is the rail half of *you may look at many, but you may only create in one* — Step 2b
+is the board half. Leaving Task 1's version in place would silently lock new sessions to
+the active workspace even while several are on screen.
 
 - [ ] **Step 2b: Hide the add control unless exactly one workspace is viewed**
 

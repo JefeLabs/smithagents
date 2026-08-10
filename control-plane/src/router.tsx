@@ -11,6 +11,7 @@ import type { ChatMessage, RosterAgent } from "./api/types";
 import { agentSeeds } from "./data/agents";
 import { useVoiceStatus } from "./hooks/useVoiceStatus";
 import { BoardStage } from "./organisms/BoardStage";
+import { DashboardsStage } from "./organisms/DashboardsStage";
 import { MapStage } from "./organisms/MapStage";
 import { VoiceStage } from "./organisms/VoiceStage";
 import { WorkStage } from "./organisms/WorkStage";
@@ -78,6 +79,10 @@ function MapRoute() {
   return <MapStage />;
 }
 
+function DashboardsRoute() {
+  return <DashboardsStage />;
+}
+
 function WorkRoute() {
   const navigate = useNavigate();
   const { agentId } = workRoute.useParams();
@@ -105,9 +110,14 @@ const rootRoute = createRootRoute({
 const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: "/", component: VoiceRoute });
 const boardRoute = createRoute({ getParentRoute: () => rootRoute, path: "/board", component: BoardRoute });
 const mapRoute = createRoute({ getParentRoute: () => rootRoute, path: "/map", component: MapRoute });
+const dashboardsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/dashboards",
+  component: DashboardsRoute,
+});
 const workRoute = createRoute({ getParentRoute: () => rootRoute, path: "/work/$agentId", component: WorkRoute });
 
-const routeTree = rootRoute.addChildren([indexRoute, boardRoute, mapRoute, workRoute]);
+const routeTree = rootRoute.addChildren([indexRoute, boardRoute, mapRoute, dashboardsRoute, workRoute]);
 
 export function createAppRouter(history = createHashHistory()) {
   return createRouter({ routeTree, history });

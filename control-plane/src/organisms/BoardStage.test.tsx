@@ -1,9 +1,11 @@
+import type { QueryClient } from "@tanstack/react-query";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ALL_WORKSPACES } from "../lib/board-aggregate";
 import { qk } from "../queries/keys";
 import { useSocketStore } from "../stores/socketStore";
+import { useUiStore } from "../stores/uiStore";
 import { renderWithProviders } from "../test/renderWithProviders";
 import type { WorkBoardT } from "./BoardStage";
 import { BoardStage, moveCard, resolveCrossBoardDrop, resolveDrop } from "./BoardStage";
@@ -74,6 +76,19 @@ function stubFetch(overrides: Record<string, unknown> = {}) {
   });
   vi.stubGlobal("fetch", fn);
   return { fn, calls };
+}
+
+function renderBoardStage(roster = ROSTER) {
+  return renderWithProviders(<BoardStage roster={roster} />);
+}
+
+/**
+ * Seeds the pushed-query cache the way the socket store would, per
+ * src/test/renderWithProviders.tsx — BoardStage's scope now follows this
+ * instead of an in-stage picker, so this is how tests drive it.
+ */
+function seedSessionFrame(client: QueryClient, session: { workspace: string }) {
+  client.setQueryData(qk.session, { id: "s0", title: "t", workspace: session.workspace, runtime: "local-in-process" });
 }
 
 describe("BoardStage", () => {
@@ -153,7 +168,7 @@ describe("BoardStage", () => {
     );
   });
 
-  it("shows the workspace dropdown and a tab per board, personal last", async () => {
+  it("shows a tab per board, personal last, following the session frame's workspace", async () => {
     stubFetch({
       boards: {
         boards: [
@@ -163,10 +178,53 @@ describe("BoardStage", () => {
         errors: [],
       },
     });
-    renderWithProviders(<BoardStage roster={ROSTER} />);
+    const { client } = renderBoardStage();
+    seedSessionFrame(client, { workspace: "acme" });
     await waitFor(() => expect(screen.getByRole("tab", { name: "Plan" })).toBeTruthy());
     expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Plan", "Personal"]);
-    expect(screen.getByLabelText("Workspace")).toBeTruthy();
+  });
+
+  it("follows the session frame's workspace without any in-stage control", async () => {
+    stubFetch({
+      boards: {
+        boards: [{ ...BOARD, id: "acme-plan", name: "Plan", type: "plan", workspaceId: "acme" }],
+        errors: [],
+      },
+    });
+    const { client } = renderBoardStage();
+    seedSessionFrame(client, { workspace: "acme" });
+    expect(await screen.findByRole("tab", { name: /plan/i })).toBeDefined();
+  });
+
+  it("falls back to every workspace, not none, before the session frame has landed", async () => {
+    // useSession() is skipToken-driven: `session` is `undefined` until the
+    // first WS frame arrives, exactly the state a fresh /#/board load is in.
+    // Falling back to an empty Set there would show zero workspace tabs —
+    // fewer boards than before Task 3. The safe degenerate case is every
+    // workspace, the prior default, not none.
+    stubFetch({
+      boards: {
+        boards: [{ ...BOARD, id: "acme-plan", name: "Plan", type: "plan", workspaceId: "acme" }],
+        errors: [],
+      },
+    });
+    renderBoardStage();
+    expect(await screen.findByRole("tab", { name: "Plan" })).toBeTruthy();
+  });
+
+  it("also falls back to every workspace when the session is confirmed to have none", async () => {
+    // HomePage's knownZeroSessions state: the broker answered and confirmed
+    // zero sessions, so `session` is a resolved `null`, not merely pending —
+    // still no workspace to follow, same fallback applies.
+    stubFetch({
+      boards: {
+        boards: [{ ...BOARD, id: "acme-plan", name: "Plan", type: "plan", workspaceId: "acme" }],
+        errors: [],
+      },
+    });
+    const { client } = renderBoardStage();
+    client.setQueryData(qk.session, null);
+    expect(await screen.findByRole("tab", { name: "Plan" })).toBeTruthy();
   });
 
   it("clusters cards by workspace under a subheading in the aggregate view", async () => {
@@ -195,33 +253,35 @@ describe("BoardStage", () => {
         errors: [],
       },
     });
-    renderWithProviders(<BoardStage roster={ROSTER} />);
+    const { client } = renderBoardStage();
+    // Start following the session's one workspace: acme's card only, no subheadings.
+    seedSessionFrame(client, { workspace: "acme" });
     await waitFor(() => expect(screen.getByText("Parent portal")).toBeTruthy());
-    // Start in a single workspace: acme's card only, and no subheadings.
-    await userEvent.selectOptions(screen.getByLabelText("Workspace"), "acme");
-    await waitFor(() => expect(screen.queryByText("Billing")).toBeNull());
+    expect(screen.queryByText("Billing")).toBeNull();
     expect(document.querySelector(".board-column__cluster-name")).toBeNull();
     // ...then switch to the aggregate view: both workspaces, each subheaded.
-    await userEvent.selectOptions(screen.getByLabelText("Workspace"), ALL_WORKSPACES);
-    // Scoped to the column: "acme" is also an <option> in the workspace
-    // dropdown, so an unscoped getByText would match two elements.
+    // No in-stage control does this (Task 3 retired it) — only the toggle a
+    // future multiselect surface will drive, exercised here directly.
+    act(() => useUiStore.getState().setViewedWorkspaces(ALL_WORKSPACES));
     const column = await waitFor(() => screen.getByText("Spec").closest(".board-column") as HTMLElement);
     expect(within(column).getByText("acme")).toBeTruthy();
     expect(within(column).getByText("globex")).toBeTruthy();
     expect(screen.getByText("Billing")).toBeTruthy();
   });
 
-  it("resets the card composer when the tab or the workspace scope changes", async () => {
+  it("resets the card composer when the tab or the session's workspace changes", async () => {
     stubFetch({
       boards: {
         boards: [
           { ...BOARD, id: "acme-plan", name: "Plan", type: "plan", workspaceId: "acme" },
+          { ...BOARD, id: "beta-plan", name: "Plan", type: "plan", workspaceId: "beta" },
           { ...BOARD, id: "personal", name: "Personal", type: "personal", workspaceId: undefined },
         ],
         errors: [],
       },
     });
-    renderWithProviders(<BoardStage roster={ROSTER} />);
+    const { client } = renderBoardStage();
+    seedSessionFrame(client, { workspace: "acme" });
     await waitFor(() => expect(screen.getByRole("tab", { name: "Personal" })).toBeTruthy());
     await userEvent.click(screen.getByRole("tab", { name: "Personal" }));
     await userEvent.click(screen.getByRole("button", { name: /add card/i }));
@@ -231,24 +291,28 @@ describe("BoardStage", () => {
     expect(screen.queryByPlaceholderText(/card title/i)).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: /add card/i }));
     expect((screen.getByPlaceholderText(/card title/i) as HTMLInputElement).value).toBe("");
-    // ...and neither must changing the workspace scope.
-    await userEvent.selectOptions(screen.getByLabelText("Workspace"), "acme");
-    expect(screen.queryByPlaceholderText(/card title/i)).toBeNull();
+    // ...and neither must the session moving to a different workspace — the
+    // "Plan" tab itself persists across the move (both workspaces have one),
+    // only the board behind it changes.
+    seedSessionFrame(client, { workspace: "beta" });
+    await waitFor(() => expect(screen.queryByPlaceholderText(/card title/i)).toBeNull());
   });
 
-  it("closes an open card sheet when the tab or the workspace scope changes", async () => {
+  it("closes an open card sheet when the tab or the session's workspace changes", async () => {
     // `open` names a card in the FULL boards list, not the tab's — without the
     // reset, workspace A's card sheet floats over workspace B's board.
     stubFetch({
       boards: {
         boards: [
           { ...BOARD, id: "acme-plan", name: "Plan", type: "plan", workspaceId: "acme" },
+          { ...BOARD, id: "beta-plan", name: "Plan", type: "plan", workspaceId: "beta" },
           { ...BOARD, id: "personal", name: "Personal", type: "personal", workspaceId: undefined },
         ],
         errors: [],
       },
     });
-    renderWithProviders(<BoardStage roster={ROSTER} />);
+    const { client } = renderBoardStage();
+    seedSessionFrame(client, { workspace: "acme" });
     await waitFor(() => expect(screen.getByRole("tab", { name: "Personal" })).toBeTruthy());
     await userEvent.click(screen.getByRole("tab", { name: "Personal" }));
     await userEvent.click(screen.getByText("Write the spec"));
@@ -258,20 +322,23 @@ describe("BoardStage", () => {
 
     await userEvent.click(screen.getByText("Write the spec"));
     expect(screen.getByRole("dialog")).toBeTruthy();
-    await userEvent.selectOptions(screen.getByLabelText("Workspace"), "acme");
-    expect(screen.queryByRole("dialog")).toBeNull();
+    // The "Plan" tab persists across this move (acme's and beta's boards both
+    // hold that type) — only the board backing it changes, from acme's card
+    // to beta's. Without the scope-keyed reset, acme's sheet would float over it.
+    seedSessionFrame(client, { workspace: "beta" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
-  it("creates a board for the scoped workspace from the add menu", async () => {
+  it("creates a board for the viewed workspace from the add menu", async () => {
     const { calls } = stubFetch({
       boards: {
         boards: [{ ...BOARD, id: "acme-plan", name: "Plan", type: "plan", workspaceId: "acme" }],
         errors: [],
       },
     });
-    renderWithProviders(<BoardStage roster={ROSTER} />);
+    const { client } = renderBoardStage();
+    seedSessionFrame(client, { workspace: "acme" });
     await waitFor(() => expect(screen.getByRole("tab", { name: "Plan" })).toBeTruthy());
-    await userEvent.selectOptions(screen.getByLabelText("Workspace"), "acme");
     await userEvent.click(screen.getByRole("button", { name: /add board/i }));
     await userEvent.click(screen.getByRole("menuitem", { name: "Deliver" }));
     await waitFor(() =>
@@ -280,6 +347,32 @@ describe("BoardStage", () => {
         workspaceId: "acme",
       }),
     );
+  });
+
+  it("hides the add-board control once several workspaces are in view, and does not resurrect the menu already open on returning to one", async () => {
+    // "You may look at many, but you may only create in one" — the rail's Plus
+    // has the other half of this rule; this is the board's. The round trip
+    // matters: the control unmounting and remounting must not resurface a
+    // menu left open before the multi-workspace view — same bug class the
+    // scope-keyed reset always guarded against, now lifted into BoardStage.
+    stubFetch({
+      boards: {
+        boards: [
+          { ...BOARD, id: "acme-plan", name: "Plan", type: "plan", workspaceId: "acme" },
+          { ...BOARD, id: "beta-plan", name: "Plan", type: "plan", workspaceId: "beta" },
+        ],
+        errors: [],
+      },
+    });
+    const { client } = renderBoardStage();
+    seedSessionFrame(client, { workspace: "acme" });
+    await userEvent.click(await screen.findByRole("button", { name: /add board/i }));
+    expect(screen.getByRole("menu")).toBeTruthy();
+    act(() => useUiStore.getState().setViewedWorkspaces(new Set(["acme", "beta"])));
+    await waitFor(() => expect(screen.queryByRole("button", { name: /add board/i })).toBeNull());
+    act(() => useUiStore.getState().setViewedWorkspaces(new Set(["beta"])));
+    await screen.findByRole("button", { name: /add board/i });
+    expect(screen.queryByRole("menu")).toBeNull();
   });
 });
 
@@ -447,6 +540,9 @@ describe("BoardStage drag wiring", () => {
       },
     });
     renderWithProviders(<BoardStage roster={ROSTER} />);
+    // No in-stage picker drives this anymore — the aggregate view is now
+    // reached only through the explicit multiselect toggle.
+    act(() => useUiStore.getState().setViewedWorkspaces(ALL_WORKSPACES));
     await readyToDrop("Billing");
     const { fireDrop } = await import("./BoardStage");
     await fireDrop("globex-plan", "g1", "ready", 0);
@@ -787,14 +883,16 @@ describe("board-side capability amendments", () => {
 
   it("linked cards show a capability chip", async () => {
     stubFetch({ boards: WS_BOARDS });
-    renderWithProviders(<BoardStage roster={ROSTER} />);
+    const { client } = renderBoardStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
     await screen.findByText("tour scheduling v1");
     expect(screen.getByTitle(/school-feature-set/i)).toBeTruthy();
   });
 
   it("linked cards are toggle-only: no add-story input, no remove buttons, toggle still PATCHes", async () => {
     const { calls } = stubFetch({ boards: WS_BOARDS });
-    renderWithProviders(<BoardStage roster={ROSTER} />);
+    const { client } = renderBoardStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
     await userEvent.click(await screen.findByText("tour scheduling v1"));
     expect(screen.queryByPlaceholderText(/add a story/i)).toBeNull();
     expect(screen.queryByLabelText(/remove story/i)).toBeNull();

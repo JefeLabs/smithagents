@@ -22,7 +22,7 @@ const BOARDS = [
 
 describe("tabsFor", () => {
   it("in workspace scope lists that workspace's boards in canonical order, personal last", () => {
-    const tabs = tabsFor(BOARDS, "acme");
+    const tabs = tabsFor(BOARDS, new Set(["acme"]));
     expect(tabs.map((t) => t.type)).toEqual(["ideation", "plan", "personal"]);
     expect(tabs[0].boardIds).toEqual(["acme-ideation"]);
     expect(tabs[2].boardIds).toEqual(["personal"]);
@@ -37,7 +37,18 @@ describe("tabsFor", () => {
   });
 
   it("omits the personal tab entirely when no personal board exists", () => {
-    expect(tabsFor([BOARDS[0]], "acme").map((t) => t.type)).toEqual(["ideation"]);
+    expect(tabsFor([BOARDS[0]], new Set(["acme"])).map((t) => t.type)).toEqual(["ideation"]);
+  });
+
+  it("a multiselect of two workspaces unions their boards and clusters, same as all scope", () => {
+    const tabs = tabsFor(BOARDS, new Set(["acme", "globex"]));
+    expect(tabs.map((t) => t.type)).toEqual(["ideation", "plan", "personal"]);
+    const plan = tabs.find((t) => t.type === "plan");
+    expect(plan?.boardIds).toEqual(["acme-plan", "globex-plan"]);
+    expect(plan?.clustered).toBe(true);
+    // ideation only has an acme board — a two-workspace selection still only
+    // unions what actually exists, it doesn't invent a globex ideation board.
+    expect(tabs.find((t) => t.type === "ideation")?.boardIds).toEqual(["acme-ideation"]);
   });
 });
 

@@ -1,7 +1,6 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ALL_WORKSPACES } from "../lib/board-aggregate";
 import { BoardTabs } from "./BoardTabs";
 
 const TABS = [
@@ -10,12 +9,11 @@ const TABS = [
 ];
 
 const base = {
-  scope: "acme",
-  workspaces: ["acme", "globex"],
   tabs: TABS,
   activeKey: "ideation",
   addable: ["deliver" as const],
-  onScope: () => {},
+  adding: false,
+  onAddingChange: () => {},
   onSelect: () => {},
   onAdd: () => {},
 };
@@ -28,12 +26,6 @@ describe("BoardTabs", () => {
     cleanup();
   });
 
-  it("lists All workspaces plus each workspace, and never Personal, in the dropdown", () => {
-    render(<BoardTabs {...base} />);
-    const options = screen.getAllByRole("option").map((o) => o.textContent);
-    expect(options).toEqual(["All workspaces", "acme", "globex"]);
-  });
-
   it("marks the active tab and reports selection", async () => {
     const onSelect = vi.fn();
     render(<BoardTabs {...base} onSelect={onSelect} />);
@@ -42,54 +34,54 @@ describe("BoardTabs", () => {
     expect(onSelect).toHaveBeenCalledWith("personal");
   });
 
-  it("offers add for the missing types in workspace scope", async () => {
+  it("offers add for the missing types", async () => {
     const onAdd = vi.fn();
-    render(<BoardTabs {...base} onAdd={onAdd} />);
+    const onAddingChange = vi.fn();
+    render(<BoardTabs {...base} onAdd={onAdd} onAddingChange={onAddingChange} />);
     await userEvent.click(screen.getByRole("button", { name: /add board/i }));
+    // Opening is reported to the parent rather than shown directly — `adding`
+    // is controlled, so re-render with it true to see the menu.
+    expect(onAddingChange).toHaveBeenCalledWith(true);
+  });
+
+  it("shows the add menu when controlled open, and reports the picked type", async () => {
+    const onAdd = vi.fn();
+    render(<BoardTabs {...base} adding={true} onAdd={onAdd} />);
+    expect(screen.getByRole("menu")).toBeTruthy();
     await userEvent.click(screen.getByRole("menuitem", { name: "Deliver" }));
     expect(onAdd).toHaveBeenCalledWith("deliver");
   });
 
-  it("hides add entirely in the aggregate scope, since there is no workspace to create into", () => {
-    render(<BoardTabs {...base} scope={ALL_WORKSPACES} />);
+  it("hides the add control entirely when nothing is addable — no workspace, or several in view", () => {
+    render(<BoardTabs {...base} addable={[]} />);
     expect(screen.queryByRole("button", { name: /add board/i })).toBeNull();
   });
 
-  it("closes the add menu on Escape", async () => {
-    render(<BoardTabs {...base} />);
-    await userEvent.click(screen.getByRole("button", { name: /add board/i }));
+  it("reports Escape as a close request while the menu is open", async () => {
+    const onAddingChange = vi.fn();
+    render(<BoardTabs {...base} adding={true} onAddingChange={onAddingChange} />);
     expect(screen.getByRole("menu")).toBeTruthy();
     await userEvent.keyboard("{Escape}");
-    expect(screen.queryByRole("menu")).toBeNull();
+    expect(onAddingChange).toHaveBeenCalledWith(false);
   });
 
-  it("closes the add menu on a pointerdown outside it", async () => {
+  it("reports a pointerdown outside the menu as a close request", async () => {
+    const onAddingChange = vi.fn();
     render(
       <div>
-        <BoardTabs {...base} />
+        <BoardTabs {...base} adding={true} onAddingChange={onAddingChange} />
         <div data-testid="outside">elsewhere on the page</div>
       </div>,
     );
-    await userEvent.click(screen.getByRole("button", { name: /add board/i }));
     expect(screen.getByRole("menu")).toBeTruthy();
     await userEvent.click(screen.getByTestId("outside"));
-    expect(screen.queryByRole("menu")).toBeNull();
+    expect(onAddingChange).toHaveBeenCalledWith(false);
   });
 
-  it("does not close the add menu on a pointerdown inside it", async () => {
-    render(<BoardTabs {...base} />);
-    await userEvent.click(screen.getByRole("button", { name: /add board/i }));
+  it("does not report a pointerdown inside the menu as a close request", async () => {
+    const onAddingChange = vi.fn();
+    render(<BoardTabs {...base} adding={true} onAddingChange={onAddingChange} />);
     await userEvent.click(screen.getByRole("menu"));
-    expect(screen.getByRole("menu")).toBeTruthy();
-  });
-
-  it("resets to closed when the scope changes away and back", async () => {
-    const { rerender } = render(<BoardTabs {...base} />);
-    await userEvent.click(screen.getByRole("button", { name: /add board/i }));
-    expect(screen.getByRole("menu")).toBeTruthy();
-    rerender(<BoardTabs {...base} scope={ALL_WORKSPACES} />);
-    expect(screen.queryByRole("button", { name: /add board/i })).toBeNull();
-    rerender(<BoardTabs {...base} />);
-    expect(screen.queryByRole("menu")).toBeNull();
+    expect(onAddingChange).not.toHaveBeenCalled();
   });
 });

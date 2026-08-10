@@ -184,6 +184,57 @@ export interface CliToolListing {
   active: boolean;
 }
 
+/**
+ * The capability (story-map) model, as the broker stores and returns it.
+ *
+ * These live here rather than beside the stage that renders them because both
+ * `api/work.ts` and `queries/work.ts` need them — importing a type out of an
+ * organism inverts the dependency direction — and because the map's geometry
+ * module (`organisms/map/layout.ts`) must stay React-free, which it cannot be
+ * if reaching a type means importing a component.
+ *
+ * Story positions are DERIVED, never stored: `CapStoryT` carries `stepId` and
+ * `order`, and layout turns those into coordinates. Nothing here gains x/y.
+ */
+export interface CapStoryT {
+  id: string;
+  stepId: string;
+  order: number;
+  text: string;
+  done: boolean;
+  verifiedBy?: string;
+}
+export interface CapActivityT {
+  id: string;
+  name: string;
+  order: number;
+  steps: Array<{ id: string; name: string; order: number }>;
+}
+export interface CapSliceT {
+  id: string;
+  name: string;
+  order: number;
+  storyIds: string[];
+  specPath?: string;
+  planPath?: string;
+  capCardRef?: { boardId: string; cardId: string };
+  deliveryCardRef?: { boardId: string; cardId: string };
+}
+export interface CapabilityT {
+  id: string;
+  name: string;
+  workspaceId: string;
+  /**
+   * Position in the capability row. OPTIONAL because the broker's is: capability files
+   * written before ordering existed carry none, and the swarm places those by id rather
+   * than inventing a value on read. Sort with a fallback, never assume it is there.
+   */
+  order?: number;
+  activities: CapActivityT[];
+  stories: CapStoryT[];
+  slices: CapSliceT[];
+}
+
 /** Provider key joined with redacted machine state — drives the API Keys settings cards. */
 export interface ApiKeyListing {
   id: string;

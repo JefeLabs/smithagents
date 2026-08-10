@@ -11,8 +11,8 @@
  * `error` field, matching how the original components handled failure inline.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { CapabilityT } from "../api/types";
 import * as api from "../api/work";
-import type { CapabilityT } from "../organisms/MapStage";
 import { qk } from "./keys";
 
 // ---------------------------------------------------------------------------
@@ -98,7 +98,7 @@ export function usePatchCapability() {
       body,
     }: {
       id: string;
-      body: Partial<Pick<CapabilityT, "name" | "activities" | "stories" | "slices">>;
+      body: Partial<Pick<CapabilityT, "name" | "order" | "activities" | "stories" | "slices">>;
     }) => api.patchCapability(id, body),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.capabilities }),
   });

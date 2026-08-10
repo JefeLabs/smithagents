@@ -1,64 +1,84 @@
-import { History, Map as MapIcon, Plus, Settings, SquareKanban } from "lucide-react";
-import { Logo } from "../atoms/Logo";
-import { ToolButton } from "../atoms/ToolButton";
-
-// route: null = action tool (opens an overlay, never highlighted as a place).
-const TOOLS = [
-  { icon: Plus, label: "New workspace", route: null },
-  { icon: History, label: "Sessions", route: null },
-  { icon: SquareKanban, label: "Board", route: "/board" },
-  { icon: MapIcon, label: "Map", route: "/map" },
-] as const;
+import { Sidebar } from "@heroui-pro/react";
+import { History, Map as MapIcon, Plus, Settings, SquareKanban, TrendingUp } from "lucide-react";
 
 interface ToolRailProps {
-  /** Current stage route ("/", "/board", "/map", "/work/<id>") — drives the highlight. */
+  /** Current stage route ("/", "/board", "/map", "/dashboards", "/work/<id>") — drives the highlight. */
   activeRoute?: string;
-  /** Logo press — back to the voice stage (home). */
-  onHome?: () => void;
-  /** "New workspace" tool — opens the create-workspace flow directly (design §5). */
-  onNewWorkspace?: () => void;
+  /** "New session" tool — opens the composer (design §5; workspace *creation* lives in the navbar now). */
+  onNewSession?: () => void;
   /** "Sessions" tool — toggles the sessions panel. */
   onSessions?: () => void;
-  /** "Board" tool — navigates to the kanban board stage. */
-  onBoard?: () => void;
-  /** "Map" tool — navigates to the story map stage. */
-  onMap?: () => void;
   /** Settings — the reset surface. */
   onSettings?: () => void;
 }
 
-// No operator avatar: there's no "account" concept in an all-local, single-operator
-// app — reintroduce it when cloud hosting makes identity meaningful.
-export function ToolRail({
-  activeRoute = "/",
-  onHome,
-  onNewWorkspace,
-  onSessions,
-  onBoard,
-  onMap,
-  onSettings,
-}: ToolRailProps) {
+// The operator avatar lives in the Navbar (src/molecules/OperatorAvatar.tsx),
+// gated on CLOUD_MODE. The rail is tools only.
+//
+// Board and Map navigate via `href` + the ancestor Sidebar.Provider's `navigate`
+// callback (wired in ControlPlaneLayout) rather than an onClick prop here — that is
+// also what drives `isCurrent`'s highlight, so there is one source of truth for
+// "where does this item go" instead of two.
+export function ToolRail({ activeRoute = "/", onNewSession, onSessions, onSettings }: ToolRailProps) {
   return (
-    <nav className="rail rail--left" aria-label="Tools and activity">
-      <button type="button" className="logo" title="smithagents" aria-label="Home" onClick={onHome}>
-        <Logo />
-      </button>
-      {TOOLS.map((tool) => (
-        <ToolButton
-          key={tool.label}
-          icon={tool.icon}
-          label={tool.label}
-          active={tool.route !== null && tool.route === activeRoute}
-          onClick={() => {
-            if (tool.label === "New workspace") onNewWorkspace?.();
-            if (tool.label === "Sessions") onSessions?.();
-            if (tool.label === "Board") onBoard?.();
-            if (tool.label === "Map") onMap?.();
-          }}
-        />
-      ))}
-      <div className="spacer" />
-      <ToolButton icon={Settings} label="Settings" onClick={onSettings} />
-    </nav>
+    <Sidebar>
+      {/* No Sidebar.Header — the logo lives in the navbar now. */}
+      <Sidebar.Content>
+        <Sidebar.Menu aria-label="Tools and activity">
+          <Sidebar.MenuItem onAction={onNewSession}>
+            <Sidebar.MenuIcon>
+              <Plus />
+            </Sidebar.MenuIcon>
+            <Sidebar.MenuItemContent>
+              <Sidebar.MenuLabel>New session</Sidebar.MenuLabel>
+            </Sidebar.MenuItemContent>
+          </Sidebar.MenuItem>
+          <Sidebar.MenuItem onAction={onSessions}>
+            <Sidebar.MenuIcon>
+              <History />
+            </Sidebar.MenuIcon>
+            <Sidebar.MenuItemContent>
+              <Sidebar.MenuLabel>Sessions</Sidebar.MenuLabel>
+            </Sidebar.MenuItemContent>
+          </Sidebar.MenuItem>
+          <Sidebar.MenuItem href="/board" isCurrent={activeRoute === "/board"}>
+            <Sidebar.MenuIcon>
+              <SquareKanban />
+            </Sidebar.MenuIcon>
+            <Sidebar.MenuItemContent>
+              <Sidebar.MenuLabel>Board</Sidebar.MenuLabel>
+            </Sidebar.MenuItemContent>
+          </Sidebar.MenuItem>
+          <Sidebar.MenuItem href="/map" isCurrent={activeRoute === "/map"}>
+            <Sidebar.MenuIcon>
+              <MapIcon />
+            </Sidebar.MenuIcon>
+            <Sidebar.MenuItemContent>
+              <Sidebar.MenuLabel>Map</Sidebar.MenuLabel>
+            </Sidebar.MenuItemContent>
+          </Sidebar.MenuItem>
+          <Sidebar.MenuItem href="/dashboards" isCurrent={activeRoute === "/dashboards"}>
+            <Sidebar.MenuIcon>
+              <TrendingUp />
+            </Sidebar.MenuIcon>
+            <Sidebar.MenuItemContent>
+              <Sidebar.MenuLabel>Dashboards</Sidebar.MenuLabel>
+            </Sidebar.MenuItemContent>
+          </Sidebar.MenuItem>
+        </Sidebar.Menu>
+      </Sidebar.Content>
+      <Sidebar.Footer>
+        <Sidebar.Menu aria-label="Settings">
+          <Sidebar.MenuItem onAction={onSettings}>
+            <Sidebar.MenuIcon>
+              <Settings />
+            </Sidebar.MenuIcon>
+            <Sidebar.MenuItemContent>
+              <Sidebar.MenuLabel>Settings</Sidebar.MenuLabel>
+            </Sidebar.MenuItemContent>
+          </Sidebar.MenuItem>
+        </Sidebar.Menu>
+      </Sidebar.Footer>
+    </Sidebar>
   );
 }

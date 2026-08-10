@@ -73,13 +73,24 @@ const CORS = {
   // CORS-enforcing client — only from tests, since Node's fetch doesn't enforce
   // preflight. GET is CORS-safelisted for simple requests but listed anyway for any
   // GET that ever adds a custom header (e.g. an Authorization header) later.
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+  // PATCH is required: the control plane patches capabilities and reorders story cards
+  // with it (control-plane/src/api/work.ts:90 and :184). Omitting it here blocks every
+  // browser write at preflight while `curl -X PATCH` succeeds, because curl sends no
+  // preflight — so the route looks healthy from the terminal and is dead in the app.
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'content-type',
 };
 
 // Routes that touch credential-presence data need a real origin check, unlike the
 // rest of this file's intentionally-open CORS (loopback bind is the gate there).
-const ALLOWED_ORIGINS = new Set(['http://localhost:1420']); // control-plane's Vite dev origin (see control-plane/vite.config.ts, tauri.conf.json devUrl)
+// Both spellings of the SAME dev server. Vite serves 1420 on the loopback interface and the
+// browser sends whichever host the user typed, so `http://127.0.0.1:1420` and
+// `http://localhost:1420` are one origin in intent and two strings here. Listing only one
+// meant the stage worked at localhost and 403'd at 127.0.0.1 — the write failed as "Update
+// failed" with a CORS console error, and which of the two you happened to type decided
+// whether the app worked. This is not a widening of trust: an attacker cannot originate
+// from a loopback dev-server origin in the victim's browser without already controlling it.
+const ALLOWED_ORIGINS = new Set(['http://localhost:1420', 'http://127.0.0.1:1420']); // control-plane's Vite dev origin (see control-plane/vite.config.ts, tauri.conf.json devUrl)
 // TODO: the packaged (non-dev) Tauri app's webview origin is NOT verified against a
 // real built app in this environment. It's commonly `tauri://localhost` on macOS or
 // `http://tauri.localhost` on Windows, but guessing wrong here would silently lock the
@@ -98,7 +109,7 @@ function isAllowedOrigin(req: IncomingMessage): boolean {
 function credentialCors(req: IncomingMessage): Record<string, string> {
   const origin = req.headers.origin;
   const headers: Record<string, string> = {
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'content-type',
   };
   if (origin && ALLOWED_ORIGINS.has(origin)) headers['Access-Control-Allow-Origin'] = origin;

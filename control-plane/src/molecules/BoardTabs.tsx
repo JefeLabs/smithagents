@@ -1,66 +1,51 @@
 import { Plus } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import { ALL_WORKSPACES, BOARD_TYPE_LABELS_UI, type BoardTypeT, type TabDescriptor } from "../lib/board-aggregate";
+import { useEffect, useRef } from "react";
+import { BOARD_TYPE_LABELS_UI, type BoardTypeT, type TabDescriptor } from "../lib/board-aggregate";
 
 interface BoardTabsProps {
-  /** ALL_WORKSPACES or a workspace name. */
-  scope: string;
-  workspaces: string[];
   tabs: TabDescriptor[];
   activeKey: string | null;
-  /** Workspace types not yet present in the scoped workspace. Ignored in aggregate scope. */
+  /** Workspace types not yet present in the viewed workspace. Empty hides the add control entirely
+   * — either the workspace already holds every type, or zero/several workspaces are in view and
+   * there is no single unambiguous board to create into. */
   addable: BoardTypeT[];
-  onScope: (scope: string) => void;
+  /** Whether the add-board type menu is open. Controlled by the parent — see the comment below. */
+  adding: boolean;
+  onAddingChange: (adding: boolean) => void;
   onSelect: (key: string) => void;
   onAdd: (type: BoardTypeT) => void;
 }
 
-/** Workspace context dropdown above the board tab row. */
-export function BoardTabs({ scope, workspaces, tabs, activeKey, addable, onScope, onSelect, onAdd }: BoardTabsProps) {
-  const [adding, setAdding] = useState(false);
+/** The board tab row, plus its own "add a board" menu. */
+export function BoardTabs({ tabs, activeKey, addable, adding, onAddingChange, onSelect, onAdd }: BoardTabsProps) {
   const addRef = useRef<HTMLDivElement>(null);
 
-  // The add control unmounts under ALL_WORKSPACES scope, but `adding` is
-  // component state and survives that — without this, opening the menu,
-  // switching to All workspaces, then switching back resurrects it already open.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: scope-keyed reset, same pattern as NewWorkspaceModal's open-keyed reset
-  useEffect(() => {
-    setAdding(false);
-  }, [scope]);
+  // `adding` is controlled from BoardStage rather than local state here: the
+  // add control unmounts whenever `addable` is empty (zero/several workspaces
+  // in view), and BoardStage already resets it scope-keyed for exactly the
+  // reason NewWorkspaceModal's open-keyed reset exists — component state
+  // would otherwise survive that unmount and resurrect the menu already open.
 
   useEffect(() => {
     if (!adding) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setAdding(false);
+      if (e.key === "Escape") onAddingChange(false);
     };
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
-  }, [adding]);
+  }, [adding, onAddingChange]);
 
   useEffect(() => {
     if (!adding) return;
     const onPointerDown = (e: PointerEvent) => {
-      if (!addRef.current?.contains(e.target as Node)) setAdding(false);
+      if (!addRef.current?.contains(e.target as Node)) onAddingChange(false);
     };
     document.addEventListener("pointerdown", onPointerDown);
     return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [adding]);
+  }, [adding, onAddingChange]);
 
   return (
     <div className="board-tabs">
-      <select
-        className="board-tabs__scope"
-        aria-label="Workspace"
-        value={scope}
-        onChange={(e) => onScope(e.target.value)}
-      >
-        <option value={ALL_WORKSPACES}>All workspaces</option>
-        {workspaces.map((w) => (
-          <option key={w} value={w}>
-            {w}
-          </option>
-        ))}
-      </select>
       <div className="board-tabs__row" role="tablist">
         {tabs.map((t) => (
           <button
@@ -74,13 +59,13 @@ export function BoardTabs({ scope, workspaces, tabs, activeKey, addable, onScope
             {t.label}
           </button>
         ))}
-        {scope !== ALL_WORKSPACES && addable.length > 0 && (
+        {addable.length > 0 && (
           <div className="board-tabs__add" ref={addRef}>
             <button
               type="button"
               className="board-tabs__tab"
               aria-label="Add board"
-              onClick={() => setAdding((v) => !v)}
+              onClick={() => onAddingChange(!adding)}
             >
               <Plus size={12} strokeWidth={2} />
             </button>
@@ -92,7 +77,7 @@ export function BoardTabs({ scope, workspaces, tabs, activeKey, addable, onScope
                     type="button"
                     role="menuitem"
                     onClick={() => {
-                      setAdding(false);
+                      onAddingChange(false);
                       onAdd(t);
                     }}
                   >
