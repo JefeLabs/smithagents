@@ -51,6 +51,18 @@ describe("ToolRail", () => {
     expect(navigate).toHaveBeenCalledWith("/map");
   });
 
+  it("dashboards tool navigates via the Provider", async () => {
+    const { navigate } = renderRail();
+    await userEvent.click(screen.getByRole("row", { name: "Dashboards" }));
+    expect(navigate).toHaveBeenCalledWith("/dashboards");
+  });
+
+  it("dashboards tool is highlighted only when activeRoute is /dashboards", () => {
+    renderRail({ activeRoute: "/dashboards" });
+    expect(screen.getByRole("row", { name: "Dashboards" }).getAttribute("data-current")).toBe("true");
+    expect(screen.getByRole("row", { name: "Board" }).getAttribute("data-current")).toBeNull();
+  });
+
   it("settings button still fires onSettings", async () => {
     const onSettings = vi.fn();
     renderRail({ onSettings });

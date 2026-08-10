@@ -1,8 +1,8 @@
 import { Sidebar } from "@heroui-pro/react";
-import { History, Map as MapIcon, Plus, Settings, SquareKanban } from "lucide-react";
+import { History, Map as MapIcon, Plus, Settings, SquareKanban, TrendingUp } from "lucide-react";
 
 interface ToolRailProps {
-  /** Current stage route ("/", "/board", "/map", "/work/<id>") — drives the highlight. */
+  /** Current stage route ("/", "/board", "/map", "/dashboards", "/work/<id>") — drives the highlight. */
   activeRoute?: string;
   /** "New session" tool — opens the composer (design §5; workspace *creation* lives in the navbar now). */
   onNewSession?: () => void;
@@ -55,6 +55,14 @@ export function ToolRail({ activeRoute = "/", onNewSession, onSessions, onSettin
             </Sidebar.MenuIcon>
             <Sidebar.MenuItemContent>
               <Sidebar.MenuLabel>Map</Sidebar.MenuLabel>
+            </Sidebar.MenuItemContent>
+          </Sidebar.MenuItem>
+          <Sidebar.MenuItem href="/dashboards" isCurrent={activeRoute === "/dashboards"}>
+            <Sidebar.MenuIcon>
+              <TrendingUp />
+            </Sidebar.MenuIcon>
+            <Sidebar.MenuItemContent>
+              <Sidebar.MenuLabel>Dashboards</Sidebar.MenuLabel>
             </Sidebar.MenuItemContent>
           </Sidebar.MenuItem>
         </Sidebar.Menu>

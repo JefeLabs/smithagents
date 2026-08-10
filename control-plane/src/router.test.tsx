@@ -106,6 +106,14 @@ describe("stage routing", () => {
     expect(screen.getByRole("row", { name: /^board$/i }).getAttribute("data-current")).toBe("true");
   });
 
+  it("dashboards tool navigates to /dashboards and highlights itself", async () => {
+    const router = await renderAt("/");
+    await userEvent.click(screen.getByRole("row", { name: /^dashboards$/i }));
+    expect(await screen.findByRole("region", { name: "Dashboards" })).toBeTruthy();
+    expect(router.state.location.pathname).toBe("/dashboards");
+    expect(screen.getByRole("row", { name: /^dashboards$/i }).getAttribute("data-current")).toBe("true");
+  });
+
   it("clicking the active board tool stays on the board (no toggle)", async () => {
     const router = await renderAt("/");
     await userEvent.click(screen.getByRole("row", { name: /^board$/i }));
