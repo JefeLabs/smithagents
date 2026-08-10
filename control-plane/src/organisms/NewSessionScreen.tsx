@@ -164,7 +164,10 @@ export function NewSessionScreen({ lockedWorkspace, forced, onSend, onCancel }: 
           className="new-session-screen__modes grid-cols-2"
           layout="grid"
           value={mode}
-          onChange={(next) => setValue("mode", next as ExecutionMode)}
+          onChange={(next) => {
+            setValue("mode", next as ExecutionMode);
+            setUserPickedMode(true);
+          }}
         >
           {available.map((m) => (
             <RadioButtonGroup.Item
