@@ -1587,6 +1587,40 @@ export function DocumentStage({ doc, onSaveSection, chat }: DocumentStageProps) 
 
 Run the DocumentStage tests → PASS, 3 tests. (If the verified Resizable API differs, keep the panel semantics — 70/30 default, document min 45 — and report the mapping.)
 
+**Entrance animation (spec amendment 2026-08-10, binding):** the stage animates
+in — wrap each panel's INNER content (never the `Resizable.Panel` itself; panels
+own their layout math) in a `motion.div` using the Transcript's exact idiom:
+
+```tsx
+import { motion, useReducedMotion } from "motion/react";
+// inside DocumentStage:
+const reduceMotion = useReducedMotion();
+// document column content wrapper:
+<motion.div
+  className="document-stage__rise"
+  initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+  animate={{ opacity: 1, y: 0 }}
+  transition={{ duration: 0.25, ease: "easeOut" }}
+>
+  {/* header + error + sections exactly as above */}
+</motion.div>
+// chat dock content wrapper (slides from the right):
+<motion.div
+  className="document-stage__dock-rise"
+  initial={reduceMotion ? false : { opacity: 0, x: 24 }}
+  animate={{ opacity: 1, x: 0 }}
+  transition={{ duration: 0.25, ease: "easeOut" }}
+>
+  {chat}
+</motion.div>
+```
+
+Both wrappers need `display: flex; flex-direction: column; flex: 1; min-height: 0;`
+(add the two classes to documents.css). Entrance-only — no AnimatePresence, no
+exit choreography, no layoutId (phase-2+ per the spec). jsdom cannot assert the
+animation; the existing DocumentStage tests must still pass unedited around the
+wrappers, and the animation is verified in the Task 11 live smoke.
+
 - [ ] **Step 6: Route, HomePage wiring, router tests**
 
 `router.tsx` — add with the other route consts and register between `dashboardsRoute` and `workRoute`:

@@ -125,6 +125,13 @@ follow-up ahead of phase 1 if the phase is not imminent.)
 - **Creation:** from the composer/new-session surface — a "document" choice
   alongside the existing session creation: pick blueprint, work type, title,
   and (phase 2) invitees. Creating navigates into `/doc/$docId`.
+- **Transition animation (Edwin, 2026-08-10):** entering the document stage
+  animates — the document column rises/fades in, the chat dock slides in from
+  the right — using the already-installed `motion` package with the
+  `useReducedMotion` guard (the Transcript's existing pattern). Entrance-only
+  in phase 1. A true shared-element morph of the chat column (layoutId +
+  AnimatePresence across routes) is a phase-2+ polish item: it must reckon
+  with router unmount timing, the resizable panels, and fixed chrome.
 - **Invitations (phase 2):** a participant strip on the document stage —
   invited agents' avatars; add/remove from the roster or by squad. Only
   participants' replies join this session's chat.
