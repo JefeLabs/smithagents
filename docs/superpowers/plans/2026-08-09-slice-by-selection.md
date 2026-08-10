@@ -867,6 +867,8 @@ cd control-plane && pnpm vitest run src/organisms/MapStage.test.tsx
 
 Expected: FAIL — no create button; the `New slice name…` box still exists.
 
+**STEP ORDER IS LOAD-BEARING IN THIS TASK.** Step 3's write-back must land *before* the composer in Step 4, not after. Task 4 put `hoverDimmed` in the seeding effect's deps, so **every mouse-enter on a panel row rebuilds the node array** — the same rebuild that erases React Flow's `selected` flags. Until `decorate` writes the selection back, hovering a slice to see what it owns silently clears the selection you were assembling. That is harmless on `main` today only because nothing consumes the selection yet; it stops being harmless the moment Step 4 adds the button.
+
 - [ ] **Step 3: Track the selection — in `MapStage`, not in React Flow**
 
 **This reverses what the spec says, and the spec is wrong.** It reads *"Selection lives in React Flow's node state, not in a parallel store."* React Flow's `selected` flags live on the node objects, and `MapStage` rebuilds those wholesale from the model on every change — reveal, capability switch, reorder, any WS update. Measured in Task 3: select two stories, click a story title to reveal, selection goes `["t2","t5"] → []`. It cannot survive the very interactions the panel invites.
@@ -1055,7 +1057,33 @@ Run: `pnpm vitest run src/organisms/map/slices.test.ts` — red on the missing e
 
 - [ ] **Step 4: Build the composer**
 
-`SliceComposer` is a **second export from `SlicePanel.tsx`**, not a change to `SlicePanel`'s own markup. `MapStage` renders it and passes the element as the `footer` prop Task 4 already added — so the panel keeps knowing nothing about selection, and the composer disappears with the list when the panel is collapsed.
+`SliceComposer` is a **second export from `SlicePanel.tsx`**, not a change to `SlicePanel`'s own markup. `MapStage` renders it and passes the element as the `footer` prop Task 4 already added — so the panel keeps knowing nothing about selection.
+
+**Move `{footer}` OUT of the collapsed branch.** Task 4 rendered it inside, so the create control vanishes when the panel is collapsed — which strands a user who selects three stories with the panel shut: the selection is live, the button is the only way to act on it, and there is no affordance on screen. The composer is about the **selection**, not about the list, so it stays reachable whatever the list is doing.
+
+This costs nothing in the common case: `SliceComposer` already returns `null` at `count === 0`, so a collapsed panel with no selection is still a single header row. Collapsed *with* a selection shows header + button, which is the panel responding to something the user just did.
+
+```tsx
+        {!open ? null : (
+          <>
+            <ul className="slice-panel__list" onMouseLeave={() => onHover(null)}>…</ul>
+          </>
+        )}
+        {footer}
+```
+
+Add a test:
+
+```ts
+it("keeps the create control reachable while the panel is collapsed", async () => {
+  renderMap();
+  await selectStories(["s1", "s2"]);
+  const panel = await screen.findByRole("region", { name: "Slices" });
+  await userEvent.click(within(panel).getByRole("button", { name: /collapse slices/i }));
+  expect(within(panel).queryByText("tour scheduling v1")).toBeNull();
+  expect(within(panel).getByRole("button", { name: /slice from 2 selected/i })).toBeDefined();
+});
+```
 
 Add to `SlicePanel.tsx`:
 
