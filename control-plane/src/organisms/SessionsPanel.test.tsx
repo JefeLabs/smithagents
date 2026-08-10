@@ -12,6 +12,7 @@ const SESSIONS: SessionSummary[] = [
     updatedAt: "2026-08-01",
     active: true,
     runtime: "local-in-process",
+    kind: "chat" as const,
   },
   {
     id: "s2",
@@ -20,6 +21,7 @@ const SESSIONS: SessionSummary[] = [
     updatedAt: "2026-08-02",
     active: false,
     runtime: "local-docker",
+    kind: "chat" as const,
   },
 ];
 

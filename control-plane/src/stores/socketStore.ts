@@ -15,6 +15,8 @@ import type {
   AudioFrame,
   BrokerIdentityInfo,
   ChatMessage,
+  DocT,
+  DocumentsFrame,
   RosterAgent,
   SessionFrame,
   SessionSummary,
@@ -39,7 +41,8 @@ type BrokerFrame =
   | { type: "board-updated"; boardId: string }
   | { type: "capability-updated"; capabilityId: string }
   | { type: "task-dispatched"; taskId: string; agent: string; task: string }
-  | SessionFrame;
+  | SessionFrame
+  | DocumentsFrame;
 
 interface SocketState {
   connected: boolean;
@@ -143,6 +146,9 @@ export const useSocketStore = create<SocketState>((set) => ({
             return;
           case "capability-updated":
             qc.invalidateQueries({ queryKey: qk.capabilities });
+            return;
+          case "documents":
+            qc.setQueryData<DocT[]>(qk.documents, frame.documents);
             return;
           case "notice":
             append(qc, "notice", frame.text);

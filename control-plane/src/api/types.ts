@@ -52,6 +52,9 @@ export type ComposeOp = { op: "form"; agents: string[] } | { op: "add" | "remove
 /** The control plane's copy of the broker's runtime vocabulary — must mirror swarm's ExecutionMode. */
 export type ExecutionMode = "local-in-process" | "local-docker" | "remote-in-process" | "remote-docker";
 
+/** Mirrors broker's sessions.ts `SessionKind` — a session is either a free-form chat or docked to a document. */
+export type SessionKind = "chat" | "document";
+
 export interface SessionSummary {
   id: string;
   title: string;
@@ -59,6 +62,9 @@ export interface SessionSummary {
   updatedAt: string;
   active: boolean;
   runtime: ExecutionMode;
+  kind: SessionKind;
+  /** Present iff kind === "document" — the document this session collaborates on. */
+  docId?: string;
 }
 
 /**
@@ -69,10 +75,54 @@ export interface SessionSummary {
  */
 export interface SessionFrame {
   type: "session";
-  session: { id: string; title: string; workspace: string; runtime: ExecutionMode } | null;
+  session: {
+    id: string;
+    title: string;
+    workspace: string;
+    runtime: ExecutionMode;
+    kind: SessionKind;
+    docId?: string;
+  } | null;
   sessions: SessionSummary[];
   transcript: Array<{ role: "user" | "broker"; text: string }>;
   workspaces: string[];
+}
+
+/** A document section — one heading/body pair the collaborative editor renders. */
+export interface DocSectionT {
+  id: string;
+  heading: string;
+  body: string;
+}
+
+/**
+ * A blueprint-instantiated document, mirroring broker's documents.ts `Doc`
+ * MINUS `proposals` — phase 1 renders no proposals, so that field simply
+ * isn't read; an unknown extra field from the broker is not an error.
+ */
+export interface DocT {
+  id: string;
+  title: string;
+  blueprintId: string;
+  workType: string;
+  sections: DocSectionT[];
+  participants: string[];
+  status: "drafting" | "review" | "final";
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** A document schema, as `GET /blueprints` returns it — the creation form's list. */
+export interface BlueprintT {
+  id: string;
+  name: string;
+  workTypes: string[];
+}
+
+/** Full-frame-on-change, like the `session` frame — every document, not a diff. */
+export interface DocumentsFrame {
+  type: "documents";
+  documents: DocT[];
 }
 
 /**

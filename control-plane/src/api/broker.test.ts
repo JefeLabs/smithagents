@@ -164,7 +164,7 @@ describe("SessionFrame (lockstep pin)", () => {
   it("session frame type accepts a populated session with runtime", () => {
     const frame: SessionFrame = {
       type: "session",
-      session: { id: "s1", title: "Fix the build", workspace: "acme", runtime: "local-docker" },
+      session: { id: "s1", title: "Fix the build", workspace: "acme", runtime: "local-docker", kind: "chat" as const },
       sessions: [
         {
           id: "s1",
@@ -173,6 +173,7 @@ describe("SessionFrame (lockstep pin)", () => {
           updatedAt: "2026-08-07T00:00:00.000Z",
           active: true,
           runtime: "local-docker",
+          kind: "chat" as const,
         },
       ],
       transcript: [{ role: "user", text: "hi" }],

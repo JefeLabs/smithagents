@@ -8,11 +8,13 @@
 import type {
   AgentRecordsResponse,
   ApiKeyListing,
+  BlueprintT,
   ChannelsRecord,
   CliToolListing,
   ComposeOp,
   ConnectorInstanceRecord,
   ConnectorVendorMeta,
+  DocT,
   ExecutionMode,
   MeRecord,
   VoiceSettingsRecord,
@@ -446,4 +448,77 @@ export async function postWorkAction(
 /** POST /sessions/:id/activate — fire-and-forget. */
 export async function activateSession(id: string, base: string = BROKER_BASE): Promise<void> {
   void fetch(`http://${base}/sessions/${encodeURIComponent(id)}/activate`, { method: "POST" }).catch(() => {});
+}
+
+/** GET /blueprints — the creation form's schema list. */
+export async function getBlueprints(base: string = BROKER_BASE): Promise<BlueprintT[]> {
+  try {
+    const res = await fetch(`http://${base}/blueprints`);
+    if (!res.ok) return [];
+    const body = (await res.json()) as { blueprints?: BlueprintT[] };
+    return body.blueprints ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/** POST /documents — creates the doc AND its document session; the documents/session frames follow on the socket. */
+export async function postDocument(
+  blueprintId: string,
+  workType: string,
+  title: string,
+  base: string = BROKER_BASE,
+): Promise<{ doc?: DocT; error?: string }> {
+  try {
+    const res = await fetch(`http://${base}/documents`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ blueprintId, workType, title }),
+    });
+    const body = (await res.json().catch(() => ({}))) as { doc?: DocT; error?: string };
+    if (res.ok && body.doc) return { doc: body.doc };
+    return { error: body.error ?? `broker returned ${res.status}` };
+  } catch {
+    return { error: "broker unreachable" };
+  }
+}
+
+/** PATCH a section body; the refreshed documents frame follows on the socket. */
+export async function patchDocSection(
+  docId: string,
+  sectionId: string,
+  body: string,
+  base: string = BROKER_BASE,
+): Promise<{ error?: string }> {
+  try {
+    const res = await fetch(
+      `http://${base}/documents/${encodeURIComponent(docId)}/sections/${encodeURIComponent(sectionId)}`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ body }),
+      },
+    );
+    if (res.ok) return {};
+    const parsed = (await res.json().catch(() => ({}))) as { error?: string };
+    return { error: parsed.error ?? `broker returned ${res.status}` };
+  } catch {
+    return { error: "broker unreachable" };
+  }
+}
+
+/** POST /polish — rewrite a draft; null-equivalent failure keeps the caller's draft. */
+export async function postPolish(text: string, base: string = BROKER_BASE): Promise<{ text?: string; error?: string }> {
+  try {
+    const res = await fetch(`http://${base}/polish`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    const body = (await res.json().catch(() => ({}))) as { text?: string; error?: string };
+    if (res.ok && body.text) return { text: body.text };
+    return { error: body.error ?? `broker returned ${res.status}` };
+  } catch {
+    return { error: "broker unreachable" };
+  }
 }
