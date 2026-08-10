@@ -20,23 +20,26 @@ export function DashboardAsk({ scope, saved, scopeHint, onScope, onSubmit }: Das
       <div className="dash-ask__inner">
         <div className="dash-ask__heading">what do you want to know?</div>
         <p className="dash-ask__sub">
-          ask in plain language. the agent reads your workspaces and composes a dashboard of KPIs, charts and tables
-          to answer it.
+          ask in plain language. the agent reads your workspaces and composes a dashboard of KPIs, charts and tables to
+          answer it.
         </p>
 
         <div className="dash-ask__scopes" role="radiogroup" aria-label="Scope">
           <span className="dash-ask__label">SCOPE</span>
           {DASH_SCOPES.map((s) => (
-            <button
-              key={s}
-              type="button"
-              role="radio"
-              aria-checked={s === scope}
-              className={`dash-chip ${s === scope ? "dash-chip--active" : ""}`}
-              onClick={() => onScope(s)}
-            >
-              {s}
-            </button>
+            <>
+              {/* biome-ignore lint/a11y/useSemanticElements: chip-styled radiogroup — a native input can't carry the pill styling, and role="radio"+aria-checked is the equivalent ARIA pattern */}
+              <button
+                key={s}
+                type="button"
+                role="radio"
+                aria-checked={s === scope}
+                className={`dash-chip ${s === scope ? "dash-chip--active" : ""}`}
+                onClick={() => onScope(s)}
+              >
+                {s}
+              </button>
+            </>
           ))}
         </div>
 
