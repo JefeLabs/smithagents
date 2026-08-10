@@ -295,7 +295,14 @@ describe("slicesWithoutExclusiveStory", () => {
     ["subset", [sl("A", ["s1"]), sl("B", ["s1", "s2"])], ["A"]],
     ["storyless", [sl("A", [])], ["A"]],
     ["no slices at all", [], []],
-    ["covered by two neighbours", [sl("A", ["s1"]), sl("B", ["s2"]), sl("C", ["s1", "s2"])], ["C"]],
+    // FIXTURE CORRECTED IN TASK 1 — copy this row as written. The first draft was
+    // A[s1] B[s2] C[s1,s2] expecting ["C"], but there A's only story is in C and B's
+    // only story is in C, so nothing owns anything and the true answer is
+    // ["A","B","C"]. Giving A and B a story of their own keeps the property this row
+    // exists for: a slice invalidated by the COMBINATION of two neighbours that are
+    // each healthy, which is what stops the check being rewritten as pairwise
+    // containment. Must match swarm/src/capabilities.test.ts exactly.
+    ["covered by two neighbours", [sl("A", ["s1", "s3"]), sl("B", ["s2", "s4"]), sl("C", ["s1", "s2"])], ["C"]],
   ];
   for (const [name, slices, invalid] of cases) {
     it(name, () => {
@@ -324,8 +331,18 @@ describe("blockedBy", () => {
   });
 
   it("catches a write that repairs one slice while breaking another", () => {
+    // FIXTURE CORRECTED IN TASK 1 — match swarm/src/capabilities.test.ts exactly.
+    // BROKEN gains an exclusive story (s1) AND takes HEALTHY's only exclusive one
+    // (s2): invalid COUNT stays at 1 while the invalid SET flips {BROKEN} → {HEALTHY},
+    // so a length comparison waves it through. That is the single thing this test
+    // exists to fail.
+    //
+    // Two wrong versions to avoid. BROKEN[s1], HEALTHY[s1,s2] leaves s2 exclusive to
+    // HEALTHY, so nothing breaks and nothing throws. BROKEN[s2], HEALTHY[s2] does
+    // break HEALTHY, but BROKEN stays invalid too, so the count goes 1 → 2 and a
+    // length check catches it — the test passes while proving nothing.
     const before = [sl("BROKEN", []), sl("HEALTHY", ["s2"])];
-    const after = [sl("BROKEN", ["s1"]), sl("HEALTHY", ["s1", "s2"])];
+    const after = [sl("BROKEN", ["s1", "s2"]), sl("HEALTHY", ["s2"])];
     expect(blockedBy(before, after).map((s) => s.id)).toEqual(["HEALTHY"]);
   });
 });
