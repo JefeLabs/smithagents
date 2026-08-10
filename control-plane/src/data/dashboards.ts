@@ -96,11 +96,46 @@ export const DASH_STAGE_BARS: DashStageBar[] = [
 ];
 
 export const DASH_ROWS: DashGroupRow[] = [
-  { name: "release", cards: 42, wip: 11, cycle: "5.8d", risk: "high", trend: [12, 14, 13, 16, 15, 18, 17, 20, 19, 22, 24, 27] },
-  { name: "deliver", cards: 61, wip: 14, cycle: "4.1d", risk: "watch", trend: [22, 21, 23, 22, 24, 23, 25, 26, 25, 27, 26, 28] },
-  { name: "reactive", cards: 28, wip: 9, cycle: "1.3d", risk: "ok", trend: [15, 13, 16, 12, 15, 11, 14, 12, 13, 11, 12, 10] },
-  { name: "plan", cards: 33, wip: 6, cycle: "3.6d", risk: "ok", trend: [18, 17, 18, 19, 18, 17, 18, 18, 19, 18, 17, 18] },
-  { name: "ideation", cards: 47, wip: 4, cycle: "8.2d", risk: "watch", trend: [9, 11, 10, 13, 12, 15, 14, 17, 16, 19, 18, 21] },
+  {
+    name: "release",
+    cards: 42,
+    wip: 11,
+    cycle: "5.8d",
+    risk: "high",
+    trend: [12, 14, 13, 16, 15, 18, 17, 20, 19, 22, 24, 27],
+  },
+  {
+    name: "deliver",
+    cards: 61,
+    wip: 14,
+    cycle: "4.1d",
+    risk: "watch",
+    trend: [22, 21, 23, 22, 24, 23, 25, 26, 25, 27, 26, 28],
+  },
+  {
+    name: "reactive",
+    cards: 28,
+    wip: 9,
+    cycle: "1.3d",
+    risk: "ok",
+    trend: [15, 13, 16, 12, 15, 11, 14, 12, 13, 11, 12, 10],
+  },
+  {
+    name: "plan",
+    cards: 33,
+    wip: 6,
+    cycle: "3.6d",
+    risk: "ok",
+    trend: [18, 17, 18, 19, 18, 17, 18, 18, 19, 18, 17, 18],
+  },
+  {
+    name: "ideation",
+    cards: 47,
+    wip: 4,
+    cycle: "8.2d",
+    risk: "watch",
+    trend: [9, 11, 10, 13, 12, 15, 14, 17, 16, 19, 18, 21],
+  },
   { name: "maintenance", cards: 19, wip: 3, cycle: "2.4d", risk: "ok", trend: [8, 9, 8, 9, 8, 9, 9, 8, 9, 8, 9, 8] },
 ];
 

@@ -24,6 +24,21 @@ interface DashboardBoardProps {
   onFollowup: (query: string) => void;
 }
 
+const ChartHitBand = ({ i, w, onHover }: { i: number; w: string; onHover: (idx: number) => void }) => (
+  <>
+    {/* biome-ignore lint/a11y/noStaticElementInteractions: hover hit-band for tooltip; values readable without hover in axis/table/legend */}
+    <rect
+      key={w}
+      className="dash-chart__hit"
+      x={((i - 0.5) * CHART_W) / N}
+      y="0"
+      width={CHART_W / N}
+      height={CHART_H}
+      onMouseEnter={() => onHover(i)}
+    />
+  </>
+);
+
 export function DashboardBoard({ query, scopeHint, onFollowup }: DashboardBoardProps) {
   const [hover, setHover] = useState<number | null>(null);
   const maxStage = Math.max(...DASH_STAGE_BARS.map((s) => s.value));
@@ -66,6 +81,7 @@ export function DashboardBoard({ query, scopeHint, onFollowup }: DashboardBoardP
               <i className="dash-legend__swatch dash-legend__swatch--ref" /> intake
             </span>
           </div>
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: hover-only tooltip enrichment — every value is also in the axis, legend and table; nothing is click- or keyboard-gated */}
           <div className="dash-chart" onMouseLeave={() => setHover(null)}>
             <svg
               viewBox={`0 0 ${CHART_W} ${CHART_H}`}
@@ -84,8 +100,14 @@ export function DashboardBoard({ query, scopeHint, onFollowup }: DashboardBoardP
                 d={seriesPath(DASH_SHIPPED, { w: CHART_W, h: CHART_H, max: CHART_MAX, close: true })}
                 fill="url(#dash-fill-a)"
               />
-              <path d={seriesPath(DASH_SHIPPED, { w: CHART_W, h: CHART_H, max: CHART_MAX })} className="dash-chart__line" />
-              <path d={seriesPath(DASH_INTAKE, { w: CHART_W, h: CHART_H, max: CHART_MAX })} className="dash-chart__ref" />
+              <path
+                d={seriesPath(DASH_SHIPPED, { w: CHART_W, h: CHART_H, max: CHART_MAX })}
+                className="dash-chart__line"
+              />
+              <path
+                d={seriesPath(DASH_INTAKE, { w: CHART_W, h: CHART_H, max: CHART_MAX })}
+                className="dash-chart__ref"
+              />
               {hover !== null && (
                 <line
                   className="dash-chart__cross"
@@ -96,15 +118,7 @@ export function DashboardBoard({ query, scopeHint, onFollowup }: DashboardBoardP
                 />
               )}
               {DASH_WEEKS.map((w, i) => (
-                <rect
-                  key={w}
-                  className="dash-chart__hit"
-                  x={((i - 0.5) * CHART_W) / N}
-                  y="0"
-                  width={CHART_W / N}
-                  height={CHART_H}
-                  onMouseEnter={() => setHover(i)}
-                />
+                <ChartHitBand key={w} i={i} w={w} onHover={setHover} />
               ))}
             </svg>
             {hover !== null && (
