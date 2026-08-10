@@ -74,6 +74,33 @@ export const SLOT_H = STORY_H + STORY_GAP;
  * underneath; the constant kept its name and its value and changed axis.
  */
 export const ARTIFACT_GAP = ACTIVITY_GAP * 2;
+/**
+ * Height of an anchor or artifact card.
+ *
+ * It USED to be `SLOT_H` — one story slot, so the band rhymed with the columns above
+ * it — and that stopped being true the moment story cards grew to hold two lines:
+ * SLOT_H went 38 to 62 while these cards, which already held their two lines in 38,
+ * had no reason to follow. The number stayed correct and its stated derivation went
+ * stale, which is the failure mode a constant is supposed to prevent. So it is a
+ * constant of its own now, and `.map-artifact` mirrors THIS.
+ *
+ * 38 holds the two lines (kind 11.5 + gap 2 + label 14 + 2 border = 29.5 measured
+ * against the compiled bundle) with the flex centring absorbing the rest.
+ */
+export const ARTIFACT_H = 38;
+/**
+ * Vertical pitch of the artifact STACK — the one a story reveals beside itself.
+ *
+ * Re-derived rather than recovered: the horizontal band retired the old pitch because
+ * a row is spaced by the column pitch, and this is a different question in a different
+ * direction. A stack needs a card plus a gap, so it is ARTIFACT_H + STORY_GAP, and it
+ * takes STORY_GAP specifically because these cards read as a list of one story's
+ * things — the same relationship stories in a column have to each other.
+ *
+ * That it lands on the same number the deleted constant held is a coincidence worth
+ * naming: the artifact card did not change size, only the story card did.
+ */
+export const ARTIFACT_STACK_PITCH = ARTIFACT_H + STORY_GAP;
 
 /** How far outside the grid's horizontal span still counts as a valid drop. */
 const REJECT_MARGIN = STEP_W;
@@ -106,6 +133,11 @@ export const sliceNodeId = (sliceId: string) => `slice:${sliceId}`;
 /** The four artifacts a slice can hang off itself; absent ones get no node. */
 export type ArtifactKind = "spec" | "plan" | "capCard" | "deliveryCard";
 export const artifactNodeId = (sliceId: string, kind: ArtifactKind) => `artifact:${sliceId}:${kind}`;
+/**
+ * The card a revealed story shows when it belongs to no slice. Keyed by the STORY,
+ * because that is the only record involved — there is no slice to name.
+ */
+export const unassignedNodeId = (storyId: string) => `unassigned:${storyId}`;
 
 /**
  * Reserved id prefix for the trailing blank card at each level. Blankness is a
@@ -271,6 +303,24 @@ export function artifactRowX(index: number, startX = 0): number {
  * Falls back to the origin for a slice that owns no stories, which is what a slice
  * looks like between being created and having anything dragged into it.
  */
+/**
+ * Where the `index`th card of a STORY's revealed stack sits, given that story's own
+ * position.
+ *
+ * BESIDE the story, not below it, and the difference is what the reveal costs: a stack
+ * below runs straight down the story's own column and buries every story under it,
+ * which is the column the reader is asking about. One column to the right lands on the
+ * neighbouring column instead — still an overlap, since the reveal is ephemeral and
+ * nothing reflows for it, but it obscures the stories the question is NOT about.
+ *
+ * Starting level with the story rather than one slot down is what makes the relation
+ * readable without an edge: the first card of the stack and the story it belongs to
+ * share a top edge, so they read as a pair the moment they appear.
+ */
+export function storyStackPosition(story: { x: number; y: number }, index: number): { x: number; y: number } {
+  return { x: story.x + STEP_W + STEP_GAP, y: story.y + index * ARTIFACT_STACK_PITCH };
+}
+
 export function artifactRowStartX(model: MapModel, slice: CapSliceT): number {
   const owned = new Set(slice.storyIds);
   const xOf = new Map(stepColumns(model.activities).map((c) => [c.stepId, c.x]));

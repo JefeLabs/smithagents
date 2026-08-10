@@ -1,5 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
-import { act, cleanup, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ALL_WORKSPACES } from "../lib/board-aggregate";
@@ -542,6 +542,77 @@ describe("MapStage editing", () => {
     });
     expect(at[0].y).toBe(at[1].y);
     expect(at[1].x).toBeGreaterThan(at[0].x);
+  });
+
+  it("clicking a story title reveals its chain as a stack, and does not dim the map", async () => {
+    // The two reveals answer different questions and must not look alike: the band asks
+    // "what is in this release" and dims everything outside it; a story asks "where is
+    // THIS one specced", which is narrow enough that restyling the map would be noise.
+    stubFetch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    // TWO jsdom accommodations here, both artifacts of the canvas rather than defects,
+    // and both verified to behave correctly in a real browser.
+    //
+    // getByText, NOT getByRole, even though the title is a real <button>: xyflow marks a
+    // node `visibility: hidden` until it has measured it, and jsdom never lays anything
+    // out, so every card on the canvas is invisible to accessibility queries here — 21
+    // hidden buttons against 12 visible ones. Every other test in this file queries
+    // canvas content the same way.
+    //
+    // fireEvent, NOT userEvent: the title IS the drag handle, so a full pointer sequence
+    // reaches xyflow's d3-drag, whose `nodrag` helper dereferences `event.view.document`
+    // — and the view is null on events user-event synthesizes. It throws OUTSIDE the
+    // assertion, so the suite reports every test passing and then exits 1. fireEvent
+    // dispatches the click alone, which is the gesture under test.
+    await screen.findByText("create tour time slots");
+    fireEvent.click(screen.getByText("create tour time slots"));
+
+    await waitFor(() => expect(document.querySelector(".map-slice-anchor")).not.toBeNull());
+    expect(document.querySelector(".map-story.is-selected")).not.toBeNull();
+    expect(document.querySelector(".map-story.is-dimmed")).toBeNull();
+
+    // A STACK, not a row: sl1's anchor and its two artifacts share an x and differ in y.
+    const at = [...document.querySelectorAll(".map-slice-anchor, .map-artifact")].map((card) => {
+      const match = /translate\((-?[\d.]+)px,\s*(-?[\d.]+)px\)/.exec(
+        (card.closest(".react-flow__node") as HTMLElement | null)?.style.transform ?? "",
+      );
+      if (!match) throw new Error("no transform on a revealed card");
+      return { x: Number(match[1]), y: Number(match[2]) };
+    });
+    expect(at.length).toBe(3);
+    expect(new Set(at.map((p) => p.x)).size).toBe(1);
+    expect(new Set(at.map((p) => p.y)).size).toBe(at.length);
+  });
+
+  it("a story in no slice says so rather than doing nothing", async () => {
+    // s3 belongs to no slice, and most real stories look like s3. A control that
+    // silently does nothing on its commonest target teaches people it is broken.
+    stubFetch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    await screen.findByText("view tour analytics");
+    fireEvent.click(screen.getByText("view tour analytics"));
+
+    await waitFor(() => expect(document.querySelector(".map-artifact--backlog")).not.toBeNull());
+    expect(screen.getByText("not in a slice yet")).toBeTruthy();
+    expect(document.querySelector(".map-slice-anchor")).toBeNull();
+  });
+
+  it("selecting a story replaces a band reveal rather than stacking on it", async () => {
+    // One selection, so the scopes are mutually exclusive by construction — but the
+    // band's dimming and edges have to actually go away, which is a property of the
+    // effect's branches rather than of the hook.
+    stubFetch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    await screen.findByText("tour scheduling v1", { selector: ".slice-band__name" });
+    await userEvent.click(screen.getByText("tour scheduling v1", { selector: ".slice-band__name" }));
+    await waitFor(() => expect(document.querySelector(".map-story.is-dimmed")).not.toBeNull());
+
+    fireEvent.click(screen.getByText("create tour time slots"));
+    await waitFor(() => expect(document.querySelector(".map-story.is-selected")).not.toBeNull());
+    expect(document.querySelector(".map-story.is-dimmed")).toBeNull();
   });
 
   it("clicking the same slice band again clears the reveal", async () => {

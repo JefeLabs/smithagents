@@ -2912,6 +2912,23 @@ button.logo {
      pull the controls row up and leave every card in a column sitting at a different
      internal height. */
   height: 28px;
+  /* It is a <button> — it selects the story and reveals its chain — but it must read as
+     the card's title, so everything but the gesture is inherited back.
+
+     NOTE the individual font properties rather than `font: inherit`: the shorthand
+     resets line-height, and line-height is load-bearing two rules up (it is what makes
+     the clamp exactly 28px and the card exactly STORY_H). `font: inherit` here would
+     silently undo the height arithmetic. */
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  text-align: left;
+  /* `grab`, not `pointer`: it is a click target AND the drag handle, and dragging is the
+     gesture a user is less likely to guess. */
   cursor: grab;
 }
 /* Activities keep the single-line treatment: ACTIVITY_H is unchanged, so a second line
@@ -2932,6 +2949,24 @@ button.logo {
 .map-story.is-done .map-story__handle {
   text-decoration: line-through;
   color: var(--text-dim);
+}
+/* The story currently being interrogated. It carries the whole burden of saying which
+   card the stack beside it belongs to, because the story reveal deliberately does NOT
+   dim the rest of the map the way the slice band does — a narrow question should not
+   restyle everything around it. So this has to read at a glance without shouting:
+   border only, no fill, so the card does not compete with the cards it is pointing at. */
+.map-story.is-selected {
+  /* NOT var(--accent), and this is a trap worth naming: HeroUI declares `--accent` on
+     EVERY element, not just :root, so any rule below the root resolves it to HeroUI's
+     blue — oklch(0.6204 0.195 253.83) — instead of the app's. Measured on this card
+     against seven app tokens, `--accent` was the only shadowed one; --text, --text-2,
+     --pill-br, --ground, --online and --dot-hi all resolve correctly. The tell was that
+     the border came out identical in all four themes while everything beside it changed.
+
+     --dot-hi carries the same value as --accent in tokens.css for three of the four
+     themes and is one shade off in `sand` (#c07a3e against #b4682f), which is the cost
+     of not being shadowed. */
+  border-color: var(--dot-hi);
 }
 /* xyflow puts .dragging on its own node wrapper, so the card underneath needs no
    is-dragging class of its own — that one belonged to the library this replaced. */
@@ -2984,15 +3019,15 @@ button.logo {
   flex-direction: column;
   justify-content: center;
   gap: 2px;
-  /* Must equal SLOT_H in organisms/map/layout.ts — one story slot, so these cards
-     rhyme with the story columns rather than introducing a third height. Measured
-     against the app's compiled bundle, the two lines come to 29.5px (11.5 + 2 + 14 +
-     2 of border), so this contains them with room to spare and the flex centring
-     absorbs the difference.
+  /* Must equal ARTIFACT_H in organisms/map/layout.ts. It used to say SLOT_H, and was
+     right until story cards grew to two lines: SLOT_H went 38 to 62 while these cards,
+     already holding their two lines in 38, had no reason to follow. The number stayed
+     correct and its stated derivation went stale — exactly what naming a constant is
+     supposed to prevent — so it has one of its own now.
 
-     It no longer has to clear a neighbour below: the artifacts are a ROW now, spaced
-     horizontally, so nothing sits one pitch beneath them. That is what retired
-     ARTIFACT_PITCH. */
+     ARTIFACT_STACK_PITCH is this plus STORY_GAP, and that matters again: a story's
+     reveal stacks these vertically, so a card taller than the pitch would overlap the
+     one below it. The horizontal band does not care. */
   height: 38px;
   /* Must equal STEP_W. artifactRowX advances one slot per card by STEP_W + STEP_GAP,
      so any other width either overlaps the next card in the band or opens a ragged

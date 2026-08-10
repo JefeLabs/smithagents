@@ -82,6 +82,8 @@ export interface StoryNodeData {
   sliceValue: string;
   onSliceChange: (sliceId: string) => void;
   onRemove: () => void;
+  onSelect: () => void;
+  selected: boolean;
   dimmed: boolean;
 }
 
@@ -97,13 +99,36 @@ export interface StoryNodeData {
  * left the title 12.5px, about two characters, on every story. Moving the controls to
  * their own row is what gives the title the card's full width; the second line is what
  * it does with it.
+ *
+ * THE TITLE IS ALSO THE SELECT TARGET — clicking it reveals where this story is specced
+ * and tracked. It is deliberately the title and not the card: the card contains a
+ * `<select>`, and opening a dropdown must not also reveal a chain. Scoping the handler
+ * to the title is the same reasoning that puts `nodrag` on the controls, applied to a
+ * different gesture, and it costs nothing to state twice because the two mechanisms are
+ * unrelated — xyflow reads `nodrag` off the DOM, this is a plain React handler.
+ *
+ * It doubles as the DRAG handle, which is safe rather than lucky: a drag is a
+ * pointerdown plus movement past xyflow's threshold, and a click is one without it, so
+ * the browser only fires `click` when no drag happened.
  */
 export function StoryNode({ data }: { data: StoryNodeData | BlankNodeData }) {
   if (data.blank) return <BlankCard className="map-story" placeholder="Add a story…" onCommit={data.onCommit} />;
-  const { story, sliceOptions, sliceValue, onSliceChange, onRemove, dimmed } = data;
+  const { story, sliceOptions, sliceValue, onSliceChange, onRemove, onSelect, selected, dimmed } = data;
   return (
-    <div className={`map-story${story.done ? " is-done" : ""}${dimmed ? " is-dimmed" : ""}`} title={story.verifiedBy}>
-      <span className="map-story__handle">{story.text}</span>
+    <div
+      className={`map-story${story.done ? " is-done" : ""}${dimmed ? " is-dimmed" : ""}${
+        selected ? " is-selected" : ""
+      }`}
+      title={story.verifiedBy}
+    >
+      {/* A real <button>, not a span with a handler — the same choice `.slice-band__select`
+          made for the other reveal. It costs a CSS reset and buys keyboard access to the
+          reveal for free, where a span would have needed role, tabIndex and a key handler
+          to reach the same place. It is still the drag handle: xyflow matches
+          `dragHandle` against the DOM and does not care what element it finds. */}
+      <button type="button" className="map-story__handle" onClick={onSelect}>
+        {story.text}
+      </button>
       <div className="map-story__meta">
         <select
           className="nodrag"

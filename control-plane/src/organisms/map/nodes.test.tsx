@@ -21,6 +21,8 @@ describe("StoryNode", () => {
     sliceValue: "backlog",
     onSliceChange: vi.fn(),
     onRemove: vi.fn(),
+    onSelect: vi.fn(),
+    selected: false,
     dimmed: false,
   };
 
@@ -33,9 +35,29 @@ describe("StoryNode", () => {
   it("marks the interactive controls nodrag so xyflow does not steal their pointer", () => {
     const { container } = render(<StoryNode data={data} />);
     expect(container.querySelector("select")?.classList.contains("nodrag")).toBe(true);
-    expect(container.querySelector("button")?.classList.contains("nodrag")).toBe(true);
+    // SCOPED to the controls row. The title is a <button> now too, and an unscoped
+    // `querySelector("button")` finds THAT one first — where the correct answer is the
+    // opposite, since the title must stay draggable.
+    expect(container.querySelector(".map-story__meta button")?.classList.contains("nodrag")).toBe(true);
     // The handle is the ONE thing that must not be nodrag — it is the drag target.
     expect(container.querySelector(".map-story__handle")?.classList.contains("nodrag")).toBe(false);
+  });
+
+  it("selects the story when its title is clicked, and only its title", async () => {
+    const onSelect = vi.fn();
+    const onSliceChange = vi.fn();
+    render(<StoryNode data={{ ...data, onSelect, onSliceChange }} />);
+    await userEvent.click(screen.getByRole("button", { name: "create slots" }));
+    expect(onSelect).toHaveBeenCalledTimes(1);
+
+    // The card carries a <select>; opening it must NOT also reveal a chain. This is the
+    // case that made the title the target instead of the whole card.
+    await userEvent.selectOptions(screen.getByLabelText("Slice for create slots"), "sl1");
+    expect(onSliceChange).toHaveBeenCalledWith("sl1");
+    expect(onSelect).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(screen.getByLabelText("Remove story: create slots"));
+    expect(onSelect).toHaveBeenCalledTimes(1);
   });
 
   it("puts the controls in their own row, so the title gets the card's width", async () => {

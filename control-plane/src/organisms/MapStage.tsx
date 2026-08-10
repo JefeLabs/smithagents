@@ -26,6 +26,8 @@ import {
   layoutMap,
   type MapNode,
   sliceNodeId,
+  storyStackPosition,
+  unassignedNodeId,
 } from "./map/layout";
 import { nodeTypes } from "./map/nodeTypes";
 import { useMapSelection } from "./map/useMapSelection";
@@ -153,8 +155,10 @@ export function MapStage() {
 
   const cap = capabilities.find((c) => c.id === activeId) ?? null;
 
-  // What the map is interrogating. Only the slice kind reveals anything today; the
-  // hook's other two exist for the detail views that come later.
+  // What the map is interrogating. TWO SCOPES, TWO SHAPES, deliberately: a slice
+  // answers "what is in this release" and gets a horizontal band under the whole map;
+  // a story answers "where is THIS story specced and tracked" and gets a vertical
+  // stack beside itself. Same records, different question, so they must not look alike.
   const { selection, select } = useMapSelection();
 
   // EVERY edge the model could draw, computed once per capability. Revealing filters
@@ -170,6 +174,15 @@ export function MapStage() {
   const revealedSlice = cap?.slices.find((s) => s.id === revealed) ?? null;
 
   const edges = useMemo(() => allEdges.filter((e) => e.sliceId === revealed), [allEdges, revealed]);
+
+  // The story reveal, resolved the same way and for the same reason: a selection that
+  // no longer names a record in `cap` simply misses, and the reveal collapses.
+  const revealedStoryId = selection?.kind === "story" ? selection.id : null;
+  const revealedStory = cap?.stories.find((s) => s.id === revealedStoryId) ?? null;
+  // The slice a revealed story belongs to, or null when it is still in the backlog —
+  // which is most stories, and the case the reveal has to answer honestly rather than
+  // by doing nothing.
+  const storySlice = revealedStory ? (cap?.slices.find((s) => s.storyIds.includes(revealedStory.id)) ?? null) : null;
 
   // Reports whether the write survived. Only the drag path reads it — a rejected
   // move has to re-seed the canvas, because xyflow holds the dragged node's
@@ -387,10 +400,12 @@ export function MapStage() {
           data: {
             story,
             dimmed,
+            selected: story.id === revealedStoryId,
             sliceOptions: [...(cap?.slices ?? [])].sort((a, b) => a.order - b.order),
             sliceValue: sliceFor(story.id),
             onSliceChange: (sliceId: string) => assignSlice(story.id, sliceId),
             onRemove: () => removeStory(story),
+            onSelect: () => select({ kind: "story", id: story.id }),
           },
         } as Node;
       }
@@ -441,13 +456,73 @@ export function MapStage() {
   //
   // If anything `decorate` reads ever stops being a function of `cap` or a listed value,
   // this suppression stops documenting a safe omission and starts hiding a stale closure.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: decorate is rebuilt every render, so listing it loops; everything it reads is `cap` or an argument — see above
+  //
+  // THAT TRIPWIRE HAS NOW FIRED ONCE, which is why it was worth writing: the story reveal
+  // made `decorate` close over `revealedStoryId` and `select`, neither of which is a
+  // function of `cap`. Both are listed below — `revealedStoryId` is a string, `select` is
+  // referentially stable by construction (`useMapSelection` resolves the toggle inside the
+  // updater so the callback has no dependencies) — so the closure is rebuilt exactly when
+  // the selection moves, and `is-selected` follows it.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: decorate is rebuilt every render, so listing it loops; everything it reads is `cap`, an argument, or a listed value — see above
   useEffect(() => {
     if (!cap) {
       setNodes([]);
       return;
     }
     const base = layoutMap(cap).nodes;
+
+    if (revealedStory) {
+      // A STORY'S OWN CHAIN, stacked beside it. NOTHING IS DIMMED here, and that is the
+      // difference in scope made visible: the band answers "what is in this release", so
+      // it dims everything outside the slice; this answers "where is this one story
+      // specced", which is a narrow question that has no business restyling the map. The
+      // story's own `is-selected` says which one is asking.
+      const at = base.find((n) => n.type === "story" && n.id === revealedStory.id)?.position;
+      const decorated = decorate(base, new Set());
+      if (!at) {
+        // The story is in the model but not on the canvas — its step was removed. There
+        // is nowhere to hang a stack, so show the map unchanged rather than guessing.
+        setNodes(decorated);
+        return;
+      }
+      const cards: MapNode[] = storySlice
+        ? [
+            {
+              id: sliceNodeId(storySlice.id),
+              type: "slice",
+              position: storyStackPosition(at, 0),
+              data: {
+                name: storySlice.name,
+                fraction: `${storySlice.storyIds.filter((id) => cap.stories.find((s) => s.id === id)?.done).length}/${
+                  storySlice.storyIds.length
+                }`,
+              },
+              draggable: false,
+            },
+            ...artifactNodesFor(storySlice).map((a, i) => ({
+              id: a.id,
+              type: "artifact" as const,
+              position: storyStackPosition(at, i + 1),
+              data: { kind: a.kind, label: a.label },
+              draggable: false,
+            })),
+          ]
+        : [
+            // MOST STORIES ARE IN THE BACKLOG, so this is the common answer and not an
+            // edge case. Saying so beats a click that silently does nothing — a control
+            // that appears broken on most of its targets teaches people not to use it.
+            {
+              id: unassignedNodeId(revealedStory.id),
+              type: "artifact",
+              position: storyStackPosition(at, 0),
+              data: { kind: "backlog", label: "not in a slice yet" },
+              draggable: false,
+            },
+          ];
+      setNodes([...decorated, ...cards]);
+      return;
+    }
+
     if (!revealedSlice) {
       setNodes(decorate(base, new Set()));
       return;
@@ -499,7 +574,7 @@ export function MapStage() {
     ];
 
     setNodes([...decorated, ...ephemeral]);
-  }, [cap, revealedSlice, setNodes]);
+  }, [cap, revealedSlice, revealedStory, revealedStoryId, storySlice, select, setNodes]);
 
   const dropNodeAt = async (nodeId: string, position: { x: number; y: number }) => {
     if (!cap) return;
