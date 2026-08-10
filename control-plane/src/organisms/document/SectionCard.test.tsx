@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SectionCard } from "./SectionCard";
 
@@ -26,22 +26,24 @@ describe("SectionCard", () => {
     expect(screen.getByRole("button", { name: /edit what this is/i })).toBeTruthy();
   });
 
-  it("edit mode seeds the raw body and commits on blur — no save button", () => {
+  it("edit mode renders the body as rich text and commits on blur — no save button", async () => {
     const onSave = vi.fn();
     render(<SectionCard section={SECTION} editing onEdit={vi.fn()} onCancel={vi.fn()} onSave={onSave} />);
-    const box = screen.getByRole("textbox", { name: /what this is/i });
-    expect((box as HTMLTextAreaElement).value).toBe("It **does** the thing.");
+    const surface = await screen.findByRole("textbox", { name: /what this is/i });
+    // Rendered, not source: the words are there, the asterisks are not.
+    expect(surface.textContent).toContain("does");
+    expect(surface.textContent).not.toContain("**");
     expect(screen.queryByRole("button", { name: /^save$/i })).toBeNull();
-    fireEvent.change(box, { target: { value: "New text" } });
-    fireEvent.blur(box);
-    expect(onSave).toHaveBeenCalledWith("New text");
+    fireEvent.blur(surface);
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
   });
 
-  it("Escape abandons the edit without saving", () => {
+  it("Escape abandons the edit without saving", async () => {
     const onSave = vi.fn();
     const onCancel = vi.fn();
     render(<SectionCard section={SECTION} editing onEdit={vi.fn()} onCancel={onCancel} onSave={onSave} />);
-    fireEvent.keyDown(screen.getByRole("textbox", { name: /what this is/i }), { key: "Escape" });
+    const surface = await screen.findByRole("textbox", { name: /what this is/i });
+    fireEvent.keyDown(surface, { key: "Escape" });
     expect(onCancel).toHaveBeenCalled();
     expect(onSave).not.toHaveBeenCalled();
   });
