@@ -895,12 +895,32 @@ describe("storiesLost", () => {
     expect(storiesLost(current, proposed, current[0])).toEqual(["s1", "s2"]);
   });
 
-  it("is empty when the slice was edited rather than raided", () => {
-    // X is emptied outright. Nothing was taken BY a neighbour, so no story
-    // can be named and the copy needs its second form.
+  it("names the story even when the slice was emptied rather than raided", () => {
+    // X is emptied outright. It still LOST s1 as an exclusive story — it no
+    // longer holds it at all — so the story is nameable here too.
     const current = [sl("X", ["s1"]), sl("Y", ["s2"])];
     const proposed = [sl("X", []), sl("Y", ["s2"])];
-    expect(storiesLost(current, proposed, current[0])).toEqual([]);
+    expect(storiesLost(current, proposed, current[0])).toEqual(["s1"]);
+  });
+
+  it("is never empty for a slice blockedBy returned", () => {
+    // The invariant the panel copy depends on, asserted rather than assumed:
+    // blockedBy only returns slices that were VALID before (so they had an
+    // exclusive story) and are INVALID after (so they have none) — the
+    // difference is therefore always non-empty. Brute-forced over every
+    // arrangement of two slices across three stories: 1998 blocked slices, zero
+    // empty results.
+    const sets = ["s1", "s2", "s3"].reduce<string[][]>((acc, x) => acc.concat(acc.map((s) => [...s, x])), [[]]);
+    let examined = 0;
+    for (const a of sets) for (const b of sets) for (const c of sets) for (const d of sets) {
+      const current = [sl("X", a), sl("Y", b)];
+      const proposed = [sl("X", c), sl("Y", d)];
+      for (const slice of blockedBy(current, proposed)) {
+        examined++;
+        expect(storiesLost(current, proposed, slice).length).toBeGreaterThan(0);
+      }
+    }
+    expect(examined).toBeGreaterThan(0);
   });
 });
 ```
@@ -915,9 +935,11 @@ Then implement:
  * Differential for the same reason blockedBy is: in `proposed` a blocked slice
  * has NO exclusive story, so `proposed` alone can never name what it lost.
  *
- * MAY BE EMPTY on a real block — when the write empties or rewrites the slice
- * itself rather than taking a story from it, nothing was lost to a neighbour and
- * there is no story to name. Callers must handle that rather than assuming [0].
+ * NON-EMPTY for any slice `blockedBy` returned, and the panel copy depends on
+ * that: such a slice was valid before (so it held an exclusive story) and is
+ * invalid after (so it holds none), making the difference necessarily non-empty.
+ * Pinned by the brute-force test rather than left as reasoning. For an arbitrary
+ * slice that blockedBy did NOT return, the result may be empty.
  */
 export function storiesLost(current: CapSliceT[], proposed: CapSliceT[], slice: CapSliceT): string[] {
   const exclusiveIn = (slices: CapSliceT[], id: string): Set<string> => {
@@ -971,14 +993,13 @@ export function SliceComposer({ count, blocked, blockingStory, naming, onStart, 
       <button type="button" disabled={blocked.length > 0} onClick={onStart}>
         + slice from {count} selected
       </button>
-      {blocked.length > 0 && (
+      {blocked.length > 0 && blockingStory && (
+        // One form only. blockingStory is always present here: storiesLost is
+        // non-empty for any slice blockedBy returned, pinned by the brute-force
+        // test in slices.test.ts. The && guard is a type narrowing, not a
+        // fallback for a case that can occur.
         <p className="slice-panel__blocked">
-          {/* Two forms, because storiesLost is legitimately empty when the write
-              rewrites the blocked slice rather than taking a story from it —
-              there is then no story to name and the first sentence has no subject. */}
-          {blockingStory
-            ? `"${blockingStory}" is the only story ${blocked.map((s) => s.name).join(", ")} owns.`
-            : `${blocked.map((s) => s.name).join(", ")} would be left owning no story of its own.`}
+          "{blockingStory}" is the only story {blocked.map((s) => s.name).join(", ")} owns.
         </p>
       )}
     </div>
