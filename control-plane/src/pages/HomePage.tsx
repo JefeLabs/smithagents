@@ -126,6 +126,9 @@ export function HomePage() {
   const knownZeroSessions = sessionStatus === "success" && session === null;
   const composerVisible = composer !== null || (connected && knownZeroSessions);
 
+  const navigate = useNavigate();
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+
   // Picking another session backs out of an explicitly-opened composer (spec §3) — without
   // this, an explicit composer stays rendered with a possibly-stale locked workspace after
   // the activated session's frame lands.
@@ -133,14 +136,20 @@ export function HomePage() {
     (id: string) => {
       closeComposer();
       void api.activateSession(id);
+      // A session's surface is part of what "switching to it" means (spec:
+      // session kinds): document sessions live at their doc, chat at "/".
+      const target = sessions.find((s) => s.id === id);
+      if (target?.kind === "document" && target.docId) {
+        // Task 9 registers this route
+        void navigate({ to: "/doc/$docId", params: { docId: target.docId } } as never);
+      } else {
+        void navigate({ to: "/" });
+      }
     },
-    [closeComposer],
+    [closeComposer, sessions, navigate],
   );
 
   const agents = agentSeeds(roster, identity, engineWarnings);
-
-  const navigate = useNavigate();
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
 
   const callOn = (name: string) => void api.postUtterance(`Go ahead, ${name} — you have the floor.`);
 

@@ -1,5 +1,5 @@
 import { Sheet } from "@heroui-pro/react";
-import { Plus } from "lucide-react";
+import { FileText, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { SessionSummary } from "../api/types";
 import { MODE_LABELS } from "./NewSessionScreen";
@@ -12,6 +12,8 @@ interface SessionsPanelProps {
   onActivate: (id: string) => void;
   onCreate: (workspace?: string) => void;
   onManage?: () => void;
+  /** The workspace the currently active session belongs to — anchors the panel's header. */
+  activeWorkspace?: string;
 }
 
 /** Session switcher: every conversation lives inside a workspace. */
@@ -23,6 +25,7 @@ export function SessionsPanel({
   onActivate,
   onCreate,
   onManage,
+  activeWorkspace,
 }: SessionsPanelProps) {
   const [wsFilter, setWsFilter] = useState<string | null>(null);
   // The panel stays mounted across close/reopen, so a filter left pointed at a
@@ -50,6 +53,7 @@ export function SessionsPanel({
             <Sheet.CloseTrigger aria-label="Close sessions" />
             <Sheet.Header>
               <Sheet.Heading>Sessions</Sheet.Heading>
+              {activeWorkspace && <span className="sessions-panel__ws">{activeWorkspace}</span>}
             </Sheet.Header>
             <Sheet.Body>
               {workspaces.length > 1 && (
@@ -78,6 +82,9 @@ export function SessionsPanel({
                     }}
                   >
                     <span className="session-row__title">{s.title}</span>
+                    {s.kind === "document" && (
+                      <FileText size={12} aria-label="document session" className="session-row__kind" />
+                    )}
                     <span className="session-row__meta">
                       {s.workspace}
                       <span className="session-row__runtime">{MODE_LABELS[s.runtime]}</span>

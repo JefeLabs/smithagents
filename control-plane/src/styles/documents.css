@@ -1,0 +1,18 @@
+/* control-plane/src/styles/documents.css
+   Pair/mob phase 1 document styles. Imported from heroui.css as layer(legacy),
+   same as dashboards.css — kept as its own file so this feature never has to
+   stage the shared components.css (parallel agents live there). Starts with
+   the SessionsPanel's workspace anchor and doc-kind badge (Task 7); Task 9
+   appends the document stage's own rules. */
+
+.sessions-panel__ws {
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.session-row__kind {
+  flex: none;
+  color: var(--accent);
+}
