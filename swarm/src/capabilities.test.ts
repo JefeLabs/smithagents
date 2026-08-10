@@ -47,6 +47,40 @@ test('createCapability: id is workspace-namespaced — two workspaces can share 
   assert.equal(b.name, 'Onboarding');
 });
 
+test('capability order: new ones go last in their own workspace, legacy files keep a stable place', async () => {
+  // The migration case, which is the one that breaks a running install: every
+  // capability file written before `order` existed has none. Loading must place them
+  // deterministically rather than reject them or shuffle with the directory read.
+  const dir = await mkdtemp(join(tmpdir(), 'caps-order-'));
+  const legacyA = { ...createCapability('Zeta', 'ws'), id: 'ws-zeta' } as Record<string, unknown>;
+  const legacyB = { ...createCapability('Alpha', 'ws'), id: 'ws-alpha' } as Record<string, unknown>;
+  delete legacyA.order;
+  delete legacyB.order;
+  await saveCapability(dir, legacyA as unknown as Parameters<typeof saveCapability>[1]);
+  await saveCapability(dir, legacyB as unknown as Parameters<typeof saveCapability>[1]);
+
+  const first = await loadCapabilities(dir);
+  assert.equal(first.errors.length, 0, 'a file without order is not an invalid file');
+  assert.deepEqual(first.capabilities.map((c) => c.id), ['ws-alpha', 'ws-zeta'], 'unordered fall back to id order');
+
+  // An ordered one sorts ahead of both, however late its id is alphabetically.
+  const ordered = createCapability('Middle', 'ws', 0);
+  await saveCapability(dir, ordered);
+  const second = await loadCapabilities(dir);
+  assert.deepEqual(second.capabilities.map((c) => c.id), ['ws-middle', 'ws-alpha', 'ws-zeta']);
+});
+
+test('patchCapability: order 0 is writable, which truthiness would drop', () => {
+  // The first slot is the commonest value a reorder writes and the one a
+  // `if (patch.order)` guard silently ignores.
+  const cap = createCapability('A', 'ws', 3);
+  patchCapability(cap, { order: 0 });
+  assert.equal(cap.order, 0);
+  // Absent means untouched, rather than reset.
+  patchCapability(cap, { name: 'B' });
+  assert.equal(cap.order, 0);
+});
+
 test('patchCapability: wholesale replace with validation', () => {
   const cap = fixture();
   const before = cap.updatedAt;

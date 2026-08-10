@@ -43,6 +43,17 @@ export interface Capability {
   id: string;
   name: string;
   workspaceId: string;
+  /**
+   * Where this capability sits in the row, and OPTIONAL on purpose: every capability
+   * file written before this existed has no `order`, and rejecting those would empty
+   * the map rather than migrate it. `loadCapabilities` gives them a deterministic place
+   * instead, and the value is written the first time something reorders them.
+   *
+   * Unlike activities, steps and stories — which are dense 0..n inside ONE document —
+   * a capability is its own file, so renumbering the set is a write per capability.
+   * The client still keeps them dense; it just costs more than the others do.
+   */
+  order?: number;
   activities: CapActivity[];
   stories: CapStory[];
   slices: CapSlice[];
@@ -58,12 +69,12 @@ export function slugify(name: string): string {
   return id;
 }
 
-export function createCapability(name: string, workspaceId: string): Capability {
+export function createCapability(name: string, workspaceId: string, order = 0): Capability {
   const now = new Date().toISOString();
   // Namespaced like boardIdFor: the id is the on-disk filename, and two
   // workspaces must be able to each have their own "Onboarding".
   const id = `${slugify(workspaceId)}-${slugify(name)}`;
-  return { id, name: name.trim(), workspaceId, activities: [], stories: [], slices: [], createdAt: now, updatedAt: now };
+  return { id, name: name.trim(), workspaceId, order, activities: [], stories: [], slices: [], createdAt: now, updatedAt: now };
 }
 
 function assertCapability(file: string, v: unknown): Capability {
@@ -91,6 +102,13 @@ export async function loadCapabilities(dir: string): Promise<{ capabilities: Cap
       errors.push({ file, error: String((err as Error).message) });
     }
   }
+  // SORTED, and by (order, id) rather than by order alone. A file written before
+  // `order` existed has none, and it has to land somewhere stable: `id` is the
+  // filename, so unordered capabilities keep a fixed alphabetical sequence after the
+  // ordered ones instead of moving whenever the directory is read in a different
+  // sequence. Nothing is renumbered here — load does not write, and a value invented
+  // on read would look persisted without being.
+  capabilities.sort((a, b) => (a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER) || a.id.localeCompare(b.id));
   return { capabilities, errors };
 }
 
@@ -105,7 +123,7 @@ export async function deleteCapabilityFile(dir: string, id: string): Promise<voi
   await rm(join(dir, `${id}.json`));
 }
 
-export function patchCapability(cap: Capability, patch: Partial<Pick<Capability, 'name' | 'activities' | 'stories' | 'slices'>>): Capability {
+export function patchCapability(cap: Capability, patch: Partial<Pick<Capability, 'name' | 'order' | 'activities' | 'stories' | 'slices'>>): Capability {
   const activities = patch.activities ?? cap.activities;
   const stories = patch.stories ?? cap.stories;
   const slices = patch.slices ?? cap.slices;
@@ -123,6 +141,9 @@ export function patchCapability(cap: Capability, patch: Partial<Pick<Capability,
     }
   }
   if (patch.name?.trim()) cap.name = patch.name.trim();
+  // Guarded on `undefined`, not on truthiness: order 0 is the first slot and the most
+  // common value a reorder writes, and `if (patch.order)` would silently drop it.
+  if (patch.order !== undefined) cap.order = patch.order;
   cap.activities = activities;
   cap.stories = stories;
   cap.slices = slices;

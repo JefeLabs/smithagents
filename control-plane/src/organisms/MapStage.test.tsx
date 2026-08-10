@@ -176,6 +176,59 @@ describe("MapStage", () => {
     });
   });
 
+  it("orders the capability row by `order`, putting unordered legacy ones last", async () => {
+    // `order` is optional because the broker's is: a capability file written before
+    // ordering existed carries none. Those must not sort to the FRONT, which is what a
+    // bare `(a.order ?? 0) - (b.order ?? 0)` would do to every one of them at once.
+    const legacy = { ...OTHER_CAP, id: "legacy", name: "Legacy", workspaceId: "skoolscout" };
+    const second = { ...OTHER_CAP, id: "second", name: "Second", workspaceId: "skoolscout", order: 1 };
+    const first = { ...OTHER_CAP, id: "first", name: "First", workspaceId: "skoolscout", order: 0 };
+    stubFetch({ capabilities: { capabilities: [legacy, second, first], errors: [] } });
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    await screen.findByText("First");
+    expect([...document.querySelectorAll(".map-capability:not(.is-blank)")].map((c) => c.textContent)).toEqual([
+      "First",
+      "Second",
+      "Legacy",
+    ]);
+  });
+
+  it("reordering writes only the capabilities whose order actually changed", async () => {
+    // A capability is its own FILE, so a dense renumber is a write per capability rather
+    // than one write for the array. Moving a card one place must therefore cost two
+    // PATCHes, not one per capability in the row.
+    const a = { ...OTHER_CAP, id: "a", name: "Aye", workspaceId: "skoolscout", order: 0 };
+    const b = { ...OTHER_CAP, id: "b", name: "Bee", workspaceId: "skoolscout", order: 1 };
+    const c = { ...OTHER_CAP, id: "c", name: "Cee", workspaceId: "skoolscout", order: 2 };
+    const { calls } = stubFetch({ capabilities: { capabilities: [a, b, c], errors: [] } });
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    await screen.findByText("Bee");
+
+    const cards = [...document.querySelectorAll(".map-capability:not(.is-blank)")];
+    const transfer = { data: {} as Record<string, string>, effectAllowed: "", dropEffect: "" };
+    const dataTransfer = {
+      ...transfer,
+      setData: (k: string, v: string) => {
+        transfer.data[k] = v;
+      },
+      getData: (k: string) => transfer.data[k] ?? "",
+    };
+    // Drag "Bee" onto "Aye": Bee takes slot 0 and Aye slides to 1. "Cee" stays at 2 and
+    // must not be written.
+    fireEvent.dragStart(cards[1], { dataTransfer });
+    fireEvent.drop(cards[0], { dataTransfer });
+
+    await waitFor(() => {
+      const patched = calls.filter((call) => call.method === "PATCH");
+      expect(patched.map((call) => [call.url.split("/").pop(), (call.body as { order?: number }).order])).toEqual([
+        ["b", 0],
+        ["a", 1],
+      ]);
+    });
+  });
+
   it("creates nothing when the blank capability card is committed empty", async () => {
     // The rule's other half, which the old panel enforced with `if (!capName)` and
     // BlankCard now enforces for all four levels. Worth an assertion here because this

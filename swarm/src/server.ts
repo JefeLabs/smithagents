@@ -2329,8 +2329,13 @@ export class OrchestratorServer {
       const b = req.body as { name?: string; workspaceId?: string };
       if (!b?.name?.trim() || !b.workspaceId?.trim()) return reply.status(400).send({ error: 'Missing required fields: name, workspaceId' });
       try {
-        const cap = createCapability(b.name, b.workspaceId.trim());
         const { capabilities } = await loadCapabilities(capsDir());
+        // LAST in its own workspace, not last overall: the row only ever shows one
+        // workspace, so ordering against capabilities the user cannot see would leave
+        // gaps in the sequence they can.
+        const mine = capabilities.filter((c) => c.workspaceId === b.workspaceId?.trim());
+        const nextOrder = mine.reduce((max, c) => Math.max(max, (c.order ?? -1) + 1), 0);
+        const cap = createCapability(b.name, b.workspaceId.trim(), nextOrder);
         if (capabilities.some((c) => c.id === cap.id)) return reply.status(409).send({ error: `Capability "${cap.id}" already exists` });
         await saveCapability(capsDir(), cap);
         await ensureWorkspaceBoards(server.workDir(), cap.workspaceId);

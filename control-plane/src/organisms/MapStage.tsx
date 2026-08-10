@@ -164,7 +164,44 @@ export function MapStage() {
   // replaces, including the empty-string case: `""` means the session has not resolved
   // a workspace yet and everything shows. That is the seam the navbar work put in, and
   // the seeding effect below relies on the same expression.
-  const visibleCapabilities = capabilities.filter((c) => !workspace || c.workspaceId === workspace);
+  // Sorted by `order`, with a fallback because the field is optional: a capability file
+  // written before ordering existed has none, and the broker places those after the
+  // ordered ones rather than inventing a value. `sort` is stable, so those keep the
+  // sequence the broker sent them in.
+  const visibleCapabilities = capabilities
+    .filter((c) => !workspace || c.workspaceId === workspace)
+    .slice()
+    .sort((a, b) => (a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER));
+
+  /**
+   * Reorders the capability row, writing only the capabilities whose order actually
+   * changed.
+   *
+   * ONE PATCH PER MOVED CAPABILITY, which is the cost of each being its own file. The
+   * canvas levels renumber a whole array inside one document for a single write; here a
+   * dense renumber is a write per capability, so the diff is taken first and untouched
+   * ones are left alone. Moving a card one place therefore costs two writes, not N.
+   */
+  const reorderCapability = async (draggedId: string, targetId: string) => {
+    if (draggedId === targetId) return;
+    const ordered = [...visibleCapabilities];
+    const from = ordered.findIndex((c) => c.id === draggedId);
+    const to = ordered.findIndex((c) => c.id === targetId);
+    if (from < 0 || to < 0) return;
+    const [moved] = ordered.splice(from, 1);
+    ordered.splice(to, 0, moved);
+    try {
+      await Promise.all(
+        ordered
+          .map((c, index) => ({ c, index }))
+          .filter(({ c, index }) => c.order !== index)
+          .map(({ c, index }) => patchCapMutation.mutateAsync({ id: c.id, body: { order: index } })),
+      );
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Reorder failed");
+    }
+  };
 
   // MEASURED, never assumed. The stage sits inside a navbar, a rail and a right rail, and
   // its own padding has already turned out once not to be what its rule said — so a
@@ -228,7 +265,7 @@ export function MapStage() {
   // move has to re-seed the canvas, because xyflow holds the dragged node's
   // position locally and would otherwise keep showing a move the server refused.
   const patchCap = useCallback(
-    async (body: Partial<Pick<CapabilityT, "name" | "activities" | "stories" | "slices">>) => {
+    async (body: Partial<Pick<CapabilityT, "name" | "order" | "activities" | "stories" | "slices">>) => {
       if (!cap) return false;
       try {
         await patchCapMutation.mutateAsync({ id: cap.id, body });
@@ -744,6 +781,27 @@ export function MapStage() {
               className={`map-capability${c.id === activeId ? " is-selected" : ""}`}
               aria-pressed={c.id === activeId}
               onClick={() => setActiveId(c.id)}
+              // NATIVE drag, not the canvas's. These are header buttons rather than
+              // xyflow nodes, and the drop target IS a card — so there is no position to
+              // invert into an index and nothing for layout.ts to resolve. The canvas
+              // needs geometry because a node can be released anywhere on it; here the
+              // browser already knows which card was landed on.
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.effectAllowed = "move";
+                e.dataTransfer.setData("text/plain", c.id);
+              }}
+              onDragOver={(e) => {
+                // Without preventDefault the browser refuses the drop outright — this is
+                // what marks a card as a valid target at all. The BLANK card has no such
+                // handler, which is exactly why nothing can be dropped onto the composer.
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                void reorderCapability(e.dataTransfer.getData("text/plain"), c.id);
+              }}
             >
               {c.name}
             </button>

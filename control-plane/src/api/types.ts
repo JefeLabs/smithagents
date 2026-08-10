@@ -224,6 +224,12 @@ export interface CapabilityT {
   id: string;
   name: string;
   workspaceId: string;
+  /**
+   * Position in the capability row. OPTIONAL because the broker's is: capability files
+   * written before ordering existed carry none, and the swarm places those by id rather
+   * than inventing a value on read. Sort with a fallback, never assume it is there.
+   */
+  order?: number;
   activities: CapActivityT[];
   stories: CapStoryT[];
   slices: CapSliceT[];

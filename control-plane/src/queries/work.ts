@@ -98,7 +98,7 @@ export function usePatchCapability() {
       body,
     }: {
       id: string;
-      body: Partial<Pick<CapabilityT, "name" | "activities" | "stories" | "slices">>;
+      body: Partial<Pick<CapabilityT, "name" | "order" | "activities" | "stories" | "slices">>;
     }) => api.patchCapability(id, body),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.capabilities }),
   });
