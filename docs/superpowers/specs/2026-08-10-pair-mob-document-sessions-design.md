@@ -141,6 +141,20 @@ follow-up ahead of phase 1 if the phase is not imminent.)
   document's history. A proposal whose section changed since it was made is
   marked `stale` and cannot be accepted without the agent re-proposing.
 
+## Future direction: blueprint surfaces (Edwin, 2026-08-10)
+
+The document body is deliberately a linear reading column — specs and plans
+are ordered prose, and text editing inside canvas nodes fights selection,
+zoom legibility, and the proposal diffs. But the surface is a property of
+the DOCUMENT TYPE: a future `surface` discriminator on the blueprint
+(`"sections"` — the default and phase 1's only value — vs `"canvas"`) lets
+diagram-class blueprints (sequence diagram, database design, architecture
+sketch) render as a zoom/pan canvas with a nodes/edges content model, reusing
+the xyflow machinery the Map stage already carries — same store, same
+document sessions, same (phase 3) proposal semantics with diagram-shaped
+proposals. Adding the optional field later is non-breaking for stored
+blueprints and documents. Not in phase 1–3 scope.
+
 ## Broker
 
 - **Store:** documents and blueprints under the broker state directory,
