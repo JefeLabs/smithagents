@@ -46,3 +46,34 @@
 .composer .voice-toggle[aria-disabled="true"] {
   pointer-events: auto;
 }
+
+/* Section editor (document page, Tiptap):
+ *
+ * Pro's editor paints a bordered card shell and its ProseMirror host sets its
+ * own type scale. The page's prose metrics must win, or focusing a section
+ * visibly reflows the document under the reader's cursor.
+ */
+.doc-section__editor .rich-text-editor__shell {
+  border: none;
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
+}
+.doc-section__editor .rich-text-editor__content,
+.doc-section__editor .rich-text-editor__prosemirror {
+  padding: 0;
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1.65;
+  color: var(--text);
+}
+.doc-section__editor .rich-text-editor__prosemirror:focus {
+  outline: none;
+}
+.doc-section__editor .rich-text-editor__prosemirror > p:first-child {
+  margin-top: 0;
+}
+.doc-section__editor .rich-text-editor__prosemirror > p:last-child {
+  margin-bottom: 0;
+}
