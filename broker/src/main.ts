@@ -1182,11 +1182,23 @@ const textChannel = new TextChannel(
     create: async (body) => {
       const bp = blueprints.find((b) => b.id === body.blueprintId);
       if (!bp) return { error: `unknown blueprint: ${body.blueprintId ?? '(none)'}` };
-      if (!body.workType || !bp.workTypes.includes(body.workType))
+      // An absent work type takes the blueprint's first — the composer sends a
+      // blueprint chip and its text, nothing more.
+      const workType = body.workType ?? bp.workTypes[0] ?? '';
+      if (!bp.workTypes.includes(workType))
         return { error: `workType must be one of: ${bp.workTypes.join(', ')}` };
-      const doc = documentManager.create(bp, body.workType, body.title ?? '');
+      const text = (body.text ?? '').trim();
+      if (!text) return { error: 'text is required' };
+      const doc = documentManager.create(bp, workType, truncateTitle(text));
       if (!doc) return { error: 'could not create document' };
-      sessionManager.create(defaultWorkspaceName, { title: doc.title, artifacts: [doc.id] });
+      // The send is still a send: the room hears it, the brain answers it in
+      // context, and a session gets lazily created here exactly as it would for
+      // a plain chat send — which is also how the document inherits the active
+      // session's runtime and workspace (it attaches, it never spawns).
+      textChannel.broadcast({ type: 'utterance', text });
+      handleUserText(text);
+      const active = sessionManager.activeOrNull();
+      if (active) sessionManager.addArtifact(active.id, doc.id);
       textChannel.broadcast(documentsFrame());
       textChannel.broadcast(sessionFrame());
       return { doc };
