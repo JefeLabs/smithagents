@@ -1114,4 +1114,47 @@ describe("MapStage editing", () => {
     await waitFor(() => expect(within(panel).getByText(/slice from 1 selected/i)).toBeDefined());
     expect(document.querySelectorAll(".react-flow__node.selected")).toHaveLength(1);
   });
+  /**
+   * The case that actually broke. Pressing Escape while focus still sits in the name input
+   * passes against the old input-scoped handler and proves nothing — the bug only appears
+   * once the user has clicked the canvas, which is both how the selection gets changed and
+   * how focus leaves the input.
+   */
+  it("Escape abandons naming from anywhere on the stage, not only from the input", async () => {
+    stubFetch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    const panel = await screen.findByRole("region", { name: "Slices" });
+    selectStories(["s2", "s3"]);
+    await userEvent.click(await within(panel).findByText(/slice from 2 selected/i));
+    expect(screen.getByPlaceholderText("Name this slice…")).toBeDefined();
+
+    // Focus on a story node, which is where clicking the canvas leaves it. React Flow
+    // binds Escape to "unselect this node" through the node wrapper's own onKeyDown, so
+    // this is the keypress that used to deselect instead of cancelling.
+    const node = document.querySelector('.react-flow__node[data-id="s2"]') as HTMLElement;
+    node.focus();
+    fireEvent.keyDown(node, { key: "Escape" });
+
+    expect(screen.queryByPlaceholderText("Name this slice…")).toBeNull();
+    // Escape abandons the NAME, not the gathering.
+    expect(within(panel).getByText(/slice from 2 selected/i)).toBeDefined();
+    // …and specifically did not eat a story on its way past.
+    expect(document.querySelectorAll(".react-flow__node.selected")).toHaveLength(2);
+  });
+
+  it("offers a visible cancel beside the name input", async () => {
+    stubFetch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    const panel = await screen.findByRole("region", { name: "Slices" });
+    selectStories(["s2", "s3"]);
+    await userEvent.click(await within(panel).findByText(/slice from 2 selected/i));
+
+    // A key with no on-screen affordance is not a way out for anyone who does not know it.
+    await userEvent.click(within(panel).getByRole("button", { name: /cancel/i }));
+    expect(screen.queryByPlaceholderText("Name this slice…")).toBeNull();
+    expect(within(panel).getByText(/slice from 2 selected/i)).toBeDefined();
+    expect(document.querySelectorAll(".react-flow__node.selected")).toHaveLength(2);
+  });
 });

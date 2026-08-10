@@ -1,5 +1,5 @@
 import { Panel } from "@xyflow/react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import type { CapSliceT } from "../../api/types";
 
 interface Props {
@@ -142,23 +142,51 @@ export function SliceComposer({
   onName,
   onCancel,
 }: FooterProps) {
+  // ESCAPE IS BOUND TO THE DOCUMENT, IN THE CAPTURE PHASE, and only while naming.
+  //
+  // It used to be `onKeyDown` on the input, which works only while focus is in the input —
+  // and clicking the canvas to change the selection is exactly what takes focus away. From
+  // there Escape reached React Flow instead, whose node wrapper binds it to "unselect this
+  // node": the escape hatch was unreachable AND the key quietly did something destructive.
+  //
+  // Capture on `document` runs before React's root handler, so stopping there is what keeps
+  // the keypress from ever becoming a deselect. It acts and it stops the event; it never
+  // does both jobs by halves. Enter is untouched — it is still the input's own handler.
+  useEffect(() => {
+    if (!naming) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      e.preventDefault();
+      onCancel();
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [naming, onCancel]);
+
   if (count === 0) return null;
   if (naming) {
     return (
-      <input
-        className="slice-panel__name-input"
-        placeholder="Name this slice…"
-        // The button that revealed this input has left the DOM, so without autoFocus the
-        // focus lands on <body> and the gesture stalls with nowhere to type.
-        // biome-ignore lint/a11y/noAutofocus: focus would otherwise land on body mid-gesture
-        autoFocus
-        onKeyDown={(e) => {
-          if (e.key === "Enter") onName((e.target as HTMLInputElement).value.trim());
-          // Escape abandons the NAME, not the selection — the stories stay picked, so the
-          // way out of a half-typed name is not "throw away what you gathered".
-          if (e.key === "Escape") onCancel();
-        }}
-      />
+      <div className="slice-panel__naming">
+        <input
+          className="slice-panel__name-input"
+          placeholder="Name this slice…"
+          // The button that revealed this input has left the DOM, so without autoFocus the
+          // focus lands on <body> and the gesture stalls with nowhere to type.
+          // biome-ignore lint/a11y/noAutofocus: focus would otherwise land on body mid-gesture
+          autoFocus
+          onKeyDown={(e) => {
+            if (e.key === "Enter") onName((e.target as HTMLInputElement).value.trim());
+          }}
+        />
+        {/* The key needs a visible twin: a shortcut nobody is told about is not a way out.
+            Both abandon the NAME and leave the stories selected — a cancel that also
+            cleared the selection would silently throw away the gathering the user came to
+            act on. */}
+        <button type="button" className="slice-panel__cancel" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
     );
   }
   return (
