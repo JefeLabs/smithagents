@@ -1397,6 +1397,7 @@ test('GET /blueprints returns the loaded set', async () => {
 test('POST /documents forwards the body and returns the created doc; PATCH updates a section', async () => {
   const patches: unknown[] = [];
   const creates: unknown[] = [];
+  const renames: unknown[] = [];
   const channel = channelWith({
     documents: {
       create: async (body: { blueprintId?: string; workType?: string; text?: string }) => {
@@ -1411,6 +1412,10 @@ test('POST /documents forwards the body and returns the created doc; PATCH updat
       },
       changeBlueprint: (docId: string, blueprintId: string) =>
         docId === 'd1' && blueprintId === 'implementation-plan' ? null : `cannot re-cast ${docId}`,
+      rename: (docId: string, title: string) => {
+        renames.push([docId, title]);
+        return docId === 'd1' ? null : `cannot rename ${docId}`;
+      },
     },
   });
   const port = await channel.start(0);
@@ -1471,6 +1476,15 @@ test('POST /documents forwards the body and returns the created doc; PATCH updat
       body: JSON.stringify({ blueprintId: 'implementation-plan' }),
     });
     assert.equal(refused.status, 409);
+
+    // Same route renames — the page's H1 is editable, so this is a real path.
+    const renamed = await fetch(`http://127.0.0.1:${port}/documents/d1`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'Login flow spec' }),
+    });
+    assert.equal(renamed.status, 200);
+    assert.deepEqual(renames[0], ['d1', 'Login flow spec']);
   } finally {
     await channel.stop();
   }

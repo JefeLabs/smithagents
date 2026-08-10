@@ -292,6 +292,7 @@ export class TextChannel {
       create(body: { blueprintId?: string; workType?: string; text?: string }): Promise<{ doc?: Doc; error?: string; status?: number }>;
       patchSection(docId: string, sectionId: string, body: string): string | null;
       changeBlueprint(docId: string, blueprintId: string): string | null;
+      rename(docId: string, title: string): string | null;
     },
   ) {}
 
@@ -997,19 +998,24 @@ export class TextChannel {
             body += c;
           });
           req.on('end', () => {
-            let blueprintId = '';
+            let parsed: { blueprintId?: unknown; title?: unknown } = {};
             try {
-              blueprintId = String((JSON.parse(body || '{}') as { blueprintId?: unknown }).blueprintId ?? '');
+              parsed = JSON.parse(body || '{}') as typeof parsed;
             } catch {
               /* falls into the guard below */
             }
-            if (!blueprintId) {
+            const blueprintId = typeof parsed.blueprintId === 'string' ? parsed.blueprintId : '';
+            const title = typeof parsed.title === 'string' ? parsed.title : '';
+            if (!blueprintId && !title) {
               res
                 .writeHead(400, { ...CORS, 'content-type': 'application/json' })
-                .end(JSON.stringify({ error: 'blueprintId is required' }));
+                .end(JSON.stringify({ error: 'blueprintId or title is required' }));
               return;
             }
-            const error = this.documents!.changeBlueprint(decodeURIComponent(docMatch[1]), blueprintId);
+            const docId = decodeURIComponent(docMatch[1]);
+            const error = title
+              ? this.documents!.rename(docId, title)
+              : this.documents!.changeBlueprint(docId, blueprintId);
             res
               .writeHead(error ? 409 : 200, { ...CORS, 'content-type': 'application/json' })
               .end(JSON.stringify(error ? { error } : { ok: true }));

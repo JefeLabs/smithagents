@@ -94,6 +94,17 @@ export class DocumentManager {
    * to a written document would silently destroy it. Returns null for an
    * unknown doc, an undeclared work type, or a document that already has text.
    */
+  /** Rename a document. An all-whitespace title is refused — a page needs a name. */
+  rename(docId: string, title: string): Doc | null {
+    const doc = this.docs.get(docId);
+    const clean = title.replace(/\s+/g, ' ').trim();
+    if (!doc || !clean) return null;
+    doc.title = clean;
+    doc.updatedAt = this.now();
+    this.store.save(doc);
+    return doc;
+  }
+
   changeBlueprint(docId: string, bp: Blueprint, workType?: string): Doc | null {
     const doc = this.docs.get(docId);
     if (!doc) return null;

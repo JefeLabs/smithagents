@@ -112,6 +112,8 @@ export interface BlueprintT {
   id: string;
   name: string;
   workTypes: string[];
+  /** The broker sends these; the page uses their `hint` as ghost text. */
+  sections?: Array<{ id: string; heading: string; hint?: string }>;
 }
 
 /** Full-frame-on-change, like the `session` frame — every document, not a diff. */

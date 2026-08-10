@@ -1203,6 +1203,12 @@ const textChannel = new TextChannel(
       textChannel.broadcast(sessionFrame());
       return { doc };
     },
+    rename: (docId, title) => {
+      const doc = documentManager.rename(docId, title);
+      if (!doc) return `cannot rename ${docId} — unknown document, or the title was blank`;
+      textChannel.broadcast(documentsFrame());
+      return null;
+    },
     changeBlueprint: (docId, blueprintId) => {
       const bp = blueprints.find((b) => b.id === blueprintId);
       if (!bp) return `unknown blueprint: ${blueprintId}`;

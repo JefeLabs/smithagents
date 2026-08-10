@@ -26,21 +26,22 @@ describe("SectionCard", () => {
     expect(screen.getByRole("button", { name: /edit what this is/i })).toBeTruthy();
   });
 
-  it("edit mode shows a textarea seeded with the raw body; save passes the new text", () => {
+  it("edit mode seeds the raw body and commits on blur — no save button", () => {
     const onSave = vi.fn();
     render(<SectionCard section={SECTION} editing onEdit={vi.fn()} onCancel={vi.fn()} onSave={onSave} />);
     const box = screen.getByRole("textbox", { name: /what this is/i });
     expect((box as HTMLTextAreaElement).value).toBe("It **does** the thing.");
+    expect(screen.queryByRole("button", { name: /^save$/i })).toBeNull();
     fireEvent.change(box, { target: { value: "New text" } });
-    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+    fireEvent.blur(box);
     expect(onSave).toHaveBeenCalledWith("New text");
   });
 
-  it("cancel discards without saving", () => {
+  it("Escape abandons the edit without saving", () => {
     const onSave = vi.fn();
     const onCancel = vi.fn();
     render(<SectionCard section={SECTION} editing onEdit={vi.fn()} onCancel={onCancel} onSave={onSave} />);
-    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+    fireEvent.keyDown(screen.getByRole("textbox", { name: /what this is/i }), { key: "Escape" });
     expect(onCancel).toHaveBeenCalled();
     expect(onSave).not.toHaveBeenCalled();
   });

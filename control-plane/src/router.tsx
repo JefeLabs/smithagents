@@ -141,6 +141,7 @@ function DocRoute() {
       doc={doc}
       blueprints={blueprints}
       onChangeBlueprint={(blueprintId) => api.patchDocBlueprint(doc.id, blueprintId)}
+      onRename={(title) => api.patchDocTitle(doc.id, title)}
       onSaveSection={(sectionId, body) => api.patchDocSection(doc.id, sectionId, body)}
       chat={
         <div className="document-stage__dock">

@@ -107,3 +107,12 @@ test('changeBlueprint refuses once any section has text, and on an unknown doc',
   assert.equal(m.get(doc.id)?.blueprintId, 'spec'); // untouched
   assert.equal(m.changeBlueprint('d99', PLAN), null);
 });
+
+test('rename sets a collapsed title, refuses blank, refuses unknown docs', () => {
+  const { m } = manager();
+  const doc = m.create(BP, 'feature', 'Old name')!;
+  assert.equal(m.rename(doc.id, '  Login   flow  spec ')?.title, 'Login flow spec');
+  assert.equal(m.rename(doc.id, '   '), null);
+  assert.equal(m.get(doc.id)?.title, 'Login flow spec'); // the blank never landed
+  assert.equal(m.rename('d99', 'x'), null);
+});

@@ -36,8 +36,9 @@ describe("DocumentStage", () => {
     // entering one section's edit mode leaves the other read-only
     expect(screen.queryByRole("button", { name: /edit what this is/i })).toBeNull();
     expect(screen.getByRole("button", { name: /edit non-goals/i })).toBeTruthy();
-    fireEvent.change(screen.getByRole("textbox", { name: /what this is/i }), { target: { value: "New." } });
-    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+    const box = screen.getByRole("textbox", { name: /what this is/i });
+    fireEvent.change(box, { target: { value: "New." } });
+    fireEvent.blur(box); // blur commits — a document has no save button
     await waitFor(() => expect(onSaveSection).toHaveBeenCalledWith("overview", "New."));
     // back to read mode after a successful save
     await screen.findByRole("button", { name: /edit what this is/i });
@@ -47,8 +48,9 @@ describe("DocumentStage", () => {
     const onSaveSection = vi.fn().mockResolvedValue({ error: "broker unreachable" });
     render(<DocumentStage doc={DOC} onSaveSection={onSaveSection} chat={null} />);
     fireEvent.click(screen.getByRole("button", { name: /edit non-goals/i }));
-    fireEvent.change(screen.getByRole("textbox", { name: /non-goals/i }), { target: { value: "Draft kept" } });
-    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+    const box = screen.getByRole("textbox", { name: /non-goals/i });
+    fireEvent.change(box, { target: { value: "Draft kept" } });
+    fireEvent.blur(box);
     expect(await screen.findByText(/broker unreachable/)).toBeTruthy();
     expect((screen.getByRole("textbox", { name: /non-goals/i }) as HTMLTextAreaElement).value).toBe("Draft kept");
   });

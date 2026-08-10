@@ -11,17 +11,32 @@ interface DocumentStageProps {
   blueprints?: BlueprintT[];
   /** Re-cast this document under another blueprint. Only offered while it is still empty. */
   onChangeBlueprint?: (blueprintId: string) => Promise<{ error?: string }>;
+  /** Rename the page. The H1 commits on blur, like every other line here. */
+  onRename?: (title: string) => Promise<{ error?: string }>;
   /** The docked chat column — composed by the route, the stage stays router- and store-free. */
   chat: ReactNode;
 }
 
 /** The pair/mob surface: document center, chat right (spec 2026-08-10, phase 1 = solo). */
-export function DocumentStage({ doc, onSaveSection, blueprints, onChangeBlueprint, chat }: DocumentStageProps) {
+export function DocumentStage({
+  doc,
+  onSaveSection,
+  blueprints,
+  onChangeBlueprint,
+  onRename,
+  chat,
+}: DocumentStageProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // The quiet confirmation that replaces a save button.
+  const [saved, setSaved] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(doc.title);
   // Written work pins the blueprint — see the switch below.
   const locked = doc.sections.some((s) => s.body.trim() !== "");
   const reduceMotion = useReducedMotion();
+  // Blueprint hints become the ghost text of an empty section.
+  const hintFor = (sectionId: string) =>
+    blueprints?.find((b) => b.id === doc.blueprintId)?.sections?.find((x) => x.id === sectionId)?.hint;
 
   const save = async (sectionId: string, body: string) => {
     setSaveError(null);
@@ -31,6 +46,8 @@ export function DocumentStage({ doc, onSaveSection, blueprints, onChangeBlueprin
       return; // stay in edit mode; the draft lives in the still-mounted card
     }
     setEditingId(null);
+    setSaved(true);
+    window.setTimeout(() => setSaved(false), 1600);
   };
 
   return (
@@ -44,9 +61,39 @@ export function DocumentStage({ doc, onSaveSection, blueprints, onChangeBlueprin
             transition={{ duration: 0.25, ease: "easeOut" }}
           >
             <header className="document-stage__bar">
-              <div className="document-stage__title">{doc.title}</div>
+              {onRename ? (
+                <input
+                  className="document-stage__title"
+                  aria-label="Document title"
+                  value={titleDraft}
+                  onChange={(e) => setTitleDraft(e.target.value)}
+                  onBlur={() => {
+                    const next = titleDraft.trim();
+                    if (!next || next === doc.title) {
+                      setTitleDraft(doc.title); // a blank title is not a rename
+                      return;
+                    }
+                    void onRename(next).then((r) => {
+                      if (r.error) {
+                        setSaveError(r.error);
+                        setTitleDraft(doc.title);
+                      }
+                    });
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") e.currentTarget.blur();
+                    if (e.key === "Escape") {
+                      setTitleDraft(doc.title);
+                      e.currentTarget.blur();
+                    }
+                  }}
+                />
+              ) : (
+                <h1 className="document-stage__title">{doc.title}</h1>
+              )}
               <span className="document-stage__meta">
                 {doc.workType} · {doc.status}
+                {saved && <em className="document-stage__saved">saved</em>}
               </span>
             </header>
             {onChangeBlueprint && blueprints && blueprints.length > 1 && (
@@ -87,6 +134,7 @@ export function DocumentStage({ doc, onSaveSection, blueprints, onChangeBlueprin
                 <SectionCard
                   key={editingId === s.id ? `${s.id}-editing` : s.id}
                   section={s}
+                  hint={hintFor(s.id)}
                   editing={editingId === s.id}
                   onEdit={() => {
                     setSaveError(null);
