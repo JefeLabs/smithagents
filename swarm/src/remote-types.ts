@@ -25,6 +25,8 @@ export interface WorkerRegisterMessage {
   name: string;
   /** Shared secret for auth */
   secret: string;
+  /** Device token minted via pairing (preferred; `secret` is the legacy path) */
+  token?: string;
   /** Max concurrent tasks this worker can handle */
   capacity: number;
   /** Which agent CLIs are installed */

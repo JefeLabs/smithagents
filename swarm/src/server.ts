@@ -49,6 +49,8 @@ import type {
   WorkerMessage,
   RegisteredMessage,
 } from './remote-types.js';
+import { DeviceRegistry } from './device-registry.js';
+import type { RemoteWorkerEntry } from './types.js';
 import { execFile } from 'node:child_process';
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { loadAgents, findAgent, saveAgent, activeAgents, type ComposedAgent } from './agents.js';
@@ -406,13 +408,9 @@ export class OrchestratorServer {
   // Auth
   // -------------------------------------------------------------------------
 
-  /** Constant-time comparison of two secrets (hashing normalizes lengths). */
+  /** Constant-time comparison of two secrets — delegates to the exported helper. */
   private static secretsEqual(a: string | undefined, b: string | undefined): boolean {
-    if (!a || !b) return false;
-    return timingSafeEqual(
-      createHash('sha256').update(a).digest(),
-      createHash('sha256').update(b).digest(),
-    );
+    return secretsEqual(a, b);
   }
 
   /**
@@ -2986,4 +2984,36 @@ export function buildChannelsUpdate(existing: WorkspaceChannels | null, b: Parti
   const textChannels = b.discord.textChannels ?? existing?.discord?.textChannels ?? [];
   const voiceChannels = b.discord.voiceChannels ?? existing?.discord?.voiceChannels ?? [];
   return { discord: { botToken, textChannels, voiceChannels } };
+}
+
+/** Constant-time comparison of two secrets (hashing normalizes lengths). */
+export function secretsEqual(a: string | undefined, b: string | undefined): boolean {
+  if (!a || !b) return false;
+  return timingSafeEqual(
+    createHash('sha256').update(a).digest(),
+    createHash('sha256').update(b).digest(),
+  );
+}
+
+/**
+ * Decide a worker registration. Token-authed workers adopt their deviceId as
+ * pool identity — the self-asserted workerId is only trusted on the legacy
+ * shared-secret path. A presented token that fails MUST NOT fall through to
+ * the secret path.
+ */
+export async function evaluateWorkerRegistration(
+  reg: WorkerRegisterMessage,
+  registry: DeviceRegistry,
+  configured: RemoteWorkerEntry[],
+): Promise<{ accepted: true; poolWorkerId: string; deviceId?: string } | { accepted: false; reason: string }> {
+  if (reg.token) {
+    const device = await registry.verifyToken(reg.token);
+    if (!device) return { accepted: false, reason: 'Invalid device token' };
+    return { accepted: true, poolWorkerId: device.deviceId, deviceId: device.deviceId };
+  }
+  if (configured.length === 0) return { accepted: false, reason: 'No remote workers configured' };
+  if (!configured.some((w) => secretsEqual(w.secret, reg.secret))) {
+    return { accepted: false, reason: 'Invalid secret' };
+  }
+  return { accepted: true, poolWorkerId: reg.workerId };
 }
