@@ -62,6 +62,10 @@
 }
 .doc-section__editor .rich-text-editor__content,
 .doc-section__editor .rich-text-editor__prosemirror {
+  /* Pro reserves height for a toolbar this editor never renders; without this
+     the section balloons the moment it takes focus. Same reservation the
+     composer's textarea needed in phase 1b. */
+  min-height: 0;
   padding: 0;
   font-family: inherit;
   font-size: 15px;
