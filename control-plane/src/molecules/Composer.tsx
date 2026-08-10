@@ -1,5 +1,5 @@
 import { PromptInput } from "@heroui-pro/react";
-import { ArrowUp, AudioLines, ChevronDown, Mic, Plus, Volume2, VolumeX } from "lucide-react";
+import { ArrowUp, AudioLines, ChevronDown, Mic, Plus, Sparkles, Volume2, VolumeX } from "lucide-react";
 import { useRef, useState } from "react";
 
 interface ComposerProps {
@@ -14,6 +14,8 @@ interface ComposerProps {
   /** STT capability gate (spec §3) — false dims the mic buttons and reroutes presses to onVoiceBlocked. */
   sttEnabled?: boolean;
   onVoiceBlocked?: () => void;
+  /** Rewrites the draft in place; the polish action renders only when this is wired. */
+  onPolish?: (text: string) => Promise<string | null>;
 }
 
 export function Composer({
@@ -25,9 +27,12 @@ export function Composer({
   onSoundToggle,
   sttEnabled = true,
   onVoiceBlocked,
+  onPolish,
 }: ComposerProps) {
   const [draft, setDraft] = useState("");
   const [holding, setHolding] = useState(false);
+  const [polishing, setPolishing] = useState(false);
+  const [polishError, setPolishError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const startHold = () => {
@@ -67,6 +72,7 @@ export function Composer({
             placeholder={disabled ? "Broker offline — start the broker to chat…" : "Type a request…"}
             onChange={(e) => {
               setDraft(e.target.value);
+              setPolishError(null);
               // Auto-grow up to the CSS max-height (132px ≈ 6 lines), then scroll internally.
               e.target.style.height = "auto";
               e.target.style.height = `${Math.min(e.target.scrollHeight, 132)}px`;
@@ -83,6 +89,35 @@ export function Composer({
             >
               <Plus strokeWidth={1.7} />
             </button>
+            {onPolish && (
+              <PromptInput.Action
+                className="polish-toggle"
+                aria-label="Polish my input"
+                aria-disabled={draft.trim() === "" || polishing || disabled}
+                onPress={() => {
+                  const text = draft.trim();
+                  if (!text || polishing || disabled) return;
+                  setPolishing(true);
+                  setPolishError(null);
+                  void onPolish(text).then((polished) => {
+                    setPolishing(false);
+                    if (polished) {
+                      setDraft(polished);
+                      textareaRef.current?.focus();
+                    } else {
+                      setPolishError("polish failed — draft unchanged");
+                    }
+                  });
+                }}
+              >
+                <Sparkles strokeWidth={1.7} />
+              </PromptInput.Action>
+            )}
+            {polishError && (
+              <span className="composer__polish-error" role="status">
+                {polishError}
+              </span>
+            )}
           </PromptInput.ToolbarStart>
           <PromptInput.ToolbarEnd className="composer__actions">
             {/* biome-ignore lint/a11y/useSemanticElements: artifact-faithful markup — .selector styles a div; becomes a real menu trigger when routing is wired */}

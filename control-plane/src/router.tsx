@@ -70,6 +70,7 @@ function VoiceRoute() {
       onVoiceBlocked={showVoiceBlockedNotice}
       showMicHero={!hideMic}
       voiceNotice={voiceNotice}
+      onPolish={api.polishDraft}
     />
   );
 }
@@ -102,7 +103,7 @@ function DocRoute() {
       chat={
         <div className="document-stage__dock">
           <Transcript messages={messages} />
-          <Composer onSend={api.postUtterance} disabled={!connected} />
+          <Composer onSend={api.postUtterance} disabled={!connected} onPolish={api.polishDraft} />
         </div>
       }
     />

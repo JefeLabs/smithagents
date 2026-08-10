@@ -522,3 +522,9 @@ export async function postPolish(text: string, base: string = BROKER_BASE): Prom
     return { error: "broker unreachable" };
   }
 }
+
+/** Composer-facing polish adapter: null on any failure so the caller keeps the draft. */
+export async function polishDraft(text: string): Promise<string | null> {
+  const r = await postPolish(text);
+  return r.text ?? null;
+}

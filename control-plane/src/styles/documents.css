@@ -158,3 +158,13 @@
   gap: 8px;
   margin-top: 8px;
 }
+
+/* Composer polish action (Task 10) — the icon-sizing counter for .polish-toggle
+   lives in overrides.css alongside its sibling toggles (Pro's svg clamp applies
+   here too); this file only owns the error status text, a plain new class with
+   no Pro rule to out-rank. */
+.composer__polish-error {
+  font-size: 11px;
+  color: var(--text-dim);
+  align-self: center;
+}
