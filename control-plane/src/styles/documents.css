@@ -423,21 +423,71 @@
 }
 
 /* ---- a composer narrow enough to live in a resizable column ----
-   Keyed on the COMPOSER's own width, not the viewport: this same component sits
-   full-width on the voice stage and in a 30%-wide dock here, and only the dock
-   needs to fold. Dragging the split re-evaluates it live. */
+   Keyed on the COMPOSER's own width, not the viewport: the same component is
+   full-width on the voice stage and ~30% wide in a document dock, and dragging
+   the split re-evaluates this live.
+
+   The fold is by PRIORITY, not by source order. Wrapping follows `order`, so
+   the top row keeps what you need to send — what send will do (the kind
+   toggle), the mic, and send itself — and everything you reach for
+   occasionally drops to the last row. `display: contents` dissolves Pro's
+   Start/End toolbar wrappers so their buttons become siblings that can be
+   ordered independently. */
 .composer {
   container-type: inline-size;
 }
 @container (max-width: 470px) {
   .composer__row {
+    display: flex;
     flex-wrap: wrap;
+    align-items: center;
     row-gap: 6px;
+    /* Not the inherited space-between: that scatters the secondary row. Row 1
+       still splits, via the kind group's auto margin below. */
+    justify-content: flex-start;
+    column-gap: 8px;
   }
-  /* The send-side group drops to its own row and keeps its right edge. */
-  .composer__actions {
+  .composer__row > * {
+    display: contents;
+  }
+
+  /* Top row — the essentials. */
+  .composer__kind-group {
+    order: 1;
+    margin-right: auto;
+  }
+  .composer .voice-toggle[aria-label="Hold to talk"] {
+    order: 2;
+  }
+  .composer .send {
+    order: 3;
+  }
+
+  /* The break: a zero-height full-width item between the two priority bands. */
+  .composer__row::after {
+    content: "";
     width: 100%;
-    justify-content: flex-end;
+    order: 4;
+  }
+
+  /* Last row — secondary options, in reaching order. */
+  .composer .plus {
+    order: 5;
+  }
+  .composer .polish-toggle {
+    order: 6;
+  }
+  .composer .selector {
+    order: 7;
+  }
+  .composer .voice-toggle[aria-label="Always listening"] {
+    order: 8;
+  }
+  .composer .sound-toggle {
+    order: 9;
+  }
+  .composer__polish-error {
+    order: 10;
   }
 }
 @container (max-width: 330px) {
