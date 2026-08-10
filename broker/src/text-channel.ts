@@ -291,6 +291,7 @@ export class TextChannel {
     private readonly documents?: {
       create(body: { blueprintId?: string; workType?: string; text?: string }): Promise<{ doc?: Doc; error?: string; status?: number }>;
       patchSection(docId: string, sectionId: string, body: string): string | null;
+      changeBlueprint(docId: string, blueprintId: string): string | null;
     },
   ) {}
 
@@ -983,6 +984,35 @@ export class TextChannel {
               (r) => (r.doc ? json(200, { doc: r.doc }) : json(r.status ?? 400, { error: r.error ?? 'invalid request' })),
               (err: unknown) => json(500, { error: String((err as Error).message ?? err) }),
             );
+          });
+          return;
+        }
+
+        // PATCH /documents/:id — re-cast an untouched document under another blueprint.
+        const docMatch = /^\/documents\/([^/]+)$/.exec(url.pathname);
+        if (req.method === 'PATCH' && docMatch && this.documents) {
+          if (originBlocked()) return;
+          let body = '';
+          req.on('data', (c) => {
+            body += c;
+          });
+          req.on('end', () => {
+            let blueprintId = '';
+            try {
+              blueprintId = String((JSON.parse(body || '{}') as { blueprintId?: unknown }).blueprintId ?? '');
+            } catch {
+              /* falls into the guard below */
+            }
+            if (!blueprintId) {
+              res
+                .writeHead(400, { ...CORS, 'content-type': 'application/json' })
+                .end(JSON.stringify({ error: 'blueprintId is required' }));
+              return;
+            }
+            const error = this.documents!.changeBlueprint(decodeURIComponent(docMatch[1]), blueprintId);
+            res
+              .writeHead(error ? 409 : 200, { ...CORS, 'content-type': 'application/json' })
+              .end(JSON.stringify(error ? { error } : { ok: true }));
           });
           return;
         }

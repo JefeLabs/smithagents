@@ -88,6 +88,26 @@ export class DocumentManager {
     return doc;
   }
 
+  /**
+   * Re-cast a document under a different blueprint. Only legal while every
+   * section is still empty: the blueprints share no section ids, so doing this
+   * to a written document would silently destroy it. Returns null for an
+   * unknown doc, an undeclared work type, or a document that already has text.
+   */
+  changeBlueprint(docId: string, bp: Blueprint, workType?: string): Doc | null {
+    const doc = this.docs.get(docId);
+    if (!doc) return null;
+    if (doc.sections.some((s) => s.body.trim())) return null;
+    const sections = instantiateSections(bp, workType ?? bp.workTypes[0] ?? '');
+    if (!sections) return null;
+    doc.blueprintId = bp.id;
+    doc.workType = workType ?? bp.workTypes[0] ?? '';
+    doc.sections = sections;
+    doc.updatedAt = this.now();
+    this.store.save(doc);
+    return doc;
+  }
+
   get(id: string): Doc | null {
     return this.docs.get(id) ?? null;
   }

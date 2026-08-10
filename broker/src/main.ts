@@ -1203,6 +1203,16 @@ const textChannel = new TextChannel(
       textChannel.broadcast(sessionFrame());
       return { doc };
     },
+    changeBlueprint: (docId, blueprintId) => {
+      const bp = blueprints.find((b) => b.id === blueprintId);
+      if (!bp) return `unknown blueprint: ${blueprintId}`;
+      const doc = documentManager.changeBlueprint(docId, bp);
+      // 409, not 404: the usual cause is a document that already has text —
+      // switching blueprints would throw that away (documents.ts guards it).
+      if (!doc) return `cannot re-cast ${docId} as "${blueprintId}" — unknown document, or it already has content`;
+      textChannel.broadcast(documentsFrame());
+      return null;
+    },
     patchSection: (docId, sectionId, body) => {
       const doc = documentManager.patchSection(docId, sectionId, body);
       if (!doc) return `unknown document or section: ${docId}/${sectionId}`;

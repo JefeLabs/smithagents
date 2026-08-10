@@ -84,9 +84,10 @@ function VoiceRoute() {
       showMicHero={!hideMic}
       voiceNotice={voiceNotice}
       onPolish={api.polishDraft}
-      blueprints={blueprints}
-      onSendDocument={async (blueprintId, text) => {
-        const r = await api.postDocument(blueprintId, text);
+      onSendDocument={async (text) => {
+        // The composer no longer picks a type — a new document starts as the
+        // first blueprint and is re-cast from the switch above the page itself.
+        const r = await api.postDocument(blueprints[0]?.id ?? "spec", text);
         if (r.error) return { error: r.error };
         if (r.doc) {
           // Seed before navigating: the doc rides a WS frame on another
@@ -124,6 +125,7 @@ function DocRoute() {
   const { docId } = docRoute.useParams();
   const navigate = useNavigate();
   const { data: docs = NO_DOCS, status } = useDocuments();
+  const { data: blueprints = NO_BLUEPRINTS } = useBlueprints();
   const { data: messages = NO_MESSAGES } = useTranscript();
   const connected = useSocketStore((c) => c.connected);
   // Cold-WS race: on a hard reload of /doc/:id the documents frame hasn't
@@ -137,6 +139,8 @@ function DocRoute() {
   return (
     <DocumentStage
       doc={doc}
+      blueprints={blueprints}
+      onChangeBlueprint={(blueprintId) => api.patchDocBlueprint(doc.id, blueprintId)}
       onSaveSection={(sectionId, body) => api.patchDocSection(doc.id, sectionId, body)}
       chat={
         <div className="document-stage__dock">

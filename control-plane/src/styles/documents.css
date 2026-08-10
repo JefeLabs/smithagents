@@ -251,54 +251,133 @@
   background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
-/* ---- artifact shelf (stage-manager): the session's documents at the edge ---- */
+/* ---- artifact shelf (stage-manager): portrait pages with real depth ----
+   Perspective is CSS, not three.js: four static tiles do not justify a WebGL
+   runtime, and transform/opacity stay GPU-composited and reduced-motion-safe. */
 .artifact-shelf {
   position: absolute;
-  left: 12px;
-  top: 50%;
-  transform: translateY(-50%);
+  left: 28px;
+  top: 28px;
   z-index: 3;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  max-width: 190px;
+  align-items: flex-start;
+  gap: 26px; /* 4x the old spacing — the stack breathes */
+  padding: 8px;
+  perspective: 900px;
+  perspective-origin: right center;
 }
 .artifact-shelf__card {
+  position: relative;
+  width: 116px;
+  height: 150px; /* page proportions, not a chip */
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 7px;
-  padding: 8px 10px;
-  border-radius: 9px;
+  padding: 10px;
+  border-radius: 8px 4px 4px 8px; /* bound edge on the inner side, facing the room */
   border: 1px solid var(--pill-br);
   background: var(--pill);
   backdrop-filter: blur(8px);
   color: var(--text-2);
   font: inherit;
-  font-size: 12px;
   text-align: left;
   cursor: pointer;
-  /* The stack fans out under the pointer — the shelf's whole affordance. */
-  transform: translateX(-6px);
+  transform-style: preserve-3d;
+  /* Faces INWARD, toward the middle of the room — a page angled at the reader,
+     hinged on its inner edge. (Verified by rendering both signs, not guessed.) */
+  transform: rotateY(24deg) rotateX(1.5deg);
+  transform-origin: right center;
+  box-shadow: -10px 12px 24px rgb(0 0 0 / 0.28);
   transition:
-    transform 0.18s ease,
-    color 0.18s ease,
-    border-color 0.18s ease;
+    transform 0.24s cubic-bezier(0.2, 0.7, 0.3, 1),
+    box-shadow 0.24s ease,
+    color 0.24s ease,
+    border-color 0.24s ease;
+}
+/* Paper thickness: a sliver standing off the bound edge, in 3D with the card. */
+.artifact-shelf__card::before {
+  content: "";
+  position: absolute;
+  right: -3px;
+  top: 3px;
+  bottom: 3px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: linear-gradient(var(--pill-br), color-mix(in srgb, var(--text) 12%, transparent));
+  transform: rotateY(90deg) translateZ(1.5px);
+  transform-origin: left center;
 }
 .artifact-shelf:hover .artifact-shelf__card,
 .artifact-shelf__card:focus-visible {
-  transform: translateX(0);
+  transform: rotateY(6deg) rotateX(0deg) translateZ(26px);
   color: var(--text);
   border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  box-shadow: -14px 18px 34px rgb(0 0 0 / 0.34);
 }
-.artifact-shelf__title {
-  flex: 1;
-  min-width: 0;
+.artifact-shelf__tag {
+  font-family: ui-monospace, monospace;
+  font-size: 8.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.artifact-shelf__tag {
+/* Ruled body text — the tile reads as a page without faking a preview. */
+.artifact-shelf__rules {
+  flex: 1;
+  border-radius: 3px;
+  background:
+    linear-gradient(var(--pill-br), var(--pill-br)) 0 4px / 100% 1px no-repeat,
+    linear-gradient(var(--pill-br), var(--pill-br)) 0 13px / 100% 1px no-repeat,
+    linear-gradient(var(--pill-br), var(--pill-br)) 0 22px / 100% 1px no-repeat,
+    linear-gradient(var(--pill-br), var(--pill-br)) 0 31px / 100% 1px no-repeat,
+    linear-gradient(var(--pill-br), var(--pill-br)) 0 40px / 58% 1px no-repeat;
+}
+.artifact-shelf__title {
+  font-size: 11px;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.artifact-shelf__more {
   font-family: ui-monospace, monospace;
-  font-size: 9.5px;
+  font-size: 10px;
   color: var(--text-dim);
+  padding-left: 6px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .artifact-shelf__card {
+    transition: none;
+  }
+}
+
+/* ---- document stage: the type switch sits ON the page, above the sections ---- */
+.document-stage__types {
+  display: inline-flex;
+  gap: 4px;
+  margin: 2px 0 12px 0;
+}
+.document-stage__type {
+  cursor: pointer;
+  font-size: 11px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--pill-br);
+  background: transparent;
+  color: var(--text-2);
+}
+.document-stage__type--on {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.document-stage__type:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }

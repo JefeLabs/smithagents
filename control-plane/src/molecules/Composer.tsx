@@ -1,7 +1,6 @@
 import { PromptInput } from "@heroui-pro/react";
 import { ArrowUp, AudioLines, ChevronDown, Mic, Plus, Sparkles, Volume2, VolumeX } from "lucide-react";
 import { useRef, useState } from "react";
-import type { BlueprintT } from "../api/types";
 
 interface ComposerProps {
   onSend: (text: string) => void;
@@ -25,9 +24,7 @@ interface ComposerProps {
    * Chat surface: arming "document" is free and reversible — THIS is what a send
    * commits to, creating the document from the very text you typed.
    */
-  onSendDocument?: (blueprintId: string, text: string) => Promise<{ error?: string } | undefined>;
-  /** The blueprint chips shown while armed; the first is preselected. */
-  blueprints?: BlueprintT[];
+  onSendDocument?: (text: string) => Promise<{ error?: string } | undefined>;
 }
 
 export function Composer({
@@ -43,7 +40,6 @@ export function Composer({
   kind = "chat",
   onKindChat,
   onSendDocument,
-  blueprints,
 }: ComposerProps) {
   const [draft, setDraft] = useState("");
   const [holding, setHolding] = useState(false);
@@ -51,8 +47,6 @@ export function Composer({
   const [polishError, setPolishError] = useState<string | null>(null);
   // Arming is local and free: nothing is created until a send commits it.
   const [armed, setArmed] = useState(false);
-  const [pickedBlueprint, setPickedBlueprint] = useState<string>();
-  const blueprintId = pickedBlueprint ?? blueprints?.[0]?.id;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const startHold = () => {
@@ -73,8 +67,8 @@ export function Composer({
   const submit = () => {
     const text = draft.trim();
     if (!text || disabled) return;
-    if (armed && onSendDocument && blueprintId) {
-      void onSendDocument(blueprintId, text).then((r) => {
+    if (armed && onSendDocument) {
+      void onSendDocument(text).then((r) => {
         if (r?.error) {
           setPolishError(r.error); // same status line the polish failure uses
           return;
@@ -117,22 +111,6 @@ export function Composer({
             }}
           />
         </PromptInput.Content>
-        {armed && blueprints && blueprints.length > 0 && (
-          // biome-ignore lint/a11y/useSemanticElements: a fieldset cannot live inside PromptInput's shell (no form, and its default chrome breaks the dock); role="group" is the ARIA equivalent for a toggle-button set
-          <div className="composer__chips" role="group" aria-label="document blueprint">
-            {blueprints.map((b) => (
-              <button
-                key={b.id}
-                type="button"
-                aria-pressed={b.id === blueprintId}
-                className={`composer__bp-chip${b.id === blueprintId ? " composer__bp-chip--on" : ""}`}
-                onClick={() => setPickedBlueprint(b.id)}
-              >
-                {b.name}
-              </button>
-            ))}
-          </div>
-        )}
         <PromptInput.Toolbar className="composer__row">
           <PromptInput.ToolbarStart>
             <button

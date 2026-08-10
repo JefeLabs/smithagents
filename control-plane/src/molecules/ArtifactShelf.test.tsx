@@ -30,4 +30,13 @@ describe("ArtifactShelf", () => {
     fireEvent.click(screen.getByRole("button", { name: /login plan/i }));
     expect(onOpen).toHaveBeenCalledWith("d2");
   });
+
+  // The shelf overlays the chat: an unbounded stack would eventually cover it.
+  it("caps the stack and counts the rest", () => {
+    const docs = ["a", "b", "c", "d", "e", "f"].map((id, i) => DOC(id, `Doc ${i + 1}`));
+    render(<ArtifactShelf docs={docs} onOpen={vi.fn()} />);
+    expect(screen.getAllByRole("button")).toHaveLength(4);
+    expect(screen.getByText("+2")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /doc 5/i })).toBeNull();
+  });
 });

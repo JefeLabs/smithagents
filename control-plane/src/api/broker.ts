@@ -483,6 +483,26 @@ export async function postDocument(
   }
 }
 
+/** PATCH /documents/:id — re-cast an untouched document under another blueprint. */
+export async function patchDocBlueprint(
+  docId: string,
+  blueprintId: string,
+  base: string = BROKER_BASE,
+): Promise<{ error?: string }> {
+  try {
+    const res = await fetch(`http://${base}/documents/${encodeURIComponent(docId)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ blueprintId }),
+    });
+    if (res.ok) return {};
+    const parsed = (await res.json().catch(() => ({}))) as { error?: string };
+    return { error: parsed.error ?? `broker returned ${res.status}` };
+  } catch {
+    return { error: "broker unreachable" };
+  }
+}
+
 /** PATCH a section body; the refreshed documents frame follows on the socket. */
 export async function patchDocSection(
   docId: string,

@@ -81,3 +81,29 @@ test('list is newest-updated first', () => {
   m.patchSection(a.id, 'overview', 'bump'); // same fake clock, but patch re-saves; order falls back to insertion — assert both present
   assert.deepEqual(m.list().map((d) => d.title).sort(), ['A', 'B']);
 });
+
+test('changeBlueprint re-instantiates an untouched document under the new blueprint', () => {
+  const { m } = manager();
+  const PLAN: Blueprint = {
+    id: 'implementation-plan',
+    name: 'Implementation Plan',
+    workTypes: ['feature'],
+    sections: [{ id: 'goal', heading: 'Goal' }, { id: 'tasks', heading: 'Tasks' }],
+  };
+  const doc = m.create(BP, 'feature', 'Login work')!;
+  const recast = m.changeBlueprint(doc.id, PLAN);
+  assert.equal(recast?.blueprintId, 'implementation-plan');
+  assert.equal(recast?.workType, 'feature');
+  assert.deepEqual(recast?.sections.map((s) => s.id), ['goal', 'tasks']);
+  assert.equal(recast?.title, 'Login work'); // the title is the user's words, not the blueprint's
+});
+
+test('changeBlueprint refuses once any section has text, and on an unknown doc', () => {
+  const { m } = manager();
+  const PLAN: Blueprint = { id: 'p', name: 'P', workTypes: ['feature'], sections: [{ id: 'goal', heading: 'Goal' }] };
+  const doc = m.create(BP, 'feature', 'T')!;
+  m.patchSection(doc.id, 'overview', 'Something written.');
+  assert.equal(m.changeBlueprint(doc.id, PLAN), null);
+  assert.equal(m.get(doc.id)?.blueprintId, 'spec'); // untouched
+  assert.equal(m.changeBlueprint('d99', PLAN), null);
+});

@@ -52,4 +52,42 @@ describe("DocumentStage", () => {
     expect(await screen.findByText(/broker unreachable/)).toBeTruthy();
     expect((screen.getByRole("textbox", { name: /non-goals/i }) as HTMLTextAreaElement).value).toBe("Draft kept");
   });
+  const BPS = [
+    { id: "spec", name: "Design Spec", workTypes: ["feature"] },
+    { id: "implementation-plan", name: "Implementation Plan", workTypes: ["feature"] },
+  ];
+
+  it("the type switch re-casts an empty document", async () => {
+    const onChangeBlueprint = vi.fn().mockResolvedValue({});
+    const empty = { ...DOC, sections: DOC.sections.map((s) => ({ ...s, body: "" })) };
+    render(
+      <DocumentStage
+        doc={empty}
+        onSaveSection={vi.fn()}
+        blueprints={BPS}
+        onChangeBlueprint={onChangeBlueprint}
+        chat={null}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /implementation plan/i }));
+    await waitFor(() => expect(onChangeBlueprint).toHaveBeenCalledWith("implementation-plan"));
+  });
+
+  // The blueprints share no section ids — re-casting written work would destroy it.
+  it("the type switch locks once the document has content", () => {
+    const onChangeBlueprint = vi.fn();
+    render(
+      <DocumentStage
+        doc={DOC}
+        onSaveSection={vi.fn()}
+        blueprints={BPS}
+        onChangeBlueprint={onChangeBlueprint}
+        chat={null}
+      />,
+    );
+    const other = screen.getByRole("button", { name: /implementation plan/i });
+    expect(other).toBeDisabled();
+    fireEvent.click(other);
+    expect(onChangeBlueprint).not.toHaveBeenCalled();
+  });
 });

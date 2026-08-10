@@ -1,4 +1,3 @@
-import { FileText } from "lucide-react";
 import type { DocT } from "../api/types";
 
 interface ArtifactShelfProps {
@@ -7,21 +6,37 @@ interface ArtifactShelfProps {
 }
 
 /**
- * Stage-manager shelf: the active session's documents, stacked at the chat's
- * edge. Clicking one brings it to center stage (spec 2026-08-10, artifacts
- * pivot). Offsets and the hover fan are CSS — nothing inline.
+ * The shelf overlays the chat, so the stack is bounded — past this many, the
+ * sessions panel is where the full list lives.
+ */
+const MAX_VISIBLE = 4;
+
+/**
+ * Stage-manager shelf: the active session's documents as portrait page tiles,
+ * stacked at the top-left of the chat. Clicking one brings it to center stage
+ * (spec 2026-08-10, artifacts pivot). Offsets, rules and the hover fan are all
+ * CSS — nothing inline.
  */
 export function ArtifactShelf({ docs, onOpen }: ArtifactShelfProps) {
   if (docs.length === 0) return null;
+  const visible = docs.slice(0, MAX_VISIBLE);
+  const overflow = docs.length - visible.length;
   return (
     <aside className="artifact-shelf" aria-label="session documents">
-      {docs.map((d) => (
+      {visible.map((d) => (
         <button key={d.id} type="button" className="artifact-shelf__card" onClick={() => onOpen(d.id)}>
-          <FileText size={14} aria-hidden="true" />
-          <span className="artifact-shelf__title">{d.title}</span>
           <span className="artifact-shelf__tag">{d.blueprintId}</span>
+          {/* Decorative rules: the tile reads as a page at a glance, without
+              pretending to preview content the shelf never loaded. */}
+          <span className="artifact-shelf__rules" aria-hidden="true" />
+          <span className="artifact-shelf__title">{d.title}</span>
         </button>
       ))}
+      {overflow > 0 && (
+        <span className="artifact-shelf__more" role="note" aria-label={`${overflow} more documents in this session`}>
+          +{overflow}
+        </span>
+      )}
     </aside>
   );
 }

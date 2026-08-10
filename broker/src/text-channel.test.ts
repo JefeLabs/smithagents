@@ -1409,6 +1409,8 @@ test('POST /documents forwards the body and returns the created doc; PATCH updat
         patches.push([docId, sectionId, body]);
         return docId === 'd1' ? null : `unknown document: ${docId}`;
       },
+      changeBlueprint: (docId: string, blueprintId: string) =>
+        docId === 'd1' && blueprintId === 'implementation-plan' ? null : `cannot re-cast ${docId}`,
     },
   });
   const port = await channel.start(0);
@@ -1453,6 +1455,22 @@ test('POST /documents forwards the body and returns the created doc; PATCH updat
       body: JSON.stringify({ body: 'x' }),
     });
     assert.equal(missing.status, 404);
+
+    // Re-casting an untouched document under another blueprint.
+    const recast = await fetch(`http://127.0.0.1:${port}/documents/d1`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ blueprintId: 'implementation-plan' }),
+    });
+    assert.equal(recast.status, 200);
+
+    // A written document (or an unknown one) is a 409, never a silent wipe.
+    const refused = await fetch(`http://127.0.0.1:${port}/documents/d9`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ blueprintId: 'implementation-plan' }),
+    });
+    assert.equal(refused.status, 409);
   } finally {
     await channel.stop();
   }
