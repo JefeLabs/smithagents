@@ -1,11 +1,13 @@
 import { QueryClient } from "@tanstack/react-query";
 import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
-import { act, cleanup, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { usePushToTalk } from "../hooks/usePushToTalk";
 import { useSpokenReplies } from "../hooks/useSpokenReplies";
 import { useTheme } from "../hooks/useTheme";
+import { AddAgentModal } from "../organisms/AddAgentModal";
 import { qk } from "../queries/keys";
 import { createAppRouter } from "../router";
 import { useSocketStore } from "../stores/socketStore";
@@ -60,6 +62,12 @@ function stubFetch() {
       if (url.endsWith("/agents"))
         return new Response(JSON.stringify({ agents: [], voice: { stt: false, tts: true } }));
       if (url.endsWith("/cli-tools")) return new Response(JSON.stringify({ tools: [] }));
+      // FULLY shaped, not empty. AddAgentModal reads `catalog?.engines.find(...)`,
+      // `catalog?.stereotypes.find(...)` and `catalog?.jobRoles.find(...)` — each
+      // optional-chained on the catalog but NOT on the array, so any missing key throws
+      // during render rather than degrading.
+      if (url.endsWith("/agent-catalog"))
+        return new Response(JSON.stringify({ presets: [], engines: [], stereotypes: [], jobRoles: [], languages: [] }));
       return new Response(JSON.stringify({}));
     }),
   );
@@ -178,6 +186,55 @@ describe("AlertMenu — the menu", () => {
 
     await userEvent.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog", { name: /alerts/i })).toBeNull());
+  });
+
+  it("a modal opened over the menu takes Escape for itself — one dismissal, not two", async () => {
+    // BOTH OVERLAYS OPEN AT ONCE, which only a keyboard can reach: AlertMenu closes on
+    // outside `mousedown`, so clicking any modal trigger dismisses the menu before the
+    // modal exists. A test that opens the modal by clicking reports "cannot reproduce"
+    // and is wrong about why.
+    function Both() {
+      const [modalOpen, setModalOpen] = useState(false);
+      return (
+        <>
+          <AlertMenu onNavigate={vi.fn()} />
+          <button type="button" onClick={() => setModalOpen(true)}>
+            Add agent
+          </button>
+          <AddAgentModal open={modalOpen} onClose={() => setModalOpen(false)} />
+        </>
+      );
+    }
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: Number.POSITIVE_INFINITY } },
+    });
+    seedTwoAlerts(client);
+    renderWithProviders(<Both />, { client });
+
+    await userEvent.click(await screen.findByRole("button", { name: "2 alerts" }));
+    await screen.findByRole("dialog", { name: /alerts/i });
+
+    // `fireEvent.click` dispatches ONLY a click. `userEvent.click` would fire a mousedown
+    // first, and AlertMenu closes on any outside mousedown — which is exactly why this
+    // overlap cannot be reached with a mouse, and why a test that used one would report
+    // "cannot reproduce" while proving nothing.
+    fireEvent.click(screen.getByRole("button", { name: "Add agent" }));
+    expect(await screen.findByRole("dialog", { name: /create an agent/i })).toBeTruthy();
+    // The menu is asserted through the DOM, not through a role query. The modal carries
+    // `aria-modal="true"`, which takes everything outside it out of the accessibility
+    // tree that `getByRole` reads — so while the modal is open the still-mounted menu is
+    // invisible to role queries and a role-based assertion would report it closed.
+    const menuInDom = () => document.querySelector(".alert-menu__popover");
+    expect(menuInDom()).not.toBeNull();
+
+    // ONE Escape dismisses ONE thing: the topmost.
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /create an agent/i })).toBeNull());
+    expect(menuInDom()).not.toBeNull();
+
+    // …and the next one dismisses the menu, so nothing is stranded.
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(menuInDom()).toBeNull());
   });
 
   it("Escape from inside a row returns focus to the trigger, not to <body>", async () => {

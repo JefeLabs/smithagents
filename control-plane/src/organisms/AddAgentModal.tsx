@@ -310,13 +310,33 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
       .catch(() => setError("Could not load this agent — is the broker running?"));
   }, [open, editingId, catalog, reset]);
 
+  /**
+   * ESCAPE IS OWNED BY THE TOPMOST OVERLAY, and this modal is it while open.
+   *
+   * It used to be a bare `addEventListener("keydown", …)` — window, bubble phase, no
+   * stopPropagation — and `AlertMenu` binds Escape exactly the same way. With both open,
+   * one Escape ran both handlers: the user asked to dismiss one thing and dismissed two.
+   * Measured in the browser, `.scrim` and `.alert-menu__popover` disappeared together.
+   *
+   * Window level cannot fix it. Listener order on one target is registration order, and
+   * the menu is open FIRST by construction — it is what the modal was opened from — so
+   * its handler has already run by the time this one could stop anything.
+   *
+   * Capture on `document` is the level that works, and it is what react-aria does for the
+   * modals `ModalShell` already covers: measured, their Escape reaches a document-capture
+   * listener and never reaches a window-bubble one. Safe here because the modal contains
+   * no in-DOM surface that wants Escape first — its five dropdowns are native `<select>`,
+   * whose popup is an OS-level surface that never enters this event flow.
+   */
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      onClose();
     };
-    addEventListener("keydown", onKey);
-    return () => removeEventListener("keydown", onKey);
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
   }, [open, onClose]);
 
   // Voice browsing is its own async surface: a key without voices_read fails
