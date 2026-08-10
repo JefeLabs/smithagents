@@ -30,11 +30,14 @@ import {
   type MapNode,
   sliceNodeId,
   stepAt,
+  storyNodeId,
   storyStackPosition,
   unassignedNodeId,
 } from "./map/layout";
 import { BlankCard } from "./map/nodes";
 import { nodeTypes } from "./map/nodeTypes";
+import { SlicePanel } from "./map/SlicePanel";
+import { slicesWithoutExclusiveStory } from "./map/slices";
 import { useMapSelection } from "./map/useMapSelection";
 
 // Test seam: jsdom cannot synthesize xyflow pointer drags any more than it could
@@ -254,6 +257,24 @@ export function MapStage() {
 
   // The story reveal, resolved the same way and for the same reason: a selection that
   // no longer names a record in `cap` simply misses, and the reveal collapses.
+  const [hoveredSliceId, setHoveredSliceId] = useState<string | null>(null);
+
+  // Hovering a slice dims every story it does NOT own. Same argument-passed dim set the
+  // slice reveal already uses, so there is one dimming mechanism rather than two that can
+  // disagree. Keyed on ids, not on positions, so it survives any relayout.
+  const hoverDimmed = useMemo(() => {
+    if (!hoveredSliceId || !cap) return new Set<string>();
+    const owned = new Set(cap.slices.find((s) => s.id === hoveredSliceId)?.storyIds ?? []);
+    return new Set(cap.stories.filter((s) => !owned.has(s.id)).map((s) => storyNodeId(s.id)));
+  }, [hoveredSliceId, cap]);
+
+  // Grandfathered slices are MARKED, not hidden — jefelabs-school-visits carries two of
+  // them, and the panel showing a slice it refuses to explain would be worse than the mark.
+  const invalidSliceIds = useMemo(
+    () => new Set(slicesWithoutExclusiveStory(cap?.slices ?? []).map((s) => s.id)),
+    [cap],
+  );
+
   const revealedStoryId = selection?.kind === "story" ? selection.id : null;
   const revealedStory = cap?.stories.find((s) => s.id === revealedStoryId) ?? null;
   // The slice a revealed story belongs to, or null when it is still in the backlog —
@@ -562,7 +583,7 @@ export function MapStage() {
       // specced", which is a narrow question that has no business restyling the map. The
       // story's own `is-selected` says which one is asking.
       const at = base.find((n) => n.type === "story" && n.id === revealedStory.id)?.position;
-      const decorated = decorate(base, new Set());
+      const decorated = decorate(base, hoverDimmed);
       if (!at) {
         // The story is in the model but not on the canvas — its step was removed. There
         // is nowhere to hang a stack, so show the map unchanged rather than guessing.
@@ -611,7 +632,7 @@ export function MapStage() {
     }
 
     if (!revealedSlice) {
-      setNodes(decorate(base, new Set()));
+      setNodes(decorate(base, hoverDimmed));
       return;
     }
 
@@ -620,8 +641,10 @@ export function MapStage() {
     // Blank story slots match this filter too and it costs nothing: `decorate` handles
     // blanks first and never gives them a `dimmed` field to read.
     const inSlice = new Set(revealedSlice.storyIds);
+    // Unioned rather than replaced: a hover while a band is open should not LIGHT a story
+    // the open slice does not own. Dim is the safe direction to combine in.
     const dimmedIds = new Set(base.filter((n) => n.type === "story" && !inSlice.has(n.id)).map((n) => n.id));
-    const decorated = decorate(base, dimmedIds);
+    const decorated = decorate(base, new Set([...dimmedIds, ...hoverDimmed]));
 
     // One y for the whole row, computed once: it depends on the deepest story stack,
     // which is a property of the model and not of any single artifact.
@@ -663,7 +686,9 @@ export function MapStage() {
     ];
 
     setNodes([...decorated, ...ephemeral]);
-  }, [cap, revealedSlice, revealedStory, revealedStoryId, storySlice, select, setNodes]);
+    // `hoverDimmed` is listed for the same reason `revealedSlice` is: it is a plain value
+    // this effect reads, and leaving it out would show the previous hover's dimming.
+  }, [cap, revealedSlice, revealedStory, revealedStoryId, storySlice, select, setNodes, hoverDimmed]);
 
   /**
    * Moves an activity to `index`, renumbering `order` densely.
@@ -908,6 +933,16 @@ export function MapStage() {
               <Background />
               <Controls />
               <MiniMap pannable zoomable />
+              <SlicePanel
+                slices={[...cap.slices].sort((a, b) => a.order - b.order)}
+                invalidIds={invalidSliceIds}
+                activeSliceId={revealed}
+                onHover={setHoveredSliceId}
+                // `select`, not a setter: it is the same toggle the bands use, so opening
+                // the slice already open closes it and the two controls cannot disagree
+                // about what is revealed.
+                onOpen={(id) => select({ kind: "slice", id })}
+              />
             </ReactFlow>
           </div>
           <div className="map-stage__slices">

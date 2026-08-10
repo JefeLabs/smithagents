@@ -1,5 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ALL_WORKSPACES } from "../lib/board-aggregate";
@@ -43,6 +43,11 @@ const CAP = {
       planPath: "docs/superpowers/plans/2026-08-08-tour-scheduling-v1.md",
     },
     { id: "sl2", name: "analytics v1", order: 1, storyIds: [] },
+    // Owns nothing, so `slicesWithoutExclusiveStory` reports it — the grandfathered
+    // shape the panel must MARK rather than hide. sl2 is storyless too, which is what
+    // makes "marks the invalid one" a weaker claim than it looks: both are invalid, so
+    // the mark is asserted on the row rather than on a count.
+    { id: "sl3", name: "empty legacy", order: 2, storyIds: [] },
   ],
 };
 
@@ -838,5 +843,81 @@ describe("MapStage editing", () => {
     await waitFor(() => expect(document.querySelector(".map-slice-anchor")).toBeNull());
     expect(document.querySelector(".map-artifact")).toBeNull();
     expect(document.querySelector(".map-story.is-dimmed")).toBeNull();
+  });
+  /**
+   * The panel's assertions read the CARD, not the node wrapper. `decorate` puts `dimmed`
+   * into node DATA and the card renders `is-dimmed` from it — the `[data-id]` wrapper
+   * xyflow owns never carries the class, so a wrapper-based assertion fails against a
+   * correct implementation. Same selector the slice-band dim test above uses.
+   */
+  it("lists every slice with its story count", async () => {
+    stubFetch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    const panel = await screen.findByRole("region", { name: "Slices" });
+    expect(within(panel).getByText("tour scheduling v1")).toBeDefined();
+    expect(within(panel).getByText("2")).toBeDefined();
+  });
+
+  it("hovering a slice dims every story it does not own", async () => {
+    stubFetch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    const panel = await screen.findByRole("region", { name: "Slices" });
+    await userEvent.hover(within(panel).getByText("tour scheduling v1"));
+
+    // s3 is in no slice, so it dims.
+    await waitFor(() => {
+      expect(screen.getByText("view tour analytics").closest(".map-story")?.classList.contains("is-dimmed")).toBe(true);
+    });
+    expect(screen.getByText("create tour time slots").closest(".map-story")?.classList.contains("is-dimmed")).toBe(
+      false,
+    );
+    // s2 DISCRIMINATES, for the same reason it does in the slice-band test: it is the
+    // only story that is owned by sl1 AND not done, so "dim what the slice does not own"
+    // and "dim what is not done" disagree on it and nowhere else.
+    expect(screen.getByText("edit tour time slots").closest(".map-story")?.classList.contains("is-dimmed")).toBe(false);
+
+    await userEvent.unhover(within(panel).getByText("tour scheduling v1"));
+    await waitFor(() => expect(document.querySelector(".map-story.is-dimmed")).toBeNull());
+  });
+
+  it("marks a grandfathered slice that owns nothing", async () => {
+    stubFetch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    const panel = await screen.findByRole("region", { name: "Slices" });
+    expect(within(panel).getByText("empty legacy").closest("li")?.getAttribute("data-invalid")).toBe("true");
+    // And the slice that DOES own something is not marked — without this the test passes
+    // against an implementation that marks every row.
+    expect(within(panel).getByText("tour scheduling v1").closest("li")?.getAttribute("data-invalid")).toBeNull();
+  });
+
+  it("collapses to a header carrying the count, and hides the list", async () => {
+    stubFetch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    const panel = await screen.findByRole("region", { name: "Slices" });
+    const toggle = within(panel).getByRole("button", { name: /collapse slices/i });
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    await userEvent.click(toggle);
+    expect(within(panel).queryByText("tour scheduling v1")).toBeNull();
+    expect(within(panel).getByText("3")).toBeDefined();
+    expect(within(panel).getByRole("button", { name: /expand slices/i })).toBeDefined();
+  });
+
+  it("collapsing clears any hover highlight rather than stranding it", async () => {
+    stubFetch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    const panel = await screen.findByRole("region", { name: "Slices" });
+    await userEvent.hover(within(panel).getByText("tour scheduling v1"));
+    await waitFor(() => expect(document.querySelector(".map-story.is-dimmed")).not.toBeNull());
+
+    // The list UNMOUNTS, and an unmounted element fires no onMouseLeave. Without an
+    // explicit clear the map stays dimmed against a slice that is no longer on screen
+    // to un-hover.
+    await userEvent.click(within(panel).getByRole("button", { name: /collapse slices/i }));
+    await waitFor(() => expect(document.querySelector(".map-story.is-dimmed")).toBeNull());
   });
 });
