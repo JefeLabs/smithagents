@@ -237,6 +237,14 @@ describe("NewSessionScreen", () => {
     await waitFor(() => expect(onCreateDocument).toHaveBeenCalledWith("spec", "feature", "Login spec"));
   });
 
+  it("document mode has no workspace field — the broker hardwires the default workspace", async () => {
+    const listBlueprints = vi.fn().mockResolvedValue([{ id: "spec", name: "Design Spec", workTypes: ["feature"] }]);
+    renderScreen({ onCreateDocument: vi.fn(), listBlueprints });
+    fireEvent.click(screen.getByRole("radio", { name: /document/i }));
+    await screen.findByRole("button", { name: /Design Spec/i });
+    expect(screen.queryByLabelText("Workspace")).toBeNull();
+  });
+
   it("a create-document error renders and keeps the form", async () => {
     const onCreateDocument = vi.fn().mockResolvedValue({ error: "broker unreachable" });
     const listBlueprints = vi.fn().mockResolvedValue([{ id: "spec", name: "Design Spec", workTypes: ["feature"] }]);

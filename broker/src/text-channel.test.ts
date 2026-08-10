@@ -1365,6 +1365,15 @@ test('POST /polish returns the rewrite, 400 on empty text, 502 when the rewrite 
       body: JSON.stringify({ text: 'x' }),
     });
     assert.equal(down.status, 502);
+
+    // Same origin guard as /documents and /sessions — a disallowed browser Origin 403s.
+    const blocked = await fetch(`http://127.0.0.1:${port}/polish`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: 'http://evil.example' },
+      body: JSON.stringify({ text: 'plz fix' }),
+    });
+    assert.equal(blocked.status, 403);
+    assert.deepEqual(await blocked.json(), { error: 'origin not allowed' });
   } finally {
     await channel.stop();
   }

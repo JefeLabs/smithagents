@@ -3,7 +3,7 @@ import { Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useCallback, useEffect } from "react";
 import * as api from "../api/broker";
 import { BROKER_BASE } from "../api/broker";
-import type { RosterAgent, SessionSummary } from "../api/types";
+import type { DocT, RosterAgent, SessionSummary } from "../api/types";
 import { type AgentSeed, agentSeeds } from "../data/agents";
 import { usePushToTalk } from "../hooks/usePushToTalk";
 import { useSpokenReplies } from "../hooks/useSpokenReplies";
@@ -234,7 +234,19 @@ export function HomePage() {
               const r = await api.postDocument(blueprintId, workType, title);
               if (r.error) return { error: r.error };
               closeComposer();
-              if (r.doc) void navigate({ to: "/doc/$docId", params: { docId: r.doc.id } });
+              if (r.doc) {
+                // Seed the cache before navigating — DocRoute reads it on mount, and the
+                // documents frame the socket would otherwise deliver can arrive a beat
+                // late. Without this the create-race twin of the cold-WS-reload bug fires:
+                // pending is fine (router.tsx now renders nothing for it), but the doc still
+                // isn't there yet either way, so there's nothing to show.
+                const created = r.doc;
+                qc.setQueryData<DocT[]>(qk.documents, (prev) => [
+                  created,
+                  ...(prev ?? []).filter((d) => d.id !== created.id),
+                ]);
+                void navigate({ to: "/doc/$docId", params: { docId: created.id } });
+              }
               return undefined;
             }}
             onSend={async (ws, mode, prompt) => {

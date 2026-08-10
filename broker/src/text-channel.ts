@@ -51,7 +51,9 @@ export type ChannelFrame =
    */
   | {
       type: 'session';
-      session: { id: string; title: string; workspace: string; runtime: string } | null;
+      session:
+        | { id: string; title: string; workspace: string; runtime: string; kind: 'chat' | 'document'; docId?: string }
+        | null;
       sessions: Array<{ id: string; title: string; workspace: string; updatedAt: string; active: boolean; runtime: string }>;
       transcript: Array<{ role: 'user' | 'broker'; text: string }>;
       workspaces: string[];
@@ -1005,6 +1007,15 @@ export class TextChannel {
       if (req.method === 'POST' && req.url === '/polish' && this.polish) {
         const json = (status: number, payload: unknown) =>
           res.writeHead(status, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify(payload));
+        // Same origin guard the /documents mutating routes use — this rewrites the user's
+        // draft on their behalf, which is exactly the class of write a browser CSRF from
+        // a disallowed origin shouldn't be able to trigger.
+        const originBlocked = (): boolean => {
+          if (isAllowedOrigin(req)) return false;
+          res.writeHead(403, { ...credentialCors(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: 'origin not allowed' }));
+          return true;
+        };
+        if (originBlocked()) return;
         let body = '';
         req.on('data', (c) => {
           body += c;

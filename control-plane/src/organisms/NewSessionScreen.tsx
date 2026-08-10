@@ -238,20 +238,22 @@ export function NewSessionScreen({
             </RadioButtonGroup.Item>
           </RadioButtonGroup>
         )}
-        <div className="new-session-screen__workspace">
-          {lockedWorkspace ? (
-            <span className="new-session-screen__workspace-static">{lockedWorkspace}</span>
-          ) : (
-            <FormSelect
-              control={control}
-              name="pickedWs"
-              label="Workspace"
-              labelHidden
-              placeholder="Choose a workspace"
-              options={workspaces.map((w) => ({ id: w, label: w }))}
-            />
-          )}
-        </div>
+        {kind === "chat" && (
+          <div className="new-session-screen__workspace">
+            {lockedWorkspace ? (
+              <span className="new-session-screen__workspace-static">{lockedWorkspace}</span>
+            ) : (
+              <FormSelect
+                control={control}
+                name="pickedWs"
+                label="Workspace"
+                labelHidden
+                placeholder="Choose a workspace"
+                options={workspaces.map((w) => ({ id: w, label: w }))}
+              />
+            )}
+          </div>
+        )}
         {kind === "chat" ? (
           <RadioButtonGroup
             aria-label="Execution mode"

@@ -90,9 +90,14 @@ function DashboardsRoute() {
 
 function DocRoute() {
   const { docId } = docRoute.useParams();
-  const { data: docs = NO_DOCS } = useDocuments();
+  const { data: docs = NO_DOCS, status } = useDocuments();
   const { data: messages = NO_MESSAGES } = useTranscript();
   const connected = useSocketStore((c) => c.connected);
+  // Cold-WS race: on a hard reload of /doc/:id the documents frame hasn't
+  // landed yet, so the query is still `pending` — that is not "no such doc",
+  // it's "don't know yet". Only a RESOLVED query missing the doc means
+  // unknown or deleted (same `status`-over-`data` precedent as useSessionKnown).
+  if (status !== "success") return null;
   const doc = docs.find((d) => d.id === docId);
   // Unknown or deleted doc — the stage-routing convention: go home.
   if (!doc) return <Navigate to="/" replace />;
