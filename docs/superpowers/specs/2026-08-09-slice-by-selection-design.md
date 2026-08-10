@@ -148,7 +148,7 @@ The band, the slice anchor, `artifactRowStartX`, and the artifact row all keep
 working as they are. Only one band is open at a time, so a shared story appears
 in whichever band you opened, and no edge crosses another.
 
-`applyStoryToggles` is also unchanged — see the risk below.
+`applyStoryToggles` is also unchanged — see **Risks** below.
 
 ## Migration
 
@@ -230,6 +230,28 @@ others; a grandfathered slice renders its mark.
 predicate would let the two copies drift apart in exactly the way the shared
 case table exists to prevent — and drift here is silent, because the server
 would simply start refusing writes the UI believes are fine.
+
+## Risks
+
+**Shared stories share their done-state, and that is visible on the boards.**
+A card on the Plan board is a toggle-only view of the capability's stories:
+`applyStoryToggles` writes `done` and `verifiedBy` back to the one canonical
+story. Once *authenticate a user* sits in two slices, ticking it done on one
+slice's card marks it done on the other's, with nobody touching that card.
+
+This is arguably correct — the work genuinely is done once, and a checklist that
+disagreed with itself across two cards would be worse. But it means a card can
+change while someone is looking at it, and the cause is off-screen. Accepted as
+designed, recorded here because the first time it happens it will read as a bug.
+
+No code changes for it: `applyStoryToggles` already resolves through the
+canonical story, so sharing works without modification. What does not exist yet
+is any indication **on a card** that a story is shared. If that becomes
+confusing in use, the fix is a marker on the card, not a change to the rule.
+
+**The rule lives in two files.** Covered under Architecture; the shared case
+table is the mitigation. It is a mitigation, not a solution — the real solution
+is a shared package, and that is worth revisiting if a third consumer appears.
 
 ## Out of scope
 
