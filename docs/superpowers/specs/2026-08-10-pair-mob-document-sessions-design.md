@@ -105,6 +105,12 @@ activating any session navigates to its kind's surface — `chat` → `/`,
 `document` → `/doc/$docId`. This adds navigation to activation, which today
 stays wherever you are.
 
+The SessionsPanel must also anchor the user's context while open: it shows
+the ACTIVE workspace in its header (the panel occludes the navbar's
+workspace selector, and a filter is not an anchor), and the currently-active
+session's row is visually marked. (Edwin, 2026-08-10 — ships as an immediate
+follow-up ahead of phase 1 if the phase is not imminent.)
+
 ## UI
 
 - **New stage route `/doc/$docId`** (hash route, thin route component,
