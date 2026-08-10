@@ -870,6 +870,69 @@ In `MapStage.tsx`:
   });
 ```
 
+- [ ] **Step 3b: Add `storiesLost` to `slices.ts` — the message needs a second differential**
+
+The designed copy names a slice **and a story**: `⚠ "book a tour" is the only story tour sched v1 owns.` `blockedBy` cannot answer the story half. A blocked slice has no exclusive story in `proposed` **by definition**, so asking `proposed` alone always returns the empty set. The answer is differential the same way validity is: which stories did this slice hold exclusively *before*, and no longer hold exclusively *after*.
+
+It lives in `slices.ts` beside `blockedBy` so the counting logic has one home rather than three.
+
+Test first, in `control-plane/src/organisms/map/slices.test.ts`:
+
+```ts
+describe("storiesLost", () => {
+  it("names the story a neighbour took, not merely one they share", () => {
+    // X owned s1 alone and also shared s2 with Y. The new slice takes BOTH.
+    // Only s1 was ever exclusive, so only s1 was lost — a `find` over the
+    // selection names whichever comes first and is wrong half the time.
+    const current = [sl("X", ["s1", "s2"]), sl("Y", ["s2", "s3"])];
+    const proposed = [...current, sl("NEW", ["s1", "s2"])];
+    expect(storiesLost(current, proposed, current[0])).toEqual(["s1"]);
+  });
+
+  it("returns every exclusive story lost, not just the first", () => {
+    const current = [sl("X", ["s1", "s2"])];
+    const proposed = [...current, sl("NEW", ["s1", "s2"])];
+    expect(storiesLost(current, proposed, current[0])).toEqual(["s1", "s2"]);
+  });
+
+  it("is empty when the slice was edited rather than raided", () => {
+    // X is emptied outright. Nothing was taken BY a neighbour, so no story
+    // can be named and the copy needs its second form.
+    const current = [sl("X", ["s1"]), sl("Y", ["s2"])];
+    const proposed = [sl("X", []), sl("Y", ["s2"])];
+    expect(storiesLost(current, proposed, current[0])).toEqual([]);
+  });
+});
+```
+
+Then implement:
+
+```ts
+/**
+ * Stories `slice` held exclusively in `current` and no longer holds exclusively
+ * in `proposed` — the "what was taken" behind a blockedBy verdict.
+ *
+ * Differential for the same reason blockedBy is: in `proposed` a blocked slice
+ * has NO exclusive story, so `proposed` alone can never name what it lost.
+ *
+ * MAY BE EMPTY on a real block — when the write empties or rewrites the slice
+ * itself rather than taking a story from it, nothing was lost to a neighbour and
+ * there is no story to name. Callers must handle that rather than assuming [0].
+ */
+export function storiesLost(current: CapSliceT[], proposed: CapSliceT[], slice: CapSliceT): string[] {
+  const exclusiveIn = (slices: CapSliceT[], id: string): Set<string> => {
+    const uses = new Map<string, number>();
+    for (const s of slices) for (const sid of new Set(s.storyIds)) uses.set(sid, (uses.get(sid) ?? 0) + 1);
+    const self = slices.find((s) => s.id === id);
+    return new Set((self?.storyIds ?? []).filter((sid) => uses.get(sid) === 1));
+  };
+  const after = exclusiveIn(proposed, slice.id);
+  return [...exclusiveIn(current, slice.id)].filter((sid) => !after.has(sid));
+}
+```
+
+Run: `pnpm vitest run src/organisms/map/slices.test.ts` — red on the missing export first, then green.
+
 - [ ] **Step 4: Build the composer**
 
 `SliceComposer` is a **second export from `SlicePanel.tsx`**, not a change to `SlicePanel`'s own markup. `MapStage` renders it and passes the element as the `footer` prop Task 4 already added — so the panel keeps knowing nothing about selection, and the composer disappears with the list when the panel is collapsed.
@@ -910,7 +973,12 @@ export function SliceComposer({ count, blocked, blockingStory, naming, onStart, 
       </button>
       {blocked.length > 0 && (
         <p className="slice-panel__blocked">
-          "{blockingStory}" is the only story {blocked.map((s) => s.name).join(", ")} owns.
+          {/* Two forms, because storiesLost is legitimately empty when the write
+              rewrites the blocked slice rather than taking a story from it —
+              there is then no story to name and the first sentence has no subject. */}
+          {blockingStory
+            ? `"${blockingStory}" is the only story ${blocked.map((s) => s.name).join(", ")} owns.`
+            : `${blocked.map((s) => s.name).join(", ")} would be left owning no story of its own.`}
         </p>
       )}
     </div>
@@ -950,13 +1018,12 @@ In `MapStage.tsx`, declare the naming state, compute the block, and pass the com
     [cap, selectedStoryIds],
   );
   const blocked = cap ? blockedBy(cap.slices, proposed) : [];
-  // The story the message names: the one the blocked slice owned alone and the
-  // selection is taking. Reported rather than guessed, so the message cannot drift
-  // from the rule that produced it.
-  const blockingStory =
-    blocked.length > 0 && cap
-      ? (cap.stories.find((s) => blocked[0].storyIds.includes(s.id) && selectedStoryIds.includes(s.id))?.text ?? null)
-      : null;
+  // The stories the blocked slice is LOSING — a second differential, this time over
+  // stories. See Step 3b; do not reach for a `find` over the selection, which names
+  // whichever story happens to come first and is wrong whenever the selection also
+  // takes a story that was already shared.
+  const lost = blocked.length > 0 && cap ? storiesLost(cap.slices, proposed, blocked[0]) : [];
+  const blockingStory = lost.length > 0 ? (cap?.stories.find((s) => s.id === lost[0])?.text ?? null) : null;
 ```
 
 Create on naming:
