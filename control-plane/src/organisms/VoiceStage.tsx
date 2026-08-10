@@ -71,7 +71,11 @@ export function VoiceStage({
           </motion.div>
         )}
       </AnimatePresence>
-      {voiceNotice && <p className="transcript__notice">{voiceNotice}</p>}
+      {voiceNotice && (
+        <p className="transcript__notice" role="status">
+          {voiceNotice}
+        </p>
+      )}
       <motion.div layout className="composer-dock" transition={spring}>
         <Composer
           onSend={onSend}

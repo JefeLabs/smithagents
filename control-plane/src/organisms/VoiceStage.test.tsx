@@ -91,7 +91,7 @@ describe("VoiceStage", () => {
     const onVoiceBlocked = vi.fn();
     const { onMicToggle } = renderStage({ sttEnabled: false, onVoiceBlocked });
     const hero = screen.getByRole("button", { name: "Activate always listening" });
-    expect(hero.className).toContain("is-voice-disabled");
+    expect(hero).toHaveAttribute("aria-disabled", "true");
     await userEvent.click(hero);
     expect(onMicToggle).not.toHaveBeenCalled();
     expect(onVoiceBlocked).toHaveBeenCalledTimes(1);
@@ -111,6 +111,6 @@ describe("VoiceStage", () => {
 
   it("no voiceNotice renders nothing extra", () => {
     renderStage({ voiceNotice: null });
-    expect(document.querySelector(".transcript__notice")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
   });
 });

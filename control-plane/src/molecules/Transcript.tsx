@@ -22,7 +22,7 @@ export function Transcript({ messages }: TranscriptProps) {
       {messages.map((m) => {
         if (m.role === "notice") {
           return (
-            <p key={m.id} className="transcript__notice">
+            <p key={m.id} className="transcript__notice" role="status">
               {m.text}
             </p>
           );

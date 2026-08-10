@@ -105,6 +105,7 @@ export function Composer({
                 title="Hold to talk"
                 aria-label="Hold to talk"
                 aria-pressed={holding}
+                aria-disabled={!sttEnabled}
                 onPointerDown={startHold}
                 onPointerUp={endHold}
                 onPointerLeave={endHold}
@@ -128,6 +129,7 @@ export function Composer({
                 title="Always listening"
                 aria-label="Always listening"
                 aria-pressed={micLive}
+                aria-disabled={!sttEnabled}
                 disabled={holding}
                 onClick={sttEnabled ? onMicToggle : () => onVoiceBlocked?.()}
               >

@@ -171,9 +171,11 @@ describe("Composer voice gating", () => {
     expect(onVoiceBlocked).toHaveBeenCalled();
   });
 
-  it("blocked mic buttons carry the is-voice-disabled class", () => {
-    render(<Composer onSend={vi.fn()} onMicToggle={vi.fn()} sttEnabled={false} />);
-    expect(screen.getByLabelText("Hold to talk").className).toContain("is-voice-disabled");
-    expect(screen.getByRole("button", { name: "Always listening" }).className).toContain("is-voice-disabled");
+  it("blocked mic buttons are marked unavailable to assistive tech", () => {
+    render(<Composer onSend={vi.fn()} onMicToggle={vi.fn()} sttEnabled={false} onVoiceBlocked={vi.fn()} />);
+    // Still pressable — a press must reach onVoiceBlocked to raise the notice —
+    // so this is aria-disabled, never the `disabled` attribute.
+    expect(screen.getByRole("button", { name: /hold to talk/i })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("button", { name: /always listening/i })).toHaveAttribute("aria-disabled", "true");
   });
 });

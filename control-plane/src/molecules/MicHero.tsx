@@ -17,6 +17,7 @@ export function MicHero({ live, onToggle, sttEnabled = true, onVoiceBlocked }: M
         title="Activate always listening"
         aria-label="Activate always listening"
         aria-pressed={live}
+        aria-disabled={!sttEnabled}
         onClick={sttEnabled ? onToggle : () => onVoiceBlocked?.()}
       >
         <AudioLines strokeWidth={1.7} />
