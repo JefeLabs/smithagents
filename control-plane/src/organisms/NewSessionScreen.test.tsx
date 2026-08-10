@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { QueryClient } from "@tanstack/react-query";
-import { screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ExecutionMode, SessionSummary, WorkspaceRecord } from "../api/types";
@@ -134,6 +134,41 @@ describe("NewSessionScreen", () => {
     // tracked on click, not change — see NewSessionScreen's onClick comment).
     await userEvent.click(screen.getByRole("radio", { name: "In process" }));
 
+    client.setQueryData(qk.executionModes, ALL_MODES);
+
+    await waitFor(() => expect(screen.getByRole("radio", { name: "In process" })).toBeChecked());
+    expect(screen.getByRole("radio", { name: "Local Docker" })).not.toBeChecked();
+  });
+
+  it("a change-event-driven mode pick (no pointer event, as a keyboard pick fires) survives modes re-resolving", async () => {
+    const sessions: SessionSummary[] = [
+      {
+        id: "s1",
+        title: "recent",
+        workspace: "acme",
+        updatedAt: "2026-08-07T00:00:00Z",
+        active: false,
+        runtime: "local-docker",
+      },
+    ];
+    const { client } = renderScreen({ lockedWorkspace: "acme" }, { sessions });
+    expect(screen.getByRole("radio", { name: "In process" })).toBeChecked();
+
+    // First resolution derives "Local Docker" from session history — nobody has picked yet.
+    client.setQueryData(qk.executionModes, ALL_MODES);
+    await waitFor(() => expect(screen.getByRole("radio", { name: "Local Docker" })).toBeChecked());
+
+    // fireEvent.click dispatches only a "click" event — unlike userEvent.click it never sends
+    // pointerdown/pointerup, so this exercises RadioButtonGroup's onChange (the underlying
+    // radio input's native change handler) in isolation from onPointerUp, the same isolation
+    // a real keyboard-driven pick (arrow key / native radio-group nav) would have.
+    fireEvent.click(screen.getByRole("radio", { name: "In process" }));
+    expect(screen.getByRole("radio", { name: "In process" })).toBeChecked();
+
+    // A second probe transition (e.g. the broker reconnecting and re-probing capabilities)
+    // must not clobber the onChange-driven pick back to the session-derived default.
+    client.setQueryData(qk.executionModes, null);
+    await waitFor(() => expect(screen.queryByRole("radio", { name: "Local Docker" })).toBeNull());
     client.setQueryData(qk.executionModes, ALL_MODES);
 
     await waitFor(() => expect(screen.getByRole("radio", { name: "In process" })).toBeChecked());

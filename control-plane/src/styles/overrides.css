@@ -38,3 +38,10 @@
   height: 24px;
   margin: 0;
 }
+
+/* HeroUI's [aria-disabled="true"] styling includes pointer-events: none — but the
+   blocked mic buttons must stay pressable so a press reaches onVoiceBlocked and
+   raises the Settings notice (voice onboarding). Dimming (opacity) still applies. */
+.composer .voice-toggle[aria-disabled="true"] {
+  pointer-events: auto;
+}
