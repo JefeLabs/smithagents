@@ -304,9 +304,7 @@ export function MapStage() {
 
   const [naming, setNaming] = useState(false);
 
-  // The write the button would send, evaluated before it is sent. `__proposed__` is a
-  // stand-in id: it never reaches the server, it only has to be absent from `cap.slices`
-  // so the differential treats it as CREATED rather than edited.
+  // The write the button would send, evaluated before it is sent.
   const proposed = useMemo(
     () =>
       cap
