@@ -118,6 +118,43 @@
   padding: 8px 12px;
   font-size: 12px;
 }
+/* ---- the docked chat: the same column height as the page beside it ----
+   The sheet sets the rhythm (18px above, 40px below); the dock matches it so
+   both columns start and end on the same lines instead of the chat running the
+   full stage while the page floats inside it. */
+.document-stage__chat {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.document-stage__dock-rise {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  margin: 18px 18px 40px 0;
+  border-left: 1px solid var(--rail-br);
+  padding-left: 14px;
+}
+.document-stage__dock {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 10px;
+}
+/* The transcript takes the slack; the composer sits at the bottom of the column,
+   level with the foot of the page. components.css caps `.transcript` at 220px
+   for the voice stage, where it floats above a centred composer — in this column
+   that cap strands the composer mid-air with dead space beneath it. */
+.document-stage__dock .transcript {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+}
+
 .document-stage__sections {
   display: flex;
   flex-direction: column;
@@ -383,4 +420,32 @@
 .document-stage__type:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+/* ---- a composer narrow enough to live in a resizable column ----
+   Keyed on the COMPOSER's own width, not the viewport: this same component sits
+   full-width on the voice stage and in a 30%-wide dock here, and only the dock
+   needs to fold. Dragging the split re-evaluates it live. */
+.composer {
+  container-type: inline-size;
+}
+@container (max-width: 470px) {
+  .composer__row {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  /* The send-side group drops to its own row and keeps its right edge. */
+  .composer__actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+@container (max-width: 330px) {
+  /* Tighter still: the routing chip's label is the first thing to go. */
+  .composer .selector {
+    max-width: 74px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
