@@ -108,13 +108,23 @@ export const ARTIFACT_STACK_PITCH = ARTIFACT_H + STORY_GAP;
  * draws the card and the fit calculation below counts them. Two copies of a number that
  * must agree is exactly what this module exists to prevent.
  *
- * 240 against STEP_W's 180. A capability sits a level above the activities beneath it and
- * a card the same width as a step read as one more step; wider gives the row its own
- * weight. Compared 200, 240 and 280 in the browser against the real names — 200 was barely
- * distinguishable from the cards below, 280 pushed the third card off a 1025px viewport
- * for no gain, since no real name comes close to filling either.
+ * 200 against STEP_W's 180. A capability sits a level above the activities beneath it and
+ * a card the same width as a step reads as one more step; wider gives the row its own
+ * weight. Compared 180, 200, 210, 220 and 240 in the browser against the real names — the
+ * names are short, so none of this is driven by text.
+ *
+ * WHAT DECIDED IT WAS A THRESHOLD, not the pixels. 240 put three cards at 86% of the row
+ * and 220 at 79%, which is the crowding this came down from. But the row holds the blank
+ * card too, so three capabilities need FOUR slots: 4W + 3 * CAPABILITY_GAP against a
+ * measured row of 855 puts the boundary at W <= 209.25. At 210 the third capability
+ * already collapsed into the `+N` menu on a full-size window — the dropdown is for when
+ * space genuinely runs out, not for three items on a wide screen. 200 fits all four with
+ * 37px to spare and is still visibly a level above a step card.
+ *
+ * That boundary is worth knowing before changing this number: a few pixels either way
+ * moves how many capabilities a normal window shows, so re-measure rather than nudge.
  */
-export const CAPABILITY_CARD_W = 240;
+export const CAPABILITY_CARD_W = 200;
 export const CAPABILITY_GAP = 6;
 /** The `+N` disclosure that holds whatever did not fit. */
 export const CAPABILITY_MORE_W = 44;

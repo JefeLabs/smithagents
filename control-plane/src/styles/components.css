@@ -2802,7 +2802,7 @@ button.logo {
      would make the row's capacity depend on the names in it, so the same three
      capabilities would collapse at one width and not another. */
   flex: 0 0 auto;
-  width: 240px;
+  width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2831,7 +2831,7 @@ button.logo {
   align-items: center;
   gap: 6px;
   min-width: 44px;
-  max-width: 240px;
+  max-width: 200px;
   padding: 4px 10px;
   border-radius: 10px;
   border: 1px solid var(--pill-br);
@@ -2881,7 +2881,7 @@ button.logo {
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
 }
 .map-capability-more__item {
-  width: 240px;
+  width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
