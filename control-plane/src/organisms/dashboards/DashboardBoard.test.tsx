@@ -34,8 +34,9 @@ describe("DashboardBoard", () => {
     expect(hits).toHaveLength(12);
     fireEvent.mouseEnter(hits[2]);
     // DASH_WEEKS[2]=W25, DASH_SHIPPED[2]=19, DASH_INTAKE[2]=25
-    expect(screen.getByText(/shipped 19 · intake 25/)).toBeTruthy();
-    expect(screen.getByText("W25")).toBeTruthy();
+    const tip = container.querySelector(".dash-chart__tip");
+    expect(tip?.textContent).toContain("W25");
+    expect(tip?.textContent).toContain("shipped 19 · intake 25");
   });
 
   it("a follow-up chip reports its own text", () => {

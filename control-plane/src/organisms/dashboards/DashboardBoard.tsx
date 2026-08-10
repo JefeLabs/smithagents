@@ -114,7 +114,7 @@ export function DashboardBoard({ query, scopeHint, onFollowup }: DashboardBoardP
             )}
           </div>
           <div className="dash-chart__weeks">
-            {DASH_WEEKS.filter((_, i) => i % 2 === 1).map((w) => (
+            {DASH_WEEKS.filter((_, i) => i % 2 === 0).map((w) => (
               <span key={w}>{w}</span>
             ))}
           </div>
