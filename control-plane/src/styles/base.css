@@ -120,7 +120,8 @@ body {
    Doubling the class (`.stage.board-stage`) also outranks `.stage` on
    specificity, so this holds regardless of source order. */
 .stage.board-stage,
-.stage.map-stage {
+.stage.map-stage,
+.stage.dashboards-stage {
   align-items: stretch;
   justify-content: flex-start;
   padding: 14px;

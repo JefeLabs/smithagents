@@ -60,3 +60,4 @@
 @import "@heroui-pro/react/css";
 
 @import "./components.css" layer(legacy);
+@import "./dashboards.css" layer(legacy);
