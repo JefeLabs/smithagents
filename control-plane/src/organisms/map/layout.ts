@@ -247,6 +247,16 @@ export interface MapNode {
   width?: number;
   data: Record<string, unknown>;
   draggable: boolean;
+  /**
+   * Selection is how a slice is made, so only REAL story nodes carry it —
+   * a lasso across the canvas must not pick up activities, steps, or the blank
+   * composers, and a blank has no story id to put in a slice.
+   *
+   * Non-optional on purpose. Omitting it would let a new node type default to
+   * unselectable silently; required, the compiler names every emission site,
+   * including the ephemeral slice and artifact nodes MapStage appends.
+   */
+  selectable: boolean;
   dragHandle?: string;
 }
 
@@ -529,6 +539,7 @@ export function layoutMap(model: MapModel): { nodes: MapNode[] } {
         // which carries `nodrag` — stays clickable, and dragging an activity is a
         // deliberate grab of its title rather than anything that happens on the card.
         draggable: true,
+        selectable: false,
         dragHandle: ".map-card__text",
       });
     }
@@ -543,6 +554,7 @@ export function layoutMap(model: MapModel): { nodes: MapNode[] } {
         data: { step, activity: act },
         // Same as its activity: draggable to reorder, by the title rather than the card.
         draggable: true,
+        selectable: false,
         dragHandle: ".map-card__text",
       });
       const stories = model.stories.filter((s) => s.stepId === step.id).sort((a, b) => a.order - b.order);
@@ -553,6 +565,8 @@ export function layoutMap(model: MapModel): { nodes: MapNode[] } {
           position: { x: stepX, y: STORIES_Y + i * SLOT_H },
           data: { story },
           draggable: true,
+          // The only true in this function: a slice is a set of real stories.
+          selectable: true,
           dragHandle: ".map-story__handle",
         });
       });
@@ -565,6 +579,7 @@ export function layoutMap(model: MapModel): { nodes: MapNode[] } {
         // the id apart to find it.
         data: { blank: true, stepId: step.id },
         draggable: false,
+        selectable: false,
       });
     }
 
@@ -576,6 +591,7 @@ export function layoutMap(model: MapModel): { nodes: MapNode[] } {
         position: { x: blankStepX, y: ACTIVITY_H + COL_GAP },
         data: { blank: true, activityId: act.id },
         draggable: false,
+        selectable: false,
       });
     }
   }
@@ -589,6 +605,7 @@ export function layoutMap(model: MapModel): { nodes: MapNode[] } {
       width: STEP_W,
       data: { blank: true },
       draggable: false,
+      selectable: false,
     });
   }
 

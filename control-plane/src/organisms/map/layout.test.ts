@@ -565,3 +565,25 @@ describe("artifactRowStartX anchors the row to the slice, not to the map", () =>
     expect(artifactRowStartX(MODEL, { id: "e", name: "e", order: 0, storyIds: ["gone"] })).toBe(0);
   });
 });
+
+describe("selectability", () => {
+  // `layoutMap` returns { nodes }, so each case destructures rather than filtering
+  // the return value directly.
+  it("only real story nodes are selectable", () => {
+    const { nodes } = layoutMap(MODEL);
+    const selectable = nodes.filter((n) => n.selectable).map((n) => n.id);
+    const stories = nodes.filter((n) => n.type === "story" && !n.data.blank).map((n) => n.id);
+    expect(selectable.sort()).toEqual(stories.sort());
+  });
+
+  it("a blank story card is NOT selectable — it is the composer, not an item", () => {
+    const blanks = layoutMap(MODEL).nodes.filter((n) => n.type === "story" && n.data.blank);
+    expect(blanks.length).toBeGreaterThan(0);
+    expect(blanks.every((n) => n.selectable === false)).toBe(true);
+  });
+
+  it("activities and steps are not selectable — a lasso must not pick up scenery", () => {
+    const scenery = layoutMap(MODEL).nodes.filter((n) => n.type === "activity" || n.type === "step");
+    expect(scenery.every((n) => n.selectable === false)).toBe(true);
+  });
+});

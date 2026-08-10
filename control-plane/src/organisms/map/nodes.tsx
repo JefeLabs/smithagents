@@ -59,7 +59,17 @@ export function BlankCard({
     onCommit(value);
   };
   return (
-    <div className={`${className} is-blank`} style={{ width }}>
+    // `pointerEvents` is not decoration and cannot move to the stylesheet. xyflow computes
+    // a node wrapper's pointer-events as `isSelectable || isDraggable || <ReactFlow-level
+    // mouse handlers>` and writes the answer as an INLINE style; a blank composer is
+    // deliberately neither selectable nor draggable, so its wrapper is `none` and
+    // everything inside it goes dead — measured, a click at a composer's centre landed on
+    // `.react-flow__pane` behind the card and all three creation affordances stopped
+    // working. A DESCENDANT setting `auto` is hit-testable again whatever the ancestor
+    // says, which a stylesheet rule could also do — except jsdom applies no stylesheets,
+    // so the three MapStage tests that type into these inputs would stay red and stop
+    // guarding this. Inline is what both the browser and the suite can see.
+    <div className={`${className} is-blank`} style={{ width, pointerEvents: "auto" }}>
       <input
         // BOTH classes, and `nopan` is the load-bearing one. They gate different
         // gestures: `nodrag` suppresses the NODE drag, which a blank card never had
@@ -246,7 +256,9 @@ export function SliceNode({ data }: { data: { name: string; fraction: string } }
 
 export function ArtifactNode({ data }: { data: { kind: string; label: string } }) {
   return (
-    <div className={`map-artifact map-artifact--${data.kind}`}>
+    // Same reason as BlankCard: an artifact is neither selectable nor draggable, so its
+    // wrapper carries `pointer-events: none` and the `title` tooltip below never fires.
+    <div className={`map-artifact map-artifact--${data.kind}`} style={{ pointerEvents: "auto" }}>
       <span className="map-artifact__kind">{data.kind}</span>
       {/* The label is a PATH, ellipsised into 160px — a 76-character spec path shows
           perhaps a third of itself, and the tail is the part that identifies it. Every

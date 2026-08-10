@@ -582,6 +582,7 @@ export function MapStage() {
                 }`,
               },
               draggable: false,
+              selectable: false,
             },
             ...artifactNodesFor(storySlice).map((a, i) => ({
               id: a.id,
@@ -589,6 +590,7 @@ export function MapStage() {
               position: storyStackPosition(at, i + 1),
               data: { kind: a.kind, label: a.label },
               draggable: false,
+              selectable: false,
             })),
           ]
         : [
@@ -601,6 +603,7 @@ export function MapStage() {
               position: storyStackPosition(at, 0),
               data: { kind: "backlog", label: "not in a slice yet" },
               draggable: false,
+              selectable: false,
             },
           ];
       setNodes([...decorated, ...cards]);
@@ -644,6 +647,7 @@ export function MapStage() {
         position: { x: artifactRowX(0, rowX), y: rowY },
         data: { name: revealedSlice.name, fraction: `${done}/${revealedSlice.storyIds.length}` },
         draggable: false,
+        selectable: false,
       },
       // `a.id` is already minted by `artifactNodeId` inside `artifactNodesFor` — it is
       // not rebuilt here, for the same reason.
@@ -654,6 +658,7 @@ export function MapStage() {
         position: { x: artifactRowX(i + 1, rowX), y: rowY },
         data: { kind: a.kind, label: a.label },
         draggable: false,
+        selectable: false,
       })),
     ];
 
@@ -869,6 +874,35 @@ export function MapStage() {
               onNodesChange={onNodesChange}
               onNodeDragStop={onNodeDragStop}
               nodesConnectable={false}
+              // Selection is how a slice gets its stories. Which nodes can be picked is
+              // decided in layout.ts by `selectable`, not here — these props only turn the
+              // gesture on.
+              //
+              // `elementsSelectable`, NOT `nodesSelectable`: the latter is not a React Flow
+              // prop at all. tsc accepts it, and it lands in the component's `...rest` and
+              // is spread onto the wrapper div, where React logs "does not recognize the
+              // nodesSelectable prop on a DOM element" and nothing gates anything. Selection
+              // still worked, because this prop defaults to true — an inert line that looks
+              // like the thing switching the feature on.
+              elementsSelectable
+              // Left-drag lassoes, middle/right-drag pans. Left has to give up panning
+              // for the lasso to have a button, and `selectionKeyCode={null}` means the
+              // lasso needs no modifier held.
+              //
+              // Safe for the reorder gestures built earlier: xyflow starts a lasso only
+              // when the pointerdown lands on the pane ITSELF (`event.target ===
+              // container.current`), so a drag beginning on any card — draggable or not —
+              // never becomes a selection rectangle.
+              selectionOnDrag
+              multiSelectionKeyCode="Shift"
+              selectionKeyCode={null}
+              panOnDrag={[1, 2]}
+              // Not in the brief, and load-bearing. xyflow defaults this TRUE, which routes
+              // node selection through drag start instead of click: measured in the browser,
+              // a click selected nothing and a 3px twitch selected the card. That costs both
+              // halves of the gesture — shift-click could not add to a selection, and every
+              // reorder drag silently added the dragged story to it.
+              selectNodesOnDrag={false}
               fitView
             >
               <Background />
