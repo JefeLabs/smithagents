@@ -73,3 +73,6 @@ broker/.smith/voice-cache/
 
 # Crew memory is personal state, like sessions.
 broker/.smith/memory.json
+
+# Per-plan isolation worktrees (superpowers SDD) — never repo content.
+.worktrees/
