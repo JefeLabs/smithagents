@@ -2,11 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Claimed by:** unclaimed — claim this header before executing
+**Claimed by:** session 4826ab44 (team-lead w/ Edwin), 2026-08-10 — executing via subagent-driven-development on branch `heroui-phase-1b` off `develop`.
 
-**BLOCKED.** Same two gates as Phase 1a (Pro-seat entitlement past beta; evidence the
-library still ships). **Additionally depends on Phase 1a being merged** — this plan
-imports `src/molecules/form/` and does not redefine it.
+**UNBLOCKED 2026-08-10.** Both Phase-1a gates resolved 2026-08-09 (Pro licensing is
+time-boxed not version-gated; the stagnation claim was an npm `time.created` misread —
+see heroui-pro-evaluation memory). Phase 1a merged to main in `c38134f` (2026-08-10), so
+`src/molecules/form/` exists. Edwin approved completing the migration 2026-08-10
+("let's complete the hero UI migration").
 
 **Goal:** Migrate `Transcript`, `Composer`, `SessionsPanel` and `NewSessionScreen`
 (527 LOC) onto HeroUI's AI components, adding markdown rendering — the one capability
