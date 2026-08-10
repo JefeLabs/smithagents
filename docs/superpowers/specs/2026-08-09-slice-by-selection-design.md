@@ -107,7 +107,17 @@ select stories on canvas
   React Flow built-ins (`multiSelectionKeyCode`, `selectionOnDrag`) — no custom
   hit-testing, and specifically no second copy of the geometry that `cellAt`
   already owns.
-- Selection lives in React Flow's node state, not in a parallel store.
+- **Selection lives in `MapStage`, and React Flow only reports gestures.** An
+  earlier draft of this spec said the opposite — that selection lives in React
+  Flow's node state. That is wrong: `MapStage` rebuilds every node from the model
+  on each change, wiping `selected`. Measured during Task 3, selecting two
+  stories and then revealing one took the selection from `["t2","t5"]` to `[]`.
+  `decorate` writes the selection back on every rebuild, the same way it already
+  writes the dim set.
+- **A plain click on a story reveals its chain, as it does today; selection is
+  lasso and shift-click.** Edwin's ruling. The reveal target is 144×26 inside a
+  165×51 card, so the two gestures compete for the same pixels and the split is
+  explicit: the title declines shift-clicks and stops propagation on plain ones.
 
 ### Slice panel (`map/SlicePanel.tsx`, new)
 

@@ -867,18 +867,87 @@ cd control-plane && pnpm vitest run src/organisms/MapStage.test.tsx
 
 Expected: FAIL — no create button; the `New slice name…` box still exists.
 
-- [ ] **Step 3: Track the selection**
+- [ ] **Step 3: Track the selection — in `MapStage`, not in React Flow**
 
-In `MapStage.tsx`:
+**This reverses what the spec says, and the spec is wrong.** It reads *"Selection lives in React Flow's node state, not in a parallel store."* React Flow's `selected` flags live on the node objects, and `MapStage` rebuilds those wholesale from the model on every change — reveal, capability switch, reorder, any WS update. Measured in Task 3: select two stories, click a story title to reveal, selection goes `["t2","t5"] → []`. It cannot survive the very interactions the panel invites.
+
+So `MapStage` owns the selection and **writes it into the nodes**, exactly as it already does for dimming:
 
 ```tsx
   const [selectedStoryIds, setSelectedStoryIds] = useState<string[]>([]);
 
-  // Only real story nodes are selectable (Task 3), so anything React Flow reports
-  // here is already a story — no filtering by type, and no second source of truth.
+  // React Flow REPORTS selection gestures; it does not STORE the selection. Node
+  // objects are rebuilt from the model on every change, which wipes `selected` —
+  // so the set lives here and `decorate` writes it back on each rebuild. Same
+  // argument-passed shape as dimmedIds, and for the same reason: it keeps
+  // `decorate` a function of its arguments rather than of a closure.
   useOnSelectionChange({
-    onChange: ({ nodes: sel }) => setSelectedStoryIds(sel.map((n) => n.id)),
+    onChange: ({ nodes: sel }) => {
+      const ids = sel.map((n) => n.id);
+      // Guard the loop: decorate writes `selected` back into the nodes, which
+      // re-fires onChange. Bail when nothing actually differs.
+      setSelectedStoryIds((prev) =>
+        prev.length === ids.length && prev.every((id, i) => id === ids[i]) ? prev : ids,
+      );
+    },
   });
+```
+
+Extend `decorate` to take the selection alongside the dim set, and set it on every node it returns:
+
+```tsx
+  const decorate = (base: MapNode[], dimmedIds: Set<string>, selectedIds: Set<string>): Node[] =>
+    base.map((n) => {
+      const node = /* …existing branches… */;
+      return { ...node, selected: selectedIds.has(n.id) };
+    });
+```
+
+- [ ] **Step 3a: Reveal keeps the plain click; shift-click selects**
+
+Edwin's ruling: **plain click on a story still reveals its chain, as it does today. Selection is lasso and shift-click.** The reveal target (`.map-story__handle`) is 144×26 inside a 165×51 card — 44% of it — so the two gestures genuinely compete for the same pixels and the split has to be explicit rather than incidental.
+
+In `nodes.tsx`, the story card's handle:
+
+```tsx
+      <button
+        type="button"
+        className="map-story__handle"
+        onClick={(e) => {
+          // Shift is the add-to-selection modifier, so the title must decline it and
+          // let the event reach React Flow. Without this the 44% of the card that
+          // reveals would be shift-click-dead, and a user sweeping a selection would
+          // silently open a band instead.
+          if (e.shiftKey) return;
+          // A plain click reveals and must NOT also change the selection — React Flow
+          // selects a node on click, which would clear a selection the user is
+          // building every time they inspect a story.
+          e.stopPropagation();
+          data.onReveal?.(story.id);
+        }}
+      >
+```
+
+- [ ] **Step 3b: Test that selection survives a reveal**
+
+```ts
+it("a reveal does not clear the selection", async () => {
+  renderMap();
+  await selectStories(["s1", "s2"]);
+  const panel = await screen.findByRole("region", { name: "Slices" });
+  expect(within(panel).getByRole("button", { name: /slice from 2 selected/i })).toBeDefined();
+  // Reveal rebuilds every node from the model — the selection must be re-applied.
+  await userEvent.click(screen.getByRole("button", { name: "edit tour time slots" }));
+  expect(within(panel).getByRole("button", { name: /slice from 2 selected/i })).toBeDefined();
+});
+
+it("shift-clicking a story title adds it rather than revealing", async () => {
+  renderMap();
+  await selectStories(["s1"]);
+  await userEvent.click(screen.getByRole("button", { name: "edit tour time slots" }), { shiftKey: true });
+  const panel = await screen.findByRole("region", { name: "Slices" });
+  expect(within(panel).getByRole("button", { name: /slice from 2 selected/i })).toBeDefined();
+});
 ```
 
 - [ ] **Step 3b: Add `storiesLost` to `slices.ts` — the message needs a second differential**
