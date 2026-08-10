@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Claimed by:** unclaimed — claim this header before executing
+**Claimed by:** session 4826ab44 (team-lead w/ Edwin), 2026-08-10 — executing via subagent-driven-development on branch `pair-mob-phase-1` off `develop` (post-1b merge f81c138).
 
 **Goal:** Ship the spec's Phase 1: blueprint-driven documents in the broker, a document stage with the shifted layout and per-section markdown editing, session kinds with kind-aware activation, the SessionsPanel workspace anchor, and polish-my-input in the composer.
 
