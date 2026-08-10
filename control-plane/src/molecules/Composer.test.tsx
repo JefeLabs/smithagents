@@ -139,6 +139,28 @@ describe("Composer", () => {
     fireEvent.pointerUp(hold);
     expect(onMicToggle).toHaveBeenCalledTimes(2);
   });
+
+  it("hold-to-talk: a canceled pointer (e.g. touch interrupted) also releases the hold", () => {
+    const onMicToggle = vi.fn();
+    render(<Composer onSend={() => {}} micLive={false} onMicToggle={onMicToggle} />);
+    const hold = screen.getByRole("button", { name: "Hold to talk" });
+    fireEvent.pointerDown(hold);
+    expect(onMicToggle).toHaveBeenCalledTimes(1);
+    fireEvent.pointerCancel(hold);
+    expect(onMicToggle).toHaveBeenCalledTimes(2);
+    fireEvent.pointerUp(hold);
+    expect(onMicToggle).toHaveBeenCalledTimes(2);
+  });
+
+  it("hold-to-talk: Space starts listening on keydown, ends on keyup", () => {
+    const onMicToggle = vi.fn();
+    render(<Composer onSend={() => {}} micLive={false} onMicToggle={onMicToggle} />);
+    const hold = screen.getByRole("button", { name: "Hold to talk" });
+    fireEvent.keyDown(hold, { key: " " });
+    expect(onMicToggle).toHaveBeenCalledTimes(1);
+    fireEvent.keyUp(hold, { key: " " });
+    expect(onMicToggle).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("Composer voice gating", () => {

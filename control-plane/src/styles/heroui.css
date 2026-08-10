@@ -20,7 +20,9 @@
  *   Tailwind utilities must win — that is their entire purpose. A migrated component
  *   styled with utilities has to beat whatever components.css still says about it.
  *
- * overrides is the escape hatch: empty for now, and beats everything.
+ * overrides is the escape hatch: beats everything, for migrated components whose
+ * legacy look has to win over a HeroUI Pro default legacy's own selectors don't
+ * mention (see overrides.css).
  *
  * tokens.css and base.css stay UNLAYERED (imported from main.tsx). Unlayered rules
  * beat every layered one, which keeps base.css's body/main selectors authoritative.
@@ -67,3 +69,4 @@
 
 @import "./components.css" layer(legacy);
 @import "./dashboards.css" layer(legacy);
+@import "./overrides.css" layer(overrides);

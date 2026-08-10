@@ -1,0 +1,40 @@
+/*
+ * The escape hatch declared in heroui.css: this layer beats every other layer
+ * regardless of selector specificity, for the cases where a migrated component's
+ * legacy look has to win over a HeroUI Pro default that legacy's own selectors never
+ * anticipated overriding (cascade layers only override *conflicting* declarations —
+ * a property legacy never mentions passes through Pro's default untouched).
+ */
+
+/* Composer (Task 3, PromptInput shell swap):
+ *
+ * Pro's own textarea reserves 56px min-height and 56px margin-bottom for its
+ * normally-absolutely-positioned toolbar, and carries its own px-3/pt-3 padding.
+ * The composer's toolbar (below) is pinned back into normal flow, and
+ * .composer--stacked already supplies the padding the original design used — both
+ * reservations have to go, or the shell renders taller than its pre-migration height.
+ */
+.composer .prompt-input__textarea {
+  min-height: 0;
+  margin-bottom: 0;
+  padding: 0;
+}
+
+/* Pro pins the toolbar absolute to the shell's bottom edge; the original markup had
+   it in normal flow below the textarea, so put it back. */
+.composer .prompt-input__toolbar {
+  position: static;
+}
+
+/* Pro's Button CSS clamps child svgs to 16-20px and gives them their own -mx-0.5/my-1
+   margin (for its own icon+label layout). The original toolbar icons were lucide's
+   unstyled 24px default with no margin, centered purely by the button's
+   `display: grid; place-items: center` — the stray margin makes the icon's margin box
+   taller than the 30px button and throws grid's centering off by a rounded pixel. */
+.composer .voice-toggle svg,
+.composer .sound-toggle svg,
+.composer .send svg {
+  width: 24px;
+  height: 24px;
+  margin: 0;
+}

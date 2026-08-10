@@ -2,14 +2,6 @@ import { PromptInput } from "@heroui-pro/react";
 import { ArrowUp, AudioLines, ChevronDown, Mic, Plus, Volume2, VolumeX } from "lucide-react";
 import { useRef, useState } from "react";
 
-// Pro's Button CSS clamps child svgs to 16px and gives them their own -mx-0.5/my-1
-// margin (for its own icon+label layout); the original toolbar icons were lucide's
-// unstyled 24px default with no margin, centered purely by the button's
-// `display: grid; place-items: center`. Inline style (highest specificity) restores
-// both — leaving the margin in place makes the icon's margin box taller than the
-// 30px button and throws grid's centering off by a rounded pixel.
-const ICON_SIZE = { width: 24, height: 24, margin: 0 };
-
 interface ComposerProps {
   onSend: (text: string) => void;
   disabled?: boolean;
@@ -73,11 +65,6 @@ export function Composer({
             rows={1}
             aria-label="Type a request"
             placeholder={disabled ? "Broker offline — start the broker to chat…" : "Type a request…"}
-            // Pro's own textarea reserves space for its absolutely-positioned toolbar
-            // (min-height + margin-bottom) and carries its own padding; the shell (via
-            // .composer--stacked) already supplies the padding the original design used,
-            // and the toolbar below is pinned back into normal flow, so both have to go.
-            style={{ minHeight: 0, marginBottom: 0, padding: 0 }}
             onChange={(e) => {
               setDraft(e.target.value);
               // Auto-grow up to the CSS max-height (132px ≈ 6 lines), then scroll internally.
@@ -86,9 +73,7 @@ export function Composer({
             }}
           />
         </PromptInput.Content>
-        {/* Pro pins the toolbar absolute to the shell's bottom edge; the original
-            markup had it in normal flow below the textarea, so put it back. */}
-        <PromptInput.Toolbar className="composer__row" style={{ position: "static" }}>
+        <PromptInput.Toolbar className="composer__row">
           <PromptInput.ToolbarStart>
             <button
               type="button"
@@ -119,9 +104,19 @@ export function Composer({
                 onPointerDown={startHold}
                 onPointerUp={endHold}
                 onPointerLeave={endHold}
+                onPointerCancel={endHold}
                 onBlur={endHold}
+                onKeyDown={(e) => {
+                  if ((e.key === " " || e.key === "Enter") && !e.repeat) {
+                    e.preventDefault();
+                    startHold();
+                  }
+                }}
+                onKeyUp={(e) => {
+                  if (e.key === " " || e.key === "Enter") endHold();
+                }}
               >
-                <Mic strokeWidth={1.7} style={ICON_SIZE} />
+                <Mic strokeWidth={1.7} />
               </PromptInput.Action>
             )}
             {onMicToggle && (
@@ -133,7 +128,7 @@ export function Composer({
                 isDisabled={holding}
                 onPress={() => (sttEnabled ? onMicToggle() : onVoiceBlocked?.())}
               >
-                <AudioLines strokeWidth={1.7} style={ICON_SIZE} />
+                <AudioLines strokeWidth={1.7} />
               </PromptInput.Action>
             )}
             {onSoundToggle && (
@@ -143,15 +138,11 @@ export function Composer({
                 aria-pressed={soundOn}
                 onPress={onSoundToggle}
               >
-                {soundOn ? (
-                  <Volume2 strokeWidth={1.7} style={ICON_SIZE} />
-                ) : (
-                  <VolumeX strokeWidth={1.7} style={ICON_SIZE} />
-                )}
+                {soundOn ? <Volume2 strokeWidth={1.7} /> : <VolumeX strokeWidth={1.7} />}
               </PromptInput.Action>
             )}
             <PromptInput.Send className="send" aria-label="Send" isDisabled={disabled || draft.trim() === ""}>
-              <ArrowUp strokeWidth={2} style={ICON_SIZE} />
+              <ArrowUp strokeWidth={2} />
             </PromptInput.Send>
           </PromptInput.ToolbarEnd>
         </PromptInput.Toolbar>
