@@ -564,7 +564,7 @@ function sessionFrame() {
   return {
     type: 'session' as const,
     session: s
-      ? { id: s.id, title: s.title, workspace: s.workspace, runtime: s.runtime, kind: s.kind ?? 'chat', docId: s.docId }
+      ? { id: s.id, title: s.title, workspace: s.workspace, runtime: s.runtime, artifacts: s.artifacts ?? [] }
       : null,
     sessions: sessionManager.list(),
     transcript: (s?.transcript ?? []).map((t) => ({ role: t.role, text: t.text })),
@@ -1186,9 +1186,7 @@ const textChannel = new TextChannel(
         return { error: `workType must be one of: ${bp.workTypes.join(', ')}` };
       const doc = documentManager.create(bp, body.workType, body.title ?? '');
       if (!doc) return { error: 'could not create document' };
-      // The document session is the collaboration episode on this doc (spec:
-      // session kinds). Created active so the docked chat is live on arrival.
-      sessionManager.create(defaultWorkspaceName, { kind: 'document', docId: doc.id, title: doc.title });
+      sessionManager.create(defaultWorkspaceName, { title: doc.title, artifacts: [doc.id] });
       textChannel.broadcast(documentsFrame());
       textChannel.broadcast(sessionFrame());
       return { doc };

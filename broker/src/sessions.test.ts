@@ -75,27 +75,46 @@ test('resolveLazyWorkspace: discord lands in the attended workspace, everything 
   assert.equal(resolveLazyWorkspace({ kind: 'stdin', channelRef: 'c' }, 'acme', 'main'), 'main');
 });
 
-test('sessions default to kind chat; document sessions carry kind and docId', () => {
+test('sessions list with their artifacts; none means an empty array', () => {
+  const mgr = new SessionManager(memoryStore());
+  mgr.create('acme', {});
+  assert.deepEqual(mgr.list()[0].artifacts, []);
+});
+
+test('addArtifact appends once, bumps updatedAt, persists; an unknown session is null', () => {
   let n = 0;
   const store = memoryStore();
   const mgr = new SessionManager(store, () => new Date(Date.parse(T) + n++ * 1000).toISOString());
-  mgr.create('acme', {});
-  const doc = mgr.create('acme', { kind: 'document', docId: 'd1', title: 'Spec: login' });
-  const [docRow, chatRow] = mgr.list();
-  assert.equal(docRow.id, doc.id);
-  assert.equal(docRow.kind, 'document');
-  assert.equal(docRow.docId, 'd1');
-  assert.equal(chatRow.kind, 'chat');
-  assert.equal(chatRow.docId, undefined);
+  const s = mgr.create('acme', {});
+  const created = s.updatedAt;
+  assert.ok(mgr.addArtifact(s.id, 'd1'));
+  assert.equal(mgr.addArtifact(s.id, 'd1')?.artifacts?.length, 1); // append-once
+  assert.ok(mgr.addArtifact(s.id, 'd2'));
+  assert.deepEqual(mgr.list()[0].artifacts, ['d1', 'd2']);
+  assert.notEqual(mgr.list()[0].updatedAt, created);
+  assert.equal(mgr.addArtifact('s99', 'd3'), null);
+  assert.equal(store.saved.length, 3); // create + the two effective appends
 });
 
-test('a legacy persisted session with no kind lists as chat', () => {
+test('a legacy persisted document-kind session normalizes to artifacts', () => {
+  const store = memoryStore();
+  store.save({
+    id: 's4', title: 'Login spec', workspace: 'w', runtime: 'local-in-process',
+    kind: 'document', docId: 'd7',
+    createdAt: T, updatedAt: T, transcript: [], brainHistory: [],
+  } as never);
+  const mgr = new SessionManager(store);
+  mgr.init();
+  assert.deepEqual(mgr.list()[0].artifacts, ['d7']);
+  assert.equal((mgr.activeOrNull() as unknown as { kind?: string }).kind, undefined);
+});
+
+test('a legacy persisted chat session with no kind normalizes to no artifacts', () => {
   const store = memoryStore();
   store.save({ id: 's1', title: 'old', workspace: 'w', runtime: 'local-in-process', createdAt: T, updatedAt: T, transcript: [], brainHistory: [] } as never);
   const mgr = new SessionManager(store);
   mgr.init();
-  assert.equal(mgr.list()[0].kind, 'chat');
-  assert.equal(mgr.list()[0].docId, undefined);
+  assert.deepEqual(mgr.list()[0].artifacts, []);
 });
 
 test('transcript and brain history persist through the store; switching swaps them', () => {

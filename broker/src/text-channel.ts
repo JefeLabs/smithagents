@@ -52,7 +52,7 @@ export type ChannelFrame =
   | {
       type: 'session';
       session:
-        | { id: string; title: string; workspace: string; runtime: string; kind: 'chat' | 'document'; docId?: string }
+        | { id: string; title: string; workspace: string; runtime: string; artifacts: string[] }
         | null;
       sessions: Array<{ id: string; title: string; workspace: string; updatedAt: string; active: boolean; runtime: string }>;
       transcript: Array<{ role: 'user' | 'broker'; text: string }>;
