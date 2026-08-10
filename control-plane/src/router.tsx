@@ -7,6 +7,7 @@ import {
   Navigate,
   useNavigate,
 } from "@tanstack/react-router";
+import { lazy, Suspense } from "react";
 import * as api from "./api/broker";
 import type { BlueprintT, ChatMessage, DocT, RosterAgent } from "./api/types";
 import { agentSeeds } from "./data/agents";
@@ -16,7 +17,6 @@ import { Composer } from "./molecules/Composer";
 import { Transcript } from "./molecules/Transcript";
 import { BoardStage } from "./organisms/BoardStage";
 import { DashboardsStage } from "./organisms/DashboardsStage";
-import { DocumentStage } from "./organisms/DocumentStage";
 import { MapStage } from "./organisms/MapStage";
 import { VoiceStage } from "./organisms/VoiceStage";
 import { WorkStage } from "./organisms/WorkStage";
@@ -34,6 +34,10 @@ const NO_MESSAGES: ChatMessage[] = [];
 const NO_ROSTER: RosterAgent[] = [];
 const NO_DOCS: DocT[] = [];
 const NO_BLUEPRINTS: BlueprintT[] = [];
+
+// The document stage carries Tiptap/ProseMirror; a chat-only session should not
+// download an editor it never opens. This is the app's first split chunk.
+const DocumentStage = lazy(() => import("./organisms/DocumentStage").then((m) => ({ default: m.DocumentStage })));
 
 /**
  * Route components are deliberately thin: they read broker state from the
@@ -137,25 +141,27 @@ function DocRoute() {
   // Unknown or deleted doc — the stage-routing convention: go home.
   if (!doc) return <Navigate to="/" replace />;
   return (
-    <DocumentStage
-      doc={doc}
-      blueprints={blueprints}
-      onChangeBlueprint={(blueprintId) => api.patchDocBlueprint(doc.id, blueprintId)}
-      onRename={(title) => api.patchDocTitle(doc.id, title)}
-      onSaveSection={(sectionId, body) => api.patchDocSection(doc.id, sectionId, body)}
-      chat={
-        <div className="document-stage__dock">
-          <Transcript messages={messages} />
-          <Composer
-            onSend={api.postUtterance}
-            disabled={!connected}
-            onPolish={api.polishDraft}
-            kind="document"
-            onKindChat={() => void navigate({ to: "/" })}
-          />
-        </div>
-      }
-    />
+    <Suspense fallback={null}>
+      <DocumentStage
+        doc={doc}
+        blueprints={blueprints}
+        onChangeBlueprint={(blueprintId) => api.patchDocBlueprint(doc.id, blueprintId)}
+        onRename={(title) => api.patchDocTitle(doc.id, title)}
+        onSaveSection={(sectionId, body) => api.patchDocSection(doc.id, sectionId, body)}
+        chat={
+          <div className="document-stage__dock">
+            <Transcript messages={messages} />
+            <Composer
+              onSend={api.postUtterance}
+              disabled={!connected}
+              onPolish={api.polishDraft}
+              kind="document"
+              onKindChat={() => void navigate({ to: "/" })}
+            />
+          </div>
+        }
+      />
+    </Suspense>
   );
 }
 

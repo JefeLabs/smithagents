@@ -87,6 +87,23 @@ vi.hoisted(() => {
     Element.prototype.releasePointerCapture = () => {};
     Element.prototype.hasPointerCapture = () => false;
   }
+
+  /**
+   * jsdom implements no layout, so `getClientRects` is missing on Range and
+   * returns nothing useful on Element. Tiptap's BubbleMenu and FloatingMenu
+   * measure the selection to place themselves on every selection change — the
+   * throw lands as an UNHANDLED error after the test has already passed, which
+   * is how a green suite still exits non-zero.
+   */
+  if (typeof Range.prototype.getClientRects !== "function") {
+    Range.prototype.getClientRects = () =>
+      ({ length: 0, item: () => null, [Symbol.iterator]: function* () {} }) as unknown as DOMRectList;
+    Range.prototype.getBoundingClientRect = () => new DOMRect();
+  }
+  if (typeof Element.prototype.getClientRects !== "function") {
+    Element.prototype.getClientRects = () =>
+      ({ length: 0, item: () => null, [Symbol.iterator]: function* () {} }) as unknown as DOMRectList;
+  }
 });
 
 beforeEach(() => resetAllStores());

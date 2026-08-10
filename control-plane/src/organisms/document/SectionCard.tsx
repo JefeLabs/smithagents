@@ -1,6 +1,6 @@
 import { Markdown } from "@heroui-pro/react/markdown";
-import { useEffect, useRef, useState } from "react";
 import type { DocSectionT } from "../../api/types";
+import { SectionEditor } from "./SectionEditor";
 
 interface SectionCardProps {
   section: DocSectionT;
@@ -20,45 +20,16 @@ interface SectionCardProps {
  * "editing should feel like editing a document, not filling a form").
  */
 export function SectionCard({ section, hint, editing, onEdit, onCancel, onSave }: SectionCardProps) {
-  const [draft, setDraft] = useState(section.body);
-  const ref = useRef<HTMLTextAreaElement>(null);
-  // Abandoned via Escape and re-entered later, the draft must start from what
-  // the document actually says — not from the text that was thrown away.
-  useEffect(() => {
-    if (editing) setDraft(section.body);
-  }, [editing, section.body]);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!editing || !el) return;
-    el.focus();
-    el.setSelectionRange(el.value.length, el.value.length);
-    el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
-  }, [editing]);
-
   return (
     <section className="doc-section" aria-label={section.heading}>
       <h3 className="doc-section__heading">{section.heading}</h3>
       {editing ? (
-        <textarea
-          ref={ref}
-          aria-label={section.heading}
-          className="doc-section__editor"
-          value={draft}
+        <SectionEditor
+          body={section.body}
+          ariaLabel={section.heading}
           placeholder={hint}
-          onChange={(e) => {
-            setDraft(e.target.value);
-            e.target.style.height = "auto";
-            e.target.style.height = `${e.target.scrollHeight}px`;
-          }}
-          onBlur={() => onSave(draft)}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") {
-              e.preventDefault();
-              onCancel();
-            }
-          }}
+          onCommit={onSave}
+          onAbandon={onCancel}
         />
       ) : (
         // The whole prose block is the affordance — a11y still needs a name and a
