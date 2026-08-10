@@ -62,6 +62,11 @@ export function useMyConnectors() {
   return useQuery({ queryKey: qk.myConnectors, queryFn: () => api.getMyConnectors() });
 }
 
+/** `GET /blueprints` — the composer's document chips. Static per broker run. */
+export function useBlueprints() {
+  return useQuery({ queryKey: qk.blueprints, queryFn: () => api.getBlueprints(), staleTime: Number.POSITIVE_INFINITY });
+}
+
 export function useCliTools() {
   return useQuery({ queryKey: qk.cliTools, queryFn: () => api.getCliTools() });
 }

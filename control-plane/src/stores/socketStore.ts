@@ -115,8 +115,16 @@ export const useSocketStore = create<SocketState>((set) => ({
           case "session":
             // A null session is KNOWN zero, not "not heard from yet" — setQueryData
             // with null still flips the query to success, which is what useSessionKnown reads.
-            qc.setQueryData<SessionFrame["session"]>(qk.session, frame.session);
-            qc.setQueryData<SessionSummary[]>(qk.sessions, frame.sessions);
+            // `artifacts` is normalized here rather than trusted: an older broker
+            // (pre-artifacts) sends session rows without it, and every consumer
+            // reads `.artifacts.length` unguarded.
+            qc.setQueryData<SessionFrame["session"]>(qk.session, () =>
+              frame.session ? { ...frame.session, artifacts: frame.session.artifacts ?? [] } : null,
+            );
+            qc.setQueryData<SessionSummary[]>(
+              qk.sessions,
+              frame.sessions.map((s) => ({ ...s, artifacts: s.artifacts ?? [] })),
+            );
             qc.setQueryData<string[]>(qk.workspaces, frame.workspaces);
             nextId = 0; // the frame replays the whole transcript, so ids restart with it
             qc.setQueryData<ChatMessage[]>(

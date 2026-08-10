@@ -80,7 +80,7 @@ describe("NewSessionScreen", () => {
             updatedAt: "2026-08-01T00:00:00Z",
             active: false,
             runtime: "local-in-process",
-            kind: "chat" as const,
+            artifacts: [],
           },
           {
             id: "s2",
@@ -89,7 +89,7 @@ describe("NewSessionScreen", () => {
             updatedAt: "2026-08-07T00:00:00Z",
             active: false,
             runtime: "local-docker",
-            kind: "chat" as const,
+            artifacts: [],
           },
         ],
       },
@@ -106,7 +106,7 @@ describe("NewSessionScreen", () => {
         updatedAt: "2026-08-07T00:00:00Z",
         active: false,
         runtime: "local-docker",
-        kind: "chat" as const,
+        artifacts: [],
       },
     ];
     // `modes` deliberately left unseeded — same "probe still in flight" state `modes: null` used to model.
@@ -128,7 +128,7 @@ describe("NewSessionScreen", () => {
         updatedAt: "2026-08-07T00:00:00Z",
         active: false,
         runtime: "local-docker",
-        kind: "chat" as const,
+        artifacts: [],
       },
     ];
     const { client } = renderScreen({ lockedWorkspace: "acme" }, { sessions });
@@ -153,7 +153,7 @@ describe("NewSessionScreen", () => {
         updatedAt: "2026-08-07T00:00:00Z",
         active: false,
         runtime: "local-docker",
-        kind: "chat" as const,
+        artifacts: [],
       },
     ];
     const { client } = renderScreen({ lockedWorkspace: "acme" }, { sessions });
@@ -213,47 +213,5 @@ describe("NewSessionScreen", () => {
     );
     expect(screen.getByText("builds the acme app")).toBeInTheDocument();
     expect(screen.getByText("https://acme.dev/docs")).toBeInTheDocument();
-  });
-
-  it("without document props there is no kind toggle (today's screen, unchanged)", () => {
-    renderScreen();
-    expect(screen.queryByRole("radio", { name: /document/i })).toBeNull();
-  });
-
-  it("choosing document swaps prompt for blueprint/work-type/title and submits them", async () => {
-    const onCreateDocument = vi.fn().mockResolvedValue(undefined);
-    const listBlueprints = vi
-      .fn()
-      .mockResolvedValue([{ id: "spec", name: "Design Spec", workTypes: ["feature", "bugfix"] }]);
-    renderScreen({ onCreateDocument, listBlueprints });
-    fireEvent.click(screen.getByRole("radio", { name: /document/i }));
-    // Blueprints resolved into the select and the sole blueprint auto-selected — asserted
-    // via the trigger's accessible name (FormSelect.test.tsx's own idiom), not `findByText`,
-    // since a selected FormSelect also carries a same-labelled option in its hidden native
-    // `<select>` fallback and `findByText` would find both.
-    await screen.findByRole("button", { name: /Design Spec/i });
-    fireEvent.change(screen.getByLabelText(/title/i), { target: { value: "Login spec" } });
-    fireEvent.click(screen.getByRole("button", { name: /create document/i }));
-    await waitFor(() => expect(onCreateDocument).toHaveBeenCalledWith("spec", "feature", "Login spec"));
-  });
-
-  it("document mode has no workspace field — the broker hardwires the default workspace", async () => {
-    const listBlueprints = vi.fn().mockResolvedValue([{ id: "spec", name: "Design Spec", workTypes: ["feature"] }]);
-    renderScreen({ onCreateDocument: vi.fn(), listBlueprints });
-    fireEvent.click(screen.getByRole("radio", { name: /document/i }));
-    await screen.findByRole("button", { name: /Design Spec/i });
-    expect(screen.queryByLabelText("Workspace")).toBeNull();
-  });
-
-  it("a create-document error renders and keeps the form", async () => {
-    const onCreateDocument = vi.fn().mockResolvedValue({ error: "broker unreachable" });
-    const listBlueprints = vi.fn().mockResolvedValue([{ id: "spec", name: "Design Spec", workTypes: ["feature"] }]);
-    renderScreen({ onCreateDocument, listBlueprints });
-    fireEvent.click(screen.getByRole("radio", { name: /document/i }));
-    await screen.findByRole("button", { name: /Design Spec/i });
-    fireEvent.change(screen.getByLabelText(/title/i), { target: { value: "X" } });
-    fireEvent.click(screen.getByRole("button", { name: /create document/i }));
-    expect(await screen.findByText(/broker unreachable/)).toBeTruthy();
-    expect(screen.getByLabelText(/title/i)).toBeTruthy();
   });
 });

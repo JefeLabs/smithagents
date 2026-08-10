@@ -1,13 +1,5 @@
 import { skipToken, useQuery } from "@tanstack/react-query";
-import type {
-  BrokerIdentityInfo,
-  ChatMessage,
-  DocT,
-  ExecutionMode,
-  RosterAgent,
-  SessionKind,
-  SessionSummary,
-} from "../api/types";
+import type { BrokerIdentityInfo, ChatMessage, DocT, ExecutionMode, RosterAgent, SessionSummary } from "../api/types";
 import { qk } from "./keys";
 
 type ActiveSession = {
@@ -15,8 +7,7 @@ type ActiveSession = {
   title: string;
   workspace: string;
   runtime: ExecutionMode;
-  kind: SessionKind;
-  docId?: string;
+  artifacts: string[];
 } | null;
 
 /**

@@ -52,7 +52,7 @@ export type ChannelFrame =
   | {
       type: 'session';
       session:
-        | { id: string; title: string; workspace: string; runtime: string; kind: 'chat' | 'document'; docId?: string }
+        | { id: string; title: string; workspace: string; runtime: string; artifacts: string[] }
         | null;
       sessions: Array<{ id: string; title: string; workspace: string; updatedAt: string; active: boolean; runtime: string }>;
       transcript: Array<{ role: 'user' | 'broker'; text: string }>;
@@ -289,7 +289,7 @@ export class TextChannel {
      * string or null, mapped to 404/200.
      */
     private readonly documents?: {
-      create(body: { blueprintId?: string; workType?: string; title?: string }): Promise<{ doc?: Doc; error?: string; status?: number }>;
+      create(body: { blueprintId?: string; workType?: string; text?: string }): Promise<{ doc?: Doc; error?: string; status?: number }>;
       patchSection(docId: string, sectionId: string, body: string): string | null;
     },
   ) {}
@@ -962,16 +962,23 @@ export class TextChannel {
             body += c;
           });
           req.on('end', () => {
-            let parsed: { blueprintId?: unknown; workType?: unknown; title?: unknown } = {};
+            let parsed: { blueprintId?: unknown; workType?: unknown; text?: unknown } = {};
             try {
               parsed = JSON.parse(body || '{}') as typeof parsed;
             } catch {
-              /* empty body handled by the closure's validation */
+              /* empty body falls into the text guard below */
+            }
+            // Send IS the commit: the text names the document and enters the
+            // conversation. Nothing to say means nothing to create.
+            const text = typeof parsed.text === 'string' ? parsed.text : '';
+            if (!text.trim()) {
+              json(400, { error: 'text is required' });
+              return;
             }
             void this.documents!.create({
               blueprintId: typeof parsed.blueprintId === 'string' ? parsed.blueprintId : undefined,
               workType: typeof parsed.workType === 'string' ? parsed.workType : undefined,
-              title: typeof parsed.title === 'string' ? parsed.title : undefined,
+              text,
             }).then(
               (r) => (r.doc ? json(200, { doc: r.doc }) : json(r.status ?? 400, { error: r.error ?? 'invalid request' })),
               (err: unknown) => json(500, { error: String((err as Error).message ?? err) }),

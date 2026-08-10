@@ -227,6 +227,37 @@ describe("socketStore frame handling", () => {
     expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
   });
 
+  // An older broker sends session rows with no `artifacts` at all. Every
+  // consumer reads `.artifacts` unguarded, so the parser — not the callers —
+  // is where the absent list becomes an empty one.
+  it("normalizes a session frame that carries no artifacts", () => {
+    const qc = new QueryClient();
+    store().connect(qc);
+    emit({
+      type: "session",
+      session: { id: "s1", title: "t", workspace: "w", runtime: "local-in-process" },
+      sessions: [
+        { id: "s1", title: "t", workspace: "w", updatedAt: "now", active: true, runtime: "local-in-process" },
+        {
+          id: "s2",
+          title: "u",
+          workspace: "w",
+          updatedAt: "now",
+          active: false,
+          runtime: "local-in-process",
+          artifacts: ["d1"],
+        },
+      ],
+      workspaces: ["w"],
+      transcript: [],
+    });
+
+    expect(qc.getQueryData(qk.session)).toMatchObject({ id: "s1", artifacts: [] });
+    const rows = qc.getQueryData(qk.sessions) as Array<{ id: string; artifacts: string[] }>;
+    expect(rows[0].artifacts).toEqual([]);
+    expect(rows[1].artifacts).toEqual(["d1"]);
+  });
+
   it("an open socket with no frame yet leaves the session key untouched", () => {
     // The flash window: `connected` is already true for a beat before the
     // broker speaks. qk.session must have NO cache entry there, because

@@ -1396,12 +1396,15 @@ test('GET /blueprints returns the loaded set', async () => {
 
 test('POST /documents forwards the body and returns the created doc; PATCH updates a section', async () => {
   const patches: unknown[] = [];
+  const creates: unknown[] = [];
   const channel = channelWith({
     documents: {
-      create: async (body: { blueprintId?: string; workType?: string; title?: string }) =>
-        body.blueprintId === 'spec'
-          ? { doc: { id: 'd1', title: body.title ?? '', blueprintId: 'spec', workType: body.workType ?? '', sections: [], participants: [], proposals: [], status: 'drafting', createdAt: 't', updatedAt: 't' } }
-          : { error: `unknown blueprint: ${body.blueprintId ?? '(none)'}` },
+      create: async (body: { blueprintId?: string; workType?: string; text?: string }) => {
+        creates.push(body);
+        return body.blueprintId === 'spec'
+          ? { doc: { id: 'd1', title: body.text ?? '', blueprintId: 'spec', workType: body.workType ?? '', sections: [], participants: [], proposals: [], status: 'drafting', createdAt: 't', updatedAt: 't' } }
+          : { error: `unknown blueprint: ${body.blueprintId ?? '(none)'}` };
+      },
       patchSection: (docId: string, sectionId: string, body: string) => {
         patches.push([docId, sectionId, body]);
         return docId === 'd1' ? null : `unknown document: ${docId}`;
@@ -1413,17 +1416,28 @@ test('POST /documents forwards the body and returns the created doc; PATCH updat
     const created = await fetch(`http://127.0.0.1:${port}/documents`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ blueprintId: 'spec', workType: 'feature', title: 'Login spec' }),
+      body: JSON.stringify({ blueprintId: 'spec', workType: 'feature', text: 'Spec out the login rework' }),
     });
     assert.equal(created.status, 200);
     assert.equal(((await created.json()) as { doc: { id: string } }).doc.id, 'd1');
+    assert.deepEqual(creates[0], { blueprintId: 'spec', workType: 'feature', text: 'Spec out the login rework' });
 
     const bad = await fetch(`http://127.0.0.1:${port}/documents`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ blueprintId: 'nope', workType: 'feature', title: 'x' }),
+      body: JSON.stringify({ blueprintId: 'nope', workType: 'feature', text: 'x' }),
     });
     assert.equal(bad.status, 400);
+
+    // The send IS the commit — a document with no text has nothing to be about,
+    // and the route rejects it without ever reaching the handler.
+    const empty = await fetch(`http://127.0.0.1:${port}/documents`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ blueprintId: 'spec', workType: 'feature', text: '   ' }),
+    });
+    assert.equal(empty.status, 400);
+    assert.equal(creates.length, 2); // the empty one never reached the closure
 
     const patched = await fetch(`http://127.0.0.1:${port}/documents/d1/sections/overview`, {
       method: 'PATCH',

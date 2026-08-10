@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import {
   createHashHistory,
   createRootRoute,
@@ -7,9 +8,10 @@ import {
   useNavigate,
 } from "@tanstack/react-router";
 import * as api from "./api/broker";
-import type { ChatMessage, DocT, RosterAgent } from "./api/types";
+import type { BlueprintT, ChatMessage, DocT, RosterAgent } from "./api/types";
 import { agentSeeds } from "./data/agents";
 import { useVoiceStatus } from "./hooks/useVoiceStatus";
+import { ArtifactShelf } from "./molecules/ArtifactShelf";
 import { Composer } from "./molecules/Composer";
 import { Transcript } from "./molecules/Transcript";
 import { BoardStage } from "./organisms/BoardStage";
@@ -19,8 +21,9 @@ import { MapStage } from "./organisms/MapStage";
 import { VoiceStage } from "./organisms/VoiceStage";
 import { WorkStage } from "./organisms/WorkStage";
 import { HomePage } from "./pages/HomePage";
-import { useVoiceSettings } from "./queries/http";
-import { useDocuments, useRoster, useTranscript } from "./queries/pushed";
+import { useBlueprints, useVoiceSettings } from "./queries/http";
+import { qk } from "./queries/keys";
+import { useDocuments, useRoster, useSession, useTranscript } from "./queries/pushed";
 import { useAudioStore } from "./stores/audioStore";
 import { useSocketStore } from "./stores/socketStore";
 import { useUiStore } from "./stores/uiStore";
@@ -30,6 +33,7 @@ import { useUiStore } from "./stores/uiStore";
 const NO_MESSAGES: ChatMessage[] = [];
 const NO_ROSTER: RosterAgent[] = [];
 const NO_DOCS: DocT[] = [];
+const NO_BLUEPRINTS: BlueprintT[] = [];
 
 /**
  * Route components are deliberately thin: they read broker state from the
@@ -57,6 +61,15 @@ function VoiceRoute() {
   const { data: voicePrefs } = useVoiceSettings();
   // Hide the hero only on a CONFIRMED no-STT broker the user asked to hide.
   const hideMic = Boolean(voicePrefs?.hideInactive) && !voice.stt;
+  const { data: active } = useSession();
+  const { data: docs = NO_DOCS } = useDocuments();
+  const { data: blueprints = NO_BLUEPRINTS } = useBlueprints();
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  // Only the documents this session actually produced, in its own order.
+  const shelfDocs = (active?.artifacts ?? [])
+    .map((id) => docs.find((d) => d.id === id))
+    .filter((d): d is DocT => Boolean(d));
   return (
     <VoiceStage
       micLive={micLive}
@@ -71,6 +84,25 @@ function VoiceRoute() {
       showMicHero={!hideMic}
       voiceNotice={voiceNotice}
       onPolish={api.polishDraft}
+      blueprints={blueprints}
+      onSendDocument={async (blueprintId, text) => {
+        const r = await api.postDocument(blueprintId, text);
+        if (r.error) return { error: r.error };
+        if (r.doc) {
+          // Seed before navigating: the doc rides a WS frame on another
+          // connection, and the stage must not decide it is missing.
+          const created = r.doc;
+          qc.setQueryData<DocT[]>(qk.documents, (prev: DocT[] | undefined) => [
+            created,
+            ...(prev ?? []).filter((d: DocT) => d.id !== created.id),
+          ]);
+          void navigate({ to: "/doc/$docId", params: { docId: created.id } });
+        }
+        return undefined;
+      }}
+      shelf={
+        <ArtifactShelf docs={shelfDocs} onOpen={(docId) => void navigate({ to: "/doc/$docId", params: { docId } })} />
+      }
     />
   );
 }
@@ -90,6 +122,7 @@ function DashboardsRoute() {
 
 function DocRoute() {
   const { docId } = docRoute.useParams();
+  const navigate = useNavigate();
   const { data: docs = NO_DOCS, status } = useDocuments();
   const { data: messages = NO_MESSAGES } = useTranscript();
   const connected = useSocketStore((c) => c.connected);
@@ -108,7 +141,13 @@ function DocRoute() {
       chat={
         <div className="document-stage__dock">
           <Transcript messages={messages} />
-          <Composer onSend={api.postUtterance} disabled={!connected} onPolish={api.polishDraft} />
+          <Composer
+            onSend={api.postUtterance}
+            disabled={!connected}
+            onPolish={api.polishDraft}
+            kind="document"
+            onKindChat={() => void navigate({ to: "/" })}
+          />
         </div>
       }
     />

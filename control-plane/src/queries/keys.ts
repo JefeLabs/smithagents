@@ -24,5 +24,6 @@ export const qk = {
   boards: ["boards"] as const,
   capability: (id: string) => ["capability", id] as const,
   capabilities: ["capabilities"] as const,
+  blueprints: ["blueprints"] as const,
   documents: ["documents"] as const,
 };

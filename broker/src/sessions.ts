@@ -17,17 +17,17 @@ export type ExecutionMode = 'local-in-process' | 'local-docker' | 'remote-in-pro
 
 const LEGACY_MODE: ExecutionMode = 'local-in-process';
 
-export type SessionKind = 'chat' | 'document';
-
 export interface Session {
   id: string;
   title: string;
   workspace: string;
   runtime: ExecutionMode;
-  /** Absent on legacy files = "chat" (lockstep tolerance, same rule the UI parser applies). */
-  kind?: SessionKind;
-  /** Present iff kind === "document" — the document this session collaborates on. */
-  docId?: string;
+  /**
+   * Documents this session produced and works on. Absent on files written
+   * before the artifacts pivot (spec 2026-08-10) — normalized at init(),
+   * including the phase-1 `kind`/`docId` pair a document session carried.
+   */
+  artifacts?: string[];
   /** True while the brain still owes this session its one post-first-reply retitle. */
   awaitingTitle?: boolean;
   createdAt: string;
@@ -41,8 +41,8 @@ export interface SessionSummary {
   title: string;
   workspace: string;
   runtime: ExecutionMode;
-  kind: SessionKind;
-  docId?: string;
+  /** Always resolved — absent on the session file means an empty list. */
+  artifacts: string[];
   updatedAt: string;
   active: boolean;
 }
@@ -84,6 +84,12 @@ export class SessionManager {
   init(): Session | null {
     for (const s of this.store.loadAll()) {
       s.runtime ??= LEGACY_MODE;
+      // Phase-1 files carried kind:"document" + docId. Fold that into artifacts
+      // and drop the dead fields; they vanish from disk on the next save.
+      const legacy = s as Session & { kind?: string; docId?: string };
+      if (!s.artifacts) s.artifacts = legacy.kind === 'document' && legacy.docId ? [legacy.docId] : [];
+      delete legacy.kind;
+      delete legacy.docId;
       this.sessions.set(s.id, s);
       this.seq = Math.max(this.seq, Number(/^s(\d+)$/.exec(s.id)?.[1] ?? 0));
     }
@@ -94,7 +100,7 @@ export class SessionManager {
 
   create(
     workspace: string,
-    opts?: { title?: string; runtime?: ExecutionMode; kind?: SessionKind; docId?: string; awaitingTitle?: boolean },
+    opts?: { title?: string; runtime?: ExecutionMode; artifacts?: string[]; awaitingTitle?: boolean },
   ): Session {
     this.seq += 1;
     const session: Session = {
@@ -102,8 +108,7 @@ export class SessionManager {
       title: opts?.title?.trim() || `Session ${this.seq}`,
       workspace,
       runtime: opts?.runtime ?? LEGACY_MODE,
-      kind: opts?.kind ?? 'chat',
-      docId: opts?.docId,
+      artifacts: opts?.artifacts ?? [],
       awaitingTitle: opts?.awaitingTitle,
       createdAt: this.now(),
       updatedAt: this.now(),
@@ -148,6 +153,23 @@ export class SessionManager {
     return true;
   }
 
+  /**
+   * Attach a document to a session (append-once). The artifact list is the
+   * session's claim on its work products — a conversation may produce several
+   * (spec 2026-08-10, artifacts pivot).
+   */
+  addArtifact(sessionId: string, docId: string): Session | null {
+    const session = this.sessions.get(sessionId);
+    if (!session) return null;
+    session.artifacts ??= [];
+    if (!session.artifacts.includes(docId)) {
+      session.artifacts.push(docId);
+      session.updatedAt = this.now();
+      this.store.save(session);
+    }
+    return session;
+  }
+
   list(): SessionSummary[] {
     return [...this.sessions.values()]
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
@@ -156,8 +178,7 @@ export class SessionManager {
         title: s.title,
         workspace: s.workspace,
         runtime: s.runtime,
-        kind: s.kind ?? 'chat',
-        docId: s.docId,
+        artifacts: s.artifacts ?? [],
         updatedAt: s.updatedAt,
         active: s.id === this.activeId,
       }));
