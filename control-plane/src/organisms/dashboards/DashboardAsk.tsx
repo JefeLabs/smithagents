@@ -27,19 +27,17 @@ export function DashboardAsk({ scope, saved, scopeHint, onScope, onSubmit }: Das
         <div className="dash-ask__scopes" role="radiogroup" aria-label="Scope">
           <span className="dash-ask__label">SCOPE</span>
           {DASH_SCOPES.map((s) => (
-            <>
-              {/* biome-ignore lint/a11y/useSemanticElements: chip-styled radiogroup — a native input can't carry the pill styling, and role="radio"+aria-checked is the equivalent ARIA pattern */}
-              <button
-                key={s}
-                type="button"
-                role="radio"
-                aria-checked={s === scope}
-                className={`dash-chip ${s === scope ? "dash-chip--active" : ""}`}
-                onClick={() => onScope(s)}
-              >
-                {s}
-              </button>
-            </>
+            // biome-ignore lint/a11y/useSemanticElements: chip-styled radiogroup — a native input can't carry the pill styling, and role="radio"+aria-checked is the equivalent ARIA pattern
+            <button
+              key={s}
+              type="button"
+              role="radio"
+              aria-checked={s === scope}
+              className={`dash-chip ${s === scope ? "dash-chip--active" : ""}`}
+              onClick={() => onScope(s)}
+            >
+              {s}
+            </button>
           ))}
         </div>
 
