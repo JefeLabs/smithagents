@@ -5,6 +5,7 @@
  * phases 2-3 never migrate stored files.
  */
 import { type Blueprint, instantiateSections } from './blueprints.ts';
+import { normalizeMarkdown } from './markdown-normalize.ts';
 
 export interface DocSection {
   id: string;
@@ -82,7 +83,7 @@ export class DocumentManager {
     const doc = this.docs.get(docId);
     const section = doc?.sections.find((s) => s.id === sectionId);
     if (!doc || !section) return null;
-    section.body = body;
+    section.body = normalizeMarkdown(body);
     doc.updatedAt = this.now();
     this.store.save(doc);
     return doc;

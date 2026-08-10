@@ -116,3 +116,13 @@ test('rename sets a collapsed title, refuses blank, refuses unknown docs', () =>
   assert.equal(m.get(doc.id)?.title, 'Login flow spec'); // the blank never landed
   assert.equal(m.rename('d99', 'x'), null);
 });
+
+test('patchSection stores normalized markdown, whatever spelling arrived', () => {
+  const { m } = manager();
+  const doc = m.create(BP, 'feature', 'T')!;
+  m.patchSection(doc.id, 'overview', '*em* and __strong__');
+  const stored = m.get(doc.id)?.sections.find((s) => s.id === 'overview')?.body;
+  m.patchSection(doc.id, 'overview', '_em_ and **strong**');
+  assert.equal(m.get(doc.id)?.sections.find((s) => s.id === 'overview')?.body, stored);
+  assert.match(stored ?? '', /_em_/); // the canonical spelling, not the input's
+});
