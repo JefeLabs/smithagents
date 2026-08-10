@@ -132,6 +132,20 @@ function DocRoute() {
   const { data: blueprints = NO_BLUEPRINTS } = useBlueprints();
   const { data: messages = NO_MESSAGES } = useTranscript();
   const connected = useSocketStore((c) => c.connected);
+  // The docked chat IS this session's conversation, so it carries the same voice
+  // controls the voice stage does. usePushToTalk owns the hardware at app scope
+  // (HomePage) and publishes through audioStore, so this route only asks for the
+  // toggles — it never holds a MediaStream of its own.
+  const micLive = useAudioStore((a) => a.micLive);
+  const toggleMic = useAudioStore((a) => a.toggleMic);
+  const soundOn = useAudioStore((a) => a.soundOn);
+  const toggleSound = useAudioStore((a) => a.toggleSound);
+  const showVoiceBlockedNotice = useUiStore((u) => u.showVoiceBlockedNotice);
+  const { voice } = useVoiceStatus();
+  const { data: voicePrefs } = useVoiceSettings();
+  // Same hide-inactive rule as the voice stage: only a CONFIRMED no-STT broker
+  // the user asked to hide drops the mic entirely.
+  const hideMic = Boolean(voicePrefs?.hideInactive) && !voice.stt;
   // Cold-WS race: on a hard reload of /doc/:id the documents frame hasn't
   // landed yet, so the query is still `pending` — that is not "no such doc",
   // it's "don't know yet". Only a RESOLVED query missing the doc means
@@ -155,6 +169,12 @@ function DocRoute() {
               onSend={api.postUtterance}
               disabled={!connected}
               onPolish={api.polishDraft}
+              micLive={micLive}
+              onMicToggle={hideMic ? undefined : toggleMic}
+              soundOn={soundOn}
+              onSoundToggle={toggleSound}
+              sttEnabled={voice.stt}
+              onVoiceBlocked={showVoiceBlockedNotice}
               kind="document"
               onKindChat={() => void navigate({ to: "/" })}
             />
