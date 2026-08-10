@@ -2771,11 +2771,78 @@ button.logo {
      `layer(legacy)`. `.map-stage__canvas` also sets `align-self`, which is a different
      property on a different element and therefore layer-proof on its own. */
 }
-.map-stage__bar,
-.map-stage__composer {
+.map-stage__bar {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+/* The capability row. `.map-stage__composer` used to sit here too — the toggle-open
+   "new capability" panel — and went with the picker it belonged to. */
+.map-capability-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* Bounded so the scroller inside can actually overflow: a flex item's min-width is
+     auto, which would let the row grow to its content and push the header wide instead
+     of scrolling. */
+  min-width: 0;
+  flex: 1;
+}
+/* Only the CARDS scroll. The blank composer is a sibling of this, not a child, so it
+   stays put at the end of the row however many capabilities there are — which is the
+   whole reason the row scrolls rather than wraps. */
+.map-capability-row__scroll {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  /* Vertical is hidden rather than auto: with only horizontal overflow declared, a
+     scrollbar gutter can still be reserved on the cross axis and clip the card's
+     border. */
+  overflow-y: hidden;
+  /* NO SCROLLBAR, and it is the header height that decides this rather than taste.
+     Measured: with a classic scrollbar the bar goes from 24px to 35px the moment a
+     third capability makes the row overflow — the header would grow and shrink the
+     canvas as capabilities come and go, which is the same variable-height objection
+     that ruled out wrapping. Hiding it holds 24px at any list length.
+
+     macOS overlay scrollbars already take no space, so on Edwin's machine this changes
+     nothing; it is the platforms with classic scrollbars that need it. The row still
+     scrolls by wheel and trackpad, and a card clipped at the edge is the affordance. */
+  scrollbar-width: none;
+}
+.map-capability-row__scroll::-webkit-scrollbar {
+  display: none;
+}
+.map-capability {
+  /* A card, and a real <button> — selecting a capability is clicking it, the same
+     interaction the slice band uses. Nothing here says "control": the row reads as
+     cards, so the button inherits and keeps only the cursor. */
+  flex: 0 0 auto;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 4px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--pill-br);
+  background: var(--pill);
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+/* The SAME idiom as a selected story — an accent border, no fill — rather than a third
+   selection language on a screen that already has two. --dot-hi, not --accent, for the
+   reason recorded at .map-story.is-selected. */
+.map-capability.is-selected {
+  border-color: var(--dot-hi);
+}
+.map-capability.is-blank {
+  background: none;
+  border-style: dashed;
+  cursor: text;
 }
 .map-stage__bar .spacer {
   flex: 1;

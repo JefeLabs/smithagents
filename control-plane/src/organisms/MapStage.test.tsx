@@ -132,18 +132,33 @@ describe("MapStage", () => {
     expect(screen.getByText("create tour time slots")).toBeTruthy();
   });
 
-  it("creates a capability in the selected workspace", async () => {
+  it("creates a capability in the selected workspace, from the row's blank card", async () => {
+    // SAME GUARANTEE, new control. This pinned that creating a capability POSTs the
+    // typed name against the CURRENT workspace — the workspace half is the part worth
+    // keeping, since it is derived from the session rather than from any control on
+    // this screen. It used to go through a "+ new capability" toggle, a panel and a
+    // "create capability" button; all three are gone and the blank card replaces them.
     const { calls } = stubFetch();
     const { client } = renderMapStage();
     seedSessionFrame(client, { workspace: "skoolscout" });
     await screen.findByText("Manage Candidate Tours");
-    await userEvent.click(screen.getByRole("button", { name: /new capability/i }));
-    await userEvent.type(screen.getByPlaceholderText(/capability name/i), "New Cap");
-    await userEvent.click(screen.getByRole("button", { name: /create capability/i }));
+    await userEvent.type(screen.getByPlaceholderText("Capability name"), "New Cap{Enter}");
     await waitFor(() => {
       const call = calls.find((c) => c.method === "POST" && c.url.endsWith("/work/capabilities"));
       expect(call?.body).toMatchObject({ name: "New Cap", workspaceId: "skoolscout" });
     });
+  });
+
+  it("creates nothing when the blank capability card is committed empty", async () => {
+    // The rule's other half, which the old panel enforced with `if (!capName)` and
+    // BlankCard now enforces for all four levels. Worth an assertion here because this
+    // is the level that just changed hands.
+    const { calls } = stubFetch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    await screen.findByText("Manage Candidate Tours");
+    await userEvent.type(screen.getByPlaceholderText("Capability name"), "   {Enter}");
+    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/work/capabilities"))).toBe(false);
   });
 
   it("shows slice bands with done fractions", async () => {
@@ -160,7 +175,12 @@ describe("MapStage", () => {
     seedSessionFrame(client, { workspace: "skoolscout" });
     await screen.findByText("Manage Candidate Tours");
     seedSessionFrame(client, { workspace: "smithagents" });
-    await waitFor(() => expect((screen.getByLabelText("Capability") as HTMLSelectElement).value).toBe("other-cap"));
+    // The picker's `value` became the selected CARD. Same guarantee: after a workspace
+    // switch the active capability is the new workspace's own, not a survivor of the
+    // old one — which is what the reset effect exists for.
+    await waitFor(() =>
+      expect(document.querySelector(".map-capability.is-selected")?.textContent).toBe("Other Product"),
+    );
     // AWAITED, where it used to be synchronous. The picker and the canvas settle on
     // different ticks: the select is plain React, while a node reaches the DOM only
     // after xyflow has adopted the re-seeded array into its own store. That was true
@@ -179,9 +199,15 @@ describe("MapStage", () => {
     await screen.findByText("Manage Candidate Tours");
     seedSessionFrame(client, { workspace: "smithagents" });
     await waitFor(() => expect(screen.queryByText("Manage Candidate Tours")).toBeNull());
-    const capSelect = screen.getByLabelText("Capability") as HTMLSelectElement;
-    expect(capSelect.value).toBe("");
-    expect(capSelect.querySelectorAll("option").length).toBe(0);
+    // The select's empty value and its zero options, in the row's terms: nothing is
+    // selected, and the row offers nothing to select. The second half is the one that
+    // pins the workspace filter — the other workspace's capability still exists in the
+    // query, and must not be on offer here.
+    expect(document.querySelector(".map-capability.is-selected")).toBeNull();
+    expect(document.querySelectorAll(".map-capability:not(.is-blank)").length).toBe(0);
+    // …and the blank card survives an empty workspace, or there would be no way to
+    // create the first capability in it.
+    expect(screen.getByPlaceholderText("Capability name")).toBeTruthy();
   });
 
   it("an explicit single-workspace view overrides the session's workspace", async () => {
@@ -280,8 +306,7 @@ describe("MapStage + socket store wiring", () => {
     // "smithagents" has no capabilities of its own — I5 clears the map.
     seedSessionFrame(client, { workspace: "smithagents" });
     await waitFor(() => expect(screen.queryByText("Manage Candidate Tours")).toBeNull());
-    const capSelect = screen.getByLabelText("Capability") as HTMLSelectElement;
-    expect(capSelect.value).toBe("");
+    expect(document.querySelector(".map-capability.is-selected")).toBeNull();
 
     // The refetch must return genuinely different data — TanStack's
     // structural sharing would otherwise keep the same `data` reference and
@@ -303,9 +328,10 @@ describe("MapStage + socket store wiring", () => {
     });
     await waitFor(() => expect(fetched()).toBeGreaterThan(before));
 
-    // Still cleared — the refetch must not seed a capability from skoolscout
-    // while the workspace picker shows smithagents.
-    expect(capSelect.value).toBe("");
+    // Still cleared — the refetch must not seed a capability from skoolscout while the
+    // row is showing smithagents. (The picker this used to read is gone; the selected
+    // card is the same fact.)
+    expect(document.querySelector(".map-capability.is-selected")).toBeNull();
     expect(screen.queryByText("Manage Candidate Tours")).toBeNull();
   });
 });

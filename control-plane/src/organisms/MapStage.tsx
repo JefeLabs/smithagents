@@ -3,7 +3,7 @@ import { Background, Controls, MiniMap, type Node, type OnNodeDrag, ReactFlow, u
 // it cannot reach the card rules components.css contributes to layer(legacy) —
 // and being unlayered keeps xyflow's own chrome authoritative over them.
 import "@xyflow/react/dist/style.css";
-import { Map as MapIcon, Plus } from "lucide-react";
+import { Map as MapIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import type { CapActivityT, CapabilityT, CapSliceT, CapStoryT } from "../api/types";
@@ -29,6 +29,7 @@ import {
   storyStackPosition,
   unassignedNodeId,
 } from "./map/layout";
+import { BlankCard } from "./map/nodes";
 import { nodeTypes } from "./map/nodeTypes";
 import { useMapSelection } from "./map/useMapSelection";
 
@@ -63,13 +64,14 @@ export async function fireNodeDragStop(nodeId: string, position: { x: number; y:
 }
 
 /**
- * The composers that are still text boxes. Activity, step and story names are NOT
- * here any more: each level's trailing blank CARD is its own composer now, holding
- * its own text and handing it back through `onCommit`. Only the capability name and
- * the slice band's two fields remain, and the records are keyed by slice id.
+ * The composers that are still text boxes — the slice band's two, and nothing else.
+ *
+ * All FOUR levels of the map are blank cards now: capability, activity, step and story
+ * each end their row or column with one, holding their own text and handing back the
+ * trimmed value through `onCommit`. `capName` used to live here and was the last of
+ * them to go; the slice band is what remains, and its records are keyed by slice id.
  */
 interface MapComposerValues {
-  capName: string;
   sliceName: string;
   planTexts: Record<string, string>;
 }
@@ -107,14 +109,13 @@ export function MapStage() {
     return session?.workspace ?? "";
   }, [viewed, session?.workspace]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Each remaining composer is a write-once text box: type, press Enter, it clears.
   // planTexts is keyed by slice id and registered as the bands render, which is why
   // this is one form rather than a `Record<string, string>` state.
   const { register, getValues, setValue } = useForm<MapComposerValues>({
-    defaultValues: { capName: "", sliceName: "", planTexts: {} },
+    defaultValues: { sliceName: "", planTexts: {} },
   });
 
   const displayError = error ?? loadError;
@@ -154,6 +155,12 @@ export function MapStage() {
   }, [capabilitiesQuery.data, workspace]);
 
   const cap = capabilities.find((c) => c.id === activeId) ?? null;
+
+  // The capabilities the row offers. THE FILTER IS UNCHANGED from the picker it
+  // replaces, including the empty-string case: `""` means the session has not resolved
+  // a workspace yet and everything shows. That is the seam the navbar work put in, and
+  // the seeding effect below relies on the same expression.
+  const visibleCapabilities = capabilities.filter((c) => !workspace || c.workspaceId === workspace);
 
   // What the map is interrogating. TWO SCOPES, TWO SHAPES, deliberately: a slice
   // answers "what is in this release" and gets a horizontal band under the whole map;
@@ -236,18 +243,25 @@ export function MapStage() {
     };
   }, [moveStory]);
 
-  const createCapability = async () => {
-    const capName = getValues("capName").trim();
-    if (!capName || !workspace) return;
-    try {
-      const created = await createCapMutation.mutateAsync({ name: capName, workspaceId: workspace });
-      setCreating(false);
-      setValue("capName", "");
-      setActiveId(created.id);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "unreachable");
-    }
+  /**
+   * Takes the name as an argument now, like the other three levels: the blank card owns
+   * its own text and hands over the trimmed value, so there is no field to read and none
+   * to clear. An empty commit never arrives — BlankCard drops it.
+   *
+   * The `workspace` guard stays. A capability has to belong somewhere, and until the
+   * session resolves one there is nowhere to put it.
+   */
+  const createCapability = (name: string) => {
+    if (!name || !workspace) return;
+    void (async () => {
+      try {
+        const created = await createCapMutation.mutateAsync({ name, workspaceId: workspace });
+        setActiveId(created.id);
+        setError(null);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "unreachable");
+      }
+    })();
   };
 
   const storiesFor = (stepId: string) =>
@@ -613,27 +627,34 @@ export function MapStage() {
     <section className="stage map-stage" aria-label="Story map">
       <header className="map-stage__bar">
         <MapIcon size={14} strokeWidth={2} />
-        <select aria-label="Capability" value={activeId ?? ""} onChange={(e) => setActiveId(e.target.value)}>
-          {capabilities
-            .filter((c) => !workspace || c.workspaceId === workspace)
-            .map((c) => (
-              <option key={c.id} value={c.id}>
+        {/* The FOURTH level of the blank-card rule, and the last one that was still a
+            picker plus an "add" button plus a toggle plus a field. Selecting a capability
+            is clicking its card, exactly as selecting a slice is clicking its band.
+
+            The cards SCROLL and the blank card sits outside the scroller, so it is
+            reachable at any list length — the row still ends with it, it just never
+            leaves. Wrapping instead would grow the header and shove the canvas down by a
+            variable amount every time someone adds a capability. */}
+        <div className="map-capability-row">
+          <div className="map-capability-row__scroll">
+            {visibleCapabilities.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                className={`map-capability${c.id === activeId ? " is-selected" : ""}`}
+                aria-pressed={c.id === activeId}
+                onClick={() => setActiveId(c.id)}
+              >
                 {c.name}
-              </option>
+              </button>
             ))}
-        </select>
-        <button type="button" className="settings-btn" onClick={() => setCreating((v) => !v)}>
-          <Plus size={12} strokeWidth={2} /> new capability
-        </button>
-      </header>
-      {creating && (
-        <div className="map-stage__composer">
-          <input placeholder="Capability name" {...register("capName")} />
-          <button type="button" className="settings-btn settings-btn--primary" onClick={() => void createCapability()}>
-            create capability
-          </button>
+          </div>
+          {/* Same component the three canvas levels use. Committing empty is a no-op and
+              the card clears itself, both inside BlankCard — there is nothing to repeat
+              here, which is the point of it being one implementation. */}
+          <BlankCard className="map-capability" placeholder="Capability name" onCommit={createCapability} />
         </div>
-      )}
+      </header>
       {displayError && <p className="wizard__error">{displayError}</p>}
       {capErrors.length > 0 && (
         <p className="wizard__hint">Some capability files failed to load: {capErrors.map((e) => e.file).join(", ")}</p>

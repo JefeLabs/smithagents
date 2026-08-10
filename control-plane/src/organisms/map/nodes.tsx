@@ -31,8 +31,14 @@ export interface BlankNodeData {
  * It holds its own text rather than the stage's form. Node ids are stable across
  * re-seeds (`new:story:<stepId>` is derived, not generated), so React keeps this
  * instance and its text through the re-render every model change causes.
+ *
+ * EXPORTED, and used off the canvas as well as on it: the capability row in the stage
+ * header ends with one of these. It takes its class from the caller and adds `is-blank`,
+ * so it carries no assumption about being a node — the `nodrag`/`nopan` classes on its
+ * input are inert anywhere xyflow is not reading them. Four levels obey Edwin's rule
+ * now, and this is the one implementation of it.
  */
-function BlankCard({
+export function BlankCard({
   className,
   placeholder,
   width,
