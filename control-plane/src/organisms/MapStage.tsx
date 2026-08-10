@@ -25,8 +25,6 @@ import {
   cellAt,
   layoutMap,
   type MapNode,
-  SLICE_RAIL_X,
-  STORIES_Y,
   sliceNodeId,
 } from "./map/layout";
 import { nodeTypes } from "./map/nodeTypes";
@@ -480,7 +478,11 @@ export function MapStage() {
         // exist is silent — xyflow draws nothing and logs nothing about the id.
         id: sliceNodeId(revealedSlice.id),
         type: "slice",
-        position: { x: SLICE_RAIL_X, y: STORIES_Y },
+        // THE ANCHOR LEADS THE ROW, at slot 0, with the artifacts following from slot 1.
+        // It used to sit off to the left at SLICE_RAIL_X, and since every edge on the
+        // canvas originates here, that one position set the length of all of them —
+        // moving the artifacts below the map shortened them but could not fix it.
+        position: { x: artifactRowX(0, rowX), y: rowY },
         data: { name: revealedSlice.name, fraction: `${done}/${revealedSlice.storyIds.length}` },
         draggable: false,
       },
@@ -489,7 +491,8 @@ export function MapStage() {
       ...artifactNodesFor(revealedSlice).map((a, i) => ({
         id: a.id,
         type: "artifact" as const,
-        position: { x: artifactRowX(i, rowX), y: rowY },
+        // `i + 1`: slot 0 is the anchor's.
+        position: { x: artifactRowX(i + 1, rowX), y: rowY },
         data: { kind: a.kind, label: a.label },
         draggable: false,
       })),

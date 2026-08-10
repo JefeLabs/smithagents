@@ -2925,9 +2925,9 @@ button.logo {
   opacity: 0.3;
 }
 
-/* Slice anchors and artifacts. Revealed on demand; the anchor is positioned by
-   SLICE_RAIL_X and the artifact ROW by artifactRowY / artifactRowX, all in
-   organisms/map/layout.ts.
+/* The revealed slice's band: its anchor leading, then its artifacts. One row, one set
+   of positions — artifactRowY / artifactRowX / artifactRowStartX in
+   organisms/map/layout.ts, the anchor taking slot 0.
 
    TWO LINES, not one. Both cards carry a subtitle where a story carries only text —
    the anchor its done fraction, the artifact its kind. Stacking them is not cosmetic:
@@ -2950,16 +2950,29 @@ button.logo {
      horizontally, so nothing sits one pitch beneath them. That is what retired
      ARTIFACT_PITCH. */
   height: 38px;
-  /* Must equal STEP_W, and for two independent reasons now. SLICE_RAIL_X is
-     -(STEP_W + ACTIVITY_GAP * 2), so the anchor's rail is one column wide by
-     construction; and artifactRowX advances by STEP_W + STEP_GAP, so any other width
-     would either overlap the next card in the row or open a ragged gap. */
+  /* Must equal STEP_W. artifactRowX advances one slot per card by STEP_W + STEP_GAP,
+     so any other width either overlaps the next card in the band or opens a ragged
+     gap — and because the band starts under one of the slice's own story columns, a
+     card of exactly a column's width also lines up with the stack above it. */
   width: 180px;
   padding: 0 10px;
   border-radius: 10px;
   border: 1px solid var(--pill-br);
   background: rgba(255, 255, 255, 0.04);
   font-size: 12px;
+}
+/* The anchor IS THE SLICE, not a fifth artifact, and once it moved into the same band
+   as the artifact cards nothing said so — same size, same shape, same neutral fill, the
+   difference carried entirely by which line held the small text. This is the map's own
+   encoding applied consistently: activities blue, steps yellow, stories and their
+   artifacts neutral, and a slice its own hue. That is the same argument that keeps the
+   artifact KINDS unstyled below — colour here distinguishes a LEVEL, which the reader
+   already has to learn, rather than adding a second language for kinds. */
+.map-slice-anchor {
+  background: rgba(120, 220, 170, 0.14);
+}
+.map-slice-anchor__name {
+  font-weight: 500;
 }
 .map-slice-anchor__fraction,
 .map-artifact__kind {

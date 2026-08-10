@@ -36,10 +36,8 @@ export const STEP_HEAD_H = 27;
 export const STORIES_Y = ACTIVITY_H + COL_GAP + STEP_HEAD_H + COL_GAP;
 /** Vertical pitch of one story slot. */
 export const SLOT_H = STORY_H + STORY_GAP;
-/** Slice anchor nodes sit left of the grid. */
-export const SLICE_RAIL_X = -(STEP_W + ACTIVITY_GAP * 2);
 /**
- * Separates the artifact row from the story stacks above it.
+ * Separates the revealed slice's row from the story stacks above it.
  *
  * This used to be a HORIZONTAL gap — artifacts sat right of the last column, in a
  * vertical stack. That is why the edges were the loudest thing on the map: reaching a

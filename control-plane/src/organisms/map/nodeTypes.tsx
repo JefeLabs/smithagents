@@ -51,20 +51,37 @@ import { ActivityNode, ArtifactNode, SliceNode, StepNode, StoryNode } from "./no
 const HIDDEN = { opacity: 0 } as const;
 
 /**
- * Left target, right source, on every level. Uniform rather than per-level, because
- * only slices currently originate an edge and only stories and artifacts receive one —
- * encoding that here would be a second place for the edge model to be stated, and
- * wrong the day a step gets an edge. The handles are inert either way: they carry no
- * pointer events (xyflow's own rule), and `nodesConnectable` is false on the canvas.
+ * SIDES ARE PER LEVEL, and they have to be. An edge leaves the first SOURCE handle of
+ * its source node and enters the first TARGET handle of its target node — xyflow picks
+ * `bounds[0]` when an edge names no handle id — so the side a level puts its handle on
+ * is the direction its edges leave and arrive from. One pair for everything was right
+ * only while the anchor sat off to the left of the whole map, where every target was to
+ * its right.
  *
- * Left/right rather than top/bottom because the reveal reads horizontally: the anchor
- * sits at SLICE_RAIL_X, left of the grid, and artifacts a column past its right edge.
+ * The anchor now leads a band UNDERNEATH the stories it owns, and it has two families
+ * of edge going opposite ways: up to its stories, and sideways along the band to its
+ * artifacts. Measured with a right-facing source and left-facing targets — the previous
+ * arrangement — an edge to a story sitting directly ABOVE the anchor left the anchor's
+ * right edge, looped 284px out and came back to enter the story from the left. Two of
+ * those crossed the empty middle of the map.
+ *
+ * So: the anchor sources from its TOP, stories receive on their BOTTOM, and artifacts
+ * receive on their LEFT. That is one handle per node per direction — no edge has to
+ * name a handle id, and `MapEdge` needs no new field. Activities and steps keep the
+ * old pair; nothing draws an edge to either, and giving them a considered side would
+ * state an edge model that does not exist.
+ *
+ * The handles stay inert throughout: no pointer events (xyflow's own rule), and
+ * `nodesConnectable` is false on the canvas.
  */
-function withHandles<D>(Card: ComponentType<{ data: D; width?: number }>): ComponentType<NodeProps> {
+function withHandles<D>(
+  Card: ComponentType<{ data: D; width?: number }>,
+  sides: { source: Position; target: Position },
+): ComponentType<NodeProps> {
   return function NodeWithHandles({ data, width }: NodeProps) {
     return (
       <>
-        <Handle type="target" position={Position.Left} isConnectable={false} style={HIDDEN} />
+        <Handle type="target" position={sides.target} isConnectable={false} style={HIDDEN} />
         {/*
           The one cast, and it is now in one place. xyflow types `data` as
           Record<string, unknown> while each card takes a narrower shape — that
@@ -73,20 +90,25 @@ function withHandles<D>(Card: ComponentType<{ data: D; width?: number }>): Compo
           the whole map at once; here it is per-level and the export is honestly typed.
         */}
         <Card data={data as D} width={width} />
-        <Handle type="source" position={Position.Right} isConnectable={false} style={HIDDEN} />
+        <Handle type="source" position={sides.source} isConnectable={false} style={HIDDEN} />
       </>
     );
   };
 }
+
+/** The side a level's edges leave from and arrive at — see `withHandles`. */
+const SIDEWAYS = { source: Position.Right, target: Position.Left } as const;
 
 /**
  * Module scope on purpose. A fresh object identity each render makes xyflow remount
  * every node on every render.
  */
 export const nodeTypes: NodeTypes = {
-  activity: withHandles(ActivityNode),
-  step: withHandles(StepNode),
-  story: withHandles(StoryNode),
-  slice: withHandles(SliceNode),
-  artifact: withHandles(ArtifactNode),
+  activity: withHandles(ActivityNode, SIDEWAYS),
+  step: withHandles(StepNode, SIDEWAYS),
+  // Receives from the band below it.
+  story: withHandles(StoryNode, { source: Position.Right, target: Position.Bottom }),
+  // Sources upward to its stories; its artifacts are the ones that reach sideways.
+  slice: withHandles(SliceNode, { source: Position.Top, target: Position.Left }),
+  artifact: withHandles(ArtifactNode, SIDEWAYS),
 };
