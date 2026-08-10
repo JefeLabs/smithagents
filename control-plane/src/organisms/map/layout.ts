@@ -26,11 +26,39 @@ import type { CapActivityT, CapSliceT, CapStoryT } from "../../api/types";
 export const STEP_W = 180;
 export const STEP_GAP = 8;
 export const ACTIVITY_GAP = 12;
-export const STORY_H = 32;
+/**
+ * A story card holds TWO LINES of title, its own row of controls, and nothing else.
+ *
+ * 56 = 2 border + 6 padding + 28 title + 4 gap + 16 controls, where the title is two
+ * 14px line boxes. `line-height` is pinned in the CSS rather than left at `normal`
+ * precisely so this addition is exact and does not move with the font stack.
+ *
+ * The title got its own full-width row here, and that — not the second line — is what
+ * made story titles legible. The slice `<select>` beside them is a native one, so it
+ * sizes to its widest OPTION rather than its value: measured, it took 123.5px of a
+ * 180px card and left the title box **12.5px, about two characters**, on every story
+ * in the capability. Naming one slice something long shrank every title on the map,
+ * including stories in the backlog. Two lines of a 12.5px box would have been four
+ * characters instead of two, so rows alone could never have fixed it.
+ */
+export const STORY_H = 56;
 export const STORY_GAP = 6;
 export const COL_GAP = 8;
 export const ACTIVITY_H = 32;
-export const STEP_HEAD_H = 27;
+/**
+ * A step head holds two lines of title beside its remove button.
+ *
+ * 34 = 2 border + 32 content, and the content box holds two 14px line boxes with the
+ * flex centring absorbing the remainder — so a one-line step still sits centred and
+ * the height never moves.
+ *
+ * Steps did NOT have the story cards' problem: their title box measured 142px and
+ * every real step name fits on one line. They are clamped anyway, and deliberately —
+ * at 142px a title runs out around 26 characters while the longest in `jefelabs` draws
+ * 134px, so the next step name anyone types is as likely as not to be cut. This buys
+ * the same protection before the second half breaks rather than after.
+ */
+export const STEP_HEAD_H = 34;
 
 /** Vertical offset where a step's story stack begins. */
 export const STORIES_Y = ACTIVITY_H + COL_GAP + STEP_HEAD_H + COL_GAP;

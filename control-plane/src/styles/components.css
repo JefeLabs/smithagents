@@ -2834,8 +2834,12 @@ button.logo {
   /* Must equal STEP_HEAD_H in organisms/map/layout.ts — STORIES_Y's other term, and
      the same gap-equality argument as .map-activity__name above. On the canvas this
      card is a step's head and nothing else: its stories are sibling nodes, not
-     children, which is why its height is a head's and not a column's. */
-  height: 27px;
+     children, which is why its height is a head's and not a column's.
+
+     34 = 2 border + 32 content, holding two 14px line boxes with the flex centring
+     absorbing the remainder — so a one-line title still sits centred and the height
+     does not move with the text. */
+  height: 34px;
   /* Must equal STEP_W. Only activity nodes carry a MapNode.width (they span their
      step group), so nothing else would give a step card a column's width. */
   width: 180px;
@@ -2845,45 +2849,85 @@ button.logo {
   border: 1px solid var(--pill-br);
   font-size: 11.5px;
 }
+/* TWO ROWS: the title, then its controls. A COLUMN, not a row, and that is the fix —
+   the slice <select> is native, so it sizes to its widest OPTION rather than its value
+   and took 123.5px of this 180px card, leaving the title 12.5px. Every story title on
+   the map was clipped to about two characters, and naming one slice something long
+   shrank all of them at once. The title only ever needed the width. */
 .map-story {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  gap: 4px;
   /* Must equal STORY_H in organisms/map/layout.ts. cellAt is NOT what is at risk —
      it inverts POSITIONS, which no stylesheet can move. The row below is: layoutMap
      puts the next story exactly SLOT_H (STORY_H + STORY_GAP) lower, so any card
      taller than STORY_H spends the 6px gap and then overlaps its neighbour.
 
-     Which is not an edge case. Without the ellipsis below, a story wraps in this
-     180px column at about SEVENTEEN characters — "create tour time slots" draws 42px
-     against a 38px pitch — and a full sentence reaches 182px, four rows deep. Nearly
-     every real story is longer than sixteen characters, so unbounded growth is the
-     normal case and the pin plus the ellipsis are what contain it. */
-  height: 32px;
+     56 = 2 border + 6 padding + 28 title + 4 gap + 16 controls. The clamp below is
+     what holds the title term at 28 no matter how long the text is; without it a full
+     sentence reaches four rows and the card does not clip, it SPILLS over whatever is
+     beneath. */
+  height: 56px;
   /* Must equal STEP_W — see .map-step__name. */
   width: 180px;
-  padding: 0 10px;
+  padding: 3px 10px;
   border-radius: 10px;
   border: 1px solid var(--pill-br);
   background: rgba(255, 255, 255, 0.04);
   font-size: 12px;
 }
+/* The controls, on their own row so the title can have the card's full width. */
+.map-story__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.map-story__meta select {
+  /* The select is still allowed to want its widest option — it just cannot take the
+     title's width to get it, now that it is on a row of its own. */
+  min-width: 0;
+  flex: 1;
+}
+/* TAIL ELLIPSIS ON THE SECOND LINE, which single-line `text-overflow` cannot do.
+   -webkit-box + line-clamp is the only mechanism that ellipsises at the end of the
+   LAST VISIBLE line; it is unprefixed nowhere, and prefixed everywhere that matters.
+
+   `line-height` is pinned rather than left at `normal` so the card-height arithmetic
+   in layout.ts is exact: 2 lines is 28px by construction, not by whatever the font
+   stack resolves to on the day. */
 .map-story__handle,
+.map-step__name .map-card__text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-height: 14px;
+  overflow: hidden;
+  /* A flex item's min-width is auto, which refuses to shrink below its content — the
+     clamp never engages without this. */
+  min-width: 0;
+}
+.map-story__handle {
+  /* Exactly two lines' worth, ALWAYS — not `max`. A one-line title would otherwise
+     pull the controls row up and leave every card in a column sitting at a different
+     internal height. */
+  height: 28px;
+  cursor: grab;
+}
+/* Activities keep the single-line treatment: ACTIVITY_H is unchanged, so a second line
+   there would overflow a card that was never given room for it. */
 .map-card__text {
   flex: 1;
-  /* A flex item's min-width is auto, which refuses to shrink below its content — the
-     ellipsis never appears without this. This pair, not the fixed height, is what
-     actually prevents overlap: .map-story sets no `overflow`, so with the height
-     pinned and the ellipsis removed the box stays 32px while its content runs to a
-     scrollHeight of 99 — the text does not clip, it SPILLS, over whatever is beneath.
-     The only overflow:hidden in play is the one on this line. */
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.map-story__handle {
-  cursor: grab;
+.map-step__name .map-card__text {
+  /* Undoes the nowrap above, which would otherwise keep the clamp to one line. */
+  white-space: normal;
+  text-overflow: unset;
+  flex: 1;
 }
 .map-story.is-done .map-story__handle {
   text-decoration: line-through;

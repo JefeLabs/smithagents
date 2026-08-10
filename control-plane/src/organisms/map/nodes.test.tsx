@@ -38,6 +38,22 @@ describe("StoryNode", () => {
     expect(container.querySelector(".map-story__handle")?.classList.contains("nodrag")).toBe(false);
   });
 
+  it("puts the controls in their own row, so the title gets the card's width", async () => {
+    // The wrapper is the whole reason the card has two rows. A native <select> sizes
+    // to its widest OPTION rather than its value, and beside the title it took 123.5px
+    // of a 180px card — measured — leaving the title about two characters. jsdom lays
+    // nothing out, so this pins the STRUCTURE that fixes it: the controls are inside
+    // .map-story__meta, and the title is not.
+    const { container } = render(<StoryNode data={data} />);
+    const meta = container.querySelector(".map-story__meta");
+    expect(meta).not.toBeNull();
+    expect(meta?.querySelector("select")).not.toBeNull();
+    expect(meta?.querySelector("button")).not.toBeNull();
+    expect(meta?.querySelector(".map-story__handle")).toBeNull();
+    // …and the title is a direct child of the card, not of the controls row.
+    expect(container.querySelector(".map-story > .map-story__handle")).not.toBeNull();
+  });
+
   it("calls onSliceChange when the slice select changes", async () => {
     const onSliceChange = vi.fn();
     render(<StoryNode data={{ ...data, onSliceChange }} />);

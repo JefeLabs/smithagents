@@ -86,9 +86,17 @@ export interface StoryNodeData {
 }
 
 /**
- * One story. The handle is the drag target (layout sets
- * `dragHandle: ".map-story__handle"`); the select and remove button carry `nodrag`
- * so xyflow leaves their pointer events alone. The handle deliberately does not.
+ * One story: a title row over a controls row. The handle is the drag target (layout
+ * sets `dragHandle: ".map-story__handle"`); the select and remove button carry
+ * `nodrag` so xyflow leaves their pointer events alone. The handle deliberately does
+ * not.
+ *
+ * THE CONTROLS ARE WRAPPED, and that wrapper is the whole point of the two-row card.
+ * They used to sit on one row beside the title, and a native `<select>` sizes to its
+ * widest OPTION rather than its value — measured, it took 123.5px of a 180px card and
+ * left the title 12.5px, about two characters, on every story. Moving the controls to
+ * their own row is what gives the title the card's full width; the second line is what
+ * it does with it.
  */
 export function StoryNode({ data }: { data: StoryNodeData | BlankNodeData }) {
   if (data.blank) return <BlankCard className="map-story" placeholder="Add a story…" onCommit={data.onCommit} />;
@@ -96,22 +104,24 @@ export function StoryNode({ data }: { data: StoryNodeData | BlankNodeData }) {
   return (
     <div className={`map-story${story.done ? " is-done" : ""}${dimmed ? " is-dimmed" : ""}`} title={story.verifiedBy}>
       <span className="map-story__handle">{story.text}</span>
-      <select
-        className="nodrag"
-        aria-label={`Slice for ${story.text}`}
-        value={sliceValue}
-        onChange={(e) => onSliceChange(e.target.value)}
-      >
-        <option value="backlog">backlog</option>
-        {sliceOptions.map((s) => (
-          <option key={s.id} value={s.id}>
-            {s.name}
-          </option>
-        ))}
-      </select>
-      <button className="nodrag" type="button" aria-label={`Remove story: ${story.text}`} onClick={onRemove}>
-        <X size={10} strokeWidth={2} />
-      </button>
+      <div className="map-story__meta">
+        <select
+          className="nodrag"
+          aria-label={`Slice for ${story.text}`}
+          value={sliceValue}
+          onChange={(e) => onSliceChange(e.target.value)}
+        >
+          <option value="backlog">backlog</option>
+          {sliceOptions.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+            </option>
+          ))}
+        </select>
+        <button className="nodrag" type="button" aria-label={`Remove story: ${story.text}`} onClick={onRemove}>
+          <X size={10} strokeWidth={2} />
+        </button>
+      </div>
     </div>
   );
 }
