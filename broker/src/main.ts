@@ -535,7 +535,9 @@ function sessionFrame() {
   const s = sessionManager.activeOrNull();
   return {
     type: 'session' as const,
-    session: s ? { id: s.id, title: s.title, workspace: s.workspace, runtime: s.runtime } : null,
+    session: s
+      ? { id: s.id, title: s.title, workspace: s.workspace, runtime: s.runtime, kind: s.kind ?? 'chat', docId: s.docId }
+      : null,
     sessions: sessionManager.list(),
     transcript: (s?.transcript ?? []).map((t) => ({ role: t.role, text: t.text })),
     workspaces: workspaceNames,
