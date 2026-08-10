@@ -33,6 +33,7 @@ import { MicSessionGate } from './mic-gate.ts';
 import { SessionManager, truncateTitle, resolveLazyWorkspace, type Session, type ExecutionMode } from './sessions.ts';
 import { EXEC_TO_RUNTIME, isExecutionMode } from './execution-modes.ts';
 import { generateSessionTitle } from './session-title.ts';
+import { polishText } from './polish.ts';
 import { DeepgramSttStream, type LiveLike, deepgramLiveOptions } from './stt.ts';
 import { SwarmClient, type SwarmSquad, type SwarmWorkspace, type WorkspaceBody } from './swarm-client.ts';
 import { VoiceKeyResolver, VOICE_STT_HINT, VOICE_TTS_HINT } from './voice-keys.ts';
@@ -1137,6 +1138,11 @@ const textChannel = new TextChannel(
     get: () => swarm.containers(),
     set: (enabled: boolean) => swarm.setContainers(enabled),
     verify: () => swarm.verifyContainers(),
+  },
+  (text) => {
+    const s = sessionManager.activeOrNull();
+    const context = s?.transcript.slice(-6).map((t) => `${t.role}: ${t.text}`).join('\n');
+    return polishText(streamFactory, 'claude-haiku-4-5', text, context);
   },
 );
 const micSessions = new MicSessionGate<DeepgramSttStream>();

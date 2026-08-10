@@ -75,6 +75,7 @@ function channelWith(opts: {
   voice?: ConstructorParameters<typeof TextChannel>[18];
   execModes?: ConstructorParameters<typeof TextChannel>[19];
   containers?: ConstructorParameters<typeof TextChannel>[20];
+  polish?: ConstructorParameters<typeof TextChannel>[21];
 }): TextChannel {
   return new TextChannel(
     () => {},
@@ -98,6 +99,7 @@ function channelWith(opts: {
     opts.voice,
     opts.execModes,
     opts.containers,
+    opts.polish,
   );
 }
 
@@ -1325,6 +1327,40 @@ test('execution-modes and containers routes pass through their deps', async () =
       body: JSON.stringify({ docker: { enabled: true } }),
     });
     assert.equal(badOrigin.status, 403); // matches the exact refusal status the cli-tools PUT's originBlocked() returns
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('POST /polish returns the rewrite, 400 on empty text, 502 when the rewrite fails', async () => {
+  let fail = false;
+  const channel = channelWith({
+    polish: async (text: string) => (fail ? null : `polished: ${text}`),
+  });
+  const port = await channel.start(0);
+  try {
+    const ok = await fetch(`http://127.0.0.1:${port}/polish`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'plz fix' }),
+    });
+    assert.equal(ok.status, 200);
+    assert.deepEqual(await ok.json(), { text: 'polished: plz fix' });
+
+    const empty = await fetch(`http://127.0.0.1:${port}/polish`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: '   ' }),
+    });
+    assert.equal(empty.status, 400);
+
+    fail = true;
+    const down = await fetch(`http://127.0.0.1:${port}/polish`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'x' }),
+    });
+    assert.equal(down.status, 502);
   } finally {
     await channel.stop();
   }

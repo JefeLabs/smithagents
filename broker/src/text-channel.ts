@@ -268,6 +268,8 @@ export class TextChannel {
       set(enabled: boolean): Promise<unknown>;
       verify(): Promise<unknown>;
     },
+    /** Polish-my-input (POST /polish): one standalone rewrite call before dispatch. Null = the model call failed; the caller keeps the draft. */
+    private readonly polish?: (text: string) => Promise<string | null>,
   ) {}
 
   private clientSeq = 0;
@@ -908,6 +910,31 @@ export class TextChannel {
             },
             (err: unknown) =>
               res.writeHead(500, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify({ error: String((err as Error).message ?? err) })),
+          );
+        });
+        return;
+      }
+      if (req.method === 'POST' && req.url === '/polish' && this.polish) {
+        const json = (status: number, payload: unknown) =>
+          res.writeHead(status, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify(payload));
+        let body = '';
+        req.on('data', (c) => {
+          body += c;
+        });
+        req.on('end', () => {
+          let text = '';
+          try {
+            text = String((JSON.parse(body || '{}') as { text?: unknown }).text ?? '');
+          } catch {
+            /* falls through to the empty-text 400 */
+          }
+          if (!text.trim()) {
+            json(400, { error: 'text is required' });
+            return;
+          }
+          void this.polish!(text).then(
+            (polished) => (polished ? json(200, { text: polished }) : json(502, { error: 'polish unavailable' })),
+            () => json(502, { error: 'polish unavailable' }),
           );
         });
         return;
