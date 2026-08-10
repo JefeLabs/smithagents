@@ -52,9 +52,6 @@ export type ComposeOp = { op: "form"; agents: string[] } | { op: "add" | "remove
 /** The control plane's copy of the broker's runtime vocabulary — must mirror swarm's ExecutionMode. */
 export type ExecutionMode = "local-in-process" | "local-docker" | "remote-in-process" | "remote-docker";
 
-/** Mirrors broker's sessions.ts `SessionKind` — a session is either a free-form chat or docked to a document. */
-export type SessionKind = "chat" | "document";
-
 export interface SessionSummary {
   id: string;
   title: string;
@@ -62,9 +59,8 @@ export interface SessionSummary {
   updatedAt: string;
   active: boolean;
   runtime: ExecutionMode;
-  kind: SessionKind;
-  /** Present iff kind === "document" — the document this session collaborates on. */
-  docId?: string;
+  /** Documents this session produced/works on; always resolved (absent on the wire = []). */
+  artifacts: string[];
 }
 
 /**
@@ -80,8 +76,7 @@ export interface SessionFrame {
     title: string;
     workspace: string;
     runtime: ExecutionMode;
-    kind: SessionKind;
-    docId?: string;
+    artifacts: string[];
   } | null;
   sessions: SessionSummary[];
   transcript: Array<{ role: "user" | "broker"; text: string }>;

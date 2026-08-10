@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SessionSummary } from "../api/types";
@@ -12,7 +12,7 @@ const SESSIONS: SessionSummary[] = [
     updatedAt: "2026-08-01",
     active: true,
     runtime: "local-in-process",
-    kind: "chat" as const,
+    artifacts: [],
   },
   {
     id: "s2",
@@ -21,7 +21,7 @@ const SESSIONS: SessionSummary[] = [
     updatedAt: "2026-08-02",
     active: false,
     runtime: "local-docker",
-    kind: "chat" as const,
+    artifacts: [],
   },
 ];
 
@@ -32,6 +32,7 @@ function props(overrides: Record<string, unknown> = {}) {
     workspaces: ["acme", "widgets"],
     onClose: vi.fn(),
     onActivate: vi.fn(),
+    onOpenArtifact: vi.fn(),
     onCreate: vi.fn(),
     ...overrides,
   };
@@ -49,6 +50,7 @@ function renderPanel(overrides: Record<string, unknown> = {}) {
         workspaces: [],
         onClose: vi.fn(),
         onActivate: vi.fn(),
+        onOpenArtifact: vi.fn(),
         onCreate: vi.fn(),
         ...overrides,
       }}
@@ -149,32 +151,46 @@ describe("SessionsPanel", () => {
     expect(screen.getByText("acme")).toBeTruthy();
   });
 
-  it("document sessions carry a doc badge; chat sessions do not", () => {
+  it("a session's artifacts each get a chip that opens them", () => {
+    const onOpenArtifact = vi.fn();
     renderPanel({
+      onOpenArtifact,
       sessions: [
         {
           id: "s1",
-          title: "Chat",
+          title: "Council",
           workspace: "acme",
           updatedAt: "t",
           active: true,
           runtime: "local-in-process",
-          kind: "chat",
+          artifacts: ["d1", "d2"],
         },
+      ],
+    });
+    const chips = screen.getAllByRole("button", { name: /open document/i });
+    expect(chips).toHaveLength(2);
+    fireEvent.click(chips[1]);
+    expect(onOpenArtifact).toHaveBeenCalledWith("s1", "d2");
+  });
+
+  it("a session with no artifacts has no chips and still activates", () => {
+    const onActivate = vi.fn();
+    renderPanel({
+      onActivate,
+      sessions: [
         {
           id: "s2",
-          title: "Login spec",
+          title: "Plain",
           workspace: "acme",
           updatedAt: "t",
           active: false,
           runtime: "local-in-process",
-          kind: "document",
-          docId: "d1",
+          artifacts: [],
         },
       ],
     });
-    const rows = screen.getAllByRole("button", { name: /chat|login spec/i });
-    expect(within(rows[1]).getByLabelText("document session")).toBeTruthy();
-    expect(within(rows[0]).queryByLabelText("document session")).toBeNull();
+    expect(screen.queryByRole("button", { name: /open document/i })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /plain/i }));
+    expect(onActivate).toHaveBeenCalledWith("s2");
   });
 });

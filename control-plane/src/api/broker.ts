@@ -465,15 +465,15 @@ export async function getBlueprints(base: string = BROKER_BASE): Promise<Bluepri
 /** POST /documents — creates the doc AND its document session; the documents/session frames follow on the socket. */
 export async function postDocument(
   blueprintId: string,
-  workType: string,
-  title: string,
+  text: string,
+  workType?: string,
   base: string = BROKER_BASE,
 ): Promise<{ doc?: DocT; error?: string }> {
   try {
     const res = await fetch(`http://${base}/documents`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ blueprintId, workType, title }),
+      body: JSON.stringify({ blueprintId, workType, text }),
     });
     const body = (await res.json().catch(() => ({}))) as { doc?: DocT; error?: string };
     if (res.ok && body.doc) return { doc: body.doc };

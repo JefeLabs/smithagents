@@ -80,7 +80,7 @@ describe("NewSessionScreen", () => {
             updatedAt: "2026-08-01T00:00:00Z",
             active: false,
             runtime: "local-in-process",
-            kind: "chat" as const,
+            artifacts: [],
           },
           {
             id: "s2",
@@ -89,7 +89,7 @@ describe("NewSessionScreen", () => {
             updatedAt: "2026-08-07T00:00:00Z",
             active: false,
             runtime: "local-docker",
-            kind: "chat" as const,
+            artifacts: [],
           },
         ],
       },
@@ -106,7 +106,7 @@ describe("NewSessionScreen", () => {
         updatedAt: "2026-08-07T00:00:00Z",
         active: false,
         runtime: "local-docker",
-        kind: "chat" as const,
+        artifacts: [],
       },
     ];
     // `modes` deliberately left unseeded — same "probe still in flight" state `modes: null` used to model.
@@ -128,7 +128,7 @@ describe("NewSessionScreen", () => {
         updatedAt: "2026-08-07T00:00:00Z",
         active: false,
         runtime: "local-docker",
-        kind: "chat" as const,
+        artifacts: [],
       },
     ];
     const { client } = renderScreen({ lockedWorkspace: "acme" }, { sessions });
@@ -153,7 +153,7 @@ describe("NewSessionScreen", () => {
         updatedAt: "2026-08-07T00:00:00Z",
         active: false,
         runtime: "local-docker",
-        kind: "chat" as const,
+        artifacts: [],
       },
     ];
     const { client } = renderScreen({ lockedWorkspace: "acme" }, { sessions });

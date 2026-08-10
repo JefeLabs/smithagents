@@ -136,16 +136,11 @@ export function HomePage() {
     (id: string) => {
       closeComposer();
       void api.activateSession(id);
-      // A session's surface is part of what "switching to it" means (spec:
-      // session kinds): document sessions live at their doc, chat at "/".
-      const target = sessions.find((s) => s.id === id);
-      if (target?.kind === "document" && target.docId) {
-        void navigate({ to: "/doc/$docId", params: { docId: target.docId } });
-      } else {
-        void navigate({ to: "/" });
-      }
+      // Every session is a conversation; its documents are entered through
+      // their own affordances (panel chips, the shelf), never by activation.
+      void navigate({ to: "/" });
     },
-    [closeComposer, sessions, navigate],
+    [closeComposer, navigate],
   );
 
   const agents = agentSeeds(roster, identity, engineWarnings);
@@ -314,6 +309,11 @@ export function HomePage() {
             activeWorkspace={session?.workspace}
             onClose={closeSessions}
             onActivate={onActivateSession}
+            onOpenArtifact={(sessionId, docId) => {
+              closeComposer();
+              void api.activateSession(sessionId);
+              void navigate({ to: "/doc/$docId", params: { docId } });
+            }}
             onCreate={(ws) => {
               closeSessions();
               openComposer(ws || undefined);

@@ -172,7 +172,7 @@ describe("stage routing", () => {
     expect(within(panel).getByText("acme")).toBeTruthy();
   });
 
-  it("a document session activation lands on its document", async () => {
+  it("an artifact chip opens its document", async () => {
     const router = await renderAt("/", (client) => {
       client.setQueryData(qk.documents, [
         {
@@ -195,13 +195,14 @@ describe("stage routing", () => {
           updatedAt: "t",
           active: false,
           runtime: "local-in-process",
-          kind: "document",
-          docId: "d1",
+          artifacts: ["d1"],
         },
       ]);
     });
     await userEvent.click(screen.getByRole("row", { name: /^sessions$/i }));
-    await userEvent.click(screen.getByText("Login spec"));
+    // Activating a session is entering a CONVERSATION; its documents are
+    // entered through their own chips (spec 2026-08-10, artifacts pivot).
+    await userEvent.click(screen.getByRole("button", { name: /open document d1/i }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/doc/d1"));
     expect(await screen.findByRole("region", { name: "Document" })).toBeTruthy();
   });

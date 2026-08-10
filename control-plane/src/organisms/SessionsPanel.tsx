@@ -10,6 +10,8 @@ interface SessionsPanelProps {
   workspaces: string[];
   onClose: () => void;
   onActivate: (id: string) => void;
+  /** Open one of a session's documents: activate the session, then go to the doc. */
+  onOpenArtifact: (sessionId: string, docId: string) => void;
   onCreate: (workspace?: string) => void;
   onManage?: () => void;
   /** The workspace the currently active session belongs to — anchors the panel's header. */
@@ -23,6 +25,7 @@ export function SessionsPanel({
   workspaces,
   onClose,
   onActivate,
+  onOpenArtifact,
   onCreate,
   onManage,
   activeWorkspace,
@@ -72,24 +75,38 @@ export function SessionsPanel({
               )}
               <div className="sessions-panel__list">
                 {visible.map((s) => (
-                  <button
-                    key={s.id}
-                    type="button"
-                    className={`session-row${s.active ? " session-row--active" : ""}`}
-                    onClick={() => {
-                      if (!s.active) onActivate(s.id);
-                      onClose();
-                    }}
-                  >
-                    <span className="session-row__title">{s.title}</span>
-                    {s.kind === "document" && (
-                      <FileText size={12} aria-label="document session" className="session-row__kind" />
-                    )}
-                    <span className="session-row__meta">
-                      {s.workspace}
-                      <span className="session-row__runtime">{MODE_LABELS[s.runtime]}</span>
-                    </span>
-                  </button>
+                  // A row is a container, not a button: its artifacts are their own
+                  // entries, and a button inside a button is invalid.
+                  <div key={s.id} className={`session-row${s.active ? " session-row--active" : ""}`}>
+                    <button
+                      type="button"
+                      className="session-row__main"
+                      onClick={() => {
+                        if (!s.active) onActivate(s.id);
+                        onClose();
+                      }}
+                    >
+                      <span className="session-row__title">{s.title}</span>
+                      <span className="session-row__meta">
+                        {s.workspace}
+                        <span className="session-row__runtime">{MODE_LABELS[s.runtime]}</span>
+                      </span>
+                    </button>
+                    {(s.artifacts ?? []).map((docId) => (
+                      <button
+                        key={docId}
+                        type="button"
+                        className="session-row__artifact"
+                        aria-label={`open document ${docId}`}
+                        onClick={() => {
+                          onOpenArtifact(s.id, docId);
+                          onClose();
+                        }}
+                      >
+                        <FileText size={12} />
+                      </button>
+                    ))}
+                  </div>
                 ))}
               </div>
               <footer>
