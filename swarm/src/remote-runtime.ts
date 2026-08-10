@@ -59,14 +59,48 @@ export class WorkerPool {
   }
 
   /**
-   * Remove a worker (called when WS disconnects).
+   * Remove a worker (disconnect or reap). Every session it owned settles its
+   * pending waitFor with -1 — a vanished worker is a failed task, never a
+   * task that hangs the dispatcher forever — and drops its cached output so
+   * captureOutput can't serve a dead session's last frame as live.
    */
   removeWorker(workerId: string): void {
     this.workers.delete(workerId);
-    // Clean up session mappings
     for (const [session, wid] of this.sessionWorker) {
-      if (wid === workerId) this.sessionWorker.delete(session);
+      if (wid !== workerId) continue;
+      this.sessionWorker.delete(session);
+      this.outputCache.delete(session);
+      const pending = this.pendingWaits.get(session);
+      if (pending) {
+        pending.resolve(-1);
+        this.pendingWaits.delete(session);
+      }
     }
+  }
+
+  /** Force-disconnect a worker (e.g., its device was revoked). */
+  disconnectWorker(workerId: string): boolean {
+    const entry = this.workers.get(workerId);
+    if (!entry) return false;
+    try { entry.ws.close(); } catch { /* already dead */ }
+    this.removeWorker(workerId);
+    return true;
+  }
+
+  /**
+   * Reap workers whose last heartbeat is older than maxAgeMs. The socket is
+   * terminated (not close — a half-dead TCP peer never completes a close
+   * handshake) and the worker removed. Returns the reaped workerIds.
+   */
+  reapStale(maxAgeMs: number, now = Date.now()): string[] {
+    const reaped: string[] = [];
+    for (const [workerId, entry] of this.workers) {
+      if (now - Date.parse(entry.info.lastHeartbeat) <= maxAgeMs) continue;
+      try { (entry.ws as { terminate?: () => void }).terminate?.(); } catch { /* already dead */ }
+      reaped.push(workerId);
+    }
+    for (const id of reaped) this.removeWorker(id);
+    return reaped;
   }
 
   /**

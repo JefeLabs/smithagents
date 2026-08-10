@@ -89,3 +89,66 @@ test('launch without kind keeps legacy any-worker behavior', async () => {
   await pool.launch('s1', 'echo hi', '/tmp');
   assert.equal(sent.length, 1);
 });
+
+// ---------------------------------------------------------------------------
+// Disconnect / reap resilience
+// ---------------------------------------------------------------------------
+
+function fakeSocket(): { sent: unknown[]; ws: WebSocket; closed: () => boolean } {
+  const sent: unknown[] = [];
+  let closed = false;
+  const ws = {
+    readyState: 1,
+    send: (data: string) => sent.push(JSON.parse(data)),
+    close: () => { closed = true; },
+    terminate: () => { closed = true; },
+  } as unknown as WebSocket;
+  return { sent, ws, closed: () => closed };
+}
+
+test('removeWorker settles pendingWaits with -1 instead of hanging forever', async () => {
+  const pool = new WorkerPool();
+  pool.addWorker('w1', workerInfo('w1', ['tmux']), fakeSocket().ws);
+  await pool.launch('sess-gone', 'echo hi', '/tmp');
+  pool.handleWorkerMessage('w1', { type: 'task:accepted', taskId: 'sess-gone', sessionName: 'sess-gone', workerId: 'w1' });
+  const wait = pool.waitFor('sess-gone');
+  pool.removeWorker('w1');
+  assert.equal(await wait, -1);
+});
+
+test('removeWorker clears the output cache for its sessions', async () => {
+  const pool = new WorkerPool();
+  pool.addWorker('w1', workerInfo('w1', ['tmux']), fakeSocket().ws);
+  await pool.launch('sess-cache', 'echo hi', '/tmp');
+  pool.handleWorkerMessage('w1', { type: 'task:accepted', taskId: 'sess-cache', sessionName: 'sess-cache', workerId: 'w1' });
+  pool.handleWorkerMessage('w1', { type: 'output:chunk', taskId: 'sess-cache', sessionName: 'sess-cache', output: 'stale', lines: 1 });
+  pool.removeWorker('w1');
+  // With the cache cleared and no worker owning the session, captureOutput
+  // must reject (request times out) rather than serve dead output.
+  await assert.rejects(pool.captureOutput('sess-cache'));
+});
+
+test('reapStale terminates only workers with stale heartbeats', () => {
+  const pool = new WorkerPool();
+  const now = Date.now();
+  const fresh = workerInfo('fresh', ['tmux']);
+  const stale = workerInfo('stale', ['tmux']);
+  stale.lastHeartbeat = new Date(now - 60_000).toISOString();
+  const staleSocket = fakeSocket();
+  pool.addWorker('fresh', fresh, fakeSocket().ws);
+  pool.addWorker('stale', stale, staleSocket.ws);
+  const reaped = pool.reapStale(45_000, now);
+  assert.deepEqual(reaped, ['stale']);
+  assert.equal(pool.workerCount, 1);
+  assert.equal(staleSocket.closed(), true);
+});
+
+test('disconnectWorker closes the socket and removes the worker', () => {
+  const pool = new WorkerPool();
+  const socket = fakeSocket();
+  pool.addWorker('w1', workerInfo('w1', ['tmux']), socket.ws);
+  assert.equal(pool.disconnectWorker('w1'), true);
+  assert.equal(socket.closed(), true);
+  assert.equal(pool.workerCount, 0);
+  assert.equal(pool.disconnectWorker('w1'), false);
+});
