@@ -118,6 +118,7 @@ export function Composer({
           />
         </PromptInput.Content>
         {armed && blueprints && blueprints.length > 0 && (
+          // biome-ignore lint/a11y/useSemanticElements: a fieldset cannot live inside PromptInput's shell (no form, and its default chrome breaks the dock); role="group" is the ARIA equivalent for a toggle-button set
           <div className="composer__chips" role="group" aria-label="document blueprint">
             {blueprints.map((b) => (
               <button
@@ -172,6 +173,7 @@ export function Composer({
               </span>
             )}
             {(onSendDocument || kind === "document") && (
+              // biome-ignore lint/a11y/useSemanticElements: same as the chips row — a toolbar-embedded toggle pair, not a form fieldset
               <div className="composer__kind-group" role="group" aria-label="composer mode">
                 <button
                   type="button"

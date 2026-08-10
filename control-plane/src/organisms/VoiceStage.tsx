@@ -1,5 +1,6 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import type { ChatMessage } from "../api/types";
+import type { ReactNode } from "react";
+import type { BlueprintT, ChatMessage } from "../api/types";
 import { Composer } from "../molecules/Composer";
 import { MicHero } from "../molecules/MicHero";
 import { Transcript } from "../molecules/Transcript";
@@ -21,6 +22,11 @@ interface VoiceStageProps {
   voiceNotice?: string | null;
   /** Rewrites the draft in place; the composer's polish action renders only when this is wired. */
   onPolish?: (text: string) => Promise<string | null>;
+  /** The active session's document shelf — composed by the route, so this stage stays router-free. */
+  shelf?: ReactNode;
+  /** Arms document mode in the composer; a send then creates the document. */
+  onSendDocument?: (blueprintId: string, text: string) => Promise<{ error?: string } | undefined>;
+  blueprints?: BlueprintT[];
 }
 
 export function VoiceStage({
@@ -36,6 +42,9 @@ export function VoiceStage({
   showMicHero = true,
   voiceNotice = null,
   onPolish,
+  shelf,
+  onSendDocument,
+  blueprints,
 }: VoiceStageProps) {
   const chatActive = messages.length > 0;
   const reduceMotion = useReducedMotion();
@@ -43,6 +52,7 @@ export function VoiceStage({
 
   return (
     <section className={chatActive ? "stage chat-active" : "stage"} aria-label="Voice">
+      {shelf}
       <AnimatePresence mode="popLayout" initial={false}>
         {!chatActive && (
           <motion.div
@@ -90,6 +100,8 @@ export function VoiceStage({
           sttEnabled={sttEnabled}
           onVoiceBlocked={onVoiceBlocked}
           onPolish={onPolish}
+          onSendDocument={onSendDocument}
+          blueprints={blueprints}
         />
       </motion.div>
     </section>
