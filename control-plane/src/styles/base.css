@@ -190,3 +190,33 @@ body {
   color: var(--text-2);
   opacity: 0.5;
 }
+
+/* React Flow tags its own container `light` (or `dark`, via the `colorMode` prop), and
+   HeroUI declares its palette on `:root,.light,.default,[data-theme=light],[data-theme=default]`.
+   Those two collide: xyflow's class matches HeroUI's LIGHT-theme selector, so every element
+   inside the canvas inherits HeroUI's light tokens no matter what theme the app is in.
+
+   Measured on a dark theme, inside `.react-flow`: `--background` was oklch(0.9702 0 0) —
+   near-white — against #090b10 at the root, and `--foreground` was near-black against light
+   text. Eight of our twenty root tokens flipped. Cards mostly survived because they use
+   `--pill` and `--text`, which HeroUI does not declare; anything reaching for one of these
+   eight got the inverted value silently.
+
+   Re-inheriting is the whole fix: these are OUR names, and the parent already holds the
+   right value for whichever theme is active — so `inherit` tracks theme changes for free,
+   where restating literals would freeze them at one theme. Unlayered, because HeroUI's
+   declaration is layered and a layered rule cannot outrank it.
+
+   Only the eight that actually collide are listed. If a token is added to tokens.css and
+   HeroUI happens to use the same name, it will need adding here — the probe is to compare
+   getComputedStyle(document.documentElement) against getComputedStyle('.react-flow'). */
+.react-flow {
+  --accent: inherit;
+  --background: inherit;
+  --foreground: inherit;
+  --surface: inherit;
+  --overlay: inherit;
+  --muted: inherit;
+  --border: inherit;
+  --separator: inherit;
+}
