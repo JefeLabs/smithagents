@@ -75,6 +75,29 @@ test('resolveLazyWorkspace: discord lands in the attended workspace, everything 
   assert.equal(resolveLazyWorkspace({ kind: 'stdin', channelRef: 'c' }, 'acme', 'main'), 'main');
 });
 
+test('sessions default to kind chat; document sessions carry kind and docId', () => {
+  let n = 0;
+  const store = memoryStore();
+  const mgr = new SessionManager(store, () => new Date(Date.parse(T) + n++ * 1000).toISOString());
+  mgr.create('acme', {});
+  const doc = mgr.create('acme', { kind: 'document', docId: 'd1', title: 'Spec: login' });
+  const [docRow, chatRow] = mgr.list();
+  assert.equal(docRow.id, doc.id);
+  assert.equal(docRow.kind, 'document');
+  assert.equal(docRow.docId, 'd1');
+  assert.equal(chatRow.kind, 'chat');
+  assert.equal(chatRow.docId, undefined);
+});
+
+test('a legacy persisted session with no kind lists as chat', () => {
+  const store = memoryStore();
+  store.save({ id: 's1', title: 'old', workspace: 'w', runtime: 'local-in-process', createdAt: T, updatedAt: T, transcript: [], brainHistory: [] } as never);
+  const mgr = new SessionManager(store);
+  mgr.init();
+  assert.equal(mgr.list()[0].kind, 'chat');
+  assert.equal(mgr.list()[0].docId, undefined);
+});
+
 test('transcript and brain history persist through the store; switching swaps them', () => {
   const store = memoryStore();
   const mgr = new SessionManager(store);

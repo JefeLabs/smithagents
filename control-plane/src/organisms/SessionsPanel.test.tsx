@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SessionSummary } from "../api/types";
@@ -12,6 +12,7 @@ const SESSIONS: SessionSummary[] = [
     updatedAt: "2026-08-01",
     active: true,
     runtime: "local-in-process",
+    kind: "chat" as const,
   },
   {
     id: "s2",
@@ -20,6 +21,7 @@ const SESSIONS: SessionSummary[] = [
     updatedAt: "2026-08-02",
     active: false,
     runtime: "local-docker",
+    kind: "chat" as const,
   },
 ];
 
@@ -33,6 +35,25 @@ function props(overrides: Record<string, unknown> = {}) {
     onCreate: vi.fn(),
     ...overrides,
   };
+}
+
+// Its own lean defaults, not `props()`'s: the shared fixture's "acme" workspace shows up
+// in a session row AND a filter chip, which would make `getByText("acme")` ambiguous for
+// a test that's only asserting on the header anchor.
+function renderPanel(overrides: Record<string, unknown> = {}) {
+  return render(
+    <SessionsPanel
+      {...{
+        open: true,
+        sessions: [],
+        workspaces: [],
+        onClose: vi.fn(),
+        onActivate: vi.fn(),
+        onCreate: vi.fn(),
+        ...overrides,
+      }}
+    />,
+  );
 }
 
 describe("SessionsPanel", () => {
@@ -121,5 +142,39 @@ describe("SessionsPanel", () => {
   it("renders nothing when closed", () => {
     const { container } = render(<SessionsPanel {...props({ open: false })} />);
     expect(container.innerHTML).toBe("");
+  });
+
+  it("the header anchors the active workspace", () => {
+    renderPanel({ activeWorkspace: "acme" });
+    expect(screen.getByText("acme")).toBeTruthy();
+  });
+
+  it("document sessions carry a doc badge; chat sessions do not", () => {
+    renderPanel({
+      sessions: [
+        {
+          id: "s1",
+          title: "Chat",
+          workspace: "acme",
+          updatedAt: "t",
+          active: true,
+          runtime: "local-in-process",
+          kind: "chat",
+        },
+        {
+          id: "s2",
+          title: "Login spec",
+          workspace: "acme",
+          updatedAt: "t",
+          active: false,
+          runtime: "local-in-process",
+          kind: "document",
+          docId: "d1",
+        },
+      ],
+    });
+    const rows = screen.getAllByRole("button", { name: /chat|login spec/i });
+    expect(within(rows[1]).getByLabelText("document session")).toBeTruthy();
+    expect(within(rows[0]).queryByLabelText("document session")).toBeNull();
   });
 });

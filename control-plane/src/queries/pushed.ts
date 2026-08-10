@@ -1,8 +1,23 @@
 import { skipToken, useQuery } from "@tanstack/react-query";
-import type { BrokerIdentityInfo, ChatMessage, ExecutionMode, RosterAgent, SessionSummary } from "../api/types";
+import type {
+  BrokerIdentityInfo,
+  ChatMessage,
+  DocT,
+  ExecutionMode,
+  RosterAgent,
+  SessionKind,
+  SessionSummary,
+} from "../api/types";
 import { qk } from "./keys";
 
-type ActiveSession = { id: string; title: string; workspace: string; runtime: ExecutionMode } | null;
+type ActiveSession = {
+  id: string;
+  title: string;
+  workspace: string;
+  runtime: ExecutionMode;
+  kind: SessionKind;
+  docId?: string;
+} | null;
 
 /**
  * The broker exposes no GET for session state — it exists only as a WS frame.
@@ -51,4 +66,9 @@ export function useRoster() {
     queryFn: skipToken,
     staleTime: Infinity,
   });
+}
+
+/** Documents frame is pushed just like sessions/roster: skipToken, filled by the socket store. */
+export function useDocuments() {
+  return useQuery<DocT[]>({ queryKey: qk.documents, queryFn: skipToken, staleTime: Infinity });
 }

@@ -17,11 +17,17 @@ export type ExecutionMode = 'local-in-process' | 'local-docker' | 'remote-in-pro
 
 const LEGACY_MODE: ExecutionMode = 'local-in-process';
 
+export type SessionKind = 'chat' | 'document';
+
 export interface Session {
   id: string;
   title: string;
   workspace: string;
   runtime: ExecutionMode;
+  /** Absent on legacy files = "chat" (lockstep tolerance, same rule the UI parser applies). */
+  kind?: SessionKind;
+  /** Present iff kind === "document" — the document this session collaborates on. */
+  docId?: string;
   /** True while the brain still owes this session its one post-first-reply retitle. */
   awaitingTitle?: boolean;
   createdAt: string;
@@ -35,6 +41,8 @@ export interface SessionSummary {
   title: string;
   workspace: string;
   runtime: ExecutionMode;
+  kind: SessionKind;
+  docId?: string;
   updatedAt: string;
   active: boolean;
 }
@@ -84,13 +92,18 @@ export class SessionManager {
     return latest;
   }
 
-  create(workspace: string, opts?: { title?: string; runtime?: ExecutionMode; awaitingTitle?: boolean }): Session {
+  create(
+    workspace: string,
+    opts?: { title?: string; runtime?: ExecutionMode; kind?: SessionKind; docId?: string; awaitingTitle?: boolean },
+  ): Session {
     this.seq += 1;
     const session: Session = {
       id: `s${this.seq}`,
       title: opts?.title?.trim() || `Session ${this.seq}`,
       workspace,
       runtime: opts?.runtime ?? LEGACY_MODE,
+      kind: opts?.kind ?? 'chat',
+      docId: opts?.docId,
       awaitingTitle: opts?.awaitingTitle,
       createdAt: this.now(),
       updatedAt: this.now(),
@@ -138,7 +151,16 @@ export class SessionManager {
   list(): SessionSummary[] {
     return [...this.sessions.values()]
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-      .map((s) => ({ id: s.id, title: s.title, workspace: s.workspace, runtime: s.runtime, updatedAt: s.updatedAt, active: s.id === this.activeId }));
+      .map((s) => ({
+        id: s.id,
+        title: s.title,
+        workspace: s.workspace,
+        runtime: s.runtime,
+        kind: s.kind ?? 'chat',
+        docId: s.docId,
+        updatedAt: s.updatedAt,
+        active: s.id === this.activeId,
+      }));
   }
 
   /** Every session with its full transcript — evidence for removal decisions. */

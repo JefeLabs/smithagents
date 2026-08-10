@@ -69,4 +69,5 @@
 
 @import "./components.css" layer(legacy);
 @import "./dashboards.css" layer(legacy);
+@import "./documents.css" layer(legacy);
 @import "./overrides.css" layer(overrides);

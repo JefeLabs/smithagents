@@ -3,7 +3,7 @@ import { Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useCallback, useEffect } from "react";
 import * as api from "../api/broker";
 import { BROKER_BASE } from "../api/broker";
-import type { RosterAgent, SessionSummary } from "../api/types";
+import type { DocT, RosterAgent, SessionSummary } from "../api/types";
 import { type AgentSeed, agentSeeds } from "../data/agents";
 import { usePushToTalk } from "../hooks/usePushToTalk";
 import { useSpokenReplies } from "../hooks/useSpokenReplies";
@@ -126,6 +126,9 @@ export function HomePage() {
   const knownZeroSessions = sessionStatus === "success" && session === null;
   const composerVisible = composer !== null || (connected && knownZeroSessions);
 
+  const navigate = useNavigate();
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+
   // Picking another session backs out of an explicitly-opened composer (spec §3) — without
   // this, an explicit composer stays rendered with a possibly-stale locked workspace after
   // the activated session's frame lands.
@@ -133,14 +136,19 @@ export function HomePage() {
     (id: string) => {
       closeComposer();
       void api.activateSession(id);
+      // A session's surface is part of what "switching to it" means (spec:
+      // session kinds): document sessions live at their doc, chat at "/".
+      const target = sessions.find((s) => s.id === id);
+      if (target?.kind === "document" && target.docId) {
+        void navigate({ to: "/doc/$docId", params: { docId: target.docId } });
+      } else {
+        void navigate({ to: "/" });
+      }
     },
-    [closeComposer],
+    [closeComposer, sessions, navigate],
   );
 
   const agents = agentSeeds(roster, identity, engineWarnings);
-
-  const navigate = useNavigate();
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
 
   const callOn = (name: string) => void api.postUtterance(`Go ahead, ${name} — you have the floor.`);
 
@@ -221,6 +229,26 @@ export function HomePage() {
           <NewSessionScreen
             lockedWorkspace={composer?.locked}
             forced={knownZeroSessions}
+            listBlueprints={api.getBlueprints}
+            onCreateDocument={async (blueprintId, workType, title) => {
+              const r = await api.postDocument(blueprintId, workType, title);
+              if (r.error) return { error: r.error };
+              closeComposer();
+              if (r.doc) {
+                // Seed the cache before navigating — DocRoute reads it on mount, and the
+                // documents frame the socket would otherwise deliver can arrive a beat
+                // late. Without this the create-race twin of the cold-WS-reload bug fires:
+                // pending is fine (router.tsx now renders nothing for it), but the doc still
+                // isn't there yet either way, so there's nothing to show.
+                const created = r.doc;
+                qc.setQueryData<DocT[]>(qk.documents, (prev) => [
+                  created,
+                  ...(prev ?? []).filter((d) => d.id !== created.id),
+                ]);
+                void navigate({ to: "/doc/$docId", params: { docId: created.id } });
+              }
+              return undefined;
+            }}
             onSend={async (ws, mode, prompt) => {
               const r = await api.postSession(BROKER_BASE, ws, mode, prompt);
               if (r.error) {
@@ -283,6 +311,7 @@ export function HomePage() {
             open={sessionsOpen}
             sessions={sessions}
             workspaces={workspaces}
+            activeWorkspace={session?.workspace}
             onClose={closeSessions}
             onActivate={onActivateSession}
             onCreate={(ws) => {

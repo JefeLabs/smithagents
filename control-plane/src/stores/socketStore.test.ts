@@ -363,6 +363,41 @@ describe("socketStore frame handling", () => {
     expect(heard).toHaveLength(1);
   });
 
+  it("a documents frame replaces the documents cache wholesale", () => {
+    const qc = new QueryClient();
+    store().connect(qc);
+    emit({
+      type: "documents",
+      documents: [
+        {
+          id: "d1",
+          title: "Spec",
+          blueprintId: "spec",
+          workType: "feature",
+          sections: [],
+          participants: [],
+          status: "drafting",
+          createdAt: "t",
+          updatedAt: "t",
+        },
+      ],
+    });
+
+    expect(qc.getQueryData(qk.documents)).toEqual([
+      {
+        id: "d1",
+        title: "Spec",
+        blueprintId: "spec",
+        workType: "feature",
+        sections: [],
+        participants: [],
+        status: "drafting",
+        createdAt: "t",
+        updatedAt: "t",
+      },
+    ]);
+  });
+
   it("ignores task-dispatched and unknown frames without touching the cache", () => {
     const qc = new QueryClient();
     store().connect(qc);

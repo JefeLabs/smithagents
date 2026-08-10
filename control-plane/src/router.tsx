@@ -7,17 +7,20 @@ import {
   useNavigate,
 } from "@tanstack/react-router";
 import * as api from "./api/broker";
-import type { ChatMessage, RosterAgent } from "./api/types";
+import type { ChatMessage, DocT, RosterAgent } from "./api/types";
 import { agentSeeds } from "./data/agents";
 import { useVoiceStatus } from "./hooks/useVoiceStatus";
+import { Composer } from "./molecules/Composer";
+import { Transcript } from "./molecules/Transcript";
 import { BoardStage } from "./organisms/BoardStage";
 import { DashboardsStage } from "./organisms/DashboardsStage";
+import { DocumentStage } from "./organisms/DocumentStage";
 import { MapStage } from "./organisms/MapStage";
 import { VoiceStage } from "./organisms/VoiceStage";
 import { WorkStage } from "./organisms/WorkStage";
 import { HomePage } from "./pages/HomePage";
 import { useVoiceSettings } from "./queries/http";
-import { useRoster, useTranscript } from "./queries/pushed";
+import { useDocuments, useRoster, useTranscript } from "./queries/pushed";
 import { useAudioStore } from "./stores/audioStore";
 import { useSocketStore } from "./stores/socketStore";
 import { useUiStore } from "./stores/uiStore";
@@ -26,6 +29,7 @@ import { useUiStore } from "./stores/uiStore";
 // keyed on the array's identity.
 const NO_MESSAGES: ChatMessage[] = [];
 const NO_ROSTER: RosterAgent[] = [];
+const NO_DOCS: DocT[] = [];
 
 /**
  * Route components are deliberately thin: they read broker state from the
@@ -66,6 +70,7 @@ function VoiceRoute() {
       onVoiceBlocked={showVoiceBlockedNotice}
       showMicHero={!hideMic}
       voiceNotice={voiceNotice}
+      onPolish={api.polishDraft}
     />
   );
 }
@@ -81,6 +86,33 @@ function MapRoute() {
 
 function DashboardsRoute() {
   return <DashboardsStage />;
+}
+
+function DocRoute() {
+  const { docId } = docRoute.useParams();
+  const { data: docs = NO_DOCS, status } = useDocuments();
+  const { data: messages = NO_MESSAGES } = useTranscript();
+  const connected = useSocketStore((c) => c.connected);
+  // Cold-WS race: on a hard reload of /doc/:id the documents frame hasn't
+  // landed yet, so the query is still `pending` — that is not "no such doc",
+  // it's "don't know yet". Only a RESOLVED query missing the doc means
+  // unknown or deleted (same `status`-over-`data` precedent as useSessionKnown).
+  if (status !== "success") return null;
+  const doc = docs.find((d) => d.id === docId);
+  // Unknown or deleted doc — the stage-routing convention: go home.
+  if (!doc) return <Navigate to="/" replace />;
+  return (
+    <DocumentStage
+      doc={doc}
+      onSaveSection={(sectionId, body) => api.patchDocSection(doc.id, sectionId, body)}
+      chat={
+        <div className="document-stage__dock">
+          <Transcript messages={messages} />
+          <Composer onSend={api.postUtterance} disabled={!connected} onPolish={api.polishDraft} />
+        </div>
+      }
+    />
+  );
 }
 
 function WorkRoute() {
@@ -115,9 +147,10 @@ const dashboardsRoute = createRoute({
   path: "/dashboards",
   component: DashboardsRoute,
 });
+const docRoute = createRoute({ getParentRoute: () => rootRoute, path: "/doc/$docId", component: DocRoute });
 const workRoute = createRoute({ getParentRoute: () => rootRoute, path: "/work/$agentId", component: WorkRoute });
 
-const routeTree = rootRoute.addChildren([indexRoute, boardRoute, mapRoute, dashboardsRoute, workRoute]);
+const routeTree = rootRoute.addChildren([indexRoute, boardRoute, mapRoute, dashboardsRoute, docRoute, workRoute]);
 
 export function createAppRouter(history = createHashHistory()) {
   return createRouter({ routeTree, history });

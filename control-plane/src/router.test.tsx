@@ -1,6 +1,6 @@
 import { QueryClient } from "@tanstack/react-query";
 import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { usePushToTalk } from "./hooks/usePushToTalk";
@@ -47,11 +47,12 @@ beforeAll(() => {
   }
 });
 
-async function renderAt(path: string) {
+async function renderAt(path: string, seed?: (client: QueryClient) => void) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: Number.POSITIVE_INFINITY, refetchOnWindowFocus: false } },
   });
   client.setQueryData(qk.roster, { agents: ROSTER, identity: null });
+  seed?.(client);
   const router = createAppRouter(createMemoryHistory({ initialEntries: [path] }));
   renderWithProviders(<RouterProvider router={router} />, { client });
   // The rail renders once the root layout is mounted. Sidebar.Menu is RAC Tree
@@ -155,5 +156,99 @@ describe("stage routing", () => {
     const router = await renderAt("/work/ignacio");
     await screen.findByRole("region", { name: "Work: Ignacio" });
     expect(router.state.location.pathname).toBe("/work/ignacio");
+  });
+
+  it("opening the sessions panel from the rail shows the active workspace in its header", async () => {
+    await renderAt("/", (client) => {
+      client.setQueryData(qk.session, {
+        id: "s1",
+        title: "Login spec",
+        workspace: "acme",
+        runtime: "local-in-process",
+      });
+    });
+    await userEvent.click(screen.getByRole("row", { name: /^sessions$/i }));
+    const panel = await screen.findByRole("dialog");
+    expect(within(panel).getByText("acme")).toBeTruthy();
+  });
+
+  it("a document session activation lands on its document", async () => {
+    const router = await renderAt("/", (client) => {
+      client.setQueryData(qk.documents, [
+        {
+          id: "d1",
+          title: "Login spec",
+          blueprintId: "spec",
+          workType: "feature",
+          sections: [{ id: "overview", heading: "What this is", body: "Words." }],
+          participants: [],
+          status: "drafting",
+          createdAt: "t",
+          updatedAt: "t",
+        },
+      ]);
+      client.setQueryData(qk.sessions, [
+        {
+          id: "s-doc",
+          title: "Login spec",
+          workspace: "acme",
+          updatedAt: "t",
+          active: false,
+          runtime: "local-in-process",
+          kind: "document",
+          docId: "d1",
+        },
+      ]);
+    });
+    await userEvent.click(screen.getByRole("row", { name: /^sessions$/i }));
+    await userEvent.click(screen.getByText("Login spec"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/doc/d1"));
+    expect(await screen.findByRole("region", { name: "Document" })).toBeTruthy();
+  });
+
+  it("a pending documents query does not bounce home — it renders once resolved", async () => {
+    // No seed for qk.documents: the query stays `pending`, the same window a
+    // hard reload of /doc/:id lands in before the socket's first documents
+    // frame arrives. This must not read as "unknown doc".
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Number.POSITIVE_INFINITY, refetchOnWindowFocus: false } },
+    });
+    client.setQueryData(qk.roster, { agents: ROSTER, identity: null });
+    const router = createAppRouter(createMemoryHistory({ initialEntries: ["/doc/d1"] }));
+    renderWithProviders(<RouterProvider router={router} />, { client });
+    await screen.findByRole("treegrid", { name: /tools/i });
+
+    // (a) pending must not redirect and must not render the doc region either.
+    expect(router.state.location.pathname).toBe("/doc/d1");
+    expect(screen.queryByRole("region", { name: "Document" })).toBeNull();
+
+    // (b) once the frame lands with the doc, the page renders it in place.
+    act(() => {
+      client.setQueryData(qk.documents, [
+        {
+          id: "d1",
+          title: "Login spec",
+          blueprintId: "spec",
+          workType: "feature",
+          sections: [{ id: "overview", heading: "What this is", body: "Words." }],
+          participants: [],
+          status: "drafting",
+          createdAt: "t",
+          updatedAt: "t",
+        },
+      ]);
+    });
+    expect(await screen.findByRole("region", { name: "Document" })).toBeTruthy();
+    expect(router.state.location.pathname).toBe("/doc/d1");
+  });
+
+  it("an unknown docId redirects home", async () => {
+    // (c) a RESOLVED miss — an empty documents cache, not an unseeded/pending
+    // one — is what must redirect; see the pending-query test above for what
+    // must NOT redirect.
+    const router = await renderAt("/doc/d404", (client) => {
+      client.setQueryData(qk.documents, []);
+    });
+    await waitFor(() => expect(router.state.location.pathname).toBe("/"));
   });
 });

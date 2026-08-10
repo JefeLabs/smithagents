@@ -19,6 +19,8 @@ interface VoiceStageProps {
   showMicHero?: boolean;
   /** Transient hint (e.g. the blocked-press notice) shown above the composer. */
   voiceNotice?: string | null;
+  /** Rewrites the draft in place; the composer's polish action renders only when this is wired. */
+  onPolish?: (text: string) => Promise<string | null>;
 }
 
 export function VoiceStage({
@@ -33,6 +35,7 @@ export function VoiceStage({
   onVoiceBlocked,
   showMicHero = true,
   voiceNotice = null,
+  onPolish,
 }: VoiceStageProps) {
   const chatActive = messages.length > 0;
   const reduceMotion = useReducedMotion();
@@ -86,6 +89,7 @@ export function VoiceStage({
           onSoundToggle={onSoundToggle}
           sttEnabled={sttEnabled}
           onVoiceBlocked={onVoiceBlocked}
+          onPolish={onPolish}
         />
       </motion.div>
     </section>

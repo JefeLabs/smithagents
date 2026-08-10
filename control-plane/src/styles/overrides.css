@@ -33,6 +33,7 @@
    taller than the 30px button and throws grid's centering off by a rounded pixel. */
 .composer .voice-toggle svg,
 .composer .sound-toggle svg,
+.composer .polish-toggle svg,
 .composer .send svg {
   width: 24px;
   height: 24px;

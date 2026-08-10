@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Composer } from "./Composer";
@@ -199,5 +199,38 @@ describe("Composer voice gating", () => {
     // so this is aria-disabled, never the `disabled` attribute.
     expect(screen.getByRole("button", { name: /hold to talk/i })).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByRole("button", { name: /always listening/i })).toHaveAttribute("aria-disabled", "true");
+  });
+});
+
+describe("Composer polish", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("polish replaces the draft with the rewrite and keeps it editable", async () => {
+    const onPolish = vi.fn().mockResolvedValue("Please fix the login flow.");
+    render(<Composer onSend={vi.fn()} onPolish={onPolish} />);
+    const box = screen.getByRole("textbox", { name: /type a request/i });
+    fireEvent.change(box, { target: { value: "plz fx login" } });
+    fireEvent.click(screen.getByRole("button", { name: /polish/i }));
+    await waitFor(() => expect((box as HTMLTextAreaElement).value).toBe("Please fix the login flow."));
+    expect(onPolish).toHaveBeenCalledWith("plz fx login");
+  });
+
+  it("a failed polish keeps the draft exactly and shows an error", async () => {
+    const onPolish = vi.fn().mockResolvedValue(null);
+    render(<Composer onSend={vi.fn()} onPolish={onPolish} />);
+    const box = screen.getByRole("textbox", { name: /type a request/i });
+    fireEvent.change(box, { target: { value: "my rough draft" } });
+    fireEvent.click(screen.getByRole("button", { name: /polish/i }));
+    expect(await screen.findByText(/polish failed/i)).toBeTruthy();
+    expect((box as HTMLTextAreaElement).value).toBe("my rough draft");
+  });
+
+  it("polish is absent without the prop and disabled on an empty draft", () => {
+    const { rerender } = render(<Composer onSend={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: /polish/i })).toBeNull();
+    rerender(<Composer onSend={vi.fn()} onPolish={vi.fn()} />);
+    expect(screen.getByRole("button", { name: /polish/i }).getAttribute("aria-disabled")).toBe("true");
   });
 });
