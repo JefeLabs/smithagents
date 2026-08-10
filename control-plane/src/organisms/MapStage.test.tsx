@@ -1050,4 +1050,34 @@ describe("MapStage editing", () => {
     expect(within(panel).queryByText("tour scheduling v1")).toBeNull();
     expect(within(panel).getByText(/slice from 2 selected/i)).toBeDefined();
   });
+  it("clears the selection after a successful create", async () => {
+    stubFetch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    const panel = await screen.findByRole("region", { name: "Slices" });
+    selectStories(["s2", "s3"]);
+    await userEvent.click(await within(panel).findByText(/slice from 2 selected/i));
+    await userEvent.type(screen.getByPlaceholderText("Name this slice…"), "analytics v2{Enter}");
+
+    // Leaving the stories selected re-proposes them against a world that now contains the
+    // slice they went into — so the panel would name the slice JUST CREATED as the victim
+    // of the selection that created it, one action after a success.
+    await waitFor(() => expect(within(panel).queryByText(/slice from/i)).toBeNull());
+    expect(document.querySelector(".slice-panel__blocked")).toBeNull();
+  });
+
+  it("Escape abandons naming and gives the button back", async () => {
+    stubFetch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    const panel = await screen.findByRole("region", { name: "Slices" });
+    selectStories(["s3"]);
+    await userEvent.click(await within(panel).findByText(/slice from 1 selected/i));
+    const input = screen.getByPlaceholderText("Name this slice…");
+
+    await userEvent.type(input, "half a name{Escape}");
+    expect(screen.queryByPlaceholderText("Name this slice…")).toBeNull();
+    // The selection survives — Escape abandons the NAME, not the stories.
+    expect(within(panel).getByText(/slice from 1 selected/i)).toBeDefined();
+  });
 });

@@ -123,6 +123,8 @@ interface FooterProps {
   naming: boolean;
   onStart: () => void;
   onName: (name: string) => void;
+  /** Abandons naming. Without it, starting to name a slice is a state with no exit. */
+  onCancel: () => void;
 }
 
 /**
@@ -130,7 +132,16 @@ interface FooterProps {
  * still knows nothing about selection — MapStage renders this and hands it over as
  * `footer`.
  */
-export function SliceComposer({ count, blocked, disabled, blockingStory, naming, onStart, onName }: FooterProps) {
+export function SliceComposer({
+  count,
+  blocked,
+  disabled,
+  blockingStory,
+  naming,
+  onStart,
+  onName,
+  onCancel,
+}: FooterProps) {
   if (count === 0) return null;
   if (naming) {
     return (
@@ -143,6 +154,9 @@ export function SliceComposer({ count, blocked, disabled, blockingStory, naming,
         autoFocus
         onKeyDown={(e) => {
           if (e.key === "Enter") onName((e.target as HTMLInputElement).value.trim());
+          // Escape abandons the NAME, not the selection — the stories stay picked, so the
+          // way out of a half-typed name is not "throw away what you gathered".
+          if (e.key === "Escape") onCancel();
         }}
       />
     );

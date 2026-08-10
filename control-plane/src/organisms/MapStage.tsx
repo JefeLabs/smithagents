@@ -88,13 +88,6 @@ interface MapComposerValues {
  * stacks, with slices carved below. Cards and spec docs are downstream
  * views; every text edit happens here and only here.
  */
-/**
- * Stand-in id for the slice the composer WOULD create. It never reaches the server; it
- * only has to be absent from `cap.slices` so the differential treats the write as a
- * creation rather than an edit.
- */
-const PROPOSED_ID = "__proposed__";
-
 export function MapStage() {
   const capabilitiesQuery = useCapabilities();
   const capabilities = capabilitiesQuery.data?.capabilities ?? [];
@@ -316,7 +309,15 @@ export function MapStage() {
   // so the differential treats it as CREATED rather than edited.
   const proposed = useMemo(
     () =>
-      cap ? [...cap.slices, { id: PROPOSED_ID, name: "", order: cap.slices.length, storyIds: selectedStoryIds }] : [],
+      cap
+        ? [
+            ...cap.slices,
+            // A real id rather than a sentinel string. It never reaches the server — it only
+            // has to be absent from `cap.slices` so the differential reads this as a
+            // creation — and a generated one cannot collide with a slice that exists.
+            { id: crypto.randomUUID(), name: "", order: cap.slices.length, storyIds: selectedStoryIds },
+          ]
+        : [],
     [cap, selectedStoryIds],
   );
   const blocked = cap ? blockedBy(cap.slices, proposed) : [];
@@ -324,7 +325,10 @@ export function MapStage() {
   // the write, but only a slice that existed before can be NAMED as having lost something
   // — the new one has no name yet, and putting it in the sentence leaves a hole where a
   // name should be.
-  const victims = blocked.filter((s) => s.id !== PROPOSED_ID);
+  // "Pre-existing" stated directly, as membership in cap.slices, rather than by comparing
+  // against the id of the one that is not.
+  const existingSliceIds = new Set(cap?.slices.map((s) => s.id) ?? []);
+  const victims = blocked.filter((s) => existingSliceIds.has(s.id));
   // The stories the raided slice is LOSING — a second differential, this time over
   // stories. Not a `find` over the selection: that names whichever story happens to come
   // first, which is wrong whenever the selection also takes a story that was already
@@ -339,6 +343,11 @@ export function MapStage() {
       slices: [...cap.slices, { id: crypto.randomUUID(), name, order: cap.slices.length, storyIds: selectedStoryIds }],
     });
     setNaming(false);
+    // Cleared, on Edwin's ruling. Left selected, the stories are immediately re-proposed
+    // against a world that now contains the slice they went into — so the panel names the
+    // slice JUST CREATED as the victim of the selection that created it, one action after
+    // a success. Re-selecting costs a gesture; an error the user cannot act on costs more.
+    setSelectedStoryIds([]);
   };
 
   const revealedStoryId = selection?.kind === "story" ? selection.id : null;
@@ -1026,6 +1035,7 @@ export function MapStage() {
                     naming={naming}
                     onStart={() => setNaming(true)}
                     onName={createSliceFromSelection}
+                    onCancel={() => setNaming(false)}
                   />
                 }
               />
