@@ -2797,12 +2797,14 @@ button.logo {
      interaction the slice band uses. Nothing here says "control": the row reads as
      cards, so the button inherits and keeps only the cursor.
 
-     Width must equal CAPABILITY_CARD_W in organisms/map/layout.ts, which is what the
-     fit calculation counts in. FIXED, not max-width: cards that sized to their text
-     would make the row's capacity depend on the names in it, so the same three
-     capabilities would collapse at one width and not another. */
+     Width comes from CAPABILITY_CARD_W in organisms/map/layout.ts, handed down as a
+     custom property on the row rather than repeated here — the fit calculation counts in
+     that same constant, and a second copy in this file would be free to drift from it.
+     FIXED, not max-width: cards that sized to their text would make the row's capacity
+     depend on the names in it, so the same three capabilities would collapse at one width
+     and not another. */
   flex: 0 0 auto;
-  width: 200px;
+  width: var(--cap-card-w);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2831,7 +2833,7 @@ button.logo {
   align-items: center;
   gap: 6px;
   min-width: 44px;
-  max-width: 200px;
+  max-width: var(--cap-card-w);
   padding: 4px 10px;
   border-radius: 10px;
   border: 1px solid var(--pill-br);
@@ -2881,7 +2883,7 @@ button.logo {
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
 }
 .map-capability-more__item {
-  width: 200px;
+  width: var(--cap-card-w);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

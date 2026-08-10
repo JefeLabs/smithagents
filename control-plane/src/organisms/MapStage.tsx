@@ -4,7 +4,7 @@ import { Background, Controls, MiniMap, type Node, type OnNodeDrag, ReactFlow, u
 // and being unlayered keeps xyflow's own chrome authoritative over them.
 import "@xyflow/react/dist/style.css";
 import { Map as MapIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import type { CapActivityT, CapabilityT, CapSliceT, CapStoryT } from "../api/types";
 import { ALL_WORKSPACES } from "../lib/board-aggregate";
@@ -22,6 +22,7 @@ import {
   artifactRowStartX,
   artifactRowX,
   artifactRowY,
+  CAPABILITY_CARD_W,
   capabilityCardsThatFit,
   cellAt,
   layoutMap,
@@ -665,7 +666,15 @@ export function MapStage() {
             reachable at any list length — the row still ends with it, it just never
             leaves. Wrapping instead would grow the header and shove the canvas down by a
             variable amount every time someone adds a capability. */}
-        <div className="map-capability-row" ref={rowRef}>
+        <div
+          className="map-capability-row"
+          ref={rowRef}
+          // The card width crosses into CSS as a custom property rather than being written
+          // in both places. layout.ts owns the number, the fit calculation counts in it,
+          // and every card rule reads it back — so the CSS cannot drift from the maths
+          // that decides how many of those cards fit.
+          style={{ "--cap-card-w": `${CAPABILITY_CARD_W}px` } as CSSProperties}
+        >
           {shownCapabilities.map((c) => (
             <button
               key={c.id}

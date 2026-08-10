@@ -108,23 +108,20 @@ export const ARTIFACT_STACK_PITCH = ARTIFACT_H + STORY_GAP;
  * draws the card and the fit calculation below counts them. Two copies of a number that
  * must agree is exactly what this module exists to prevent.
  *
- * 200 against STEP_W's 180. A capability sits a level above the activities beneath it and
- * a card the same width as a step reads as one more step; wider gives the row its own
- * weight. Compared 180, 200, 210, 220 and 240 in the browser against the real names — the
- * names are short, so none of this is driven by text.
+ * 192, which is Edwin's number: he asked for 20% off the 240 he was looking at.
  *
- * WHAT DECIDED IT WAS A THRESHOLD, not the pixels. 240 put three cards at 86% of the row
- * and 220 at 79%, which is the crowding this came down from. But the row holds the blank
- * card too, so three capabilities need FOUR slots: 4W + 3 * CAPABILITY_GAP against a
- * measured row of 855 puts the boundary at W <= 209.25. At 210 the third capability
- * already collapsed into the `+N` menu on a full-size window — the dropdown is for when
- * space genuinely runs out, not for three items on a wide screen. 200 fits all four with
- * 37px to spare and is still visibly a level above a step card.
+ * It sits 12px above STEP_W's 180, so the "a capability card is visibly a level above a
+ * step card" reading that the earlier widths were buying is thin at this margin — see the
+ * report for how the row actually reads. Recorded because it is the thing most likely to
+ * be re-litigated, not as an argument against the number.
  *
- * That boundary is worth knowing before changing this number: a few pixels either way
- * moves how many capabilities a normal window shows, so re-measure rather than nudge.
+ * THE ROW HOLDS THE BLANK CARD TOO, which is the arithmetic worth keeping: three
+ * capabilities need FOUR slots, so the number of cards a normal window shows turns over at
+ * `4W + 3 * CAPABILITY_GAP <= rowWidth`. Against a measured row of 855 that boundary is
+ * W <= 209.25 — which is why 210 hid a capability behind the menu on a full window and 192
+ * does not. Re-measure rather than nudge.
  */
-export const CAPABILITY_CARD_W = 200;
+export const CAPABILITY_CARD_W = 192;
 export const CAPABILITY_GAP = 6;
 /** The `+N` disclosure that holds whatever did not fit. */
 export const CAPABILITY_MORE_W = 44;
