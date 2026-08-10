@@ -451,16 +451,13 @@
     display: contents;
   }
 
-  /* Top row — the essentials. */
+  /* Top row — what a send needs: what send will do, and send. */
   .composer__kind-group {
     order: 1;
     margin-right: auto;
   }
-  .composer .voice-toggle[aria-label="Hold to talk"] {
-    order: 2;
-  }
   .composer .send {
-    order: 3;
+    order: 2;
   }
 
   /* The break: a zero-height full-width item between the two priority bands. */
@@ -480,14 +477,19 @@
   .composer .selector {
     order: 7;
   }
-  .composer .voice-toggle[aria-label="Always listening"] {
+  /* The mic sits with the other voice controls rather than beside send — one
+     band of tools, one band of intent (Edwin, 2026-08-10). */
+  .composer .voice-toggle[aria-label="Hold to talk"] {
     order: 8;
   }
-  .composer .sound-toggle {
+  .composer .voice-toggle[aria-label="Always listening"] {
     order: 9;
   }
-  .composer__polish-error {
+  .composer .sound-toggle {
     order: 10;
+  }
+  .composer__polish-error {
+    order: 11;
   }
 }
 @container (max-width: 330px) {
