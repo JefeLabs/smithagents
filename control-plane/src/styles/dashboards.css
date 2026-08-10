@@ -15,7 +15,8 @@
   --dash-mono: ui-monospace, monospace;
   overflow: hidden;
 }
-:root[data-theme="light"] .dashboards-stage {
+:root[data-theme="light"] .dashboards-stage,
+:root[data-theme="sand"] .dashboards-stage {
   --dash-line: #3f6fe0;
   --dash-ok: #17a877;
   --dash-watch: #84620a;
@@ -383,6 +384,7 @@
   border-radius: 10px;
   border: 1px solid var(--rail-br);
   background: color-mix(in srgb, var(--text) 2%, transparent);
+  /* `rise` is base.css's keyframe (base.css @keyframes rise) — shared on purpose, do not rename here */
   animation: rise 0.4s ease both;
 }
 .dash-kpi__label {
