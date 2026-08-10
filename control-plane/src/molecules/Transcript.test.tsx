@@ -42,4 +42,26 @@ describe("Transcript", () => {
     expect(screen.getByText("Manuel")).toBeTruthy();
     expect(screen.getByText("On it.")).toBeTruthy();
   });
+
+  it("renders markdown in broker speech", () => {
+    render(<Transcript messages={[{ id: 1, role: "broker", text: "Manuel: shipped **v2** today" }]} />);
+    expect(screen.getByText("Manuel")).toBeTruthy();
+    expect(screen.getByText("v2").tagName).toBe("STRONG");
+  });
+
+  // The no-redesign rule: a message with no markdown syntax must render as it
+  // always did. This is the test that catches markdown "helpfully" reflowing
+  // ordinary speech.
+  it("leaves plain text exactly as plain text", () => {
+    render(<Transcript messages={[{ id: 1, role: "broker", text: "Manuel: On it." }]} />);
+    expect(screen.getByText("On it.")).toBeTruthy();
+  });
+
+  // Speaker extraction must run BEFORE markdown, or the "Manuel:" prefix becomes
+  // part of the rendered body and the speaker label disappears.
+  it("extracts the speaker before rendering the body as markdown", () => {
+    render(<Transcript messages={[{ id: 1, role: "broker", text: "Ana: `deploy` is green" }]} />);
+    expect(screen.getByText("Ana").tagName).toBe("B");
+    expect(screen.getByText("deploy").tagName).toBe("CODE");
+  });
 });

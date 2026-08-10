@@ -63,6 +63,18 @@ vi.hoisted(() => {
       disconnect() {}
     } as unknown as typeof ResizeObserver;
   }
+
+  /**
+   * jsdom implements `Window.prototype.scrollTo` (as a "not implemented" console
+   * stub) but never `Element.prototype.scrollTo` at all. `ChatConversation`'s
+   * stick-to-bottom behavior calls `scrollTo` on its own scroll container ref
+   * inside a `requestAnimationFrame` callback, so the throw lands async, after
+   * the render that triggered it — any test that mounts a `Transcript` with
+   * messages hits it, not just Transcript's own suite.
+   */
+  if (typeof Element.prototype.scrollTo !== "function") {
+    Element.prototype.scrollTo = () => {};
+  }
 });
 
 beforeEach(() => resetAllStores());
