@@ -302,7 +302,19 @@ export function MapStage() {
     [cap],
   );
 
-  const [naming, setNaming] = useState(false);
+  /**
+   * The stories the composer is CURRENTLY OFFERING TO CREATE, frozen when naming begins —
+   * and `null` when it is not naming, so the two facts cannot disagree.
+   *
+   * Naming swaps the button for an input but does not lock the canvas, so the selection
+   * can move while the input is open. Everything the panel validated — the count, the
+   * blocked check, the message — was computed for the selection as it was when the button
+   * was pressed, so that is the selection the write has to carry. Otherwise `+ slice from
+   * N selected` is a snapshot that can drift rather than a promise, and the drift is
+   * silent: a different-but-valid selection creates a slice with stories the user never
+   * agreed to, and nothing errors.
+   */
+  const [pendingStoryIds, setPendingStoryIds] = useState<string[] | null>(null);
 
   // The write the button would send, evaluated before it is sent.
   const proposed = useMemo(
@@ -335,17 +347,19 @@ export function MapStage() {
   const lost = victims.length > 0 && cap ? storiesLost(cap.slices, proposed, victims[0]) : [];
   const blockingStory = lost.length > 0 ? (cap?.stories.find((s) => s.id === lost[0])?.text ?? null) : null;
 
-  const createSliceFromSelection = (name: string) => {
-    if (!cap || !name || selectedStoryIds.length === 0) return;
-    void patchCap({
-      slices: [...cap.slices, { id: crypto.randomUUID(), name, order: cap.slices.length, storyIds: selectedStoryIds }],
+  const createSliceFromSelection = async (name: string) => {
+    const storyIds = pendingStoryIds;
+    if (!cap || !name || !storyIds || storyIds.length === 0) return;
+    const created = await patchCap({
+      slices: [...cap.slices, { id: crypto.randomUUID(), name, order: cap.slices.length, storyIds }],
     });
-    setNaming(false);
-    // Cleared, on Edwin's ruling. Left selected, the stories are immediately re-proposed
-    // against a world that now contains the slice they went into — so the panel names the
-    // slice JUST CREATED as the victim of the selection that created it, one action after
-    // a success. Re-selecting costs a gesture; an error the user cannot act on costs more.
-    setSelectedStoryIds([]);
+    setPendingStoryIds(null);
+    // ONLY on a confirmed success. Clearing after a rejection would cost the user the
+    // write and the selection that produced it, leaving nothing to retry from. On success
+    // it clears, per Edwin's ruling: left selected, the stories are re-proposed against a
+    // world that now contains the slice they went into, so the panel names the slice just
+    // created as the victim of the selection that created it.
+    if (created) setSelectedStoryIds([]);
   };
 
   const revealedStoryId = selection?.kind === "story" ? selection.id : null;
@@ -1026,14 +1040,17 @@ export function MapStage() {
                 onOpen={(id) => select({ kind: "slice", id })}
                 footer={
                   <SliceComposer
-                    count={selectedStoryIds.length}
+                    // The FROZEN count while naming, so the composer keeps offering what
+                    // it validated — and does not unmount mid-name if the canvas selection
+                    // is emptied underneath it.
+                    count={(pendingStoryIds ?? selectedStoryIds).length}
                     blocked={victims}
                     disabled={blocked.length > 0}
                     blockingStory={blockingStory}
-                    naming={naming}
-                    onStart={() => setNaming(true)}
+                    naming={pendingStoryIds !== null}
+                    onStart={() => setPendingStoryIds(selectedStoryIds)}
                     onName={createSliceFromSelection}
-                    onCancel={() => setNaming(false)}
+                    onCancel={() => setPendingStoryIds(null)}
                   />
                 }
               />

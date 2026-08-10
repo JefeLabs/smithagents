@@ -1080,4 +1080,38 @@ describe("MapStage editing", () => {
     // The selection survives — Escape abandons the NAME, not the stories.
     expect(within(panel).getByText(/slice from 1 selected/i)).toBeDefined();
   });
+  it("commits the stories the button counted, not whatever is selected when Enter lands", async () => {
+    const { calls } = stubFetch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    const panel = await screen.findByRole("region", { name: "Slices" });
+    selectStories(["s3"]);
+    await userEvent.click(await within(panel).findByText(/slice from 1 selected/i));
+
+    // Naming swaps the button for an input but does NOT lock the canvas, so the selection
+    // can still move underneath it. Everything the panel validated — the count, the
+    // blocked check, the message — was computed for the OLD selection.
+    selectStories(["s2"]);
+    await userEvent.type(screen.getByPlaceholderText("Name this slice…"), "frozen{Enter}");
+
+    await waitFor(() => expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(1));
+    const body = calls.find((c) => c.method === "PATCH")?.body as { slices: Array<{ storyIds: string[] }> };
+    // s3 alone — what "+ slice from 1 selected" promised — and not s2, which arrived after.
+    expect(body.slices[3].storyIds).toEqual(["s3"]);
+  });
+
+  it("a rejected write keeps the selection rather than clearing it", async () => {
+    stubFetch();
+    failEveryPatch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    const panel = await screen.findByRole("region", { name: "Slices" });
+    selectStories(["s3"]);
+    await userEvent.click(await within(panel).findByText(/slice from 1 selected/i));
+    await userEvent.type(screen.getByPlaceholderText("Name this slice…"), "doomed{Enter}");
+
+    // Nothing was created, so clearing would cost the user the write AND the selection.
+    await waitFor(() => expect(within(panel).getByText(/slice from 1 selected/i)).toBeDefined());
+    expect(document.querySelectorAll(".react-flow__node.selected")).toHaveLength(1);
+  });
 });
