@@ -233,4 +233,42 @@ describe("Composer polish", () => {
     rerender(<Composer onSend={vi.fn()} onPolish={vi.fn()} />);
     expect(screen.getByRole("button", { name: /polish/i }).getAttribute("aria-disabled")).toBe("true");
   });
+  const BPS = [
+    { id: "spec", name: "Design Spec", workTypes: ["feature"] },
+    { id: "implementation-plan", name: "Implementation Plan", workTypes: ["feature"] },
+  ];
+
+  it("arming document mode routes the send to onSendDocument with the picked blueprint", async () => {
+    const onSend = vi.fn();
+    const onSendDocument = vi.fn().mockResolvedValue(undefined);
+    render(<Composer onSend={onSend} onSendDocument={onSendDocument} blueprints={BPS} />);
+    await userEvent.click(screen.getByRole("button", { name: /^document$/i }));
+    const box = screen.getByRole("textbox", { name: /describe the document/i });
+    await userEvent.click(screen.getByRole("button", { name: /implementation plan/i }));
+    await userEvent.type(box, "Spec out login{Enter}");
+    await waitFor(() => expect(onSendDocument).toHaveBeenCalledWith("implementation-plan", "Spec out login"));
+    expect(onSend).not.toHaveBeenCalled();
+    await waitFor(() => expect((box as HTMLTextAreaElement).value).toBe(""));
+  });
+
+  it("a failed document send keeps the draft and stays armed", async () => {
+    const onSendDocument = vi.fn().mockResolvedValue({ error: "broker unreachable" });
+    render(<Composer onSend={vi.fn()} onSendDocument={onSendDocument} blueprints={BPS} />);
+    await userEvent.click(screen.getByRole("button", { name: /^document$/i }));
+    const box = screen.getByRole("textbox", { name: /describe the document/i });
+    await userEvent.type(box, "Draft kept{Enter}");
+    expect(await screen.findByText(/broker unreachable/)).toBeTruthy();
+    expect((box as HTMLTextAreaElement).value).toBe("Draft kept");
+    expect(screen.getByRole("button", { name: /^document$/i }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("no group without onSendDocument; on a document surface chat presses call onKindChat", async () => {
+    const { rerender } = render(<Composer onSend={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: /^document$/i })).toBeNull();
+    const onKindChat = vi.fn();
+    rerender(<Composer onSend={vi.fn()} kind="document" onKindChat={onKindChat} />);
+    expect(screen.getByRole("button", { name: /^document$/i }).getAttribute("aria-pressed")).toBe("true");
+    await userEvent.click(screen.getByRole("button", { name: /^chat$/i }));
+    expect(onKindChat).toHaveBeenCalled();
+  });
 });

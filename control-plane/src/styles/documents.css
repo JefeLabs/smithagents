@@ -207,3 +207,46 @@
 .session-row__artifact:hover {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
+
+/* ---- composer: kind group + blueprint chips (artifacts pivot) ---- */
+.composer__kind-group {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--pill-br);
+  border-radius: 999px;
+}
+.composer__kind {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.composer__kind--on {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.composer__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 8px 6px 8px;
+}
+.composer__bp-chip {
+  cursor: pointer;
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--pill-br);
+  background: transparent;
+  color: var(--text-2);
+}
+.composer__bp-chip--on {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
