@@ -183,10 +183,40 @@ describe("cellAt is the exact inverse of layoutMap", () => {
 describe("cellAt boundaries", () => {
   const cols = stepColumns(MODEL.activities);
 
-  it("snaps a drop in the gap between columns to the nearest column", () => {
-    // Just past st1's right edge — still nearer st1's centre than st2's.
+  it("snaps a drop in the gap between columns to the one it actually sits on", () => {
+    // REWRITTEN, not re-tuned. This case used to drop at st1.x + STEP_W + 2 and expect
+    // st1, with the comment "still nearer st1's centre than st2's" — which is a
+    // description of the old metric (a left EDGE measured against column CENTRES), not
+    // of anything a user could want. A card whose left edge is two pixels past st1's
+    // right edge spans 182..362: it covers st2 almost entirely and st1 not at all.
+    // Resolving it to st1 was always wrong; the test pinned the bug, so the fixture
+    // went with it and the name stayed.
     const x = cols[0].x + STEP_W + 2;
-    expect(cellAt({ x, y: STORIES_Y }, MODEL)?.stepId).toBe("st1");
+    expect(cellAt({ x, y: STORIES_Y }, MODEL)?.stepId).toBe("st2");
+  });
+
+  it("keeps a card nudged LEFT of its own column in that column", () => {
+    // The user-visible defect, and the reason this was worth fixing. Under the old
+    // comparison a card sitting exactly on st2 had four pixels of leftward tolerance
+    // against 184 to the right: nudge it five pixels back the way it came and the drop
+    // landed a whole column earlier. At st2.x - 4 the old metric was an exact tie
+    // between st1 and st2, which the loop's strict `<` broke in favour of the FIRST
+    // column — st1. It resolves to st2 now, as the card plainly shows.
+    expect(cellAt({ x: cols[1].x - 4, y: STORIES_Y }, MODEL)?.stepId).toBe("st2");
+    expect(cellAt({ x: cols[1].x - 30, y: STORIES_Y }, MODEL)?.stepId).toBe("st2");
+  });
+
+  it("gives each column exactly half the pitch either side, and no more", () => {
+    // The window is symmetric now, so pin both edges of it. The pitch is
+    // STEP_W + STEP_GAP = 188, so the changeover sits at 94 — assert either side of it
+    // rather than the midpoint itself, where a tie is decided by iteration order rather
+    // than by distance.
+    const half = (STEP_W + STEP_GAP) / 2;
+    expect(cellAt({ x: cols[0].x + half - 1, y: STORIES_Y }, MODEL)?.stepId).toBe("st1");
+    expect(cellAt({ x: cols[0].x + half + 1, y: STORIES_Y }, MODEL)?.stepId).toBe("st2");
+    // Symmetric means the mirror case holds too: one pixel short of a full pitch back
+    // from st2 is still st2's, not st1's.
+    expect(cellAt({ x: cols[1].x - half + 1, y: STORIES_Y }, MODEL)?.stepId).toBe("st2");
   });
 
   it("appends when dropped past the last story in a column", () => {
@@ -277,6 +307,19 @@ describe("cellAt and blank cells", () => {
     expect(cellAt({ x: blank.x + STEP_W / 2, y: STORIES_Y }, MODEL)).toBeNull();
     const blank2 = nodeById(nodes, blankStepId("act2")).position;
     expect(cellAt({ x: blank2.x + STEP_W / 2, y: STORIES_Y }, MODEL)).toBeNull();
+  });
+
+  it("hands over to the blank column at half a pitch, the same as any other neighbour", () => {
+    // WHERE the rejection starts, which moved with the comparison fix and is worth
+    // pinning rather than leaving implied. A blank column is a neighbour like any
+    // other, so the changeover is half a pitch past the last real column — not the 184
+    // it used to be when a left edge was measured against centres. Dragging right out
+    // of a column now stops being a valid drop twice as early, which is the same
+    // symmetry the real columns got.
+    const half = (STEP_W + STEP_GAP) / 2;
+    const lastReal = stepColumns(MODEL.activities)[1].x; // st2, the last real column of act1
+    expect(cellAt({ x: lastReal + half - 1, y: STORIES_Y }, MODEL)?.stepId).toBe("st2");
+    expect(cellAt({ x: lastReal + half + 1, y: STORIES_Y }, MODEL)).toBeNull();
   });
 
   it("accepts a drop onto a blank STORY slot, because that is the append target", () => {

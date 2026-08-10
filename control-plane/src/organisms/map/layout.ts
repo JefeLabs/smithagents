@@ -459,7 +459,25 @@ export function cellAt(pos: { x: number; y: number }, model: MapModel): { stepId
   let best = cols[0];
   let bestDistance = Number.POSITIVE_INFINITY;
   for (const col of cols) {
-    const distance = Math.abs(pos.x - (col.x + STEP_W / 2));
+    // BOTH OPERANDS ARE LEFT EDGES, and that is the entire point. `pos.x` is the
+    // dragged node's left edge — xyflow reports a node's position as its top-left —
+    // and `col.x` is the column's. This used to read `pos.x - (col.x + STEP_W / 2)`,
+    // comparing an edge against a CENTRE, which silently asked the card's left edge to
+    // sit at the column's middle and so shifted the whole acceptance window half a card
+    // to the right.
+    //
+    // The arithmetic, with `d` the node's offset from its own column's left edge and a
+    // column pitch of STEP_W + STEP_GAP = 188. Before: the column won for
+    // d ∈ (-4, 184) — |d - 90| < |d + 98| gives d > -4, and |d - 90| < |d - 278| gives
+    // d < 184. FOUR pixels of tolerance to the left against 184 to the right. Nudge a
+    // card five pixels left of where it already sits and the drop lands a column back.
+    // After: d ∈ (-94, 94), symmetric, exactly half the pitch, which is what "nearest
+    // column" should always have meant.
+    //
+    // Comparing centre to centre would be algebraically identical AND carry a trap: the
+    // card's half-width only cancels the column's while the two are both STEP_W. Edge
+    // to edge needs no width at all.
+    const distance = Math.abs(pos.x - col.x);
     if (distance < bestDistance) {
       bestDistance = distance;
       best = col;
