@@ -19,6 +19,7 @@ import {
 import { useUiStore } from "../stores/uiStore";
 import { artifactNodesFor, buildEdges } from "./map/edges";
 import {
+  activityAt,
   artifactRowStartX,
   artifactRowX,
   artifactRowY,
@@ -28,6 +29,7 @@ import {
   layoutMap,
   type MapNode,
   sliceNodeId,
+  stepAt,
   storyStackPosition,
   unassignedNodeId,
 } from "./map/layout";
@@ -621,20 +623,80 @@ export function MapStage() {
     setNodes([...decorated, ...ephemeral]);
   }, [cap, revealedSlice, revealedStory, revealedStoryId, storySlice, select, setNodes]);
 
+  /**
+   * Moves an activity to `index`, renumbering `order` densely.
+   *
+   * The whole array is renumbered rather than the two ends swapped, because `order` is
+   * what every reader sorts by and a sparse or duplicated one is a map that draws in an
+   * arbitrary sequence. `layoutMap`'s doc states the dense invariant for stories; this
+   * keeps the same promise a level up.
+   */
+  const moveActivity = async (activityId: string, index: number) => {
+    if (!cap) return false;
+    const ordered = [...cap.activities].sort((a, b) => a.order - b.order);
+    const from = ordered.findIndex((a) => a.id === activityId);
+    if (from < 0 || from === index) return true;
+    const [moved] = ordered.splice(from, 1);
+    ordered.splice(Math.max(0, Math.min(index, ordered.length)), 0, moved);
+    return patchCap({ activities: ordered.map((a, i) => ({ ...a, order: i })) });
+  };
+
+  /**
+   * Moves a step to `index` within `activityId`, which may be the activity it already
+   * belongs to or another one.
+   *
+   * CROSS-ACTIVITY IS A REAL EDIT, not a side effect: a step belongs to an activity, so
+   * dropping one under a different heading is the user saying it belongs there instead.
+   * Both activities are rewritten because a step lives inside its parent's `steps`
+   * array, so the move is a removal and an insertion rather than a reordering.
+   */
+  const moveStep = async (stepId: string, activityId: string, index: number) => {
+    if (!cap) return false;
+    const activities = cap.activities.map((a) => ({ ...a, steps: [...a.steps].sort((x, y) => x.order - y.order) }));
+    const source = activities.find((a) => a.steps.some((s) => s.id === stepId));
+    const target = activities.find((a) => a.id === activityId);
+    if (!source || !target) return false;
+    const from = source.steps.findIndex((s) => s.id === stepId);
+    if (source.id === target.id && from === index) return true;
+    const [moved] = source.steps.splice(from, 1);
+    target.steps.splice(Math.max(0, Math.min(index, target.steps.length)), 0, moved);
+    return patchCap({
+      activities: activities.map((a) => ({ ...a, steps: a.steps.map((s, i) => ({ ...s, order: i })) })),
+    });
+  };
+
   const dropNodeAt = async (nodeId: string, position: { x: number; y: number }) => {
     if (!cap) return;
-    // A story node's id IS its story id (layout.ts's one asymmetry), so it needs no
-    // unwrapping here. Only stories are draggable, so nothing else reaches this.
-    const cell = cellAt(position, cap);
     // Invalid drop, or a rejected mutation: re-seed from the model. Without this the
     // node keeps its dropped position and shows a move that never happened — and the
     // seeding effect cannot cover it, because on both paths the model never changed.
-    if (!cell) {
-      setNodes(decorate(layoutMap(cap).nodes, new Set()));
+    const reseed = () => setNodes(decorate(layoutMap(cap).nodes, new Set()));
+    // The TYPE comes from the node, never from parsing the id. layout.ts owns those
+    // formats and is the only place allowed to take one apart.
+    const dragged = nodes.find((n) => n.id === nodeId);
+
+    if (dragged?.type === "activity") {
+      const index = activityAt(position, cap);
+      const activity = (dragged.data as { activity?: CapActivityT }).activity;
+      if (index === null || !activity) return reseed();
+      if (!(await moveActivity(activity.id, index))) reseed();
       return;
     }
+
+    if (dragged?.type === "step") {
+      const target = stepAt(position, cap);
+      const step = (dragged.data as { step?: { id: string } }).step;
+      if (!target || !step) return reseed();
+      if (!(await moveStep(step.id, target.activityId, target.index))) reseed();
+      return;
+    }
+
+    // A story node's id IS its story id (layout.ts's one asymmetry), so it needs no
+    // unwrapping here.
+    const cell = cellAt(position, cap);
+    if (!cell) return reseed();
     const ok = await moveStory(nodeId, cell.stepId, cell.order);
-    if (!ok) setNodes(decorate(layoutMap(cap).nodes, new Set()));
+    if (!ok) reseed();
   };
 
   const onNodeDragStop: OnNodeDrag = (_event, node) => void dropNodeAt(node.id, node.position);

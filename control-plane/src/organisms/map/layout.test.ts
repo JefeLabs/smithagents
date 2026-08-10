@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { MapModel, MapNode } from "./layout";
 import {
+  activityAt,
   artifactRowStartX,
   artifactRowX,
   artifactRowY,
@@ -18,6 +19,7 @@ import {
   STEP_W,
   STORIES_Y,
   STORY_H,
+  stepAt,
   stepColumns,
 } from "./layout";
 
@@ -341,6 +343,71 @@ describe("cellAt and blank cells", () => {
  * map, so the lines measured the map's width rather than saying anything about the
  * model.
  */
+describe("activityAt and stepAt invert the backbone", () => {
+  const { nodes } = layoutMap(MODEL);
+  const at = (id: string) => nodeById(nodes, id).position;
+
+  it("round-trips every activity back to its own index", () => {
+    // The same contract cellAt has with stories: drop a card exactly where it was drawn
+    // and the resolver must name the slot it came from, or a drag that moves nothing
+    // still rewrites `order`.
+    expect(activityAt(at("activity:act1"), MODEL)).toBe(0);
+    expect(activityAt(at("activity:act2"), MODEL)).toBe(1);
+  });
+
+  it("round-trips every step back to its own activity and index", () => {
+    expect(stepAt(at("step:st1"), MODEL)).toEqual({ activityId: "act1", index: 0 });
+    expect(stepAt(at("step:st2"), MODEL)).toEqual({ activityId: "act1", index: 1 });
+    expect(stepAt(at("step:st3"), MODEL)).toEqual({ activityId: "act2", index: 0 });
+  });
+
+  it("measures EDGE TO EDGE, so a card nudged left stays where it is", () => {
+    // The defect c8e2446 removed from cellAt, guarded here before it can come back by
+    // analogy: an edge compared against a slot's CENTRE gives a card four pixels of
+    // leftward tolerance and ~184 to the right. Four pixels left of its own slot, a
+    // card must still resolve to that slot.
+    const st2 = at("step:st2");
+    expect(stepAt({ x: st2.x - 4, y: st2.y }, MODEL)).toEqual({ activityId: "act1", index: 1 });
+    const act2 = at("activity:act2");
+    expect(activityAt({ x: act2.x - 4, y: act2.y }, MODEL)).toBe(1);
+  });
+
+  it("refuses a step drop whose nearest column is a BLANK one", () => {
+    // The trailing composer is a slot no record can take, exactly as in cellAt. Without
+    // this a reorder could insert a step where the "add a step" card lives.
+    const blank = nodeById(nodes, blankStepId("act1")).position;
+    expect(stepAt(blank, MODEL)).toBeNull();
+  });
+
+  it("refuses a drop that has left the backbone band", () => {
+    const st1 = at("step:st1");
+    expect(stepAt({ x: -5000, y: st1.y }, MODEL)).toBeNull();
+    expect(activityAt({ x: 5000, y: 0 }, MODEL)).toBeNull();
+    // Dragged down into the story stacks: not a reorder of the backbone.
+    expect(stepAt({ x: st1.x, y: STORIES_Y + 10 }, MODEL)).toBeNull();
+    expect(activityAt({ x: st1.x, y: STORIES_Y + 10 }, MODEL)).toBeNull();
+  });
+
+  it("reports the activity a step was dropped ONTO, not the one it came from", () => {
+    // Cross-activity movement is a real edit — a step belongs to an activity — so the
+    // resolver has to name the activity under the drop. st1 dropped on st3's column is
+    // act2's business, whatever the caller then decides to do about it.
+    expect(stepAt(at("step:st3"), MODEL)).toEqual({ activityId: "act2", index: 0 });
+  });
+
+  it("resolves against where the card was DRAWN, for an activity with no steps", () => {
+    // A step-less activity starts at its own blank step slot, and activityColumns is
+    // what layoutMap now reads for that x — so this pins the two together rather than
+    // trusting them to agree.
+    const empty: MapModel = {
+      ...MODEL,
+      activities: [...MODEL.activities, { id: "act3", name: "Fresh", order: 2, steps: [] }],
+    };
+    const drawn = nodeById(layoutMap(empty).nodes, "activity:act3").position;
+    expect(activityAt(drawn, empty)).toBe(2);
+  });
+});
+
 describe("capabilityCardsThatFit", () => {
   const slot = CAPABILITY_CARD_W + CAPABILITY_GAP;
 

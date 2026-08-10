@@ -46,6 +46,33 @@ const CAP = {
   ],
 };
 
+/**
+ * TWO activities, which is the minimum a reorder can be observed in — and the minimum
+ * for the two-gesture case, since one activity's columns cannot move relative to
+ * another's until there are two. `s1` sits in act2's step so a later drop can move it
+ * into act1's, across the boundary the reorder shifts.
+ */
+const TWO_ACT = {
+  id: "two-act",
+  name: "Two Activities",
+  workspaceId: "skoolscout",
+  activities: [
+    { id: "act1", name: "First", order: 0, steps: [{ id: "st1", name: "Alpha", order: 0 }] },
+    { id: "act2", name: "Second", order: 1, steps: [{ id: "st2", name: "Beta", order: 0 }] },
+  ],
+  stories: [{ id: "s1", stepId: "st2", order: 0, text: "a story", done: false }],
+  slices: [],
+};
+
+/** What the broker returns once act2 has been dragged in front of act1. */
+const REORDERED = {
+  ...TWO_ACT,
+  activities: [
+    { id: "act2", name: "Second", order: 0, steps: [{ id: "st2", name: "Beta", order: 0 }] },
+    { id: "act1", name: "First", order: 1, steps: [{ id: "st1", name: "Alpha", order: 0 }] },
+  ],
+};
+
 const OTHER_CAP = {
   id: "other-cap",
   name: "Other Product",
@@ -459,6 +486,112 @@ describe("MapStage editing", () => {
     const moved = await fireStoryDrop("s2", "st2", 0);
     expect(moved).toBe(false);
     expect(calls.some((c) => c.method === "PATCH")).toBe(true);
+  });
+
+  it("dragging an activity reorders the backbone and renumbers order densely", async () => {
+    const { calls } = stubFetch({ capabilities: { capabilities: [TWO_ACT], errors: [] } });
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    await screen.findByText("Second");
+    const { fireNodeDragStop } = await import("./MapStage");
+    // act2's card dropped on act1's left edge — the first slot.
+    await act(async () => {
+      await fireNodeDragStop("activity:act2", { x: 0, y: 0 });
+    });
+    await waitFor(() => {
+      const patches = calls.filter((c) => c.method === "PATCH");
+      const call = patches[patches.length - 1];
+      const activities = (call?.body as { activities?: Array<{ id: string; order: number }> })?.activities;
+      // Dense and 0-based, not a swap of two order values.
+      expect(activities?.map((a) => [a.id, a.order])).toEqual([
+        ["act2", 0],
+        ["act1", 1],
+      ]);
+    });
+  });
+
+  it("dragging a step onto another activity's column moves it to that activity", async () => {
+    // Cross-activity is a real edit: a step belongs to an activity, so dropping one
+    // under a different heading is the user saying it belongs there now. Both parents
+    // are rewritten, because a step lives inside its own activity's `steps` array.
+    const { calls } = stubFetch({ capabilities: { capabilities: [TWO_ACT], errors: [] } });
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    await screen.findByText("Second");
+    const { fireNodeDragStop } = await import("./MapStage");
+    const st2x = stepColumns(TWO_ACT.activities).find((c) => c.stepId === "st2")?.x ?? 0;
+    await act(async () => {
+      await fireNodeDragStop("step:st1", { x: st2x, y: 40 });
+    });
+    await waitFor(() => {
+      const patches = calls.filter((c) => c.method === "PATCH");
+      const call = patches[patches.length - 1];
+      const activities = (call?.body as { activities?: Array<{ id: string; steps: Array<{ id: string }> }> })
+        ?.activities;
+      expect(activities?.find((a) => a.id === "act1")?.steps.map((s) => s.id)).toEqual([]);
+      expect(activities?.find((a) => a.id === "act2")?.steps.map((s) => s.id)).toEqual(["st1", "st2"]);
+    });
+  });
+
+  it("a step dropped on a blank column writes nothing and snaps back", async () => {
+    // The trailing composer is a slot no record can take. Without this guard a reorder
+    // could displace the "add a step" card, which is the affordance itself.
+    const { calls } = stubFetch({ capabilities: { capabilities: [TWO_ACT], errors: [] } });
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    await screen.findByText("Second");
+    const { fireNodeDragStop } = await import("./MapStage");
+    const before = nodePosition("step:st1");
+    const blankX = nodePosition("new:step:act1");
+    expect(blankX).toBeTruthy();
+    const x = Number(/translate\((-?[\d.]+)px/.exec(blankX ?? "")?.[1]);
+    await act(async () => {
+      await fireNodeDragStop("step:st1", { x, y: 40 });
+    });
+    expect(nodePosition("step:st1")).toBe(before);
+    expect(calls.some((c) => c.method === "PATCH")).toBe(false);
+  });
+
+  it("a story still lands where aimed AFTER a reorder has moved the columns", async () => {
+    // THE TWO-GESTURE CASE, which is the one a single-gesture test cannot reach: a
+    // reorder changes every column's x, and the story resolution has to read the new
+    // geometry rather than the geometry it was mounted with. Aimed at a position that
+    // means DIFFERENT steps before and after the reorder, so stale columns resolve to
+    // the wrong one rather than merely to a stale-looking number.
+    const overrides: { capabilities?: unknown } = { capabilities: { capabilities: [TWO_ACT], errors: [] } };
+    const { calls } = stubFetch(overrides);
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    await screen.findByText("Second");
+
+    const cols = stepColumns(TWO_ACT.activities);
+    const st2xBefore = cols.find((c) => c.stepId === "st2")?.x ?? 0;
+    // Gesture 1: swap the activities. The refetch returns the reordered model, which is
+    // what moves st1 to where st2 used to be.
+    overrides.capabilities = { capabilities: [REORDERED], errors: [] };
+    const { fireNodeDragStop } = await import("./MapStage");
+    await act(async () => {
+      await fireNodeDragStop("activity:act2", { x: 0, y: 0 });
+    });
+    // Wait for the reorder to reach the canvas: st1 now sits where st2 used to be.
+    await waitFor(() => {
+      const st1 = nodePosition("step:st1");
+      expect(st1).toContain(`translate(${st2xBefore}px`);
+    });
+
+    // Gesture 2: drop the story at that same x. Before the reorder it meant st2; now it
+    // means st1, and that is what it must resolve to.
+    await act(async () => {
+      await fireNodeDragStop("s1", { x: st2xBefore, y: STORIES_Y });
+    });
+    await waitFor(() => {
+      const patches = calls.filter((c) => c.method === "PATCH");
+      const call = patches[patches.length - 1];
+      const moved = (call?.body as { stories?: Array<{ id: string; stepId: string }> })?.stories?.find(
+        (s) => s.id === "s1",
+      );
+      expect(moved?.stepId).toBe("st1");
+    });
   });
 
   // The two re-seed branches, reached through fireNodeDragStop. Both are the same

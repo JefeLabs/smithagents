@@ -292,6 +292,118 @@ export function stepColumns(activities: CapActivityT[]): Array<{ stepId: string;
 }
 
 /**
+ * Every REAL activity's left edge, in render order — the horizontal axis one level up.
+ *
+ * An activity starts at its first step's column, or at its own trailing blank when it
+ * has no steps yet. `layoutMap` reads this rather than deriving the same x again, for
+ * the reason `stepColumns` exists: the reorder resolver below has to agree with where
+ * the card was actually drawn, and two expressions computing "the same" left edge are
+ * two things that can disagree.
+ */
+export function activityColumns(activities: CapActivityT[]): Array<{ activityId: string; x: number }> {
+  const xOf = new Map(columns(activities).map((c) => [c.id, c.x]));
+  const out: Array<{ activityId: string; x: number }> = [];
+  for (const act of [...activities].sort((a, b) => a.order - b.order)) {
+    const first = [...act.steps].sort((a, b) => a.order - b.order)[0];
+    const x = xOf.get(first?.id ?? blankStepId(act.id));
+    if (x !== undefined) out.push({ activityId: act.id, x });
+  }
+  return out;
+}
+
+/**
+ * Resolves a dragged ACTIVITY card's position to the index it should take.
+ *
+ * The inverse of `activityColumns`, and edge-to-edge like `cellAt`: `pos.x` is the
+ * dragged card's left edge and so is every candidate. Comparing an edge to a slot's
+ * CENTRE is the defect that made a story land a column to its left for years — it is
+ * one file away from here and must not come back by analogy.
+ *
+ * Activities have DIFFERENT widths, since each spans its own step group, so there is no
+ * single pitch to divide by. Nearest left edge is what stays correct when the slots are
+ * ragged; a midpoint rule would need each neighbour's width and would still have to
+ * pick a side at the boundary.
+ *
+ * Returns null for a drop outside the backbone's own band, so the caller snaps back
+ * rather than reordering on a gesture that was heading somewhere else.
+ */
+export function activityAt(pos: { x: number; y: number }, model: MapModel): number | null {
+  const cols = activityColumns(model.activities);
+  if (cols.length === 0) return null;
+  if (!withinBackboneBand(pos, model)) return null;
+
+  let best = 0;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  cols.forEach((col, index) => {
+    const distance = Math.abs(pos.x - col.x);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = index;
+    }
+  });
+  return best;
+}
+
+/**
+ * Resolves a dragged STEP card's position to the activity and index it should take.
+ *
+ * Returns the ACTIVITY as well as the index because a step genuinely belongs to one —
+ * the resolution has no way to express "somewhere in the same activity" without first
+ * saying which activity the position is in. Whether a caller acts on a cross-activity
+ * answer is its decision; this only reports where the card was dropped.
+ *
+ * A drop whose nearest column is a BLANK one resolves to null, exactly as `cellAt`
+ * does. That is what keeps the trailing composer from being displaced: it is a slot no
+ * record can take.
+ */
+export function stepAt(pos: { x: number; y: number }, model: MapModel): { activityId: string; index: number } | null {
+  const cols = columns(model.activities);
+  if (cols.filter((c) => !c.blank).length === 0) return null;
+  if (!withinBackboneBand(pos, model)) return null;
+
+  let best = cols[0];
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const col of cols) {
+    const distance = Math.abs(pos.x - col.x);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = col;
+    }
+  }
+  if (best.blank) return null;
+
+  for (const act of [...model.activities].sort((a, b) => a.order - b.order)) {
+    const steps = [...act.steps].sort((a, b) => a.order - b.order);
+    const index = steps.findIndex((s) => s.id === best.id);
+    if (index >= 0) return { activityId: act.id, index };
+  }
+  return null;
+}
+
+/**
+ * The horizontal and vertical extent a backbone drop has to land in.
+ *
+ * Shared by both resolvers so they cannot disagree about what counts as "on the map".
+ * The vertical bound is generous — anywhere above the first story slot — because a card
+ * dragged sideways wanders vertically and rejecting that would make the gesture feel
+ * broken; it is the drop that leaves the map entirely that has to be refused.
+ */
+function withinBackboneBand(pos: { x: number; y: number }, model: MapModel): boolean {
+  // EVERY column, blanks included, because this is the map's physical extent and not a
+  // list of drop targets — which slots are takeable is the callers' business. Measuring
+  // it from real step columns alone put a step-less activity OUTSIDE the map it was
+  // drawn on: such an activity starts at its own blank step slot, and a trailing one
+  // sits beyond the last real step by more than REJECT_MARGIN, so its own card resolved
+  // to null when dropped exactly where it was drawn.
+  const cols = columns(model.activities);
+  if (cols.length === 0) return false;
+  const left = cols[0].x;
+  const right = cols[cols.length - 1].x + STEP_W;
+  if (pos.x < left - REJECT_MARGIN || pos.x > right + REJECT_MARGIN) return false;
+  return pos.y < STORIES_Y;
+}
+
+/**
  * Where the revealed slice's artifact row sits, measured from the DEEPEST story
  * stack rather than from a fixed offset — anything fixed would either float far above
  * a tall column or be buried by it.
@@ -338,19 +450,6 @@ export function artifactRowX(index: number, startX = 0): number {
 }
 
 /**
- * Where a revealed slice's artifact row BEGINS: under the leftmost column holding one
- * of its own stories.
- *
- * Anchoring the row to the slice rather than to the map's origin is what keeps the
- * cards next to the thing they describe. A slice whose stories all sit in the second
- * activity would otherwise hang its spec and its cards under the FIRST activity's
- * columns — whose stories are, at that moment, all dimmed — so the map would show a
- * document under a column it has nothing to do with.
- *
- * Falls back to the origin for a slice that owns no stories, which is what a slice
- * looks like between being created and having anything dragged into it.
- */
-/**
  * Where the `index`th card of a STORY's revealed stack sits, given that story's own
  * position.
  *
@@ -368,6 +467,19 @@ export function storyStackPosition(story: { x: number; y: number }, index: numbe
   return { x: story.x + STEP_W + STEP_GAP, y: story.y + index * ARTIFACT_STACK_PITCH };
 }
 
+/**
+ * Where a revealed slice's artifact row BEGINS: under the leftmost column holding one
+ * of its own stories.
+ *
+ * Anchoring the row to the slice rather than to the map's origin is what keeps the
+ * cards next to the thing they describe. A slice whose stories all sit in the second
+ * activity would otherwise hang its spec and its cards under the FIRST activity's
+ * columns — whose stories are, at that moment, all dimmed — so the map would show a
+ * document under a column it has nothing to do with.
+ *
+ * Falls back to the origin for a slice that owns no stories, which is what a slice
+ * looks like between being created and having anything dragged into it.
+ */
 export function artifactRowStartX(model: MapModel, slice: CapSliceT): number {
   const owned = new Set(slice.storyIds);
   const xOf = new Map(stepColumns(model.activities).map((c) => [c.stepId, c.x]));
@@ -382,6 +494,7 @@ export function artifactRowStartX(model: MapModel, slice: CapSliceT): number {
 export function layoutMap(model: MapModel): { nodes: MapNode[] } {
   const nodes: MapNode[] = [];
   const xOf = new Map(columns(model.activities).map((c) => [c.id, c.x]));
+  const activityX = new Map(activityColumns(model.activities).map((c) => [c.activityId, c.x]));
 
   for (const act of [...model.activities].sort((a, b) => a.order - b.order)) {
     const steps = [...act.steps].sort((a, b) => a.order - b.order);
@@ -393,7 +506,10 @@ export function layoutMap(model: MapModel): { nodes: MapNode[] } {
     // span 1, exactly STEP_W — which is what the old Math.max was there to
     // protect.
     const span = steps.length + 1;
-    const x = xOf.get(steps[0]?.id ?? blankStepId(act.id));
+    // From activityColumns, not derived again here — the reorder resolver inverts that
+    // function, and a second expression for "this activity's left edge" is a second
+    // thing that can disagree with where the card was drawn.
+    const x = activityX.get(act.id);
     if (x !== undefined) {
       nodes.push({
         id: activityNodeId(act.id),
@@ -401,7 +517,11 @@ export function layoutMap(model: MapModel): { nodes: MapNode[] } {
         position: { x, y: 0 },
         width: span * STEP_W + (span - 1) * STEP_GAP,
         data: { activity: act },
-        draggable: false,
+        // Draggable to REORDER. The handle is the card's text, so the remove button —
+        // which carries `nodrag` — stays clickable, and dragging an activity is a
+        // deliberate grab of its title rather than anything that happens on the card.
+        draggable: true,
+        dragHandle: ".map-card__text",
       });
     }
 
@@ -413,7 +533,9 @@ export function layoutMap(model: MapModel): { nodes: MapNode[] } {
         type: "step",
         position: { x: stepX, y: ACTIVITY_H + COL_GAP },
         data: { step, activity: act },
-        draggable: false,
+        // Same as its activity: draggable to reorder, by the title rather than the card.
+        draggable: true,
+        dragHandle: ".map-card__text",
       });
       const stories = model.stories.filter((s) => s.stepId === step.id).sort((a, b) => a.order - b.order);
       stories.forEach((story, i) => {
