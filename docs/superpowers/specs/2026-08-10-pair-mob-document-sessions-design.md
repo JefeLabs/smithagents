@@ -97,7 +97,10 @@ interface Proposal {             // phase 3
 }
 ```
 
-**Session kinds** — `SessionSummary` gains `kind: "chat" | "document"` and an
+**Session kinds** — **SUPERSEDED 2026-08-10 (evening) by
+`2026-08-10-session-artifacts-design.md`**: sessions carry optional
+`artifacts` instead of kinds; the paragraphs below describe the shipped
+phase-1 state the migration replaces. — `SessionSummary` gains `kind: "chat" | "document"` and an
 optional `docId`. Absent `kind` parses as `"chat"` (legacy tolerance, same
 precedent as the channels array). A document session is a real broker session
 bound to a document: it appears in the SessionsPanel with a kind badge, and
