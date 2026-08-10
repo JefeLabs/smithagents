@@ -1,6 +1,6 @@
 import { QueryClient } from "@tanstack/react-query";
 import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { usePushToTalk } from "./hooks/usePushToTalk";
@@ -47,11 +47,12 @@ beforeAll(() => {
   }
 });
 
-async function renderAt(path: string) {
+async function renderAt(path: string, seed?: (client: QueryClient) => void) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: Number.POSITIVE_INFINITY, refetchOnWindowFocus: false } },
   });
   client.setQueryData(qk.roster, { agents: ROSTER, identity: null });
+  seed?.(client);
   const router = createAppRouter(createMemoryHistory({ initialEntries: [path] }));
   renderWithProviders(<RouterProvider router={router} />, { client });
   // The rail renders once the root layout is mounted. Sidebar.Menu is RAC Tree
@@ -155,5 +156,19 @@ describe("stage routing", () => {
     const router = await renderAt("/work/ignacio");
     await screen.findByRole("region", { name: "Work: Ignacio" });
     expect(router.state.location.pathname).toBe("/work/ignacio");
+  });
+
+  it("opening the sessions panel from the rail shows the active workspace in its header", async () => {
+    await renderAt("/", (client) => {
+      client.setQueryData(qk.session, {
+        id: "s1",
+        title: "Login spec",
+        workspace: "acme",
+        runtime: "local-in-process",
+      });
+    });
+    await userEvent.click(screen.getByRole("row", { name: /^sessions$/i }));
+    const panel = await screen.findByRole("dialog");
+    expect(within(panel).getByText("acme")).toBeTruthy();
   });
 });

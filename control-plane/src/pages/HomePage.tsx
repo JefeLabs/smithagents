@@ -292,6 +292,7 @@ export function HomePage() {
             open={sessionsOpen}
             sessions={sessions}
             workspaces={workspaces}
+            activeWorkspace={session?.workspace}
             onClose={closeSessions}
             onActivate={onActivateSession}
             onCreate={(ws) => {
