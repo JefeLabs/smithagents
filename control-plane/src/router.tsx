@@ -37,9 +37,7 @@ const NO_BLUEPRINTS: BlueprintT[] = [];
 
 // The document stage carries Tiptap/ProseMirror; a chat-only session should not
 // download an editor it never opens. This is the app's first split chunk.
-const DocumentStage = lazy(() =>
-  import("./organisms/DocumentStage").then((m) => ({ default: m.DocumentStage })),
-);
+const DocumentStage = lazy(() => import("./organisms/DocumentStage").then((m) => ({ default: m.DocumentStage })));
 
 /**
  * Route components are deliberately thin: they read broker state from the
