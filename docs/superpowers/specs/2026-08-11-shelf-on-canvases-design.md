@@ -1,7 +1,7 @@
 # Staged-artifacts shelf on every kind surface + focus view — Design
 
-**Date:** 2026-08-11 (v3 — dashboards dock added mid-review)
-**Status:** Approved by Edwin (v2: all five kind surfaces; focus view collapses shelf + docked chat; toggle = left-rail control above Settings + Esc. v3: /dashboards uses the shared ChatDock — the center variant replaces the stage's own ask box)
+**Date:** 2026-08-11 (v4 — dashboards board view docks right)
+**Status:** Approved by Edwin (v2: all five kind surfaces; focus view collapses shelf + docked chat; toggle = left-rail control above Settings + Esc. v3: /dashboards uses the shared ChatDock — the center variant replaces the stage's own ask box. v4: while a composed dashboard is DISPLAYING, the chat moves to the right dock — the iterate-or-pivot channel: "ask changes to the dashboard or request something different altogether"; ask/composing keep the center box)
 
 ## Problem
 
@@ -104,6 +104,27 @@ collapses both the shelf and the chat panel for a clean canvas.
   the real chat-driven composition wires in.
 - The `center` variant CSS already exists (chatdock.css:62-82); no CSS
   work beyond the focus rules above.
+
+### Board view docks right (v4)
+
+While the composed dashboard displays, the chat docks right so it can take
+change requests or a whole new ask without covering the board:
+
+- `uiStore.dashBoardShowing: boolean` (+ `setDashBoardShowing`). The
+  dashboards stage mirrors its own view machine into it via an effect
+  (`view === "board"`), resetting to `false` on unmount. Organisms already
+  read/write uiStore (BoardStage's `viewedWorkspaces`), so no boundary
+  breach; the view machine itself stays inside the stage.
+- HomePage composes the one view-dependent override:
+  `pathname === "/dashboards" && dashBoardShowing ? "dock" : layoutForPath(pathname)`.
+  `layoutForPath` stays pure URL → variant; `"center"` remains the
+  `/dashboards` base for ask/composing.
+- Width reservation is stage-local: the section gains a
+  `dashboards-stage--docked` modifier in board view; CSS gives it the
+  `--chat-dock-w` right padding, and `body[data-focus]` zeroes it like the
+  other canvases. Ask/composing keep the padding-free center overlay.
+- Rejected: URL-encoding the view (`/dashboards/board`) — deep-link
+  semantics for a mock flow Plan 4 rebuilds anyway.
 
 ### Testing
 
