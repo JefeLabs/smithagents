@@ -1342,15 +1342,21 @@ const textChannel = new TextChannel(
       const workType = body.workType ?? bp.workTypes[0] ?? "";
       if (!bp.workTypes.includes(workType)) return { error: `workType must be one of: ${bp.workTypes.join(", ")}` };
       const text = (body.text ?? "").trim();
-      if (!text) return { error: "text is required" };
-      const doc = documentManager.create(bp, workType, truncateTitle(text));
+      // Empty text is a composer instantiation: the doc scaffolds from the
+      // blueprint's starters and auto-names itself (documents.create falls
+      // back to "<blueprint> <seq>" — truncateTitle would mislabel it
+      // "New session"), and no utterance enters the room.
+      const doc = documentManager.create(bp, workType, text ? truncateTitle(text) : "");
       if (!doc) return { error: "could not create document" };
-      // The send is still a send: the room hears it, the brain answers it in
-      // context, and a session gets lazily created here exactly as it would for
-      // a plain chat send — which is also how the document inherits the active
-      // session's runtime and workspace (it attaches, it never spawns).
-      textChannel.broadcast({ type: "utterance", text });
-      handleUserText(text);
+      if (text) {
+        // The send is still a send: the room hears it, the brain answers it in
+        // context, and a session gets lazily created here exactly as it would
+        // for a plain chat send — which is also how the document inherits the
+        // active session's runtime and workspace (it attaches, it never
+        // spawns).
+        textChannel.broadcast({ type: "utterance", text });
+        handleUserText(text);
+      }
       const active = sessionManager.activeOrNull();
       if (active) sessionManager.addArtifact(active.id, doc.id);
       textChannel.broadcast(documentsFrame());

@@ -1388,9 +1388,12 @@ export class TextChannel {
               /* empty body falls into the text guard below */
             }
             // Send IS the commit: the text names the document and enters the
-            // conversation. Nothing to say means nothing to create.
+            // conversation. The one exception is a composer instantiation — a
+            // blueprintId with no text scaffolds a blank doc from the
+            // blueprint's starters — so only a no-text, no-blueprint request
+            // has nothing to create.
             const text = typeof parsed.text === "string" ? parsed.text : "";
-            if (!text.trim()) {
+            if (!text.trim() && typeof parsed.blueprintId !== "string") {
               json(400, { error: "text is required" });
               return;
             }

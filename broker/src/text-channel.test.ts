@@ -1586,15 +1586,26 @@ test("POST /documents forwards the body and returns the created doc; PATCH updat
     });
     assert.equal(bad.status, 400);
 
-    // The send IS the commit — a document with no text has nothing to be about,
-    // and the route rejects it without ever reaching the handler.
-    const empty = await fetch(`http://127.0.0.1:${port}/documents`, {
+    // Composer instantiation: a blueprintId with no text scaffolds a blank
+    // doc from the blueprint's starters (spec: postDocument(er, "")), so the
+    // route forwards it instead of rejecting.
+    const scaffold = await fetch(`http://127.0.0.1:${port}/documents`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ blueprintId: "spec", workType: "feature", text: "   " }),
     });
+    assert.equal(scaffold.status, 200);
+    assert.equal(creates.length, 3);
+
+    // The send IS the commit — no text AND no blueprint has nothing to be
+    // about, and the route rejects it without ever reaching the handler.
+    const empty = await fetch(`http://127.0.0.1:${port}/documents`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workType: "feature", text: "   " }),
+    });
     assert.equal(empty.status, 400);
-    assert.equal(creates.length, 2); // the empty one never reached the closure
+    assert.equal(creates.length, 3); // the no-blueprint one never reached the closure
 
     const patched = await fetch(`http://127.0.0.1:${port}/documents/d1/sections/overview`, {
       method: "PATCH",
