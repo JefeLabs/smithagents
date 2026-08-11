@@ -18,11 +18,13 @@ import {
   findCardByRef,
   findRouteDestination,
   loadBoards,
+  normalizePersonalBoard,
   patchCard,
   removeCard,
   resolveExit,
   routeCard,
   saveBoard,
+  type WorkBoard,
   WORKSPACE_BOARD_TYPES,
 } from "./work-items.js";
 
@@ -273,6 +275,60 @@ test("save/load round-trip; malformed files land in errors without sinking the r
   await deleteBoardFile(dir, "alpha-plan");
   assert.deepEqual((await loadBoards(dir)).boards, []);
   await assert.rejects(saveBoard(dir, { ...b, id: "../evil" }), /id/i);
+});
+
+test("normalizePersonalBoard migrates a pre-rename personal board and is idempotent", () => {
+  const legacy: WorkBoard = {
+    id: "personal",
+    name: "Personal",
+    type: "personal",
+    columns: [
+      { id: "todo", name: "Todo" },
+      { id: "doing", name: "Doing" },
+      { id: "done", name: "Done" },
+      { id: "not-doing", name: "Not Doing" },
+    ],
+    cards: [],
+  };
+  normalizePersonalBoard(legacy);
+  assert.equal(legacy.name, "Active To-dos");
+  assert.deepEqual(
+    legacy.columns.map((c) => c.id),
+    ["queue", "todo", "doing", "done", "not-doing"],
+  );
+  normalizePersonalBoard(legacy);
+  assert.equal(legacy.columns.filter((c) => c.id === "queue").length, 1);
+});
+
+test("normalizePersonalBoard keeps a custom name and never touches workspace boards", () => {
+  const renamed = { ...createBoard("personal"), name: "Edwin's list" };
+  assert.equal(normalizePersonalBoard(renamed).name, "Edwin's list");
+  const ws = createBoard("deliver", "acme");
+  const before = ws.columns.map((c) => c.id);
+  normalizePersonalBoard(ws);
+  assert.deepEqual(
+    ws.columns.map((c) => c.id),
+    before,
+  );
+});
+
+test("loadBoards migrates a legacy personal file in memory only", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "work-"));
+  await writeFile(
+    join(dir, "personal.json"),
+    JSON.stringify({
+      id: "personal",
+      name: "Personal",
+      type: "personal",
+      columns: [{ id: "todo", name: "Todo" }],
+      cards: [],
+    }),
+  );
+  const { boards } = await loadBoards(dir);
+  assert.equal(boards[0].name, "Active To-dos");
+  assert.equal(boards[0].columns[0].id, "queue");
+  // In-memory only: the file still says Personal until the next mutation saves.
+  assert.match(await readFile(join(dir, "personal.json"), "utf8"), /"Personal"/);
 });
 
 test("removeCard deletes and renumbers its column", () => {

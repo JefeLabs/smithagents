@@ -289,6 +289,19 @@ function assertBoard(file: string, v: unknown): WorkBoard {
   return o;
 }
 
+/**
+ * Reshape a personal board persisted before the Active To-dos rename: the
+ * default name follows the new label and the queue intake column is
+ * prepended. A custom rename is preserved. In-memory only — the file is
+ * rewritten the next time any mutation saves the board.
+ */
+export function normalizePersonalBoard(board: WorkBoard): WorkBoard {
+  if (board.type !== "personal") return board;
+  if (board.name === "Personal") board.name = "Active To-dos";
+  if (!board.columns.some((c) => c.id === "queue")) board.columns.unshift({ id: "queue", name: "Queue" });
+  return board;
+}
+
 export async function loadBoards(
   dir: string,
 ): Promise<{ boards: WorkBoard[]; errors: Array<{ file: string; error: string }> }> {
@@ -302,7 +315,7 @@ export async function loadBoards(
   const errors: Array<{ file: string; error: string }> = [];
   for (const file of entries.filter((f) => f.endsWith(".json"))) {
     try {
-      boards.push(assertBoard(file, JSON.parse(await readFile(join(dir, file), "utf8"))));
+      boards.push(normalizePersonalBoard(assertBoard(file, JSON.parse(await readFile(join(dir, file), "utf8")))));
     } catch (err) {
       errors.push({ file, error: String((err as Error).message) });
     }
