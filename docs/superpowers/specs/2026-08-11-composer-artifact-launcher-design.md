@@ -269,3 +269,39 @@ Dashboards/Map are pure navigations; Documents/Diagrams create-then-navigate.
 - Folding User Story Maps into the session document shelf as first-class
   artifacts (they keep their capability-story-map model; parity is the canvas
   *chrome*, not shelf membership).
+
+---
+
+## Revision (2026-08-11): Composer unification — the ChatDock
+
+Live decisions by Edwin that supersede §3, §4, and §8's "same composer per stage"
+language with a stronger invariant: **all views use the same chat box — literally
+one instance, not one-per-route.**
+
+**One persistent `ChatDock`.** The chat box is today DUPLICATED (`VoiceStage` and
+`DocRoute` each mount their own `<Composer>`; Map/Dashboards/Board have none). Instead,
+mount a single **`ChatDock` = `Transcript` + `Composer`** once in the shell
+(`HomePage`, inside `ControlPlaneLayout`'s `Sidebar.Main` as a sibling of `{stage}`),
+wired to broker deps once. It never unmounts; navigation only re-positions it, so the
+draft text, mic binding, focus, and scroll survive view switches.
+
+**Router-driven layout.** A pure `layoutForPath(pathname)` returns the variant — no
+new store state, the URL is the single source of truth (back/forward just work):
+
+| Route | Variant | Shape |
+| --- | --- | --- |
+| `/` | `full` | Centerpiece: empty-hero ("mic is yours") → transcript, composer at bottom, **kind buttons**, artifact shelf |
+| `/doc/$id` `/diagram/$id` `/map` | `dock` | Right column: mini-transcript above the input, **kind row → a `<select>`** (a narrow dock has no room for five buttons) |
+| `/dashboards` | `center` | Mid-screen (Plan 4 details the priority-card layout) |
+| `/board` `/work/$agent`, and while the session-birth `NewSessionScreen` shows | `hidden` | No chat box |
+
+**Consequences.** `VoiceStage` is retired — its hero + transcript become the `full`
+variant's own empty/active states, and `VoiceRoute`'s `/` Outlet goes near-empty (the
+dock covers it over the dot-grid). `DocRoute` loses its private `<Composer>` and
+Resizable split; `DocumentStage` becomes document-only, matching `DiagramStage` (already
+chat-free as of Plan 2). The kind control is one component with a `variant` prop:
+buttons in `full`/`center`, a `<select>` in `dock`.
+
+**Scope split.** This is **Plan 3 = the ChatDock lift + reposition + buttons→select
+ONLY.** Full-screen focus mode (Esc, hide nav/rails, shrink the dock — old §8/§8.1)
+moves to its own follow-up **Plan 3b**. Plan 4 (Dashboards centered layout) is unchanged.
