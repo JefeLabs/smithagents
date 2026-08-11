@@ -2631,14 +2631,30 @@ button.logo {
 }
 /* Queue is the system's intake lane, not a working column — it reads grayed
    back so the eye starts at the first working lane. Neutral mixes track every
-   theme's own text tokens. */
+   theme's own text tokens (sand included), so no per-theme branches. */
 .board-column--queue {
-  background: color-mix(in srgb, var(--text-dim) 8%, transparent);
+  background: color-mix(in srgb, var(--text-dim) 16%, transparent);
   border-style: dashed;
-  border-color: color-mix(in srgb, var(--text-dim) 35%, transparent);
+  border-color: color-mix(in srgb, var(--text-dim) 50%, transparent);
 }
 .board-column--queue .board-column__name {
   color: var(--text-dim);
+}
+/* Intake cards sit grey until someone picks them up — the tint (and any flag
+   color) only comes back under the pointer, so a queued card still reads at
+   full fidelity the moment you consider it. */
+.board-column--queue .board-card {
+  filter: grayscale(0.85);
+  opacity: 0.75;
+  transition:
+    filter 0.15s,
+    opacity 0.15s;
+}
+.board-column--queue .board-card:hover,
+.board-column--queue .board-card:focus-visible,
+.board-column--queue .board-card.is-dragging {
+  filter: none;
+  opacity: 1;
 }
 .board-column__name {
   font-size: 11px;
