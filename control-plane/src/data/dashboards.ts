@@ -36,16 +36,10 @@ export interface DashGroupRow {
   risk: DashRisk;
 }
 
-export const DASH_SCOPES = [
-  "all workspaces",
-  "ideation",
-  "plan",
-  "deliver",
-  "release",
-  "reactive",
-  "maintenance",
-  "personal",
-] as const;
+// The one non-group scope. The board-type chips retired with workspace groups
+// (spec 2026-08-11-workspace-groups §6): a dashboard's scope is a GROUPING of
+// workspaces now; board+date scoping is phase 2's dimension.
+export const DASH_SCOPES = ["all workspaces"] as const;
 
 export const DASH_SUGGESTIONS = [
   "where is delivery slipping across all workspaces this quarter?",
@@ -139,9 +133,10 @@ export const DASH_ROWS: DashGroupRow[] = [
   { name: "maintenance", cards: 19, wip: 3, cycle: "2.4d", risk: "ok", trend: [8, 9, 8, 9, 8, 9, 9, 8, 9, 8, 9, 8] },
 ];
 
-/** The meta line a just-saved dashboard gets; "all workspaces" folds to ALL. */
-export function savedMeta(scope: string): string {
-  return `${(scope === "all workspaces" ? "all" : scope).toUpperCase()} · JUST SAVED`;
+/** SAVED-card meta: pin targets (group: namespace stripped — storage, not copy) + freshness. */
+export function savedMeta(pins: string[] | undefined, updatedAt: string): string {
+  const targets = (pins ?? []).map((p) => p.replace(/^group:/, "")).join(", ");
+  return `${targets} · updated ${new Date(updatedAt).toLocaleDateString()}`;
 }
 
 export function scopeHint(scope: string): string {

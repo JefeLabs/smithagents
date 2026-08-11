@@ -6,6 +6,7 @@ import { DashboardAsk } from "./DashboardAsk";
 function renderAsk(over: Partial<Parameters<typeof DashboardAsk>[0]> = {}) {
   const props = {
     scope: "all workspaces",
+    scopes: ["all workspaces", "frontend", "core"],
     saved: DASH_SAVED,
     onScope: vi.fn(),
     onSubmit: vi.fn(),
@@ -18,11 +19,12 @@ function renderAsk(over: Partial<Parameters<typeof DashboardAsk>[0]> = {}) {
 describe("DashboardAsk", () => {
   afterEach(() => cleanup());
 
-  it("scope chips reflect the selection and report a pick", () => {
+  it("scope chips are exactly the scopes prop — your groups, not board types (spec §6)", () => {
     const { onScope } = renderAsk();
     expect(screen.getByRole("radio", { name: "all workspaces" }).getAttribute("aria-checked")).toBe("true");
-    fireEvent.click(screen.getByRole("radio", { name: "release" }));
-    expect(onScope).toHaveBeenCalledWith("release");
+    expect(screen.getAllByRole("radio").map((r) => r.textContent)).toEqual(["all workspaces", "frontend", "core"]);
+    fireEvent.click(screen.getByRole("radio", { name: "frontend" }));
+    expect(onScope).toHaveBeenCalledWith("frontend");
   });
 
   it("owns no text input — the shared center dock is the one chat box (spec v3)", () => {

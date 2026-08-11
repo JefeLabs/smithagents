@@ -1,7 +1,9 @@
-import { DASH_SCOPES, DASH_SUGGESTIONS, type SavedDashboard } from "../../data/dashboards";
+import { DASH_SUGGESTIONS, type SavedDashboard } from "../../data/dashboards";
 
 interface DashboardAskProps {
   scope: string;
+  /** The offered scopes: "all workspaces" + the user's groups (spec §6). */
+  scopes: string[];
   saved: SavedDashboard[];
   onScope: (scope: string) => void;
   /** Compose from a suggestion — free-typed asks go through the shared center dock (spec v3). */
@@ -10,7 +12,7 @@ interface DashboardAskProps {
   onOpenSaved?: (docId: string) => void;
 }
 
-export function DashboardAsk({ scope, saved, onScope, onSubmit, onOpenSaved }: DashboardAskProps) {
+export function DashboardAsk({ scope, scopes, saved, onScope, onSubmit, onOpenSaved }: DashboardAskProps) {
   return (
     <div className="dash-ask">
       <div className="dash-ask__inner">
@@ -22,7 +24,7 @@ export function DashboardAsk({ scope, saved, onScope, onSubmit, onOpenSaved }: D
 
         <div className="dash-ask__scopes" role="radiogroup" aria-label="Scope">
           <span className="dash-ask__label">SCOPE</span>
-          {DASH_SCOPES.map((s) => (
+          {scopes.map((s) => (
             // biome-ignore lint/a11y/useSemanticElements: chip-styled radiogroup — a native input can't carry the pill styling, and role="radio"+aria-checked is the equivalent ARIA pattern
             <button
               key={s}

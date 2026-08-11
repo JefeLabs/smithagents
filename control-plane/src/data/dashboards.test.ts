@@ -16,9 +16,10 @@ describe("dashboards fake data", () => {
     expect(DASH_STEPS).toHaveLength(4);
   });
 
-  it("savedMeta folds 'all workspaces' to ALL", () => {
-    expect(savedMeta("all workspaces")).toBe("ALL · JUST SAVED");
-    expect(savedMeta("release")).toBe("RELEASE · JUST SAVED");
+  it("savedMeta lists pin targets with the group: namespace stripped", () => {
+    const meta = savedMeta(["jefelabs", "group:core"], "2026-08-11T00:00:00Z");
+    expect(meta).toContain("jefelabs, core");
+    expect(meta).not.toContain("group:core");
   });
 
   it("scopeHint uppercases the scope", () => {

@@ -1,5 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
-import { DASH_STEPS, DASH_SUGGESTIONS, type SavedDashboard, scopeHint } from "../data/dashboards";
+import { DASH_SCOPES, DASH_STEPS, DASH_SUGGESTIONS, type SavedDashboard, scopeHint } from "../data/dashboards";
 import { DashboardAsk } from "./dashboards/DashboardAsk";
 import { DashboardComposing } from "./dashboards/DashboardComposing";
 
@@ -14,6 +14,8 @@ interface DashboardsStageProps {
    * canvas. The stage never shows a board of its own anymore.
    */
   onPresent?: (question: string, scope: string) => void;
+  /** The offered scopes: "all workspaces" + the user's groups (spec §6). */
+  scopes?: string[];
   /** Pinned dashboard docs, listed under SAVED — the route derives them. */
   savedDocs?: SavedDashboard[];
   /** Open a saved (pinned) dashboard's document. */
@@ -25,7 +27,7 @@ interface DashboardsStageProps {
  * document (`/dashboard/$docId`); this stage hands off via `onPresent` the
  * moment the walk completes. Router-free like every organism.
  */
-export function DashboardsStage({ shelf, onPresent, savedDocs, onOpenSaved }: DashboardsStageProps = {}) {
+export function DashboardsStage({ shelf, onPresent, scopes, savedDocs, onOpenSaved }: DashboardsStageProps = {}) {
   const [view, setView] = useState<DashView>("ask");
   const [query, setQuery] = useState("");
   const [scope, setScope] = useState("all workspaces");
@@ -71,6 +73,7 @@ export function DashboardsStage({ shelf, onPresent, savedDocs, onOpenSaved }: Da
       {view === "ask" && (
         <DashboardAsk
           scope={scope}
+          scopes={scopes ?? [...DASH_SCOPES]}
           saved={savedDocs ?? []}
           onScope={setScope}
           onSubmit={submit}

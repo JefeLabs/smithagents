@@ -25,14 +25,19 @@ describe("DashboardsStage", () => {
     expect(screen.getByText("what do you want to know?")).toBeTruthy();
   });
 
-  it("onPresent carries the picked scope", () => {
+  it("onPresent carries the picked GROUP scope", () => {
     vi.useFakeTimers();
     const onPresent = vi.fn();
-    render(<DashboardsStage onPresent={onPresent} />);
-    fireEvent.click(screen.getByRole("radio", { name: "release" }));
+    render(<DashboardsStage onPresent={onPresent} scopes={["all workspaces", "frontend"]} />);
+    fireEvent.click(screen.getByRole("radio", { name: "frontend" }));
     fireEvent.click(screen.getByText(DASH_SUGGESTIONS[0]));
     act(() => vi.advanceTimersByTime(STEP_MS * 4));
-    expect(onPresent).toHaveBeenCalledExactlyOnceWith(DASH_SUGGESTIONS[0], "release");
+    expect(onPresent).toHaveBeenCalledExactlyOnceWith(DASH_SUGGESTIONS[0], "frontend");
+  });
+
+  it("without a scopes prop only 'all workspaces' offers", () => {
+    render(<DashboardsStage />);
+    expect(screen.getAllByRole("radio").map((r) => r.textContent)).toEqual(["all workspaces"]);
   });
 
   it("presents exactly once — the completed walk's timer is stopped, not left ticking", () => {

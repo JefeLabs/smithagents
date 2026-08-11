@@ -10,6 +10,7 @@ import { lazy, Suspense } from "react";
 import * as api from "./api/broker";
 import type { BlueprintT, DocT, GroupT, RosterAgent } from "./api/types";
 import { agentSeeds } from "./data/agents";
+import { savedMeta } from "./data/dashboards";
 import { composeSpec, specToFence } from "./lib/dashboardSpec";
 import { openDocByFamily } from "./lib/pickKind";
 import { ArtifactShelf, shelfDocsFor } from "./molecules/ArtifactShelf";
@@ -84,19 +85,17 @@ function DashboardsRoute() {
   const shelf = useShelf();
   const { data: docs = NO_DOCS } = useDocuments();
   const { data: blueprints = NO_BLUEPRINTS } = useBlueprints();
+  const { data: groups = NO_GROUPS } = useGroups();
   // SAVED = dashboard docs pinned somewhere (spec 2026-08-11). A composed but
   // never-pinned dashboard lives on in its session's shelf, not here.
   const dashboardIds = new Set(blueprints.filter((b) => b.family === "dashboard").map((b) => b.id));
   const savedDocs = docs
     .filter((d) => dashboardIds.has(d.blueprintId) && (d.pins?.length ?? 0) > 0)
-    .map((d) => ({
-      id: d.id,
-      title: d.title,
-      meta: `${d.pins?.join(", ")} · updated ${new Date(d.updatedAt).toLocaleDateString()}`,
-    }));
+    .map((d) => ({ id: d.id, title: d.title, meta: savedMeta(d.pins, d.updatedAt) }));
   return (
     <DashboardsStage
       shelf={shelf}
+      scopes={["all workspaces", ...groups.map((g) => g.name)]}
       savedDocs={savedDocs}
       onOpenSaved={(docId) => void navigate({ to: "/dashboard/$docId", params: { docId } })}
       onPresent={async (question, scope) => {
