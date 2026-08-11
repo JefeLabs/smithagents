@@ -45,6 +45,14 @@ describe("uiStore", () => {
     expect(useUiStore.getState().focusMode).toBe(false);
   });
 
+  it("dashBoardShowing flips on and off", () => {
+    expect(useUiStore.getState().dashBoardShowing).toBe(false);
+    useUiStore.getState().setDashBoardShowing(true);
+    expect(useUiStore.getState().dashBoardShowing).toBe(true);
+    useUiStore.getState().setDashBoardShowing(false);
+    expect(useUiStore.getState().dashBoardShowing).toBe(false);
+  });
+
   it("state does not leak between tests", () => {
     // modalOpen alone doesn't pin this: it happens to end up false anyway
     // from the "closing the agent modal" test's own closeAgentModal() call,

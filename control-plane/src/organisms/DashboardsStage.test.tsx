@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DASH_SUGGESTIONS } from "../data/dashboards";
+import { useUiStore } from "../stores/uiStore";
 import { DashboardsStage } from "./DashboardsStage";
 
 const STEP_MS = 620;
@@ -64,5 +65,21 @@ describe("DashboardsStage", () => {
   it("renders the shelf slot inside the stage when provided", () => {
     render(<DashboardsStage shelf={<aside aria-label="session documents" />} />);
     expect(screen.getByRole("complementary", { name: "session documents" })).toBeTruthy();
+  });
+
+  it("board view stamps the docked modifier and mirrors dashBoardShowing; leaving clears both", () => {
+    vi.useFakeTimers();
+    const { unmount } = render(<DashboardsStage />);
+    const stage = screen.getByRole("region", { name: "Dashboards" });
+    expect(stage.className).not.toContain("dashboards-stage--docked");
+    expect(useUiStore.getState().dashBoardShowing).toBe(false);
+    fireEvent.click(screen.getByText(DASH_SUGGESTIONS[0]));
+    act(() => vi.advanceTimersByTime(STEP_MS * 4));
+    expect(stage.className).toContain("dashboards-stage--docked");
+    expect(useUiStore.getState().dashBoardShowing).toBe(true);
+    fireEvent.click(screen.getByText("new question"));
+    expect(useUiStore.getState().dashBoardShowing).toBe(false);
+    unmount();
+    expect(useUiStore.getState().dashBoardShowing).toBe(false);
   });
 });

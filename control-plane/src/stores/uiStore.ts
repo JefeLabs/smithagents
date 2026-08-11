@@ -33,6 +33,9 @@ interface UiState {
   focusMode: boolean;
   toggleFocus: () => void;
   exitFocus: () => void;
+  /** Mirrored by the dashboards stage: true while a composed board displays — the shell docks the chat right (spec v4). */
+  dashBoardShowing: boolean;
+  setDashBoardShowing: (showing: boolean) => void;
   /**
    * Which workspaces Board and Map RENDER. View-only: it never affects dispatch and
    * never changes the active session — work still lands in the active session's
@@ -88,6 +91,7 @@ const initial = {
   removing: null,
   voiceNotice: null,
   focusMode: false,
+  dashBoardShowing: false,
   viewedWorkspaces: new Set<string>(),
 } satisfies Partial<UiState>;
 
@@ -103,6 +107,7 @@ export const useUiStore = create<UiState>((set) => ({
   resetGrid: () => set({ gridParams: GRID_DEFAULTS }),
   toggleFocus: () => set((s) => ({ focusMode: !s.focusMode })),
   exitFocus: () => set({ focusMode: false }),
+  setDashBoardShowing: (dashBoardShowing) => set({ dashBoardShowing }),
   toggleSessions: () => set((s) => ({ sessionsOpen: !s.sessionsOpen })),
   closeSessions: () => set({ sessionsOpen: false }),
   openComposer: (locked) => set({ composer: { locked } }),

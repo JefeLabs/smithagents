@@ -7,6 +7,7 @@ import {
   savedMeta,
   scopeHint,
 } from "../data/dashboards";
+import { useUiStore } from "../stores/uiStore";
 import { DashboardAsk } from "./dashboards/DashboardAsk";
 import { DashboardBoard } from "./dashboards/DashboardBoard";
 import { DashboardComposing } from "./dashboards/DashboardComposing";
@@ -27,6 +28,14 @@ export function DashboardsStage({ shelf }: { shelf?: ReactNode } = {}) {
   const [saved, setSaved] = useState<SavedDashboard[]>(DASH_SAVED);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const savedSeq = useRef(0);
+  const setDashBoardShowing = useUiStore((s) => s.setDashBoardShowing);
+
+  // The shell docks the chat right while a board displays (spec v4) — mirror
+  // the view machine's one shell-relevant fact; unmounting clears it.
+  useEffect(() => {
+    setDashBoardShowing(view === "board");
+    return () => setDashBoardShowing(false);
+  }, [view, setDashBoardShowing]);
 
   const stop = useCallback(() => {
     if (timer.current !== null) {
@@ -56,7 +65,10 @@ export function DashboardsStage({ shelf }: { shelf?: ReactNode } = {}) {
   }, [view, step, stop]);
 
   return (
-    <section className="stage dashboards-stage" aria-label="Dashboards">
+    <section
+      className={`stage dashboards-stage${view === "board" ? " dashboards-stage--docked" : ""}`}
+      aria-label="Dashboards"
+    >
       {shelf}
       <header className="dashboards-stage__bar">
         <div className="dashboards-stage__title">dashboards</div>

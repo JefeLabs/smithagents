@@ -472,6 +472,16 @@ Run: `pnpm lint > /tmp/lint.out 2>&1; echo "lint=$?"` → `lint=0`.
 
 - [ ] **Step 4: Commit spec fix + push**
 
+---
+
+### Task 8 (v4): Dashboards board view docks the chat right
+
+**Files:**
+- Modify: `control-plane/src/stores/uiStore.ts`, `control-plane/src/organisms/DashboardsStage.tsx`, `control-plane/src/pages/HomePage.tsx`, `control-plane/src/styles/chatdock.css`
+- Test: `control-plane/src/stores/uiStore.test.ts`, `control-plane/src/organisms/DashboardsStage.test.tsx`, `control-plane/src/pages/HomePage.test.tsx`
+
+Spec v4: `dashBoardShowing` mirrored from the stage's view machine; HomePage overrides the variant to `dock` on `/dashboards` while it's true; the stage stamps `dashboards-stage--docked` for the `--chat-dock-w` padding; focus zeroes it. TDD per the established cycle; then full verification, live smoke of ask→board (center→right dock), push.
+
 ```bash
 git -C /Users/edwincruz/Development/Workspaces/jefelabs/smithagents add docs/superpowers/specs/2026-08-11-shelf-on-canvases-design.md
 git -C /Users/edwincruz/Development/Workspaces/jefelabs/smithagents commit -m "docs: dashboards mock flow stays reachable via suggestions/saved cards"

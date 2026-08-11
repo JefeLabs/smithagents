@@ -9,6 +9,7 @@ import { useTheme } from "../hooks/useTheme";
 import { qk } from "../queries/keys";
 import { createAppRouter } from "../router";
 import { useSocketStore } from "../stores/socketStore";
+import { useUiStore } from "../stores/uiStore";
 import { renderWithProviders } from "../test/renderWithProviders";
 
 // Only the hooks that reach for browser hardware are module-mocked: speech
@@ -403,6 +404,16 @@ describe("HomePage — creating a session lands in its conversation", () => {
 
     expect(await screen.findByText(/not available/)).toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/board");
+  });
+
+  it("dashboards docks the chat right while a board displays, center otherwise", async () => {
+    renderApp(undefined, "/dashboards");
+    const dock = await screen.findByRole("region", { name: "Chat" });
+    expect(dock.className).toContain("chat-dock--center");
+    act(() => useUiStore.getState().setDashBoardShowing(true));
+    await waitFor(() => expect(screen.getByRole("region", { name: "Chat" }).className).toContain("chat-dock--dock"));
+    act(() => useUiStore.getState().setDashBoardShowing(false));
+    await waitFor(() => expect(screen.getByRole("region", { name: "Chat" }).className).toContain("chat-dock--center"));
   });
 
   it("focus mode stamps body[data-focus]; Esc exits", async () => {
