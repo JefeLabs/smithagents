@@ -78,10 +78,7 @@ describe("DashboardBoard", () => {
   });
 
   it("no texts in the spec — no text-card section renders", () => {
-    render(
-      <DashboardBoard query="q" scopeHint="SCOPE · ALL" onFollowup={() => {}} spec={composeSpec("q", "all")} />,
-    );
+    render(<DashboardBoard query="q" scopeHint="SCOPE · ALL" onFollowup={() => {}} spec={composeSpec("q", "all")} />);
     expect(document.querySelector(".dash-text-card")).toBeNull();
   });
-
 });

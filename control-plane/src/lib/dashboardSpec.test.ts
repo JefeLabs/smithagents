@@ -23,10 +23,7 @@ describe("dashboardSpec", () => {
   });
 
   it("a malformed text entry fails the whole parse — all-or-nothing like the rest", () => {
-    const body = specToFence(composeSpec("q", "all workspaces")).replace(
-      '"kpis"',
-      '"texts": [{ "title": 1 }], "kpis"',
-    );
+    const body = specToFence(composeSpec("q", "all workspaces")).replace('"kpis"', '"texts": [{ "title": 1 }], "kpis"');
     expect(parseDashSpec(body)).toBeNull();
   });
 
