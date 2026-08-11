@@ -138,12 +138,16 @@ body {
    silently dead. Focus view drops the dock, so each side falls back to its
    own default (14px shorthand; diagram has none). */
 .stage.document-stage,
-.stage.diagram-stage,
-.stage.dashboards-stage--docked {
+.stage.diagram-stage {
+  padding-right: var(--chat-dock-w);
+}
+/* Dashboards is docked by board view OR a live thread — HomePage stamps the
+   actual variant on <body>, so the reservation tracks reality, not one rule. */
+body[data-dock="dock"] .stage.dashboards-stage {
   padding-right: var(--chat-dock-w);
 }
 body[data-focus] .stage.document-stage,
-body[data-focus] .stage.dashboards-stage--docked {
+body[data-focus] .stage.dashboards-stage {
   padding-right: 14px;
 }
 body[data-focus] .stage.diagram-stage {

@@ -406,12 +406,15 @@ describe("HomePage — creating a session lands in its conversation", () => {
     expect(router.state.location.pathname).toBe("/board");
   });
 
-  it("dashboards docks the chat right immediately when a thread exists", async () => {
+  it("dashboards docks the chat right immediately when a thread exists, and body carries the variant", async () => {
     renderApp((client) => {
       client.setQueryData(qk.transcript, [{ id: "m1", role: "user", text: "hola", at: "t" }]);
     }, "/dashboards");
     const dock = await screen.findByRole("region", { name: "Chat" });
     expect(dock.className).toContain("chat-dock--dock");
+    // The stage's width reservation keys off this stamp — it must track the
+    // ACTUAL variant (thread-docked ask view included), not just board view.
+    expect(document.body.getAttribute("data-dock")).toBe("dock");
   });
 
   it("dashboards docks the chat right while a board displays, center otherwise", async () => {

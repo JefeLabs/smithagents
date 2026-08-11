@@ -176,6 +176,14 @@ export function HomePage() {
     return () => document.body.removeAttribute("data-focus");
   }, [focusMode]);
 
+  // The dock variant, stamped the same way: stages whose boundary depends on
+  // the ACTUAL variant (dashboards — docked by board view OR a live thread)
+  // key their width reservation off this rather than re-deriving the rule.
+  useEffect(() => {
+    document.body.setAttribute("data-dock", dockVariant);
+    return () => document.body.removeAttribute("data-dock");
+  }, [dockVariant]);
+
   useEffect(() => {
     if (!focusMode) return;
     const onKey = (e: KeyboardEvent) => {
