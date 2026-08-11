@@ -23,7 +23,15 @@
 }
 
 /* ---- full: the home centerpiece. The section also carries `.stage`, so it
-   inherits the voice-stage layout verbatim; nothing more is needed here. ---- */
+   inherits the voice-stage layout verbatim. One correction: the transcript
+   column must be the SAME width as the composer so the chat history lines up
+   under the chat box and right-aligned user bubbles don't overhang its right
+   edge. components.css sizes .chat-log at 760px but the chat-active composer at
+   680px — match them here (this 2-class selector outranks the base .chat-log).
+   Keep in step with `.chat-active .composer-dock` in components.css. ---- */
+.chat-dock--full .chat-log {
+  width: min(680px, 92%);
+}
 
 /* ---- dock: a fixed column just left of the 72px agent rail, below the navbar.
    Transcript scrolls; the composer sits at the foot of the column. ---- */
