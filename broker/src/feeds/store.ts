@@ -68,7 +68,12 @@ export class FeedStore {
   private writeItems(all: FeedItem[]): void {
     const cutoff = this.now().getTime() - MAX_AGE_DAYS * 86_400_000;
     const kept = all
-      .filter((i) => Date.parse(i.publishedAt) >= cutoff)
+      // A release is a standing fact ("the latest version is X"), not a news
+      // item that goes stale — and release feeds are SPARSE. Spring Boot's
+      // newest entry was 47 days old when this was first run live, so age
+      // trimming silently deleted every release the moment it arrived. Releases
+      // are pruned by the 500 cap only.
+      .filter((i) => i.tag === 'release' || Date.parse(i.publishedAt) >= cutoff)
       .sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt))
       .slice(0, MAX_ITEMS);
     this.io.write('items.json', JSON.stringify(kept, null, 2));

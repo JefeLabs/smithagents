@@ -97,3 +97,20 @@ test('a corrupt file reads as empty rather than throwing — a bad write must no
   io.files.set('sources.json', '{not json');
   assert.deepEqual(new FeedStore(io).sources(), []);
 });
+
+test('a RELEASE survives age trimming — release feeds are sparse, and a version is not stale news', () => {
+  const store = new FeedStore(memoryIo(), { now: () => new Date('2026-08-11T00:00:00Z') });
+  store.addItems([
+    { ...item('old-news', '2026-06-01T00:00:00Z'), tag: 'news' },
+    {
+      ...item('old-release', '2026-06-01T00:00:00Z'),
+      tag: 'release',
+      release: { name: 'spring-boot', version: '4.1.0', bump: 'minor', security: false },
+    },
+  ]);
+  assert.deepEqual(
+    store.items().map((i) => i.id),
+    ['old-release'],
+    'the news went, the release stayed',
+  );
+});
