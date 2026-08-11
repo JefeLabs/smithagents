@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { classifyBump, mentionsSecurity, qualifies, latestVersion } from './versions.ts';
+import { classifyBump, mentionsSecurity, qualifies, latestVersion, githubAtomUrl, repositoryUrl } from './versions.ts';
 
 test('classifyBump reads semver, ignoring a leading v', () => {
   assert.equal(classifyBump('4.0.7', '5.0.0'), 'major');
@@ -53,4 +53,26 @@ test('latestVersion reads each ecosystem, and a failure is null not a throw', as
     throw new Error('offline');
   };
   assert.equal(await latestVersion(dead, 'npm', 'react'), null);
+});
+
+test('githubAtomUrl reaches the free Atom feed rather than the rate-limited API', () => {
+  assert.equal(
+    githubAtomUrl('git+https://github.com/facebook/react.git'),
+    'https://github.com/facebook/react/releases.atom',
+  );
+  assert.equal(githubAtomUrl('https://github.com/tauri-apps/tauri'), 'https://github.com/tauri-apps/tauri/releases.atom');
+  assert.equal(githubAtomUrl('https://gitlab.com/x/y'), null);
+  assert.equal(githubAtomUrl(''), null);
+});
+
+test('repositoryUrl reads npm and cargo; maven has none, so maven releases carry no notes', async () => {
+  assert.equal(
+    await repositoryUrl(async () => ({ repository: { url: 'git+https://github.com/facebook/react.git' } }), 'npm', 'react'),
+    'git+https://github.com/facebook/react.git',
+  );
+  assert.equal(
+    await repositoryUrl(async () => ({ crate: { repository: 'https://github.com/tauri-apps/tauri' } }), 'cargo', 'tauri'),
+    'https://github.com/tauri-apps/tauri',
+  );
+  assert.equal(await repositoryUrl(async () => ({}), 'maven', 'g:a'), null);
 });

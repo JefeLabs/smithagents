@@ -19,8 +19,21 @@ import { buildDigest } from './feeds/digest.ts';
 import { parseFeed, youtubeFeedUrl } from './feeds/rss.ts';
 import { weatherLine, weatherUrl } from './feeds/weather.ts';
 import { CADENCE_MS, dueSources, recordOutcome } from './feeds/ingest.ts';
-import type { FeedSource } from './feeds/types.ts';
+import type { FeedItem, FeedSource } from './feeds/types.ts';
 import { urlRejectionReason } from './feeds/url-guard.ts';
+import { readManifests } from './feeds/manifests.ts';
+import { deriveSources } from './feeds/derive.ts';
+import { ownerRole } from './feeds/interests.ts';
+import { cardForRelease } from './feeds/cards.ts';
+import {
+  classifyBump,
+  githubAtomUrl,
+  latestVersion,
+  mentionsSecurity,
+  qualifies,
+  repositoryUrl,
+  type Ecosystem,
+} from './feeds/versions.ts';
 import { ElectionScheduler, runElection, type AskFactory } from './election.ts';
 import { parseTarget, resolveTarget } from './targets.ts';
 import { createDiscordTextLifecycle } from './discord-text-lifecycle.ts';
@@ -1408,6 +1421,101 @@ const textChannel = new TextChannel(
  * with the reason visible in Settings (spec §10).
  */
 const FEEDS_TICK_MS = 60_000;
+/** Manifests are re-read this often; a dependency added today is watched today. */
+const DERIVE_TICK_MS = 60 * 60_000;
+
+/**
+ * A qualifying release becomes a Triage card (spec §5b) — this is how the
+ * maintenance and reactive boards get filled. Failure is logged, never thrown:
+ * the release is still spoken, because conversation does not depend on boards.
+ */
+async function makeCard(item: FeedItem, workspace: string, currentVersion: string): Promise<void> {
+  const result = await cardForRelease(
+    {
+      boards: async () => {
+        const { payload } = await workBoards.proxy('GET', '/work/boards');
+        return ((payload as { boards?: Array<{ id: string; type: string; workspaceId?: string }> }).boards ?? []).map(
+          (b) => ({ id: b.id, type: b.type, workspaceId: b.workspaceId }),
+        );
+      },
+      addCard: async (boardId, card) => {
+        const { status } = await workBoards.proxy('POST', `/work/boards/${boardId}/cards`, card);
+        if (status >= 400) throw new Error(`board rejected the card (${status})`);
+      },
+      plan: async (release, from) => {
+        const message = await anthropic.messages.create({
+          model: 'claude-haiku-4-5',
+          max_tokens: 400,
+          system:
+            'You write short upgrade plans for a working engineer. At most 5 numbered steps, imperative, specific to the change. No preamble.',
+          messages: [
+            {
+              role: 'user',
+              content: `We are on ${release.release!.name} ${from} and ${release.release!.version} is out.\n\nRelease notes:\n${release.summary || '(none available)'}\n\nWhat should we do?`,
+            },
+          ],
+        });
+        return message.content.map((b) => ('text' in b ? b.text : '')).join('');
+      },
+      now: () => new Date().toISOString(),
+    },
+    item,
+    { workspace, currentVersion },
+  );
+  if (result.carded) {
+    feedStore.markCarded(item.id, new Date().toISOString());
+    console.log(`[feeds] carded ${item.title} → ${workspace}`);
+  } else {
+    console.error(`[feeds] no card for ${item.title}: ${result.reason}`);
+  }
+}
+
+/**
+ * The stack declares its own interests (spec §4.1): every workspace repo's
+ * manifests become derived release sources. Manual sources are never touched —
+ * deriveSources returns only the derived set, and the merge preserves the rest.
+ */
+async function deriveFromManifests(): Promise<void> {
+  const workspaces = await swarm.listWorkspaces().catch(() => []);
+  const deps = workspaces
+    .filter((w) => !w.archived)
+    .flatMap((w) =>
+      (w.repos ?? []).flatMap((repo) =>
+        readManifests(
+          {
+            read(path) {
+              try {
+                return readFileSync(path, 'utf8');
+              } catch {
+                return null;
+              }
+            },
+          },
+          repo.path,
+        ).map((d) => ({ ...d, workspace: w.name })),
+      ),
+    );
+  if (!deps.length) return;
+
+  const existing = feedStore.sources();
+  const derived = deriveSources({ deps, promoted: [], existing });
+  const manual = existing.filter((s) => s.origin === 'manual');
+  const state = feedStore.state();
+  const seen = { ...state.seenVersions };
+  // Seed each dependency's baseline from the manifest, so the first poll
+  // compares against what you actually run rather than announcing everything.
+  for (const dep of deps) if (!seen[dep.name] && dep.version) seen[dep.name] = dep.version;
+
+  feedStore.patchState({ seenVersions: seen });
+  for (const source of [...manual, ...derived]) feedStore.putSource(source);
+  const removed = existing.filter((s) => s.origin === 'derived' && !derived.some((d) => d.id === s.id));
+  for (const gone of removed) feedStore.removeSource(gone.id);
+  console.log(`[feeds] derived ${derived.length} release sources from ${deps.length} dependencies`);
+}
+
+void deriveFromManifests();
+setInterval(() => void deriveFromManifests(), DERIVE_TICK_MS).unref();
+
 
 async function fetchSource(source: FeedSource): Promise<{ ok: boolean; error?: string }> {
   try {
@@ -1431,7 +1539,55 @@ async function fetchSource(source: FeedSource): Promise<{ ok: boolean; error?: s
       feedStore.addItems(items);
       return { ok: true };
     }
-    // registry and x sources are polled by their own paths; nothing to do here yet.
+    if (source.kind === 'registry') {
+      const [eco, ...rest] = source.locator.split(':');
+      const name = rest.join(':');
+      const fetchJson = async (url: string) => (await fetch(url)).json();
+      const latest = await latestVersion(fetchJson, eco as Ecosystem, name);
+      if (!latest) return { ok: false, error: `no version found for ${name}` };
+
+      const state = feedStore.state();
+      const from = state.seenVersions[name];
+      // First sight seeds the baseline without announcing: the version you are
+      // already on is not news.
+      if (!from) {
+        feedStore.patchState({ seenVersions: { ...state.seenVersions, [name]: latest } });
+        return { ok: true };
+      }
+      const bump = classifyBump(from, latest);
+      if (!bump) return { ok: true }; // nothing newer
+
+      // Cheap check done; notes are fetched ONLY now, and only to decide
+      // whether a patch is a security patch (spec §5).
+      let notes = '';
+      const repo = await repositoryUrl(fetchJson, eco as Ecosystem, name);
+      const atom = repo ? githubAtomUrl(repo) : null;
+      if (atom) {
+        notes = await fetch(atom)
+          .then((r) => r.text())
+          .catch(() => '');
+      }
+      const security = mentionsSecurity(notes);
+      // The baseline moves whether or not this one is worth telling you about,
+      // so a skipped patch is never re-evaluated forever.
+      feedStore.patchState({ seenVersions: { ...feedStore.state().seenVersions, [name]: latest } });
+      if (!qualifies(bump, security)) return { ok: true };
+
+      const [fresh] = feedStore.addItems([
+        {
+          id: `${source.id}@${latest}`,
+          sourceId: source.id,
+          tag: 'release',
+          title: `${source.label} ${latest}`,
+          publishedAt: new Date().toISOString(),
+          summary: notes.slice(0, 400),
+          release: { name, version: latest, bump, security },
+        },
+      ]);
+      if (fresh && source.workspace) void makeCard(fresh, source.workspace, from);
+      return { ok: true };
+    }
+    // x sources are polled by their own path; nothing to do here yet.
     return { ok: true };
   } catch (err) {
     return { ok: false, error: String((err as Error).message ?? err) };
@@ -1541,11 +1697,31 @@ let currentDigest = '';
 /** Releases named in the digest the crew has not yet said out loud. */
 let unspokenReleaseIds: string[] = [];
 
+/**
+ * dependency name → the agent who should speak its line (feeds spec §4.2).
+ * A role with nobody on the roster resolves to nothing, so attribution never
+ * invents a speaker.
+ */
+function releaseOwners(): Record<string, string> {
+  const roster = broker.uiRoster().agents;
+  const owners: Record<string, string> = {};
+  for (const source of feedStore.sources()) {
+    if (source.tag !== 'release') continue;
+    const [eco, ...rest] = source.locator.split(':');
+    const name = rest.join(':');
+    const role = ownerRole({ name, eco: eco as Ecosystem, version: '', manifest: '' }, false);
+    if (!role) continue;
+    const agent = roster.find((p) => p.agent.role.toLowerCase() === role.toLowerCase());
+    if (agent) owners[name] = agent.agent.name;
+  }
+  return owners;
+}
+
 function refreshDigest(): void {
   const built = buildDigest({
     items: feedStore.items(),
     weather: feedStore.state().weather?.text,
-    owners: {},
+    owners: releaseOwners(),
     now: new Date().toISOString(),
   });
   currentDigest = built.text;

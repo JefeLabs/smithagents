@@ -59,3 +59,44 @@ export async function latestVersion(
     return null;
   }
 }
+
+/**
+ * A GitHub repository URL → its releases Atom feed, which is free and
+ * unauthenticated (the REST API is rate-limited to 60/hour without a token).
+ * Null when the URL is not GitHub, in which case we simply have no notes.
+ */
+export function githubAtomUrl(repositoryUrl: string): string | null {
+  const m = /github\.com[:/]+([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:$|[/#?])/.exec(repositoryUrl);
+  return m ? `https://github.com/${m[1]}/${m[2]}/releases.atom` : null;
+}
+
+/**
+ * Where an ecosystem publishes a package's repository URL. Maven Central's
+ * search API does not expose scm, so maven releases carry no notes — which
+ * means a maven SECURITY patch cannot be detected (major/minor still are).
+ * Documented limitation, not an oversight.
+ */
+export async function repositoryUrl(
+  fetchJson: (url: string) => Promise<unknown>,
+  eco: Ecosystem,
+  name: string,
+): Promise<string | null> {
+  try {
+    if (eco === 'npm') {
+      const body = (await fetchJson(`https://registry.npmjs.org/${name}/latest`)) as {
+        repository?: { url?: string } | string;
+      };
+      const repo = typeof body.repository === 'string' ? body.repository : body.repository?.url;
+      return repo ?? null;
+    }
+    if (eco === 'cargo') {
+      const body = (await fetchJson(`https://crates.io/api/v1/crates/${name}`)) as {
+        crate?: { repository?: string };
+      };
+      return body.crate?.repository ?? null;
+    }
+    return null; // maven: no scm from the search API
+  } catch {
+    return null;
+  }
+}
