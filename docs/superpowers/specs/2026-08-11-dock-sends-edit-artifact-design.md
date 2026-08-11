@@ -1,7 +1,7 @@
 # Dock sends edit the artifact on screen — Design
 
 **Date:** 2026-08-11
-**Status:** SHIPPED (direct-apply verified live end-to-end: instruction → edit turn → section updated on canvas + transcript ack. Crew→proposal path unit/route-tested; its LIVE exercise is blocked by the pre-existing directed-send gap — the swarm agent registry returns empty, so `resolveTarget` 404s on rail crew for plain chat too. See composer-target-selector's OPEN note.)
+**Status:** SHIPPED — both paths verified live end-to-end. Direct-apply: instruction → edit turn → section updated on canvas + transcript ack. Crew: directed send → Osvaldo sticky note → Accept applied. (The directed-send gap turned out to be freed squad members missing from the resolution roster; fixed same day.)
 
 ## Problem
 
