@@ -4,7 +4,19 @@ import { createServer } from 'node:http';
 import { mkdtemp, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { nextReconnectDelay, toHttpUrl, toWsUrl, registerDevice, loadCredentials } from './worker.js';
+import { mergeWorkerConfig, nextReconnectDelay, toHttpUrl, toWsUrl, registerDevice, loadCredentials } from './worker.js';
+
+test('mergeWorkerConfig: explicit undefined overrides never clobber defaults', () => {
+  // The CLI passes `capacity: opts.capacity ? Number(...) : undefined` — a
+  // plain spread would override the default with undefined, and a worker
+  // with capacity undefined is never picked by the pool (0 < undefined).
+  const merged = mergeWorkerConfig({ orchestratorUrl: 'ws://x:1', token: 't', capacity: undefined, name: undefined, defaultRuntime: undefined });
+  assert.equal(merged.capacity, 5);
+  assert.equal(merged.defaultRuntime, 'tmux');
+  assert.ok(merged.name.length > 0);
+  assert.equal(merged.orchestratorUrl, 'ws://x:1');
+  assert.equal(merged.token, 't');
+});
 
 test('nextReconnectDelay: exponential from base, capped, jittered ±20%', () => {
   const noJitter = () => 0.5; // rand=0.5 → jitter factor exactly 1.0

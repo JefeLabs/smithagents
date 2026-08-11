@@ -144,6 +144,19 @@ export async function loadCredentials(credsPath = DEFAULT_CREDENTIALS_PATH): Pro
 // SmithWorker
 // ---------------------------------------------------------------------------
 
+/**
+ * Merge a partial config over the defaults, dropping explicit undefineds —
+ * the CLI builds `{ capacity: x ? N : undefined, ... }`, and a plain spread
+ * would let those undefineds clobber the defaults (a capacity-undefined
+ * worker is never picked by the pool).
+ */
+export function mergeWorkerConfig(config?: Partial<WorkerConfig>): WorkerConfig {
+  const defined = Object.fromEntries(
+    Object.entries(config ?? {}).filter(([, v]) => v !== undefined),
+  ) as Partial<WorkerConfig>;
+  return { ...DEFAULT_WORKER_CONFIG, ...defined };
+}
+
 export class SmithWorker {
   private readonly config: WorkerConfig;
   private readonly runtime: RuntimeAdapter;
@@ -156,7 +169,7 @@ export class SmithWorker {
   private stopped = false;
 
   constructor(config?: Partial<WorkerConfig>) {
-    this.config = { ...DEFAULT_WORKER_CONFIG, ...config };
+    this.config = mergeWorkerConfig(config);
 
     if (this.config.defaultRuntime === 'docker' && this.config.docker) {
       this.runtime = new DockerRuntime(this.config.docker);
