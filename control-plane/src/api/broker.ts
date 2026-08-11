@@ -21,7 +21,8 @@ import type {
   WorkspaceRecord,
 } from "./types";
 
-export const BROKER_BASE = "127.0.0.1:7790";
+export { BROKER_BASE } from "./origin";
+import { BROKER_BASE, brokerFetch } from "./origin";
 
 /** All modes assumed unavailable except the one every machine can always run — the honest fallback when the broker's response is unreadable. */
 const DEFAULT_EXECUTION_MODES: Record<ExecutionMode, boolean> = {
@@ -43,7 +44,7 @@ export async function postSession(
   prompt: string,
 ): Promise<{ error?: string; status?: number }> {
   try {
-    const res = await fetch(`http://${base}/sessions`, {
+    const res = await brokerFetch(`/sessions`, base, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ workspace, runtime, prompt }),
@@ -58,14 +59,14 @@ export async function postSession(
 
 /** GET /execution-modes — which runtimes this machine can actually run right now, keyed by mode id. */
 export async function getExecutionModes(base: string = BROKER_BASE): Promise<Record<ExecutionMode, boolean>> {
-  const res = await fetch(`http://${base}/execution-modes`);
+  const res = await brokerFetch(`/execution-modes`, base);
   const body = (await res.json()) as { modes?: Record<ExecutionMode, boolean> };
   return body.modes ?? DEFAULT_EXECUTION_MODES;
 }
 
 /** POST /utterance — fire-and-forget; the broker echoes accepted utterances back as WS frames, so a failed POST is already communicated by the UI going quiet. */
 export async function postUtterance(text: string, base: string = BROKER_BASE): Promise<void> {
-  void fetch(`http://${base}/utterance`, {
+  void brokerFetch(`/utterance`, base, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ text }),
@@ -76,7 +77,7 @@ export async function postUtterance(text: string, base: string = BROKER_BASE): P
 
 /** POST /compose — fire-and-forget; roster frames simply won't change if this fails. */
 export async function postCompose(op: ComposeOp, base: string = BROKER_BASE): Promise<void> {
-  void fetch(`http://${base}/compose`, {
+  void brokerFetch(`/compose`, base, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(op),
@@ -90,7 +91,7 @@ export async function resetSetup(
   scope: { runtime?: boolean; conversations?: boolean; worktrees?: boolean; agents?: boolean },
   base: string = BROKER_BASE,
 ): Promise<{ ok?: boolean; error?: string; swarm?: { preserved?: string[]; killed?: Record<string, number> } }> {
-  const res = await fetch(`http://${base}/reset`, {
+  const res = await brokerFetch(`/reset`, base, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(scope),
@@ -107,7 +108,7 @@ export async function getActivity(
   name: string,
   base: string = BROKER_BASE,
 ): Promise<{ busy: boolean; label?: string; output?: string }> {
-  const res = await fetch(`http://${base}/activity/${encodeURIComponent(name)}`);
+  const res = await brokerFetch(`/activity/${encodeURIComponent(name)}`, base);
   return (await res.json()) as { busy: boolean; label?: string; output?: string };
 }
 
@@ -123,7 +124,7 @@ export async function getActivity(
  * so an unknown never gates the mic).
  */
 export async function getAgentRecords(base: string = BROKER_BASE): Promise<AgentRecordsResponse> {
-  const res = await fetch(`http://${base}/agents`);
+  const res = await brokerFetch(`/agents`, base);
   const body = (await res.json()) as Partial<AgentRecordsResponse>;
   return { ...body, agents: body.agents ?? [] };
 }
@@ -135,7 +136,7 @@ export async function getRemovalPreview(
   id: string,
   base: string = BROKER_BASE,
 ): Promise<{ outcome?: "delete" | "archive"; reasons?: string[]; error?: string }> {
-  const res = await fetch(`http://${base}/agents/${encodeURIComponent(id)}/removal`);
+  const res = await brokerFetch(`/agents/${encodeURIComponent(id)}/removal`, base);
   return (await res.json()) as { outcome?: "delete" | "archive"; reasons?: string[]; error?: string };
 }
 
@@ -144,13 +145,13 @@ export async function deleteAgent(
   id: string,
   base: string = BROKER_BASE,
 ): Promise<{ outcome?: string; error?: string }> {
-  const res = await fetch(`http://${base}/agents/${encodeURIComponent(id)}`, { method: "DELETE" });
+  const res = await brokerFetch(`/agents/${encodeURIComponent(id)}`, base, { method: "DELETE" });
   return (await res.json()) as { outcome?: string; error?: string };
 }
 
 /** GET /workspaces — full workspace records, as the manager UI reads and writes them. */
 export async function getWorkspaceRecords(base: string = BROKER_BASE): Promise<WorkspaceRecord[]> {
-  const res = await fetch(`http://${base}/workspaces`);
+  const res = await brokerFetch(`/workspaces`, base);
   const body = (await res.json()) as { workspaces?: WorkspaceRecord[] };
   return body.workspaces ?? [];
 }
@@ -161,7 +162,7 @@ export async function saveWorkspace(
   isNew: boolean,
   base: string = BROKER_BASE,
 ): Promise<{ error?: string; name?: string }> {
-  const res = await fetch(`http://${base}/workspaces${isNew ? "" : `/${encodeURIComponent(body.name)}`}`, {
+  const res = await brokerFetch(`/workspaces${isNew ? "" : `/${encodeURIComponent(body.name)}`}`, base, {
     method: isNew ? "POST" : "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -174,7 +175,7 @@ export async function removeWorkspace(
   name: string,
   base: string = BROKER_BASE,
 ): Promise<{ outcome?: string; error?: string }> {
-  const res = await fetch(`http://${base}/workspaces/${encodeURIComponent(name)}`, { method: "DELETE" });
+  const res = await brokerFetch(`/workspaces/${encodeURIComponent(name)}`, base, { method: "DELETE" });
   return (await res.json()) as { outcome?: string; error?: string };
 }
 
@@ -183,7 +184,7 @@ export async function verifyWorkspaceAtlassian(
   name: string,
   base: string = BROKER_BASE,
 ): Promise<{ ok?: boolean; detail?: string; error?: string }> {
-  const res = await fetch(`http://${base}/workspaces/${encodeURIComponent(name)}/verify-atlassian`, {
+  const res = await brokerFetch(`/workspaces/${encodeURIComponent(name)}/verify-atlassian`, base, {
     method: "POST",
   });
   return (await res.json()) as { ok?: boolean; detail?: string; error?: string };
@@ -195,8 +196,9 @@ export async function verifyRepoGithub(
   repoName: string,
   base: string = BROKER_BASE,
 ): Promise<{ ok?: boolean; detail?: string; error?: string }> {
-  const res = await fetch(
-    `http://${base}/workspaces/${encodeURIComponent(name)}/repos/${encodeURIComponent(repoName)}/verify-github`,
+  const res = await brokerFetch(
+    `/workspaces/${encodeURIComponent(name)}/repos/${encodeURIComponent(repoName)}/verify-github`,
+    base,
     { method: "POST" },
   );
   return (await res.json()) as { ok?: boolean; detail?: string; error?: string };
@@ -204,7 +206,7 @@ export async function verifyRepoGithub(
 
 /** GET /workspaces/:name/channels */
 export async function getWorkspaceChannels(name: string, base: string = BROKER_BASE): Promise<ChannelsRecord> {
-  const res = await fetch(`http://${base}/workspaces/${encodeURIComponent(name)}/channels`);
+  const res = await brokerFetch(`/workspaces/${encodeURIComponent(name)}/channels`, base);
   return (await res.json()) as ChannelsRecord;
 }
 
@@ -214,7 +216,7 @@ export async function saveWorkspaceChannels(
   body: { discord?: { botToken: string; textChannels: string[]; voiceChannels: string[] } },
   base: string = BROKER_BASE,
 ): Promise<ChannelsRecord & { error?: string }> {
-  const res = await fetch(`http://${base}/workspaces/${encodeURIComponent(name)}/channels`, {
+  const res = await brokerFetch(`/workspaces/${encodeURIComponent(name)}/channels`, base, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -227,7 +229,7 @@ export async function verifyWorkspaceDiscord(
   name: string,
   base: string = BROKER_BASE,
 ): Promise<{ ok?: boolean; detail?: string; error?: string }> {
-  const res = await fetch(`http://${base}/workspaces/${encodeURIComponent(name)}/channels/verify-discord`, {
+  const res = await brokerFetch(`/workspaces/${encodeURIComponent(name)}/channels/verify-discord`, base, {
     method: "POST",
   });
   return (await res.json()) as { ok?: boolean; detail?: string; error?: string };
@@ -235,7 +237,7 @@ export async function verifyWorkspaceDiscord(
 
 /** GET /me/voice */
 export async function getVoiceSettings(base: string = BROKER_BASE): Promise<VoiceSettingsRecord> {
-  const res = await fetch(`http://${base}/me/voice`);
+  const res = await brokerFetch(`/me/voice`, base);
   return (await res.json()) as VoiceSettingsRecord;
 }
 
@@ -244,7 +246,7 @@ export async function saveVoiceSettings(
   body: { stt: { instanceId: string } | null; tts: { instanceId: string } | null; hideInactive: boolean },
   base: string = BROKER_BASE,
 ): Promise<VoiceSettingsRecord & { error?: string }> {
-  const res = await fetch(`http://${base}/me/voice`, {
+  const res = await brokerFetch(`/me/voice`, base, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -254,7 +256,7 @@ export async function saveVoiceSettings(
 
 /** GET /me — the operator's own profile. */
 export async function getMe(base: string = BROKER_BASE): Promise<MeRecord> {
-  const res = await fetch(`http://${base}/me`);
+  const res = await brokerFetch(`/me`, base);
   return (await res.json()) as MeRecord;
 }
 
@@ -263,7 +265,7 @@ export async function updateMe(
   body: { name?: string },
   base: string = BROKER_BASE,
 ): Promise<MeRecord & { error?: string }> {
-  const res = await fetch(`http://${base}/me`, {
+  const res = await brokerFetch(`/me`, base, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -273,13 +275,13 @@ export async function updateMe(
 
 /** GET /connectors/vendors — the connector catalog. */
 export async function getConnectorVendors(base: string = BROKER_BASE): Promise<ConnectorVendorMeta[]> {
-  const res = await fetch(`http://${base}/connectors/vendors`);
+  const res = await brokerFetch(`/connectors/vendors`, base);
   return (await res.json()) as ConnectorVendorMeta[];
 }
 
 /** GET /me/connectors — the operator's own connector instances. */
 export async function getMyConnectors(base: string = BROKER_BASE): Promise<ConnectorInstanceRecord[]> {
-  const res = await fetch(`http://${base}/me/connectors`);
+  const res = await brokerFetch(`/me/connectors`, base);
   return (await res.json()) as ConnectorInstanceRecord[];
 }
 
@@ -288,7 +290,7 @@ export async function addConnector(
   body: { vendorId: string; label: string; fields: Record<string, string> },
   base: string = BROKER_BASE,
 ): Promise<ConnectorInstanceRecord & { error?: string }> {
-  const res = await fetch(`http://${base}/me/connectors`, {
+  const res = await brokerFetch(`/me/connectors`, base, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -302,7 +304,7 @@ export async function updateConnector(
   body: { label?: string; fields?: Record<string, string> },
   base: string = BROKER_BASE,
 ): Promise<ConnectorInstanceRecord & { error?: string }> {
-  const res = await fetch(`http://${base}/me/connectors/${encodeURIComponent(id)}`, {
+  const res = await brokerFetch(`/me/connectors/${encodeURIComponent(id)}`, base, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -315,7 +317,7 @@ export async function deleteConnector(
   id: string,
   base: string = BROKER_BASE,
 ): Promise<{ ok?: boolean; error?: string }> {
-  const res = await fetch(`http://${base}/me/connectors/${encodeURIComponent(id)}`, { method: "DELETE" });
+  const res = await brokerFetch(`/me/connectors/${encodeURIComponent(id)}`, base, { method: "DELETE" });
   return (await res.json()) as { ok?: boolean; error?: string };
 }
 
@@ -325,7 +327,7 @@ export async function verifyConnector(
   extra?: Record<string, string>,
   base: string = BROKER_BASE,
 ): Promise<{ ok?: boolean; detail?: string; error?: string }> {
-  const res = await fetch(`http://${base}/me/connectors/${encodeURIComponent(id)}/verify`, {
+  const res = await brokerFetch(`/me/connectors/${encodeURIComponent(id)}/verify`, base, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ extra }),
@@ -335,13 +337,13 @@ export async function verifyConnector(
 
 /** GET /cli-tools — catalog engine joined with machine status. */
 export async function getCliTools(base: string = BROKER_BASE): Promise<CliToolListing[]> {
-  const res = await fetch(`http://${base}/cli-tools`);
+  const res = await brokerFetch(`/cli-tools`, base);
   return ((await res.json()) as { tools?: CliToolListing[] }).tools ?? [];
 }
 
 /** GET /containers */
 export async function getContainers(base: string = BROKER_BASE): Promise<{ docker: { enabled: boolean } }> {
-  const res = await fetch(`http://${base}/containers`);
+  const res = await brokerFetch(`/containers`, base);
   return (await res.json()) as { docker: { enabled: boolean } };
 }
 
@@ -350,7 +352,7 @@ export async function setDockerEnabled(
   enabled: boolean,
   base: string = BROKER_BASE,
 ): Promise<{ docker: { enabled: boolean } }> {
-  const res = await fetch(`http://${base}/containers`, {
+  const res = await brokerFetch(`/containers`, base, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ docker: { enabled } }),
@@ -360,13 +362,13 @@ export async function setDockerEnabled(
 
 /** POST /containers/verify */
 export async function verifyContainers(base: string = BROKER_BASE): Promise<{ ok: boolean; detail: string }> {
-  const res = await fetch(`http://${base}/containers/verify`, { method: "POST" });
+  const res = await brokerFetch(`/containers/verify`, base, { method: "POST" });
   return (await res.json()) as { ok: boolean; detail: string };
 }
 
 /** POST /cli-tools/refresh?tool=:tool — re-detects one tool, or every tool when omitted. */
 export async function refreshCliTools(tool?: string, base: string = BROKER_BASE): Promise<CliToolListing[]> {
-  const res = await fetch(`http://${base}/cli-tools/refresh${tool ? `?tool=${encodeURIComponent(tool)}` : ""}`, {
+  const res = await brokerFetch(`/cli-tools/refresh${tool ? `?tool=${encodeURIComponent(tool)}` : ""}`, base, {
     method: "POST",
   });
   return ((await res.json()) as { tools?: CliToolListing[] }).tools ?? [];
@@ -378,7 +380,7 @@ export async function setCliToolEnabled(
   enabled: boolean,
   base: string = BROKER_BASE,
 ): Promise<CliToolListing[] | { error: string }> {
-  const res = await fetch(`http://${base}/cli-tools/${encodeURIComponent(id)}`, {
+  const res = await brokerFetch(`/cli-tools/${encodeURIComponent(id)}`, base, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ enabled }),
@@ -389,7 +391,7 @@ export async function setCliToolEnabled(
 
 /** GET /api-keys — provider keys joined with redacted machine state. */
 export async function getApiKeys(base: string = BROKER_BASE): Promise<ApiKeyListing[]> {
-  const res = await fetch(`http://${base}/api-keys`);
+  const res = await brokerFetch(`/api-keys`, base);
   return ((await res.json()) as { providers?: ApiKeyListing[] }).providers ?? [];
 }
 
@@ -399,7 +401,7 @@ export async function saveApiKey(
   key: string,
   base: string = BROKER_BASE,
 ): Promise<ApiKeyListing[] | { error: string }> {
-  const res = await fetch(`http://${base}/api-keys/${encodeURIComponent(id)}`, {
+  const res = await brokerFetch(`/api-keys/${encodeURIComponent(id)}`, base, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ key }),
@@ -413,7 +415,7 @@ export async function verifyApiKey(
   id: string,
   base: string = BROKER_BASE,
 ): Promise<ApiKeyListing[] | { error: string }> {
-  const res = await fetch(`http://${base}/api-keys/${encodeURIComponent(id)}/verify`, { method: "POST" });
+  const res = await brokerFetch(`/api-keys/${encodeURIComponent(id)}/verify`, base, { method: "POST" });
   const body = (await res.json()) as { providers?: ApiKeyListing[]; error?: string };
   return body.error ? { error: body.error } : (body.providers ?? []);
 }
@@ -423,7 +425,7 @@ export async function deleteApiKey(
   id: string,
   base: string = BROKER_BASE,
 ): Promise<ApiKeyListing[] | { error: string }> {
-  const res = await fetch(`http://${base}/api-keys/${encodeURIComponent(id)}`, { method: "DELETE" });
+  const res = await brokerFetch(`/api-keys/${encodeURIComponent(id)}`, base, { method: "DELETE" });
   const body = (await res.json()) as { providers?: ApiKeyListing[]; error?: string };
   return body.error ? { error: body.error } : (body.providers ?? []);
 }
@@ -435,7 +437,7 @@ export async function postWorkAction(
   message?: string,
   base: string = BROKER_BASE,
 ): Promise<string | null> {
-  const res = await fetch(`http://${base}/activity/${encodeURIComponent(name)}/${action}`, {
+  const res = await brokerFetch(`/activity/${encodeURIComponent(name)}/${action}`, base, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(message ? { message } : {}),
@@ -447,7 +449,7 @@ export async function postWorkAction(
 
 /** POST /sessions/:id/activate — fire-and-forget. */
 export async function activateSession(id: string, base: string = BROKER_BASE): Promise<void> {
-  void fetch(`http://${base}/sessions/${encodeURIComponent(id)}/activate`, { method: "POST" }).catch(() => {});
+  void brokerFetch(`/sessions/${encodeURIComponent(id)}/activate`, base, { method: "POST" }).catch(() => {});
 }
 
 /**
@@ -458,7 +460,7 @@ export async function activateSession(id: string, base: string = BROKER_BASE): P
  */
 export async function deleteSession(id: string, base: string = BROKER_BASE): Promise<string | null> {
   try {
-    const res = await fetch(`http://${base}/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
+    const res = await brokerFetch(`/sessions/${encodeURIComponent(id)}`, base, { method: "DELETE" });
     if (res.ok) return null;
     const body = (await res.json().catch(() => ({}))) as { error?: string };
     return body.error ?? `HTTP ${res.status}`;
@@ -470,7 +472,7 @@ export async function deleteSession(id: string, base: string = BROKER_BASE): Pro
 /** GET /blueprints — the creation form's schema list. */
 export async function getBlueprints(base: string = BROKER_BASE): Promise<BlueprintT[]> {
   try {
-    const res = await fetch(`http://${base}/blueprints`);
+    const res = await brokerFetch(`/blueprints`, base);
     if (!res.ok) return [];
     const body = (await res.json()) as { blueprints?: BlueprintT[] };
     return body.blueprints ?? [];
@@ -487,7 +489,7 @@ export async function postDocument(
   base: string = BROKER_BASE,
 ): Promise<{ doc?: DocT; error?: string }> {
   try {
-    const res = await fetch(`http://${base}/documents`, {
+    const res = await brokerFetch(`/documents`, base, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ blueprintId, workType, text }),
@@ -507,7 +509,7 @@ export async function patchDocBlueprint(
   base: string = BROKER_BASE,
 ): Promise<{ error?: string }> {
   try {
-    const res = await fetch(`http://${base}/documents/${encodeURIComponent(docId)}`, {
+    const res = await brokerFetch(`/documents/${encodeURIComponent(docId)}`, base, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ blueprintId }),
@@ -527,7 +529,7 @@ export async function patchDocTitle(
   base: string = BROKER_BASE,
 ): Promise<{ error?: string }> {
   try {
-    const res = await fetch(`http://${base}/documents/${encodeURIComponent(docId)}`, {
+    const res = await brokerFetch(`/documents/${encodeURIComponent(docId)}`, base, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ title }),
@@ -548,8 +550,9 @@ export async function patchDocSection(
   base: string = BROKER_BASE,
 ): Promise<{ error?: string }> {
   try {
-    const res = await fetch(
-      `http://${base}/documents/${encodeURIComponent(docId)}/sections/${encodeURIComponent(sectionId)}`,
+    const res = await brokerFetch(
+      `/documents/${encodeURIComponent(docId)}/sections/${encodeURIComponent(sectionId)}`,
+      base,
       {
         method: "PATCH",
         headers: { "content-type": "application/json" },
@@ -567,7 +570,7 @@ export async function patchDocSection(
 /** POST /polish — rewrite a draft; null-equivalent failure keeps the caller's draft. */
 export async function postPolish(text: string, base: string = BROKER_BASE): Promise<{ text?: string; error?: string }> {
   try {
-    const res = await fetch(`http://${base}/polish`, {
+    const res = await brokerFetch(`/polish`, base, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text }),

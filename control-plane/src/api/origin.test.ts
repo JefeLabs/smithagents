@@ -28,7 +28,7 @@ describe("origin derivation", () => {
   it("brokerFetch sends credentials and passes the path through", async () => {
     const fetchMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => new Response("{}", { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
-    await brokerFetch("/sessions", { method: "POST" });
+    await brokerFetch("/sessions", LOCAL_BASE, { method: "POST" });
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(String(url)).toMatch(/\/sessions$/);
     expect(init?.credentials).toBe("include");

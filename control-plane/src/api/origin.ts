@@ -57,7 +57,7 @@ export const BROKER_BASE: string = brokerBase();
  * expiry drops the user to login from one place. `/auth/me` opts out (it IS the
  * check; letting it trip the seam would loop).
  */
-export async function brokerFetch(path: string, init?: RequestInit, base: string = BROKER_BASE): Promise<Response> {
+export async function brokerFetch(path: string, base: string = BROKER_BASE, init?: RequestInit): Promise<Response> {
   const res = await fetch(httpUrl(path, base), { credentials: "include", ...init });
   if (res.status === 401 && isCloud() && path !== "/auth/me") {
     useAuthStore.getState().markSessionLost();
