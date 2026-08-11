@@ -553,6 +553,42 @@ export async function unpinDoc(docId: string, target: string, base: string = BRO
   }
 }
 
+/**
+ * POST /groups (create) or PUT /groups/:name (edit) — workspace-group CRUD
+ * (spec 2026-08-11-workspace-groups). Resolves { error } rather than throwing;
+ * the refreshed session frame (which carries `groups`) follows on the socket.
+ */
+export async function saveGroup(
+  body: { name: string; description?: string; workspaces: string[]; groups: string[]; color?: string },
+  isNew: boolean,
+  base: string = BROKER_BASE,
+): Promise<{ error?: string }> {
+  try {
+    const res = await brokerFetch(isNew ? `/groups` : `/groups/${encodeURIComponent(body.name)}`, base, {
+      method: isNew ? "POST" : "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) return {};
+    const parsed = (await res.json().catch(() => ({}))) as { error?: string };
+    return { error: parsed.error ?? `broker returned ${res.status}` };
+  } catch {
+    return { error: "broker unreachable" };
+  }
+}
+
+/** DELETE /groups/:name. Error string in { error }, or {} on success. */
+export async function deleteGroup(name: string, base: string = BROKER_BASE): Promise<{ error?: string }> {
+  try {
+    const res = await brokerFetch(`/groups/${encodeURIComponent(name)}`, base, { method: "DELETE" });
+    if (res.ok) return {};
+    const parsed = (await res.json().catch(() => ({}))) as { error?: string };
+    return { error: parsed.error ?? `broker returned ${res.status}` };
+  } catch {
+    return { error: "broker unreachable" };
+  }
+}
+
 /** POST /documents/:id/proposals/:pid/accept — apply a sticky-note suggestion. Error string or null. */
 export async function acceptProposal(
   docId: string,

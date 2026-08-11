@@ -231,6 +231,7 @@ describe("socketStore frame handling", () => {
       session: { id: "s1", title: "t", workspace: "w", runtime: "local-in-process" },
       sessions: [{ id: "s1", title: "t", workspace: "w", updatedAt: "now", active: true, runtime: "local-in-process" }],
       workspaces: ["w"],
+      groups: [{ name: "g1", workspaces: [], groups: [], expansion: ["w"] }],
       transcript: [
         { role: "user", text: "hi" },
         { role: "broker", text: "hello" },
@@ -240,6 +241,7 @@ describe("socketStore frame handling", () => {
     expect(qc.getQueryData(qk.session)).toMatchObject({ id: "s1" });
     expect(qc.getQueryData(qk.sessions)).toHaveLength(1);
     expect(qc.getQueryData(qk.workspaces)).toEqual(["w"]);
+    expect(qc.getQueryData(qk.groups)).toEqual([{ name: "g1", workspaces: [], groups: [], expansion: ["w"] }]);
     expect(qc.getQueryData(qk.transcript)).toEqual([
       { id: 0, role: "user", text: "hi" },
       { id: 1, role: "broker", text: "hello" },
@@ -296,6 +298,8 @@ describe("socketStore frame handling", () => {
     const qc = new QueryClient();
     store().connect(qc);
     emit({ type: "session", session: null, sessions: [], workspaces: ["w"], transcript: [] });
+    // An older broker sends no `groups` — the cache must still resolve to [].
+    expect(qc.getQueryData(qk.groups)).toEqual([]);
 
     // useSessionKnown() reads status === "success"; null data still counts as
     // a frame having landed, which is exactly what the old sessionKnown flag meant.

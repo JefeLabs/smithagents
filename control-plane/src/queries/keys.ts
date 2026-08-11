@@ -6,6 +6,7 @@ export const qk = {
   session: ["session"] as const,
   sessions: ["sessions"] as const,
   workspaces: ["workspaces"] as const,
+  groups: ["groups"] as const,
   transcript: ["transcript"] as const,
   roster: ["roster"] as const,
   agentRecords: ["agent-records"] as const,

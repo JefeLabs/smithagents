@@ -1,5 +1,13 @@
 import { skipToken, useQuery } from "@tanstack/react-query";
-import type { BrokerIdentityInfo, ChatMessage, DocT, ExecutionMode, RosterAgent, SessionSummary } from "../api/types";
+import type {
+  BrokerIdentityInfo,
+  ChatMessage,
+  DocT,
+  ExecutionMode,
+  GroupT,
+  RosterAgent,
+  SessionSummary,
+} from "../api/types";
 import { qk } from "./keys";
 
 type ActiveSession = {
@@ -49,6 +57,11 @@ export function useTranscript() {
  */
 export function useWorkspaces() {
   return useQuery<string[]>({ queryKey: qk.workspaces, queryFn: skipToken, staleTime: Infinity });
+}
+
+/** Workspace groups, riding the same session frame as `workspaces`. */
+export function useGroups() {
+  return useQuery<GroupT[]>({ queryKey: qk.groups, queryFn: skipToken, staleTime: Infinity });
 }
 
 export function useRoster() {

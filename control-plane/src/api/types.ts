@@ -95,6 +95,22 @@ export interface SessionFrame {
   sessions: SessionSummary[];
   transcript: Array<{ role: "user" | "broker"; text: string }>;
   workspaces: string[];
+  /** Absent on an older broker; the socket store normalizes to []. */
+  groups?: GroupT[];
+}
+
+/**
+ * A workspace group (spec 2026-08-11-workspace-groups): a nested, named set
+ * of workspaces and other groups. `expansion` is the swarm-computed transitive
+ * member-workspace list — consumers never re-walk membership.
+ */
+export interface GroupT {
+  name: string;
+  description?: string;
+  workspaces: string[];
+  groups: string[];
+  color?: string;
+  expansion: string[];
 }
 
 /** A document section — one heading/body pair the collaborative editor renders. */

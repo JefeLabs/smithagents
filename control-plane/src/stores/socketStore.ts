@@ -17,6 +17,7 @@ import type {
   ChatMessage,
   DocT,
   DocumentsFrame,
+  GroupT,
   RosterAgent,
   SessionFrame,
   SessionSummary,
@@ -129,6 +130,8 @@ export const useSocketStore = create<SocketState>((set) => ({
               frame.sessions.map((s) => ({ ...s, artifacts: s.artifacts ?? [] })),
             );
             qc.setQueryData<string[]>(qk.workspaces, frame.workspaces);
+            // Normalized, not trusted: an older broker sends no `groups`.
+            qc.setQueryData<GroupT[]>(qk.groups, frame.groups ?? []);
             nextId = 0; // the frame replays the whole transcript, so ids restart with it
             qc.setQueryData<ChatMessage[]>(
               qk.transcript,
