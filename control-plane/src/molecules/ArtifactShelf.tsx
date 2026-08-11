@@ -6,12 +6,6 @@ interface ArtifactShelfProps {
 }
 
 /**
- * The shelf overlays the chat, so the stack is bounded — past this many, the
- * sessions panel is where the full list lives.
- */
-const MAX_VISIBLE = 4;
-
-/**
  * The active session's documents in its own order — what the shelf shows.
  * Missing ids (deleted doc, frame race) drop out rather than render holes.
  */
@@ -27,11 +21,11 @@ export function shelfDocsFor(session: { artifacts?: string[] } | null | undefine
  */
 export function ArtifactShelf({ docs, onOpen }: ArtifactShelfProps) {
   if (docs.length === 0) return null;
-  const visible = docs.slice(0, MAX_VISIBLE);
-  const overflow = docs.length - visible.length;
   return (
+    // Every document renders — past the viewport the shelf scrolls (CSS
+    // bounds it to the stage and overflows), so nothing hides behind a count.
     <aside className="artifact-shelf" aria-label="session documents">
-      {visible.map((d) => (
+      {docs.map((d) => (
         <button key={d.id} type="button" className="artifact-shelf__card" onClick={() => onOpen(d.id)}>
           <span className="artifact-shelf__tag">{d.blueprintId}</span>
           {/* Decorative rules: the tile reads as a page at a glance, without
@@ -40,11 +34,6 @@ export function ArtifactShelf({ docs, onOpen }: ArtifactShelfProps) {
           <span className="artifact-shelf__title">{d.title}</span>
         </button>
       ))}
-      {overflow > 0 && (
-        <span className="artifact-shelf__more" role="note" aria-label={`${overflow} more documents in this session`}>
-          +{overflow}
-        </span>
-      )}
     </aside>
   );
 }

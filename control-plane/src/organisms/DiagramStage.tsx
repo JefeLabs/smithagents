@@ -25,6 +25,16 @@ export function DiagramStage({ doc, blueprints, onChangeBlueprint, onSaveSection
   const [source, setSource] = useState(section?.body ?? "");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [view, setView] = useState<"canvas" | "markdown">("canvas");
+  const [copied, setCopied] = useState(false);
+
+  const fenced = `\`\`\`mermaid\n${source}\n\`\`\``;
+  const copyMarkdown = () => {
+    void navigator.clipboard.writeText(fenced).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    });
+  };
   // A diagram with words pins its blueprint — the diagram blueprints share no
   // section ids, so re-casting drawn work would throw it away.
   const locked = doc.sections.some((s) => s.body.trim() !== "");
@@ -73,18 +83,53 @@ export function DiagramStage({ doc, blueprints, onChangeBlueprint, onSaveSection
           {saveError}
         </p>
       )}
-      <div className="diagram-stage__canvas">
-        <MermaidBlock code={source} />
+      {/* biome-ignore lint/a11y/useSemanticElements: a toolbar-style view toggle, not a form fieldset */}
+      <div className="diagram-stage__views" role="group" aria-label="diagram view">
+        <button
+          type="button"
+          className={`diagram-stage__type${view === "canvas" ? " diagram-stage__type--on" : ""}`}
+          aria-pressed={view === "canvas"}
+          onClick={() => setView("canvas")}
+        >
+          Canvas
+        </button>
+        <button
+          type="button"
+          className={`diagram-stage__type${view === "markdown" ? " diagram-stage__type--on" : ""}`}
+          aria-pressed={view === "markdown"}
+          onClick={() => setView("markdown")}
+        >
+          Markdown
+        </button>
       </div>
-      <textarea
-        className="diagram-stage__source"
-        aria-label="Mermaid source"
-        value={source}
-        spellCheck={false}
-        onChange={(e) => setSource(e.target.value)}
-        onBlur={() => void commit()}
-      />
+      {view === "canvas" ? (
+        <>
+          <div className="diagram-stage__canvas">
+            <MermaidBlock code={source} />
+          </div>
+          <textarea
+            className="diagram-stage__source"
+            aria-label="Mermaid source"
+            value={source}
+            spellCheck={false}
+            onChange={(e) => setSource(e.target.value)}
+            onBlur={() => void commit()}
+          />
+        </>
+      ) : (
+        // The whole block is the copy affordance — one click puts the fenced
+        // Mermaid on the clipboard, ready to paste into any markdown doc.
+        <button
+          type="button"
+          className="diagram-stage__markdown"
+          aria-label="Copy Mermaid markdown"
+          onClick={copyMarkdown}
+        >
+          <pre>{fenced}</pre>
+        </button>
+      )}
       {saved && <em className="diagram-stage__saved">saved</em>}
+      {copied && <em className="diagram-stage__saved">copied</em>}
     </section>
   );
 }

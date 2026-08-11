@@ -32,12 +32,12 @@ describe("ArtifactShelf", () => {
   });
 
   // The shelf overlays the chat: an unbounded stack would eventually cover it.
-  it("caps the stack and counts the rest", () => {
+  it("renders every document — the shelf scrolls instead of capping", () => {
     const docs = ["a", "b", "c", "d", "e", "f"].map((id, i) => DOC(id, `Doc ${i + 1}`));
     render(<ArtifactShelf docs={docs} onOpen={vi.fn()} />);
-    expect(screen.getAllByRole("button")).toHaveLength(4);
-    expect(screen.getByText("+2")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /doc 5/i })).toBeNull();
+    expect(screen.getAllByRole("button")).toHaveLength(6);
+    expect(screen.queryByText(/^\+\d+$/)).toBeNull();
+    expect(screen.getByRole("button", { name: /doc 6/i })).toBeInTheDocument();
   });
 
   it("shelfDocsFor keeps the session's own artifact order and drops unknown ids", () => {
