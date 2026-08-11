@@ -38,6 +38,7 @@ const NOOP_EXEC: ToolExecutors = {
   draft_agent: async () => 'ok',
   confirm_agent: async () => 'ok',
   check_feeds: async () => 'ok',
+  track_topic: async () => 'ok',
 };
 
 test('plain text answer streams to onSpeech as chunks', async () => {
@@ -283,7 +284,7 @@ test('seedContext pushes a user/assistant pair without any API call', () => {
 
 // ---- personal tracking feeds (spec §6, §7) ----
 
-const FEED_EXEC: ToolExecutors = { ...NOOP_EXEC, check_feeds: async () => 'ok' };
+const FEED_EXEC: ToolExecutors = { ...NOOP_EXEC, check_feeds: async () => 'ok', track_topic: async () => 'ok' };
 
 test('the digest rides in the system prompt, after the roster', async () => {
   const { factory, calls } = scripted([
@@ -335,4 +336,31 @@ test('check_feeds is offered as a tool and its result reaches the model', async 
   assert.deepEqual(seen, [{ query: 'fly.io pricing' }]);
   const tools = calls[0]!.tools as Array<{ name: string }>;
   assert.equal(tools.some((t) => t.name === 'check_feeds'), true);
+});
+
+test('track_topic is offered as a tool and its input reaches the executor', async () => {
+  const seen: unknown[] = [];
+  const { factory, calls } = scripted([
+    {
+      textDeltas: [],
+      final: {
+        content: [{ type: 'tool_use', id: 't1', name: 'track_topic', input: { name: 'Spring Boot' } }],
+        stop_reason: 'tool_use',
+      },
+    },
+    { textDeltas: ['ok'], final: { content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn' } },
+  ]);
+  const brain = new BrokerBrain(factory, {
+    ...NOOP_EXEC,
+    track_topic: async (input) => {
+      seen.push(input);
+      return 'Osvaldo is looking into Spring Boot.';
+    },
+  });
+  await brain.handleUtterance('track spring boot', { roster: '', onSpeech: () => {} });
+  assert.deepEqual(seen, [{ name: 'Spring Boot' }]);
+  assert.equal(
+    (calls[0]!.tools as Array<{ name: string }>).some((t) => t.name === 'track_topic'),
+    true,
+  );
 });

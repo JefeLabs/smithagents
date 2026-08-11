@@ -21,6 +21,12 @@ import { weatherLine, weatherUrl } from './feeds/weather.ts';
 import { CADENCE_MS, dueSources, recordOutcome } from './feeds/ingest.ts';
 import type { FeedItem, FeedSource } from './feeds/types.ts';
 import { urlRejectionReason } from './feeds/url-guard.ts';
+import { TopicStore, slugify, type Topic } from './feeds/topics.ts';
+import { parseBundle } from './feeds/bundle.ts';
+import { approve, repoKey } from './feeds/approve.ts';
+import { diffBundle } from './feeds/rediscover.ts';
+import { startDiscovery } from './feeds/discovery.ts';
+import { latestFromAtom } from './feeds/atom-release.ts';
 import { readManifests } from './feeds/manifests.ts';
 import { deriveSources } from './feeds/derive.ts';
 import { ownerRole } from './feeds/interests.ts';
@@ -327,6 +333,18 @@ const brain = new BrokerBrain(
      * matching over a few hundred short items — no embeddings, no vector
      * store, because at this size substring matching answers it.
      */
+    track_topic: async ({ name }) => {
+      const id = slugify(name);
+      const existing = topicStore.get(id);
+      if (existing?.status === 'discovering') return `Already looking into ${name}.`;
+      const topic: Topic = existing ?? { id, name, status: 'discovering', candidates: [], declined: [] };
+      topicStore.put(topic);
+      await beginDiscovery(topic);
+      const after = topicStore.get(id);
+      return after?.note
+        ? `Could not start: ${after.note}`
+        : `Looking into ${name} — the sources will be in Settings › Topics when they land.`;
+    },
     check_feeds: async ({ query, tag, sinceDays }) => {
       const days = Math.min(Math.max(sinceDays ?? 7, 1), 30);
       const cutoff = Date.now() - days * 86_400_000;
@@ -1412,7 +1430,62 @@ const textChannel = new TextChannel(
       return { ok: true };
     },
   },
+  {
+    /** Settings › Topics (topics spec §7). */
+    list: async () => ({
+      topics: topicStore.all(),
+      sources: feedStore.sources().filter((src) => src.topicId),
+    }),
+    track: async ({ name }) => {
+      if (!name.trim()) return { error: 'a topic needs a name' };
+      const id = slugify(name);
+      const existing = topicStore.get(id);
+      if (existing?.status === 'discovering') return { error: `already looking into ${name}` };
+      const topic: Topic = existing ?? { id, name, status: 'discovering', candidates: [], declined: [] };
+      topicStore.put(topic);
+      await beginDiscovery(topic);
+      return { ok: true, id };
+    },
+    approve: async (id, body) => {
+      const topic = topicStore.get(id);
+      if (!topic) return { error: `unknown topic: ${id}` };
+      const { topic: next, sources, baselines } = approve(topic, body.keep, body.baseline);
+      for (const source of sources) feedStore.putSource(source);
+      if (Object.keys(baselines).length) {
+        feedStore.patchState({ seenVersions: { ...feedStore.state().seenVersions, ...baselines } });
+      }
+      topicStore.put(next);
+      return { ok: true, approved: sources.length };
+    },
+    rediscover: async (id) => {
+      const topic = topicStore.get(id);
+      if (!topic) return { error: `unknown topic: ${id}` };
+      await beginDiscovery(topic);
+      return { ok: true };
+    },
+    remove: async (id) => {
+      // A topic's sources go with it; manifest-derived ones are untouched.
+      for (const src of feedStore.sources()) if (src.topicId === id) feedStore.removeSource(src.id);
+      topicStore.remove(id);
+      return { ok: true };
+    },
+  },
 );
+
+/**
+ * Re-discovery every 30 days per topic (topics spec §6). Never two at once for
+ * the same topic, and the result is diffed rather than applied.
+ */
+const REDISCOVER_MS = 30 * 86_400_000;
+setInterval(() => {
+  const inFlight = new Set(Object.values(feedStore.state().pendingDiscoveries));
+  for (const topic of topicStore.all()) {
+    if (topic.status !== 'active' || inFlight.has(topic.id)) continue;
+    const last = topic.lastDiscoveredAt ? Date.parse(topic.lastDiscoveredAt) : 0;
+    if (Date.now() - last < REDISCOVER_MS) continue;
+    void beginDiscovery(topic);
+  }
+}, 60 * 60_000).unref();
 
 /**
  * One tick a minute asks which sources are due (ingest.ts decides), fetches
@@ -1468,6 +1541,61 @@ async function makeCard(item: FeedItem, workspace: string, currentVersion: strin
   } else {
     console.error(`[feeds] no card for ${item.title}: ${result.reason}`);
   }
+}
+
+/** The agent a discovery goes to: any idle one, else the first on the roster. */
+function discoveryAgent(): string {
+  const roster = broker.uiRoster().agents;
+  return (roster.find((p) => p.status === 'idle') ?? roster[0])?.agent.name ?? '';
+}
+
+/**
+ * Send someone looking (topics spec §3). The dispatch is the composer's own
+ * path, so busy-refusal and task binding come from there; the returned taskId
+ * is the ONLY correlation available, because SwarmEvent carries no metadata.
+ */
+async function beginDiscovery(topic: Topic): Promise<void> {
+  const { topic: next, taskId } = await startDiscovery(
+    {
+      dispatch: async (task) => {
+        const r = await broker.dispatchWork({ agent: discoveryAgent(), task, inheritSessionRuntime: false });
+        return 'error' in r ? { error: r.error } : { taskId: r.taskId };
+      },
+      bundlePath,
+    },
+    topic,
+  );
+  topicStore.put({ ...next, lastDiscoveredAt: new Date().toISOString() });
+  if (taskId) {
+    feedStore.patchState({ pendingDiscoveries: { ...feedStore.state().pendingDiscoveries, [taskId]: topic.id } });
+  }
+}
+
+/** A discovery task finished: read its bundle, or say why there isn't one. */
+function landDiscovery(taskId: string): void {
+  const pending = feedStore.state().pendingDiscoveries;
+  const topicId = pending[taskId];
+  if (!topicId) return; // not one of ours
+  const { [taskId]: _done, ...rest } = pending;
+  feedStore.patchState({ pendingDiscoveries: rest });
+
+  const topic = topicStore.get(topicId);
+  if (!topic) return;
+  let raw: string | null = null;
+  try {
+    raw = readFileSync(bundlePath(topicId), 'utf8');
+  } catch {
+    raw = null;
+  }
+  const { candidates, note } = parseBundle(raw);
+  // A re-run diffs against what is already approved, so an unchanged bundle
+  // produces an empty pending list rather than re-offering everything.
+  const approved = feedStore.sources().filter((src) => src.topicId === topicId);
+  const additions = approved.length
+    ? diffBundle({ topic, fresh: candidates, approved, now: new Date().toISOString() }).additions
+    : candidates;
+  topicStore.put({ ...topic, status: 'pending', candidates: additions, note });
+  console.log(`[topics] ${topicId}: ${additions.length} candidate(s)${note ? ` — ${note}` : ''}`);
 }
 
 /**
@@ -1548,6 +1676,44 @@ async function fetchSource(source: FeedSource): Promise<{ ok: boolean; error?: s
       const line = weatherLine(await res.json());
       if (!line) return { ok: false, error: 'unreadable weather response' };
       feedStore.patchState({ weather: { text: line, at: new Date().toISOString() } });
+      return { ok: true };
+    }
+    // A topic's github source is a RELEASE source: without this it would fall
+    // to the generic rss branch below and store entries as plain items with no
+    // metadata — the exact bug this feature exists to fix.
+    if (source.kind === 'rss' && source.tag === 'release' && source.topicId) {
+      const res = await fetch(source.locator);
+      const latest = latestFromAtom(await res.text());
+      if (!latest) return { ok: false, error: 'no versioned release found in the feed' };
+
+      const key = repoKey(source.locator) ?? source.locator;
+      const state = feedStore.state();
+      const from = state.seenVersions[key];
+      // Approval always sets a baseline; an absent one means state was lost, so
+      // seed rather than announce — history is still never carded.
+      if (!from) {
+        feedStore.patchState({ seenVersions: { ...state.seenVersions, [key]: latest.version } });
+        return { ok: true };
+      }
+      const bump = classifyBump(from, latest.version);
+      if (!bump) return { ok: true };
+      const security = mentionsSecurity(latest.notes);
+      feedStore.patchState({ seenVersions: { ...feedStore.state().seenVersions, [key]: latest.version } });
+      if (!qualifies(bump, security)) return { ok: true };
+
+      const [fresh] = feedStore.addItems([
+        {
+          id: `${source.id}@${latest.version}`,
+          sourceId: source.id,
+          tag: 'release',
+          title: `${source.label} ${latest.version}`,
+          publishedAt: latest.publishedAt ?? new Date().toISOString(),
+          summary: latest.notes.slice(0, 400),
+          release: { name: source.label, version: latest.version, bump, security },
+        },
+      ]);
+      // A topic is global — it has no workspace of its own, so cards go to the default.
+      if (fresh) void makeCard(fresh, defaultWorkspaceName, from);
       return { ok: true };
     }
     if (source.kind === 'rss') {
@@ -1693,15 +1859,15 @@ function broadcastSpokenAudio(text: string): void {
 // Personal tracking feeds (spec 2026-08-11): three files under .smith/feeds/,
 // read and written through the same kind of io seam the session store uses.
 const feedsDir = process.env.BROKER_FEEDS_DIR ?? '.smith/feeds';
-const feedStore = new FeedStore({
-  read(name) {
+const feedsIo = {
+  read(name: string) {
     try {
       return readFileSync(join(feedsDir, name), 'utf8');
     } catch {
       return null;
     }
   },
-  write(name, body) {
+  write(name: string, body: string) {
     try {
       mkdirSync(feedsDir, { recursive: true });
       writeFileSync(join(feedsDir, name), body);
@@ -1709,7 +1875,13 @@ const feedStore = new FeedStore({
       console.error('[feeds] persist failed:', err);
     }
   },
-});
+};
+const feedStore = new FeedStore(feedsIo);
+const topicStore = new TopicStore(feedsIo);
+
+// Where a discovery agent writes its bundle (topics spec §3.1).
+const topicsDir = process.env.BROKER_TOPICS_DIR ?? '.smith/topics';
+const bundlePath = (topicId: string) => `${topicsDir}/${topicId}.json`;
 
 /**
  * Rebuilt on a timer, never per turn — a conversation must never wait on a
@@ -1824,6 +1996,8 @@ broker = new Broker(
     // Task 2/3) means a work-board card just changed; the board stage
     // refetches on this frame instead of the broker duplicating card state.
     onSwarmEvent: (e) => {
+      // A discovery task finishing is how a topic's bundle arrives (topics spec §3).
+      if (e.type === 'task:completed' || e.type === 'task:failed') landDiscovery(e.taskId);
       if ((e.type === 'task:completed' || e.type === 'task:failed') && e.workCardRef) {
         textChannel.broadcast({ type: 'board-updated', boardId: e.workCardRef.boardId });
       }

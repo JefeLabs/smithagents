@@ -338,6 +338,14 @@ export class TextChannel {
       remove(id: string): Promise<unknown>;
       weather(body: { location: string }): Promise<unknown>;
     },
+    /** Settings › Topics. Same origin guard as every other write. */
+    private readonly topics?: {
+      list(): Promise<unknown>;
+      track(body: { name: string }): Promise<unknown>;
+      approve(id: string, body: { keep: string[]; baseline?: string }): Promise<unknown>;
+      rediscover(id: string): Promise<unknown>;
+      remove(id: string): Promise<unknown>;
+    },
   ) {}
 
   private clientSeq = 0;
@@ -1074,7 +1082,9 @@ export class TextChannel {
       // DELETE /sessions/:id — permanent. Matched before the POST block so the
       // bare-id shape can't be confused with /sessions itself. Deleting is a
       // mutation, so it carries the same origin guard the POSTs below use.
-      if (this.feeds) {
+      // Feeds AND topics share this block's json/origin/body helpers, so the
+      // guard admits either — with only one wired, the other's routes must still serve.
+      if (this.feeds || this.topics) {
         const feedUrl = new URL(req.url ?? '/', 'http://localhost');
         const feedJson = (status: number, payload: unknown) =>
           res.writeHead(status, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify(payload));
@@ -1100,19 +1110,19 @@ export class TextChannel {
         };
 
         // Read-only: no guard, like GET /blueprints.
-        if (req.method === 'GET' && feedUrl.pathname === '/feeds') {
+        if (this.feeds && req.method === 'GET' && feedUrl.pathname === '/feeds') {
           void this.feeds.list().then((payload) => feedJson(200, payload));
           return;
         }
         // /feeds/weather is matched BEFORE the bare-id route so it is never swallowed by it.
-        if (req.method === 'PUT' && feedUrl.pathname === '/feeds/weather') {
+        if (this.feeds && req.method === 'PUT' && feedUrl.pathname === '/feeds/weather') {
           if (feedOriginBlocked()) return;
           readBody((body) => {
             void this.feeds!.weather({ location: String(body.location ?? '') }).then((p) => feedJson(200, p));
           });
           return;
         }
-        if (req.method === 'POST' && feedUrl.pathname === '/feeds') {
+        if (this.feeds && req.method === 'POST' && feedUrl.pathname === '/feeds') {
           if (feedOriginBlocked()) return;
           readBody((body) => {
             void this.feeds!.add({ url: String(body.url ?? ''), tag: String(body.tag ?? 'news') }).then((p) =>
@@ -1121,8 +1131,45 @@ export class TextChannel {
           });
           return;
         }
+        // Topics. Sub-routes are matched BEFORE the bare-id route, or it swallows them.
+        if (this.topics) {
+          if (req.method === 'GET' && feedUrl.pathname === '/topics') {
+            void this.topics.list().then((p) => feedJson(200, p));
+            return;
+          }
+          if (req.method === 'POST' && feedUrl.pathname === '/topics') {
+            if (feedOriginBlocked()) return;
+            readBody((body) => {
+              void this.topics!.track({ name: String(body.name ?? '') }).then((p) => feedJson(200, p));
+            });
+            return;
+          }
+          const approveMatch = /^\/topics\/([^/]+)\/approve$/.exec(feedUrl.pathname);
+          if (req.method === 'POST' && approveMatch) {
+            if (feedOriginBlocked()) return;
+            readBody((body) => {
+              void this.topics!.approve(decodeURIComponent(approveMatch[1]!), {
+                keep: Array.isArray(body.keep) ? (body.keep as string[]) : [],
+                baseline: typeof body.baseline === 'string' ? body.baseline : undefined,
+              }).then((p) => feedJson(200, p));
+            });
+            return;
+          }
+          const rediscoverMatch = /^\/topics\/([^/]+)\/rediscover$/.exec(feedUrl.pathname);
+          if (req.method === 'POST' && rediscoverMatch) {
+            if (feedOriginBlocked()) return;
+            void this.topics.rediscover(decodeURIComponent(rediscoverMatch[1]!)).then((p) => feedJson(200, p));
+            return;
+          }
+          const topicIdMatch = /^\/topics\/([^/]+)$/.exec(feedUrl.pathname);
+          if (req.method === 'DELETE' && topicIdMatch) {
+            if (feedOriginBlocked()) return;
+            void this.topics.remove(decodeURIComponent(topicIdMatch[1]!)).then((p) => feedJson(200, p));
+            return;
+          }
+        }
         const feedIdMatch = /^\/feeds\/([^/]+)$/.exec(feedUrl.pathname);
-        if (feedIdMatch && (req.method === 'PATCH' || req.method === 'DELETE')) {
+        if (this.feeds && feedIdMatch && (req.method === 'PATCH' || req.method === 'DELETE')) {
           if (feedOriginBlocked()) return;
           const id = decodeURIComponent(feedIdMatch[1]!);
           if (req.method === 'DELETE') {

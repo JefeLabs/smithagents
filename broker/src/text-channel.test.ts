@@ -115,6 +115,7 @@ function channelWith(opts: {
   auth?: ConstructorParameters<typeof TextChannel>[24];
   directed?: ConstructorParameters<typeof TextChannel>[25];
   feeds?: ConstructorParameters<typeof TextChannel>[26];
+  topics?: ConstructorParameters<typeof TextChannel>[27];
   onUtterance?: ConstructorParameters<typeof TextChannel>[0];
 }): TextChannel {
   return new TextChannel(
@@ -145,6 +146,7 @@ function channelWith(opts: {
     opts.auth,
     opts.directed,
     opts.feeds,
+    opts.topics,
   );
 }
 
@@ -2055,4 +2057,119 @@ test('open mode: no CSRF guard — a cross-origin mutating request is not blocke
     });
     assert.notEqual(res.status, 403);
   } finally { await channel.stop(); }
+});
+
+// ---- topics of interest (spec §7) ----
+
+function topicStub(over: Partial<NonNullable<ConstructorParameters<typeof TextChannel>[27]>> = {}) {
+  return {
+    list: async () => ({ topics: [] }),
+    track: async () => ({ ok: true }),
+    approve: async () => ({ ok: true }),
+    rediscover: async () => ({ ok: true }),
+    remove: async () => ({ ok: true }),
+    ...over,
+  };
+}
+
+test('GET /topics lists; POST /topics starts tracking one', async () => {
+  const tracked: unknown[] = [];
+  const channel = channelWith({
+    topics: topicStub({
+      list: async () => ({ topics: [{ id: 'spring-boot', name: 'Spring Boot', status: 'active' }] }),
+      track: async (body) => {
+        tracked.push(body);
+        return { ok: true, id: 'spring-boot' };
+      },
+    }),
+  });
+  const port = await channel.start(0);
+  try {
+    const listed = await fetch(`http://127.0.0.1:${port}/topics`);
+    assert.equal(listed.status, 200);
+    assert.deepEqual(await listed.json(), { topics: [{ id: 'spring-boot', name: 'Spring Boot', status: 'active' }] });
+
+    const res = await fetch(`http://127.0.0.1:${port}/topics`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Spring Boot' }),
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(tracked, [{ name: 'Spring Boot' }]);
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('approve forwards the ticked urls and the baseline', async () => {
+  const calls: unknown[] = [];
+  const channel = channelWith({
+    topics: topicStub({
+      approve: async (id, body) => {
+        calls.push([id, body]);
+        return { ok: true };
+      },
+    }),
+  });
+  const port = await channel.start(0);
+  try {
+    await fetch(`http://127.0.0.1:${port}/topics/spring-boot/approve`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ keep: ['https://spring.io/blog.atom'], baseline: '4.0.0' }),
+    });
+    assert.deepEqual(calls, [['spring-boot', { keep: ['https://spring.io/blog.atom'], baseline: '4.0.0' }]]);
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('/approve and /rediscover are matched BEFORE the bare-id route so it never swallows them', async () => {
+  const calls: string[] = [];
+  const channel = channelWith({
+    topics: topicStub({
+      approve: async () => {
+        calls.push('approve');
+        return { ok: true };
+      },
+      rediscover: async () => {
+        calls.push('rediscover');
+        return { ok: true };
+      },
+      remove: async () => {
+        calls.push('remove');
+        return { ok: true };
+      },
+    }),
+  });
+  const port = await channel.start(0);
+  try {
+    await fetch(`http://127.0.0.1:${port}/topics/spring-boot/approve`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ keep: [] }),
+    });
+    await fetch(`http://127.0.0.1:${port}/topics/spring-boot/rediscover`, { method: 'POST' });
+    await fetch(`http://127.0.0.1:${port}/topics/spring-boot`, { method: 'DELETE' });
+    assert.deepEqual(calls, ['approve', 'rediscover', 'remove']);
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('the mutating topic routes refuse a disallowed browser Origin', async () => {
+  const channel = channelWith({
+    topics: topicStub({ track: async () => assert.fail('must not be reached') }),
+  });
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/topics`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Origin: 'http://evil.example' },
+      body: JSON.stringify({ name: 'Spring Boot' }),
+    });
+    assert.equal(res.status, 403);
+  } finally {
+    await channel.stop();
+  }
 });

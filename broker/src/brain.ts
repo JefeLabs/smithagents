@@ -19,6 +19,7 @@ export interface ToolExecutors {
   lookup_ticket(input: { ticketKey: string; workspace: string }): Promise<string>;
   search_docs(input: { query: string; workspace: string }): Promise<string>;
   check_feeds(input: { query: string; tag?: string; sinceDays?: number }): Promise<string>;
+  track_topic(input: { name: string }): Promise<string>;
   draft_agent(input: { spec: string }): Promise<string>;
   confirm_agent(input: { accept: boolean }): Promise<string>;
 }
@@ -150,6 +151,18 @@ const TOOLS = [
         accept: { type: 'boolean' as const, description: 'true = the human said yes; false = they declined' },
       },
       required: ['accept'],
+    },
+  },
+  {
+    name: 'track_topic',
+    description:
+      'Start following a subject the human names — a framework, a project, a company. An agent goes and finds where it publishes; the human ticks what to keep. Use when they say to track, follow, or keep an eye on something.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        name: { type: 'string' as const, description: 'The subject as the human said it, e.g. "Spring Boot"' },
+      },
+      required: ['name'],
     },
   },
   {
@@ -335,6 +348,7 @@ export class BrokerBrain {
       if (name === 'search_docs') return await this.executors.search_docs(input as { query: string; workspace: string });
       if (name === 'check_feeds')
         return await this.executors.check_feeds(input as { query: string; tag?: string; sinceDays?: number });
+      if (name === 'track_topic') return await this.executors.track_topic(input as { name: string });
       if (name === 'draft_agent') return await this.executors.draft_agent(input as { spec: string });
       if (name === 'confirm_agent') return await this.executors.confirm_agent(input as { accept: boolean });
       return `unknown tool: ${name}`;
