@@ -45,22 +45,10 @@ describe("ToolRail", () => {
     expect(navigate).toHaveBeenCalledWith("/board");
   });
 
-  it("map tool navigates via the Provider", async () => {
-    const { navigate } = renderRail();
-    await userEvent.click(screen.getByRole("row", { name: "Map" }));
-    expect(navigate).toHaveBeenCalledWith("/map");
-  });
-
-  it("dashboards tool navigates via the Provider", async () => {
-    const { navigate } = renderRail();
-    await userEvent.click(screen.getByRole("row", { name: "Dashboards" }));
-    expect(navigate).toHaveBeenCalledWith("/dashboards");
-  });
-
-  it("dashboards tool is highlighted only when activeRoute is /dashboards", () => {
-    renderRail({ activeRoute: "/dashboards" });
-    expect(screen.getByRole("row", { name: "Dashboards" }).getAttribute("data-current")).toBe("true");
-    expect(screen.getByRole("row", { name: "Board" }).getAttribute("data-current")).toBeNull();
+  it("no longer offers Map or Dashboards — they're composer-triggered", () => {
+    renderRail();
+    expect(screen.queryByRole("row", { name: "Map" })).toBeNull();
+    expect(screen.queryByRole("row", { name: "Dashboards" })).toBeNull();
   });
 
   it("settings button still fires onSettings", async () => {
@@ -77,13 +65,11 @@ describe("ToolRail", () => {
   it("board tool is highlighted only when activeRoute is /board", () => {
     renderRail({ activeRoute: "/board" });
     expect(screen.getByRole("row", { name: "Board" }).getAttribute("data-current")).toBe("true");
-    expect(screen.getByRole("row", { name: "Map" }).getAttribute("data-current")).toBeNull();
   });
 
   it("nothing is highlighted at the home route", () => {
     renderRail({ activeRoute: "/" });
     expect(screen.getByRole("row", { name: "Board" }).getAttribute("data-current")).toBeNull();
-    expect(screen.getByRole("row", { name: "Map" }).getAttribute("data-current")).toBeNull();
   });
 
   // The logo (and its Home behaviour) moved to Navbar — see Navbar.test.tsx.

@@ -107,12 +107,10 @@ describe("stage routing", () => {
     expect(screen.getByRole("row", { name: /^board$/i }).getAttribute("data-current")).toBe("true");
   });
 
-  it("dashboards tool navigates to /dashboards and highlights itself", async () => {
-    const router = await renderAt("/");
-    await userEvent.click(screen.getByRole("row", { name: /^dashboards$/i }));
-    expect(await screen.findByRole("region", { name: "Dashboards" })).toBeTruthy();
-    expect(router.state.location.pathname).toBe("/dashboards");
-    expect(screen.getByRole("row", { name: /^dashboards$/i }).getAttribute("data-current")).toBe("true");
+  it("the rail no longer offers Dashboards or Map (they're composer-triggered)", async () => {
+    await renderAt("/");
+    expect(screen.queryByRole("row", { name: /^dashboards$/i })).toBeNull();
+    expect(screen.queryByRole("row", { name: /^map$/i })).toBeNull();
   });
 
   it("the composer Dashboards kind navigates to /dashboards", async () => {
@@ -158,7 +156,7 @@ describe("stage routing", () => {
 
   it("browser back restores the previous stage", async () => {
     const router = await renderAt("/");
-    await userEvent.click(screen.getByRole("row", { name: /^map$/i }));
+    await userEvent.click(screen.getByRole("button", { name: "User Story Maps" }));
     await screen.findByRole("region", { name: "Story map" });
     act(() => router.history.back());
     await waitFor(() => expect(router.state.location.pathname).toBe("/"));
