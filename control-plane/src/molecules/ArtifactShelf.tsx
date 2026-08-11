@@ -12,6 +12,14 @@ interface ArtifactShelfProps {
 const MAX_VISIBLE = 4;
 
 /**
+ * The active session's documents in its own order — what the shelf shows.
+ * Missing ids (deleted doc, frame race) drop out rather than render holes.
+ */
+export function shelfDocsFor(session: { artifacts?: string[] } | null | undefined, docs: DocT[]): DocT[] {
+  return (session?.artifacts ?? []).map((id) => docs.find((d) => d.id === id)).filter((d): d is DocT => Boolean(d));
+}
+
+/**
  * Stage-manager shelf: the active session's documents as portrait page tiles,
  * stacked at the top-left of the chat. Clicking one brings it to center stage
  * (spec 2026-08-10, artifacts pivot). Offsets, rules and the hover fan are all

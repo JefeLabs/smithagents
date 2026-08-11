@@ -13,7 +13,7 @@ import { ALL_WORKSPACES } from "../lib/board-aggregate";
 import { kindForPath, layoutForPath } from "../lib/composerLayout";
 import { makePickKind, openDocByFamily } from "../lib/pickKind";
 import { AlertMenu } from "../molecules/AlertMenu";
-import { ArtifactShelf } from "../molecules/ArtifactShelf";
+import { ArtifactShelf, shelfDocsFor } from "../molecules/ArtifactShelf";
 import { ConfirmSheet } from "../molecules/ConfirmSheet";
 import { OperatorAvatar } from "../molecules/OperatorAvatar";
 import { WorkspaceSelector } from "../molecules/WorkspaceSelector";
@@ -154,10 +154,7 @@ export function HomePage() {
   // Hide the mic hero only on a CONFIRMED no-STT broker the user asked to hide.
   const hideMic = Boolean(voicePrefs?.hideInactive) && !voice.stt;
   const dockVariant = layoutForPath(pathname);
-  // Only the documents THIS session produced, in its own order — the full-variant shelf.
-  const shelfDocs = (session?.artifacts ?? [])
-    .map((id) => docs.find((d) => d.id === id))
-    .filter((d): d is DocT => Boolean(d));
+  const shelfDocs = shelfDocsFor(session, docs);
 
   // Picking another session backs out of an explicitly-opened composer (spec §3) — without
   // this, an explicit composer stays rendered with a possibly-stale locked workspace after

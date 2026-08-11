@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DocT } from "../api/types";
-import { ArtifactShelf } from "./ArtifactShelf";
+import { ArtifactShelf, shelfDocsFor } from "./ArtifactShelf";
 
 const DOC = (id: string, title: string): DocT => ({
   id,
@@ -38,5 +38,15 @@ describe("ArtifactShelf", () => {
     expect(screen.getAllByRole("button")).toHaveLength(4);
     expect(screen.getByText("+2")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /doc 5/i })).toBeNull();
+  });
+
+  it("shelfDocsFor keeps the session's own artifact order and drops unknown ids", () => {
+    const docs = [DOC("d1", "Login spec"), DOC("d2", "Login plan"), DOC("d3", "Old draft")];
+    expect(shelfDocsFor({ artifacts: ["d2", "ghost", "d1"] }, docs).map((d) => d.id)).toEqual(["d2", "d1"]);
+  });
+
+  it("shelfDocsFor is empty for a null session or one without artifacts", () => {
+    expect(shelfDocsFor(null, [DOC("d1", "x")])).toEqual([]);
+    expect(shelfDocsFor({}, [DOC("d1", "x")])).toEqual([]);
   });
 });
