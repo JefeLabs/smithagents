@@ -39,7 +39,7 @@ async function request(
     const res = await fetch(url, init);
     const data = await res.json().catch(() => null);
     return { status: res.status, data };
-  } catch (err) {
+  } catch {
     console.error(`\x1b[31m✗ Cannot reach server at ${BASE_URL}\x1b[0m`);
     console.error(`  Is the orchestrator running? → pnpm serve`);
     process.exit(1);
@@ -432,11 +432,11 @@ async function cmdSquadOutput(id: string): Promise<void> {
   }
   const { status, data } = await request("GET", `/squads/${id}/output`);
   if (status !== 200) {
-    const d = data as any;
+    const d = data as { error?: string } | null;
     console.error(`\x1b[31m✗ ${d?.error || "Failed"}\x1b[0m`);
     return;
   }
-  const d = data as any;
+  const d = data as { squadId: string; sessionName: string; output: string };
   console.log(`\x1b[1m  Squad ${d.squadId}\x1b[0m`);
   console.log(`  Session:  ${d.sessionName}`);
   console.log(`\n\x1b[2m${"─".repeat(60)}\x1b[0m`);
@@ -453,7 +453,7 @@ async function cmdSquadKill(id: string): Promise<void> {
   if (status === 200) {
     console.log(`\x1b[32m✓ Squad ${id} killed\x1b[0m`);
   } else {
-    const d = data as any;
+    const d = data as { error?: string } | null;
     console.error(`\x1b[31m✗ ${d?.error || "Failed"}\x1b[0m`);
   }
 }
@@ -472,14 +472,14 @@ async function cmdSquadSteer(id: string, rest: string[]): Promise<void> {
       message += (message ? " " : "") + rest[i];
     }
   }
-  const body: any = { keys: message };
+  const body: { keys: string; pane?: number } = { keys: message };
   if (pane !== undefined) body.pane = pane;
 
   const { status, data } = await request("POST", `/squads/${id}/steer`, body);
   if (status === 200) {
     console.log(`\x1b[32m✓ Sent to squad ${id}\x1b[0m`);
   } else {
-    const d = data as any;
+    const d = data as { error?: string } | null;
     console.error(`\x1b[31m✗ ${d?.error || "Failed"}\x1b[0m`);
   }
 }
@@ -491,13 +491,13 @@ async function cmdCouncilJoin(id: string): Promise<void> {
   }
   const { status, data } = await request("POST", `/squads/${id}/council/join`);
   if (status === 200) {
-    const d = data as any;
+    const d = data as { squadId: string };
     console.log(`\x1b[32m✓ Joined council for squad ${d.squadId}\x1b[0m`);
     console.log(`  To interact, you can use:`);
     console.log(`  smith council overrule ${id} "your directive"`);
     console.log(`  (or attach to pane 0 manually)`);
   } else {
-    const d = data as any;
+    const d = data as { error?: string } | null;
     console.error(`\x1b[31m✗ ${d?.error || "Failed"}\x1b[0m`);
   }
 }
@@ -512,7 +512,7 @@ async function cmdCouncilOverrule(id: string, rest: string[]): Promise<void> {
   if (status === 200) {
     console.log(`\x1b[32m✓ Sent directive to leader of squad ${id}\x1b[0m`);
   } else {
-    const d = data as any;
+    const d = data as { error?: string } | null;
     console.error(`\x1b[31m✗ ${d?.error || "Failed"}\x1b[0m`);
   }
 }

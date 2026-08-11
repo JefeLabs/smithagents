@@ -10,6 +10,7 @@ interface ComposerProps {
    * Send. A directed send resolves to the broker's refusal text (or null) —
    * a busy agent has to be able to say so; an untargeted one returns nothing.
    */
+  // biome-ignore lint/suspicious/noConfusingVoidType: void (not undefined) keeps sync block-bodied handlers assignable
   onSend: (text: string, target?: Target) => void | Promise<string | null>;
   /** The rail's entries, in rail order. Omit and no target selector renders. */
   targets?: RosterAgent[];

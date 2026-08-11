@@ -21,7 +21,7 @@ export type AgyRunner = (
 
 const defaultRunner: AgyRunner = (argv, cwd, timeoutMs) =>
   new Promise((done) => {
-    execFile(argv[0]!, argv.slice(1), { cwd, timeout: timeoutMs }, (err, stdout, stderr) => {
+    execFile(argv[0], argv.slice(1), { cwd, timeout: timeoutMs }, (err, stdout, stderr) => {
       const code = err
         ? typeof (err as { code?: unknown }).code === "number"
           ? (err as { code: number }).code
@@ -58,7 +58,7 @@ export class AgyImagesClient implements ImagesClient {
             `agy produced no image${res.code !== 0 ? ` (exit ${res.code})` : ""} — try again, or add a Google key in Settings → API Keys`,
           );
         }
-        const data = (await readFile(join(dir, images[0]!))).toString("base64");
+        const data = (await readFile(join(dir, images[0]))).toString("base64");
         // mimeType is advisory — AvatarGenerator pipes bytes through sharp,
         // which sniffs the real format (the JPEG-named-.png case).
         return { candidates: [{ content: { parts: [{ inlineData: { data, mimeType: "image/png" } }] } }] };

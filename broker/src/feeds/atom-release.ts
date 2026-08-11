@@ -15,13 +15,13 @@ export function versionFromTitle(title: string): string | null {
 
 function tagText(block: string, name: string): string {
   const m = new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)</${name}>`, "i").exec(block);
-  return m ? m[1]!.trim() : "";
+  return m ? m[1].trim() : "";
 }
 
 /** The newest entry that actually names a version. Atom is newest-first. */
 export function latestFromAtom(xml: string): { version: string; notes: string; publishedAt?: string } | null {
   for (const m of xml.matchAll(/<entry(?:\s[^>]*)?>([\s\S]*?)<\/entry>/gi)) {
-    const block = m[1]!;
+    const block = m[1];
     const version = versionFromTitle(tagText(block, "title"));
     if (!version) continue; // a nightly or a rename is not a release
     return {

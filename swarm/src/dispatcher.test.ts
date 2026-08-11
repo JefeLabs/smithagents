@@ -74,7 +74,7 @@ test("resolveConnections: pairs the current user credential with the repo-matche
 });
 
 test("resolveConnections: missing workspace atlassian config or missing user credential both skip injection cleanly", async () => {
-  const { root, repoPath } = await fixture();
+  const { root } = await fixture();
   // repoPath not matched by any workspace -> everything skipped
   const dispatcher = new Dispatcher({} as OrchestratorConfig);
   const resolved = await dispatcher.resolveConnections({ context: { repoPath: "/nope" } } as TaskManifest, root);

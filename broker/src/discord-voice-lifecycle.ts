@@ -284,7 +284,7 @@ export function createDiscordVoiceLifecycle(deps: DiscordVoiceLifecycleDeps): Di
         // Reuse earClient (already logged in for presence) rather than a
         // second gateway session under the same bot token.
         const channel = await earClient.channels.fetch(channelId);
-        if (!channel || !channel.isVoiceBased()) {
+        if (!channel?.isVoiceBased()) {
           throw new Error(`Discord channel ${channelId} is not a voice channel`);
         }
         // Own `group` so the ear's connection gets its own slot in
@@ -358,7 +358,7 @@ export function createDiscordVoiceLifecycle(deps: DiscordVoiceLifecycleDeps): Di
 
     function humanCountFor(channelId: string): number {
       const channel = earClient.channels.cache.get(channelId);
-      if (!channel || !channel.isVoiceBased()) return 0;
+      if (!channel?.isVoiceBased()) return 0;
       return channel.members.filter((m) => !m.user.bot).size;
     }
 

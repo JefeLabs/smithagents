@@ -4,7 +4,7 @@ import type { StreamFactory } from "./brain.ts";
 import { polishText } from "./polish.ts";
 
 const factoryReturning = (text: string | Error): StreamFactory =>
-  ((params: unknown) => ({
+  (() => ({
     on: () => {},
     finalMessage: async () => {
       if (text instanceof Error) throw text;

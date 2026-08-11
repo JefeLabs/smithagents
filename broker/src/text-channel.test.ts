@@ -609,11 +609,11 @@ test("GET /workspaces/:name/channels is origin-restricted like /me; PUT round-tr
         calls.push(`get ${name}`);
         return { hasDiscordToken: false, textChannels: [], voiceChannels: [] };
       },
-      save: async (name: string, body: unknown) => {
+      save: async (name: string, _body: unknown) => {
         calls.push(`save ${name}`);
         return { hasDiscordToken: true, textChannels: [], voiceChannels: [] };
       },
-      verifyDiscord: async (name: string) => ({ ok: true, detail: "Bot authenticated as crew" }),
+      verifyDiscord: async (_name: string) => ({ ok: true, detail: "Bot authenticated as crew" }),
     },
   });
   const port = await channel.start(0);

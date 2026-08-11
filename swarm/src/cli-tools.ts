@@ -95,7 +95,7 @@ const VERSION_TIMEOUT_MS = 5_000;
 /** Production subprocess runner: resolves with exit code + output, never rejects. */
 export const defaultRunner: CommandRunner = (argv, timeoutMs) =>
   new Promise((done) => {
-    execFile(argv[0]!, argv.slice(1), { timeout: timeoutMs }, (err, stdout, stderr) => {
+    execFile(argv[0], argv.slice(1), { timeout: timeoutMs }, (err, stdout, stderr) => {
       const code = err
         ? typeof (err as { code?: unknown }).code === "number"
           ? (err as { code: number }).code
@@ -133,7 +133,7 @@ export async function sweepCliTools(path: string, deps: SweepDeps, only?: string
   await Promise.all(
     targets.map(async (cli) => {
       const baseCommand = deps.agentCommands[cli] ?? cli;
-      const binary = baseCommand.split(/\s+/)[0]!;
+      const binary = baseCommand.split(/\s+/)[0];
       const enabled = file.tools[cli]?.enabled ?? true;
       const entry: CliToolStatus = {
         detected: false,
@@ -149,7 +149,7 @@ export async function sweepCliTools(path: string, deps: SweepDeps, only?: string
           entry.detail = `${binary} not found on PATH`;
         } else {
           const ver = await run([binary, "--version"], VERSION_TIMEOUT_MS);
-          if (ver.code === 0 && ver.stdout.trim()) entry.version = ver.stdout.trim().split("\n")[0]!;
+          if (ver.code === 0 && ver.stdout.trim()) entry.version = ver.stdout.trim().split("\n")[0];
           const probe = resolveDriver(cli)?.verifyAuth;
           if (probe) {
             const auth = await probe(binary, run, authTimeoutMs);

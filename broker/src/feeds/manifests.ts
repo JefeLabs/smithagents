@@ -40,14 +40,14 @@ export function readManifests(io: { read(path: string): string | null }, repoPat
     const gradle = read(file);
     if (!gradle) continue;
     for (const m of gradle.matchAll(/['"]([\w.-]+):([\w.-]+):([\w.+-]+)['"]/g)) {
-      out.push({ name: `${m[1]}:${m[2]}`, eco: "maven", version: bareVersion(m[3]!), manifest: file });
+      out.push({ name: `${m[1]}:${m[2]}`, eco: "maven", version: bareVersion(m[3]), manifest: file });
     }
   }
 
   const pom = read("pom.xml");
   if (pom) {
     for (const m of pom.matchAll(/<dependency>([\s\S]*?)<\/dependency>/g)) {
-      const block = m[1]!;
+      const block = m[1];
       const group = /<groupId>([^<]+)<\/groupId>/.exec(block)?.[1];
       const artifact = /<artifactId>([^<]+)<\/artifactId>/.exec(block)?.[1];
       const version = /<version>([^<]+)<\/version>/.exec(block)?.[1] ?? "";
@@ -65,7 +65,7 @@ export function readManifests(io: { read(path: string): string | null }, repoPat
       const short = /^\s*([\w-]+)\s*=\s*"([^"]+)"/.exec(line);
       const table = /^\s*([\w-]+)\s*=\s*\{[^}]*version\s*=\s*"([^"]+)"/.exec(line);
       const hit = short ?? table;
-      if (hit) out.push({ name: hit[1]!, eco: "cargo", version: bareVersion(hit[2]!), manifest: "Cargo.toml" });
+      if (hit) out.push({ name: hit[1], eco: "cargo", version: bareVersion(hit[2]), manifest: "Cargo.toml" });
     }
   }
 

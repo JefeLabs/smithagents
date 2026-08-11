@@ -230,8 +230,9 @@ export class Dispatcher extends EventEmitter {
     const users = await loadUsersFromDir(resolve(root, ".smith/users"));
     const user = resolveCurrentUser(users);
 
-    const atlassianConnector = workspace.atlassian?.connectorId
-      ? user?.connectors?.find((c) => c.id === workspace.atlassian!.connectorId && c.vendorId === "atlassian")
+    const atlassianConnectorId = workspace.atlassian?.connectorId;
+    const atlassianConnector = atlassianConnectorId
+      ? user?.connectors?.find((c) => c.id === atlassianConnectorId && c.vendorId === "atlassian")
       : undefined;
     const atlassian = workspace.atlassian && atlassianConnector ? workspace.atlassian : undefined;
     if (atlassian && atlassianConnector) {
@@ -243,8 +244,9 @@ export class Dispatcher extends EventEmitter {
     // gate, unlike before this task (which granted GH_TOKEN from "any github
     // token the user has", ignoring repo config). Two repos in the same
     // workspace can legitimately resolve to two different tokens.
-    const githubConnector = repo?.github?.connectorId
-      ? user?.connectors?.find((c) => c.id === repo.github!.connectorId && c.vendorId === "github")
+    const githubConnectorId = repo?.github?.connectorId;
+    const githubConnector = githubConnectorId
+      ? user?.connectors?.find((c) => c.id === githubConnectorId && c.vendorId === "github")
       : undefined;
     if (githubConnector?.fields.token) {
       env.GH_TOKEN = githubConnector.fields.token;
@@ -386,8 +388,7 @@ export class Dispatcher extends EventEmitter {
    * a human look at a flaky failure than burn tokens re-running it.
    */
   private async onFailed(manifest: TaskManifest, result: TaskResult): Promise<void> {
-    const reason =
-      `Alpha agent exited with code ${result.exitCode}. ` + `Task quarantined for human review (no automatic retries).`;
+    const reason = `Alpha agent exited with code ${result.exitCode}. Task quarantined for human review (no automatic retries).`;
 
     // Write the result log
     await this.writeResultLog(manifest.taskId, result);

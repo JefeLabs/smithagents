@@ -37,5 +37,5 @@ export function weatherLine(body: unknown): string | null {
   const probs = b?.hourly?.precipitation_probability ?? [];
   const idx = probs.findIndex((p) => p >= 60);
   if (idx === -1 || !times[idx]) return `${base}.`;
-  return `${base}; rain likely ${times[idx]!.slice(11, 16)}.`;
+  return `${base}; rain likely ${times[idx].slice(11, 16)}.`;
 }

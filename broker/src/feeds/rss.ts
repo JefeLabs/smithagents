@@ -32,7 +32,7 @@ function plain(text: string): string {
 
 function tagText(block: string, name: string): string | undefined {
   const m = new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)</${name}>`, "i").exec(block);
-  return m ? decode(m[1]!).trim() : undefined;
+  return m ? decode(m[1]).trim() : undefined;
 }
 
 /** Stable per source+guid so a re-fetch is a no-op in the store. */
@@ -43,7 +43,7 @@ function idFor(sourceId: string, guid: string): string {
 }
 
 export function parseFeed(source: FeedSource, xml: string): FeedItem[] {
-  const blocks = [...xml.matchAll(/<(item|entry)(?:\s[^>]*)?>([\s\S]*?)<\/\1>/gi)].map((m) => m[2]!);
+  const blocks = [...xml.matchAll(/<(item|entry)(?:\s[^>]*)?>([\s\S]*?)<\/\1>/gi)].map((m) => m[2]);
   return blocks.flatMap((block): FeedItem[] => {
     const title = tagText(block, "title");
     if (!title) return [];

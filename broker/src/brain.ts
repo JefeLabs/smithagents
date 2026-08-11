@@ -349,7 +349,7 @@ export class BrokerBrain {
     let start = this.history.length - this.maxHistory;
     while (
       start < this.history.length &&
-      !(this.history[start]!.role === "user" && typeof this.history[start]!.content === "string")
+      !(this.history[start].role === "user" && typeof this.history[start].content === "string")
     ) {
       start++;
     }

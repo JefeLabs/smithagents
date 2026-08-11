@@ -21,7 +21,7 @@ import websocket from "@fastify/websocket";
 import Fastify from "fastify";
 import { WebSocket } from "ws";
 import { AgentSessionManager } from "./agent-sessions.js";
-import { activeAgents, type ComposedAgent, findAgent, loadAgents, saveAgent } from "./agents.js";
+import { type ComposedAgent, findAgent, loadAgents, saveAgent } from "./agents.js";
 import {
   type ApiKeyOpResult,
   buildApiKeyListings,
@@ -721,7 +721,7 @@ export class OrchestratorServer {
 
       // If active, kill the session
       const active = this.activeTasks.get(taskId);
-      if (active && active.runtime) {
+      if (active?.runtime) {
         await active.runtime.kill(active.sessionName);
         this.activeTasks.delete(taskId);
         this.namePool.releaseByTaskId(taskId);
@@ -753,7 +753,7 @@ export class OrchestratorServer {
     this.app.get<{ Params: { taskId: string } }>("/tasks/:taskId/output", async (req, reply) => {
       const taskId = resolveTaskId(req.params.taskId);
       const active = taskId ? this.activeTasks.get(taskId) : undefined;
-      if (!active || !active.runtime) {
+      if (!active?.runtime) {
         return reply.status(404).send({ error: `'${req.params.taskId}' not running or not found` });
       }
       try {
@@ -776,7 +776,7 @@ export class OrchestratorServer {
     this.app.post<{ Params: { taskId: string } }>("/tasks/:taskId/steer", async (req, reply) => {
       const taskId = resolveTaskId(req.params.taskId);
       const active = taskId ? this.activeTasks.get(taskId) : undefined;
-      if (!active || !active.runtime) {
+      if (!active?.runtime) {
         return reply.status(404).send({ error: `'${req.params.taskId}' not running or not found` });
       }
       const body = req.body as { keys?: string; message?: string };
@@ -802,12 +802,12 @@ export class OrchestratorServer {
     this.app.post<{ Params: { taskId: string } }>("/tasks/:taskId/kill", async (req, reply) => {
       const taskId = resolveTaskId(req.params.taskId);
       const active = taskId ? this.activeTasks.get(taskId) : undefined;
-      if (!active || !active.runtime) {
+      if (!taskId || !active?.runtime) {
         return reply.status(404).send({ error: `'${req.params.taskId}' not running or not found` });
       }
       await active.runtime.kill(active.sessionName);
-      this.activeTasks.delete(taskId!);
-      this.namePool.releaseByTaskId(taskId!);
+      this.activeTasks.delete(taskId);
+      this.namePool.releaseByTaskId(taskId);
       this.app.log.info(`${active.agentName ?? taskId} force-killed via /kill`);
       return { taskId, agentName: active.agentName, status: "killed" };
     });
@@ -1069,8 +1069,7 @@ export class OrchestratorServer {
         if (this.squadPool.isActive(squadId)) {
           return reply.status(409).send({ error: `Squad ${squadId} is already active` });
         }
-        // Force claim the specific squad (bypassing private constraint since claim() lacks squadId param)
-        (this.squadPool as any).activeAssignments.set(squadId, taskId);
+        this.squadPool.claim(taskId, squadId);
       }
 
       const squadDef = this.squadPool.getSquad(squadId);
@@ -1233,7 +1232,7 @@ export class OrchestratorServer {
     // (from metadata.composedAgentId, when the caller sent one) and the
     // display name, so isBusy/agentUsage can match by id first and fall
     // back to name only for tasks whose manifest predates the id.
-    const agentFacts = async (agent: ComposedAgent) => {
+    const agentFacts = async () => {
       const records = await new SessionStore(resolve(process.cwd(), ".smith/sessions")).load();
       const live = this.agentSessions ? (await this.agentSessions.list()).map((s) => s.agentId) : [];
       const taskRefs = [...this.activeTasks.values()]
@@ -1260,7 +1259,7 @@ export class OrchestratorServer {
       // task attribution out from under a running task — block all edits
       // while busy, matching the UI, which already locks busy agents from
       // the edit wizard.
-      const { live, taskRefs } = await agentFacts(existing);
+      const { live, taskRefs } = await agentFacts();
       if (isBusy(live, taskRefs, existing)) {
         return reply.status(409).send({ error: `${existing.name} is working — cancel their task or session first` });
       }
@@ -1318,7 +1317,7 @@ export class OrchestratorServer {
       const agents = await loadAgents(resolve(process.cwd(), ".smith/agents"));
       const agent = agents.find((a) => a.id === req.params.id);
       if (!agent) return reply.status(404).send({ error: `Unknown agent: ${req.params.id}` });
-      const { records, live, taskRefs } = await agentFacts(agent);
+      const { records, live, taskRefs } = await agentFacts();
       return agentUsage(agent, records, live, taskRefs);
     });
 
@@ -1327,7 +1326,7 @@ export class OrchestratorServer {
       const agents = await loadAgents(agentsDir);
       const agent = agents.find((a) => a.id === req.params.id);
       if (!agent) return reply.status(404).send({ error: `Unknown agent: ${req.params.id}` });
-      const { live, taskRefs } = await agentFacts(agent);
+      const { live, taskRefs } = await agentFacts();
       if (isBusy(live, taskRefs, agent)) {
         return reply.status(409).send({ error: `${agent.name} is working — cancel their task or session first` });
       }
@@ -1342,7 +1341,7 @@ export class OrchestratorServer {
       if (!agent) return reply.status(404).send({ error: `Unknown agent: ${req.params.id}` });
       // Defense in depth: the broker decides archive-vs-delete, but swarm
       // re-checks its own facts so a buggy caller cannot erase history.
-      const { records, live, taskRefs } = await agentFacts(agent);
+      const { records, live, taskRefs } = await agentFacts();
       const usage = agentUsage(agent, records, live, taskRefs);
       if (usage.warmSessions > 0 || usage.activeTasks > 0) {
         return reply.status(409).send({ error: `${agent.name} has history on this machine — archive instead` });
@@ -1541,9 +1540,15 @@ export class OrchestratorServer {
       if (initProblem) return reply.status(400).send({ error: initProblem });
       const problem = await workspaceProblems(b);
       if (problem) return reply.status(400).send({ error: problem });
+      const { name: submittedName, repos: submittedRepos } = b;
+      // Unreachable — workspaceProblems already rejects a blank name or empty
+      // repos. The guard is what carries that guarantee into the type system.
+      if (!submittedName?.trim() || !submittedRepos?.length) {
+        return reply.status(400).send({ error: "Invalid workspace payload" });
+      }
       const dir = resolve(process.cwd(), ".smith/workspaces");
-      const name = b
-        .name!.trim()
+      const name = submittedName
+        .trim()
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/^-|-$/g, "");
@@ -1559,7 +1564,7 @@ export class OrchestratorServer {
       const ws: Workspace = {
         name,
         description: b.description?.trim() || undefined,
-        repos: b.repos!.map((r) => ({
+        repos: submittedRepos.map((r) => ({
           name: r.name.trim(),
           path: r.path,
           repository: r.repository,
@@ -1770,14 +1775,17 @@ export class OrchestratorServer {
       const dir = resolve(process.cwd(), ".smith/users");
       const users = await loadUsersFromDir(dir);
       const existing = resolveCurrentUser(users);
-      const current = existing?.connectors?.find((c) => c.id === req.params.id);
-      if (!current) return reply.status(404).send({ error: `Unknown connector: ${req.params.id}` });
+      const connectors = existing?.connectors;
+      const current = connectors?.find((c) => c.id === req.params.id);
+      if (!existing || !connectors || !current) {
+        return reply.status(404).send({ error: `Unknown connector: ${req.params.id}` });
+      }
       const updated = buildConnectorUpdate(current, b);
       const blocked = await verifyBeforeSave(updated.vendorId, updated.fields);
       if (blocked) return reply.status(400).send({ error: blocked });
       const merged: User = {
-        ...existing!,
-        connectors: existing!.connectors!.map((c) => (c.id === current.id ? updated : c)),
+        ...existing,
+        connectors: connectors.map((c) => (c.id === current.id ? updated : c)),
       };
       try {
         await saveUser(dir, merged);
@@ -2051,7 +2059,7 @@ export class OrchestratorServer {
           ws.atlassian.siteUrl,
           resolved.instance.fields.email ?? "",
           resolved.instance.fields.apiToken ?? "",
-          ticketKey!,
+          resolved.field,
         );
       },
     );
@@ -2072,7 +2080,7 @@ export class OrchestratorServer {
           ws.atlassian.siteUrl,
           resolved.instance.fields.email ?? "",
           resolved.instance.fields.apiToken ?? "",
-          query!,
+          resolved.field,
           {
             spaceKeys: ws.atlassian.confluenceSpaceKeys,
           },
@@ -2204,7 +2212,7 @@ export class OrchestratorServer {
 
       try {
         const runtime = createRuntime(this.orchConfig.defaultRuntime, this.orchConfig.docker);
-        await runtime.sendKeys(`${manifest.sessionName}.0`, body.directive + "\n");
+        await runtime.sendKeys(`${manifest.sessionName}.0`, `${body.directive}\n`);
         return { squadId, status: "overruled", directive: body.directive };
       } catch (err) {
         return reply.status(500).send({ error: "Failed to send directive", details: String(err) });
@@ -2668,7 +2676,8 @@ export class OrchestratorServer {
   private startQueueWorker(): void {
     const tick = async (): Promise<void> => {
       while (this.taskQueue.length > 0 && this.activeTasks.size < this.config.maxConcurrent) {
-        const manifest = this.taskQueue.shift()!;
+        const manifest = this.taskQueue.shift();
+        if (!manifest) break;
         this.dispatchTask(manifest);
       }
     };
@@ -2763,11 +2772,12 @@ export class OrchestratorServer {
 
   private startUdpHeartbeat(): void {
     try {
-      this.udpSocket = createSocket({ type: "udp4", reuseAddr: true });
-      this.udpSocket.bind(this.config.udpPort, () => {
-        this.udpSocket!.setBroadcast(true);
+      const socket = createSocket({ type: "udp4", reuseAddr: true });
+      this.udpSocket = socket;
+      socket.bind(this.config.udpPort, () => {
+        socket.setBroadcast(true);
         try {
-          this.udpSocket!.addMembership(this.config.udpMulticastAddr);
+          socket.addMembership(this.config.udpMulticastAddr);
         } catch {
           // Multicast may not be available — fallback to broadcast
         }
@@ -3009,7 +3019,7 @@ export function redactConnector(instance: ConnectorInstance): Record<string, unk
   const fields: Record<string, string | boolean> = {};
   for (const f of vendor?.fields ?? []) {
     const v = instance.fields[f.key];
-    if (f.secret) fields[`has${f.key[0]!.toUpperCase()}${f.key.slice(1)}`] = Boolean(v);
+    if (f.secret) fields[`has${f.key[0].toUpperCase()}${f.key.slice(1)}`] = Boolean(v);
     else fields[f.key] = v ?? "";
   }
   return { id: instance.id, vendorId: instance.vendorId, label: instance.label, fields };
@@ -3057,11 +3067,13 @@ export function resolveAtlassianConnector(
   connectorId: string | undefined,
   user: User | null,
   requiredField: { name: string; value: string | undefined },
-): { instance: ConnectorInstance } | { error: string } {
+): { instance: ConnectorInstance; field: string } | { error: string } {
   const resolved = resolveConnector(connectorId, "atlassian", "an Atlassian", "workspace", user);
   if ("error" in resolved) return resolved;
   if (!requiredField.value) return { error: `Missing required field: ${requiredField.name}` };
-  return resolved;
+  // Hand the validated value back so callers use the checked one rather than
+  // re-asserting the original could-be-undefined body field.
+  return { ...resolved, field: requiredField.value };
 }
 
 /**
@@ -3154,7 +3166,7 @@ export function buildConnectorFields(
   const vendor = findVendor(vendorId);
   const result: Record<string, string> = {};
   for (const f of vendor?.fields ?? []) {
-    if (fields?.[f.key] !== undefined) result[f.key] = fields[f.key]!;
+    if (fields?.[f.key] !== undefined) result[f.key] = fields[f.key];
   }
   return result;
 }

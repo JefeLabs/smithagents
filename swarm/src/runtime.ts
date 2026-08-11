@@ -12,7 +12,7 @@
 // ---------------------------------------------------------------------------
 
 import { execFile } from "node:child_process";
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, unlink } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -146,7 +146,7 @@ export class TmuxRuntime implements RuntimeAdapter {
       await unlink(exitFile).catch(() => {
         /* ignore */
       });
-      return isNaN(code) ? 1 : code;
+      return Number.isNaN(code) ? 1 : code;
     } catch {
       return 1;
     }
@@ -361,7 +361,7 @@ export class DockerRuntime implements RuntimeAdapter {
         0, // no timeout — block indefinitely
       );
       const code = parseInt(stdout.trim(), 10);
-      return isNaN(code) ? 1 : code;
+      return Number.isNaN(code) ? 1 : code;
     } catch {
       return 1;
     }

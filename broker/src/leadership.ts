@@ -87,7 +87,7 @@ export function pickLeader(claims: Claim[], members: Rankable[]): { leader: stri
 
   const top = Math.max(...willing.map((c) => c.confidence));
   const tied = willing.filter((c) => c.confidence === top).map((c) => c.agent);
-  if (tied.length === 1) return { leader: tied[0]!, method: "vote" };
+  if (tied.length === 1) return { leader: tied[0], method: "vote" };
 
   // Tie among the willing — the ladder breaks it, but a vote still happened.
   const tiedMembers = members.filter((m) => tied.includes(m.id));

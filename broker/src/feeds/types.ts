@@ -38,6 +38,9 @@ export interface FeedItem {
   cardedAt?: string;
 }
 
+/** A feed item known to carry a release — what survives a `release` guard. */
+export type ReleaseItem = FeedItem & { release: NonNullable<FeedItem["release"]> };
+
 export interface FeedState {
   /** sourceId → fetch health. */
   sources: Record<string, { lastFetchedAt?: string; consecutiveFailures: number; lastError?: string }>;

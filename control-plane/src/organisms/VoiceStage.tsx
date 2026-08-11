@@ -11,6 +11,7 @@ interface VoiceStageProps {
   onMicToggle: () => void;
   messages: ChatMessage[];
   brokerConnected: boolean;
+  // biome-ignore lint/suspicious/noConfusingVoidType: void (not undefined) keeps sync block-bodied handlers assignable
   onSend: (text: string, target?: Target) => void | Promise<string | null>;
   /** Rail entries the composer may direct a message to. */
   targets?: RosterAgent[];

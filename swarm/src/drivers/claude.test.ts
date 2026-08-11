@@ -133,6 +133,7 @@ test("materialize: with atlassian config, also writes .mcp.json referencing env 
     assert.deepEqual(written.sort(), [".mcp.json", "CLAUDE.md"]);
     const mcp = JSON.parse(await readFile(join(dir, ".mcp.json"), "utf8"));
     assert.equal(mcp.mcpServers.atlassian.env.JIRA_URL, "https://acme.atlassian.net");
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: asserting the placeholder reaches disk unexpanded is the point of this test
     assert.equal(mcp.mcpServers.atlassian.env.JIRA_API_TOKEN, "${SMITH_ATLASSIAN_TOKEN}");
     assert.doesNotMatch(JSON.stringify(mcp), /secret|tok-[a-z0-9]+/); // no literal credential ever lands here
   } finally {

@@ -195,8 +195,8 @@ function makeSegmentSource(): {
 
   async function* generate(): AsyncGenerator<Uint8Array> {
     for (;;) {
-      if (pending.length > 0) {
-        const chunk = pending.shift()!;
+      const chunk = pending.shift();
+      if (chunk) {
         backlogBytes -= chunk.byteLength;
         releaseDrainWaitersIfUnderCap();
         yield chunk;
@@ -513,11 +513,12 @@ export function realGateway(): VoiceGatewayLike {
       }
 
       const channel = await client.channels.fetch(channelId);
-      if (!channel || !channel.isVoiceBased()) {
+      if (!channel?.isVoiceBased()) {
         throw new Error(`Discord channel ${channelId} is not a voice channel`);
       }
 
-      const identity = client.user!.id;
+      if (!client.user) throw new Error("Discord client became ready without a user");
+      const identity = client.user.id;
       // @discordjs/voice keys its process-wide connection registry by
       // (group, guildId), defaulting group to 'default' — every mouth in the
       // same guild would otherwise collide on that one 'default' entry and

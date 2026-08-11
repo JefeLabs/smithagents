@@ -8,7 +8,6 @@
 
 import type {
   ConnectedWorker,
-  OutputChunkMessage,
   OutputRequestMessage,
   TaskDispatchMessage,
   TaskKillMessage,
@@ -186,7 +185,7 @@ export class WorkerPool {
     const workerId = this.sessionWorker.get(sessionName);
     if (!workerId) return false;
     const entry = this.workers.get(workerId);
-    if (!entry || entry.ws.readyState !== 1) return false;
+    if (entry?.ws.readyState !== 1) return false;
     entry.ws.send(JSON.stringify(msg));
     return true;
   }
@@ -203,7 +202,7 @@ export class WorkerPool {
     sessionName: string,
     command: string,
     cwd: string,
-    env?: Record<string, string>,
+    _env?: Record<string, string>,
     kind?: "tmux" | "docker",
   ): Promise<void> {
     const worker = this.pickWorker(kind);

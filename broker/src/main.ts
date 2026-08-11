@@ -39,7 +39,7 @@ import { cardForRelease } from "./feeds/cards.ts";
 import { deriveSources } from "./feeds/derive.ts";
 import { buildDigest } from "./feeds/digest.ts";
 import { startDiscovery } from "./feeds/discovery.ts";
-import { CADENCE_MS, dueSources, recordOutcome } from "./feeds/ingest.ts";
+import { dueSources, recordOutcome } from "./feeds/ingest.ts";
 import { ownerRole } from "./feeds/interests.ts";
 import { readManifests } from "./feeds/manifests.ts";
 import { diffBundle } from "./feeds/rediscover.ts";
@@ -69,7 +69,7 @@ import { generateSessionTitle } from "./session-title.ts";
 import { type ExecutionMode, resolveLazyWorkspace, type Session, SessionManager, truncateTitle } from "./sessions.ts";
 import { DeepgramSttStream, deepgramLiveOptions, type LiveLike } from "./stt.ts";
 import { applyModeChange, decideJoin, SurfacePolicy, surfaceModes } from "./surface-modes.ts";
-import { SwarmClient, type SwarmSquad, type SwarmWorkspace, type WorkspaceBody } from "./swarm-client.ts";
+import { SwarmClient, type SwarmWorkspace, type WorkspaceBody } from "./swarm-client.ts";
 import { parseTarget, resolveTarget } from "./targets.ts";
 import { type ChannelFrame, type RosterEntry, TextChannel } from "./text-channel.ts";
 import { mintRoomToken } from "./token.ts";
@@ -252,6 +252,7 @@ async function* speak(text: string): AsyncIterable<Uint8Array> {
 // coincidence — see makeVoiceStt below.
 function makeDeepgramLive(sampleRate = 48000): LiveLike {
   type Socket = Awaited<ReturnType<DeepgramClient["listen"]["v1"]["connect"]>>;
+  type ConnectArgs = Parameters<DeepgramClient["listen"]["v1"]["connect"]>[0];
   let socket: Socket | null = null;
   let resultsCb: ((data?: unknown) => void) | null = null;
   const pending: Uint8Array[] = [];
@@ -263,7 +264,7 @@ function makeDeepgramLive(sampleRate = 48000): LiveLike {
     .then((key) => {
       if (!key) return null; // no STT key — session yields no results (callers gate before starting)
       const deepgram = new DeepgramClient({ apiKey: key });
-      return deepgram.listen.v1.connect(deepgramLiveOptions(sampleRate) as any);
+      return deepgram.listen.v1.connect(deepgramLiveOptions(sampleRate) as unknown as ConnectArgs);
     })
     .then(async (s) => {
       if (!s) return null;
@@ -578,13 +579,13 @@ const toRosterEntries = (roster: UiRoster): RosterEntry[] => {
     ...roster.squads.map(
       (s): RosterEntry => ({
         id: `squad-${s.id}`,
-        name: s.id[0]!.toUpperCase() + s.id.slice(1),
+        name: s.id[0].toUpperCase() + s.id.slice(1),
         role: `Squad — led by ${s.leader.name}`,
         ring: SQUAD_RINGS[s.id],
         status: s.status === "active" ? "busy" : "idle",
         kind: "squad",
         // A squad's hand is its leader's hand (either name may be used by the brain).
-        hand: roster.hands[s.leader.name] ?? roster.hands[s.id[0]!.toUpperCase() + s.id.slice(1)],
+        hand: roster.hands[s.leader.name] ?? roster.hands[s.id[0].toUpperCase() + s.id.slice(1)],
         // A squad listens when addressed by its id or through its leader.
         listening: isListening(s.id, s.leader.name),
         members: s.members
@@ -612,7 +613,7 @@ const toRosterEntries = (roster: UiRoster): RosterEntry[] => {
       const leaderName = g.members.find((m) => m.id === g.leader)?.name ?? g.members[0]?.name ?? "?";
       return {
         id: `group-${g.id}`,
-        name: g.name[0]!.toUpperCase() + g.name.slice(1),
+        name: g.name[0].toUpperCase() + g.name.slice(1),
         role: `Squad — led by ${leaderName}`,
         ring: GROUP_RING_PALETTE[i % GROUP_RING_PALETTE.length],
         status: "idle",
@@ -1565,7 +1566,7 @@ async function makeCard(item: FeedItem, workspace: string, currentVersion: strin
           messages: [
             {
               role: "user",
-              content: `We are on ${release.release!.name} ${from} and ${release.release!.version} is out.\n\nRelease notes:\n${release.summary || "(none available)"}\n\nWhat should we do?`,
+              content: `We are on ${release.release.name} ${from} and ${release.release.version} is out.\n\nRelease notes:\n${release.summary || "(none available)"}\n\nWhat should we do?`,
             },
           ],
         });

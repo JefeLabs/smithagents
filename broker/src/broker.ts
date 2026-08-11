@@ -250,8 +250,7 @@ export class Broker {
       const agent = this.deps.directory.resolve(input.agent);
       if (!agent) return `There is no agent named "${input.agent}".`;
       const presence = this.deps.directory.snapshot().find((p) => p.agent.id === agent.id);
-      if (!presence || presence.status !== "busy" || !presence.taskId)
-        return `${agent.name} is not working on anything right now.`;
+      if (presence?.status !== "busy" || !presence.taskId) return `${agent.name} is not working on anything right now.`;
       const { output } = await this.deps.swarm.getOutput(presence.taskId);
       const tail = output.split("\n").slice(-25).join("\n");
       return `Live terminal tail for ${agent.name} (summarize for speech, do not read verbatim):\n${tail}`;
@@ -581,18 +580,19 @@ export class Broker {
       .map((g) => ({ ...g, memberIds: g.memberIds.filter(knownAgent) }))
       .filter((g) => g.memberIds.length >= 2);
     this.squadEdits = new Map(
-      saved.squadEdits
-        .filter(([squadId]) => this.squads.some((s) => s.id === squadId))
-        .map(([squadId, edits]) => {
-          const squad = this.squads.find((s) => s.id === squadId)!;
-          return [
+      saved.squadEdits.flatMap(([squadId, edits]): Array<[string, { added: string[]; removed: string[] }]> => {
+        const squad = this.squads.find((s) => s.id === squadId);
+        if (!squad) return []; // a squad that no longer exists takes its edits with it
+        return [
+          [
             squadId,
             {
               added: edits.added.filter(knownAgent),
               removed: edits.removed.filter((name) => squad.members.some((m) => m.name === name)),
             },
-          ];
-        }),
+          ],
+        ];
+      }),
     );
     this.groupSeq = saved.groupSeq;
   }
@@ -723,7 +723,7 @@ export class Broker {
       const ids = [...new Set(op.agents.map(resolveId))];
       if (ids.length < 2 || ids.some((id) => !id)) return "form needs two distinct known agents";
       for (const id of ids as string[]) this.detachEverywhere(id);
-      const name = GROUP_NAMES[this.groupSeq % GROUP_NAMES.length]!;
+      const name = GROUP_NAMES[this.groupSeq % GROUP_NAMES.length];
       this.groupSeq += 1;
       this.groups.push({ id: `g${this.groupSeq}`, name, memberIds: ids as string[] });
       this.persistRosterState();

@@ -8,14 +8,16 @@
  * Card creation is a SEPARATE consumer from the digest. If this fails, the
  * release is still spoken — nothing about small talk depends on the boards.
  */
-import type { FeedItem } from "./types.ts";
+import type { FeedItem, ReleaseItem } from "./types.ts";
+
+const isRelease = (item: FeedItem): item is ReleaseItem => item.release !== undefined;
 
 export function boardTypeFor(item: FeedItem): "reactive" | "maintenance" {
   return item.release?.security ? "reactive" : "maintenance";
 }
 
-export function cardTitle(item: FeedItem, currentVersion: string): string {
-  return `Upgrade ${item.release!.name} ${currentVersion} → ${item.release!.version}`;
+export function cardTitle(item: ReleaseItem, currentVersion: string): string {
+  return `Upgrade ${item.release.name} ${currentVersion} → ${item.release.version}`;
 }
 
 export async function cardForRelease(
@@ -23,13 +25,13 @@ export async function cardForRelease(
     boards(): Promise<Array<{ id: string; type: string; workspaceId?: string }>>;
     addCard(boardId: string, card: { title: string; notes: string; columnId: string }): Promise<void>;
     /** The action plan: at most 5 steps, generated once, about THIS repo. */
-    plan(item: FeedItem, currentVersion: string): Promise<string>;
+    plan(item: ReleaseItem, currentVersion: string): Promise<string>;
     now(): string;
   },
   item: FeedItem,
   ctx: { workspace: string; currentVersion: string },
 ): Promise<{ carded: boolean; reason?: string }> {
-  if (!item.release) return { carded: false, reason: "not a release" };
+  if (!isRelease(item)) return { carded: false, reason: "not a release" };
   if (item.cardedAt) return { carded: false, reason: "already carded" };
 
   const wanted = boardTypeFor(item);

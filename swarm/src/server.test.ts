@@ -26,7 +26,7 @@ import {
   resolveVoiceKeys,
   workspaceProblems,
 } from "./server.js";
-import type { ConnectorInstance, User, VoiceSettings } from "./users.js";
+import type { ConnectorInstance, User } from "./users.js";
 import { loadUsersFromDir, saveUser } from "./users.js";
 import type { Workspace } from "./workspaces.js";
 import { isGitRepo } from "./workspaces.js";
@@ -208,7 +208,7 @@ test("resolveAtlassianConnector: both a resolvable connector and a present requi
   };
   const user: User = { id: "edwin", name: "Edwin", connectors: [instance] };
   const resolved = resolveAtlassianConnector("c1", user, { name: "ticketKey", value: "PROJ-123" });
-  assert.deepEqual(resolved, { instance });
+  assert.deepEqual(resolved, { instance, field: "PROJ-123" });
 });
 
 test("workspaceProblems: rejects an atlassian block with no site URL, accepts one with", async () => {

@@ -76,7 +76,7 @@ test("transitionIssue: finds the transition by target status name (case-insensit
           { id: "41", to: { name: "Done" } },
         ],
       },
-      capture: (u, init) => {
+      capture: (_u, init) => {
         if (init?.method === "POST") posted = String(init.body);
       },
     },

@@ -562,8 +562,8 @@ export class SwarmClient {
 
   /** Subscribe to /ws events. Reconnects every 2s until the returned fn is called. */
   subscribe(onEvent: (e: SwarmEvent) => void): () => void {
-    const wsUrl =
-      this.baseUrl.replace(/^http/, "ws") + "/ws" + (this.token ? `?token=${encodeURIComponent(this.token)}` : "");
+    const query = this.token ? `?token=${encodeURIComponent(this.token)}` : "";
+    const wsUrl = `${this.baseUrl.replace(/^http/, "ws")}/ws${query}`;
     let stopped = false;
     let current: WsLike | null = null;
     let timer: NodeJS.Timeout | null = null;

@@ -73,7 +73,7 @@ export class DeviceRegistry {
     const idx = this.pending.findIndex((p) => timingSafeEqual(presented, Buffer.from(p.codeHash, "hex")));
     if (idx === -1) return null;
     const [entry] = this.pending.splice(idx, 1);
-    if (now > entry!.expiresAt) return null;
+    if (now > entry.expiresAt) return null;
 
     const token = TOKEN_PREFIX + randomBytes(32).toString("hex");
     const device: DeviceRecord = {

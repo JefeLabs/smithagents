@@ -388,7 +388,8 @@ export class TextChannel {
   private readonly clientKinds = new Map<number, Identity["kind"]>();
 
   /**
-   * The /auth/* ceremony surface. Only reached when `this.auth` is set.
+   * The /auth/* ceremony surface. `auth` is passed in rather than read off
+   * `this`: start() only routes here once it has one.
    * `/auth/me` is handled inline in start(); everything else lands here.
    */
   private async handleAuthRoute(
@@ -396,8 +397,8 @@ export class TextChannel {
     res: import("node:http").ServerResponse,
     pathname: string,
     identity: Identity | null,
+    auth: BrokerAuth,
   ): Promise<void> {
-    const auth = this.auth!;
     const cors = credentialCors(req);
     const json = (status: number, body: unknown, extra: Record<string, string> = {}) =>
       res.writeHead(status, { ...cors, "content-type": "application/json", ...extra }).end(JSON.stringify(body));
@@ -410,7 +411,7 @@ export class TextChannel {
 
     try {
       if (pathname === "/auth/invites") {
-        if (auth.required && (!identity || identity.kind !== "human")) {
+        if (auth.required && identity?.kind !== "human") {
           json(401, { error: "unauthorized" });
           return;
         }
@@ -520,7 +521,7 @@ export class TextChannel {
       }
 
       if (auth && pathname.startsWith("/auth/")) {
-        void this.handleAuthRoute(req, res, pathname, identity).catch((err: unknown) =>
+        void this.handleAuthRoute(req, res, pathname, identity, auth).catch((err: unknown) =>
           res
             .writeHead(500, { ...credentialCors(req), "content-type": "application/json" })
             .end(JSON.stringify({ error: String(err) })),
@@ -601,6 +602,7 @@ export class TextChannel {
         return;
       }
       if (req.method === "POST" && req.url === "/reset" && this.onReset) {
+        const onReset = this.onReset;
         // A full-install reset is a human action — never let a bridge trigger it.
         if (auth?.required && identity?.kind === "bridge") {
           res
@@ -619,7 +621,7 @@ export class TextChannel {
           } catch {
             /* empty body = default scope */
           }
-          void this.onReset!(scope)
+          void onReset(scope)
             .then((report) =>
               res.writeHead(200, { ...corsFor(req), "content-type": "application/json" }).end(JSON.stringify(report)),
             )
@@ -634,7 +636,7 @@ export class TextChannel {
       if (req.method === "GET" && this.tasks) {
         const m = /^\/tasks\/([^/]+)$/.exec(new URL(req.url ?? "/", "http://localhost").pathname);
         if (m) {
-          const taskId = decodeURIComponent(m[1]!);
+          const taskId = decodeURIComponent(m[1]);
           void this.tasks.get(taskId).then(
             (t) =>
               t
@@ -651,6 +653,7 @@ export class TextChannel {
         }
       }
       if (this.creation) {
+        const creation = this.creation;
         const url = new URL(req.url ?? "/", "http://localhost");
         const json = (status: number, payload: unknown) =>
           res.writeHead(status, { ...corsFor(req), "content-type": "application/json" }).end(JSON.stringify(payload));
@@ -675,7 +678,7 @@ export class TextChannel {
         };
 
         if (req.method === "GET" && url.pathname === "/agent-catalog") {
-          void this.creation.catalog().then((c) => json(200, c), fail);
+          void creation.catalog().then((c) => json(200, c), fail);
           return;
         }
         // Portraits: one URL shape for roster avatars, chooser cards, and
@@ -683,8 +686,8 @@ export class TextChannel {
         // replace bytes behind an unchanged filename.
         const avatarFileMatch = /^\/avatars\/([a-z0-9][a-z0-9-]{0,63}\.png)$/.exec(url.pathname);
         if (req.method === "GET" && avatarFileMatch) {
-          void this.creation
-            .avatarFile(avatarFileMatch[1]!)
+          void creation
+            .avatarFile(avatarFileMatch[1])
             .then(
               (buf) =>
                 buf
@@ -708,16 +711,15 @@ export class TextChannel {
             } catch {
               return json(400, { error: "body must be JSON" });
             }
-            void this.creation!.generateAvatar(parsed).then(
-              (r) => json((r as { error?: string }).error ? 400 : 200, r),
-              fail,
-            );
+            void creation
+              .generateAvatar(parsed)
+              .then((r) => json((r as { error?: string }).error ? 400 : 200, r), fail);
           });
           return;
         }
         if (req.method === "GET" && url.pathname === "/voices") {
           const query = Object.fromEntries(url.searchParams.entries());
-          void this.creation.voices(query).then((v) => json(200, v), fail);
+          void creation.voices(query).then((v) => json(200, v), fail);
           return;
         }
         if (req.method === "POST" && url.pathname === "/voices/preview") {
@@ -733,10 +735,9 @@ export class TextChannel {
               /* handled below */
             }
             if (!parsed.voiceId) return json(400, { error: "body must be {voiceId, text?}" });
-            void this.creation!.preview(
-              parsed.voiceId,
-              parsed.text?.trim() || "Hola, mi gente. This is how I sound.",
-            ).then((audio) => res.writeHead(200, { ...corsFor(req), "content-type": "audio/mpeg" }).end(audio), fail);
+            void creation
+              .preview(parsed.voiceId, parsed.text?.trim() || "Hola, mi gente. This is how I sound.")
+              .then((audio) => res.writeHead(200, { ...corsFor(req), "content-type": "audio/mpeg" }).end(audio), fail);
           });
           return;
         }
@@ -752,7 +753,7 @@ export class TextChannel {
             } catch {
               return json(400, { error: "body must be JSON" });
             }
-            void this.creation!.generate(parsed).then((draft) => json(200, draft), fail);
+            void creation.generate(parsed).then((draft) => json(200, draft), fail);
           });
           return;
         }
@@ -762,7 +763,7 @@ export class TextChannel {
         // for surface-aware UIs; existing consumers reading `agents` alone
         // (e.g. AddAgentModal) are unaffected.
         if (req.method === "GET" && url.pathname === "/agents") {
-          void this.creation.records().then((agents) => {
+          void creation.records().then((agents) => {
             const presence = this.surfaces?.presence() ?? {};
             const withPresence = agents.map((a) => ({
               ...a,
@@ -779,14 +780,14 @@ export class TextChannel {
         const joinMatch = /^\/agents\/([^/]+)\/surfaces\/([^/]+)\/join$/.exec(url.pathname);
         if (req.method === "POST" && joinMatch && this.surfaces) {
           void this.surfaces
-            .join(decodeURIComponent(joinMatch[1]!), decodeURIComponent(joinMatch[2]!))
+            .join(decodeURIComponent(joinMatch[1]), decodeURIComponent(joinMatch[2]))
             .then((r) => ("error" in r ? json(r.status, { error: r.error }) : json(200, { ok: true })), fail);
           return;
         }
         const removalMatch = /^\/agents\/([^/]+)\/removal$/.exec(url.pathname);
         if (req.method === "GET" && removalMatch && this.removal) {
           void this.removal
-            .preview(decodeURIComponent(removalMatch[1]!))
+            .preview(decodeURIComponent(removalMatch[1]))
             .then((r) => json("error" in r ? 404 : 200, r), fail);
           return;
         }
@@ -794,7 +795,7 @@ export class TextChannel {
         const editMatch = /^\/agents\/([^/]+)$/.exec(url.pathname);
         if (req.method === "DELETE" && editMatch && this.removal) {
           void this.removal
-            .execute(decodeURIComponent(editMatch[1]!))
+            .execute(decodeURIComponent(editMatch[1]))
             .then((r) => json("error" in r ? 409 : 200, r), fail);
           return;
         }
@@ -810,10 +811,9 @@ export class TextChannel {
             } catch {
               return json(400, { error: "body must be JSON" });
             }
-            void this.creation!.update(decodeURIComponent(editMatch[1]!), parsed).then(
-              (r) => json(r.error ? 400 : 200, r),
-              fail,
-            );
+            void creation
+              .update(decodeURIComponent(editMatch[1]), parsed)
+              .then((r) => json(r.error ? 400 : 200, r), fail);
           });
           return;
         }
@@ -829,7 +829,7 @@ export class TextChannel {
             } catch {
               return json(400, { error: "body must be JSON" });
             }
-            void this.creation!.create(parsed).then((r) => json(r.error ? 400 : 201, r), fail);
+            void creation.create(parsed).then((r) => json(r.error ? 400 : 201, r), fail);
           });
           return;
         }
@@ -839,6 +839,7 @@ export class TextChannel {
           return;
         }
         if (req.method === "POST" && url.pathname === "/workspaces" && this.workspaces) {
+          const workspaces = this.workspaces;
           let body = "";
           req.on("data", (c) => {
             body += c;
@@ -850,12 +851,13 @@ export class TextChannel {
             } catch {
               return json(400, { error: "body must be JSON" });
             }
-            void this.workspaces!.save(parsed, true).then((r) => json(r.error ? 400 : 201, r), fail);
+            void workspaces.save(parsed, true).then((r) => json(r.error ? 400 : 201, r), fail);
           });
           return;
         }
         const workspaceMatch = /^\/workspaces\/([^/]+)$/.exec(url.pathname);
         if (req.method === "PUT" && workspaceMatch && this.workspaces) {
+          const workspaces = this.workspaces;
           let body = "";
           req.on("data", (c) => {
             body += c;
@@ -867,16 +869,15 @@ export class TextChannel {
             } catch {
               return json(400, { error: "body must be JSON" });
             }
-            void this.workspaces!.save({ ...parsed, name: decodeURIComponent(workspaceMatch[1]!) }, false).then(
-              (r) => json(r.error ? 400 : 200, r),
-              fail,
-            );
+            void workspaces
+              .save({ ...parsed, name: decodeURIComponent(workspaceMatch[1]) }, false)
+              .then((r) => json(r.error ? 400 : 200, r), fail);
           });
           return;
         }
         if (req.method === "DELETE" && workspaceMatch && this.workspaces) {
           void this.workspaces
-            .remove(decodeURIComponent(workspaceMatch[1]!))
+            .remove(decodeURIComponent(workspaceMatch[1]))
             .then((r) => json("error" in r ? 409 : 200, r), fail);
           return;
         }
@@ -886,6 +887,7 @@ export class TextChannel {
           return;
         }
         if (req.method === "PUT" && url.pathname === "/me" && this.me) {
+          const me = this.me;
           if (originBlocked()) return;
           let body = "";
           req.on("data", (c) => {
@@ -898,10 +900,7 @@ export class TextChannel {
             } catch {
               return credJson(400, { error: "body must be JSON" });
             }
-            void this.me!.update(parsed).then(
-              (r) => credJson((r as { error?: string }).error ? 400 : 200, r),
-              credFail,
-            );
+            void me.update(parsed).then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
           });
           return;
         }
@@ -909,7 +908,7 @@ export class TextChannel {
         if (req.method === "POST" && wsAtlassianMatch && this.workspaces) {
           if (originBlocked()) return;
           void this.workspaces
-            .verifyAtlassian(decodeURIComponent(wsAtlassianMatch[1]!))
+            .verifyAtlassian(decodeURIComponent(wsAtlassianMatch[1]))
             .then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
           return;
         }
@@ -917,17 +916,18 @@ export class TextChannel {
         if (req.method === "POST" && repoGithubMatch && this.workspaces) {
           if (originBlocked()) return;
           void this.workspaces
-            .verifyGithubRepo(decodeURIComponent(repoGithubMatch[1]!), decodeURIComponent(repoGithubMatch[2]!))
+            .verifyGithubRepo(decodeURIComponent(repoGithubMatch[1]), decodeURIComponent(repoGithubMatch[2]))
             .then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
           return;
         }
         const wsChannelsMatch = /^\/workspaces\/([^/]+)\/channels$/.exec(url.pathname);
         if (req.method === "GET" && wsChannelsMatch && this.channels) {
           if (originBlocked()) return;
-          void this.channels.get(decodeURIComponent(wsChannelsMatch[1]!)).then((r) => credJson(200, r), credFail);
+          void this.channels.get(decodeURIComponent(wsChannelsMatch[1])).then((r) => credJson(200, r), credFail);
           return;
         }
         if (req.method === "PUT" && wsChannelsMatch && this.channels) {
+          const channels = this.channels;
           if (originBlocked()) return;
           let body = "";
           req.on("data", (c) => {
@@ -940,10 +940,9 @@ export class TextChannel {
             } catch {
               return credJson(400, { error: "body must be JSON" });
             }
-            void this.channels!.save(decodeURIComponent(wsChannelsMatch[1]!), parsed).then(
-              (r) => credJson((r as { error?: string }).error ? 400 : 200, r),
-              credFail,
-            );
+            void channels
+              .save(decodeURIComponent(wsChannelsMatch[1]), parsed)
+              .then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
           });
           return;
         }
@@ -951,7 +950,7 @@ export class TextChannel {
         if (req.method === "POST" && verifyDiscordMatch && this.channels) {
           if (originBlocked()) return;
           void this.channels
-            .verifyDiscord(decodeURIComponent(verifyDiscordMatch[1]!))
+            .verifyDiscord(decodeURIComponent(verifyDiscordMatch[1]))
             .then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
           return;
         }
@@ -961,6 +960,7 @@ export class TextChannel {
           return;
         }
         if (req.method === "PUT" && url.pathname === "/me/voice" && this.voice) {
+          const voice = this.voice;
           if (originBlocked()) return;
           let body = "";
           req.on("data", (c) => {
@@ -973,10 +973,7 @@ export class TextChannel {
             } catch {
               return credJson(400, { error: "body must be JSON" });
             }
-            void this.voice!.save(parsed).then(
-              (r) => credJson((r as { error?: string }).error ? 400 : 200, r),
-              credFail,
-            );
+            void voice.save(parsed).then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
           });
           return;
         }
@@ -991,6 +988,7 @@ export class TextChannel {
           return;
         }
         if (req.method === "POST" && url.pathname === "/me/connectors" && this.connectors) {
+          const connectors = this.connectors;
           if (originBlocked()) return;
           let body = "";
           req.on("data", (c) => {
@@ -1003,15 +1001,13 @@ export class TextChannel {
             } catch {
               return credJson(400, { error: "body must be JSON" });
             }
-            void this.connectors!.add(parsed).then(
-              (r) => credJson((r as { error?: string }).error ? 400 : 201, r),
-              credFail,
-            );
+            void connectors.add(parsed).then((r) => credJson((r as { error?: string }).error ? 400 : 201, r), credFail);
           });
           return;
         }
         const connectorIdMatch = /^\/me\/connectors\/([^/]+)$/.exec(url.pathname);
         if (req.method === "PUT" && connectorIdMatch && this.connectors) {
+          const connectors = this.connectors;
           if (originBlocked()) return;
           let body = "";
           req.on("data", (c) => {
@@ -1024,22 +1020,22 @@ export class TextChannel {
             } catch {
               return credJson(400, { error: "body must be JSON" });
             }
-            void this.connectors!.update(decodeURIComponent(connectorIdMatch[1]!), parsed).then(
-              (r) => credJson((r as { error?: string }).error ? 400 : 200, r),
-              credFail,
-            );
+            void connectors
+              .update(decodeURIComponent(connectorIdMatch[1]), parsed)
+              .then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
           });
           return;
         }
         if (req.method === "DELETE" && connectorIdMatch && this.connectors) {
           if (originBlocked()) return;
           void this.connectors
-            .remove(decodeURIComponent(connectorIdMatch[1]!))
+            .remove(decodeURIComponent(connectorIdMatch[1]))
             .then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
           return;
         }
         const connectorVerifyMatch = /^\/me\/connectors\/([^/]+)\/verify$/.exec(url.pathname);
         if (req.method === "POST" && connectorVerifyMatch && this.connectors) {
+          const connectors = this.connectors;
           if (originBlocked()) return;
           let body = "";
           req.on("data", (c) => {
@@ -1052,10 +1048,9 @@ export class TextChannel {
             } catch {
               return credJson(400, { error: "body must be JSON" });
             }
-            void this.connectors!.verify(decodeURIComponent(connectorVerifyMatch[1]!), parsed.extra).then(
-              (r) => credJson((r as { error?: string }).error ? 400 : 200, r),
-              credFail,
-            );
+            void connectors
+              .verify(decodeURIComponent(connectorVerifyMatch[1]), parsed.extra)
+              .then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
           });
           return;
         }
@@ -1071,6 +1066,7 @@ export class TextChannel {
         }
         const cliToolMatch = /^\/cli-tools\/([^/]+)$/.exec(url.pathname);
         if (req.method === "PUT" && cliToolMatch && this.cliTools) {
+          const cliTools = this.cliTools;
           if (originBlocked()) return;
           let body = "";
           req.on("data", (c) => {
@@ -1085,10 +1081,9 @@ export class TextChannel {
             }
             if (typeof parsed.enabled !== "boolean")
               return credJson(400, { error: "body must be { enabled: boolean }" });
-            void this.cliTools!.setEnabled(decodeURIComponent(cliToolMatch[1]!), parsed.enabled).then(
-              (r) => credJson((r as { error?: string }).error ? 400 : 200, r),
-              credFail,
-            );
+            void cliTools
+              .setEnabled(decodeURIComponent(cliToolMatch[1]), parsed.enabled)
+              .then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
           });
           return;
         }
@@ -1103,6 +1098,7 @@ export class TextChannel {
           return;
         }
         if (req.method === "PUT" && url.pathname === "/containers" && this.containers) {
+          const containers = this.containers;
           if (originBlocked()) return;
           let body = "";
           req.on("data", (c) => {
@@ -1117,7 +1113,7 @@ export class TextChannel {
             }
             if (typeof parsed.docker?.enabled !== "boolean")
               return credJson(400, { error: "body must be { docker: { enabled: boolean } }" });
-            void this.containers!.set(parsed.docker.enabled).then((r) => credJson(200, r), credFail);
+            void containers.set(parsed.docker.enabled).then((r) => credJson(200, r), credFail);
           });
           return;
         }
@@ -1135,12 +1131,13 @@ export class TextChannel {
         if (req.method === "POST" && apiKeyVerifyMatch && this.apiKeys) {
           if (originBlocked()) return;
           void this.apiKeys
-            .verify(decodeURIComponent(apiKeyVerifyMatch[1]!))
+            .verify(decodeURIComponent(apiKeyVerifyMatch[1]))
             .then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
           return;
         }
         const apiKeyMatch = /^\/api-keys\/([^/]+)$/.exec(url.pathname);
         if (req.method === "PUT" && apiKeyMatch && this.apiKeys) {
+          const apiKeys = this.apiKeys;
           if (originBlocked()) return;
           let body = "";
           req.on("data", (c) => {
@@ -1153,17 +1150,16 @@ export class TextChannel {
             } catch {
               return credJson(400, { error: "body must be JSON" });
             }
-            void this.apiKeys!.save(decodeURIComponent(apiKeyMatch[1]!), parsed.key ?? "").then(
-              (r) => credJson((r as { error?: string }).error ? 400 : 200, r),
-              credFail,
-            );
+            void apiKeys
+              .save(decodeURIComponent(apiKeyMatch[1]), parsed.key ?? "")
+              .then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
           });
           return;
         }
         if (req.method === "DELETE" && apiKeyMatch && this.apiKeys) {
           if (originBlocked()) return;
           void this.apiKeys
-            .remove(decodeURIComponent(apiKeyMatch[1]!))
+            .remove(decodeURIComponent(apiKeyMatch[1]))
             .then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
           return;
         }
@@ -1208,31 +1204,34 @@ export class TextChannel {
         }
         // /feeds/weather is matched BEFORE the bare-id route so it is never swallowed by it.
         if (this.feeds && req.method === "PUT" && feedUrl.pathname === "/feeds/weather") {
+          const feeds = this.feeds;
           if (feedOriginBlocked()) return;
           readBody((body) => {
-            void this.feeds!.weather({ location: String(body.location ?? "") }).then((p) => feedJson(200, p));
+            void feeds.weather({ location: String(body.location ?? "") }).then((p) => feedJson(200, p));
           });
           return;
         }
         if (this.feeds && req.method === "POST" && feedUrl.pathname === "/feeds") {
+          const feeds = this.feeds;
           if (feedOriginBlocked()) return;
           readBody((body) => {
-            void this.feeds!.add({ url: String(body.url ?? ""), tag: String(body.tag ?? "news") }).then((p) =>
-              feedJson(200, p),
-            );
+            void feeds
+              .add({ url: String(body.url ?? ""), tag: String(body.tag ?? "news") })
+              .then((p) => feedJson(200, p));
           });
           return;
         }
         // Topics. Sub-routes are matched BEFORE the bare-id route, or it swallows them.
         if (this.topics) {
+          const topics = this.topics;
           if (req.method === "GET" && feedUrl.pathname === "/topics") {
-            void this.topics.list().then((p) => feedJson(200, p));
+            void topics.list().then((p) => feedJson(200, p));
             return;
           }
           if (req.method === "POST" && feedUrl.pathname === "/topics") {
             if (feedOriginBlocked()) return;
             readBody((body) => {
-              void this.topics!.track({ name: String(body.name ?? "") }).then((p) => feedJson(200, p));
+              void topics.track({ name: String(body.name ?? "") }).then((p) => feedJson(200, p));
             });
             return;
           }
@@ -1240,39 +1239,44 @@ export class TextChannel {
           if (req.method === "POST" && approveMatch) {
             if (feedOriginBlocked()) return;
             readBody((body) => {
-              void this.topics!.approve(decodeURIComponent(approveMatch[1]!), {
-                keep: Array.isArray(body.keep) ? (body.keep as string[]) : [],
-                baseline: typeof body.baseline === "string" ? body.baseline : undefined,
-              }).then((p) => feedJson(200, p));
+              void topics
+                .approve(decodeURIComponent(approveMatch[1]), {
+                  keep: Array.isArray(body.keep) ? (body.keep as string[]) : [],
+                  baseline: typeof body.baseline === "string" ? body.baseline : undefined,
+                })
+                .then((p) => feedJson(200, p));
             });
             return;
           }
           const rediscoverMatch = /^\/topics\/([^/]+)\/rediscover$/.exec(feedUrl.pathname);
           if (req.method === "POST" && rediscoverMatch) {
             if (feedOriginBlocked()) return;
-            void this.topics.rediscover(decodeURIComponent(rediscoverMatch[1]!)).then((p) => feedJson(200, p));
+            void topics.rediscover(decodeURIComponent(rediscoverMatch[1])).then((p) => feedJson(200, p));
             return;
           }
           const topicIdMatch = /^\/topics\/([^/]+)$/.exec(feedUrl.pathname);
           if (req.method === "DELETE" && topicIdMatch) {
             if (feedOriginBlocked()) return;
-            void this.topics.remove(decodeURIComponent(topicIdMatch[1]!)).then((p) => feedJson(200, p));
+            void topics.remove(decodeURIComponent(topicIdMatch[1])).then((p) => feedJson(200, p));
             return;
           }
         }
         const feedIdMatch = /^\/feeds\/([^/]+)$/.exec(feedUrl.pathname);
         if (this.feeds && feedIdMatch && (req.method === "PATCH" || req.method === "DELETE")) {
+          const feeds = this.feeds;
           if (feedOriginBlocked()) return;
-          const id = decodeURIComponent(feedIdMatch[1]!);
+          const id = decodeURIComponent(feedIdMatch[1]);
           if (req.method === "DELETE") {
-            void this.feeds.remove(id).then((p) => feedJson(200, p));
+            void feeds.remove(id).then((p) => feedJson(200, p));
             return;
           }
           readBody((body) => {
-            void this.feeds!.update(id, {
-              enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
-              dismissed: typeof body.dismissed === "boolean" ? body.dismissed : undefined,
-            }).then((p) => feedJson(200, p));
+            void feeds
+              .update(id, {
+                enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
+                dismissed: typeof body.dismissed === "boolean" ? body.dismissed : undefined,
+              })
+              .then((p) => feedJson(200, p));
           });
           return;
         }
@@ -1285,7 +1289,7 @@ export class TextChannel {
             .end(JSON.stringify({ error: "origin not allowed" }));
           return;
         }
-        const error = this.sessions.remove(decodeURIComponent(sessionDeleteMatch[1]!));
+        const error = this.sessions.remove(decodeURIComponent(sessionDeleteMatch[1]));
         res
           .writeHead(error ? 404 : 200, { ...corsFor(req), "content-type": "application/json" })
           .end(JSON.stringify(error ? { error } : { ok: true }));
@@ -1293,6 +1297,7 @@ export class TextChannel {
       }
       const sessionMatch = /^\/sessions(?:\/([^/]+)\/activate)?$/.exec(req.url ?? "");
       if (req.method === "POST" && sessionMatch && this.sessions) {
+        const sessions = this.sessions;
         // Creating/activating a session is a mutation — same origin guard as /work/delegate
         // and the credential-adjacent routes above. An absent Origin header still passes
         // (the smith-broker-send CLI bridge and same-process callers send no Origin); only a
@@ -1317,7 +1322,7 @@ export class TextChannel {
             /* empty body is fine */
           }
           if (sessionMatch[1]) {
-            const error = this.sessions!.activate(decodeURIComponent(sessionMatch[1]));
+            const error = sessions.activate(decodeURIComponent(sessionMatch[1]));
             res
               .writeHead(error ? 400 : 200, { ...corsFor(req), "content-type": "application/json" })
               .end(JSON.stringify(error ? { error } : { ok: true }));
@@ -1327,21 +1332,23 @@ export class TextChannel {
           // so the caller either gets a live session or a clean rejection — never a
           // half-created one. The handler decides the status (e.g. 409 for an
           // unavailable execution mode) via the optional `status` field.
-          void this.sessions!.create({
-            workspace: typeof parsed.workspace === "string" ? parsed.workspace : undefined,
-            runtime: typeof parsed.runtime === "string" ? parsed.runtime : undefined,
-            prompt: typeof parsed.prompt === "string" ? parsed.prompt : undefined,
-          }).then(
-            (r) => {
-              res
-                .writeHead(r ? (r.status ?? 400) : 200, { ...corsFor(req), "content-type": "application/json" })
-                .end(JSON.stringify(r ? { error: r.error } : { ok: true }));
-            },
-            (err: unknown) =>
-              res
-                .writeHead(500, { ...corsFor(req), "content-type": "application/json" })
-                .end(JSON.stringify({ error: String((err as Error).message ?? err) })),
-          );
+          void sessions
+            .create({
+              workspace: typeof parsed.workspace === "string" ? parsed.workspace : undefined,
+              runtime: typeof parsed.runtime === "string" ? parsed.runtime : undefined,
+              prompt: typeof parsed.prompt === "string" ? parsed.prompt : undefined,
+            })
+            .then(
+              (r) => {
+                res
+                  .writeHead(r ? (r.status ?? 400) : 200, { ...corsFor(req), "content-type": "application/json" })
+                  .end(JSON.stringify(r ? { error: r.error } : { ok: true }));
+              },
+              (err: unknown) =>
+                res
+                  .writeHead(500, { ...corsFor(req), "content-type": "application/json" })
+                  .end(JSON.stringify({ error: String((err as Error).message ?? err) })),
+            );
         });
         return;
       }
@@ -1367,6 +1374,7 @@ export class TextChannel {
         }
 
         if (req.method === "POST" && url.pathname === "/documents" && this.documents) {
+          const documents = this.documents;
           if (originBlocked()) return;
           let body = "";
           req.on("data", (c) => {
@@ -1386,15 +1394,17 @@ export class TextChannel {
               json(400, { error: "text is required" });
               return;
             }
-            void this.documents!.create({
-              blueprintId: typeof parsed.blueprintId === "string" ? parsed.blueprintId : undefined,
-              workType: typeof parsed.workType === "string" ? parsed.workType : undefined,
-              text,
-            }).then(
-              (r) =>
-                r.doc ? json(200, { doc: r.doc }) : json(r.status ?? 400, { error: r.error ?? "invalid request" }),
-              (err: unknown) => json(500, { error: String((err as Error).message ?? err) }),
-            );
+            void documents
+              .create({
+                blueprintId: typeof parsed.blueprintId === "string" ? parsed.blueprintId : undefined,
+                workType: typeof parsed.workType === "string" ? parsed.workType : undefined,
+                text,
+              })
+              .then(
+                (r) =>
+                  r.doc ? json(200, { doc: r.doc }) : json(r.status ?? 400, { error: r.error ?? "invalid request" }),
+                (err: unknown) => json(500, { error: String((err as Error).message ?? err) }),
+              );
           });
           return;
         }
@@ -1402,6 +1412,7 @@ export class TextChannel {
         // PATCH /documents/:id — re-cast an untouched document under another blueprint.
         const docMatch = /^\/documents\/([^/]+)$/.exec(url.pathname);
         if (req.method === "PATCH" && docMatch && this.documents) {
+          const documents = this.documents;
           if (originBlocked()) return;
           let body = "";
           req.on("data", (c) => {
@@ -1423,9 +1434,7 @@ export class TextChannel {
               return;
             }
             const docId = decodeURIComponent(docMatch[1]);
-            const error = title
-              ? this.documents!.rename(docId, title)
-              : this.documents!.changeBlueprint(docId, blueprintId);
+            const error = title ? documents.rename(docId, title) : documents.changeBlueprint(docId, blueprintId);
             res
               .writeHead(error ? 409 : 200, { ...corsFor(req), "content-type": "application/json" })
               .end(JSON.stringify(error ? { error } : { ok: true }));
@@ -1435,6 +1444,7 @@ export class TextChannel {
 
         const docSectionMatch = /^\/documents\/([^/]+)\/sections\/([^/]+)$/.exec(url.pathname);
         if (req.method === "PATCH" && docSectionMatch && this.documents) {
+          const documents = this.documents;
           if (originBlocked()) return;
           let body = "";
           req.on("data", (c) => {
@@ -1447,9 +1457,9 @@ export class TextChannel {
             } catch {
               /* empty = clear the section, which is legal */
             }
-            const error = this.documents!.patchSection(
-              decodeURIComponent(docSectionMatch[1]!),
-              decodeURIComponent(docSectionMatch[2]!),
+            const error = documents.patchSection(
+              decodeURIComponent(docSectionMatch[1]),
+              decodeURIComponent(docSectionMatch[2]),
               text,
             );
             json(error ? 404 : 200, error ? { error } : { ok: true });
@@ -1458,6 +1468,7 @@ export class TextChannel {
         }
       }
       if (req.method === "POST" && req.url === "/polish" && this.polish) {
+        const polish = this.polish;
         const json = (status: number, payload: unknown) =>
           res.writeHead(status, { ...corsFor(req), "content-type": "application/json" }).end(JSON.stringify(payload));
         // Same origin guard the /documents mutating routes use — this rewrites the user's
@@ -1486,7 +1497,7 @@ export class TextChannel {
             json(400, { error: "text is required" });
             return;
           }
-          void this.polish!(text).then(
+          void polish(text).then(
             (polished) => (polished ? json(200, { text: polished }) : json(502, { error: "polish unavailable" })),
             () => json(502, { error: "polish unavailable" }),
           );
@@ -1495,12 +1506,13 @@ export class TextChannel {
       }
       const workMatch = /^\/activity\/([^/]+)(\/steer|\/cancel)?$/.exec(req.url ?? "");
       if (workMatch && this.work) {
-        const name = decodeURIComponent(workMatch[1]!);
+        const work = this.work;
+        const name = decodeURIComponent(workMatch[1]);
         const action = workMatch[2];
         const respond = (status: number, payload: unknown) =>
           res.writeHead(status, { ...corsFor(req), "content-type": "application/json" }).end(JSON.stringify(payload));
         if (req.method === "GET" && !action) {
-          this.work
+          work
             .activity(name)
             .then((a) => respond(200, a))
             .catch((err) => respond(502, { error: String(err) }));
@@ -1519,7 +1531,7 @@ export class TextChannel {
                 return "";
               }
             })();
-            const run = action === "/steer" ? this.work!.steer(name, message) : this.work!.cancel(name);
+            const run = action === "/steer" ? work.steer(name, message) : work.cancel(name);
             run
               .then((error) => respond(error ? 409 : 200, error ? { error } : { ok: true }))
               .catch((err) => respond(502, { error: String(err) }));
@@ -1528,6 +1540,7 @@ export class TextChannel {
         }
       }
       if (this.workBoards) {
+        const workBoards = this.workBoards;
         const url2 = new URL(req.url ?? "/", "http://localhost");
         if (req.method === "POST" && url2.pathname === "/work/delegate") {
           // Dispatch binds a task to an agent — same origin guard as /me and /me/connectors;
@@ -1553,7 +1566,7 @@ export class TextChannel {
                 .writeHead(400, { ...corsFor(req), "content-type": "application/json" })
                 .end(JSON.stringify({ error: "body must be JSON" }));
             }
-            void this.workBoards!.delegate(parsed).then(
+            void workBoards.delegate(parsed).then(
               (r) =>
                 res
                   .writeHead("error" in r ? 409 : 200, { ...corsFor(req), "content-type": "application/json" })
@@ -1593,7 +1606,7 @@ export class TextChannel {
                   .end(JSON.stringify({ error: "body must be JSON" }));
               }
             }
-            void this.workBoards!.proxy(req.method ?? "GET", url2.pathname, parsed).then(
+            void workBoards.proxy(req.method ?? "GET", url2.pathname, parsed).then(
               (r) => {
                 res
                   .writeHead(r.status, { ...corsFor(req), "content-type": "application/json" })

@@ -53,20 +53,6 @@ test("WorkerPool.launch: env is never forwarded onto the outgoing TaskDispatchMe
 
 test("launch with kind routes to a worker advertising that runtime", async () => {
   const pool = new WorkerPool();
-  const tmuxWs = {
-    send: (() => {
-      let count = 0;
-      return () => count++;
-    })(),
-    readyState: 1,
-  };
-  const dockerWs = {
-    send: (() => {
-      let count = 0;
-      return () => count++;
-    })(),
-    readyState: 1,
-  };
   const sentDocker: unknown[] = [];
   const sentTmux: unknown[] = [];
 

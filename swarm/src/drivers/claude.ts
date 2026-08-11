@@ -154,11 +154,13 @@ export class ClaudeDriver implements ToolDriver {
             args: ["mcp-atlassian"],
             env: {
               JIRA_URL: atlassian.siteUrl,
+              // biome-ignore-start lint/suspicious/noTemplateCurlyInString: literal ${VAR} placeholders the CLI expands from its own env at startup — resolving them here would write the credential into .mcp.json
               JIRA_USERNAME: "${SMITH_ATLASSIAN_EMAIL}",
               JIRA_API_TOKEN: "${SMITH_ATLASSIAN_TOKEN}",
               CONFLUENCE_URL: `${atlassian.siteUrl.replace(/\/$/, "")}/wiki`,
               CONFLUENCE_USERNAME: "${SMITH_ATLASSIAN_EMAIL}",
               CONFLUENCE_API_TOKEN: "${SMITH_ATLASSIAN_TOKEN}",
+              // biome-ignore-end lint/suspicious/noTemplateCurlyInString: end of placeholder block
               ...(atlassian.jiraProjectKeys?.length
                 ? { JIRA_PROJECTS_FILTER: atlassian.jiraProjectKeys.join(",") }
                 : {}),

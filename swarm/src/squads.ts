@@ -268,15 +268,15 @@ function matchesAnyGlob(path: string, patterns: string[]): boolean {
     if (pattern === path) return true;
     if (pattern.endsWith("/**")) {
       const prefix = pattern.slice(0, -3);
-      if (path.startsWith(prefix + "/") || path === prefix) return true;
+      if (path.startsWith(`${prefix}/`) || path === prefix) return true;
     }
     if (pattern.endsWith("/*")) {
       const prefix = pattern.slice(0, -2);
-      if (path.startsWith(prefix + "/") && !path.slice(prefix.length + 1).includes("/")) return true;
+      if (path.startsWith(`${prefix}/`) && !path.slice(prefix.length + 1).includes("/")) return true;
     }
     // Simple wildcard in filename: src/**/*.ts
     if (pattern.includes("*")) {
-      const regex = new RegExp("^" + pattern.replace(/\*\*/g, ".*").replace(/\*/g, "[^/]*") + "$");
+      const regex = new RegExp(`^${pattern.replace(/\*\*/g, ".*").replace(/\*/g, "[^/]*")}$`);
       if (regex.test(path)) return true;
     }
   }
@@ -309,23 +309,19 @@ export const SQUAD_MEMBERS: SquadMember[] = [
  * deletable, and cleared by a settings reset. Mutated in place by
  * setSquadRoster so existing holders of this array see the change.
  */
-export const SQUAD_ROSTER: SquadDefinition[] = [
-  {
-    id: "alpha",
-    members: SQUAD_MEMBERS.filter((m) => m.squad === "alpha") as [SquadMember, SquadMember, SquadMember, SquadMember],
-    leader: SQUAD_MEMBERS.find((m) => m.squad === "alpha" && m.role === "leader")!,
-  },
-  {
-    id: "beta",
-    members: SQUAD_MEMBERS.filter((m) => m.squad === "beta") as [SquadMember, SquadMember, SquadMember, SquadMember],
-    leader: SQUAD_MEMBERS.find((m) => m.squad === "beta" && m.role === "leader")!,
-  },
-  {
-    id: "gamma",
-    members: SQUAD_MEMBERS.filter((m) => m.squad === "gamma") as [SquadMember, SquadMember, SquadMember, SquadMember],
-    leader: SQUAD_MEMBERS.find((m) => m.squad === "gamma" && m.role === "leader")!,
-  },
-];
+/** Slice one squad out of SQUAD_MEMBERS, refusing to boot on a malformed table. */
+function defaultSquad(id: SquadId): SquadDefinition {
+  const members = SQUAD_MEMBERS.filter((m) => m.squad === id);
+  const leader = members.find((m) => m.role === "leader");
+  if (members.length !== 4 || !leader) {
+    throw new Error(
+      `SQUAD_MEMBERS is malformed for squad "${id}": ${members.length} members (expected 4), leader ${leader ? "present" : "missing"}`,
+    );
+  }
+  return { id, members: members as [SquadMember, SquadMember, SquadMember, SquadMember], leader };
+}
+
+export const SQUAD_ROSTER: SquadDefinition[] = [defaultSquad("alpha"), defaultSquad("beta"), defaultSquad("gamma")];
 
 /** Replace the live roster in place (boot-time load, reset). */
 export function setSquadRoster(defs: SquadDefinition[]): void {
@@ -383,7 +379,16 @@ export async function loadSquadsFromDir(dir: string): Promise<SquadDefinition[]>
 export class SquadPool {
   private activeAssignments = new Map<SquadId, string>();
 
-  claim(taskId: string): SquadId | null {
+  /**
+   * Claim the first free squad, or `squadId` when the caller has already
+   * picked one. The named form assigns unconditionally — callers that care
+   * whether it was free must check `isActive` first.
+   */
+  claim(taskId: string, squadId?: SquadId): SquadId | null {
+    if (squadId) {
+      this.activeAssignments.set(squadId, taskId);
+      return squadId;
+    }
     for (const squad of SQUAD_ROSTER) {
       if (!this.activeAssignments.has(squad.id)) {
         this.activeAssignments.set(squad.id, taskId);
@@ -536,9 +541,9 @@ export function buildSquadLaunchScript(manifest: SquadManifest): string {
     "DELEGATION PROTOCOL:",
     "1. Plan the work breakdown for your team",
     "2. Permission grants are pre-written at .smith/permissions/<name>.json",
-    "3. Delegate to each agent via: tmux send-keys -t " + sessionName + '.<pane> -l "<prompt>"',
+    `3. Delegate to each agent via: tmux send-keys -t ${sessionName}.<pane> -l "<prompt>"`,
     "4. Include the permission block from their grant file in your delegation prompt",
-    "5. Monitor their output JSON files: " + subAgents.map((a) => getOutputFilename(a.name.toLowerCase())).join(", "),
+    `5. Monitor their output JSON files: ${subAgents.map((a) => getOutputFilename(a.name.toLowerCase())).join(", ")}`,
     "6. Validate compliance: each agent must only modify files within their write permissions",
     "7. On success: compile results and exit 0",
     "8. On unrecoverable failure: exit 1 (quarantine)",

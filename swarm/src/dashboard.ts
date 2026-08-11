@@ -23,7 +23,7 @@
 import { WebSocket } from "ws";
 
 const BASE_URL = process.env.SMITH_SERVER_URL ?? "http://localhost:7777";
-const WS_URL = BASE_URL.replace(/^http/, "ws") + "/ws";
+const WS_URL = `${BASE_URL.replace(/^http/, "ws")}/ws`;
 
 // ---------------------------------------------------------------------------
 // ANSI helpers
@@ -75,12 +75,6 @@ interface TaskInfo {
   position?: number;
   exitCode?: number;
   durationMs?: number;
-}
-
-interface TasksData {
-  active: TaskInfo[];
-  queued: TaskInfo[];
-  completed: TaskInfo[];
 }
 
 interface AgentSeat {
@@ -425,7 +419,7 @@ class Dashboard {
     lines.push(
       `  ${ansi.dim("#")}  ${pad("NAME", 12)} ${pad("TOOL", 8)} ${pad("LOC", 8)} ${pad("STATUS", 10)} ${pad("UPTIME", 8)} ${ansi.dim("TASK")}`,
     );
-    lines.push(ansi.dim("  " + "─".repeat(Math.min(w - 4, 80))));
+    lines.push(ansi.dim(`  ${"─".repeat(Math.min(w - 4, 80))}`));
 
     for (let i = 0; i < ROSTER.length; i++) {
       const name = ROSTER[i];
@@ -433,8 +427,8 @@ class Dashboard {
       const sel = i === this.state.selectedIdx ? ansi.cyan("▶") : " ";
       const idx = ansi.dim(String(i + 1));
 
-      if (seat && seat.taskId) {
-        const status = seat.status === "running" ? ansi.green("● running") : ansi.yellow("◐ " + (seat.status ?? "?"));
+      if (seat?.taskId) {
+        const status = seat.status === "running" ? ansi.green("● running") : ansi.yellow(`◐ ${seat.status ?? "?"}`);
         const uptime = seat.startedAt ? formatUptime((Date.now() - new Date(seat.startedAt).getTime()) / 1000) : "-";
         const highlight = i === this.state.selectedIdx ? (s: string) => ansi.cyan(s) : (s: string) => s;
         const prompt = seat.prompt ? ansi.dim(seat.prompt.substring(0, 35)) : "";

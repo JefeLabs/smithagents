@@ -179,7 +179,7 @@ test("two independent lifecycles do not share state", async () => {
   const a = fakeDeps({ createEarClient: () => fakeEarClient().client });
   const b = fakeDeps({ createEarClient: () => fakeEarClient().client });
   const lifecycleA = createDiscordVoiceLifecycle(a.deps);
-  const lifecycleB = createDiscordVoiceLifecycle(b.deps);
+  createDiscordVoiceLifecycle(b.deps); // constructed only to prove it takes no share of A's state
 
   await lifecycleA.bootDiscordVoice("tok", ["chan-1"]);
   assert.equal(a.surfaceChanges.length, 1);

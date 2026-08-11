@@ -6,7 +6,7 @@
  * Empty in, empty out: with nothing configured the prompt is byte-for-byte
  * what it was before this feature existed.
  */
-import type { FeedItem } from "./types.ts";
+import type { FeedItem, ReleaseItem } from "./types.ts";
 
 const WINDOW_HOURS = 48;
 /** 150 tokens at the standard ~4-chars-per-token estimate. */
@@ -25,7 +25,7 @@ export function buildDigest(input: {
     .filter((i) => Date.parse(i.publishedAt) >= cutoff)
     .sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
 
-  const unspoken = recent.filter((i) => i.release && !i.spokenAt);
+  const unspoken = recent.filter((i): i is ReleaseItem => Boolean(i.release) && !i.spokenAt);
   const lines: string[] = [];
 
   if (input.weather) lines.push(`TODAY · ${input.weather}`);
@@ -33,8 +33,8 @@ export function buildDigest(input: {
   // Releases first: this is the half the human asked to be told about.
   if (unspoken.length) {
     const rendered = unspoken.slice(0, 4).map((i) => {
-      const owner = input.owners[i.release!.name];
-      return `${i.release!.name} ${i.release!.version}${owner ? ` [${owner}]` : ""}`;
+      const owner = input.owners[i.release.name];
+      return `${i.release.name} ${i.release.version}${owner ? ` [${owner}]` : ""}`;
     });
     lines.push(`releases — ${rendered.join(" · ")}`);
   }

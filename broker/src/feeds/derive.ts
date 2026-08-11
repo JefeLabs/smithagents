@@ -26,7 +26,7 @@ export function deriveSources(input: {
     if (out.has(id)) return;
     out.set(id, {
       id,
-      label: name.includes(":") ? name.split(":")[1]! : name,
+      label: name.includes(":") ? name.split(":")[1] : name,
       kind: "registry",
       locator: `${eco}:${name}`,
       tag: "release",

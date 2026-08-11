@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { boardTypeFor, cardForRelease, cardTitle } from "./cards.ts";
-import type { FeedItem } from "./types.ts";
+import type { FeedItem, ReleaseItem } from "./types.ts";
 
-const rel = (over: Partial<NonNullable<FeedItem["release"]>> = {}): FeedItem => ({
+const rel = (over: Partial<NonNullable<FeedItem["release"]>> = {}): ReleaseItem => ({
   id: "r1",
   sourceId: "s",
   tag: "release",

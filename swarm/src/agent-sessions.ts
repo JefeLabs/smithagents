@@ -12,7 +12,7 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { appendFile, mkdir, readFile, stat } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import type { ComposedAgent } from "./agents.js";
 import { SessionDeadError, SessionNotFoundError, ToolLaunchError, TurnTimeoutError } from "./drivers/errors.js";
 import { getDriver } from "./drivers/index.js";
@@ -355,10 +355,10 @@ export class AgentSessionManager {
   private async newest(files: string[]): Promise<string> {
     // Database handles (db::<id>) come back newest-first from their query and
     // have no mtime to compare.
-    if (files.some((f) => f.startsWith("db::"))) return files[0]!;
+    if (files.some((f) => f.startsWith("db::"))) return files[0];
     const stats = await Promise.all(files.map(async (f) => ({ f, mtime: (await stat(f)).mtimeMs })));
     stats.sort((a, b) => b.mtime - a.mtime);
-    return stats[0]!.f;
+    return stats[0].f;
   }
 
   private info(state: SessionState): AgentSessionInfo {

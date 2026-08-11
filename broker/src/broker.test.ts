@@ -234,7 +234,7 @@ test("speech publishes with the speaking agent's persona id", async () => {
 test("a prefixed line with an unresolved speaker name publishes with no persona id", async () => {
   const f = makeFakes([MEETING]);
   const brain: BrainLike = {
-    handleUtterance: async (text, turn) => void turn.onSpeech("Ghost: nobody knows me"),
+    handleUtterance: async (_text, turn) => void turn.onSpeech("Ghost: nobody knows me"),
     handleSystemNote: async () => {},
   };
   const b = new Broker({ ...basicDeps(f, new AgentDirectory()), brain });
@@ -254,8 +254,8 @@ test("a system-note turn (task completion narration) never inherits a prior turn
   const f = makeFakes([MEETING]);
   f.swarm.registry = async () => [...AGENTS, IGNACIO];
   const brain: BrainLike = {
-    handleUtterance: async (text, turn) => void turn.onSpeech("Ignacio: dime"), // sets the sticky speaker
-    handleSystemNote: async (note, turn) => void turn.onSpeech("narration"), // unprefixed — must be its own, clean turn
+    handleUtterance: async (_text, turn) => void turn.onSpeech("Ignacio: dime"), // sets the sticky speaker
+    handleSystemNote: async (_note, turn) => void turn.onSpeech("narration"), // unprefixed — must be its own, clean turn
   };
   const b = new Broker({ ...basicDeps(f, new AgentDirectory()), brain });
   try {
@@ -354,7 +354,7 @@ test("while a voice surface is attached, speech publishes to it", async () => {
   const f = makeFakes([]); // no meetings at all
   f.swarm.registry = async () => [...AGENTS, IGNACIO];
   const brain: BrainLike = {
-    handleUtterance: async (text, turn) => void turn.onSpeech("Ignacio: hola"),
+    handleUtterance: async (_text, turn) => void turn.onSpeech("Ignacio: hola"),
     handleSystemNote: async () => {},
   };
   const b = new Broker({ ...basicDeps(f, new AgentDirectory()), brain });
@@ -914,7 +914,7 @@ test("raise_hand stores the hand, roster carries it, and speaking lowers it", as
   // ...until a chunk with his speaker prefix goes out.
   b.handleUtterance("x"); // enqueue another turn
   await new Promise((r) => setTimeout(r, 10));
-  b["enqueueSpeech"]("Octavio: The risk is contained.");
+  (b as unknown as { enqueueSpeech(text: string): void }).enqueueSpeech("Octavio: The risk is contained.");
   assert.deepEqual(b.uiRoster().hands, {});
   await b.stop();
 });
