@@ -10,6 +10,7 @@ import {
 import { lazy, Suspense } from "react";
 import * as api from "./api/broker";
 import type { BlueprintT, ChatMessage, DocT, RosterAgent } from "./api/types";
+import { type ArtifactKind, familyForKind } from "./lib/artifactKinds";
 import { agentSeeds } from "./data/agents";
 import { useVoiceStatus } from "./hooks/useVoiceStatus";
 import { ArtifactShelf } from "./molecules/ArtifactShelf";
@@ -34,6 +35,36 @@ const NO_MESSAGES: ChatMessage[] = [];
 const NO_ROSTER: RosterAgent[] = [];
 const NO_DOCS: DocT[] = [];
 const NO_BLUEPRINTS: BlueprintT[] = [];
+
+/**
+ * The composer kind row's click handler. Chat/Dashboards/Map navigate to their
+ * stage; Documents/Diagrams create a fresh blueprint doc of the matching family
+ * and open it. (Plan 2 will route diagram-family docs to a Mermaid canvas; here
+ * they open in the prose document stage, and with no diagram blueprint yet a
+ * diagram click falls back to the first blueprint.)
+ */
+function makePickKind(
+  navigate: ReturnType<typeof useNavigate>,
+  qc: ReturnType<typeof useQueryClient>,
+  blueprints: BlueprintT[],
+): (kind: ArtifactKind) => void {
+  return (kind) => {
+    if (kind === "chat") return void navigate({ to: "/" });
+    if (kind === "dashboards") return void navigate({ to: "/dashboards" });
+    if (kind === "map") return void navigate({ to: "/map" });
+    const family = familyForKind(kind); // "document" | "diagram"
+    const bp = blueprints.find((b) => b.family === family) ?? blueprints[0];
+    void api.postDocument(bp?.id ?? "spec", "").then((r) => {
+      if (!r.doc) return;
+      const created = r.doc;
+      qc.setQueryData<DocT[]>(qk.documents, (prev: DocT[] | undefined) => [
+        created,
+        ...(prev ?? []).filter((d: DocT) => d.id !== created.id),
+      ]);
+      void navigate({ to: "/doc/$docId", params: { docId: created.id } });
+    });
+  };
+}
 
 // The document stage carries Tiptap/ProseMirror; a chat-only session should not
 // download an editor it never opens. This is the app's first split chunk.
@@ -90,23 +121,8 @@ function VoiceRoute() {
       showMicHero={!hideMic}
       voiceNotice={voiceNotice}
       onPolish={api.polishDraft}
-      onSendDocument={async (text) => {
-        // The composer no longer picks a type — a new document starts as the
-        // first blueprint and is re-cast from the switch above the page itself.
-        const r = await api.postDocument(blueprints[0]?.id ?? "spec", text);
-        if (r.error) return { error: r.error };
-        if (r.doc) {
-          // Seed before navigating: the doc rides a WS frame on another
-          // connection, and the stage must not decide it is missing.
-          const created = r.doc;
-          qc.setQueryData<DocT[]>(qk.documents, (prev: DocT[] | undefined) => [
-            created,
-            ...(prev ?? []).filter((d: DocT) => d.id !== created.id),
-          ]);
-          void navigate({ to: "/doc/$docId", params: { docId: created.id } });
-        }
-        return undefined;
-      }}
+      onPickKind={makePickKind(navigate, qc, blueprints)}
+      activeKind="chat"
       shelf={
         <ArtifactShelf docs={shelfDocs} onOpen={(docId) => void navigate({ to: "/doc/$docId", params: { docId } })} />
       }
@@ -130,6 +146,7 @@ function DashboardsRoute() {
 function DocRoute() {
   const { docId } = docRoute.useParams();
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const { data: docs = NO_DOCS, status } = useDocuments();
   const { data: rosterFrame } = useRoster();
   const { data: blueprints = NO_BLUEPRINTS } = useBlueprints();
@@ -179,8 +196,8 @@ function DocRoute() {
               onSoundToggle={toggleSound}
               sttEnabled={voice.stt}
               onVoiceBlocked={showVoiceBlockedNotice}
-              kind="document"
-              onKindChat={() => void navigate({ to: "/" })}
+              onPickKind={makePickKind(navigate, qc, blueprints)}
+              activeKind="documents"
             />
           </div>
         }

@@ -84,10 +84,6 @@ export function Composer({
   // every send — you can never leak a message to a CLI by forgetting a mode.
   const [target, setTarget] = useState<Target>({ kind: "host" });
   const [refusal, setRefusal] = useState<string | null>(null);
-  // The kind row reveals while the user is engaged with the box, and collapses
-  // when idle — focus OR a non-empty draft counts as engaged.
-  const [focused, setFocused] = useState(false);
-  const engaged = focused || draft.trim() !== "";
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const startHold = () => {
@@ -141,8 +137,6 @@ export function Composer({
             disableAutosize
             rows={1}
             aria-label="Type a request"
-            onFocus={() => setFocused(true)}
-            onBlur={() => setFocused(false)}
             placeholder={disabled ? "Broker offline — start the broker to chat…" : "Type a request…"}
             onChange={(e) => {
               setDraft(e.target.value);
@@ -153,6 +147,25 @@ export function Composer({
             }}
           />
         </PromptInput.Content>
+        {onPickKind && (
+          // The middle row of the composer: input above, controls below. Buttons
+          // sit flush with the composer's own background until the box is hovered
+          // (see composer__kind CSS), so the row is calm at rest.
+          // biome-ignore lint/a11y/useSemanticElements: a nav row, not a form fieldset
+          <div className="composer__kind-group" role="group" aria-label="artifact kind">
+            {ARTIFACT_KINDS.map((k) => (
+              <button
+                key={k.kind}
+                type="button"
+                className={`composer__kind${activeKind === k.kind ? " composer__kind--on" : ""}`}
+                aria-pressed={activeKind === k.kind}
+                onClick={() => onPickKind(k.kind)}
+              >
+                {k.label}
+              </button>
+            ))}
+          </div>
+        )}
         <PromptInput.Toolbar className="composer__row">
           <PromptInput.ToolbarStart>
             <button
@@ -198,27 +211,6 @@ export function Composer({
               <span className="composer__target-error" role="status">
                 {refusal}
               </span>
-            )}
-            {onPickKind && engaged && (
-              // biome-ignore lint/a11y/useSemanticElements: a toolbar-embedded nav row, not a form fieldset
-              <div className="composer__kind-group" role="group" aria-label="artifact kind">
-                {ARTIFACT_KINDS.map((k) => (
-                  <button
-                    key={k.kind}
-                    type="button"
-                    className={`composer__kind${activeKind === k.kind ? " composer__kind--on" : ""}`}
-                    aria-pressed={activeKind === k.kind}
-                    // A nav trigger fired on mousedown so it beats the textarea's
-                    // blur (which would collapse the row before the click lands).
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      onPickKind(k.kind);
-                    }}
-                  >
-                    {k.label}
-                  </button>
-                ))}
-              </div>
             )}
           </PromptInput.ToolbarStart>
           <PromptInput.ToolbarEnd className="composer__actions">

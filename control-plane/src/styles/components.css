@@ -1064,6 +1064,40 @@ button.logo {
   align-items: center;
   justify-content: space-between;
 }
+/* Artifact-kind row — the composer's middle row (input above, controls below).
+   At rest the buttons are flush with the composer's own background; only when
+   the mouse is over the box do they surface a chip background. Calm until you
+   reach for it. */
+.composer__kind-group {
+  display: flex;
+  gap: 4px;
+  width: 100%;
+  padding: 2px 2px;
+}
+.composer__kind {
+  appearance: none;
+  border: none;
+  border-radius: 12px;
+  padding: 3px 10px;
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--muted);
+  background: transparent; /* same color as the chat box background at rest */
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+.composer:hover .composer__kind {
+  background: var(--surface); /* visible chips once the mouse is over the box */
+}
+.composer__kind:hover {
+  color: var(--foreground);
+}
+.composer__kind--on {
+  color: var(--foreground);
+  background: var(--surface); /* the active kind stays visible regardless of hover */
+}
 .composer__actions {
   display: flex;
   align-items: center;

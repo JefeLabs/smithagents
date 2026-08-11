@@ -234,26 +234,23 @@ describe("Composer polish", () => {
     rerender(<Composer onSend={vi.fn()} onPolish={vi.fn()} />);
     expect(screen.getByRole("button", { name: /polish/i }).getAttribute("aria-disabled")).toBe("true");
   });
-  it("hides the kind row until engaged, reveals on focus", async () => {
+  it("renders the kind row as a persistent third row (present without engaging)", () => {
     render(<Composer onSend={vi.fn()} onPickKind={vi.fn()} />);
-    expect(screen.queryByRole("group", { name: /artifact kind/i })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("textbox"));
     expect(screen.getByRole("group", { name: /artifact kind/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Diagrams" })).toBeInTheDocument();
   });
 
   it("clicking a kind calls onPickKind and never sends", async () => {
     const onPickKind = vi.fn();
     const onSend = vi.fn();
     render(<Composer onSend={onSend} onPickKind={onPickKind} />);
-    await userEvent.click(screen.getByRole("textbox"));
     await userEvent.click(screen.getByRole("button", { name: "Diagrams" }));
     expect(onPickKind).toHaveBeenCalledWith("diagrams");
     expect(onSend).not.toHaveBeenCalled();
   });
 
-  it("the active kind button is marked current", async () => {
+  it("the active kind button is marked current", () => {
     render(<Composer onSend={vi.fn()} onPickKind={vi.fn()} activeKind="map" />);
-    await userEvent.click(screen.getByRole("textbox"));
     expect(screen.getByRole("button", { name: "User Story Maps" }).getAttribute("aria-pressed")).toBe("true");
   });
 

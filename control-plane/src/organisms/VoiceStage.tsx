@@ -1,6 +1,7 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type { ReactNode } from "react";
 import type { ChatMessage, RosterAgent, Target } from "../api/types";
+import type { ArtifactKind } from "../lib/artifactKinds";
 import { Composer } from "../molecules/Composer";
 import { MicHero } from "../molecules/MicHero";
 import { Transcript } from "../molecules/Transcript";
@@ -26,8 +27,10 @@ interface VoiceStageProps {
   onPolish?: (text: string) => Promise<string | null>;
   /** The active session's document shelf — composed by the route, so this stage stays router-free. */
   shelf?: ReactNode;
-  /** Arms document mode in the composer; a send then creates the document. */
-  onSendDocument?: (text: string) => Promise<{ error?: string } | undefined>;
+  /** The composer's artifact-kind row — clicking a kind navigates immediately. */
+  onPickKind?: (kind: ArtifactKind) => void;
+  /** Highlighted kind (this stage is chat). */
+  activeKind?: ArtifactKind;
 }
 
 export function VoiceStage({
@@ -45,7 +48,8 @@ export function VoiceStage({
   voiceNotice = null,
   onPolish,
   shelf,
-  onSendDocument,
+  onPickKind,
+  activeKind,
 }: VoiceStageProps) {
   const chatActive = messages.length > 0;
   const reduceMotion = useReducedMotion();
@@ -102,7 +106,8 @@ export function VoiceStage({
           sttEnabled={sttEnabled}
           onVoiceBlocked={onVoiceBlocked}
           onPolish={onPolish}
-          onSendDocument={onSendDocument}
+          onPickKind={onPickKind}
+          activeKind={activeKind}
         />
       </motion.div>
     </section>

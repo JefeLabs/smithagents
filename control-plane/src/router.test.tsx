@@ -115,6 +115,36 @@ describe("stage routing", () => {
     expect(screen.getByRole("row", { name: /^dashboards$/i }).getAttribute("data-current")).toBe("true");
   });
 
+  it("the composer Dashboards kind navigates to /dashboards", async () => {
+    const router = await renderAt("/");
+    // The composer kind row buttons are role=button (distinct from the rail's role=row).
+    await userEvent.click(screen.getByRole("button", { name: "Dashboards" }));
+    expect(await screen.findByRole("region", { name: "Dashboards" })).toBeTruthy();
+    expect(router.state.location.pathname).toBe("/dashboards");
+  });
+
+  it("the composer Documents kind creates a document and opens it", async () => {
+    const posts: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/blueprints"))
+          return new Response(JSON.stringify({ blueprints: [{ id: "spec", name: "Spec", family: "document", workTypes: ["feature"] }] }));
+        if (url.endsWith("/documents") && init?.method === "POST") {
+          posts.push(url);
+          return new Response(JSON.stringify({ doc: { id: "d1", title: "Untitled", blueprintId: "spec", sections: [], artifacts: [] } }));
+        }
+        if (url.endsWith("/agents")) return new Response(JSON.stringify({ agents: [], voice: { stt: false, tts: false } }));
+        return new Response(JSON.stringify({}));
+      }),
+    );
+    const router = await renderAt("/");
+    await userEvent.click(screen.getByRole("button", { name: "Documents" }));
+    await waitFor(() => expect(posts.length).toBe(1));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/doc/d1"));
+  });
+
   it("clicking the active board tool stays on the board (no toggle)", async () => {
     const router = await renderAt("/");
     await userEvent.click(screen.getByRole("row", { name: /^board$/i }));
