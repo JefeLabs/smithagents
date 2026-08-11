@@ -168,12 +168,12 @@ describe("BoardStage", () => {
     );
   });
 
-  it("shows a tab per board, personal last, following the session frame's workspace", async () => {
+  it("shows a tab per board, personal first, following the session frame's workspace", async () => {
     stubFetch({
       boards: {
         boards: [
           { ...BOARD, id: "acme-plan", name: "Plan", type: "plan", workspaceId: "acme" },
-          { ...BOARD, id: "personal", name: "Personal", type: "personal", workspaceId: undefined },
+          { ...BOARD, id: "personal", name: "Active To-dos", type: "personal", workspaceId: undefined },
         ],
         errors: [],
       },
@@ -181,7 +181,7 @@ describe("BoardStage", () => {
     const { client } = renderBoardStage();
     seedSessionFrame(client, { workspace: "acme" });
     await waitFor(() => expect(screen.getByRole("tab", { name: "Plan" })).toBeTruthy());
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Plan", "Personal"]);
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Active To-dos", "Plan"]);
   });
 
   it("follows the session frame's workspace without any in-stage control", async () => {
@@ -275,15 +275,15 @@ describe("BoardStage", () => {
         boards: [
           { ...BOARD, id: "acme-plan", name: "Plan", type: "plan", workspaceId: "acme" },
           { ...BOARD, id: "beta-plan", name: "Plan", type: "plan", workspaceId: "beta" },
-          { ...BOARD, id: "personal", name: "Personal", type: "personal", workspaceId: undefined },
+          { ...BOARD, id: "personal", name: "Active To-dos", type: "personal", workspaceId: undefined },
         ],
         errors: [],
       },
     });
     const { client } = renderBoardStage();
     seedSessionFrame(client, { workspace: "acme" });
-    await waitFor(() => expect(screen.getByRole("tab", { name: "Personal" })).toBeTruthy());
-    await userEvent.click(screen.getByRole("tab", { name: "Personal" }));
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Active To-dos" })).toBeTruthy());
+    await userEvent.click(screen.getByRole("tab", { name: "Active To-dos" }));
     await userEvent.click(screen.getByRole("button", { name: /add card/i }));
     await userEvent.type(screen.getByPlaceholderText(/card title/i), "Half-typed");
     // Switching tabs must not carry a half-typed card onto another board.
@@ -306,15 +306,15 @@ describe("BoardStage", () => {
         boards: [
           { ...BOARD, id: "acme-plan", name: "Plan", type: "plan", workspaceId: "acme" },
           { ...BOARD, id: "beta-plan", name: "Plan", type: "plan", workspaceId: "beta" },
-          { ...BOARD, id: "personal", name: "Personal", type: "personal", workspaceId: undefined },
+          { ...BOARD, id: "personal", name: "Active To-dos", type: "personal", workspaceId: undefined },
         ],
         errors: [],
       },
     });
     const { client } = renderBoardStage();
     seedSessionFrame(client, { workspace: "acme" });
-    await waitFor(() => expect(screen.getByRole("tab", { name: "Personal" })).toBeTruthy());
-    await userEvent.click(screen.getByRole("tab", { name: "Personal" }));
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Active To-dos" })).toBeTruthy());
+    await userEvent.click(screen.getByRole("tab", { name: "Active To-dos" }));
     await userEvent.click(screen.getByText("Write the spec"));
     expect(screen.getByRole("dialog")).toBeTruthy();
     await userEvent.click(screen.getByRole("tab", { name: "Plan" }));
@@ -885,6 +885,8 @@ describe("board-side capability amendments", () => {
     stubFetch({ boards: WS_BOARDS });
     const { client } = renderBoardStage();
     seedSessionFrame(client, { workspace: "skoolscout" });
+    // The personal tab leads and is active by default; the linked card lives on Plan.
+    await userEvent.click(await screen.findByRole("tab", { name: "Plan" }));
     await screen.findByText("tour scheduling v1");
     expect(screen.getByTitle(/school-feature-set/i)).toBeTruthy();
   });
@@ -893,6 +895,8 @@ describe("board-side capability amendments", () => {
     const { calls } = stubFetch({ boards: WS_BOARDS });
     const { client } = renderBoardStage();
     seedSessionFrame(client, { workspace: "skoolscout" });
+    // The personal tab leads and is active by default; the linked card lives on Plan.
+    await userEvent.click(await screen.findByRole("tab", { name: "Plan" }));
     await userEvent.click(await screen.findByText("tour scheduling v1"));
     expect(screen.queryByPlaceholderText(/add a story/i)).toBeNull();
     expect(screen.queryByLabelText(/remove story/i)).toBeNull();

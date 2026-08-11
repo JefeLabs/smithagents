@@ -27,8 +27,8 @@ import {
   routeCard,
   saveBoard,
   sweepPersonalBoard,
-  type WorkBoard,
   WORKSPACE_BOARD_TYPES,
+  type WorkBoard,
 } from "./work-items.js";
 
 test("templates: seven typed column sets, ids unique and slug-shaped", () => {

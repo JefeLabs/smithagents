@@ -5,7 +5,7 @@ import { BoardTabs } from "./BoardTabs";
 
 const TABS = [
   { key: "ideation", label: "Ideation", type: "ideation" as const, boardIds: ["a-ideation"], clustered: false },
-  { key: "personal", label: "Personal", type: "personal" as const, boardIds: ["personal"], clustered: false },
+  { key: "personal", label: "Active To-dos", type: "personal" as const, boardIds: ["personal"], clustered: false },
 ];
 
 const base = {
@@ -30,7 +30,7 @@ describe("BoardTabs", () => {
     const onSelect = vi.fn();
     render(<BoardTabs {...base} onSelect={onSelect} />);
     expect(screen.getByRole("tab", { name: "Ideation" }).getAttribute("aria-selected")).toBe("true");
-    await userEvent.click(screen.getByRole("tab", { name: "Personal" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Active To-dos" }));
     expect(onSelect).toHaveBeenCalledWith("personal");
   });
 
