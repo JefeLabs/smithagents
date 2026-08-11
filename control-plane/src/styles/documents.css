@@ -560,3 +560,95 @@
   font-size: 11px;
   margin: 4px 0 0;
 }
+
+/* ---- diagram stage: a mermaid canvas over an editable source panel ----
+   Sibling of the document stage, and here (not components.css) for the same
+   reason this whole file exists — the artifact-launcher feature never stages
+   the shared sheet parallel agents live in. This is the bare canvas; Plan 3
+   adds the chat dock + full-screen chrome. */
+.diagram-stage {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 12px;
+  padding: 18px 24px 24px;
+}
+.diagram-stage__types {
+  display: inline-flex;
+  gap: 4px;
+}
+.diagram-stage__type {
+  cursor: pointer;
+  font-size: 11px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--pill-br);
+  background: transparent;
+  color: var(--text-2);
+}
+.diagram-stage__type--on {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.diagram-stage__type:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.diagram-stage__error {
+  color: var(--text);
+  border: 1px solid var(--pill-br);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+}
+/* The canvas takes the slack; the rendered SVG centres inside it. */
+.diagram-stage__canvas {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  border: 1px solid var(--rail-br);
+  background: color-mix(in srgb, var(--ground-2) 92%, var(--text) 3%);
+  padding: 20px;
+}
+.diagram-stage__canvas .mermaid-block svg {
+  max-width: 100%;
+  height: auto;
+}
+/* The source well: a fixed-height code panel beneath the canvas. */
+.diagram-stage__source {
+  flex: none;
+  height: 168px;
+  resize: vertical;
+  font-family: ui-monospace, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--ground-2);
+  border: 1px solid var(--rail-br);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.diagram-stage__source:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+/* The parse-error fallback — message + source, never blank. */
+.mermaid-block__error {
+  margin: 0;
+  white-space: pre-wrap;
+  color: #d9534f;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+/* Reuses the document stage's doc-saved keyframes above. */
+.diagram-stage__saved {
+  font-style: normal;
+  color: var(--online);
+  animation: doc-saved 1.6s ease forwards;
+}
