@@ -132,6 +132,16 @@ interface DashSpec {
   send "change the summary" → spec updates + canvas re-renders; reopen
   from SAVED.
 
+## Next (Edwin's direction, 2026-08-11 — not this build)
+
+Workspace **groups** as first-class entities: a named logical grouping of
+workspaces usable as dashboard context (and by boards/maps' multi-select).
+A dashboard bound to a group is "always relevant [to] the logical grouping
+the person is interested in" — its scope references the group, and
+recomposition follows the group's CURRENT membership rather than a frozen
+snapshot. The spec's `scope` string starts referencing real groups once
+they exist. Sequenced after this build (Edwin: "Pin now, groups next").
+
 ## Out of scope
 
 - Sticky-note proposals rendered on the dashboard canvas (machinery
