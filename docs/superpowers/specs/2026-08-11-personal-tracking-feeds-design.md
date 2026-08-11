@@ -169,6 +169,43 @@ crew mentions it, `spokenAt` is stamped and it leaves. There is no bell and no l
 (Edwin's ruling, §12 risk 3), so this marker is the only thing standing between "you
 were told" and "you were told four times".
 
+## 5b. Releases become work
+
+Edwin, 2026-08-11: *"news of upgrades might be a source of generating an action plan to
+add to maintenance board."*
+
+This answers a standing question about the six-board system — **how do the maintenance
+and reactive boards get filled?** They are the boards for work that *arrives* rather
+than work you chose, and both open with a **Triage** column. An upgrade is precisely
+that kind of arriving work.
+
+So a qualifying release (§5) does two things, not one: it enters the unspoken digest set
+**and** it becomes a card.
+
+| Release | Board | Column |
+|---|---|---|
+| `security: true` | **Reactive** | Triage |
+| major or minor | **Maintenance** | Triage |
+
+- **Title:** `Upgrade <name> <current> → <new>`
+- **Notes:** a short action plan — at most 5 steps — generated **once**, by the same
+  model client the elections use, from the release notes plus the version currently
+  pinned in the manifest and which repo declared it. Not a paste of the changelog: what
+  *this* repo would have to do.
+- **Which board:** the workspace whose repo declared the dependency. Derivation already
+  knows this (§4.1). A dependency declared in two workspaces yields a card in each.
+- **Written through the existing path:** the broker's `workBoards.proxy` →
+  `POST /work/boards/:id/cards`. No new write path, no direct file access.
+
+**Idempotence.** A `cardedAt` marker on the item, alongside `spokenAt` — one card per
+(dependency, version, workspace), ever. Re-running derivation, restarting the broker, or
+re-fetching the feed never produces a second card.
+
+**Independence.** Card creation and conversation are separate consumers of the same
+event. If the board write fails, the release still reaches the digest and Anderson still
+mentions it; the failure is recorded on the source, not swallowed. Nothing about small
+talk depends on the boards existing.
+
 ## 6. Small talk: the digest
 
 A block appended to the brain's system prompt, next to the roster. The seam already
