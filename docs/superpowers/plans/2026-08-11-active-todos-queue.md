@@ -1,6 +1,6 @@
 # Active To-dos Board + Queue Intake Implementation Plan
 
-> **CLAIMED:** in execution by Claude session d43af92a (inline, main checkout) since 2026-08-11. Do not execute concurrently.
+> **EXECUTED:** completed 2026-08-11 by Claude session d43af92a; shipped to origin/main @ 6302ca9. Do not re-execute.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
