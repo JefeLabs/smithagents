@@ -10,7 +10,7 @@
 
 import type { QueryClient } from "@tanstack/react-query";
 import { create } from "zustand";
-import { BROKER_BASE } from "../api/broker";
+import { BROKER_BASE, wsUrl } from "../api/origin";
 import type {
   AudioFrame,
   BrokerIdentityInfo,
@@ -22,6 +22,7 @@ import type {
   SessionSummary,
 } from "../api/types";
 import { qk } from "../queries/keys";
+import { useAuthStore } from "./authStore";
 import { registerStoreReset } from "./reset";
 
 const RECONNECT_MS = 2000;
@@ -93,7 +94,9 @@ export const useSocketStore = create<SocketState>((set) => ({
     const open = () => {
       let ws: WebSocket;
       try {
-        ws = new WebSocket(`ws://${base}/events`);
+        // The browser attaches the smith_session cookie to this upgrade
+        // automatically — no header is settable on a WebSocket.
+        ws = new WebSocket(wsUrl("/events", base));
       } catch (err) {
         // `base` is caller-supplied, and a malformed one throws right here. Releasing
         // the guard matters more than the throw does: `active` is module-scoped, so
@@ -171,12 +174,20 @@ export const useSocketStore = create<SocketState>((set) => ({
             return; // task-dispatched, and anything a newer broker adds
         }
       };
-      ws.onclose = () => {
+      ws.onclose = (event?: { code?: number }) => {
         // A superseded socket closing late (close() is async) must not clear the
         // handle its replacement owns, nor arm a second reconnect.
         if (socket !== ws) return;
         socket = null;
         set({ connected: false });
+        // 4401 is the broker's "unauthorized" upgrade close (cloud, required
+        // mode). Retrying would hot-loop against the auth wall forever — stop,
+        // and route the user to login via the auth store instead.
+        if (event?.code === 4401) {
+          active = false;
+          useAuthStore.getState().markSessionLost();
+          return;
+        }
         if (active) timer = setTimeout(open, RECONNECT_MS);
       };
       ws.onerror = () => ws.close();

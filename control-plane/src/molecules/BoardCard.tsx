@@ -1,8 +1,7 @@
+import { BROKER_BASE, httpUrl } from "../api/origin";
 import type { RosterAgent } from "../api/types";
 import { Avatar } from "../atoms/Avatar";
 import type { WorkCardT } from "../organisms/BoardStage";
-
-const BASE = "127.0.0.1:7790";
 
 const FLAG_LABEL = { blocked: "Blocked", "at-risk": "At risk", waiting: "Waiting" } as const;
 const FLAG_GLYPH = { blocked: "⛔", "at-risk": "⚠", waiting: "⏸" } as const;
@@ -82,7 +81,7 @@ export function BoardCard({ card, agent, onOpen, className, tint }: BoardCardPro
               initial={(agent?.name ?? d.agentId)[0]?.toUpperCase() ?? "?"}
               label={agent?.name ?? d.agentId}
               ring={agent?.ring}
-              image={agent?.avatar ? `http://${BASE}/avatars/${agent.avatar}` : undefined}
+              image={agent?.avatar ? httpUrl(`/avatars/${agent.avatar}`, BROKER_BASE) : undefined}
               state={d.state === "working" ? "working" : undefined}
               interactive={false}
             />

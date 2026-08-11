@@ -330,7 +330,10 @@ describe("HomePage — composer closes when another session is activated", () =>
     await userEvent.click(screen.getByRole("row", { name: "Sessions" }));
     await userEvent.click(screen.getByText("Other work"));
 
-    expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:7790/sessions/s-other/activate", { method: "POST" });
+    expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:7790/sessions/s-other/activate", {
+      credentials: "include",
+      method: "POST",
+    });
     expect(screen.queryByRole("heading", { name: /start a session/i })).toBeNull();
   });
 });

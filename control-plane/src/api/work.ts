@@ -16,6 +16,7 @@
 import type { CapabilityT } from "../api/types";
 import type { WorkBoardT } from "../organisms/BoardStage";
 import { BROKER_BASE } from "./broker";
+import { brokerFetch } from "./origin";
 
 export interface BoardsResult {
   boards: WorkBoardT[];
@@ -33,7 +34,7 @@ export interface CapabilitiesResult {
 
 /** GET /work/boards — the whole board collection; there is no per-board GET. */
 export async function getBoards(base: string = BROKER_BASE): Promise<BoardsResult> {
-  const res = (await fetch(`http://${base}/work/boards`).then((r) => r.json())) as {
+  const res = (await brokerFetch(`/work/boards`, base).then((r) => r.json())) as {
     boards?: WorkBoardT[];
     errors?: Array<{ file: string; error: string }>;
     error?: string;
@@ -47,7 +48,7 @@ export async function createBoard(
   body: { type: string; workspaceId?: string },
   base: string = BROKER_BASE,
 ): Promise<WorkBoardT> {
-  const res = (await fetch(`http://${base}/work/boards`, {
+  const res = (await brokerFetch(`/work/boards`, base, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -65,7 +66,7 @@ export async function createBoard(
  * exactly — do not add a status check that wasn't there.
  */
 export async function addCard(boardId: string, body: { title: string }, base: string = BROKER_BASE): Promise<void> {
-  await fetch(`http://${base}/work/boards/${encodeURIComponent(boardId)}/cards`, {
+  await brokerFetch(`/work/boards/${encodeURIComponent(boardId)}/cards`, base, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -85,8 +86,9 @@ export async function patchCard(
   body: unknown,
   base: string = BROKER_BASE,
 ): Promise<void> {
-  const res = await fetch(
-    `http://${base}/work/boards/${encodeURIComponent(boardId)}/cards/${encodeURIComponent(cardId)}`,
+  const res = await brokerFetch(
+    `/work/boards/${encodeURIComponent(boardId)}/cards/${encodeURIComponent(cardId)}`,
+    base,
     { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) },
   ).catch(() => null);
   if (res?.ok) return;
@@ -96,8 +98,9 @@ export async function patchCard(
 
 /** DELETE /work/boards/:id/cards/:cardId */
 export async function deleteCard(boardId: string, cardId: string, base: string = BROKER_BASE): Promise<void> {
-  const res = await fetch(
-    `http://${base}/work/boards/${encodeURIComponent(boardId)}/cards/${encodeURIComponent(cardId)}`,
+  const res = await brokerFetch(
+    `/work/boards/${encodeURIComponent(boardId)}/cards/${encodeURIComponent(cardId)}`,
+    base,
     { method: "DELETE" },
   ).catch(() => null);
   if (!res?.ok) throw new Error("Delete failed");
@@ -110,8 +113,9 @@ export async function routeCard(
   toType: string,
   base: string = BROKER_BASE,
 ): Promise<void> {
-  const res = await fetch(
-    `http://${base}/work/boards/${encodeURIComponent(boardId)}/cards/${encodeURIComponent(cardId)}/route`,
+  const res = await brokerFetch(
+    `/work/boards/${encodeURIComponent(boardId)}/cards/${encodeURIComponent(cardId)}/route`,
+    base,
     { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ toType }) },
   ).catch(() => null);
   if (res?.ok) return;
@@ -121,7 +125,7 @@ export async function routeCard(
 
 /** POST /work/boards/:id/jira/import */
 export async function importJira(boardId: string, base: string = BROKER_BASE): Promise<void> {
-  const res = (await fetch(`http://${base}/work/boards/${encodeURIComponent(boardId)}/jira/import`, { method: "POST" })
+  const res = (await brokerFetch(`/work/boards/${encodeURIComponent(boardId)}/jira/import`, base, { method: "POST" })
     .then((r) => r.json())
     .catch(() => ({ error: "Broker unreachable" }))) as { error?: string };
   if (res.error) throw new Error(res.error);
@@ -132,7 +136,7 @@ export async function delegateCard(
   body: { boardId: string; cardId: string; agentId: string; workspace?: string; prompt: string },
   base: string = BROKER_BASE,
 ): Promise<{ taskId?: string }> {
-  const res = (await fetch(`http://${base}/work/delegate`, {
+  const res = (await brokerFetch(`/work/delegate`, base, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -149,7 +153,7 @@ export async function delegateCard(
 
 /** GET /work/capabilities — all capabilities; there is no per-capability GET, and no client-side workspace filter — MapStage filters the collection itself. */
 export async function getCapabilities(base: string = BROKER_BASE): Promise<CapabilitiesResult> {
-  const res = (await fetch(`http://${base}/work/capabilities`).then((r) => r.json())) as {
+  const res = (await brokerFetch(`/work/capabilities`, base).then((r) => r.json())) as {
     capabilities?: CapabilityT[];
     errors?: Array<{ file: string; error: string }>;
     error?: string;
@@ -163,7 +167,7 @@ export async function createCapability(
   body: { name: string; workspaceId: string },
   base: string = BROKER_BASE,
 ): Promise<CapabilityT> {
-  const res = (await fetch(`http://${base}/work/capabilities`, {
+  const res = (await brokerFetch(`/work/capabilities`, base, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -180,7 +184,7 @@ export async function patchCapability(
   body: Partial<Pick<CapabilityT, "name" | "activities" | "stories" | "slices">>,
   base: string = BROKER_BASE,
 ): Promise<void> {
-  const res = await fetch(`http://${base}/work/capabilities/${encodeURIComponent(id)}`, {
+  const res = await brokerFetch(`/work/capabilities/${encodeURIComponent(id)}`, base, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -197,8 +201,9 @@ export async function patchCapability(
  * (swarm/src/server.ts:2372) both say POST. Real code wins — ported as POST.
  */
 export async function generateSpec(id: string, sliceId: string, base: string = BROKER_BASE): Promise<void> {
-  const res = (await fetch(
-    `http://${base}/work/capabilities/${encodeURIComponent(id)}/slices/${encodeURIComponent(sliceId)}/spec`,
+  const res = (await brokerFetch(
+    `/work/capabilities/${encodeURIComponent(id)}/slices/${encodeURIComponent(sliceId)}/spec`,
+    base,
     { method: "POST" },
   )
     .then((r) => r.json())
@@ -213,8 +218,9 @@ export async function sendSlice(
   target: "capabilities" | "delivery",
   base: string = BROKER_BASE,
 ): Promise<void> {
-  const res = (await fetch(
-    `http://${base}/work/capabilities/${encodeURIComponent(id)}/slices/${encodeURIComponent(sliceId)}/send`,
+  const res = (await brokerFetch(
+    `/work/capabilities/${encodeURIComponent(id)}/slices/${encodeURIComponent(sliceId)}/send`,
+    base,
     { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ target }) },
   )
     .then((r) => r.json())
