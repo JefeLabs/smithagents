@@ -141,53 +141,71 @@ export function DocumentStage({
             </p>
           )}
           <div className="document-stage__sections">
-            {doc.sections.map((s) => (
-              <div key={s.id} className="document-stage__section-slot">
-                {(doc.proposals ?? [])
-                  .filter((p) => p.sectionId === s.id && p.state === "open")
-                  .map((p) => (
-                    // biome-ignore lint/a11y/useSemanticElements: a labelled sticky note, not flowing prose — role="note" names it for AT and tests
-                    <aside key={p.id} className="sticky-note" role="note" aria-label={`suggestion from ${p.agentId}`}>
-                      <span className="sticky-note__agent">{p.agentId}</span>
-                      <span className="sticky-note__rationale">{p.rationale}</span>
-                      <p className="sticky-note__preview">{p.newBody.slice(0, 240)}</p>
-                      <div className="sticky-note__actions">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSaveError(null);
-                            void onAcceptProposal?.(p.id).then((e) => e && setSaveError(e));
-                          }}
+            {doc.sections.map((s) => {
+              const open = (doc.proposals ?? []).filter((p) => p.sectionId === s.id && p.state === "open");
+              return (
+                <div key={s.id} className="document-stage__section-slot">
+                  {open.length > 0 && (
+                    // Several agents on one section pile up rather than burying the
+                    // prose — hover or keyboard focus fans the stack out.
+                    // biome-ignore lint/a11y/useSemanticElements: a labelled pile of notes; role="group" names the count for AT and tests
+                    <div
+                      className="sticky-stack"
+                      role="group"
+                      data-count={open.length}
+                      aria-label={`${open.length} suggestion${open.length === 1 ? "" : "s"} on ${s.heading}`}
+                    >
+                      {open.map((p) => (
+                        // biome-ignore lint/a11y/useSemanticElements: a labelled sticky note, not flowing prose — role="note" names it for AT and tests
+                        <aside
+                          key={p.id}
+                          className="sticky-note"
+                          role="note"
+                          aria-label={`suggestion from ${p.agentId}`}
                         >
-                          Accept
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSaveError(null);
-                            void onRejectProposal?.(p.id).then((e) => e && setSaveError(e));
-                          }}
-                        >
-                          Dismiss
-                        </button>
-                      </div>
-                    </aside>
-                  ))}
-                <SectionCard
-                  key={editingId === s.id ? `${s.id}-editing` : s.id}
-                  section={s}
-                  hint={hintFor(s.id)}
-                  onAim={onAimSection ? () => onAimSection(s.id, s.heading) : undefined}
-                  editing={editingId === s.id}
-                  onEdit={() => {
-                    setSaveError(null);
-                    setEditingId(s.id);
-                  }}
-                  onCancel={() => setEditingId(null)}
-                  onSave={(body) => void save(s.id, body)}
-                />
-              </div>
-            ))}
+                          <span className="sticky-note__agent">{p.agentId}</span>
+                          <span className="sticky-note__rationale">{p.rationale}</span>
+                          <p className="sticky-note__preview">{p.newBody.slice(0, 240)}</p>
+                          <div className="sticky-note__actions">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSaveError(null);
+                                void onAcceptProposal?.(p.id).then((e) => e && setSaveError(e));
+                              }}
+                            >
+                              Accept
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSaveError(null);
+                                void onRejectProposal?.(p.id).then((e) => e && setSaveError(e));
+                              }}
+                            >
+                              Dismiss
+                            </button>
+                          </div>
+                        </aside>
+                      ))}
+                    </div>
+                  )}
+                  <SectionCard
+                    key={editingId === s.id ? `${s.id}-editing` : s.id}
+                    section={s}
+                    hint={hintFor(s.id)}
+                    onAim={onAimSection ? () => onAimSection(s.id, s.heading) : undefined}
+                    editing={editingId === s.id}
+                    onEdit={() => {
+                      setSaveError(null);
+                      setEditingId(s.id);
+                    }}
+                    onCancel={() => setEditingId(null)}
+                    onSave={(body) => void save(s.id, body)}
+                  />
+                </div>
+              );
+            })}
           </div>
         </motion.div>
       </div>

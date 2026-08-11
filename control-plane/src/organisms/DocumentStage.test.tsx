@@ -130,6 +130,37 @@ describe("DocumentStage", () => {
     expect(onRejectProposal).toHaveBeenCalledWith("p1");
   });
 
+  it("multiple open suggestions on one section share a stack that carries its count", () => {
+    const doc: DocT = {
+      ...DOC,
+      proposals: [
+        {
+          id: "p1",
+          sectionId: DOC.sections[0].id,
+          agentId: "Osvaldo",
+          newBody: "one",
+          rationale: "a",
+          state: "open",
+          createdAt: "t",
+        },
+        {
+          id: "p2",
+          sectionId: DOC.sections[0].id,
+          agentId: "Gabriel",
+          newBody: "two",
+          rationale: "b",
+          state: "open",
+          createdAt: "t",
+        },
+      ],
+    };
+    render(<DocumentStage doc={doc} onSaveSection={vi.fn()} onAcceptProposal={vi.fn()} onRejectProposal={vi.fn()} />);
+    const stack = screen.getByRole("group", { name: /2 suggestions/i });
+    expect(stack.getAttribute("data-count")).toBe("2");
+    expect(within(stack).getByRole("note", { name: /suggestion from Osvaldo/i })).toBeInTheDocument();
+    expect(within(stack).getByRole("note", { name: /suggestion from Gabriel/i })).toBeInTheDocument();
+  });
+
   it("aim buttons render per section and report id + heading; absent when unwired", () => {
     const onAimSection = vi.fn();
     render(<DocumentStage doc={DOC} onSaveSection={vi.fn()} onAimSection={onAimSection} />);
