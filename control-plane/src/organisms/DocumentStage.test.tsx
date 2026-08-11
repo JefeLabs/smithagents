@@ -57,8 +57,8 @@ describe("DocumentStage", () => {
     expect(screen.getByRole("textbox", { name: /non-goals/i })).toBeTruthy();
   });
   const BPS = [
-    { id: "spec", name: "Design Spec", workTypes: ["feature"] },
-    { id: "implementation-plan", name: "Implementation Plan", workTypes: ["feature"] },
+    { id: "spec", name: "Design Spec", family: "document" as const, workTypes: ["feature"] },
+    { id: "implementation-plan", name: "Implementation Plan", family: "document" as const, workTypes: ["feature"] },
   ];
 
   it("the type switch re-casts an empty document", async () => {

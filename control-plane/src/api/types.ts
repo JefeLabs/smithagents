@@ -125,6 +125,8 @@ export interface DocT {
 export interface BlueprintT {
   id: string;
   name: string;
+  /** Render family — prose documents vs Mermaid diagrams; the composer groups by it. */
+  family: "document" | "diagram";
   workTypes: string[];
   /** The broker sends these; the page uses their `hint` as ghost text. */
   sections?: Array<{ id: string; heading: string; hint?: string }>;
