@@ -159,7 +159,6 @@ export function DocumentStage({
                       aria-label={`${open.length} suggestion${open.length === 1 ? "" : "s"} on ${s.heading}`}
                     >
                       {open.map((p) => (
-                        // biome-ignore lint/a11y/useSemanticElements: a labelled sticky note, not flowing prose — role="note" names it for AT and tests
                         <aside
                           key={p.id}
                           className="sticky-note"

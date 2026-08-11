@@ -10,8 +10,8 @@ import {
   DASH_STAGE_BARS,
   DASH_WEEKS,
 } from "../../data/dashboards";
-import type { DashSpec } from "../../lib/dashboardSpec";
 import { seriesPath, sparkPath } from "../../lib/dashboard-paths";
+import type { DashSpec } from "../../lib/dashboardSpec";
 
 const CHART_W = 640;
 const CHART_H = 190;
