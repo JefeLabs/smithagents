@@ -16,6 +16,11 @@ export function layoutForPath(pathname: string): ComposerVariant {
   return "hidden"; // /board, /work/$agent, unrouted
 }
 
+/** The five composer-kind surfaces — where the artifact shelf and the focus toggle exist. */
+export function isKindSurface(pathname: string): boolean {
+  return layoutForPath(pathname) !== "hidden";
+}
+
 /** Which artifact kind the dock highlights on each surface. */
 export function kindForPath(pathname: string): ArtifactKind {
   if (pathname.startsWith("/doc/")) return "documents";

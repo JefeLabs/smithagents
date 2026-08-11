@@ -29,6 +29,10 @@ interface UiState {
   newWorkspaceOpen: boolean;
   removing: RemovalTarget | null;
   voiceNotice: string | null;
+  /** Focus view: collapses the artifact shelf and the docked chat (CSS via body[data-focus]). */
+  focusMode: boolean;
+  toggleFocus: () => void;
+  exitFocus: () => void;
   /**
    * Which workspaces Board and Map RENDER. View-only: it never affects dispatch and
    * never changes the active session — work still lands in the active session's
@@ -83,6 +87,7 @@ const initial = {
   newWorkspaceOpen: false,
   removing: null,
   voiceNotice: null,
+  focusMode: false,
   viewedWorkspaces: new Set<string>(),
 } satisfies Partial<UiState>;
 
@@ -96,6 +101,8 @@ export const useUiStore = create<UiState>((set) => ({
   toggleTuner: () => set((s) => ({ tunerOpen: !s.tunerOpen })),
   setGridParam: (key, value) => set((s) => ({ gridParams: { ...s.gridParams, [key]: value } })),
   resetGrid: () => set({ gridParams: GRID_DEFAULTS }),
+  toggleFocus: () => set((s) => ({ focusMode: !s.focusMode })),
+  exitFocus: () => set({ focusMode: false }),
   toggleSessions: () => set((s) => ({ sessionsOpen: !s.sessionsOpen })),
   closeSessions: () => set({ sessionsOpen: false }),
   openComposer: (locked) => set({ composer: { locked } }),

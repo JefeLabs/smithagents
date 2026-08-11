@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { kindForPath, layoutForPath } from "./composerLayout";
+import { isKindSurface, kindForPath, layoutForPath } from "./composerLayout";
 
 describe("layoutForPath", () => {
   it("/ is the full centerpiece", () => expect(layoutForPath("/")).toBe("full"));
@@ -24,5 +24,12 @@ describe("kindForPath", () => {
     expect(kindForPath("/map")).toBe("map");
     expect(kindForPath("/dashboards")).toBe("dashboards");
     expect(kindForPath("/board")).toBe("chat"); // hidden dock still needs a valid default
+  });
+});
+
+describe("isKindSurface", () => {
+  it("is exactly the non-hidden dock surfaces", () => {
+    for (const p of ["/", "/dashboards", "/map", "/doc/d1", "/diagram/d2"]) expect(isKindSurface(p)).toBe(true);
+    for (const p of ["/board", "/work/ignacio", "/nope"]) expect(isKindSurface(p)).toBe(false);
   });
 });

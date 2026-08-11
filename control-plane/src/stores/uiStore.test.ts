@@ -36,6 +36,15 @@ describe("uiStore", () => {
     expect(useUiStore.getState().gridParams).toEqual(GRID_DEFAULTS);
   });
 
+  it("focus toggles on/off and exits idempotently", () => {
+    expect(useUiStore.getState().focusMode).toBe(false);
+    useUiStore.getState().toggleFocus();
+    expect(useUiStore.getState().focusMode).toBe(true);
+    useUiStore.getState().exitFocus();
+    useUiStore.getState().exitFocus();
+    expect(useUiStore.getState().focusMode).toBe(false);
+  });
+
   it("state does not leak between tests", () => {
     // modalOpen alone doesn't pin this: it happens to end up false anyway
     // from the "closing the agent modal" test's own closeAgentModal() call,
