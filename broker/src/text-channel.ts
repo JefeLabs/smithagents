@@ -321,6 +321,15 @@ export class TextChannel {
     },
     /** Connection identity (passkey humans + bridge bearer). Absent = open mode. */
     private readonly auth?: BrokerAuth,
+    /**
+     * Directed sends (composer target selector). Owns the whole decision: it
+     * resolves the target, takes the brain path for host/crew, and dispatches
+     * to one agent for everyone else — so this route stays dumb. Returning a
+     * status is what lets a busy-refusal reach the composer.
+     */
+    private readonly directed?: {
+      send(text: string, target: unknown): Promise<{ ok: true; taskId?: string } | { error: string; status: number }>;
+    },
   ) {}
 
   private clientSeq = 0;
@@ -437,17 +446,37 @@ export class TextChannel {
           body += c;
         });
         req.on('end', () => {
-          let text: unknown;
+          let parsed: { text?: unknown; target?: unknown } = {};
           try {
-            text = (JSON.parse(body) as { text?: unknown }).text;
+            parsed = JSON.parse(body) as typeof parsed;
           } catch {
-            text = undefined;
+            /* handled by the validation below */
           }
+          const text = parsed.text;
           if (typeof text !== 'string' || !text.trim()) {
             res.writeHead(400, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify({ error: 'body must be {"text": string}' }));
             return;
           }
           const utterance = text.trim();
+          // A DIRECTED send is awaited so a refusal (busy agent, unknown
+          // target) can reach the composer. With no `target` this branch never
+          // runs, so mic PTT, stdin, Discord and the CLI bridge keep exactly
+          // the path — and the 202 — they have today.
+          if (parsed.target !== undefined && this.directed) {
+            void this.directed.send(utterance, parsed.target).then(
+              (r) => {
+                const status = 'error' in r ? r.status : 200;
+                res
+                  .writeHead(status, { ...CORS, 'content-type': 'application/json' })
+                  .end(JSON.stringify('error' in r ? { error: r.error } : r));
+              },
+              (err: unknown) =>
+                res
+                  .writeHead(500, { ...CORS, 'content-type': 'application/json' })
+                  .end(JSON.stringify({ error: String((err as Error).message ?? err) })),
+            );
+            return;
+          }
           this.broadcast({ type: 'utterance', text: utterance });
           this.onUtterance(utterance);
           res.writeHead(202, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify({ ok: true }));

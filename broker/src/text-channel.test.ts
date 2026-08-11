@@ -113,9 +113,11 @@ function channelWith(opts: {
   blueprints?: ConstructorParameters<typeof TextChannel>[22];
   documents?: ConstructorParameters<typeof TextChannel>[23];
   auth?: ConstructorParameters<typeof TextChannel>[24];
+  directed?: ConstructorParameters<typeof TextChannel>[25];
+  onUtterance?: ConstructorParameters<typeof TextChannel>[0];
 }): TextChannel {
   return new TextChannel(
-    () => {},
+    opts.onUtterance ?? (() => {}),
     () => [],
     undefined,
     undefined,
@@ -140,6 +142,7 @@ function channelWith(opts: {
     opts.blueprints,
     opts.documents,
     opts.auth,
+    opts.directed,
   );
 }
 
@@ -1749,5 +1752,133 @@ test('https origin yields SameSite=None; Secure; http origin yields SameSite=Lax
       });
       assert.match(r.headers.get('set-cookie') ?? '', expected);
     } finally { await channel.stop(); }
+  }
+});
+
+// ---- directed sends (composer target selector, spec §8) ----
+
+test('POST /utterance with a target dispatches instead of taking a brain turn', async () => {
+  const calls: Array<{ text: string; target: unknown }> = [];
+  const channel = channelWith({
+    directed: {
+      send: async (text, target) => {
+        calls.push({ text, target });
+        return { ok: true as const, taskId: 't1' };
+      },
+    },
+  });
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/utterance`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'look at the auth bug', target: { kind: 'agent', id: 'osvaldo' } }),
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { ok: true, taskId: 't1' });
+    assert.deepEqual(calls, [{ text: 'look at the auth bug', target: { kind: 'agent', id: 'osvaldo' } }]);
+  } finally {
+    await channel.stop();
+  }
+});
+
+test("a busy target answers 409 with the broker's own wording, and dispatches nothing", async () => {
+  const channel = channelWith({
+    directed: { send: async () => ({ error: 'Osvaldo is busy with: refactor auth.', status: 409 }) },
+  });
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/utterance`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'hi', target: { kind: 'agent', id: 'osvaldo' } }),
+    });
+    assert.equal(res.status, 409);
+    assert.deepEqual(await res.json(), { error: 'Osvaldo is busy with: refactor auth.' });
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('an unknown target answers 404', async () => {
+  const channel = channelWith({
+    directed: { send: async () => ({ error: 'unknown agent: ghost', status: 404 }) },
+  });
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/utterance`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'hi', target: { kind: 'agent', id: 'ghost' } }),
+    });
+    assert.equal(res.status, 404);
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('a directed send that rejects answers 500 rather than hanging the composer', async () => {
+  const channel = channelWith({
+    directed: {
+      send: async () => {
+        throw new Error('swarm unreachable');
+      },
+    },
+  });
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/utterance`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'hi', target: { kind: 'agent', id: 'osvaldo' } }),
+    });
+    assert.equal(res.status, 500);
+    assert.deepEqual(await res.json(), { error: 'swarm unreachable' });
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('an ABSENT target keeps the untouched 202 path — every other caller depends on this', async () => {
+  const heard: string[] = [];
+  const directedCalls: unknown[] = [];
+  const channel = channelWith({
+    onUtterance: (text: string) => heard.push(text),
+    directed: {
+      send: async (_t, target) => {
+        directedCalls.push(target);
+        return { ok: true as const };
+      },
+    },
+  });
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/utterance`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'plain old utterance' }),
+    });
+    assert.equal(res.status, 202); // unchanged from before this feature
+    assert.deepEqual(heard, ['plain old utterance']);
+    assert.deepEqual(directedCalls, [], 'no target means the directed seam is never consulted');
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('with no directed handler wired at all, a target is ignored rather than fatal', async () => {
+  const heard: string[] = [];
+  const channel = channelWith({ onUtterance: (text: string) => heard.push(text) });
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/utterance`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'hi', target: { kind: 'agent', id: 'osvaldo' } }),
+    });
+    assert.equal(res.status, 202);
+    assert.deepEqual(heard, ['hi']);
+  } finally {
+    await channel.stop();
   }
 });

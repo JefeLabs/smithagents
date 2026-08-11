@@ -66,6 +66,7 @@ function VoiceRoute() {
   // Hide the hero only on a CONFIRMED no-STT broker the user asked to hide.
   const hideMic = Boolean(voicePrefs?.hideInactive) && !voice.stt;
   const { data: active } = useSession();
+  const { data: rosterFrame } = useRoster();
   const { data: docs = NO_DOCS } = useDocuments();
   const { data: blueprints = NO_BLUEPRINTS } = useBlueprints();
   const navigate = useNavigate();
@@ -81,6 +82,7 @@ function VoiceRoute() {
       messages={messages}
       brokerConnected={connected}
       onSend={api.postUtterance}
+      targets={rosterFrame?.agents ?? NO_ROSTER}
       soundOn={soundOn}
       onSoundToggle={toggleSound}
       sttEnabled={voice.stt}
@@ -129,6 +131,7 @@ function DocRoute() {
   const { docId } = docRoute.useParams();
   const navigate = useNavigate();
   const { data: docs = NO_DOCS, status } = useDocuments();
+  const { data: rosterFrame } = useRoster();
   const { data: blueprints = NO_BLUEPRINTS } = useBlueprints();
   const { data: messages = NO_MESSAGES } = useTranscript();
   const connected = useSocketStore((c) => c.connected);
@@ -167,6 +170,7 @@ function DocRoute() {
             <Transcript messages={messages} />
             <Composer
               onSend={api.postUtterance}
+              targets={rosterFrame?.agents ?? NO_ROSTER}
               disabled={!connected}
               onPolish={api.polishDraft}
               micLive={micLive}

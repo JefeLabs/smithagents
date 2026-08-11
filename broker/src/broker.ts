@@ -10,6 +10,7 @@ import type { AgentDirectory, AgentPresence } from './directory.ts';
 import type { BrainTurn } from './brain.ts';
 import type { MemoryPort, MemoryScope } from './memory.ts';
 import { whoIsAddressed } from './addressing.ts';
+import { deriveLeader, type Claim } from './leadership.ts';
 import type { ChannelsRecord, RegistryAgent, SwarmEvent, SwarmMeeting, SwarmSquad, SwarmWorkspace, TicketResult, DocResult, VerifyResult } from './swarm-client.ts';
 
 export interface SwarmClientLike {
@@ -99,6 +100,8 @@ export interface BrokerDeps {
   memoryScope?: () => MemoryScope;
   /** Durable store for roster composition (user squads, edits). Loaded on start, saved on every change. */
   rosterStore?: { load(): RosterState | null; save(state: RosterState): void };
+  /** Fired after a group is formed or its membership changes — the election trigger. */
+  onGroupChanged?: (groupId: string) => void;
   mintToken: (roomName: string) => Promise<string>;
   livekitUrl: string;
   pollMs?: number;
@@ -118,7 +121,15 @@ const SPEAKER_RE = /^([A-Z][\w-]{1,24}):\s/;
 
 /** Roster composition state that survives broker restarts. */
 export interface RosterState {
-  groups: Array<{ id: string; name: string; memberIds: string[] }>;
+  groups: Array<{
+    id: string;
+    name: string;
+    memberIds: string[];
+    /** Elected leader (agent id). Absent until the first election lands. */
+    leader?: string;
+    /** The vote behind `leader` — evidence when the choice looks surprising. */
+    election?: { claims: Claim[]; at: string; method: 'vote' | 'rank' };
+  }>;
   squadEdits: Array<[string, { added: string[]; removed: string[] }]>;
   groupSeq: number;
 }
@@ -129,7 +140,7 @@ export interface UiRoster {
   listening: string[];
   agents: AgentPresence[];
   squads: Array<SwarmSquad & { extraMembers: string[]; removedMembers: string[] }>;
-  groups: Array<{ id: string; name: string; members: Array<{ id: string; name: string }> }>;
+  groups: Array<{ id: string; name: string; leader?: string; members: Array<{ id: string; name: string }> }>;
   /** Original squad members dragged out — they stand alone until dragged back home. */
   freed: Array<{ name: string; role: string; squadId: string }>;
   hands: Record<string, string>;
@@ -278,7 +289,13 @@ export class Broker {
   /** Who the current utterance spoke to. Lives for one turn (see handleUtterance). */
   private listening = new Set<string>();
   /** User-formed squads (from the UI's edit mode). First member leads. */
-  private groups: Array<{ id: string; name: string; memberIds: string[] }> = [];
+  private groups: Array<{
+    id: string;
+    name: string;
+    memberIds: string[];
+    leader?: string;
+    election?: { claims: Claim[]; at: string; method: 'vote' | 'rank' };
+  }> = [];
   /** Conversation-layer edits to swarm squads: agents dragged in/out via the UI. */
   private squadEdits = new Map<string, { added: string[]; removed: string[] }>();
   private groupSeq = 0;
@@ -497,11 +514,14 @@ export class Broker {
           removedMembers: edits?.removed ?? [],
         };
       }),
-      groups: this.groups.map((g) => ({
-        id: g.id,
-        name: g.name,
-        members: g.memberIds.map((id) => ({ id, name: byId(id)?.name ?? id })),
-      })),
+      groups: this.groups.map((g) => {
+        const members = g.memberIds.map((id) => ({ id, name: byId(id)?.name ?? id }));
+        // An election may not have landed yet (or may have failed) — the ladder
+        // is always underneath, so a group is never leaderless (spec §2).
+        const leader =
+          g.leader ?? deriveLeader(g.memberIds.map((id) => ({ id, roles: [byId(id)?.role ?? ''] })));
+        return { id: g.id, name: g.name, leader: leader ?? undefined, members };
+      }),
       freed: [...this.squadEdits.entries()].flatMap(([squadId, edits]) =>
         edits.removed.flatMap((name) => {
           const member = this.squads.find((s) => s.id === squadId)?.members.find((m) => m.name === name);
@@ -542,6 +562,39 @@ export class Broker {
         }),
     );
     this.groupSeq = saved.groupSeq;
+  }
+
+  /**
+   * Record an election result. Persists, then republishes the roster so open
+   * UIs see the new leader without a refetch.
+   */
+  setGroupLeader(
+    groupId: string,
+    leader: string,
+    election: { claims: Claim[]; at: string; method: 'vote' | 'rank' },
+  ): void {
+    const group = this.groups.find((g) => g.id === groupId);
+    if (!group) return; // dissolved while the vote ran
+    group.leader = leader;
+    group.election = election;
+    this.persistRosterState();
+    this.notifyRoster();
+  }
+
+  /** Everything an election needs about a group's members. Null when the group is gone. */
+  groupCandidates(
+    groupId: string,
+  ): Array<{ id: string; name: string; role: string; directives: string; squadRole?: string }> | null {
+    const group = this.groups.find((g) => g.id === groupId);
+    if (!group) return null;
+    return group.memberIds.flatMap((id) => {
+      const agent = this.deps.directory.resolve(id);
+      if (!agent) return [];
+      const squadRole = this.squads
+        .flatMap((s) => s.members)
+        .find((m) => m.name.toLowerCase() === agent.name.toLowerCase())?.role;
+      return [{ id: agent.id, name: agent.name, role: agent.role, directives: agent.directives, squadRole }];
+    });
   }
 
   private persistRosterState(): void {
@@ -628,6 +681,8 @@ export class Broker {
       this.groups.push({ id: `g${this.groupSeq}`, name, memberIds: ids as string[] });
       this.persistRosterState();
       this.notifyRoster();
+      // A brand-new group has no leader until its members claim one.
+      this.deps.onGroupChanged?.(`g${this.groupSeq}`);
       return null;
     }
     op = { ...op, agent: op.agent.replace(/^freed-/, '') }; // UI roster ids for freed members carry a prefix
@@ -646,6 +701,9 @@ export class Broker {
       }
       this.persistRosterState();
       this.notifyRoster();
+      // Membership changed, so the old mandate is stale — but a dissolved group
+      // has nobody left to lead.
+      if (this.groups.includes(group)) this.deps.onGroupChanged?.(group.id);
       return null;
     }
     const squad = this.squads.find((s) => s.id === op.target || `squad-${s.id}` === op.target);

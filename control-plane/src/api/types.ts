@@ -37,6 +37,8 @@ export interface RosterAgent {
   /** True while the live utterance is addressing them ("Hey Manuel"). */
   listening?: boolean;
   members?: string[];
+  /** For a group entry: the agent id its members elected to lead it. */
+  leader?: string;
 }
 
 /** The broker's own host identity, riding the roster frame — never one of the agents. */
@@ -48,6 +50,18 @@ export interface BrokerIdentityInfo {
 }
 
 export type ComposeOp = { op: "form"; agents: string[] } | { op: "add" | "remove"; target: string; agent: string };
+
+/**
+ * Who a composed message is for — mirrors broker/src/targets.ts `Target`.
+ * Kept in lockstep BY HAND: an object rather than an "agent:osvaldo" string so
+ * a drifted parser is a type error instead of a silent mis-parse.
+ */
+export type Target =
+  | { kind: "host" }
+  | { kind: "crew" }
+  | { kind: "squad"; id: string }
+  | { kind: "group"; id: string }
+  | { kind: "agent"; id: string };
 
 /** The control plane's copy of the broker's runtime vocabulary — must mirror swarm's ExecutionMode. */
 export type ExecutionMode = "local-in-process" | "local-docker" | "remote-in-process" | "remote-docker";

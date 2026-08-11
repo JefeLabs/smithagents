@@ -1,9 +1,17 @@
+import { Header, ListBox, Select, Separator } from "@heroui/react";
 import { PromptInput } from "@heroui-pro/react";
-import { ArrowUp, AudioLines, ChevronDown, Mic, Plus, Sparkles, Volume2, VolumeX } from "lucide-react";
+import { ArrowUp, AudioLines, Mic, Plus, Sparkles, Volume2, VolumeX } from "lucide-react";
 import { useRef, useState } from "react";
+import type { RosterAgent, Target } from "../api/types";
 
 interface ComposerProps {
-  onSend: (text: string) => void;
+  /**
+   * Send. A directed send resolves to the broker's refusal text (or null) —
+   * a busy agent has to be able to say so; an untargeted one returns nothing.
+   */
+  onSend: (text: string, target?: Target) => void | Promise<string | null>;
+  /** The rail's entries, in rail order. Omit and no target selector renders. */
+  targets?: RosterAgent[];
   disabled?: boolean;
   /** Always-listening state; the toggle renders only when onMicToggle is wired. */
   micLive?: boolean;
@@ -27,8 +35,37 @@ interface ComposerProps {
   onSendDocument?: (text: string) => Promise<{ error?: string } | undefined>;
 }
 
+/** HeroUI's Select speaks string Keys; the wire speaks Target objects. Encode here, decode on the way out. */
+export function targetKey(t: Target): string {
+  return t.kind === "host" || t.kind === "crew" ? t.kind : `${t.kind}:${t.id}`;
+}
+
+export function parseTargetKey(key: string): Target {
+  if (key === "host" || key === "crew") return { kind: key };
+  const [kind, ...rest] = key.split(":");
+  const id = rest.join(":");
+  if ((kind === "squad" || kind === "group" || kind === "agent") && id) return { kind, id };
+  return { kind: "host" };
+}
+
+/**
+ * A rail entry's id carries its own prefix; the wire wants the bare id.
+ *
+ * `freed-` matters as much as the other two: a squad member dragged out to
+ * stand alone rides the roster as `freed-osvaldo` while the registry — and so
+ * the broker's target resolution — only knows `osvaldo`. compose() strips the
+ * same prefix for the same reason (broker.ts).
+ */
+function targetOf(entry: RosterAgent): Target {
+  if (entry.id.startsWith("squad-")) return { kind: "squad", id: entry.id.slice("squad-".length) };
+  if (entry.id.startsWith("group-")) return { kind: "group", id: entry.id.slice("group-".length) };
+  if (entry.id.startsWith("freed-")) return { kind: "agent", id: entry.id.slice("freed-".length) };
+  return { kind: "agent", id: entry.id };
+}
+
 export function Composer({
   onSend,
+  targets,
   disabled = false,
   micLive = false,
   onMicToggle,
@@ -45,6 +82,10 @@ export function Composer({
   const [holding, setHolding] = useState(false);
   const [polishing, setPolishing] = useState(false);
   const [polishError, setPolishError] = useState<string | null>(null);
+  // Directing is a per-message act, so this resets to the chief of staff after
+  // every send — you can never leak a message to a CLI by forgetting a mode.
+  const [target, setTarget] = useState<Target>({ kind: "host" });
+  const [refusal, setRefusal] = useState<string | null>(null);
   // Arming is local and free: nothing is created until a send commits it.
   const [armed, setArmed] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -79,8 +120,25 @@ export function Composer({
       });
       return;
     }
-    onSend(text);
+    // Host sends call onSend(text) with ONE argument, exactly as before this
+    // feature — every existing caller and test depends on that call shape.
+    const outcome = target.kind === "host" ? onSend(text) : onSend(text, target);
+    if (outcome && typeof (outcome as Promise<string | null>).then === "function") {
+      void (outcome as Promise<string | null>).then((error) => {
+        if (error) {
+          // Refused (busy agent, unknown target): KEEP the draft — nothing was sent.
+          setRefusal(error);
+          return;
+        }
+        setRefusal(null);
+        setDraft("");
+        setTarget({ kind: "host" });
+      });
+      return;
+    }
+    setRefusal(null);
     setDraft("");
+    setTarget({ kind: "host" });
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
@@ -150,6 +208,13 @@ export function Composer({
                 {polishError}
               </span>
             )}
+            {refusal && (
+              // Nothing was dispatched and the draft is still in the box — this
+              // says why, in the broker's own words ("Osvaldo is busy with: …").
+              <span className="composer__target-error" role="status">
+                {refusal}
+              </span>
+            )}
             {(onSendDocument || kind === "document") && (
               // biome-ignore lint/a11y/useSemanticElements: same as the chips row — a toolbar-embedded toggle pair, not a form fieldset
               <div className="composer__kind-group" role="group" aria-label="composer mode">
@@ -175,16 +240,62 @@ export function Composer({
             )}
           </PromptInput.ToolbarStart>
           <PromptInput.ToolbarEnd className="composer__actions">
-            {/* biome-ignore lint/a11y/useSemanticElements: artifact-faithful markup — .selector styles a div; becomes a real menu trigger when routing is wired */}
-            <div
-              className="selector"
-              role="button"
-              tabIndex={0}
-              title="Route to a specific agent, or let the swarm decide"
-            >
-              Swarm
-              <ChevronDown strokeWidth={2} />
-            </div>
+            {targets && targets.length > 0 && (
+              <Select
+                className="selector"
+                aria-label="Send to"
+                value={targetKey(target)}
+                onChange={(key) => {
+                  setRefusal(null);
+                  setTarget(parseTargetKey(String(key)));
+                }}
+              >
+                <Select.Trigger>
+                  <Select.Value />
+                  <Select.Indicator />
+                </Select.Trigger>
+                <Select.Popover>
+                  <ListBox>
+                    <ListBox.Item id="host" textValue="Anderson">
+                      Anderson
+                      <ListBox.ItemIndicator />
+                    </ListBox.Item>
+                    <ListBox.Item id="crew" textValue="Entire Crew">
+                      Entire Crew
+                      <ListBox.ItemIndicator />
+                    </ListBox.Item>
+                    <Separator />
+                    <ListBox.Section>
+                      <Header>Squads &amp; groups</Header>
+                      {targets
+                        .filter((t) => t.kind === "squad")
+                        .map((t) => (
+                          <ListBox.Item key={t.id} id={targetKey(targetOf(t))} textValue={t.name}>
+                            {t.name}
+                            {/* The role already reads "Squad — led by X", so it names
+                                the actual recipient without a second lookup. */}
+                            <span className="selector__who">{t.role}</span>
+                            <ListBox.ItemIndicator />
+                          </ListBox.Item>
+                        ))}
+                    </ListBox.Section>
+                    <Separator />
+                    <ListBox.Section>
+                      <Header>Agents</Header>
+                      {targets
+                        .filter((t) => t.kind === "agent")
+                        .map((t) => (
+                          <ListBox.Item key={t.id} id={targetKey(targetOf(t))} textValue={t.name}>
+                            {t.name}
+                            <span className="selector__who">{t.role}</span>
+                            <ListBox.ItemIndicator />
+                          </ListBox.Item>
+                        ))}
+                    </ListBox.Section>
+                  </ListBox>
+                </Select.Popover>
+              </Select>
+            )}
             {onMicToggle && (
               <PromptInput.Action
                 className={holding ? "voice-toggle live" : "voice-toggle"}
