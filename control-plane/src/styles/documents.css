@@ -300,6 +300,47 @@
   font-size: 11px;
   color: var(--text-dim);
 }
+/* "Pin to…" popover: one toggle row per target (workspace, groups, stale pins). */
+.pin-button__wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.pin-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 5;
+  min-width: 160px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  background: var(--ground-2);
+  border: 1px solid var(--pill-br);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+.pin-popover__row {
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+.pin-popover__row:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+}
+.pin-popover__row--on {
+  color: color-mix(in srgb, var(--accent) 80%, var(--text));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
 
 /* The composer's aimed-section chip — one send spends it, click clears it. */
 .composer__doc-target {

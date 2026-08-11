@@ -8,7 +8,7 @@ import {
 } from "@tanstack/react-router";
 import { lazy, Suspense } from "react";
 import * as api from "./api/broker";
-import type { BlueprintT, DocT, RosterAgent } from "./api/types";
+import type { BlueprintT, DocT, GroupT, RosterAgent } from "./api/types";
 import { agentSeeds } from "./data/agents";
 import { composeSpec, specToFence } from "./lib/dashboardSpec";
 import { openDocByFamily } from "./lib/pickKind";
@@ -20,7 +20,7 @@ import { MapStage } from "./organisms/MapStage";
 import { WorkStage } from "./organisms/WorkStage";
 import { HomePage } from "./pages/HomePage";
 import { useBlueprints } from "./queries/http";
-import { useDocuments, useRoster, useSession } from "./queries/pushed";
+import { useDocuments, useGroups, useRoster, useSession } from "./queries/pushed";
 import { useUiStore } from "./stores/uiStore";
 
 // Stable empties: a fresh `[]` per render would churn every downstream effect
@@ -28,6 +28,7 @@ import { useUiStore } from "./stores/uiStore";
 const NO_ROSTER: RosterAgent[] = [];
 const NO_DOCS: DocT[] = [];
 const NO_BLUEPRINTS: BlueprintT[] = [];
+const NO_GROUPS: GroupT[] = [];
 
 // The document stage carries Tiptap/ProseMirror; a chat-only session should not
 // download an editor it never opens. This is the app's first split chunk.
@@ -118,6 +119,8 @@ function DocRoute() {
   const { data: docs = NO_DOCS, status } = useDocuments();
   const { data: blueprints = NO_BLUEPRINTS } = useBlueprints();
   const { data: session = null } = useSession();
+  const { data: groups = NO_GROUPS } = useGroups();
+  const groupNames = groups.map((g) => g.name);
   const docTarget = useUiStore((s) => s.docTarget);
   // Cold-WS race: on a hard reload of /doc/:id the documents frame hasn't
   // landed yet, so the query is still `pending` — that is not "no such doc",
@@ -142,6 +145,7 @@ function DocRoute() {
           <PinButton
             pins={doc.pins}
             workspace={session?.workspace}
+            groups={groupNames}
             onPin={(t) => api.pinDoc(doc.id, t)}
             onUnpin={(t) => api.unpinDoc(doc.id, t)}
           />
@@ -164,6 +168,8 @@ function DiagramRoute() {
   const { data: docs = NO_DOCS, status } = useDocuments();
   const { data: blueprints = NO_BLUEPRINTS, status: bpStatus } = useBlueprints();
   const { data: session = null } = useSession();
+  const { data: groups = NO_GROUPS } = useGroups();
+  const groupNames = groups.map((g) => g.name);
   // Diagrams and prose share the /doc store; the blueprint family decides which
   // canvas shows a doc. So wait for BOTH the doc and the blueprints that type it
   // before routing — a pending blueprints query is "don't know the family yet",
@@ -184,6 +190,7 @@ function DiagramRoute() {
           <PinButton
             pins={doc.pins}
             workspace={session?.workspace}
+            groups={groupNames}
             onPin={(t) => api.pinDoc(doc.id, t)}
             onUnpin={(t) => api.unpinDoc(doc.id, t)}
           />
@@ -201,6 +208,8 @@ function DashboardDocRoute() {
   const { data: docs = NO_DOCS, status } = useDocuments();
   const { data: blueprints = NO_BLUEPRINTS, status: bpStatus } = useBlueprints();
   const { data: session = null } = useSession();
+  const { data: groups = NO_GROUPS } = useGroups();
+  const groupNames = groups.map((g) => g.name);
   // Same both-resolved gate as DiagramRoute: family decides the canvas.
   if (status !== "success" || bpStatus !== "success") return null;
   const doc = docs.find((d) => d.id === docId);
@@ -216,6 +225,7 @@ function DashboardDocRoute() {
           <PinButton
             pins={doc.pins}
             workspace={session?.workspace}
+            groups={groupNames}
             onPin={(t) => api.pinDoc(doc.id, t)}
             onUnpin={(t) => api.unpinDoc(doc.id, t)}
           />
