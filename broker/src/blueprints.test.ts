@@ -108,7 +108,7 @@ test("default blueprints declare a family; spec and plan are documents", () => {
   assert.equal(bps.find((b) => b.id === "spec")?.family, "document");
   assert.equal(bps.find((b) => b.id === "implementation-plan")?.family, "document");
   // Every blueprint must declare a family (no undefined leaks to the UI grouping).
-  assert.ok(bps.every((b) => b.family === "document" || b.family === "diagram"));
+  assert.ok(bps.every((b) => b.family === "document" || b.family === "diagram" || b.family === "dashboard"));
 });
 
 test("a user blueprint file without family defaults to document", () => {
