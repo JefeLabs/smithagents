@@ -138,11 +138,14 @@ import {
   findCardByRef,
   findRouteDestination,
   loadBoards,
+  localDayStamp,
+  msUntilNextMidnight,
   patchCard,
   removeCard,
   resolveExit,
   routeCard,
   saveBoard,
+  sweepPersonalBoard,
   type WorkBoard,
 } from "./work-items.js";
 import {
@@ -234,6 +237,8 @@ export class OrchestratorServer {
   /** Device pairing registry — the writer behind /workers/connect auth. */
   readonly deviceRegistry = new DeviceRegistry(resolve(process.cwd(), ".smith/devices.json"));
   private reapTimer: ReturnType<typeof setInterval> | null = null;
+  /** Midnight sweep of the Active To-dos board — Todo/Doing leftovers roll into Queue. */
+  private sweepTimer: ReturnType<typeof setTimeout> | null = null;
   readonly squadPool = new SquadPool();
   /** Warm conversational sessions (design §3) — lazy so tests don't need tmux. */
   private agentSessions: AgentSessionManager | null = null;
@@ -407,6 +412,11 @@ export class OrchestratorServer {
       }
     }, 15_000);
 
+    // Day rollover for the Active To-dos board. Cron-only by design (spec:
+    // 2026-08-11 ruling) — if the server is down at 00:00 the sweep waits
+    // for the next midnight; there is no boot-time catch-up.
+    this.scheduleMidnightSweep();
+
     // Belt-and-braces on top of sweepEncryptUsers' own per-file skip-and-
     // continue: also guards the failure mode that isn't per-file, e.g.
     // resolveMasterKey unable to create ~/.smith (read-only/absent HOME). An
@@ -442,9 +452,28 @@ export class OrchestratorServer {
   async stop(): Promise<void> {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     if (this.reapTimer) clearInterval(this.reapTimer);
+    if (this.sweepTimer) clearTimeout(this.sweepTimer);
     if (this.udpSocket) this.udpSocket.close();
     for (const ws of this.wsClients) ws.close();
     await this.app.close();
+  }
+
+  /** setTimeout chain, not setInterval: each firing re-measures the distance to the NEXT local midnight, so drift and DST never accumulate. */
+  private scheduleMidnightSweep(): void {
+    this.sweepTimer = setTimeout(async () => {
+      try {
+        const { boards } = await loadBoards(this.workDir());
+        const personal = boards.find((b) => b.type === "personal");
+        if (personal && sweepPersonalBoard(personal, localDayStamp(new Date()))) {
+          await saveBoard(this.workDir(), personal);
+          this.app.log.info("Swept Active To-dos leftovers into Queue");
+        }
+      } catch (err) {
+        this.app.log.warn(`Midnight sweep failed: ${(err as Error).message}`);
+      } finally {
+        this.scheduleMidnightSweep();
+      }
+    }, msUntilNextMidnight(new Date()));
   }
 
   // -------------------------------------------------------------------------

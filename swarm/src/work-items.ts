@@ -393,7 +393,7 @@ function renumber(board: WorkBoard, columnId: string): void {
  * only), so fresh cards default to Todo there and to the leftmost column
  * everywhere else.
  */
-export function defaultColumnFor(board: WorkBoard): string | undefined {
+export function defaultColumnFor(board: WorkBoard): string {
   return board.type === "personal" ? "todo" : board.columns[0]?.id;
 }
 
