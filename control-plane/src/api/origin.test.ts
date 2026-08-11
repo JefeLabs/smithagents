@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { brokerBase, isCloud, httpUrl, wsUrl, LOCAL_BASE, brokerFetch } from "./origin";
 import { useAuthStore } from "../stores/authStore";
+import { brokerBase, brokerFetch, httpUrl, isCloud, LOCAL_BASE, wsUrl } from "./origin";
 
 const dev = { hostname: "localhost", host: "localhost:1420", protocol: "http:" };
 const tauri = { hostname: "tauri.localhost", host: "tauri.localhost", protocol: "tauri:" };
@@ -26,7 +26,9 @@ describe("origin derivation", () => {
     expect(wsUrl("/events", "skoolscout.smith.app", cloud)).toBe("wss://skoolscout.smith.app/events");
   });
   it("brokerFetch sends credentials and passes the path through", async () => {
-    const fetchMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => new Response("{}", { status: 200 }));
+    const fetchMock = vi.fn(
+      async (_url: RequestInfo | URL, _init?: RequestInit) => new Response("{}", { status: 200 }),
+    );
     vi.stubGlobal("fetch", fetchMock);
     await brokerFetch("/sessions", LOCAL_BASE, { method: "POST" });
     const [url, init] = fetchMock.mock.calls[0]!;
@@ -35,7 +37,10 @@ describe("origin derivation", () => {
     expect(init?.method).toBe("POST");
   });
   it("a 401 does NOT flip sessionLost in local mode (jsdom host is localhost)", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 401 })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("{}", { status: 401 })),
+    );
     await brokerFetch("/me");
     expect(useAuthStore.getState().sessionLost).toBe(false);
   });

@@ -11,7 +11,6 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { create } from "zustand";
 import { BROKER_BASE, wsUrl } from "../api/origin";
-import { useAuthStore } from "./authStore";
 import type {
   AudioFrame,
   BrokerIdentityInfo,
@@ -23,6 +22,7 @@ import type {
   SessionSummary,
 } from "../api/types";
 import { qk } from "../queries/keys";
+import { useAuthStore } from "./authStore";
 import { registerStoreReset } from "./reset";
 
 const RECONNECT_MS = 2000;

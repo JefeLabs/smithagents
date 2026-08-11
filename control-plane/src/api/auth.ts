@@ -7,11 +7,12 @@
  * the brokerFetch 401 seam — getMe IS the auth check, so a 401 is a valid
  * "not signed in" answer, not a session-lost event.
  */
-import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
+
 import type {
   PublicKeyCredentialCreationOptionsJSON,
   PublicKeyCredentialRequestOptionsJSON,
 } from "@simplewebauthn/browser";
+import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import { brokerFetch, httpUrl } from "./origin";
 
 export type Me = { kind: "human"; userId?: string; name?: string; role?: string; local?: boolean };

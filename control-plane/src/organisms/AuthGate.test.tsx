@@ -4,7 +4,13 @@ import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../lib/cloud", () => ({ CLOUD_MODE: true }));
-vi.mock("../api/auth", () => ({ getMe: vi.fn(), login: vi.fn(), beginEnroll: vi.fn(), finishEnroll: vi.fn(), EnrollError: class extends Error {} }));
+vi.mock("../api/auth", () => ({
+  getMe: vi.fn(),
+  login: vi.fn(),
+  beginEnroll: vi.fn(),
+  finishEnroll: vi.fn(),
+  EnrollError: class extends Error {},
+}));
 
 import { getMe } from "../api/auth";
 import { useAuthStore } from "../stores/authStore";

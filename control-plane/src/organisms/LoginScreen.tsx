@@ -68,8 +68,20 @@ export function LoginScreen({ onAuthed }: { onAuthed: () => void }) {
 
         {showInvite ? (
           <form className="login-screen__invite" onSubmit={enroll}>
-            <FormTextField control={control} name="code" label="Invite code" placeholder="XXXX-XXXX" rules={{ required: true }} />
-            <FormTextField control={control} name="name" label="Your name" placeholder="e.g. Edwin" rules={{ required: true }} />
+            <FormTextField
+              control={control}
+              name="code"
+              label="Invite code"
+              placeholder="XXXX-XXXX"
+              rules={{ required: true }}
+            />
+            <FormTextField
+              control={control}
+              name="name"
+              label="Your name"
+              placeholder="e.g. Edwin"
+              rules={{ required: true }}
+            />
             <Button type="submit" variant="secondary" isDisabled={busy}>
               Create passkey
             </Button>

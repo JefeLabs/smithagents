@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { brokerFetch, BROKER_BASE } from "../api/origin";
+import { BROKER_BASE, brokerFetch } from "../api/origin";
 import { useAgentRecords } from "../queries/http";
 import { qk } from "../queries/keys";
 
@@ -153,9 +153,13 @@ export function useSurfacePolicy(agentId: string) {
         const { [surface]: _dropped, ...rest } = e;
         return rest;
       });
-      void brokerFetch(`/agents/${encodeURIComponent(agentId)}/surfaces/${encodeURIComponent(surface)}/join`, BROKER_BASE, {
-        method: "POST",
-      }).then(async (res) => {
+      void brokerFetch(
+        `/agents/${encodeURIComponent(agentId)}/surfaces/${encodeURIComponent(surface)}/join`,
+        BROKER_BASE,
+        {
+          method: "POST",
+        },
+      ).then(async (res) => {
         if (!res.ok) {
           const body = (await res.json().catch(() => ({}))) as { error?: string };
           setErrors((e) => ({ ...e, [surface]: body.error ?? `HTTP ${res.status}` }));
