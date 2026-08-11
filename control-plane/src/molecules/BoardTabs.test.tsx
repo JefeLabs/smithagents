@@ -5,7 +5,7 @@ import { BoardTabs } from "./BoardTabs";
 
 const TABS = [
   { key: "ideation", label: "Ideation", type: "ideation" as const, boardIds: ["a-ideation"], clustered: false },
-  { key: "personal", label: "Action Planner", type: "personal" as const, boardIds: ["personal"], clustered: false },
+  { key: "personal", label: "Agenda", type: "personal" as const, boardIds: ["personal"], clustered: false },
 ];
 
 const base = {
@@ -30,8 +30,8 @@ describe("BoardTabs", () => {
     const onSelect = vi.fn();
     render(<BoardTabs {...base} onSelect={onSelect} />);
     expect(screen.getByRole("tab", { name: "Ideation" }).getAttribute("aria-selected")).toBe("true");
-    await userEvent.click(screen.getByRole("tab", { name: "Action Planner" }));
-    expect(screen.getByRole("tab", { name: "Action Planner" }).className).toContain("board-tabs__tab--planner");
+    await userEvent.click(screen.getByRole("tab", { name: "Agenda" }));
+    expect(screen.getByRole("tab", { name: "Agenda" }).className).toContain("board-tabs__tab--planner");
     expect(screen.getByRole("tab", { name: "Ideation" }).className).not.toContain("board-tabs__tab--planner");
     expect(onSelect).toHaveBeenCalledWith("personal");
   });

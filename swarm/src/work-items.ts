@@ -80,7 +80,7 @@ export const BOARD_TYPE_ORDER: BoardType[] = [
 export const WORKSPACE_BOARD_TYPES: BoardType[] = BOARD_TYPE_ORDER.filter((t) => t !== "personal");
 
 export const BOARD_TYPE_LABELS: Record<BoardType, string> = {
-  personal: "Action Planner",
+  personal: "Agenda",
   ideation: "Ideate",
   plan: "Plan",
   deliver: "Deliver",
@@ -207,10 +207,10 @@ export const BOARD_ROUTES: Record<BoardType, RouteExit[]> = {
   reactive: [
     { from: "triage", toType: "maintenance", toColumn: "triage", label: "To maintenance" },
     { from: "triage", toType: "ideation", toColumn: "intake", label: "To ideation" },
-    { from: "triage", toType: "personal", toColumn: "queue", label: "Escalate to Action Planner" },
+    { from: "triage", toType: "personal", toColumn: "queue", label: "Escalate to Agenda" },
   ],
   ideation: [],
-  maintenance: [{ from: "triage", toType: "personal", toColumn: "queue", label: "Escalate to Action Planner" }],
+  maintenance: [{ from: "triage", toType: "personal", toColumn: "queue", label: "Escalate to Agenda" }],
   personal: [],
 };
 
@@ -302,7 +302,7 @@ function assertBoard(file: string, v: unknown): WorkBoard {
 
 /** Default names boards used to seed with — a board still wearing one follows the label when it changes. */
 const LEGACY_DEFAULT_NAMES: Partial<Record<BoardType, string[]>> = {
-  personal: ["Personal", "Active To-dos"],
+  personal: ["Personal", "Active To-dos", "Action Planner"],
   ideation: ["Ideation"],
   reactive: ["Reactive"],
   maintenance: ["Maintenance"],

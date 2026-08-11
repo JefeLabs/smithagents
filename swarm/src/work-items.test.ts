@@ -87,7 +87,7 @@ test("createBoard derives id from workspace+type, seeds the label, copies column
 test("createBoard: personal is workspace-less with a fixed id; mismatches throw", () => {
   const p = createBoard("personal");
   assert.equal(p.id, "personal");
-  assert.equal(p.name, "Action Planner");
+  assert.equal(p.name, "Agenda");
   assert.equal(p.workspaceId, undefined);
   assert.throws(() => createBoard("personal", "acme"), /workspace/i);
   assert.throws(() => createBoard("deliver"), /workspace/i);
@@ -294,7 +294,7 @@ test("normalizeBoard migrates a pre-rename personal board and is idempotent", ()
     cards: [],
   };
   normalizeBoard(legacy);
-  assert.equal(legacy.name, "Action Planner");
+  assert.equal(legacy.name, "Agenda");
   assert.deepEqual(
     legacy.columns.map((c) => c.id),
     ["queue", "todo", "doing", "done", "not-doing"],
@@ -305,7 +305,7 @@ test("normalizeBoard migrates a pre-rename personal board and is idempotent", ()
 
 test("normalizeBoard renames old default labels across types, keeps custom names", () => {
   const active = { ...createBoard("personal"), name: "Active To-dos" };
-  assert.equal(normalizeBoard(active).name, "Action Planner");
+  assert.equal(normalizeBoard(active).name, "Agenda");
   const reactive = { ...createBoard("reactive", "acme"), name: "Reactive" };
   assert.equal(normalizeBoard(reactive).name, "React");
   const maintenance = { ...createBoard("maintenance", "acme"), name: "Maintenance" };
@@ -404,7 +404,7 @@ test("loadBoards migrates a legacy personal file in memory only", async () => {
     }),
   );
   const { boards } = await loadBoards(dir);
-  assert.equal(boards[0].name, "Action Planner");
+  assert.equal(boards[0].name, "Agenda");
   assert.equal(boards[0].columns[0].id, "queue");
   // In-memory only: the file still says Personal until the next mutation saves.
   assert.match(await readFile(join(dir, "personal.json"), "utf8"), /"Personal"/);
@@ -592,7 +592,7 @@ test("escalation: maintenance and reactive triage each exit to the personal queu
   const reactive = createBoard("reactive", "acme");
   assert.deepEqual(
     exitsFor(maintenance, "triage").map((e) => e.label),
-    ["Escalate to Action Planner"],
+    ["Escalate to Agenda"],
   );
   assert.equal(resolveExit(reactive, "triage", "personal")?.toColumn, "queue");
   assert.deepEqual(exitsFor(maintenance, "doing"), []);

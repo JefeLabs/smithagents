@@ -45,7 +45,7 @@ describe("CardSheet routes", () => {
     render(<CardSheet {...props} />);
     expect(screen.getByRole("button", { name: "To maintenance" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "To ideation" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Escalate to Action Planner" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Escalate to Agenda" })).toBeTruthy();
   });
 
   it("renders no pills from a column with no exits", () => {

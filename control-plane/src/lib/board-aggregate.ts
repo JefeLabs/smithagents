@@ -27,7 +27,7 @@ export const WORKSPACE_BOARD_TYPES_UI: Exclude<BoardTypeT, "personal">[] = [
 ];
 
 export const BOARD_TYPE_LABELS_UI: Record<BoardTypeT, string> = {
-  personal: "Action Planner",
+  personal: "Agenda",
   ideation: "Ideate",
   plan: "Plan",
   deliver: "Deliver",
@@ -143,10 +143,10 @@ export const BOARD_ROUTES_UI: Record<BoardTypeT, RouteExitT[]> = {
   reactive: [
     { from: "triage", toType: "maintenance", toColumn: "triage", label: "To maintenance" },
     { from: "triage", toType: "ideation", toColumn: "intake", label: "To ideation" },
-    { from: "triage", toType: "personal", toColumn: "queue", label: "Escalate to Action Planner" },
+    { from: "triage", toType: "personal", toColumn: "queue", label: "Escalate to Agenda" },
   ],
   ideation: [],
-  maintenance: [{ from: "triage", toType: "personal", toColumn: "queue", label: "Escalate to Action Planner" }],
+  maintenance: [{ from: "triage", toType: "personal", toColumn: "queue", label: "Escalate to Agenda" }],
   personal: [],
 };
 

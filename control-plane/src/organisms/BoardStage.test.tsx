@@ -173,7 +173,7 @@ describe("BoardStage", () => {
       boards: {
         boards: [
           { ...BOARD, id: "acme-plan", name: "Plan", type: "plan", workspaceId: "acme" },
-          { ...BOARD, id: "personal", name: "Action Planner", type: "personal", workspaceId: undefined },
+          { ...BOARD, id: "personal", name: "Agenda", type: "personal", workspaceId: undefined },
         ],
         errors: [],
       },
@@ -181,7 +181,7 @@ describe("BoardStage", () => {
     const { client } = renderBoardStage();
     seedSessionFrame(client, { workspace: "acme" });
     await waitFor(() => expect(screen.getByRole("tab", { name: "Plan" })).toBeTruthy());
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Action Planner", "Plan"]);
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Agenda", "Plan"]);
   });
 
   it("follows the session frame's workspace without any in-stage control", async () => {
@@ -275,15 +275,15 @@ describe("BoardStage", () => {
         boards: [
           { ...BOARD, id: "acme-plan", name: "Plan", type: "plan", workspaceId: "acme" },
           { ...BOARD, id: "beta-plan", name: "Plan", type: "plan", workspaceId: "beta" },
-          { ...BOARD, id: "personal", name: "Action Planner", type: "personal", workspaceId: undefined },
+          { ...BOARD, id: "personal", name: "Agenda", type: "personal", workspaceId: undefined },
         ],
         errors: [],
       },
     });
     const { client } = renderBoardStage();
     seedSessionFrame(client, { workspace: "acme" });
-    await waitFor(() => expect(screen.getByRole("tab", { name: "Action Planner" })).toBeTruthy());
-    await userEvent.click(screen.getByRole("tab", { name: "Action Planner" }));
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Agenda" })).toBeTruthy());
+    await userEvent.click(screen.getByRole("tab", { name: "Agenda" }));
     await userEvent.click(screen.getByRole("button", { name: /add card/i }));
     await userEvent.type(screen.getByPlaceholderText(/card title/i), "Half-typed");
     // Switching tabs must not carry a half-typed card onto another board.
@@ -306,15 +306,15 @@ describe("BoardStage", () => {
         boards: [
           { ...BOARD, id: "acme-plan", name: "Plan", type: "plan", workspaceId: "acme" },
           { ...BOARD, id: "beta-plan", name: "Plan", type: "plan", workspaceId: "beta" },
-          { ...BOARD, id: "personal", name: "Action Planner", type: "personal", workspaceId: undefined },
+          { ...BOARD, id: "personal", name: "Agenda", type: "personal", workspaceId: undefined },
         ],
         errors: [],
       },
     });
     const { client } = renderBoardStage();
     seedSessionFrame(client, { workspace: "acme" });
-    await waitFor(() => expect(screen.getByRole("tab", { name: "Action Planner" })).toBeTruthy());
-    await userEvent.click(screen.getByRole("tab", { name: "Action Planner" }));
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Agenda" })).toBeTruthy());
+    await userEvent.click(screen.getByRole("tab", { name: "Agenda" }));
     await userEvent.click(screen.getByText("Write the spec"));
     expect(screen.getByRole("dialog")).toBeTruthy();
     await userEvent.click(screen.getByRole("tab", { name: "Plan" }));
