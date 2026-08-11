@@ -285,4 +285,49 @@ describe("stage routing", () => {
     });
     await waitFor(() => expect(router.state.location.pathname).toBe("/"));
   });
+
+  it("a diagram-family doc renders the diagram stage at /diagram/$id", async () => {
+    const router = await renderAt("/diagram/d9", (client) => {
+      client.setQueryData(qk.documents, [
+        {
+          id: "d9",
+          title: "ER",
+          blueprintId: "er",
+          workType: "feature",
+          status: "drafting",
+          participants: [],
+          createdAt: "",
+          updatedAt: "",
+          artifacts: [],
+          sections: [{ id: "diagram", heading: "Diagram", body: "erDiagram" }],
+        },
+      ]);
+      client.setQueryData(qk.blueprints, [
+        { id: "er", name: "Database design", family: "diagram", workTypes: ["feature"] },
+      ]);
+    });
+    expect(await screen.findByRole("region", { name: "Diagram" })).toBeTruthy();
+    expect(router.state.location.pathname).toBe("/diagram/d9");
+  });
+
+  it("a document-family doc at /diagram bounces to /doc (negative control)", async () => {
+    const router = await renderAt("/diagram/d2", (client) => {
+      client.setQueryData(qk.documents, [
+        {
+          id: "d2",
+          title: "Spec",
+          blueprintId: "spec",
+          workType: "feature",
+          status: "drafting",
+          participants: [],
+          createdAt: "",
+          updatedAt: "",
+          artifacts: [],
+          sections: [{ id: "overview", heading: "Overview", body: "" }],
+        },
+      ]);
+      client.setQueryData(qk.blueprints, [{ id: "spec", name: "Spec", family: "document", workTypes: ["feature"] }]);
+    });
+    await waitFor(() => expect(router.state.location.pathname).toBe("/doc/d2"));
+  });
 });

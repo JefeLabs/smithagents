@@ -69,6 +69,8 @@ function makePickKind(
 // The document stage carries Tiptap/ProseMirror; a chat-only session should not
 // download an editor it never opens. This is the app's first split chunk.
 const DocumentStage = lazy(() => import("./organisms/DocumentStage").then((m) => ({ default: m.DocumentStage })));
+// mermaid is heavy too; a session that never opens a diagram shouldn't ship it.
+const DiagramStage = lazy(() => import("./organisms/DiagramStage").then((m) => ({ default: m.DiagramStage })));
 
 /**
  * Route components are deliberately thin: they read broker state from the
@@ -206,6 +208,32 @@ function DocRoute() {
   );
 }
 
+function DiagramRoute() {
+  const { docId } = diagramRoute.useParams();
+  const { data: docs = NO_DOCS, status } = useDocuments();
+  const { data: blueprints = NO_BLUEPRINTS, status: bpStatus } = useBlueprints();
+  // Diagrams and prose share the /doc store; the blueprint family decides which
+  // canvas shows a doc. So wait for BOTH the doc and the blueprints that type it
+  // before routing — a pending blueprints query is "don't know the family yet",
+  // not "it's prose", and redirecting on that guess would flap on a cold reload.
+  if (status !== "success" || bpStatus !== "success") return null;
+  const doc = docs.find((d) => d.id === docId);
+  if (!doc) return <Navigate to="/" replace />;
+  // Only diagrams live here; a prose doc reached via /diagram goes to /doc.
+  const family = blueprints.find((b) => b.id === doc.blueprintId)?.family;
+  if (family !== "diagram") return <Navigate to="/doc/$docId" params={{ docId }} replace />;
+  return (
+    <Suspense fallback={null}>
+      <DiagramStage
+        doc={doc}
+        blueprints={blueprints.filter((b) => b.family === "diagram")}
+        onChangeBlueprint={(blueprintId) => api.patchDocBlueprint(doc.id, blueprintId)}
+        onSaveSection={(sectionId, body) => api.patchDocSection(doc.id, sectionId, body)}
+      />
+    </Suspense>
+  );
+}
+
 function WorkRoute() {
   const navigate = useNavigate();
   const { agentId } = workRoute.useParams();
@@ -239,9 +267,22 @@ const dashboardsRoute = createRoute({
   component: DashboardsRoute,
 });
 const docRoute = createRoute({ getParentRoute: () => rootRoute, path: "/doc/$docId", component: DocRoute });
+const diagramRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/diagram/$docId",
+  component: DiagramRoute,
+});
 const workRoute = createRoute({ getParentRoute: () => rootRoute, path: "/work/$agentId", component: WorkRoute });
 
-const routeTree = rootRoute.addChildren([indexRoute, boardRoute, mapRoute, dashboardsRoute, docRoute, workRoute]);
+const routeTree = rootRoute.addChildren([
+  indexRoute,
+  boardRoute,
+  mapRoute,
+  dashboardsRoute,
+  docRoute,
+  diagramRoute,
+  workRoute,
+]);
 
 export function createAppRouter(history = createHashHistory()) {
   return createRouter({ routeTree, history });
