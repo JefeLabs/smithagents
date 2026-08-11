@@ -23,7 +23,7 @@ nav-rail entries for these kinds go away.
 | Kind | Surface | Main area | Chat | Backed by |
 |---|---|---|---|---|
 | **Chat** | home (`/`) | transcript | inline (composer) | conversation |
-| **Dashboards** | `/dashboards` (`DashboardsStage`, client mock) | mock board | its own ask box | mock (`data/dashboards.ts`) |
+| **Dashboards** | `/dashboards` (`DashboardsStage`) | role-aware home: **centered chat**, priority slice cards above, dashboards list below (§9) | centered (mid-screen) | mock (`data/dashboards.ts`) |
 | **Documents** | `/doc/$id` (`DocumentStage`) | prose editor (Tiptap) | **docked right** | blueprint doc, `family: "document"` |
 | **Diagrams** | new `/diagram/$id` stage | **Mermaid canvas** (full-bleed, renders the diagram) | **docked right** | blueprint doc, `family: "diagram"` |
 | **User Story Maps** | `/map` (`MapStage`, react-flow canvas) | node canvas | (its own) | capability story map |
@@ -142,11 +142,12 @@ continues where you author.
   Documents/Diagrams entry if present) — the kind row under the chat box is the
   navigation now. All routes stay reachable.
 
-### 8. Shared canvas-stage chrome
+### 8. Shared canvas-stage chrome (Diagrams + User Story Maps)
 
-- **Canvas stages** = every kind presented on a canvas: **Diagrams**, **User
-  Story Maps**, **Dashboards**. Because they're all canvas-presented, they share
-  the same chrome regardless of their (different) underlying data models:
+- **Canvas stages** = the two kinds presented on a working canvas: **Diagrams**
+  and **User Story Maps**. (Dashboards has its own layout — §9 — not this
+  chrome.) Because both are canvas-presented, they share the same chrome
+  regardless of their different data models:
   - **right-docked chat** (the composer dock on the right, so you converse while
     you work the canvas) — User Story Maps gains the docked chat it lacks today,
     matching the diagram stage;
@@ -158,16 +159,16 @@ continues where you author.
   (chat collapsed to a slim input) the panel can return to its natural spot. The
   rule: canvas controls are never hidden behind the chat.
 - **Implementation:** a shared `CanvasStage` layout wrapper (chat dock +
-  full-screen affordance + Esc wiring) that `DiagramStage`, `MapStage`, and the
-  dashboards board render inside. Data models are untouched — a story map stays
-  the capability-story-map model, a dashboard the client mock, a diagram a
-  `family: "diagram"` document. Parity is in the *chrome*, not the storage.
+  full-screen affordance + Esc wiring) that `DiagramStage` and `MapStage` render
+  inside. Data models are untouched — a story map stays the capability-story-map
+  model, a diagram a `family: "diagram"` document. Parity is in the *chrome*,
+  not the storage.
 
 ### 8.1 Full-screen mode
 
-- **Which kinds:** the canvas-presented stages — **Diagrams**, **User Story
-  Maps**, and **Dashboards** (its board). Documents (a prose column) do not get
-  full-screen.
+- **Which kinds:** the two canvas stages — **Diagrams** and **User Story Maps**.
+  Documents (a prose column) and Dashboards (its own centered layout, §9) do not
+  get full-screen.
 - **Behavior:** a full-screen toggle (a control in the canvas's corner) enters a
   focus mode that shows **only the canvas and a minimal chat input**. Everything
   else hides: the top navbar, the left rail, and the **left shelf of the
@@ -183,6 +184,27 @@ continues where you author.
   rail.
 - **Non-canvas stays put:** entering a Document (prose) never engages
   full-screen; Chat/home is unaffected.
+
+### 9. Dashboards: its own centered layout (not canvas chrome)
+
+Dashboards does **not** share the canvas chrome — clicking `Dashboards` lands on
+a role-aware home whose shape echoes the empty/new-session screen:
+
+- **Chat box mid-screen** — centered, calm, the same feel as `NewSessionScreen`.
+  This is the primary affordance: describe the dashboard you want, or just ask.
+- **Above the chat — priority "slice" cards.** A row of the most important slices
+  for **your role**, e.g. *priority maintenance*, *support issues*, *prioritized
+  plan / delivery items*. They're the at-a-glance "what matters now" surfaced as
+  cards; clicking one opens that dashboard/board.
+- **Below the chat (optional) — a collapsed list** of saved/generatable
+  dashboards, expandable to pick or generate one.
+- **Generating / opening a dashboard** shows the board itself (today's mock
+  `ask→composing→board`); the board view can go full-bleed but does not adopt
+  the diagram/map canvas chrome.
+- **Role source:** "based on your role" reads the current operator/user role
+  (the same identity the app already resolves) to choose which slice cards show;
+  the card *contents* stay the client mock in v1 (see scope). Making the slices
+  data-real is deferred with the rest of the dashboard-realness work.
 
 ## Data flow
 
