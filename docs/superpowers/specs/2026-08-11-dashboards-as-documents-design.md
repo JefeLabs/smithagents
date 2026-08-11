@@ -18,6 +18,17 @@ treated like a document like diagrams and documents."
 2. **Born on compose**: `/dashboards` stays the launcher; the moment a
    dashboard is composed/presented it becomes a doc and the URL moves to
    its route. Asks that never compose leave nothing behind.
+3. **Session by default, pinned = global** (Edwin: "maybe a dashboard in
+   a session can be pinned as a global dashboard?"): a composed dashboard
+   attaches to its session like any doc — it lives on that session's
+   shelf. An explicit **Pin** promotes it to the global collection: the
+   launcher's SAVED list shows exactly the PINNED dashboard docs, across
+   every session and workspace. Storage stays broker-global either way
+   (a doc URL always opens; pin controls the launcher listing, never
+   access), and the dashboard's scope ("all workspaces", a group,
+   personal) remains data inside it, never a gate. The pin itself is
+   spec data (`pinned: true` in the spec JSON), toggled through the
+   existing section-patch route — no new broker surface.
 
 ## Design
 
@@ -39,6 +50,8 @@ interface DashSpec {
   kpis: Array<{ label: string; value: string; delta?: string; tone?: "ok" | "watch" | "high" }>;
   charts: Array<{ kind: "line" | "bars"; title: string; series?: string[] }>;
   table?: { title: string; columns: string[]; rows: string[][] };
+  /** Pinned to the global collection — the launcher's SAVED list shows exactly these. */
+  pinned?: boolean;
 }
 ```
 
@@ -82,8 +95,13 @@ interface DashSpec {
   the one target).
 - Shelf: automatic (docs are docs); tile tag shows `dashboard`.
 - SAVED on the launcher: `DashboardAsk`'s saved list switches from
-  `DASH_SAVED` fixtures to dashboard-family docs (wired by the route from
-  `useDocuments` + blueprints); clicking one opens its doc route.
+  `DASH_SAVED` fixtures to PINNED dashboard-family docs (spec parses with
+  `pinned === true`; wired by the route from `useDocuments` +
+  blueprints); clicking one opens its doc route.
+- Pin toggle: a `Pin`/`Pinned` button on the dashboard canvas title bar —
+  rewrites the spec section with `pinned` flipped via the existing
+  `patchDocSection` (no new endpoint). The composing session's shelf
+  shows the doc regardless of pin state.
 
 ### Dock variant cleanup
 
@@ -104,6 +122,10 @@ interface DashSpec {
   calls onPresent (board view gone).
 - Route: /dashboard family gate + redirect, openDocByFamily third family,
   layoutForPath/kindForPath additions, saved-list wiring.
+- Pin semantics: SAVED lists only pinned dashboards, and lists them even
+  when the active session has no artifacts (cross-session guarantee);
+  the pin toggle round-trips through the spec section; unpinning removes
+  the SAVED entry without touching shelf or access.
 - HomePage: doc-context regex covers /dashboard/; the removed dashboards
   variant override's tests replaced by launcher-center + doc-dock cases.
 - Live smoke: compose from the launcher → doc route + shelf tile; dock
