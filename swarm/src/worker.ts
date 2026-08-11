@@ -18,7 +18,9 @@
 
 import WebSocket from 'ws';
 import { randomUUID } from 'node:crypto';
-import { hostname } from 'node:os';
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { homedir, hostname } from 'node:os';
+import { dirname, join } from 'node:path';
 
 import { TmuxRuntime, DockerRuntime, type RuntimeAdapter } from './runtime.js';
 import type { DockerConfig } from './types.js';
@@ -43,8 +45,10 @@ import type {
 interface WorkerConfig {
   /** Orchestrator WS URL (e.g., "ws://192.168.1.10:7777") */
   orchestratorUrl: string;
-  /** Shared secret — must match orchestrator */
-  secret: string;
+  /** Shared secret — legacy auth path; must match orchestrator config */
+  secret?: string;
+  /** Device token from pairing — preferred over secret */
+  token?: string;
   /** Max concurrent tasks this worker handles */
   capacity: number;
   /** Worker name (default: hostname) */
@@ -84,6 +88,59 @@ interface TrackedSession {
 }
 
 // ---------------------------------------------------------------------------
+// Pairing + credentials
+// ---------------------------------------------------------------------------
+
+export function toHttpUrl(url: string): string {
+  return url.replace(/^ws:/, 'http:').replace(/^wss:/, 'https:');
+}
+export function toWsUrl(url: string): string {
+  return url.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:');
+}
+
+/** Exponential backoff with ±20% jitter so a worker fleet never thunders. */
+export function nextReconnectDelay(attempt: number, baseMs = 3_000, capMs = 60_000, rand: () => number = Math.random): number {
+  const exp = Math.min(capMs, baseMs * 2 ** attempt);
+  return Math.round(exp * (0.8 + 0.4 * rand()));
+}
+
+export interface WorkerCredentials {
+  orchestratorUrl: string;
+  deviceId: string;
+  token: string;
+  name: string;
+}
+
+export const DEFAULT_CREDENTIALS_PATH = join(homedir(), '.smith', 'worker-credentials.json');
+
+/** Redeem a pairing code and persist the device credentials (0600). */
+export async function registerDevice(orchestratorUrl: string, code: string, name: string, credsPath = DEFAULT_CREDENTIALS_PATH): Promise<WorkerCredentials> {
+  const res = await fetch(`${toHttpUrl(orchestratorUrl)}/devices/redeem`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ code, name }),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    throw new Error(`Pairing failed (${res.status}): ${detail}`);
+  }
+  const { deviceId, token } = await res.json() as { deviceId: string; token: string };
+  const creds: WorkerCredentials = { orchestratorUrl: toWsUrl(orchestratorUrl), deviceId, token, name };
+  await mkdir(dirname(credsPath), { recursive: true });
+  await writeFile(credsPath, JSON.stringify(creds, null, 2), { mode: 0o600 });
+  await chmod(credsPath, 0o600); // writeFile mode is umask-filtered; chmod is not
+  return creds;
+}
+
+export async function loadCredentials(credsPath = DEFAULT_CREDENTIALS_PATH): Promise<WorkerCredentials | null> {
+  try {
+    return JSON.parse(await readFile(credsPath, 'utf8')) as WorkerCredentials;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // SmithWorker
 // ---------------------------------------------------------------------------
 
@@ -95,6 +152,7 @@ export class SmithWorker {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private outputTimer: ReturnType<typeof setInterval> | null = null;
   private reconnecting = false;
+  private reconnectAttempts = 0;
   private stopped = false;
 
   constructor(config?: Partial<WorkerConfig>) {
@@ -159,11 +217,12 @@ export class SmithWorker {
   private scheduleReconnect(): void {
     if (this.stopped || this.reconnecting) return;
     this.reconnecting = true;
-    console.log(`  ↻ Reconnecting in ${this.config.reconnectMs / 1000}s...`);
+    const delay = nextReconnectDelay(this.reconnectAttempts++, this.config.reconnectMs);
+    console.log(`  ↻ Reconnecting in ${Math.round(delay / 100) / 10}s...`);
     setTimeout(() => {
       this.reconnecting = false;
       this.connect();
-    }, this.config.reconnectMs);
+    }, delay);
   }
 
   // -------------------------------------------------------------------------
@@ -175,7 +234,8 @@ export class SmithWorker {
       type: 'register',
       workerId: this.config.workerId,
       name: this.config.name,
-      secret: this.config.secret,
+      secret: this.config.secret ?? '',
+      token: this.config.token,
       capacity: this.config.capacity,
       agents: ['claude', 'agy', 'codex'],
       runtimes: [this.config.defaultRuntime],
@@ -192,6 +252,7 @@ export class SmithWorker {
     switch (msg.type) {
       case 'registered':
         if (msg.accepted) {
+          this.reconnectAttempts = 0;
           console.log(`  ✓ Registered with orchestrator (${msg.message ?? 'ok'})`);
         } else {
           console.error(`  ✗ Registration rejected: ${msg.message}`);
@@ -440,6 +501,7 @@ export class SmithWorker {
 
 export async function startWorker(): Promise<void> {
   const args = process.argv.slice(2);
+  const subcommand = args[0] && !args[0].startsWith('--') ? args.shift() : null;
   const opts: Record<string, string> = {};
 
   for (let i = 0; i < args.length; i += 2) {
@@ -448,25 +510,43 @@ export async function startWorker(): Promise<void> {
     opts[key] = args[i + 1];
   }
 
-  if (!opts.secret || !opts.orchestrator) {
-    console.error('Usage: smith-worker --orchestrator ws://HOST:7777 --secret <shared-secret>');
-    console.error('\nRequired:');
-    console.error('  --orchestrator   Orchestrator WebSocket URL (ws://host:7777)');
-    console.error('  --secret         Shared secret for authentication');
+  if (subcommand === 'register') {
+    if (!opts.orchestrator || !opts.code) {
+      console.error('Usage: smith-worker register --orchestrator <url> --code XXXX-XXXX [--name <name>]');
+      process.exit(1);
+    }
+    const name = opts.name ?? hostname();
+    const creds = await registerDevice(opts.orchestrator, opts.code, name);
+    console.log(`  ✓ Paired as "${name}" (${creds.deviceId})`);
+    console.log(`  Credentials saved to ${DEFAULT_CREDENTIALS_PATH}`);
+    console.log(`  Start the worker with: smith-worker`);
+    return;
+  }
+
+  const creds = opts.token ? null : await loadCredentials();
+  const orchestratorUrl = opts.orchestrator ?? creds?.orchestratorUrl;
+  const token = opts.token ?? creds?.token;
+
+  if (!orchestratorUrl || (!token && !opts.secret)) {
+    console.error('Usage: smith-worker [--orchestrator ws://HOST:7777] [--token <device-token>]');
+    console.error('       smith-worker register --orchestrator <url> --code XXXX-XXXX [--name <name>]');
+    console.error('\nWith no flags, credentials from `smith-worker register` are used.');
     console.error('\nOptional:');
     console.error('  --capacity       Max concurrent tasks (default: 5)');
     console.error('  --name           Worker name (default: hostname)');
     console.error('  --runtime        Default runtime: tmux or docker (default: tmux)');
-    console.error('  --id             Stable worker ID (default: random)');
+    console.error('  --id             Stable worker ID (default: paired deviceId, else random)');
+    console.error('  --secret         Legacy shared-secret auth instead of a device token');
     process.exit(1);
   }
 
   const worker = new SmithWorker({
-    orchestratorUrl: opts.orchestrator,
+    orchestratorUrl,
+    token,
     secret: opts.secret,
     capacity: opts.capacity ? Number(opts.capacity) : undefined,
-    name: opts.name,
-    workerId: opts.id,
+    name: opts.name ?? creds?.name,
+    workerId: opts.id ?? creds?.deviceId,
     defaultRuntime: opts.runtime as 'tmux' | 'docker' | undefined,
   });
 
