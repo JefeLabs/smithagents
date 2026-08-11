@@ -248,6 +248,42 @@
   background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
+/* Delete: the one irreversible thing in this panel, so it stays out of sight
+   until you mean it. Opacity rather than display, so the row never reflows and
+   the button keeps its place in the tab order for keyboard users — who reveal
+   it with :focus-visible instead of hover. */
+.session-row__delete {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.session-row:hover .session-row__delete,
+.session-row__delete:focus-visible {
+  opacity: 1;
+}
+/* The same red the confirm dialog's destructive button uses (components.css) —
+   there is no --danger token yet, and inventing a second red here would make
+   the two reds differ in the one flow that shows them together. */
+.session-row__delete:hover {
+  color: #d9534f;
+  border-color: color-mix(in srgb, #d9534f 45%, transparent);
+  background: color-mix(in srgb, #d9534f 12%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .session-row__delete {
+    transition: none;
+  }
+}
+
 /* ---- composer: kind group + blueprint chips (artifacts pivot) ---- */
 .composer__kind-group {
   display: inline-flex;

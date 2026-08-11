@@ -450,6 +450,23 @@ export async function activateSession(id: string, base: string = BROKER_BASE): P
   void fetch(`http://${base}/sessions/${encodeURIComponent(id)}/activate`, { method: "POST" }).catch(() => {});
 }
 
+/**
+ * DELETE /sessions/:id — permanent, so unlike activate this one is awaited and
+ * reports its failure: a delete that silently did nothing would leave the row
+ * on screen with no explanation. The refreshed list arrives on the sessions
+ * frame, not in this response.
+ */
+export async function deleteSession(id: string, base: string = BROKER_BASE): Promise<string | null> {
+  try {
+    const res = await fetch(`http://${base}/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (res.ok) return null;
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    return body.error ?? `HTTP ${res.status}`;
+  } catch {
+    return "broker unreachable";
+  }
+}
+
 /** GET /blueprints — the creation form's schema list. */
 export async function getBlueprints(base: string = BROKER_BASE): Promise<BlueprintT[]> {
   try {

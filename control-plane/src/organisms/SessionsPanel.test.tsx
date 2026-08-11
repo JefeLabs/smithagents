@@ -194,3 +194,56 @@ describe("SessionsPanel", () => {
     expect(onActivate).toHaveBeenCalledWith("s2");
   });
 });
+
+describe("deleting a session", () => {
+  it("asks before deleting, names the session, and promises the documents survive", async () => {
+    const onDelete = vi.fn().mockResolvedValue(null);
+    render(<SessionsPanel {...props({ onDelete })} />);
+
+    await userEvent.click(screen.getByRole("button", { name: 'delete session "Draft the README"' }));
+
+    // Nothing is gone yet — a destructive action states its outcome first.
+    expect(onDelete).not.toHaveBeenCalled();
+    const dialog = screen.getByRole("alertdialog");
+    expect(dialog).toHaveTextContent("Draft the README");
+    expect(dialog).toHaveTextContent(/document/i);
+  });
+
+  it("deletes on confirm and closes the dialog", async () => {
+    const onDelete = vi.fn().mockResolvedValue(null);
+    render(<SessionsPanel {...props({ onDelete })} />);
+
+    await userEvent.click(screen.getByRole("button", { name: 'delete session "Draft the README"' }));
+    await userEvent.click(screen.getByRole("button", { name: "delete session" }));
+
+    expect(onDelete).toHaveBeenCalledWith("s2");
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
+  it("cancelling deletes nothing", async () => {
+    const onDelete = vi.fn().mockResolvedValue(null);
+    render(<SessionsPanel {...props({ onDelete })} />);
+
+    await userEvent.click(screen.getByRole("button", { name: 'delete session "Fix the flaky test"' }));
+    await userEvent.click(screen.getByRole("button", { name: "cancel" }));
+
+    expect(onDelete).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
+  it("keeps the dialog open and shows why when the broker refuses", async () => {
+    const onDelete = vi.fn().mockResolvedValue("broker unreachable");
+    render(<SessionsPanel {...props({ onDelete })} />);
+
+    await userEvent.click(screen.getByRole("button", { name: 'delete session "Draft the README"' }));
+    await userEvent.click(screen.getByRole("button", { name: "delete session" }));
+
+    // The row must not vanish on a failed delete — the session still exists.
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("broker unreachable");
+  });
+
+  it("offers no delete affordance at all when the caller supplies no handler", () => {
+    render(<SessionsPanel {...props()} />);
+    expect(screen.queryByRole("button", { name: /^delete session/ })).toBeNull();
+  });
+});

@@ -299,6 +299,9 @@ export function HomePage() {
               openComposer(ws || undefined);
             }}
             onManage={() => setWorkspacesOpen(true)}
+            // No local list surgery: the broker broadcasts the sessions frame
+            // after a delete, so the row leaves the same way it arrived.
+            onDelete={(id) => api.deleteSession(id)}
           />
           <WorkspaceManagerModal
             open={workspacesOpen}
