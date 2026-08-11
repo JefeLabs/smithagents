@@ -1,5 +1,7 @@
 # Workspace Groups Implementation Plan
 
+> **CLAIMED:** in execution by Claude session d43af92a (inline, main checkout) since 2026-08-11. Do not execute concurrently.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Groups are first-class nested sets of workspaces/groups you can pin docs to (down-only flow into sessions), view Board/Map through (lens), scope dashboards by, and manage from the workspace manager — plus text answer cards in DashSpec.
