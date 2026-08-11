@@ -15,6 +15,7 @@ import { Broker, TTS_SAMPLE_RATE } from './broker.ts';
 import { AdapterHub } from './channels.ts';
 import { loadBrokerConfig } from './config.ts';
 import { ElectionScheduler, runElection, type AskFactory } from './election.ts';
+import { parseTarget, resolveTarget } from './targets.ts';
 import { createDiscordTextLifecycle } from './discord-text-lifecycle.ts';
 import { createDiscordVoiceLifecycle } from './discord-voice-lifecycle.ts';
 import { createDiscordWorkspaceSwitcher } from './discord-workspace-switcher.ts';
@@ -1264,6 +1265,42 @@ const textChannel = new TextChannel(
     },
   },
   brokerAuth,
+  {
+    /**
+     * A message with a target on it. Host and crew stay a brain turn — the
+     * crew's leader IS Anderson — and everyone else resolves to exactly one
+     * agent, who gets the typed text as a task with no brain in between
+     * (spec §2, Edwin's "no mediation" ruling).
+     */
+    send: async (text, rawTarget) => {
+      const target = parseTarget(rawTarget);
+      const roster = broker.uiRoster();
+      const resolution = resolveTarget(target, {
+        squads: roster.squads,
+        groups: roster.groups.map((g) => ({
+          id: g.id,
+          name: g.name,
+          leader: g.leader,
+          members: g.members.map((m) => ({ id: m.id, name: m.name, roles: [directory.resolve(m.id)?.role ?? ''] })),
+        })),
+        agents: roster.agents.map((p) => ({ id: p.agent.id, name: p.agent.name })),
+      });
+
+      if ('error' in resolution) return { error: resolution.error, status: 404 };
+      if (resolution.kind === 'brain') {
+        textChannel.broadcast({ type: 'utterance', text });
+        handleUserText(text);
+        return { ok: true as const };
+      }
+      // The THIRD caller of the one dispatch path (delegate tool, work board,
+      // and now the composer): busy-refusal, the directives-prefixed prompt,
+      // task binding and roster refresh all come from there.
+      const dispatched = await broker.dispatchWork({ agent: resolution.name, task: text, inheritSessionRuntime: true });
+      if ('error' in dispatched) return { error: dispatched.error, status: 409 };
+      textChannel.broadcast({ type: 'utterance', text });
+      return { ok: true as const, taskId: dispatched.taskId };
+    },
+  },
 );
 const micSessions = new MicSessionGate<DeepgramSttStream>();
 
