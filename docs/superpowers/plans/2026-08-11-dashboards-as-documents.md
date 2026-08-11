@@ -60,7 +60,19 @@ export function specToFence(spec: DashSpec): string; // "```json\n" + JSON.strin
 
 - [ ] Failing test: render with a two-KPI spec (distinct labels/values, one `tone:"high"`), assert both tiles + summary + the spec's chart title appear and a fixture-only KPI label does NOT. Run → FAIL, implement (spec-or-fixture selection at the top: `const kpis = spec?.kpis ?? DASH_KPIS;` etc.), PASS. Commit `feat(cp): DashboardBoard renders a DashSpec`.
 
-### Task 4: `/dashboard/$docId` — DashboardDocStage, route, family plumbing
+### Task 4: Broker — doc pins + session-context seeding (pin model v2)
+
+**Files:** Modify `broker/src/documents.ts` (Doc.pins?: string[]; idempotent `pin(docId, target): Doc | null` / `unpin(docId, target): Doc | null`), `broker/src/text-channel.ts` (documents seam gains `pin(docId, target): string | null` / `unpin(docId, target): string | null`; routes `POST /documents/:id/pins` `{target}` and `DELETE /documents/:id/pins/:target`, originBlocked, null→200/string→404 like proposals), `broker/src/main.ts` (adapter entries broadcasting documentsFrame; POST /sessions path: after create in workspace W, attach every doc whose pins include W via the same addArtifact path and broadcast session+documents frames); Tests `broker/src/documents.test.ts`, `broker/src/text-channel.test.ts`.
+
+- [ ] Failing tests: pin/unpin round-trip + idempotence + unknown doc → null (documents.test); pin routes 200/404 + seam args (text-channel.test, stubbed seam). Session seeding is main.ts wiring — covered by the live smoke (repo convention). Run → FAIL, implement, PASS. Commit `feat(broker): doc pins target a workspace; new sessions inherit pinned docs`.
+
+### Task 5: CP pin plumbing — PinButton, shelf marker, api helpers
+
+**Files:** Modify `control-plane/src/api/types.ts` (DocT.pins?: string[]), `control-plane/src/api/broker.ts` (`pinDoc(docId, target)` / `unpinDoc(docId, target)` → error-string-or-null, POST/DELETE per Task 4 routes), Create `control-plane/src/molecules/PinButton.tsx` (+test) — `{ pins?: string[]; workspace?: string; onPin: (target: string) => Promise<string | null>; onUnpin: (target: string) => Promise<string | null> }`, renders nothing without `workspace`, else aria-pressed toggle "Pin to <workspace>"/"Pinned to <workspace>"; Modify `control-plane/src/molecules/ArtifactShelf.tsx` (+test) — tiles with `doc.pins?.length` get `artifact-shelf__card--pinned` + a pin dot span, `control-plane/src/styles/documents.css` (dot + tinted edge), `control-plane/src/organisms/DocumentStage.tsx` + `DiagramStage.tsx` (+tests) — optional `pinControl?: ReactNode` slot in the title bar, `control-plane/src/router.tsx` — DocRoute/DiagramRoute build `<PinButton pins={doc.pins} workspace={session?.workspace} onPin/onUnpin={api helpers}>`.
+
+- [ ] Failing tests per file (PinButton toggle callbacks + hidden-without-workspace; shelf marker class; stages render the pinControl slot). Run → FAIL, implement, PASS. Commit `feat(cp): pin any doc to a workspace — PinButton on the canvases, marked shelf tiles`.
+
+### Task 6: `/dashboard/$docId` — DashboardDocStage, route, family plumbing
 
 **Files:** Create `control-plane/src/organisms/DashboardDocStage.tsx`, `control-plane/src/organisms/DashboardDocStage.test.tsx`; Modify `control-plane/src/router.tsx` (lazy stage, `DashboardDocRoute`, route table), `control-plane/src/lib/pickKind.ts` (`openDocByFamily` third family), `control-plane/src/lib/composerLayout.ts` (`/dashboard/` → dock; kindForPath → "dashboards"), `control-plane/src/lib/composerLayout.test.ts`, `control-plane/src/router.test.tsx`, `control-plane/src/styles/dashboards.css` (title bar + fallback styles).
 
@@ -69,36 +81,35 @@ export function specToFence(spec: DashSpec): string; // "```json\n" + JSON.strin
 interface DashboardDocStageProps {
   doc: DocT;                                    // family:dashboard — question + spec sections
   onRename?: (title: string) => Promise<{ error?: string }>;
-  /** Rewrites the spec section with `pinned` flipped. Resolve to refusal text or null. */
-  onTogglePin?: (nextFenced: string) => Promise<{ error?: string }>;
+  pinControl?: ReactNode;
   shelf?: ReactNode;
 }
 export function DashboardDocStage(props): JSX.Element
 ```
 - Renders `<section className="stage dashboards-stage" aria-label="Dashboard">`: `{shelf}`, title bar (rename input exactly like DocumentStage's), the question section body as a subheader line, then `parseDashSpec(specBody)`:
-  - spec → `<DashboardBoard spec={spec} query={doc.title} scopeHint="" onFollowup={() => {}} />` plus a `Pin`/`Pinned` toggle button (`aria-pressed={Boolean(spec.pinned)}`) that calls `onTogglePin(specToFence({ ...spec, pinned: !spec.pinned }))`.
+  - spec → `<DashboardBoard spec={spec} query={doc.title} scopeHint="" onFollowup={() => {}} />`; the title bar hosts the shared `pinControl` slot (PinButton from Task 5 — pins are doc-level, not spec data).
   - null → `<pre className="dashboard-doc__raw">` with the raw body and a "spec didn't parse — showing source" status line.
-- Router: `DashboardDocRoute` mirrors DiagramRoute (family gate: non-dashboard docs redirect to `openDocByFamily`'s target; pending queries return null), wires `onRename`/`onTogglePin` to `api.patchDocTitle` / `api.patchDocSection(doc.id, "spec", nextFenced)`, passes `useShelf()`.
+- Router: `DashboardDocRoute` mirrors DiagramRoute (family gate: non-dashboard docs redirect; pending queries return null), wires `onRename` → `api.patchDocTitle`, `pinControl` → PinButton, passes `useShelf()`.
 - `layoutForPath`: `pathname.startsWith("/dashboard/")` joins the dock list (NOTE: test it doesn't shadow `/dashboards` — check the prefix ordering: `/dashboards` === exact match runs first).
 - `.stage.dashboards-stage` already reserves via `body[data-dock="dock"]` — no CSS boundary work.
 
-- [ ] Failing tests: stage renders spec KPIs + Pin toggle (aria-pressed false → click → onTogglePin called with fence containing `"pinned": true`); parse-failure fallback shows raw + status; composerLayout `/dashboard/d1` → dock + kind "dashboards" (and `/dashboards` still center); router test: a dashboard-family doc at `/dashboard/d1` renders region "Dashboard", a prose doc redirects to `/doc/d1`. Run → FAIL, implement, PASS. Commit `feat(cp): /dashboard/$docId — the dashboard document canvas with Pin`.
+- [ ] Failing tests: stage renders spec KPIs + the pinControl slot; parse-failure fallback shows raw + status; composerLayout `/dashboard/d1` → dock + kind "dashboards" (and `/dashboards` still center); router test: a dashboard-family doc at `/dashboard/d1` renders region "Dashboard", a prose doc redirects to `/doc/d1`. Run → FAIL, implement, PASS. Commit `feat(cp): /dashboard/$docId — the dashboard document canvas with Pin`.
 
-### Task 5: Birth on compose; SAVED = pinned; retire the internal board view + v4 machinery
+### Task 7: Birth on compose; SAVED = pinned docs; retire the internal board view + v4 machinery
 
-**Files:** Modify `control-plane/src/organisms/DashboardsStage.tsx` (drop view "board" + `dashBoardShowing` mirror; compose walk completion calls `onPresent(question, scope)`; new props `onPresent?`, `savedDocs?: Array<{ id: string; title: string; meta: string }>` passed to DashboardAsk), `control-plane/src/organisms/dashboards/DashboardAsk.tsx` (saved list renders `savedDocs` prop instead of `DASH_SAVED`; `onOpenSaved?: (docId: string) => void`), `control-plane/src/router.tsx` (DashboardsRoute: wire `onPresent` = `postDocument("dashboard", question)` → `patchDocSection(docId, "question", `${question}\n\nscope: ${scope}`)` → `patchDocSection(docId, "spec", specToFence(composeSpec(question, scope)))` → `navigate({ to: "/dashboard/$docId", params: { docId } })`; `savedDocs` = dashboard-family docs whose parsed spec is pinned, meta from `updatedAt`; `onOpenSaved` navigates), `control-plane/src/stores/uiStore.ts` + test (remove `dashBoardShowing`/`setDashBoardShowing`), `control-plane/src/pages/HomePage.tsx` + test (drop the dashboards dock override — `dockVariant = pathname === "/dashboards" && messages.length > 0 ? "dock" : layoutForPath(pathname)` keeps ONLY the v5 thread rule), affected tests (DashboardsStage board-view tests rewritten to assert `onPresent` fires with question+scope after the walk; DashboardAsk saved-list tests use the prop).
+**Files:** Modify `control-plane/src/organisms/DashboardsStage.tsx` (drop view "board" + `dashBoardShowing` mirror; compose walk completion calls `onPresent(question, scope)`; new props `onPresent?`, `savedDocs?: Array<{ id: string; title: string; meta: string }>` passed to DashboardAsk), `control-plane/src/organisms/dashboards/DashboardAsk.tsx` (saved list renders `savedDocs` prop instead of `DASH_SAVED`; `onOpenSaved?: (docId: string) => void`), `control-plane/src/router.tsx` (DashboardsRoute: wire `onPresent` = `postDocument("dashboard", question)` → `patchDocSection(docId, "question", `${question}\n\nscope: ${scope}`)` → `patchDocSection(docId, "spec", specToFence(composeSpec(question, scope)))` → `navigate({ to: "/dashboard/$docId", params: { docId } })`; `savedDocs` = dashboard-family docs with `pins?.length` (meta from `updatedAt` + pin targets); `onOpenSaved` navigates), `control-plane/src/stores/uiStore.ts` + test (remove `dashBoardShowing`/`setDashBoardShowing`), `control-plane/src/pages/HomePage.tsx` + test (drop the dashboards dock override — `dockVariant = pathname === "/dashboards" && messages.length > 0 ? "dock" : layoutForPath(pathname)` keeps ONLY the v5 thread rule), affected tests (DashboardsStage board-view tests rewritten to assert `onPresent` fires with question+scope after the walk; DashboardAsk saved-list tests use the prop).
 
 - [ ] Tests first (rewrites listed above) → FAIL, implement, PASS (full cp suite — the removed store field will surface every stale reference). Commit `feat(cp): composed dashboards become documents; SAVED lists the pinned ones`.
 
-### Task 6: Doc-context sends cover /dashboard/
+### Task 8: Doc-context sends cover /dashboard/
 
 **Files:** Modify `control-plane/src/pages/HomePage.tsx` (the onSend docId regex becomes `/^\/(?:doc|diagram|dashboard)\/([^/]+)$/`); Test `control-plane/src/pages/HomePage.test.tsx` (a send from `/dashboard/d1` carries `doc: { docId: "d1" }` — seed a dashboard-family doc + blueprint, mirror the existing /doc send test).
 
 - [ ] Test → FAIL, implement, PASS. Commit `feat(cp): dock sends edit the dashboard on screen`.
 
-### Task 7: Verification, live smoke, restart, ship
+### Task 9: Verification, live smoke, restart, ship
 
 - [ ] Root `pnpm test` / `pnpm lint` / `pnpm typecheck` all clean (exit codes via redirect).
 - [ ] Restart the broker (tmux `smith-broker`, C-c + relaunch) — the new blueprint must serve.
-- [ ] Live smoke: launcher → TRY suggestion → compose walk → lands on `/dashboard/$docId` with the rendered spec + shelf tile; Pin it → appears under SAVED on the launcher; dock send "make the summary one sentence" → spec updates + re-render; reopen from SAVED. Screenshot each and LOOK.
+- [ ] Live smoke: launcher → TRY → compose → `/dashboard/$docId` renders + shelf tile; Pin to the active workspace → SAVED lists it; NEW session in that workspace opens with the doc attached (seeding); dock send "make the summary one sentence" → spec updates; reopen from SAVED. Screenshot and LOOK.
 - [ ] Spec status → SHIPPED, memory file + MEMORY.md, push (ecruz165 dance).
