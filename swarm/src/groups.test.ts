@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { assertGroup, expandGroup, wouldCycle, type WorkspaceGroup } from "./groups.js";
+import { assertGroup, expandGroup, type WorkspaceGroup, wouldCycle } from "./groups.js";
 import type { Workspace } from "./workspaces.js";
 
 const ws = (name: string, archived = false): Workspace => ({ name, archived, repos: [{ name, path: "/tmp/x" }] });
