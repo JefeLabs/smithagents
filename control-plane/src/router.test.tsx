@@ -375,4 +375,31 @@ describe("stage routing", () => {
     });
     await waitFor(() => expect(router.state.location.pathname).toBe("/doc/d2"));
   });
+
+  it("the document type switch omits diagram blueprints", async () => {
+    await renderAt("/doc/d2", (client) => {
+      client.setQueryData(qk.documents, [
+        {
+          id: "d2",
+          title: "Spec",
+          blueprintId: "spec",
+          workType: "feature",
+          status: "drafting",
+          participants: [],
+          createdAt: "",
+          updatedAt: "",
+          artifacts: [],
+          sections: [{ id: "overview", heading: "Overview", body: "" }],
+        },
+      ]);
+      client.setQueryData(qk.blueprints, [
+        { id: "spec", name: "Spec", family: "document", workTypes: ["feature"] },
+        { id: "implementation-plan", name: "Plan", family: "document", workTypes: ["feature"] },
+        { id: "er", name: "Database design", family: "diagram", workTypes: ["feature"] },
+      ]);
+    });
+    const group = await screen.findByRole("group", { name: /document type/i });
+    expect(within(group).queryByRole("button", { name: "Database design" })).toBeNull();
+    expect(within(group).getByRole("button", { name: "Plan" })).toBeInTheDocument();
+  });
 });

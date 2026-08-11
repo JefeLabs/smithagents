@@ -192,11 +192,15 @@ function DocRoute() {
   const doc = docs.find((d) => d.id === docId);
   // Unknown or deleted doc — the stage-routing convention: go home.
   if (!doc) return <Navigate to="/" replace />;
+  // The type switch re-casts a doc under a sibling blueprint, which only makes
+  // sense within a family — you can't turn a prose page into an ER diagram. So
+  // the switch sees only same-family blueprints. (DiagramRoute filters likewise.)
+  const docFamily = blueprints.find((b) => b.id === doc.blueprintId)?.family ?? "document";
   return (
     <Suspense fallback={null}>
       <DocumentStage
         doc={doc}
-        blueprints={blueprints}
+        blueprints={blueprints.filter((b) => b.family === docFamily)}
         onChangeBlueprint={(blueprintId) => api.patchDocBlueprint(doc.id, blueprintId)}
         onRename={(title) => api.patchDocTitle(doc.id, title)}
         onSaveSection={(sectionId, body) => api.patchDocSection(doc.id, sectionId, body)}
