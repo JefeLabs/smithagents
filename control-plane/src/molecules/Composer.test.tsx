@@ -258,6 +258,20 @@ describe("Composer polish", () => {
     render(<Composer onSend={vi.fn()} />);
     expect(screen.queryByRole("group", { name: /artifact kind/i })).not.toBeInTheDocument();
   });
+
+  it("kindControl=select renders a kind picker that fires onPickKind", async () => {
+    const onPickKind = vi.fn();
+    render(<Composer onSend={vi.fn()} onPickKind={onPickKind} activeKind="documents" kindControl="select" />);
+    await userEvent.click(screen.getByRole("button", { name: /artifact kind/i }));
+    await userEvent.click(await screen.findByRole("option", { name: "Diagrams" }));
+    expect(onPickKind).toHaveBeenCalledWith("diagrams");
+  });
+
+  it("kindControl=select replaces the button group (no group role)", () => {
+    render(<Composer onSend={vi.fn()} onPickKind={vi.fn()} activeKind="documents" kindControl="select" />);
+    expect(screen.queryByRole("group", { name: /artifact kind/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /artifact kind/i })).toBeInTheDocument();
+  });
 });
 
 describe("target selector", () => {

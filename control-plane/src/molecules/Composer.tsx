@@ -33,6 +33,11 @@ interface ComposerProps {
   onPickKind?: (kind: ArtifactKind) => void;
   /** The current surface's kind, highlighted in the row. */
   activeKind?: ArtifactKind;
+  /**
+   * How the kind row renders: a flush button group (the full-width composer) or
+   * a compact `<select>` (the right dock, where five buttons won't fit).
+   */
+  kindControl?: "buttons" | "select";
 }
 
 /** HeroUI's Select speaks string Keys; the wire speaks Target objects. Encode here, decode on the way out. */
@@ -76,6 +81,7 @@ export function Composer({
   onPolish,
   onPickKind,
   activeKind = "chat",
+  kindControl = "buttons",
 }: ComposerProps) {
   const [draft, setDraft] = useState("");
   const [holding, setHolding] = useState(false);
@@ -148,25 +154,50 @@ export function Composer({
             }}
           />
         </PromptInput.Content>
-        {onPickKind && (
-          // The middle row of the composer: input above, controls below. Buttons
-          // sit flush with the composer's own background until the box is hovered
-          // (see composer__kind CSS), so the row is calm at rest.
-          // biome-ignore lint/a11y/useSemanticElements: a nav row, not a form fieldset
-          <div className="composer__kind-group" role="group" aria-label="artifact kind">
-            {ARTIFACT_KINDS.map((k) => (
-              <button
-                key={k.kind}
-                type="button"
-                className={`composer__kind${activeKind === k.kind ? " composer__kind--on" : ""}`}
-                aria-pressed={activeKind === k.kind}
-                onClick={() => onPickKind(k.kind)}
-              >
-                {k.label}
-              </button>
-            ))}
-          </div>
-        )}
+        {onPickKind &&
+          (kindControl === "select" ? (
+            // The docked composer has no room for five buttons, so the kind row
+            // becomes a compact picker — same navigation, one control wide.
+            <Select
+              className="composer__kind-select"
+              aria-label="Artifact kind"
+              value={activeKind}
+              onChange={(key) => onPickKind(String(key) as ArtifactKind)}
+            >
+              <Select.Trigger>
+                <Select.Value />
+                <Select.Indicator />
+              </Select.Trigger>
+              <Select.Popover>
+                <ListBox>
+                  {ARTIFACT_KINDS.map((k) => (
+                    <ListBox.Item key={k.kind} id={k.kind} textValue={k.label}>
+                      {k.label}
+                      <ListBox.ItemIndicator />
+                    </ListBox.Item>
+                  ))}
+                </ListBox>
+              </Select.Popover>
+            </Select>
+          ) : (
+            // The middle row of the composer: input above, controls below. Buttons
+            // sit flush with the composer's own background until the box is hovered
+            // (see composer__kind CSS), so the row is calm at rest.
+            // biome-ignore lint/a11y/useSemanticElements: a nav row, not a form fieldset
+            <div className="composer__kind-group" role="group" aria-label="artifact kind">
+              {ARTIFACT_KINDS.map((k) => (
+                <button
+                  key={k.kind}
+                  type="button"
+                  className={`composer__kind${activeKind === k.kind ? " composer__kind--on" : ""}`}
+                  aria-pressed={activeKind === k.kind}
+                  onClick={() => onPickKind(k.kind)}
+                >
+                  {k.label}
+                </button>
+              ))}
+            </div>
+          ))}
         <PromptInput.Toolbar className="composer__row">
           <PromptInput.ToolbarStart>
             <button

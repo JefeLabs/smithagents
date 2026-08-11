@@ -1,0 +1,17 @@
+/* control-plane/src/styles/chatdock.css
+   The one persistent chat box (ChatDock = transcript + composer) and its three
+   route-driven variants. A dedicated file — like documents.css — so this feature
+   never has to stage the shared components.css (parallel agents live there).
+   Task 6 appends the .chat-dock--full/--dock/--center variant rules; this starts
+   with the composer's compact kind picker (the docked variant's control). */
+
+/* The kind row as a select (docked composer): a toolbar control, not a form
+   field — it must not add height or field chrome to the composer's row. Mirrors
+   the target selector's trigger treatment. */
+.composer__kind-select .select__trigger {
+  border: none;
+  background: transparent;
+  font-size: 11px;
+  padding: 2px 8px;
+  gap: 4px;
+}
