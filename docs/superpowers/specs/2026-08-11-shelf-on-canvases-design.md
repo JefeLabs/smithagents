@@ -125,6 +125,14 @@ change requests or a whole new ask without covering the board:
   other canvases. Ask/composing keep the padding-free center overlay.
 - Rejected: URL-encoding the view (`/dashboards/board`) — deep-link
   semantics for a mock flow Plan 4 rebuilds anyway.
+- **v5:** arriving on `/dashboards` with a conversation already going
+  (transcript non-empty) docks the chat right IMMEDIATELY — the thread
+  stays beside the stage instead of vanishing under the ask screen's
+  center box. Center is reserved for the fresh, nothing-said-yet state.
+- **v5:** the shelf owns a real left column: canvases with rendered
+  shelf tiles reserve 176px left padding (`:has(.artifact-shelf)`,
+  unlayered in base.css beside the shorthand it outranks — see the
+  cascade-layer note in that file). Home stays overlay-style on purpose.
 
 ### Testing
 

@@ -157,10 +157,14 @@ export function HomePage() {
   // Hide the mic hero only on a CONFIRMED no-STT broker the user asked to hide.
   const hideMic = Boolean(voicePrefs?.hideInactive) && !voice.stt;
   const dashBoardShowing = useUiStore((s) => s.dashBoardShowing);
-  // The one view-dependent override (spec v4): while a composed dashboard
-  // displays, the chat docks right — the iterate-or-pivot channel. The URL
-  // stays the variant's source of truth everywhere else.
-  const dockVariant = pathname === "/dashboards" && dashBoardShowing ? "dock" : layoutForPath(pathname);
+  // The view-dependent overrides (spec v4/v5): the chat docks right while a
+  // composed dashboard displays, and also whenever a conversation is already
+  // going — arriving on dashboards mid-thread must keep the thread beside the
+  // stage, not bury it under the ask screen's center box. Center is reserved
+  // for the fresh, nothing-said-yet state. The URL stays the variant's source
+  // of truth everywhere else.
+  const dockVariant =
+    pathname === "/dashboards" && (dashBoardShowing || messages.length > 0) ? "dock" : layoutForPath(pathname);
   const shelfDocs = shelfDocsFor(session, docs);
 
   // Focus collapses chrome via CSS alone — a body-level stamp so every

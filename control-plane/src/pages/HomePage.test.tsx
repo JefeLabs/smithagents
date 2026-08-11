@@ -406,6 +406,14 @@ describe("HomePage — creating a session lands in its conversation", () => {
     expect(router.state.location.pathname).toBe("/board");
   });
 
+  it("dashboards docks the chat right immediately when a thread exists", async () => {
+    renderApp((client) => {
+      client.setQueryData(qk.transcript, [{ id: "m1", role: "user", text: "hola", at: "t" }]);
+    }, "/dashboards");
+    const dock = await screen.findByRole("region", { name: "Chat" });
+    expect(dock.className).toContain("chat-dock--dock");
+  });
+
   it("dashboards docks the chat right while a board displays, center otherwise", async () => {
     renderApp(undefined, "/dashboards");
     const dock = await screen.findByRole("region", { name: "Chat" });
