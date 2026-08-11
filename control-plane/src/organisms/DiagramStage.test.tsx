@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("../molecules/MermaidBlock", () => ({
   MermaidBlock: ({ code }: { code: string }) => <div data-testid="mermaid">{code}</div>,
 }));
+
 import { DiagramStage } from "./DiagramStage";
 
 const DOC = {
