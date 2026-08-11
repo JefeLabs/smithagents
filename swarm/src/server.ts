@@ -208,6 +208,9 @@ export class OrchestratorServer {
   private readonly wsClients = new Set<WebSocket>();
   private readonly namePool = new AgentNamePool();
   readonly workerPool = new WorkerPool();
+  /** Device pairing registry — the writer behind /workers/connect auth. */
+  readonly deviceRegistry = new DeviceRegistry(resolve(process.cwd(), '.smith/devices.json'));
+  private reapTimer: ReturnType<typeof setInterval> | null = null;
   readonly squadPool = new SquadPool();
   /** Warm conversational sessions (design §3) — lazy so tests don't need tmux. */
   private agentSessions: AgentSessionManager | null = null;
@@ -345,11 +348,22 @@ export class OrchestratorServer {
       }
     } catch { /* fs races are not boot problems */ }
 
+    await this.deviceRegistry.load();
+
     await this.registerPlugins();
     this.registerAuthHook();
     this.registerRoutes();
     this.startUdpHeartbeat();
     this.startQueueWorker();
+
+    // Reap workers whose heartbeats stopped without a socket close (sleep,
+    // NAT timeout, kill -9). 45s = 4 missed 10s heartbeats + slack.
+    this.reapTimer = setInterval(() => {
+      for (const id of this.workerPool.reapStale(45_000)) {
+        this.app.log.warn(`Reaped stale remote worker: ${id}`);
+        this.broadcast({ type: 'worker:disconnected', workerId: id } as unknown as DispatcherEvent);
+      }
+    }, 15_000);
 
     // Belt-and-braces on top of sweepEncryptUsers' own per-file skip-and-
     // continue: also guards the failure mode that isn't per-file, e.g.
@@ -391,6 +405,7 @@ export class OrchestratorServer {
   /** Graceful shutdown */
   async stop(): Promise<void> {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    if (this.reapTimer) clearInterval(this.reapTimer);
     if (this.udpSocket) this.udpSocket.close();
     for (const ws of this.wsClients) ws.close();
     await this.app.close();
@@ -426,9 +441,13 @@ export class OrchestratorServer {
       this.app.log.warn('SMITH_API_TOKEN not set — API is unauthenticated, loopback-only');
       return;
     }
+    // /devices/redeem authenticates via single-use pairing code; /workers/connect
+    // via the device token in its register frame (fail-closed, 10s deadline).
+    // Neither client holds SMITH_API_TOKEN — that is the point of pairing.
+    const exempt = new Set(['/health', '/devices/redeem', '/workers/connect']);
     this.app.addHook('onRequest', async (req, reply) => {
       const path = req.url.split('?')[0];
-      if (path === '/health') return;
+      if (exempt.has(path)) return;
       const header = req.headers.authorization;
       const bearer = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : undefined;
       const queryToken = (req.query as Record<string, unknown> | null)?.token;
@@ -811,37 +830,41 @@ export class OrchestratorServer {
     // ── Remote Worker WebSocket ───────────────────────────────────────
     this.app.get('/workers/connect', { websocket: true }, (socket) => {
       let workerId: string | null = null;
+      // Auth-exempt endpoint: a socket that hasn't produced a valid register
+      // frame within the deadline is dropped, so strangers can't hold sockets.
+      const authDeadline = setTimeout(() => { if (!workerId) socket.close(); }, 10_000);
 
       socket.on('message', (data: Buffer) => {
-        try {
+        void (async () => {
           const msg = JSON.parse(data.toString()) as WorkerMessage;
 
           if (msg.type === 'register') {
             const reg = msg as WorkerRegisterMessage;
 
-            // Fail closed: workers must be explicitly configured, and the
-            // presented secret must match a configured worker's secret.
-            // A worker configured without a secret is never accepted.
-            const configured = server.orchConfig.remoteWorkers ?? [];
-            const accepted = configured.length > 0
-              && configured.some((w) => OrchestratorServer.secretsEqual(w.secret, reg.secret));
+            // Fail closed: a device token must verify against the pairing
+            // registry, or (legacy) the secret must match a configured
+            // worker. Token-authed workers adopt their deviceId as identity.
+            const verdict = await evaluateWorkerRegistration(
+              reg, server.deviceRegistry, server.orchConfig.remoteWorkers ?? []);
 
-            if (!accepted) {
+            if (!verdict.accepted) {
               const reject: RegisteredMessage = {
                 type: 'registered',
                 accepted: false,
                 orchestratorId: 'orchestrator',
-                message: configured.length > 0 ? 'Invalid secret' : 'No remote workers configured',
+                message: verdict.reason,
               };
               socket.send(JSON.stringify(reject));
               socket.close();
               return;
             }
 
-            workerId = reg.workerId;
+            workerId = verdict.poolWorkerId;
+            clearTimeout(authDeadline);
+            if (verdict.deviceId) void server.deviceRegistry.touch(verdict.deviceId);
 
             const workerInfo: ConnectedWorker = {
-              workerId: reg.workerId,
+              workerId: verdict.poolWorkerId,
               name: reg.name,
               capacity: reg.capacity,
               activeCount: 0,
@@ -853,7 +876,7 @@ export class OrchestratorServer {
               tasks: new Set(),
             };
 
-            server.workerPool.addWorker(reg.workerId, workerInfo, socket as unknown as import('ws').WebSocket);
+            server.workerPool.addWorker(verdict.poolWorkerId, workerInfo, socket as unknown as import('ws').WebSocket);
 
             const ack: RegisteredMessage = {
               type: 'registered',
@@ -864,12 +887,12 @@ export class OrchestratorServer {
             socket.send(JSON.stringify(ack));
 
             server.app.log.info(
-              `Remote worker registered: ${reg.name} (${reg.workerId}) — ${reg.capacity} slots`,
+              `Remote worker registered: ${reg.name} (${verdict.poolWorkerId}) — ${reg.capacity} slots`,
             );
 
             server.broadcast({
               type: 'worker:connected',
-              workerId: reg.workerId,
+              workerId: verdict.poolWorkerId,
               name: reg.name,
               capacity: reg.capacity,
             } as unknown as DispatcherEvent);
@@ -895,12 +918,13 @@ export class OrchestratorServer {
               } as unknown as DispatcherEvent);
             }
           }
-        } catch (err) {
+        })().catch((err) => {
           server.app.log.error(`Invalid message from worker: ${err}`);
-        }
+        });
       });
 
       socket.on('close', () => {
+        clearTimeout(authDeadline);
         if (workerId) {
           server.workerPool.removeWorker(workerId);
           server.app.log.info(`Remote worker disconnected: ${workerId}`);
@@ -910,6 +934,41 @@ export class OrchestratorServer {
           } as unknown as DispatcherEvent);
         }
       });
+    });
+
+    // ── Device pairing ───────────────────────────────────────────────
+    this.app.post('/devices/pair-codes', async (_req, reply) => {
+      const { code, expiresAt } = server.deviceRegistry.mintPairingCode();
+      return reply.status(201).send({ code, expiresAt: new Date(expiresAt).toISOString() });
+    });
+
+    this.app.post('/devices/redeem', async (req, reply) => {
+      const body = (req.body ?? {}) as { code?: string; name?: string };
+      if (!body.code || !body.name) {
+        return reply.status(400).send({ error: 'Missing required fields: code, name' });
+      }
+      const result = await server.deviceRegistry.redeem(body.code, body.name);
+      if (!result) return reply.status(410).send({ error: 'Invalid or expired pairing code' });
+      server.app.log.info(`Device paired: ${body.name} (${result.deviceId})`);
+      return reply.status(201).send(result);
+    });
+
+    this.app.get('/devices', async () => {
+      const connected = new Set(server.workerPool.listWorkers().map((w) => w.workerId));
+      return {
+        devices: server.deviceRegistry.list().map((d) => ({
+          deviceId: d.deviceId, name: d.name, createdAt: d.createdAt,
+          lastSeenAt: d.lastSeenAt, revoked: Boolean(d.revoked),
+          connected: connected.has(d.deviceId),
+        })),
+      };
+    });
+
+    this.app.delete<{ Params: { deviceId: string } }>('/devices/:deviceId', async (req, reply) => {
+      const ok = await server.deviceRegistry.revoke(req.params.deviceId);
+      if (!ok) return reply.status(404).send({ error: 'Unknown device' });
+      server.workerPool.disconnectWorker(req.params.deviceId);
+      return { revoked: true };
     });
 
     // ── List Remote Workers ──────────────────────────────────────────
