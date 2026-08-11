@@ -1,10 +1,9 @@
 import { Hand, TriangleAlert, Users } from "lucide-react";
 import { useRef, useState } from "react";
+import { BROKER_BASE, httpUrl } from "../api/origin";
 import { Avatar } from "../atoms/Avatar";
 import { useLongPress } from "../hooks/useLongPress";
 import { SurfacePolicyPopover } from "./SurfacePolicyPopover";
-
-const BASE = "127.0.0.1:7790";
 
 /** Hover-intent delay before the surface-policy popover opens — long enough to filter out a passing cursor. */
 const HOVER_INTENT_MS = 500;
@@ -105,7 +104,7 @@ export function AgentAvatar({
         label={label}
         onClick={onCall}
         state={status === "busy" ? "working" : listening ? "listening" : undefined}
-        image={avatar ? `http://${BASE}/avatars/${avatar}` : undefined}
+        image={avatar ? httpUrl(`/avatars/${avatar}`, BROKER_BASE) : undefined}
       >
         <span className={`status status--${status}`} />
         {group && (

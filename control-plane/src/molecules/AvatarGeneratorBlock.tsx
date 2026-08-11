@@ -1,6 +1,7 @@
 import { RefreshCw, Sparkles } from "lucide-react";
 import type { CSSProperties } from "react";
 import { useState } from "react";
+import { brokerFetch } from "../api/origin";
 
 interface AvatarGeneratorBlockProps {
   /** Broker host:port. */
@@ -43,7 +44,7 @@ export function AvatarGeneratorBlock({
   const generate = async () => {
     setGenBusy(true);
     setGenError(null);
-    const res = (await fetch(`http://${base}/avatars/generate`, {
+    const res = (await brokerFetch(`/avatars/generate`, base, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name, gender, role, backstory, stereotype }),

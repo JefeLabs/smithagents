@@ -1,5 +1,6 @@
 import { Play } from "lucide-react";
 import type { CSSProperties } from "react";
+import { httpUrl } from "../api/origin";
 
 /** A premade card from the catalog — a complete character, joinable in one click. */
 export interface PresetCard {
@@ -70,7 +71,7 @@ export function AddAgentChooser({
             >
               <img
                 className="preset-card__portrait"
-                src={`http://${base}/avatars/${p.avatar}`}
+                src={httpUrl(`/avatars/${p.avatar}`, base)}
                 alt=""
                 style={{ "--ring": p.ring } as CSSProperties}
                 onError={(e) => {

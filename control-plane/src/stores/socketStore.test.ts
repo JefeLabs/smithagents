@@ -1,6 +1,7 @@
 import { QueryClient } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { qk } from "../queries/keys";
+import { useAuthStore } from "./authStore";
 import { resetAllStores } from "./reset";
 import { useSocketStore } from "./socketStore";
 
@@ -23,7 +24,7 @@ class FakeSocket {
   closed = false;
   onopen: (() => void) | null = null;
   onmessage: ((e: { data: string }) => void) | null = null;
-  onclose: (() => void) | null = null;
+  onclose: ((e?: { code?: number }) => void) | null = null;
   onerror: (() => void) | null = null;
   sent: unknown[] = [];
 
@@ -51,6 +52,13 @@ class FakeSocket {
     this.closed = true;
     this.readyState = FakeSocket.CLOSED;
     this.onclose?.();
+  }
+
+  /** A close carrying a code — the broker's 4401 unauthorized upgrade close. */
+  emitClose(code: number) {
+    this.closed = true;
+    this.readyState = FakeSocket.CLOSED;
+    this.onclose?.({ code });
   }
 }
 
@@ -116,6 +124,18 @@ describe("socketStore connection lifecycle", () => {
     store().disconnect();
     vi.advanceTimersByTime(10_000);
     expect(FakeSocket.count).toBe(2);
+  });
+
+  it("a 4401 close stops reconnecting and flips sessionLost (the auth wall)", () => {
+    vi.useFakeTimers();
+    useAuthStore.getState().clearSessionLost();
+    store().connect(new QueryClient());
+    FakeSocket.last?.emitClose(4401);
+    expect(useAuthStore.getState().sessionLost).toBe(true);
+    // No reconnect: an ordinary close would have opened a 2nd socket at 2s.
+    vi.advanceTimersByTime(5000);
+    expect(FakeSocket.count).toBe(1);
+    useAuthStore.getState().clearSessionLost();
   });
 
   it("cancels an armed reconnect on disconnect", () => {

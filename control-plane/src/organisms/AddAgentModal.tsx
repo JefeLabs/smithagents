@@ -2,10 +2,9 @@ import { Check, ChevronLeft, ChevronRight, Play, Search, Sparkles } from "lucide
 import type { MouseEvent } from "react";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
+import { BROKER_BASE, brokerFetch, httpUrl } from "../api/origin";
 import { AvatarGeneratorBlock } from "../molecules/AvatarGeneratorBlock";
 import { AddAgentChooser, type PresetCard } from "./AddAgentChooser";
-
-const BASE = "127.0.0.1:7790";
 
 interface Stereotype {
   id: string;
@@ -246,7 +245,7 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
 
   useEffect(() => {
     if (!open || editingId) return;
-    void fetch(`http://${BASE}/agents`)
+    void brokerFetch(`/agents`, BROKER_BASE)
       .then((r) => r.json())
       .then((res: { agents?: StoredAgent[] }) =>
         setTakenIds(new Set((res.agents ?? []).filter((a) => !a.archived).map((a) => a.id))),
@@ -256,7 +255,7 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
 
   useEffect(() => {
     if (!open || catalog) return;
-    void fetch(`http://${BASE}/agent-catalog`)
+    void brokerFetch(`/agent-catalog`, BROKER_BASE)
       .then((r) => r.json())
       .then((c: Catalog) => {
         setCatalog(c);
@@ -274,7 +273,7 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
   // frame is a view model and carries none of the persona detail.
   useEffect(() => {
     if (!open || !editingId || !catalog) return;
-    void fetch(`http://${BASE}/agents`)
+    void brokerFetch(`/agents`, BROKER_BASE)
       .then((r) => r.json())
       .then((res: { agents?: StoredAgent[] }) => {
         const a = res.agents?.find((x) => x.id === editingId);
@@ -345,7 +344,7 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
     const params = new URLSearchParams();
     if (search) params.set("search", search);
     if (genderFilter && genderFilter !== "neutral") params.set("gender", genderFilter);
-    const res = (await fetch(`http://${BASE}/voices?${params}`).then((r) => r.json())) as {
+    const res = (await brokerFetch(`/voices?${params}`, BROKER_BASE).then((r) => r.json())) as {
       voices?: CatalogVoice[];
       error?: string;
     };
@@ -382,7 +381,7 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
   const generate = async () => {
     setGenerating(true);
     setError(null);
-    const draft = (await fetch(`http://${BASE}/agents/generate`, {
+    const draft = (await brokerFetch(`/agents/generate`, BROKER_BASE, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -421,7 +420,7 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
   };
 
   const preview = async (id: string) => {
-    const res = await fetch(`http://${BASE}/voices/preview`, {
+    const res = await brokerFetch(`/voices/preview`, BROKER_BASE, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ voiceId: id, text: `Hola, I am ${name || "your new teammate"}.` }),
@@ -441,7 +440,7 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
       !editing && customizedPresetOrigin && v.name === customizedPresetOrigin.name
         ? customizedPresetOrigin.id
         : undefined;
-    const res = (await fetch(`http://${BASE}/agents${editingId ? `/${encodeURIComponent(editingId)}` : ""}`, {
+    const res = (await brokerFetch(`/agents${editingId ? `/${encodeURIComponent(editingId)}` : ""}`, BROKER_BASE, {
       method: editing ? "PUT" : "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -488,7 +487,7 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
   const joinPreset = async (p: PresetCard) => {
     setBusy(true);
     setError(null);
-    const res = (await fetch(`http://${BASE}/agents`, {
+    const res = (await brokerFetch(`/agents`, BROKER_BASE, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -598,7 +597,7 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
                 onCustom={enterCustomWizard}
                 onPreview={(id) => void preview(id)}
                 stereotypeLabels={Object.fromEntries((catalog?.stereotypes ?? []).map((s) => [s.id, s.label]))}
-                base={BASE}
+                base={BROKER_BASE}
                 busy={busy}
                 inactiveClis={inactiveClis}
               />
@@ -802,7 +801,7 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
                     ))}
                   </div>
                   <AvatarGeneratorBlock
-                    base={BASE}
+                    base={BROKER_BASE}
                     engine={catalog?.avatarGen ?? null}
                     name={name}
                     gender={gender}
@@ -813,9 +812,9 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
                     value={
                       avatarData ??
                       (avatarPresetRef
-                        ? `http://${BASE}/avatars/${avatarPresetRef}.png`
+                        ? httpUrl(`/avatars/${avatarPresetRef}.png`, BROKER_BASE)
                         : editingAvatar
-                          ? `http://${BASE}/avatars/${editingAvatar}`
+                          ? httpUrl(`/avatars/${editingAvatar}`, BROKER_BASE)
                           : undefined)
                     }
                     onGenerated={(uri) => {
