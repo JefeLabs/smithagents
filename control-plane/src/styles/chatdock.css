@@ -69,16 +69,11 @@ body[data-focus] .chat-dock:not(.chat-dock--full) {
 }
 body[data-focus] .stage.document-stage,
 body[data-focus] .stage.diagram-stage,
-body[data-focus] .stage.map-stage,
-body[data-focus] .stage.dashboards-stage--docked {
+body[data-focus] .stage.map-stage {
   padding-right: 0; /* the canvas reclaims the dock's reserved width (Plan 3b note above) */
 }
-
-/* Board view only (spec v4): ask/composing float over the center overlay, but a
-   displayed dashboard shares the row with the right dock, so it reserves the width. */
-.stage.dashboards-stage--docked {
-  padding-right: var(--chat-dock-w);
-}
+/* The docked-dashboards width reservation lives in base.css (unlayered) — a
+   layered rule here cannot outrank base.css's `padding: 14px` shorthand. */
 
 .chat-dock--center {
   position: fixed;

@@ -129,6 +129,19 @@ body {
   gap: 10px;
 }
 
+/* A displayed dashboard shares the row with the right dock (spec v4), so it
+   reserves the dock's width. This lives HERE, not chatdock.css: that file is
+   imported into layer(legacy), and no layered declaration can outrank the
+   unlayered `padding: 14px` shorthand above — a chatdock.css version of this
+   rule is silently dead. Focus view drops the dock, so the right side falls
+   back to the shorthand's 14px. */
+.stage.dashboards-stage--docked {
+  padding-right: var(--chat-dock-w);
+}
+body[data-focus] .stage.dashboards-stage--docked {
+  padding-right: 14px;
+}
+
 /* React Flow's own controls, themed. Its stylesheet is imported from
    MapStage.tsx as a bare `import "@xyflow/react/dist/style.css"`, which Vite
    injects UNLAYERED — so it beats components.css too, and its defaults (white
