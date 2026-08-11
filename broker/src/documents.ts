@@ -31,6 +31,8 @@ export interface Doc {
   sections: DocSection[];
   participants: string[];
   proposals: Proposal[];
+  /** Workspaces (group ids later) this doc is pinned to — new sessions there inherit it. Absent on older files. */
+  pins?: string[];
   status: "drafting" | "review" | "final";
   createdAt: string;
   updatedAt: string;
@@ -167,6 +169,26 @@ export class DocumentManager {
     doc.blueprintId = bp.id;
     doc.workType = workType ?? bp.workTypes[0] ?? "";
     doc.sections = sections;
+    doc.updatedAt = this.now();
+    this.store.save(doc);
+    return doc;
+  }
+
+  /** Pin to a workspace/group target: new sessions there inherit the doc. Idempotent. */
+  pin(docId: string, target: string): Doc | null {
+    const doc = this.docs.get(docId);
+    if (!doc) return null;
+    doc.pins = [...new Set([...(doc.pins ?? []), target])];
+    doc.updatedAt = this.now();
+    this.store.save(doc);
+    return doc;
+  }
+
+  /** Remove a pin. Unpinning an absent target is a no-op, not an error. */
+  unpin(docId: string, target: string): Doc | null {
+    const doc = this.docs.get(docId);
+    if (!doc) return null;
+    doc.pins = (doc.pins ?? []).filter((t) => t !== target);
     doc.updatedAt = this.now();
     this.store.save(doc);
     return doc;

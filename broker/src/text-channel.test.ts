@@ -1568,6 +1568,8 @@ test("POST /documents forwards the body and returns the created doc; PATCH updat
       },
       acceptProposal: () => null,
       rejectProposal: () => null,
+      pin: () => null,
+      unpin: () => null,
     },
   });
   const port = await channel.start(0);
@@ -1961,6 +1963,8 @@ test("POST /documents/:id/proposals/:pid accept and reject map null→200 and er
         decided.push(["reject", docId, pid]);
         return pid === "p1" ? null : `unknown proposal: ${pid}`;
       },
+      pin: () => null,
+      unpin: () => null,
     },
   });
   const port = await channel.start(0);
@@ -1972,6 +1976,51 @@ test("POST /documents/:id/proposals/:pid accept and reject map null→200 and er
     assert.deepEqual(decided, [
       ["accept", "d1", "p1"],
       ["reject", "d1", "p9"],
+    ]);
+  } finally {
+    await channel.stop();
+  }
+});
+
+test("POST/DELETE /documents/:id/pins map null→200 and error→404", async () => {
+  const pinned: Array<[string, string, string]> = [];
+  const channel = channelWith({
+    documents: {
+      create: async () => ({ error: "unused" }),
+      patchSection: () => null,
+      changeBlueprint: () => null,
+      rename: () => null,
+      acceptProposal: () => null,
+      rejectProposal: () => null,
+      pin: (docId: string, target: string) => {
+        pinned.push(["pin", docId, target]);
+        return docId === "d1" ? null : `unknown document: ${docId}`;
+      },
+      unpin: (docId: string, target: string) => {
+        pinned.push(["unpin", docId, target]);
+        return docId === "d1" ? null : `unknown document: ${docId}`;
+      },
+    },
+  });
+  const port = await channel.start(0);
+  try {
+    const ok = await fetch(`http://127.0.0.1:${port}/documents/d1/pins`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ target: "acme" }),
+    });
+    assert.equal(ok.status, 200);
+    const missingTarget = await fetch(`http://127.0.0.1:${port}/documents/d1/pins`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(missingTarget.status, 400);
+    const gone = await fetch(`http://127.0.0.1:${port}/documents/d9/pins/acme`, { method: "DELETE" });
+    assert.equal(gone.status, 404);
+    assert.deepEqual(pinned, [
+      ["pin", "d1", "acme"],
+      ["unpin", "d9", "acme"],
     ]);
   } finally {
     await channel.stop();

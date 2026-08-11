@@ -229,3 +229,19 @@ test("proposals: seq continues across restarts from stored ids", () => {
   const again = m2.addProposal(doc.id, { sectionId: "overview", agentId: "a", newBody: "y", rationale: "r" });
   assert.equal(again?.proposals[1].id, "p2");
 });
+
+test("pins: pin/unpin a workspace target, idempotent, unknown doc → null", () => {
+  const { m } = manager();
+  const doc = m.create(BP, "feature", "T");
+  assert.ok(doc);
+  const pinned = m.pin(doc.id, "acme");
+  assert.deepEqual(pinned?.pins, ["acme"]);
+  m.pin(doc.id, "acme"); // idempotent
+  m.pin(doc.id, "globex");
+  assert.deepEqual(m.get(doc.id)?.pins, ["acme", "globex"]);
+  const unpinned = m.unpin(doc.id, "acme");
+  assert.deepEqual(unpinned?.pins, ["globex"]);
+  assert.deepEqual(m.unpin(doc.id, "acme")?.pins, ["globex"]); // unpin absent = no-op, not an error
+  assert.equal(m.pin("nope", "acme"), null);
+  assert.equal(m.unpin("nope", "acme"), null);
+});

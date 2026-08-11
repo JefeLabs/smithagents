@@ -356,6 +356,9 @@ export class TextChannel {
       /** Sticky-note decisions — error string or null, mapped to 404/200 like patchSection. */
       acceptProposal(docId: string, proposalId: string): string | null;
       rejectProposal(docId: string, proposalId: string): string | null;
+      /** Workspace pins (spec: dashboards-as-documents) — same error contract. */
+      pin(docId: string, target: string): string | null;
+      unpin(docId: string, target: string): string | null;
     },
     /** Connection identity (passkey humans + bridge bearer). Absent = open mode. */
     private readonly auth?: BrokerAuth,
@@ -1460,6 +1463,47 @@ export class TextChannel {
               .writeHead(error ? 409 : 200, { ...corsFor(req), "content-type": "application/json" })
               .end(JSON.stringify(error ? { error } : { ok: true }));
           });
+          return;
+        }
+
+        // POST /documents/:id/pins {target} — pin a doc to a workspace; new sessions there inherit it.
+        const pinPostMatch = /^\/documents\/([^/]+)\/pins$/.exec(url.pathname);
+        if (req.method === "POST" && pinPostMatch && this.documents) {
+          const documents = this.documents;
+          if (originBlocked()) return;
+          let body = "";
+          req.on("data", (c) => {
+            body += c;
+          });
+          req.on("end", () => {
+            let target = "";
+            try {
+              target = String((JSON.parse(body || "{}") as { target?: unknown }).target ?? "");
+            } catch {
+              /* falls into the guard below */
+            }
+            if (!target.trim()) {
+              res
+                .writeHead(400, { ...corsFor(req), "content-type": "application/json" })
+                .end(JSON.stringify({ error: "target is required" }));
+              return;
+            }
+            const error = documents.pin(decodeURIComponent(pinPostMatch[1]), target.trim());
+            res
+              .writeHead(error ? 404 : 200, { ...corsFor(req), "content-type": "application/json" })
+              .end(JSON.stringify(error ? { error } : { ok: true }));
+          });
+          return;
+        }
+        // DELETE /documents/:id/pins/:target — remove a pin.
+        const pinDeleteMatch = /^\/documents\/([^/]+)\/pins\/([^/]+)$/.exec(url.pathname);
+        if (req.method === "DELETE" && pinDeleteMatch && this.documents) {
+          const documents = this.documents;
+          if (originBlocked()) return;
+          const error = documents.unpin(decodeURIComponent(pinDeleteMatch[1]), decodeURIComponent(pinDeleteMatch[2]));
+          res
+            .writeHead(error ? 404 : 200, { ...corsFor(req), "content-type": "application/json" })
+            .end(JSON.stringify(error ? { error } : { ok: true }));
           return;
         }
 

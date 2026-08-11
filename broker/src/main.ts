@@ -706,6 +706,12 @@ function startSession(
     brain.seedContext(`workspace "${workspace}": ${rec.description ?? ""}${links}`);
     sessionManager.saveBrainHistory(brain.exportHistory());
   }
+  // Docs pinned to this workspace are its standing context (spec:
+  // dashboards-as-documents, pin model v2) — a new session opens with them
+  // already on its shelf.
+  for (const doc of documentManager.list()) {
+    if (doc.pins?.includes(workspace)) sessionManager.addArtifact(s.id, doc.id);
+  }
   switchDiscord(workspace);
   textChannel.broadcast(sessionFrame());
   return s;
@@ -1377,6 +1383,18 @@ const textChannel = new TextChannel(
       // 409, not 404: the usual cause is a document that already has text —
       // switching blueprints would throw that away (documents.ts guards it).
       if (!doc) return `cannot re-cast ${docId} as "${blueprintId}" — unknown document, or it already has content`;
+      textChannel.broadcast(documentsFrame());
+      return null;
+    },
+    pin: (docId, target) => {
+      const doc = documentManager.pin(docId, target);
+      if (!doc) return `unknown document: ${docId}`;
+      textChannel.broadcast(documentsFrame());
+      return null;
+    },
+    unpin: (docId, target) => {
+      const doc = documentManager.unpin(docId, target);
+      if (!doc) return `unknown document: ${docId}`;
       textChannel.broadcast(documentsFrame());
       return null;
     },
