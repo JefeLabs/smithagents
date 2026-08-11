@@ -222,3 +222,57 @@ body {
   --border: inherit;
   --separator: inherit;
 }
+
+/* Login screen (cloud mode only): the full-screen state shown until a tenant is
+   signed in. Centered card, tokens inherited from the active theme. */
+.login-screen {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--background);
+  padding: 24px;
+}
+.login-screen__card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  max-width: 360px;
+  padding: 32px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+}
+.login-screen__title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.login-screen__subtitle {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+.login-screen__invite {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.login-screen__link {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+}
+.login-screen__error {
+  color: var(--danger, #d4183d);
+  font-size: 0.9rem;
+}
+.auth-gate__splash {
+  position: fixed;
+  inset: 0;
+  background: var(--background);
+}

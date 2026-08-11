@@ -12,4 +12,6 @@
  * looking live. Widening the type keeps those branches honestly type-checked while
  * the value stays false.
  */
-export const CLOUD_MODE: boolean = false;
+import { isCloud } from "../api/origin";
+
+export const CLOUD_MODE: boolean = isCloud();
