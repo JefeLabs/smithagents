@@ -78,6 +78,8 @@ export function HomePage() {
   const focusMode = useUiStore((s) => s.focusMode);
   const toggleFocus = useUiStore((s) => s.toggleFocus);
   const exitFocus = useUiStore((s) => s.exitFocus);
+  const docTarget = useUiStore((s) => s.docTarget);
+  const clearDocTarget = useUiStore((s) => s.clearDocTarget);
   const modalOpen = useUiStore((s) => s.modalOpen);
   const editingId = useUiStore((s) => s.editingId);
   const tunerOpen = useUiStore((s) => s.tunerOpen);
@@ -312,7 +314,19 @@ export function HomePage() {
           <ChatDock
             variant={dockVariant}
             messages={messages}
-            onSend={api.postUtterance}
+            onSend={(text, target) => {
+              // On a doc canvas the send IS an instruction about the page
+              // (spec: dock-sends-edit-artifact); the aimed section rides
+              // along when it matches the doc on screen, and one send spends
+              // the aim.
+              const docId = /^\/(?:doc|diagram)\/([^/]+)$/.exec(pathname)?.[1];
+              if (!docId) return api.postUtterance(text, target);
+              const sectionId = docTarget?.docId === docId ? docTarget.sectionId : undefined;
+              clearDocTarget();
+              return api.postUtterance(text, target, { docId, ...(sectionId ? { sectionId } : {}) });
+            }}
+            docTarget={docTarget}
+            onClearDocTarget={clearDocTarget}
             targets={roster}
             brokerConnected={connected}
             micLive={micLive}

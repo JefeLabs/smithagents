@@ -365,4 +365,14 @@ describe("target selector", () => {
     await userEvent.click(screen.getByRole("button", { name: /send to/i }));
     expect(await screen.findByRole("option", { name: /Delta/ })).toHaveTextContent(/Josefina/);
   });
+
+  it("shows the aimed-section chip and clears it on click; absent when unset", async () => {
+    const onClearDocTarget = vi.fn();
+    render(<Composer onSend={vi.fn()} docTarget={{ heading: "Approach" }} onClearDocTarget={onClearDocTarget} />);
+    await userEvent.click(screen.getByRole("button", { name: /Targeting Approach/ }));
+    expect(onClearDocTarget).toHaveBeenCalledTimes(1);
+    cleanup();
+    render(<Composer onSend={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: /Targeting/ })).toBeNull();
+  });
 });

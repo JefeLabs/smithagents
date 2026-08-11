@@ -424,6 +424,49 @@ describe("HomePage — creating a session lands in its conversation", () => {
     await waitFor(() => expect(screen.getByRole("region", { name: "Chat" }).className).toContain("chat-dock--center"));
   });
 
+  it("a send from /doc carries the viewed doc and the aimed section, then spends the aim", async () => {
+    const calls: Array<{ url: string; body?: unknown }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+        if (url.endsWith("/agents")) return new Response(JSON.stringify({ agents: [], voice: { stt: false, tts: true } }));
+        if (url.endsWith("/workspaces")) return new Response(JSON.stringify({ workspaces: [] }));
+        if (url.endsWith("/cli-tools")) return new Response(JSON.stringify({ tools: [] }));
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }),
+    );
+    renderApp((client) => {
+      client.setQueryData(qk.documents, [
+        {
+          id: "d1",
+          title: "Login spec",
+          blueprintId: "spec",
+          workType: "feature",
+          sections: [{ id: "overview", heading: "What this is", body: "Words." }],
+          participants: [],
+          status: "drafting",
+          createdAt: "t",
+          updatedAt: "t",
+        },
+      ]);
+    }, "/doc/d1");
+    await screen.findByRole("region", { name: "Document" });
+    act(() => FakeSocket.last?.open()); // the composer enables once the broker socket is up
+    act(() => useUiStore.getState().setDocTarget({ docId: "d1", sectionId: "overview", heading: "What this is" }));
+    await userEvent.type(screen.getByRole("textbox", { name: "Type a request" }), "tighten this");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => {
+      const sent = calls.find((c) => c.url.endsWith("/utterance"));
+      expect(sent?.body).toMatchObject({
+        text: "tighten this",
+        doc: { docId: "d1", sectionId: "overview" },
+      });
+    });
+    expect(useUiStore.getState().docTarget).toBeNull(); // one send spends the aim
+  });
+
   it("focus mode stamps body[data-focus]; Esc exits", async () => {
     renderApp();
     await userEvent.click(await screen.findByRole("row", { name: "Focus" }));

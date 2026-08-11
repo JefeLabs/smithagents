@@ -30,6 +30,9 @@ export interface ChatDockProps {
   activeKind?: ArtifactKind;
   /** The active session's artifact shelf — only rendered in the `full` variant. */
   shelf?: ReactNode;
+  /** The aimed section for the next send — the composer's dismissible chip. */
+  docTarget?: { heading: string } | null;
+  onClearDocTarget?: () => void;
 }
 
 /**
@@ -58,6 +61,8 @@ export function ChatDock({
   onPickKind,
   activeKind,
   shelf,
+  docTarget,
+  onClearDocTarget,
 }: ChatDockProps) {
   const reduceMotion = useReducedMotion();
   const spring = reduceMotion ? { duration: 0 } : { type: "spring" as const, duration: 0.5, bounce: 0 };
@@ -78,6 +83,8 @@ export function ChatDock({
       onPickKind={onPickKind}
       activeKind={activeKind}
       kindControl={variant === "dock" ? "select" : "buttons"}
+      docTarget={docTarget}
+      onClearDocTarget={onClearDocTarget}
     />
   );
 

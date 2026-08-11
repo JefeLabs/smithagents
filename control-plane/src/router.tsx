@@ -100,6 +100,7 @@ function DocRoute() {
         doc={doc}
         blueprints={blueprints.filter((b) => b.family === docFamily)}
         shelf={shelf}
+        onAimSection={(sectionId, heading) => useUiStore.getState().setDocTarget({ docId: doc.id, sectionId, heading })}
         onChangeBlueprint={(blueprintId) => api.patchDocBlueprint(doc.id, blueprintId)}
         onRename={(title) => api.patchDocTitle(doc.id, title)}
         onSaveSection={(sectionId, body) => api.patchDocSection(doc.id, sectionId, body)}

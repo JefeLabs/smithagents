@@ -11,6 +11,8 @@ interface SectionCardProps {
   onCancel: () => void;
   /** Blur commits — a document has no save button. */
   onSave: (body: string) => void;
+  /** Aim the next dock send at this section (spec: dock-sends-edit-artifact). */
+  onAim?: () => void;
 }
 
 /**
@@ -19,10 +21,23 @@ interface SectionCardProps {
  * button and no save button: blur commits, Escape abandons (spec 2026-08-10 —
  * "editing should feel like editing a document, not filling a form").
  */
-export function SectionCard({ section, hint, editing, onEdit, onCancel, onSave }: SectionCardProps) {
+export function SectionCard({ section, hint, editing, onEdit, onCancel, onSave, onAim }: SectionCardProps) {
   return (
     <section className="doc-section" aria-label={section.heading}>
-      <h3 className="doc-section__heading">{section.heading}</h3>
+      <div className="doc-section__head">
+        <h3 className="doc-section__heading">{section.heading}</h3>
+        {onAim && (
+          <button
+            type="button"
+            className="doc-section__aim"
+            aria-label={`Target ${section.heading}`}
+            title="aim the next chat instruction at this section"
+            onClick={onAim}
+          >
+            ⌖
+          </button>
+        )}
+      </div>
       {editing ? (
         <SectionEditor
           body={section.body}

@@ -109,6 +109,17 @@ export interface DocSectionT {
  * MINUS `proposals` — phase 1 renders no proposals, so that field simply
  * isn't read; an unknown extra field from the broker is not an error.
  */
+/** An agent's suggested section rewrite — a sticky note on the page until decided. */
+export interface ProposalT {
+  id: string;
+  sectionId: string;
+  agentId: string;
+  newBody: string;
+  rationale: string;
+  state: "open" | "accepted" | "rejected" | "stale";
+  createdAt: string;
+}
+
 export interface DocT {
   id: string;
   title: string;
@@ -116,6 +127,8 @@ export interface DocT {
   workType: string;
   sections: DocSectionT[];
   participants: string[];
+  /** Absent on docs stored before proposals existed. */
+  proposals?: ProposalT[];
   status: "drafting" | "review" | "final";
   createdAt: string;
   updatedAt: string;

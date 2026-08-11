@@ -75,12 +75,18 @@ export async function getExecutionModes(base: string = BROKER_BASE): Promise<Rec
  * and that refusal has to reach the composer — so this resolves to an error
  * string, or null on success.
  */
-export async function postUtterance(text: string, target?: Target, base: string = BROKER_BASE): Promise<string | null> {
+export async function postUtterance(
+  text: string,
+  target?: Target,
+  /** The artifact the sender is looking at — turns the send into an edit instruction (spec: dock-sends-edit-artifact). */
+  doc?: { docId: string; sectionId?: string },
+  base: string = BROKER_BASE,
+): Promise<string | null> {
   try {
     const res = await brokerFetch(`/utterance`, base, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(target ? { text, target } : { text }),
+      body: JSON.stringify({ text, ...(target ? { target } : {}), ...(doc ? { doc } : {}) }),
     });
     if (res.ok) return null;
     const body = (await res.json().catch(() => ({}))) as { error?: string };
@@ -514,6 +520,27 @@ export async function postDocument(
     return { error: body.error ?? `broker returned ${res.status}` };
   } catch {
     return { error: "broker unreachable" };
+  }
+}
+
+/** POST /documents/:id/proposals/:pid/accept — apply a sticky-note suggestion. Error string or null. */
+export async function acceptProposal(docId: string, proposalId: string, base: string = BROKER_BASE): Promise<string | null> {
+  return decideProposal(docId, proposalId, "accept", base);
+}
+
+/** POST /documents/:id/proposals/:pid/reject — dismiss a sticky-note suggestion. Error string or null. */
+export async function rejectProposal(docId: string, proposalId: string, base: string = BROKER_BASE): Promise<string | null> {
+  return decideProposal(docId, proposalId, "reject", base);
+}
+
+async function decideProposal(docId: string, proposalId: string, verb: "accept" | "reject", base: string): Promise<string | null> {
+  try {
+    const res = await brokerFetch(`/documents/${encodeURIComponent(docId)}/proposals/${encodeURIComponent(proposalId)}/${verb}`, base, { method: "POST" });
+    if (res.ok) return null;
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    return body.error ?? `HTTP ${res.status}`;
+  } catch {
+    return "broker unreachable";
   }
 }
 

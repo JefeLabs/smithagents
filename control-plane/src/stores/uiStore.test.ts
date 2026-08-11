@@ -53,6 +53,14 @@ describe("uiStore", () => {
     expect(useUiStore.getState().dashBoardShowing).toBe(false);
   });
 
+  it("docTarget sets and clears", () => {
+    expect(useUiStore.getState().docTarget).toBeNull();
+    useUiStore.getState().setDocTarget({ docId: "d1", sectionId: "approach", heading: "Approach" });
+    expect(useUiStore.getState().docTarget?.heading).toBe("Approach");
+    useUiStore.getState().clearDocTarget();
+    expect(useUiStore.getState().docTarget).toBeNull();
+  });
+
   it("state does not leak between tests", () => {
     // modalOpen alone doesn't pin this: it happens to end up false anyway
     // from the "closing the agent modal" test's own closeAgentModal() call,

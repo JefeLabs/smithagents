@@ -130,6 +130,11 @@
   flex-direction: column;
   gap: 6px;
 }
+.doc-section__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .doc-section__heading {
   margin: 0;
   font-size: 13px;
@@ -137,6 +142,39 @@
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-2);
+}
+/* Aim-a-section: quiet until the section is hovered or the button focused. */
+.doc-section__aim {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 6px;
+  cursor: pointer;
+  opacity: 0;
+}
+.doc-section:hover .doc-section__aim,
+.doc-section__aim:focus-visible {
+  opacity: 1;
+}
+.doc-section__aim:hover {
+  color: color-mix(in srgb, var(--accent) 80%, var(--text));
+  border-color: var(--pill-br);
+}
+
+/* The composer's aimed-section chip — one send spends it, click clears it. */
+.composer__doc-target {
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: color-mix(in srgb, var(--accent) 80%, var(--text));
+  font: inherit;
+  font-size: 11.5px;
+  padding: 3px 10px;
+  cursor: pointer;
+  white-space: nowrap;
 }
 .doc-section__body {
   font-size: 15px;

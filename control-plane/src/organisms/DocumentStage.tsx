@@ -14,6 +14,8 @@ interface DocumentStageProps {
   onRename?: (title: string) => Promise<{ error?: string }>;
   /** The session's staged-artifacts shelf, absolutely positioned over the stage's left edge. Built by the route. */
   shelf?: ReactNode;
+  /** Aim the next dock send at a section — the route wires this to the composer's target chip. */
+  onAimSection?: (sectionId: string, heading: string) => void;
 }
 
 /**
@@ -28,6 +30,7 @@ export function DocumentStage({
   onChangeBlueprint,
   onRename,
   shelf,
+  onAimSection,
 }: DocumentStageProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -138,6 +141,7 @@ export function DocumentStage({
                 key={editingId === s.id ? `${s.id}-editing` : s.id}
                 section={s}
                 hint={hintFor(s.id)}
+                onAim={onAimSection ? () => onAimSection(s.id, s.heading) : undefined}
                 editing={editingId === s.id}
                 onEdit={() => {
                   setSaveError(null);

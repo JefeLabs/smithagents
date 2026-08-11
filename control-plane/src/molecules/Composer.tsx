@@ -38,6 +38,9 @@ interface ComposerProps {
    * a compact `<select>` (the right dock, where five buttons won't fit).
    */
   kindControl?: "buttons" | "select";
+  /** The aimed section for the next send (spec: dock-sends-edit-artifact) — a dismissible chip. */
+  docTarget?: { heading: string } | null;
+  onClearDocTarget?: () => void;
 }
 
 /** HeroUI's Select speaks string Keys; the wire speaks Target objects. Encode here, decode on the way out. */
@@ -82,6 +85,8 @@ export function Composer({
   onPickKind,
   activeKind = "chat",
   kindControl = "buttons",
+  docTarget,
+  onClearDocTarget,
 }: ComposerProps) {
   const [draft, setDraft] = useState("");
   const [holding, setHolding] = useState(false);
@@ -200,6 +205,17 @@ export function Composer({
           ))}
         <PromptInput.Toolbar className="composer__row">
           <PromptInput.ToolbarStart>
+            {docTarget && (
+              // The aimed section for the next send — click to widen back to the whole page.
+              <button
+                type="button"
+                className="composer__doc-target"
+                aria-label={`Targeting ${docTarget.heading} — click to clear`}
+                onClick={onClearDocTarget}
+              >
+                → {docTarget.heading} ✕
+              </button>
+            )}
             <button
               type="button"
               className="plus"

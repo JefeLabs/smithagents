@@ -85,4 +85,14 @@ describe("DocumentStage", () => {
     render(<DocumentStage doc={DOC} onSaveSection={vi.fn()} shelf={<aside aria-label="session documents" />} />);
     expect(screen.getByRole("complementary", { name: "session documents" })).toBeTruthy();
   });
+
+  it("aim buttons render per section and report id + heading; absent when unwired", () => {
+    const onAimSection = vi.fn();
+    render(<DocumentStage doc={DOC} onSaveSection={vi.fn()} onAimSection={onAimSection} />);
+    fireEvent.click(screen.getByRole("button", { name: `Target ${DOC.sections[0].heading}` }));
+    expect(onAimSection).toHaveBeenCalledWith(DOC.sections[0].id, DOC.sections[0].heading);
+    cleanup();
+    render(<DocumentStage doc={DOC} onSaveSection={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: /^Target / })).toBeNull();
+  });
 });
