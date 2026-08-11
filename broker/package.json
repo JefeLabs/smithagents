@@ -10,7 +10,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "serve": "node --env-file=../.env --import tsx src/main.ts",
-    "test": "node --import tsx --test src/*.test.ts"
+    "test": "node --import tsx --test src/*.test.ts src/**/*.test.ts"
   },
   "engines": {
     "node": ">=24.0.0"
