@@ -29,6 +29,7 @@ import { createDiscordTextLifecycle } from "./discord-text-lifecycle.ts";
 import type { createDiscordVoiceSurface } from "./discord-voice.ts";
 import { createDiscordVoiceLifecycle } from "./discord-voice-lifecycle.ts";
 import { createDiscordWorkspaceSwitcher } from "./discord-workspace-switcher.ts";
+import { runDocEditTurn } from "./doc-edit.ts";
 import { type Doc, DocumentManager } from "./documents.ts";
 import { type AskFactory, ElectionScheduler, runElection } from "./election.ts";
 import { EXEC_TO_RUNTIME, isExecutionMode } from "./execution-modes.ts";
@@ -1394,7 +1395,7 @@ const textChannel = new TextChannel(
      * agent, who gets the typed text as a task with no brain in between
      * (spec §2, Edwin's "no mediation" ruling).
      */
-    send: async (text, rawTarget) => {
+    send: async (text, rawTarget, doc) => {
       const target = parseTarget(rawTarget);
       const roster = broker.uiRoster();
       const resolution = resolveTarget(target, {
@@ -1409,6 +1410,45 @@ const textChannel = new TextChannel(
       });
 
       if ("error" in resolution) return { error: resolution.error, status: 404 };
+
+      // A doc-context send is an instruction about the artifact on screen
+      // (spec: dock-sends-edit-artifact). Host = your hands, applied
+      // directly; a single crew agent = a sticky-note Proposal. Never a
+      // swarm dispatch — doc edits are broker-domain work.
+      if (doc) {
+        const targetDoc = documentManager.get(doc.docId);
+        if (!targetDoc) return { error: `unknown document: ${doc.docId}`, status: 404 };
+        if (resolution.kind !== "brain" && target?.kind !== "agent") {
+          return { error: "direct a doc instruction at one agent", status: 400 };
+        }
+        textChannel.broadcast({ type: "utterance", text });
+        const editor = resolution.kind === "brain" ? undefined : resolution.name;
+        try {
+          const r = await runDocEditTurn({
+            doc: targetDoc,
+            instruction: text,
+            targetSectionId: doc.sectionId,
+            persona: editor,
+            create: (p) => anthropic.messages.create(p as Parameters<typeof anthropic.messages.create>[0]) as never,
+          });
+          if (editor) {
+            for (const rw of r.rewrites) {
+              documentManager.addProposal(doc.docId, { ...rw, agentId: editor, rationale: r.note });
+            }
+            textChannel.broadcast({ type: "speech", text: `${r.rewrites.length} suggestion(s) from ${editor} on “${targetDoc.title}” — accept or dismiss them on the page.` });
+          } else {
+            for (const rw of r.rewrites) documentManager.patchSection(doc.docId, rw.sectionId, rw.newBody);
+            textChannel.broadcast({ type: "speech", text: r.note });
+          }
+          textChannel.broadcast(documentsFrame());
+        } catch (err) {
+          // Nothing was written; the transcript carries the failure so the
+          // composer isn't blocked on a refusal status.
+          textChannel.broadcast({ type: "speech", text: `couldn't apply that: ${(err as Error).message}` });
+        }
+        return { ok: true as const };
+      }
+
       if (resolution.kind === "brain") {
         textChannel.broadcast({ type: "utterance", text });
         handleUserText(text);

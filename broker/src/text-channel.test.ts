@@ -1943,6 +1943,40 @@ test("POST /utterance with a target dispatches instead of taking a brain turn", 
   }
 });
 
+test("POST /utterance with doc context takes the directed path even without a target", async () => {
+  const calls: Array<{ text: string; target: unknown; doc: unknown }> = [];
+  const channel = channelWith({
+    directed: {
+      send: async (text, target, doc) => {
+        calls.push({ text, target, doc });
+        return { ok: true as const };
+      },
+    },
+  });
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/utterance`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: "tighten the approach", doc: { docId: "d1", sectionId: "approach" } }),
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(calls, [
+      { text: "tighten the approach", target: undefined, doc: { docId: "d1", sectionId: "approach" } },
+    ]);
+
+    const targeted = await fetch(`http://127.0.0.1:${port}/utterance`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: "x", target: { kind: "agent", id: "osvaldo" }, doc: { docId: "d1" } }),
+    });
+    assert.equal(targeted.status, 200);
+    assert.deepEqual(calls[1], { text: "x", target: { kind: "agent", id: "osvaldo" }, doc: { docId: "d1" } });
+  } finally {
+    await channel.stop();
+  }
+});
+
 test("a busy target answers 409 with the broker's own wording, and dispatches nothing", async () => {
   const channel = channelWith({
     directed: { send: async () => ({ error: "Osvaldo is busy with: refactor auth.", status: 409 }) },

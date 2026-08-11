@@ -363,7 +363,12 @@ export class TextChannel {
      * status is what lets a busy-refusal reach the composer.
      */
     private readonly directed?: {
-      send(text: string, target: unknown): Promise<{ ok: true; taskId?: string } | { error: string; status: number }>;
+      send(
+        text: string,
+        target: unknown,
+        /** The artifact the sender is LOOKING AT — a doc-context send runs an edit turn, not a chat turn. */
+        doc?: { docId: string; sectionId?: string },
+      ): Promise<{ ok: true; taskId?: string } | { error: string; status: number }>;
     },
     /** Settings › Feeds. The mutating routes carry the same origin guard as every other write. */
     private readonly feeds?: {
@@ -542,7 +547,7 @@ export class TextChannel {
           body += c;
         });
         req.on("end", () => {
-          let parsed: { text?: unknown; target?: unknown } = {};
+          let parsed: { text?: unknown; target?: unknown; doc?: unknown } = {};
           try {
             parsed = JSON.parse(body) as typeof parsed;
           } catch {
@@ -556,12 +561,19 @@ export class TextChannel {
             return;
           }
           const utterance = text.trim();
+          const rawDoc = parsed.doc as { docId?: unknown; sectionId?: unknown } | undefined;
+          const doc =
+            rawDoc && typeof rawDoc.docId === "string"
+              ? { docId: rawDoc.docId, ...(typeof rawDoc.sectionId === "string" ? { sectionId: rawDoc.sectionId } : {}) }
+              : undefined;
           // A DIRECTED send is awaited so a refusal (busy agent, unknown
-          // target) can reach the composer. With no `target` this branch never
-          // runs, so mic PTT, stdin, Discord and the CLI bridge keep exactly
-          // the path — and the 202 — they have today.
-          if (parsed.target !== undefined && this.directed) {
-            void this.directed.send(utterance, parsed.target).then(
+          // target) can reach the composer. A DOC-CONTEXT send always takes
+          // this path too — an instruction about the artifact on screen is an
+          // edit turn even with no explicit target. With neither, mic PTT,
+          // stdin, Discord and the CLI bridge keep exactly the path — and the
+          // 202 — they have today.
+          if ((parsed.target !== undefined || doc) && this.directed) {
+            void this.directed.send(utterance, parsed.target, doc).then(
               (r) => {
                 const status = "error" in r ? r.status : 200;
                 res
