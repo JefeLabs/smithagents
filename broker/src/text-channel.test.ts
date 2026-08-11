@@ -1728,3 +1728,26 @@ test('open mode: WS connects with no credential and mic works as before', async 
     ws.close();
   } finally { await channel.stop(); }
 });
+
+test('https origin yields SameSite=None; Secure; http origin yields SameSite=Lax', async () => {
+  for (const [webOrigin, expected] of [
+    ['https://cell.example.com', /SameSite=None; Secure/],
+    ['http://localhost:1420', /SameSite=Lax/],
+  ] as const) {
+    const dir = await mkdtemp(join(tmpdir(), 'ck-'));
+    const auth = new BrokerAuth(join(dir, 'auth.json'), { rpId: 'x', webOrigin, required: true, webauthn: fakeWebauthnAdapter() });
+    await auth.load();
+    const invite = auth.mintInvite();
+    await auth.beginRegistration(invite.code, 'edwin'); // park the challenge finishRegistration needs
+    const channel = channelWith({ auth });
+    const port = await channel.start(0);
+    try {
+      const r = await fetch(`http://127.0.0.1:${port}/auth/register/verify`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ code: invite.code, response: { ok: true } }),
+      });
+      assert.match(r.headers.get('set-cookie') ?? '', expected);
+    } finally { await channel.stop(); }
+  }
+});
