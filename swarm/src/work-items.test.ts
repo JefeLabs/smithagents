@@ -358,7 +358,7 @@ test("routes: exits are per-column and the forward plan handoff exists", () => {
   const reactive = createBoard("reactive", "acme");
   assert.deepEqual(
     exitsFor(reactive, "triage").map((e) => e.toType),
-    ["maintenance", "ideation"],
+    ["maintenance", "ideation", "personal"],
   );
   assert.deepEqual(exitsFor(createBoard("ideation", "acme"), "confirm"), []);
 });
@@ -463,6 +463,45 @@ test("findRouteDestination: does not match a same-type board in a different work
   const exit = resolveExit(source, "ready", "deliver");
   assert.ok(exit);
   assert.equal(findRouteDestination([source, otherWorkspaceDest], source, exit), undefined);
+});
+
+test("escalation: maintenance and reactive triage each exit to the personal queue", () => {
+  const maintenance = createBoard("maintenance", "acme");
+  const reactive = createBoard("reactive", "acme");
+  assert.deepEqual(
+    exitsFor(maintenance, "triage").map((e) => e.label),
+    ["Escalate to Active To-dos"],
+  );
+  assert.equal(resolveExit(reactive, "triage", "personal")?.toColumn, "queue");
+  assert.deepEqual(exitsFor(maintenance, "doing"), []);
+});
+
+test("findRouteDestination resolves the workspace-less personal board from any workspace", () => {
+  const source = createBoard("maintenance", "acme");
+  const personal = createBoard("personal");
+  const boards = [createBoard("maintenance", "globex"), personal, source];
+  const exit = resolveExit(source, "triage", "personal");
+  assert.ok(exit);
+  assert.equal(findRouteDestination(boards, source, exit), personal);
+});
+
+test("routeCard escalates a triage card into the personal queue with a provenance trace", () => {
+  const maintenance = createBoard("maintenance", "acme");
+  const personal = createBoard("personal");
+  addCard(personal, { title: "already queued", columnId: "queue" });
+  const card = addCard(maintenance, { title: "prod leak", columnId: "triage" });
+  const exit = resolveExit(maintenance, "triage", "personal");
+  assert.ok(exit);
+  const plan = routeCard(maintenance, personal, card.id, exit, "2026-08-11T00:00:00.000Z");
+  assert.equal(plan.card.columnId, "queue");
+  assert.equal(plan.card.order, 1); // appended after the existing queue card
+  assert.equal(plan.writeFirst, personal); // destination-first persistence
+  assert.deepEqual(plan.card.routedFrom?.at(-1), {
+    boardId: maintenance.id,
+    boardType: "maintenance",
+    columnId: "triage",
+    at: "2026-08-11T00:00:00.000Z",
+  });
 });
 
 test("findRouteDestination: undefined when the workspace has no board of that type yet", () => {

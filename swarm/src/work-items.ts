@@ -202,9 +202,10 @@ export const BOARD_ROUTES: Record<BoardType, RouteExit[]> = {
   reactive: [
     { from: "triage", toType: "maintenance", toColumn: "triage", label: "To maintenance" },
     { from: "triage", toType: "ideation", toColumn: "intake", label: "To ideation" },
+    { from: "triage", toType: "personal", toColumn: "queue", label: "Escalate to Active To-dos" },
   ],
   ideation: [],
-  maintenance: [],
+  maintenance: [{ from: "triage", toType: "personal", toColumn: "queue", label: "Escalate to Active To-dos" }],
   personal: [],
 };
 
@@ -228,8 +229,13 @@ export interface RoutePlan {
   writeSecond: WorkBoard;
 }
 
-/** The board a routed card lands on: same workspace as the source, the exit's destination type. */
+/**
+ * The board a routed card lands on: same workspace as the source, the exit's
+ * destination type. The personal board is the workspace-less singleton, so an
+ * escalation reaches it from any workspace.
+ */
 export function findRouteDestination(boards: WorkBoard[], source: WorkBoard, exit: RouteExit): WorkBoard | undefined {
+  if (exit.toType === "personal") return boards.find((b) => b.type === "personal");
   return boards.find((b) => b.type === exit.toType && b.workspaceId === source.workspaceId);
 }
 
