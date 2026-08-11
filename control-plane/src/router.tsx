@@ -10,9 +10,9 @@ import {
 import { lazy, Suspense } from "react";
 import * as api from "./api/broker";
 import type { BlueprintT, ChatMessage, DocT, RosterAgent } from "./api/types";
-import { type ArtifactKind, familyForKind } from "./lib/artifactKinds";
 import { agentSeeds } from "./data/agents";
 import { useVoiceStatus } from "./hooks/useVoiceStatus";
+import { type ArtifactKind, familyForKind } from "./lib/artifactKinds";
 import { ArtifactShelf } from "./molecules/ArtifactShelf";
 import { Composer } from "./molecules/Composer";
 import { Transcript } from "./molecules/Transcript";

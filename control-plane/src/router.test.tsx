@@ -128,12 +128,17 @@ describe("stage routing", () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
         if (url.endsWith("/blueprints"))
-          return new Response(JSON.stringify({ blueprints: [{ id: "spec", name: "Spec", family: "document", workTypes: ["feature"] }] }));
+          return new Response(
+            JSON.stringify({ blueprints: [{ id: "spec", name: "Spec", family: "document", workTypes: ["feature"] }] }),
+          );
         if (url.endsWith("/documents") && init?.method === "POST") {
           posts.push(url);
-          return new Response(JSON.stringify({ doc: { id: "d1", title: "Untitled", blueprintId: "spec", sections: [], artifacts: [] } }));
+          return new Response(
+            JSON.stringify({ doc: { id: "d1", title: "Untitled", blueprintId: "spec", sections: [], artifacts: [] } }),
+          );
         }
-        if (url.endsWith("/agents")) return new Response(JSON.stringify({ agents: [], voice: { stt: false, tts: false } }));
+        if (url.endsWith("/agents"))
+          return new Response(JSON.stringify({ agents: [], voice: { stt: false, tts: false } }));
         return new Response(JSON.stringify({}));
       }),
     );
