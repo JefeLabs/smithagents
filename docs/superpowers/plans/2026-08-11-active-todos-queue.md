@@ -1,5 +1,7 @@
 # Active To-dos Board + Queue Intake Implementation Plan
 
+> **CLAIMED:** in execution by Claude session d43af92a (inline, main checkout) since 2026-08-11. Do not execute concurrently.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Rename the personal board to "Active To-dos", make it the first tab, and give it a leftmost Queue intake column fed by a midnight carry-over sweep and escalation routes from the Maintenance/Reactive triage columns.
