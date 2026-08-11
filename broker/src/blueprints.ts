@@ -11,6 +11,8 @@ export interface BlueprintSection {
   heading: string;
   /** Author guidance shown as the empty-section placeholder. */
   hint?: string;
+  /** Seed body a fresh document opens with (e.g. a starter Mermaid block). Absent = empty. */
+  starter?: string;
   /** Absent = always present. */
   when?: { workType: string[] };
   required?: boolean;
@@ -69,6 +71,34 @@ const DEFAULT_BLUEPRINTS: Blueprint[] = [
       { id: "verification", heading: "Verification", hint: "The gates that must be green before merge." },
     ],
   },
+  {
+    id: "er",
+    name: "Database design",
+    family: "diagram",
+    workTypes: ["feature", "bugfix", "integration"],
+    sections: [
+      {
+        id: "diagram",
+        heading: "Diagram",
+        hint: "A Mermaid entity-relationship diagram.",
+        starter: "```mermaid\nerDiagram\n  CUSTOMER ||--o{ ORDER : places\n  ORDER ||--|{ LINE_ITEM : contains\n```",
+      },
+    ],
+  },
+  {
+    id: "sequence",
+    name: "Sequence diagram",
+    family: "diagram",
+    workTypes: ["feature", "bugfix", "integration"],
+    sections: [
+      {
+        id: "diagram",
+        heading: "Diagram",
+        hint: "A Mermaid sequence diagram.",
+        starter: "```mermaid\nsequenceDiagram\n  Client->>Server: request\n  Server-->>Client: response\n```",
+      },
+    ],
+  },
 ];
 
 /** Defaults merged with user files (by id, user wins); malformed files are skipped. */
@@ -101,5 +131,5 @@ export function instantiateSections(
   if (!bp.workTypes.includes(workType)) return null;
   return bp.sections
     .filter((s) => !s.when || s.when.workType.includes(workType))
-    .map((s) => ({ id: s.id, heading: s.heading, body: "" }));
+    .map((s) => ({ id: s.id, heading: s.heading, body: s.starter ?? "" }));
 }

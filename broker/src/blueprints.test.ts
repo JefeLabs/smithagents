@@ -5,9 +5,9 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { instantiateSections, loadBlueprints } from "./blueprints.ts";
 
-test("defaults ship spec and implementation-plan", () => {
+test("defaults ship spec and implementation-plan plus the er/sequence diagrams", () => {
   const bps = loadBlueprints(join(tmpdir(), "no-such-dir"));
-  assert.deepEqual(bps.map((b) => b.id).sort(), ["implementation-plan", "spec"]);
+  assert.deepEqual(bps.map((b) => b.id).sort(), ["er", "implementation-plan", "sequence", "spec"]);
 });
 
 test("user files merge over defaults by id and add new ids", () => {
@@ -104,4 +104,14 @@ test("a user blueprint file without family defaults to document", () => {
   );
   const bp = loadBlueprints(dir).find((b) => b.id === "custom");
   assert.equal(bp?.family, "document");
+});
+
+test("diagram blueprints carry family=diagram and a Mermaid starter that seeds the section body", () => {
+  const bps = loadBlueprints(join(tmpdir(), "no-such-dir"));
+  const er = bps.find((b) => b.id === "er");
+  const seq = bps.find((b) => b.id === "sequence");
+  assert.equal(er?.family, "diagram");
+  assert.equal(seq?.family, "diagram");
+  const secs = instantiateSections(er!, er!.workTypes[0]!);
+  assert.ok(secs && secs[0]!.body.includes("erDiagram"));
 });
