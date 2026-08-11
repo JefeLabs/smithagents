@@ -12,6 +12,11 @@ export interface DashSpec {
   kpis: Array<{ label: string; value: string; delta?: string; tone?: "ok" | "watch" | "high" }>;
   charts: Array<{ kind: "line" | "bars"; title: string; series?: string[] }>;
   table?: { title: string; columns: string[]; rows: string[][] };
+  /**
+   * Prose answer cards (spec 2026-08-11-workspace-groups §7) — chat-written
+   * text with an informational source label ("session s12", "doc d34").
+   */
+  texts?: Array<{ title: string; body: string; source?: string }>;
 }
 
 /** First fenced ```json block (or a bare object); null unless the shape holds. */
@@ -21,6 +26,20 @@ export function parseDashSpec(body: string): DashSpec | null {
     const parsed = JSON.parse(raw) as DashSpec;
     if (typeof parsed.summary !== "string" || !Array.isArray(parsed.kpis) || !Array.isArray(parsed.charts)) {
       return null;
+    }
+    // texts are optional but validated when present — a malformed entry fails
+    // the WHOLE parse, all-or-nothing like every other field.
+    if (parsed.texts !== undefined) {
+      const ok =
+        Array.isArray(parsed.texts) &&
+        parsed.texts.every(
+          (t) =>
+            t &&
+            typeof t.title === "string" &&
+            typeof t.body === "string" &&
+            (t.source === undefined || typeof t.source === "string"),
+        );
+      if (!ok) return null;
     }
     return parsed;
   } catch {

@@ -166,6 +166,18 @@ export function DashboardBoard({ query, scopeHint, onFollowup, spec }: Dashboard
         </section>
       </div>
 
+      {spec?.texts && spec.texts.length > 0 && (
+        <div className="dash-text-cards">
+          {spec.texts.map((t) => (
+            <article key={t.title} className="dash-text-card">
+              <h3 className="dash-text-card__title">{t.title}</h3>
+              <p className="dash-text-card__body">{t.body}</p>
+              {t.source && <span className="dash-text-card__source">{t.source}</span>}
+            </article>
+          ))}
+        </div>
+      )}
+
       {spec?.table ? (
         // A doc-backed dashboard's table renders its OWN columns and rows —
         // risk-like cells still get the pill treatment.

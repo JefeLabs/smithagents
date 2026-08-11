@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DASH_FOLLOWUPS } from "../../data/dashboards";
+import { composeSpec } from "../../lib/dashboardSpec";
 import { DashboardBoard } from "./DashboardBoard";
 
 function renderBoard(onFollowup = vi.fn()) {
@@ -67,4 +68,20 @@ describe("DashboardBoard", () => {
     expect(screen.getByText("custom bars title")).toBeInTheDocument();
     expect(screen.getByText("custom table")).toBeInTheDocument();
   });
+  it("renders text answer cards from the spec, with their source label", () => {
+    const spec = composeSpec("q", "all workspaces");
+    spec.texts = [{ title: "release risk", body: "one squad is over WIP.", source: "doc d34" }];
+    render(<DashboardBoard query="q" scopeHint="SCOPE · ALL" onFollowup={() => {}} spec={spec} />);
+    expect(screen.getByText("release risk")).toBeTruthy();
+    expect(screen.getByText("one squad is over WIP.")).toBeTruthy();
+    expect(screen.getByText("doc d34")).toBeTruthy();
+  });
+
+  it("no texts in the spec — no text-card section renders", () => {
+    render(
+      <DashboardBoard query="q" scopeHint="SCOPE · ALL" onFollowup={() => {}} spec={composeSpec("q", "all")} />,
+    );
+    expect(document.querySelector(".dash-text-card")).toBeNull();
+  });
+
 });
