@@ -18,7 +18,7 @@ type CreateLike = (params: object) => Promise<{ content: Array<{ type: string; t
 
 const OUTPUT_CONTRACT = `Reply with EXACTLY one JSON object (fenced or bare), no other commentary:
 {"rewrites":[{"sectionId":"<id>","newBody":"<full replacement markdown for that section>"}],"note":"<one short line describing the change>"}
-Rewrite ONLY the sections the instruction calls for; every sectionId must be one of the ids listed. newBody replaces the section wholesale.`;
+Rewrite ONLY the sections the instruction calls for; every sectionId must be one of the ids listed. newBody replaces the section wholesale — prose only, never the "section id=…" header line from the input format.`;
 
 export async function runDocEditTurn(opts: {
   doc: Doc;
@@ -58,10 +58,15 @@ export async function runDocEditTurn(opts: {
     /* falls through to the guard below */
   }
   const ids = new Set(doc.sections.map((s) => s.id));
-  const rewrites = (parsed.rewrites ?? []).filter(
-    (r): r is { sectionId: string; newBody: string } =>
-      typeof r.sectionId === "string" && ids.has(r.sectionId) && typeof r.newBody === "string",
-  );
+  const rewrites = (parsed.rewrites ?? [])
+    .filter(
+      (r): r is { sectionId: string; newBody: string } =>
+        typeof r.sectionId === "string" && ids.has(r.sectionId) && typeof r.newBody === "string",
+    )
+    // Models sometimes parrot the input format's section header into the
+    // body; the contract forbids it, and this belt-and-braces strip keeps a
+    // near-miss reply useful instead of publishing scaffolding into the doc.
+    .map((r) => ({ ...r, newBody: r.newBody.replace(/^#{0,6}\s*section id=[^\n]*\n?/, "").trimStart() }));
   // All-or-nothing: a reply that named unknown sections or produced nothing
   // usable is a failed turn, not a partial edit.
   if (rewrites.length === 0 || rewrites.length !== (parsed.rewrites?.length ?? 0)) {

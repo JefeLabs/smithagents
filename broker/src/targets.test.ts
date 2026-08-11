@@ -68,3 +68,14 @@ test("parseTarget accepts the five shapes and rejects everything else", () => {
   assert.equal(parseTarget({ kind: "agent" }), undefined); // id required
   assert.equal(parseTarget({ kind: "nonsense" }), undefined);
 });
+
+test("a freed squad member listed by bare lowercased name resolves to a name-dispatch — the composer strips their ui freed- prefix", () => {
+  // The resolution roster's `agents` must include freed members as
+  // { id: name.toLowerCase(), name } — main.ts assembles them from
+  // roster.freed beside the registry agents. This pins that contract.
+  const withFreed = {
+    ...ROSTER,
+    agents: [...ROSTER.agents, { id: "osvaldo", name: "Osvaldo" }],
+  };
+  assert.deepEqual(resolveTarget({ kind: "agent", id: "osvaldo" }, withFreed), { kind: "agent", name: "Osvaldo" });
+});

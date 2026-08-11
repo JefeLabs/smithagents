@@ -1418,7 +1418,15 @@ const textChannel = new TextChannel(
           leader: g.leader,
           members: g.members.map((m) => ({ id: m.id, name: m.name, roles: [directory.resolve(m.id)?.role ?? ""] })),
         })),
-        agents: roster.agents.map((p) => ({ id: p.agent.id, name: p.agent.name })),
+        agents: [
+          ...roster.agents.map((p) => ({ id: p.agent.id, name: p.agent.name })),
+          // Freed squad members are dispatchable by NAME exactly like squad
+          // leaders. Their rail id carries a `freed-` prefix the composer
+          // strips before sending, so their resolvable id is the bare
+          // lowercased name — without this row they 404 despite being on
+          // the rail (the registry only ever held API-engine agents).
+          ...roster.freed.map((m) => ({ id: m.name.toLowerCase(), name: m.name })),
+        ],
       });
 
       if ("error" in resolution) return { error: resolution.error, status: 404 };

@@ -71,3 +71,11 @@ test("malformed or empty replies throw", async () => {
     /usable rewrites/,
   );
 });
+
+test("a parroted section-header scaffold line is stripped from newBody", async () => {
+  const { create } = stub(
+    '```json\n{"rewrites":[{"sectionId":"approach","newBody":"## section id=approach heading=\\"Approach\\"\\nReal content."}],"note":"n"}\n```',
+  );
+  const r = await runDocEditTurn({ doc: DOC, instruction: "x", create });
+  assert.equal(r.rewrites[0].newBody, "Real content.");
+});
