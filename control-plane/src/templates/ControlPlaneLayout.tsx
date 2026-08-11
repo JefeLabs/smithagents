@@ -8,6 +8,8 @@ interface ControlPlaneLayoutProps {
   leftRail: ReactNode;
   rightRail: ReactNode;
   stage: ReactNode;
+  /** The one persistent ChatDock, a sibling of the stage so it survives navigation. */
+  chatDock?: ReactNode;
   hint?: ReactNode;
   overlays?: ReactNode;
 }
@@ -47,6 +49,7 @@ export function ControlPlaneLayout({
   leftRail,
   rightRail,
   stage,
+  chatDock,
   hint,
   overlays,
 }: ControlPlaneLayoutProps) {
@@ -79,6 +82,7 @@ export function ControlPlaneLayout({
               dnd-kit usage — should know that before it starts. */}
           {rightRail}
           {stage}
+          {chatDock}
         </Sidebar.Main>
       </Sidebar.Provider>
       {hint != null && <div className="subhint">{hint}</div>}

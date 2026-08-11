@@ -200,9 +200,9 @@ describe("HomePage — the zero-session composer", () => {
   it("holds the execution-mode and workspace-record probes until the composer is on screen", async () => {
     renderApp(knownZero);
     await appMounted();
-    // VoiceStage is a labelled <section> (role="region"), not <main> — HeroUI's
-    // required Sidebar.Main already claims the page's one, un-nested <main>.
-    await screen.findByRole("region", { name: "Voice" });
+    // The persistent ChatDock is a labelled <section> (role="region") named "Chat",
+    // covering the home surface where VoiceStage's "Voice" region used to be.
+    await screen.findByRole("region", { name: "Chat" });
     // The handshake has not finished, so the composer is off screen and neither
     // probe has any reason to run yet.
     expect(callsTo("/execution-modes")).toBe(0);
@@ -233,9 +233,9 @@ describe("HomePage — the zero-session composer", () => {
     await waitFor(() => expect(callsTo("/execution-modes")).toBe(1));
 
     await userEvent.click(screen.getByRole("button", { name: /cancel new session/i }));
-    // VoiceStage is a labelled <section> (role="region"), not <main> — HeroUI's
-    // required Sidebar.Main already claims the page's one, un-nested <main>.
-    await screen.findByRole("region", { name: "Voice" });
+    // The persistent ChatDock is a labelled <section> (role="region") named "Chat",
+    // covering the home surface where VoiceStage's "Voice" region used to be.
+    await screen.findByRole("region", { name: "Chat" });
 
     await userEvent.click(screen.getByRole("row", { name: "Sessions" }));
     await userEvent.click(screen.getByRole("button", { name: /new session · acme/i }));
@@ -256,9 +256,9 @@ describe("HomePage — the zero-session composer", () => {
     // gate rather than the status gate it exists to isolate.
     expect(useSocketStore.getState().connected).toBe(true);
 
-    // VoiceStage is a labelled <section> (role="region"), not <main> — HeroUI's
-    // required Sidebar.Main already claims the page's one, un-nested <main>.
-    await screen.findByRole("region", { name: "Voice" });
+    // The persistent ChatDock is a labelled <section> (role="region") named "Chat",
+    // covering the home surface where VoiceStage's "Voice" region used to be.
+    await screen.findByRole("region", { name: "Chat" });
     expect(screen.queryByRole("heading", { name: /start a session/i })).toBeNull();
   });
 
@@ -267,9 +267,9 @@ describe("HomePage — the zero-session composer", () => {
     await appMounted();
     // FakeSocket.open() deliberately never called — the handshake has not finished.
 
-    // VoiceStage is a labelled <section> (role="region"), not <main> — HeroUI's
-    // required Sidebar.Main already claims the page's one, un-nested <main>.
-    await screen.findByRole("region", { name: "Voice" });
+    // The persistent ChatDock is a labelled <section> (role="region") named "Chat",
+    // covering the home surface where VoiceStage's "Voice" region used to be.
+    await screen.findByRole("region", { name: "Chat" });
     expect(screen.queryByRole("heading", { name: /start a session/i })).toBeNull();
   });
 });

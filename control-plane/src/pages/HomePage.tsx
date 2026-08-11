@@ -3,18 +3,23 @@ import { Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useCallback, useEffect } from "react";
 import * as api from "../api/broker";
 import { BROKER_BASE } from "../api/broker";
-import type { RosterAgent, SessionSummary } from "../api/types";
+import type { BlueprintT, ChatMessage, DocT, RosterAgent, SessionSummary } from "../api/types";
 import { type AgentSeed, agentSeeds } from "../data/agents";
 import { usePushToTalk } from "../hooks/usePushToTalk";
 import { useSpokenReplies } from "../hooks/useSpokenReplies";
 import { useTheme } from "../hooks/useTheme";
+import { useVoiceStatus } from "../hooks/useVoiceStatus";
 import { ALL_WORKSPACES } from "../lib/board-aggregate";
+import { kindForPath, layoutForPath } from "../lib/composerLayout";
+import { makePickKind, openDocByFamily } from "../lib/pickKind";
 import { AlertMenu } from "../molecules/AlertMenu";
+import { ArtifactShelf } from "../molecules/ArtifactShelf";
 import { ConfirmSheet } from "../molecules/ConfirmSheet";
 import { OperatorAvatar } from "../molecules/OperatorAvatar";
 import { WorkspaceSelector } from "../molecules/WorkspaceSelector";
 import { AddAgentModal } from "../organisms/AddAgentModal";
 import { AgentRoster } from "../organisms/AgentRoster";
+import { ChatDock } from "../organisms/ChatDock";
 import { DotGridCanvas } from "../organisms/DotGridCanvas";
 import { DotGridTuner } from "../organisms/DotGridTuner";
 import { Navbar } from "../organisms/Navbar";
@@ -25,8 +30,9 @@ import { SettingsPanel } from "../organisms/SettingsPanel";
 import { ToolRail } from "../organisms/ToolRail";
 import { WorkspaceManagerModal } from "../organisms/WorkspaceManagerModal";
 import { useEngineWarnings } from "../queries/health";
+import { useBlueprints, useVoiceSettings } from "../queries/http";
 import { qk } from "../queries/keys";
-import { useRoster, useSession, useSessions, useWorkspaces } from "../queries/pushed";
+import { useDocuments, useRoster, useSession, useSessions, useTranscript, useWorkspaces } from "../queries/pushed";
 import { hasNativeFolderPicker, pickFolder } from "../services/nativeDialog";
 import { useAudioStore } from "../stores/audioStore";
 import { useSocketStore } from "../stores/socketStore";
@@ -39,6 +45,9 @@ import { ControlPlaneLayout } from "../templates/ControlPlaneLayout";
 const NO_ROSTER: RosterAgent[] = [];
 const NO_SESSIONS: SessionSummary[] = [];
 const NO_WORKSPACES: string[] = [];
+const NO_MESSAGES: ChatMessage[] = [];
+const NO_DOCS: DocT[] = [];
+const NO_BLUEPRINTS: BlueprintT[] = [];
 
 export function HomePage() {
   // The broker socket is opened here, at app scope, and closed with the page.
@@ -92,10 +101,14 @@ export function HomePage() {
   const setRemoving = useUiStore((s) => s.setRemoving);
   const viewedWorkspaces = useUiStore((s) => s.viewedWorkspaces);
 
-  // The audio hint is the page's only read of audio state — the mic and mute
-  // controls themselves live in the voice route and read the store there.
+  // The persistent ChatDock lives in this shell now, so its mic/sound controls
+  // read audioStore here rather than in a route. `audioBlocked` still drives the
+  // page's own "click to enable sound" hint.
   const soundOn = useAudioStore((s) => s.soundOn);
   const audioBlocked = useAudioStore((s) => s.audioBlocked);
+  const micLive = useAudioStore((s) => s.micLive);
+  const toggleMic = useAudioStore((s) => s.toggleMic);
+  const toggleSound = useAudioStore((s) => s.toggleSound);
 
   const { theme, setTheme } = useTheme();
   // Both mounted here, at app scope, and deliberately not below the router:
@@ -128,6 +141,23 @@ export function HomePage() {
 
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+
+  // ---- the one persistent ChatDock, wired once and repositioned by route ----
+  // These are the props VoiceStage/DocRoute used to wire each for themselves.
+  const { data: messages = NO_MESSAGES } = useTranscript();
+  const { data: docs = NO_DOCS } = useDocuments();
+  const { data: blueprints = NO_BLUEPRINTS } = useBlueprints();
+  const { voice } = useVoiceStatus();
+  const { data: voicePrefs } = useVoiceSettings();
+  const voiceNotice = useUiStore((s) => s.voiceNotice);
+  const showVoiceBlockedNotice = useUiStore((s) => s.showVoiceBlockedNotice);
+  // Hide the mic hero only on a CONFIRMED no-STT broker the user asked to hide.
+  const hideMic = Boolean(voicePrefs?.hideInactive) && !voice.stt;
+  const dockVariant = layoutForPath(pathname);
+  // Only the documents THIS session produced, in its own order — the full-variant shelf.
+  const shelfDocs = (session?.artifacts ?? [])
+    .map((id) => docs.find((d) => d.id === id))
+    .filter((d): d is DocT => Boolean(d));
 
   // Picking another session backs out of an explicitly-opened composer (spec §3) — without
   // this, an explicit composer stays rendered with a possibly-stale locked workspace after
@@ -247,6 +277,38 @@ export function HomePage() {
         ) : (
           <Outlet />
         )
+      }
+      chatDock={
+        // The one chat box — mounted once, repositioned by route. Hidden on
+        // board/work and while the session-birth screen owns the stage.
+        dockVariant !== "hidden" && !composerVisible ? (
+          <ChatDock
+            variant={dockVariant}
+            messages={messages}
+            onSend={api.postUtterance}
+            targets={roster}
+            brokerConnected={connected}
+            micLive={micLive}
+            onMicToggle={toggleMic}
+            soundOn={soundOn}
+            onSoundToggle={toggleSound}
+            sttEnabled={voice.stt}
+            onVoiceBlocked={showVoiceBlockedNotice}
+            showMicHero={!hideMic}
+            voiceNotice={voiceNotice}
+            onPolish={api.polishDraft}
+            onPickKind={makePickKind(navigate, qc, blueprints)}
+            activeKind={kindForPath(pathname)}
+            shelf={
+              dockVariant === "full" ? (
+                <ArtifactShelf
+                  docs={shelfDocs}
+                  onOpen={(docId) => openDocByFamily(navigate, blueprints, docs, docId)}
+                />
+              ) : undefined
+            }
+          />
+        ) : null
       }
       overlays={
         <>

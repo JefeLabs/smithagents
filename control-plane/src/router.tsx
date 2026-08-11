@@ -12,19 +12,16 @@ import * as api from "./api/broker";
 import type { BlueprintT, ChatMessage, DocT, RosterAgent } from "./api/types";
 import { agentSeeds } from "./data/agents";
 import { useVoiceStatus } from "./hooks/useVoiceStatus";
-import { type ArtifactKind, familyForKind } from "./lib/artifactKinds";
-import { ArtifactShelf } from "./molecules/ArtifactShelf";
+import { makePickKind } from "./lib/pickKind";
 import { Composer } from "./molecules/Composer";
 import { Transcript } from "./molecules/Transcript";
 import { BoardStage } from "./organisms/BoardStage";
 import { DashboardsStage } from "./organisms/DashboardsStage";
 import { MapStage } from "./organisms/MapStage";
-import { VoiceStage } from "./organisms/VoiceStage";
 import { WorkStage } from "./organisms/WorkStage";
 import { HomePage } from "./pages/HomePage";
 import { useBlueprints, useVoiceSettings } from "./queries/http";
-import { qk } from "./queries/keys";
-import { useDocuments, useRoster, useSession, useTranscript } from "./queries/pushed";
+import { useDocuments, useRoster, useTranscript } from "./queries/pushed";
 import { useAudioStore } from "./stores/audioStore";
 import { useSocketStore } from "./stores/socketStore";
 import { useUiStore } from "./stores/uiStore";
@@ -36,41 +33,6 @@ const NO_ROSTER: RosterAgent[] = [];
 const NO_DOCS: DocT[] = [];
 const NO_BLUEPRINTS: BlueprintT[] = [];
 
-/**
- * The composer kind row's click handler. Chat/Dashboards/Map navigate to their
- * stage; Documents/Diagrams create a fresh blueprint doc of the matching family
- * and open it — a document-family doc on the prose stage (`/doc`), a
- * diagram-family doc on the Mermaid canvas (`/diagram`). With no blueprint of
- * the asked family, it falls back to the first blueprint and routes by whatever
- * family that turns out to be.
- */
-function makePickKind(
-  navigate: ReturnType<typeof useNavigate>,
-  qc: ReturnType<typeof useQueryClient>,
-  blueprints: BlueprintT[],
-): (kind: ArtifactKind) => void {
-  return (kind) => {
-    if (kind === "chat") return void navigate({ to: "/" });
-    if (kind === "dashboards") return void navigate({ to: "/dashboards" });
-    if (kind === "map") return void navigate({ to: "/map" });
-    const family = familyForKind(kind); // "document" | "diagram"
-    const bp = blueprints.find((b) => b.family === family) ?? blueprints[0];
-    void api.postDocument(bp?.id ?? "spec", "").then((r) => {
-      if (!r.doc) return;
-      const created = r.doc;
-      qc.setQueryData<DocT[]>(qk.documents, (prev: DocT[] | undefined) => [
-        created,
-        ...(prev ?? []).filter((d: DocT) => d.id !== created.id),
-      ]);
-      const fam = blueprints.find((b) => b.id === created.blueprintId)?.family;
-      void navigate({
-        to: fam === "diagram" ? "/diagram/$docId" : "/doc/$docId",
-        params: { docId: created.id },
-      });
-    });
-  };
-}
-
 // The document stage carries Tiptap/ProseMirror; a chat-only session should not
 // download an editor it never opens. This is the app's first split chunk.
 const DocumentStage = lazy(() => import("./organisms/DocumentStage").then((m) => ({ default: m.DocumentStage })));
@@ -81,71 +43,15 @@ const DiagramStage = lazy(() => import("./organisms/DiagramStage").then((m) => (
  * Route components are deliberately thin: they read broker state from the
  * query cache and the socket store and render the organisms with plain props.
  * No route loaders — data rides the WebSocket above the router, and mounting
- * it per-route would reconnect on every navigation.
- *
- * The mic/sound/STT controls come from `audioStore` and two ordinary queries.
- * Calling `useVoiceStatus`/`useVoiceSettings` here rather than receiving them
- * as props is safe precisely because they are queries: this route and anything
- * else asking share one cache entry, so an invalidation reaches both.
+ * it per-route would reconnect on every navigation. The chat box is NOT among
+ * these props anymore: one persistent ChatDock lives in the shell (HomePage)
+ * and repositions by route, so no stage carries its own composer.
  */
+// `/` renders nothing of its own: the persistent ChatDock (mounted in the shell,
+// HomePage) covers the home surface in its `full` variant over the dot-grid. The
+// route stays registered so navigations to "/" resolve; it just has no stage.
 function VoiceRoute() {
-  const { data: messages = NO_MESSAGES } = useTranscript();
-  const connected = useSocketStore((c) => c.connected);
-  const voiceNotice = useUiStore((u) => u.voiceNotice);
-  const showVoiceBlockedNotice = useUiStore((u) => u.showVoiceBlockedNotice);
-  const micLive = useAudioStore((a) => a.micLive);
-  // Registered by `usePushToTalk`, which owns the hardware at app scope — this
-  // route asks for the toggle, it never holds the MediaStream.
-  const toggleMic = useAudioStore((a) => a.toggleMic);
-  const soundOn = useAudioStore((a) => a.soundOn);
-  const toggleSound = useAudioStore((a) => a.toggleSound);
-  const { voice } = useVoiceStatus();
-  const { data: voicePrefs } = useVoiceSettings();
-  // Hide the hero only on a CONFIRMED no-STT broker the user asked to hide.
-  const hideMic = Boolean(voicePrefs?.hideInactive) && !voice.stt;
-  const { data: active } = useSession();
-  const { data: rosterFrame } = useRoster();
-  const { data: docs = NO_DOCS } = useDocuments();
-  const { data: blueprints = NO_BLUEPRINTS } = useBlueprints();
-  const navigate = useNavigate();
-  const qc = useQueryClient();
-  // Only the documents this session actually produced, in its own order.
-  const shelfDocs = (active?.artifacts ?? [])
-    .map((id) => docs.find((d) => d.id === id))
-    .filter((d): d is DocT => Boolean(d));
-  return (
-    <VoiceStage
-      micLive={micLive}
-      onMicToggle={toggleMic}
-      messages={messages}
-      brokerConnected={connected}
-      onSend={api.postUtterance}
-      targets={rosterFrame?.agents ?? NO_ROSTER}
-      soundOn={soundOn}
-      onSoundToggle={toggleSound}
-      sttEnabled={voice.stt}
-      onVoiceBlocked={showVoiceBlockedNotice}
-      showMicHero={!hideMic}
-      voiceNotice={voiceNotice}
-      onPolish={api.polishDraft}
-      onPickKind={makePickKind(navigate, qc, blueprints)}
-      activeKind="chat"
-      shelf={
-        <ArtifactShelf
-          docs={shelfDocs}
-          onOpen={(docId) => {
-            // A diagram opens on its canvas, prose on the page — same family split
-            // the kind row uses, so the shelf and the composer agree.
-            const fam = blueprints.find((b) => b.id === docs.find((d) => d.id === docId)?.blueprintId)?.family;
-            void navigate({
-              to: fam === "diagram" ? "/diagram/$docId" : "/doc/$docId",
-              params: { docId },
-            });
-          }}
-        />
-      }
-    />
-  );
+  return null;
 }
 
 function BoardRoute() {

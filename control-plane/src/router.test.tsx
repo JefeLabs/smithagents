@@ -107,6 +107,16 @@ describe("stage routing", () => {
     expect(screen.getByRole("row", { name: /^board$/i }).getAttribute("data-current")).toBe("true");
   });
 
+  it("the persistent chat dock shows on / and hides on /board", async () => {
+    await renderAt("/");
+    // The one ChatDock (shell-mounted) covers the home surface.
+    expect(await screen.findByRole("region", { name: "Chat" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("row", { name: /^board$/i }));
+    await screen.findByRole("region", { name: "Work boards" });
+    // Board is a management view — the chat box is hidden there (layoutForPath).
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Chat" })).toBeNull());
+  });
+
   it("the rail no longer offers Dashboards or Map (they're composer-triggered)", async () => {
     await renderAt("/");
     expect(screen.queryByRole("row", { name: /^dashboards$/i })).toBeNull();
