@@ -5,6 +5,7 @@ import {
   getExecutionModes,
   getWorkspaceRecords,
   postSession,
+  postUtterance,
   saveApiKey,
   setCliToolEnabled,
 } from "./broker";
@@ -180,5 +181,40 @@ describe("SessionFrame (lockstep pin)", () => {
       workspaces: ["acme"],
     };
     expect(frame.session?.runtime).toBe("local-docker");
+  });
+});
+
+describe("postUtterance with a target", () => {
+  it("sends the target as an object and resolves null on success", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) });
+    vi.stubGlobal("fetch", fetchMock);
+    const error = await postUtterance("look at the auth bug", { kind: "agent", id: "osvaldo" });
+    expect(error).toBeNull();
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body).toEqual({ text: "look at the auth bug", target: { kind: "agent", id: "osvaldo" } });
+  });
+
+  it("returns the broker's refusal text so the composer can show it", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 409,
+        json: async () => ({ error: "Osvaldo is busy with: refactor auth." }),
+      }),
+    );
+    expect(await postUtterance("hi", { kind: "agent", id: "osvaldo" })).toBe("Osvaldo is busy with: refactor auth.");
+  });
+
+  it("reports an unreachable broker rather than throwing", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("down")));
+    expect(await postUtterance("hi", { kind: "agent", id: "osvaldo" })).toBe("broker unreachable");
+  });
+
+  it("omits `target` entirely when none is given, preserving the untargeted wire shape", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) });
+    vi.stubGlobal("fetch", fetchMock);
+    await postUtterance("plain old utterance");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ text: "plain old utterance" });
   });
 });

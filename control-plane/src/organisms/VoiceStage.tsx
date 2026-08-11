@@ -1,6 +1,6 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type { ReactNode } from "react";
-import type { ChatMessage } from "../api/types";
+import type { ChatMessage, RosterAgent, Target } from "../api/types";
 import { Composer } from "../molecules/Composer";
 import { MicHero } from "../molecules/MicHero";
 import { Transcript } from "../molecules/Transcript";
@@ -10,7 +10,9 @@ interface VoiceStageProps {
   onMicToggle: () => void;
   messages: ChatMessage[];
   brokerConnected: boolean;
-  onSend: (text: string) => void;
+  onSend: (text: string, target?: Target) => void | Promise<string | null>;
+  /** Rail entries the composer may direct a message to. */
+  targets?: RosterAgent[];
   soundOn: boolean;
   onSoundToggle: () => void;
   /** STT capability gate (spec §3) — false dims the mic controls and reroutes presses to onVoiceBlocked. */
@@ -29,6 +31,7 @@ interface VoiceStageProps {
 }
 
 export function VoiceStage({
+  targets,
   micLive,
   onMicToggle,
   messages,
@@ -90,6 +93,7 @@ export function VoiceStage({
       <motion.div layout className="composer-dock" transition={spring}>
         <Composer
           onSend={onSend}
+          targets={targets}
           disabled={!brokerConnected}
           micLive={micLive}
           onMicToggle={showMicHero ? onMicToggle : undefined}

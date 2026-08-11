@@ -17,6 +17,7 @@ import type {
   DocT,
   ExecutionMode,
   MeRecord,
+  Target,
   VoiceSettingsRecord,
   WorkspaceRecord,
 } from "./types";
@@ -63,15 +64,28 @@ export async function getExecutionModes(base: string = BROKER_BASE): Promise<Rec
   return body.modes ?? DEFAULT_EXECUTION_MODES;
 }
 
-/** POST /utterance — fire-and-forget; the broker echoes accepted utterances back as WS frames, so a failed POST is already communicated by the UI going quiet. */
-export async function postUtterance(text: string, base: string = BROKER_BASE): Promise<void> {
-  void fetch(`http://${base}/utterance`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ text }),
-  }).catch(() => {
-    /* broker down — the disabled composer already communicates this */
-  });
+/**
+ * POST /utterance. Untargeted (or host-targeted) sends stay effectively
+ * fire-and-forget — the broker echoes accepted utterances back as WS frames,
+ * so a failed POST is already communicated by the UI going quiet.
+ *
+ * A DIRECTED send is different: it can be refused because the agent is busy,
+ * and that refusal has to reach the composer — so this resolves to an error
+ * string, or null on success.
+ */
+export async function postUtterance(text: string, target?: Target, base: string = BROKER_BASE): Promise<string | null> {
+  try {
+    const res = await fetch(`http://${base}/utterance`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(target ? { text, target } : { text }),
+    });
+    if (res.ok) return null;
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    return body.error ?? `HTTP ${res.status}`;
+  } catch {
+    return "broker unreachable";
+  }
 }
 
 /** POST /compose — fire-and-forget; roster frames simply won't change if this fails. */

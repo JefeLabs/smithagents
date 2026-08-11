@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { RosterAgent } from "../api/types";
 import { Composer } from "./Composer";
 
 describe("Composer", () => {
@@ -264,5 +265,83 @@ describe("Composer polish", () => {
     expect(screen.getByRole("button", { name: /^document$/i }).getAttribute("aria-pressed")).toBe("true");
     await userEvent.click(screen.getByRole("button", { name: /^chat$/i }));
     expect(onKindChat).toHaveBeenCalled();
+  });
+});
+
+describe("target selector", () => {
+  const TARGETS: RosterAgent[] = [
+    { id: "osvaldo", name: "Osvaldo", role: "senior", status: "idle", kind: "agent" },
+    {
+      id: "squad-alpha",
+      name: "Alpha",
+      role: "Squad — led by Gabriel",
+      status: "idle",
+      kind: "squad",
+      members: ["Gabriel"],
+    },
+    {
+      id: "group-g1",
+      name: "Delta",
+      role: "Squad — led by Josefina",
+      status: "idle",
+      kind: "squad",
+      members: ["Josefina", "Osvaldo"],
+      leader: "josefina",
+    },
+  ];
+
+  it("renders no selector at all when the caller passes no targets", () => {
+    render(<Composer onSend={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: /send to/i })).toBeNull();
+  });
+
+  it("defaults to the chief of staff", () => {
+    render(<Composer onSend={vi.fn()} targets={TARGETS} />);
+    expect(screen.getByRole("button", { name: /send to/i })).toHaveTextContent("Anderson");
+  });
+
+  it("sends to the chosen agent, decoding the key into a Target object", async () => {
+    const onSend = vi.fn();
+    render(<Composer onSend={onSend} targets={TARGETS} />);
+    await userEvent.click(screen.getByRole("button", { name: /send to/i }));
+    await userEvent.click(await screen.findByRole("option", { name: /Osvaldo/ }));
+    await userEvent.type(screen.getByRole("textbox"), "look at the auth bug");
+    await userEvent.click(screen.getByRole("button", { name: /^send$/i }));
+    expect(onSend).toHaveBeenCalledWith("look at the auth bug", { kind: "agent", id: "osvaldo" });
+  });
+
+  it("sends with NO target when the chief of staff is selected — the untouched brain path", async () => {
+    const onSend = vi.fn();
+    render(<Composer onSend={onSend} targets={TARGETS} />);
+    await userEvent.type(screen.getByRole("textbox"), "who is free?");
+    await userEvent.click(screen.getByRole("button", { name: /^send$/i }));
+    // ONE argument, byte-identical to the pre-feature call shape.
+    expect(onSend).toHaveBeenCalledWith("who is free?");
+  });
+
+  it("snaps back to Anderson after a send, so no message ever leaks to a CLI", async () => {
+    render(<Composer onSend={vi.fn()} targets={TARGETS} />);
+    await userEvent.click(screen.getByRole("button", { name: /send to/i }));
+    await userEvent.click(await screen.findByRole("option", { name: /Osvaldo/ }));
+    await userEvent.type(screen.getByRole("textbox"), "one");
+    await userEvent.click(screen.getByRole("button", { name: /^send$/i }));
+    expect(screen.getByRole("button", { name: /send to/i })).toHaveTextContent("Anderson");
+  });
+
+  it("shows a refusal and KEEPS the text when the target is busy", async () => {
+    const onSend = vi.fn().mockResolvedValue("Osvaldo is busy with: refactor auth.");
+    render(<Composer onSend={onSend} targets={TARGETS} />);
+    await userEvent.click(screen.getByRole("button", { name: /send to/i }));
+    await userEvent.click(await screen.findByRole("option", { name: /Osvaldo/ }));
+    await userEvent.type(screen.getByRole("textbox"), "look at the auth bug");
+    await userEvent.click(screen.getByRole("button", { name: /^send$/i }));
+    expect(await screen.findByText(/busy with: refactor auth/i)).toBeInTheDocument();
+    expect(screen.getByRole("textbox")).toHaveValue("look at the auth bug");
+  });
+
+  it("names a group's elected leader so you know who actually receives it", async () => {
+    render(<Composer onSend={vi.fn()} targets={TARGETS} />);
+    await userEvent.click(screen.getByRole("button", { name: /send to/i }));
+    expect(await screen.findByRole("option", { name: /Delta/ })).toHaveTextContent(/Josefina/);
   });
 });
