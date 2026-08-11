@@ -318,6 +318,8 @@ export class TextChannel {
   ) {}
 
   private clientSeq = 0;
+  /** clientId → identity kind, for gating mic frames to humans. */
+  private readonly clientKinds = new Map<number, Identity['kind']>();
 
   /**
    * The /auth/* ceremony surface. Only reached when `this.auth` is set.
@@ -1307,11 +1309,18 @@ export class TextChannel {
     });
 
     this.wss = new WebSocketServer({ server, path: '/events' });
-    this.wss.on('connection', (client) => {
+    this.wss.on('connection', (client, req) => {
+      // Authenticate the upgrade BEFORE any hello frame leaks roster/transcript.
+      const identity = this.auth?.resolveIdentity(req) ?? null;
+      if (this.auth?.required && !identity) { client.close(4401, 'unauthorized'); return; }
+      const kind: Identity['kind'] = identity?.kind ?? 'human'; // open mode = local human
       const clientId = ++this.clientSeq;
+      this.clientKinds.set(clientId, kind);
       for (const frame of this.helloFrames()) client.send(JSON.stringify(frame));
       client.on('message', (data, isBinary) => {
         if (!this.mic) return;
+        // The mic is a human affordance — a bridge never opens an audio session.
+        if (this.clientKinds.get(clientId) !== 'human') return;
         if (isBinary) {
           this.mic.audio(clientId, new Uint8Array(data as Buffer));
           return;
@@ -1324,7 +1333,7 @@ export class TextChannel {
           // not a control frame — ignore
         }
       });
-      client.on('close', () => this.mic?.stop(clientId));
+      client.on('close', () => { this.mic?.stop(clientId); this.clientKinds.delete(clientId); });
     });
     this.server = server;
     return new Promise((resolve, reject) => {

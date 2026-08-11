@@ -1598,3 +1598,75 @@ test('preflight OPTIONS answers 204 with authorization allowed, even in required
     assert.match(res.headers.get('access-control-allow-headers') ?? '', /authorization/i);
   } finally { await channel.stop(); }
 });
+
+// ---------------------------------------------------------------------------
+// Phase 1a: WS upgrade identity + mic gating
+// (channelWith's helloFrames is () => [], so these key off open/close, not a frame.)
+// ---------------------------------------------------------------------------
+
+/** Resolve on 'open', reject with the close code on 'close'/'error'. */
+function connectAuthed(port: number, headers?: Record<string, string>): Promise<WebSocket> {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/events`, { headers });
+    ws.once('open', () => resolve(ws));
+    ws.once('close', (code) => reject(new Error(`closed ${code}`)));
+    ws.once('error', () => { /* 'close' carries the code */ });
+  });
+}
+
+test('required mode: WS without credential is closed 4401; bridge token connects', async () => {
+  const auth = await makeAuth(true, 'bridge-secret');
+  const channel = channelWith({ auth, mic: { start: () => {}, stop: () => {}, audio: () => {} } });
+  const port = await channel.start(0);
+  try {
+    const rejected = new WebSocket(`ws://127.0.0.1:${port}/events`);
+    const closeCode = await new Promise<number>((res) => rejected.on('close', (c) => res(c)));
+    assert.equal(closeCode, 4401);
+
+    const ok = await connectAuthed(port, { authorization: 'Bearer bridge-secret' });
+    assert.equal(ok.readyState, WebSocket.OPEN);
+    ok.close();
+  } finally { await channel.stop(); }
+});
+
+test('required mode: bridge mic-start is ignored (mic is human-only)', async () => {
+  const auth = await makeAuth(true, 'bridge-secret');
+  const started: number[] = [];
+  const channel = channelWith({ auth, mic: { start: (id: number) => started.push(id), stop: () => {}, audio: () => {} } });
+  const port = await channel.start(0);
+  try {
+    const bridge = await connectAuthed(port, { authorization: 'Bearer bridge-secret' });
+    bridge.send(JSON.stringify({ type: 'mic-start' }));
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(started.length, 0, 'bridge cannot open a mic');
+    bridge.close();
+  } finally { await channel.stop(); }
+});
+
+test('required mode: a session cookie authenticates the WS upgrade', async () => {
+  const auth = await makeAuth(true);
+  const invite = auth.mintInvite();
+  await auth.beginRegistration(invite.code, 'edwin');
+  const { sessionToken } = await auth.finishRegistration(invite.code, { ok: true });
+  const channel = channelWith({ auth });
+  const port = await channel.start(0);
+  try {
+    const ws = await connectAuthed(port, { cookie: `smith_session=${sessionToken}` });
+    assert.equal(ws.readyState, WebSocket.OPEN);
+    ws.close();
+  } finally { await channel.stop(); }
+});
+
+test('open mode: WS connects with no credential and mic works as before', async () => {
+  const auth = await makeAuth(false);
+  const started: number[] = [];
+  const channel = channelWith({ auth, mic: { start: (id: number) => started.push(id), stop: () => {}, audio: () => {} } });
+  const port = await channel.start(0);
+  try {
+    const ws = await connect(port);
+    ws.send(JSON.stringify({ type: 'mic-start' }));
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(started.length, 1, 'open-mode client is a local human');
+    ws.close();
+  } finally { await channel.stop(); }
+});
