@@ -326,6 +326,14 @@ export class TextChannel {
     private readonly directed?: {
       send(text: string, target: unknown): Promise<{ ok: true; taskId?: string } | { error: string; status: number }>;
     },
+    /** Settings › Feeds. The mutating routes carry the same origin guard as every other write. */
+    private readonly feeds?: {
+      list(): Promise<unknown>;
+      add(body: { url: string; tag: string }): Promise<unknown>;
+      update(id: string, body: { enabled?: boolean; dismissed?: boolean }): Promise<unknown>;
+      remove(id: string): Promise<unknown>;
+      weather(body: { location: string }): Promise<unknown>;
+    },
   ) {}
 
   private clientSeq = 0;
@@ -1047,6 +1055,70 @@ export class TextChannel {
       // DELETE /sessions/:id — permanent. Matched before the POST block so the
       // bare-id shape can't be confused with /sessions itself. Deleting is a
       // mutation, so it carries the same origin guard the POSTs below use.
+      if (this.feeds) {
+        const feedUrl = new URL(req.url ?? '/', 'http://localhost');
+        const feedJson = (status: number, payload: unknown) =>
+          res.writeHead(status, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify(payload));
+        const feedOriginBlocked = (): boolean => {
+          if (isAllowedOrigin(req)) return false;
+          res
+            .writeHead(403, { ...credentialCors(req), 'content-type': 'application/json' })
+            .end(JSON.stringify({ error: 'origin not allowed' }));
+          return true;
+        };
+        const readBody = (cb: (body: Record<string, unknown>) => void) => {
+          let raw = '';
+          req.on('data', (c) => {
+            raw += c;
+          });
+          req.on('end', () => {
+            try {
+              cb(JSON.parse(raw || '{}') as Record<string, unknown>);
+            } catch {
+              cb({});
+            }
+          });
+        };
+
+        // Read-only: no guard, like GET /blueprints.
+        if (req.method === 'GET' && feedUrl.pathname === '/feeds') {
+          void this.feeds.list().then((payload) => feedJson(200, payload));
+          return;
+        }
+        // /feeds/weather is matched BEFORE the bare-id route so it is never swallowed by it.
+        if (req.method === 'PUT' && feedUrl.pathname === '/feeds/weather') {
+          if (feedOriginBlocked()) return;
+          readBody((body) => {
+            void this.feeds!.weather({ location: String(body.location ?? '') }).then((p) => feedJson(200, p));
+          });
+          return;
+        }
+        if (req.method === 'POST' && feedUrl.pathname === '/feeds') {
+          if (feedOriginBlocked()) return;
+          readBody((body) => {
+            void this.feeds!.add({ url: String(body.url ?? ''), tag: String(body.tag ?? 'news') }).then((p) =>
+              feedJson(200, p),
+            );
+          });
+          return;
+        }
+        const feedIdMatch = /^\/feeds\/([^/]+)$/.exec(feedUrl.pathname);
+        if (feedIdMatch && (req.method === 'PATCH' || req.method === 'DELETE')) {
+          if (feedOriginBlocked()) return;
+          const id = decodeURIComponent(feedIdMatch[1]!);
+          if (req.method === 'DELETE') {
+            void this.feeds.remove(id).then((p) => feedJson(200, p));
+            return;
+          }
+          readBody((body) => {
+            void this.feeds!.update(id, {
+              enabled: typeof body.enabled === 'boolean' ? body.enabled : undefined,
+              dismissed: typeof body.dismissed === 'boolean' ? body.dismissed : undefined,
+            }).then((p) => feedJson(200, p));
+          });
+          return;
+        }
+      }
       const sessionDeleteMatch = /^\/sessions\/([^/]+)$/.exec(req.url ?? '');
       if (req.method === 'DELETE' && sessionDeleteMatch && this.sessions) {
         if (!isAllowedOrigin(req)) {

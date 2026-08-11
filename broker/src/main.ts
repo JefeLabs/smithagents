@@ -16,6 +16,10 @@ import { AdapterHub } from './channels.ts';
 import { loadBrokerConfig } from './config.ts';
 import { FeedStore } from './feeds/store.ts';
 import { buildDigest } from './feeds/digest.ts';
+import { parseFeed, youtubeFeedUrl } from './feeds/rss.ts';
+import { weatherLine, weatherUrl } from './feeds/weather.ts';
+import { CADENCE_MS, dueSources, recordOutcome } from './feeds/ingest.ts';
+import type { FeedSource } from './feeds/types.ts';
 import { ElectionScheduler, runElection, type AskFactory } from './election.ts';
 import { parseTarget, resolveTarget } from './targets.ts';
 import { createDiscordTextLifecycle } from './discord-text-lifecycle.ts';
@@ -1339,7 +1343,110 @@ const textChannel = new TextChannel(
       return { ok: true as const, taskId: dispatched.taskId };
     },
   },
+  {
+    /** Settings › Feeds (spec §8). Sources are global — personal feeds follow you across workspaces. */
+    list: async () => ({
+      sources: feedStore.sources().map((s) => ({ ...s, lastError: feedStore.state().sources[s.id]?.lastError })),
+      weather: feedStore.state().weather ?? null,
+    }),
+    add: async ({ url, tag }) => {
+      if (!url.trim()) return { error: 'a feed needs a URL' };
+      // A YouTube channel URL is not itself a feed; every channel has one.
+      const locator = youtubeFeedUrl(url) ?? url;
+      const id = `m${Date.now().toString(36)}`;
+      feedStore.putSource({
+        id,
+        label: new URL(locator).hostname.replace(/^www\./, ''),
+        kind: 'rss',
+        locator,
+        tag: (tag as FeedSource['tag']) || 'news',
+        origin: 'manual',
+        enabled: true,
+      });
+      return { ok: true, id };
+    },
+    update: async (id, body) => {
+      const source = feedStore.sources().find((s) => s.id === id);
+      if (!source) return { error: `unknown feed: ${id}` };
+      feedStore.putSource({
+        ...source,
+        enabled: body.enabled ?? source.enabled,
+        // A dismissal is a standing instruction — derivation must not undo it.
+        dismissed: body.dismissed ?? source.dismissed,
+      });
+      return { ok: true };
+    },
+    remove: async (id) => {
+      feedStore.removeSource(id);
+      return { ok: true };
+    },
+    weather: async ({ location }) => {
+      const [lat, lon] = location.split(',').map(Number);
+      feedStore.putSource({
+        id: 'weather',
+        label: location,
+        kind: 'weather',
+        locator: Number.isFinite(lat) && Number.isFinite(lon) ? `${lat},${lon}` : '18.48,-69.93',
+        tag: 'weather',
+        origin: 'manual',
+        enabled: true,
+      });
+      return { ok: true };
+    },
+  },
 );
+
+/**
+ * One tick a minute asks which sources are due (ingest.ts decides), fetches
+ * those, and records the outcome. Everything here is contained per source: a
+ * dead feed can never stop the others, and five failures in a row disables it
+ * with the reason visible in Settings (spec §10).
+ */
+const FEEDS_TICK_MS = 60_000;
+
+async function fetchSource(source: FeedSource): Promise<{ ok: boolean; error?: string }> {
+  try {
+    if (source.kind === 'weather') {
+      const [lat, lon] = source.locator.split(',').map(Number);
+      const res = await fetch(weatherUrl(lat ?? 18.48, lon ?? -69.93));
+      const line = weatherLine(await res.json());
+      if (!line) return { ok: false, error: 'unreadable weather response' };
+      feedStore.patchState({ weather: { text: line, at: new Date().toISOString() } });
+      return { ok: true };
+    }
+    if (source.kind === 'rss') {
+      const res = await fetch(source.locator);
+      const items = parseFeed(source, await res.text());
+      // Zero items from a feed that should have some is a failure, not a quiet success.
+      if (!items.length) return { ok: false, error: 'no items parsed' };
+      feedStore.addItems(items);
+      return { ok: true };
+    }
+    // registry and x sources are polled by their own paths; nothing to do here yet.
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String((err as Error).message ?? err) };
+  }
+}
+
+setInterval(() => {
+  const state = feedStore.state();
+  const due = dueSources(feedStore.sources(), state, Date.now());
+  if (!due.length) return;
+  void Promise.all(
+    due.map(async (source) => {
+      const outcome = await fetchSource(source);
+      feedStore.patchState({
+        sources: recordOutcome(feedStore.state(), source.id, {
+          ok: outcome.ok,
+          at: new Date().toISOString(),
+          error: outcome.error,
+        }).sources,
+      });
+    }),
+  ).then(() => refreshDigest());
+}, FEEDS_TICK_MS).unref();
+
 const micSessions = new MicSessionGate<DeepgramSttStream>();
 
 // ElevenLabs audio for text-channel replies: synthesize each speech chunk with

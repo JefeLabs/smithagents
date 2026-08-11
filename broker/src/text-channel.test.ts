@@ -114,6 +114,7 @@ function channelWith(opts: {
   documents?: ConstructorParameters<typeof TextChannel>[23];
   auth?: ConstructorParameters<typeof TextChannel>[24];
   directed?: ConstructorParameters<typeof TextChannel>[25];
+  feeds?: ConstructorParameters<typeof TextChannel>[26];
   onUtterance?: ConstructorParameters<typeof TextChannel>[0];
 }): TextChannel {
   return new TextChannel(
@@ -143,6 +144,7 @@ function channelWith(opts: {
     opts.documents,
     opts.auth,
     opts.directed,
+    opts.feeds,
   );
 }
 
@@ -1855,6 +1857,120 @@ test('with no directed handler wired at all, a target is ignored rather than fat
     });
     assert.equal(res.status, 202);
     assert.deepEqual(heard, ['hi']);
+  } finally {
+    await channel.stop();
+  }
+});
+
+// ---- personal tracking feeds (spec §8) ----
+
+function feedStub(over: Partial<NonNullable<ConstructorParameters<typeof TextChannel>[26]>> = {}) {
+  return {
+    list: async () => ({ sources: [] }),
+    add: async () => ({ ok: true }),
+    update: async () => ({ ok: true }),
+    remove: async () => ({ ok: true }),
+    weather: async () => ({ ok: true }),
+    ...over,
+  };
+}
+
+test('GET /feeds lists sources; POST adds one', async () => {
+  const added: unknown[] = [];
+  const channel = channelWith({
+    feeds: feedStub({
+      list: async () => ({ sources: [{ id: 's1', label: 'Diario Libre' }] }),
+      add: async (body) => {
+        added.push(body);
+        return { ok: true };
+      },
+    }),
+  });
+  const port = await channel.start(0);
+  try {
+    const listed = await fetch(`http://127.0.0.1:${port}/feeds`);
+    assert.equal(listed.status, 200);
+    assert.deepEqual(await listed.json(), { sources: [{ id: 's1', label: 'Diario Libre' }] });
+
+    const res = await fetch(`http://127.0.0.1:${port}/feeds`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url: 'https://example.test/rss', tag: 'news' }),
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(added, [{ url: 'https://example.test/rss', tag: 'news' }]);
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('PATCH /feeds/:id dismisses a derived source; DELETE removes a manual one', async () => {
+  const calls: unknown[] = [];
+  const channel = channelWith({
+    feeds: feedStub({
+      update: async (id, body) => {
+        calls.push(['update', id, body]);
+        return { ok: true };
+      },
+      remove: async (id) => {
+        calls.push(['remove', id]);
+        return { ok: true };
+      },
+    }),
+  });
+  const port = await channel.start(0);
+  try {
+    await fetch(`http://127.0.0.1:${port}/feeds/rel%3Ajefelabs%3Aspring-boot`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ dismissed: true }),
+    });
+    await fetch(`http://127.0.0.1:${port}/feeds/m1`, { method: 'DELETE' });
+    assert.deepEqual(calls, [
+      ['update', 'rel:jefelabs:spring-boot', { enabled: undefined, dismissed: true }],
+      ['remove', 'm1'],
+    ]);
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('PUT /feeds/weather is matched before the bare-id route, never swallowed by it', async () => {
+  const calls: unknown[] = [];
+  const channel = channelWith({
+    feeds: feedStub({
+      weather: async (body) => {
+        calls.push(['weather', body]);
+        return { ok: true };
+      },
+      update: async () => assert.fail('the id route must not swallow /feeds/weather'),
+    }),
+  });
+  const port = await channel.start(0);
+  try {
+    await fetch(`http://127.0.0.1:${port}/feeds/weather`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ location: 'Santo Domingo, DO' }),
+    });
+    assert.deepEqual(calls, [['weather', { location: 'Santo Domingo, DO' }]]);
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('the mutating feed routes refuse a disallowed browser Origin', async () => {
+  const channel = channelWith({
+    feeds: feedStub({ add: async () => assert.fail('must not be reached') }),
+  });
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/feeds`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Origin: 'http://evil.example' },
+      body: JSON.stringify({ url: 'https://example.test/rss', tag: 'news' }),
+    });
+    assert.equal(res.status, 403);
   } finally {
     await channel.stop();
   }
