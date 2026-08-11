@@ -107,6 +107,7 @@ export const BOARD_TEMPLATES: Record<BoardType, WorkColumn[]> = {
     { id: "killed", name: "Killed" },
   ],
   plan: [
+    { id: "queue", name: "Queue" },
     { id: "spec", name: "Spec" },
     { id: "tech-design", name: "Tech design" },
     { id: "decomposed", name: "Decomposed" },
@@ -308,7 +309,7 @@ const LEGACY_DEFAULT_NAMES: Partial<Record<BoardType, string[]>> = {
 };
 
 /** The boards whose leftmost lane is the Queue intake. */
-const QUEUE_TYPES: BoardType[] = ["personal", "deliver", "reactive", "maintenance"];
+const QUEUE_TYPES: BoardType[] = ["personal", "plan", "deliver", "reactive", "maintenance"];
 
 /**
  * Reshape a board persisted under an earlier template: default names follow

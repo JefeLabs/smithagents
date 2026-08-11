@@ -42,7 +42,7 @@ test("templates: seven typed column sets, ids unique and slug-shaped", () => {
   );
   assert.deepEqual(
     BOARD_TEMPLATES.plan.map((c) => c.name),
-    ["Spec", "Tech design", "Decomposed", "Ready"],
+    ["Queue", "Spec", "Tech design", "Decomposed", "Ready"],
   );
   assert.deepEqual(
     BOARD_TEMPLATES.deliver.map((c) => c.name),
@@ -365,16 +365,30 @@ test("normalizeBoard moves maintenance's queued to the front as Queue, cards rid
   assert.equal(maintenance.columns.filter((c) => c.id === "queue").length, 1);
 });
 
-test("normalizeBoard leaves plan and release untouched", () => {
-  for (const type of ["plan", "release"] as const) {
-    const b = createBoard(type, "acme");
-    const before = b.columns.map((c) => c.id);
-    normalizeBoard(b);
-    assert.deepEqual(
-      b.columns.map((c) => c.id),
-      before,
-    );
-  }
+test("normalizeBoard leaves release untouched and prepends queue on a legacy plan board", () => {
+  const release = createBoard("release", "acme");
+  const before = release.columns.map((c) => c.id);
+  normalizeBoard(release);
+  assert.deepEqual(
+    release.columns.map((c) => c.id),
+    before,
+  );
+  const legacyPlan: WorkBoard = {
+    id: "acme-plan",
+    name: "Plan",
+    type: "plan",
+    workspaceId: "acme",
+    columns: [
+      { id: "spec", name: "Spec" },
+      { id: "ready", name: "Ready" },
+    ],
+    cards: [],
+  };
+  normalizeBoard(legacyPlan);
+  assert.deepEqual(
+    legacyPlan.columns.map((c) => c.id),
+    ["queue", "spec", "ready"],
+  );
 });
 
 test("loadBoards migrates a legacy personal file in memory only", async () => {

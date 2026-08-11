@@ -319,7 +319,7 @@ test("ensureWorkspaceBoards: creates the standing three once, idempotent, never 
     ["skoolscout-ideation", "skoolscout"],
     ["skoolscout-plan", "skoolscout"],
   ]);
-  assert.deepEqual(boards.find((b) => b.id === "skoolscout-plan")?.columns.map((c) => c.id)[0], "spec");
+  assert.deepEqual(boards.find((b) => b.id === "skoolscout-plan")?.columns.map((c) => c.id)[0], "queue");
 });
 
 test("ensureWorkspaceBoards: rejects a name too long to fit a board id — why POST /workspaces provisions best-effort", async () => {
@@ -345,7 +345,7 @@ test("ensurePersonalBoard creates exactly one workspace-less board and is idempo
   );
 });
 
-test("sendSliceToBoard: leftmost card, story copies, capabilityRef", async () => {
+test("sendSliceToBoard: first working column (Queue is system intake), story copies, capabilityRef", async () => {
   const dir = await mkdtemp(join(tmpdir(), "work-"));
   await ensureWorkspaceBoards(dir, "skoolscout");
   const { boards } = await loadBoards(dir);
@@ -353,7 +353,9 @@ test("sendSliceToBoard: leftmost card, story copies, capabilityRef", async () =>
   const cap = fixture();
   const card = sendSliceToBoard(cap, cap.slices[0], board!);
   assert.equal(card.title, "tour scheduling v1");
-  assert.equal(card.columnId, board!.columns[0].id);
+  // A slice send is the USER's move, so it lands in Spec — the first working
+  // column — not the Queue intake lane.
+  assert.equal(card.columnId, "spec");
   assert.deepEqual(card.capabilityRef, { capabilityId: "skoolscout-school-feature-set", sliceId: "sl1" });
   assert.deepEqual(
     card.stories?.map((s) => s.text),
