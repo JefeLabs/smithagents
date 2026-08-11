@@ -90,6 +90,12 @@ export interface BrokerDeps {
   onTurnEnd?: () => void;
   /** Fired with a fresh roster snapshot after every directory, squad, group, or hand change. */
   onRosterChange?: (roster: UiRoster) => void;
+  /**
+   * Today's digest, injected beside the roster on every turn (feeds spec §6).
+   * Absent — or empty — leaves the brain's prompt exactly as it was before
+   * feeds existed.
+   */
+  digest?: () => string;
   /** Fired the moment a delegated task is bound in the directory — before any narration. Lets an external bridge (e.g. Copilot/Claude, see broker/bin) correlate its own utterance to the resulting taskId. */
   onTaskDispatched?: (d: { taskId: string; agent: string; task: string }) => void;
   /** Fired with every raw swarm event, alongside the broker's own handling (narration, directory updates) — lets a caller react to shapes the broker itself has no opinion on (e.g. relaying a work-board update when a completion event carries a `workCardRef`). */
@@ -816,6 +822,7 @@ export class Broker {
   private makeTurn(utterance?: string): BrainTurn {
     return {
       roster: this.describeRosterForBrain() + this.describeMemoryForBrain(utterance),
+      digest: this.deps.digest?.(),
       onSpeech: (chunk) => this.enqueueSpeech(chunk),
     };
   }

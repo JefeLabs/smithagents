@@ -14,6 +14,8 @@ import { BrokerBrain, type StreamFactory } from './brain.ts';
 import { Broker, TTS_SAMPLE_RATE } from './broker.ts';
 import { AdapterHub } from './channels.ts';
 import { loadBrokerConfig } from './config.ts';
+import { FeedStore } from './feeds/store.ts';
+import { buildDigest } from './feeds/digest.ts';
 import { ElectionScheduler, runElection, type AskFactory } from './election.ts';
 import { parseTarget, resolveTarget } from './targets.ts';
 import { createDiscordTextLifecycle } from './discord-text-lifecycle.ts';
@@ -302,6 +304,34 @@ const brain = new BrokerBrain(
     // Scoped to the current conversation's workspace only — never model-choosable, unlike delegate's optional workspace.
     lookup_ticket: (input) => broker.executors.lookup_ticket({ ...input, workspace: sessionManager.activeOrNull()?.workspace ?? defaultWorkspaceName }),
     search_docs: (input) => broker.executors.search_docs({ ...input, workspace: sessionManager.activeOrNull()?.workspace ?? defaultWorkspaceName }),
+    /**
+     * Depth, when small talk turns into a real question (spec §7). Keyword
+     * matching over a few hundred short items — no embeddings, no vector
+     * store, because at this size substring matching answers it.
+     */
+    check_feeds: async ({ query, tag, sinceDays }) => {
+      const days = Math.min(Math.max(sinceDays ?? 7, 1), 30);
+      const cutoff = Date.now() - days * 86_400_000;
+      const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
+      const hits = feedStore
+        .items()
+        .filter((i) => Date.parse(i.publishedAt) >= cutoff)
+        .filter((i) => !tag || i.tag === tag)
+        .filter((i) => {
+          const haystack = `${i.title} ${i.summary}`.toLowerCase();
+          return tokens.some((t) => haystack.includes(t));
+        })
+        .sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt))
+        .slice(0, 10);
+      if (!hits.length) return `Nothing in the feeds about "${query}" in the last ${days} days.`;
+      return hits
+        .map((i) => {
+          const ageHours = Math.round((Date.now() - Date.parse(i.publishedAt)) / 3_600_000);
+          const age = ageHours < 24 ? `${ageHours}h ago` : `${Math.round(ageHours / 24)}d ago`;
+          return `- ${i.title} (${age})${i.summary ? `\n  ${i.summary}` : ''}`;
+        })
+        .join('\n');
+    },
     // Voice-driven agent creation: draft under the host's control, persist
     // only on the human's explicit yes.
     draft_agent: async ({ spec }) => {
@@ -655,7 +685,15 @@ function handleUserText(text: string, origin?: TurnOrigin): void {
   // mic/stdin: at their own entry point, before this function ever runs)
   // landed before or after startSession's.
   if (lazilyCreated) textChannel.broadcast(sessionFrame());
+  const spokenThisTurn = unspokenReleaseIds;
   void broker.handleUtterance(text, origin).then(async () => {
+    // The crew has now had the chance to say them; a release is mentioned once
+    // (spec §5), and with no bell this marker is the only thing preventing a
+    // repeat on every following turn.
+    if (spokenThisTurn.length) {
+      feedStore.markSpoken(spokenThisTurn, new Date().toISOString());
+      refreshDigest();
+    }
     if (sessionManager.hasActive()) sessionManager.saveBrainHistory(brain.exportHistory());
     await maybeRetitle();
   });
@@ -1357,6 +1395,48 @@ function broadcastSpokenAudio(text: string): void {
   });
 }
 
+// Personal tracking feeds (spec 2026-08-11): three files under .smith/feeds/,
+// read and written through the same kind of io seam the session store uses.
+const feedsDir = process.env.BROKER_FEEDS_DIR ?? '.smith/feeds';
+const feedStore = new FeedStore({
+  read(name) {
+    try {
+      return readFileSync(join(feedsDir, name), 'utf8');
+    } catch {
+      return null;
+    }
+  },
+  write(name, body) {
+    try {
+      mkdirSync(feedsDir, { recursive: true });
+      writeFileSync(join(feedsDir, name), body);
+    } catch (err) {
+      console.error('[feeds] persist failed:', err);
+    }
+  },
+});
+
+/**
+ * Rebuilt on a timer, never per turn — a conversation must never wait on a
+ * fetch (spec §6). Empty until feeds exist, which keeps the brain's prompt
+ * byte-for-byte unchanged on a fresh install.
+ */
+let currentDigest = '';
+/** Releases named in the digest the crew has not yet said out loud. */
+let unspokenReleaseIds: string[] = [];
+
+function refreshDigest(): void {
+  const built = buildDigest({
+    items: feedStore.items(),
+    weather: feedStore.state().weather?.text,
+    owners: {},
+    now: new Date().toISOString(),
+  });
+  currentDigest = built.text;
+  unspokenReleaseIds = built.unspokenIds;
+}
+refreshDigest();
+
 // Roster composition survives restarts — user-formed squads are arrangements, not session state.
 const stateFile = process.env.BROKER_STATE_FILE ?? '.smith/roster-state.json';
 const rosterStore = {
@@ -1388,6 +1468,8 @@ broker = new Broker(
       return { workspace: active?.workspace, session: active?.id };
     },
     rosterStore,
+    // Today's world, injected beside the roster so small talk needs no lookup.
+    digest: () => currentDigest,
     // A group's membership changed — its members re-claim leadership (spec §5.3).
     onGroupChanged: (groupId) => elections.schedule(groupId),
     makeStt: () => new DeepgramSttStream(makeDeepgramLive),

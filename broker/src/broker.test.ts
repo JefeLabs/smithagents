@@ -1131,3 +1131,17 @@ test('a group that dissolves to one member announces nothing — there is no gro
   b.compose({ op: 'remove', target: `group-${id}`, agent: 'Josefina' }); // dissolves: < 2 members
   assert.deepEqual(changed, []);
 });
+
+test("today's digest reaches the brain's turn, and its absence changes nothing", async () => {
+  const withDigest: Array<string | undefined> = [];
+  const brain: BrainLike = {
+    handleUtterance: async (_text, turn) => void withDigest.push(turn.digest),
+    handleSystemNote: async () => {},
+  };
+  const f = makeFakes([]);
+  const withFeed = new Broker({ ...basicDeps(f, new AgentDirectory()), brain, digest: () => '\n\nTODAY · 29°C.\n' });
+  await withFeed.handleUtterance('morning');
+  const without = new Broker({ ...basicDeps(f, new AgentDirectory()), brain });
+  await without.handleUtterance('morning');
+  assert.deepEqual(withDigest, ['\n\nTODAY · 29°C.\n', undefined]);
+});

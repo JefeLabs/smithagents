@@ -18,12 +18,19 @@ export interface ToolExecutors {
   raise_hand(input: { agent: string; reason: string }): Promise<string>;
   lookup_ticket(input: { ticketKey: string; workspace: string }): Promise<string>;
   search_docs(input: { query: string; workspace: string }): Promise<string>;
+  check_feeds(input: { query: string; tag?: string; sinceDays?: number }): Promise<string>;
   draft_agent(input: { spec: string }): Promise<string>;
   confirm_agent(input: { accept: boolean }): Promise<string>;
 }
 
 export interface BrainTurn {
   roster: string;
+  /**
+   * What the crew already knows about today — weather, headlines, unspoken
+   * releases (spec §6). Empty/absent when no feeds are configured, so the
+   * prompt is unchanged for anyone who never set this up.
+   */
+  digest?: string;
   onSpeech: (chunk: string) => void;
 }
 
@@ -146,6 +153,20 @@ const TOOLS = [
     },
   },
   {
+    name: 'check_feeds',
+    description:
+      "Look deeper into what the crew has been reading — news, tech, sports, government notices, and release notes. Use when the conversation goes past what you already know from today's digest. Read-only.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        query: { type: 'string' as const, description: 'Free text matched against titles and summaries' },
+        tag: { type: 'string' as const, description: 'Optional: news, tech, sports, gov, or release' },
+        sinceDays: { type: 'number' as const, description: 'How far back to look; default 7, max 30' },
+      },
+      required: ['query'],
+    },
+  },
+  {
     name: 'search_docs',
     description: 'Search Confluence for docs relevant to a question in conversation. Read-only.',
     input_schema: {
@@ -230,7 +251,7 @@ export class BrokerBrain {
       const params: Parameters<StreamFactory>[0] = {
         model: this.model,
         max_tokens: 1024,
-        system: this.persona + turn.roster,
+        system: this.persona + turn.roster + (turn.digest ?? ''),
         messages: [...this.history],
         tools: TOOLS,
       };
@@ -312,6 +333,8 @@ export class BrokerBrain {
       if (name === 'remember') return await this.executors.remember(input as { key: string; text: string; scope: string });
       if (name === 'lookup_ticket') return await this.executors.lookup_ticket(input as { ticketKey: string; workspace: string });
       if (name === 'search_docs') return await this.executors.search_docs(input as { query: string; workspace: string });
+      if (name === 'check_feeds')
+        return await this.executors.check_feeds(input as { query: string; tag?: string; sinceDays?: number });
       if (name === 'draft_agent') return await this.executors.draft_agent(input as { spec: string });
       if (name === 'confirm_agent') return await this.executors.confirm_agent(input as { accept: boolean });
       return `unknown tool: ${name}`;

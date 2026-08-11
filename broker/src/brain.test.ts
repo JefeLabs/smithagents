@@ -37,6 +37,7 @@ const NOOP_EXEC: ToolExecutors = {
   search_docs: async () => 'ok',
   draft_agent: async () => 'ok',
   confirm_agent: async () => 'ok',
+  check_feeds: async () => 'ok',
 };
 
 test('plain text answer streams to onSpeech as chunks', async () => {
@@ -278,4 +279,60 @@ test('seedContext pushes a user/assistant pair without any API call', () => {
   assert.match(String(h[0].content), /workspace context.*acme/s);
   assert.equal(h[1].role, 'assistant');
   assert.equal(factory.mock.callCount(), 0);
+});
+
+// ---- personal tracking feeds (spec §6, §7) ----
+
+const FEED_EXEC: ToolExecutors = { ...NOOP_EXEC, check_feeds: async () => 'ok' };
+
+test('the digest rides in the system prompt, after the roster', async () => {
+  const { factory, calls } = scripted([
+    { textDeltas: ['morning'], final: { content: [{ type: 'text', text: 'morning' }], stop_reason: 'end_turn' } },
+  ]);
+  const brain = new BrokerBrain(factory, FEED_EXEC);
+  await brain.handleUtterance('morning', {
+    roster: '\n\nROSTER: Anderson idle',
+    digest: '\n\nTODAY · 29°C, clear.\n',
+    onSpeech: () => {},
+  });
+  assert.match(String(calls[0]!.system), /ROSTER: Anderson idle[\s\S]*29°C, clear/);
+});
+
+test('NO digest leaves the prompt byte-for-byte unchanged — a fresh install pays nothing', async () => {
+  const { factory, calls } = scripted([
+    { textDeltas: ['a'], final: { content: [{ type: 'text', text: 'a' }], stop_reason: 'end_turn' } },
+    { textDeltas: ['b'], final: { content: [{ type: 'text', text: 'b' }], stop_reason: 'end_turn' } },
+  ]);
+  const brain = new BrokerBrain(factory, FEED_EXEC);
+  await brain.handleUtterance('morning', { roster: '\n\nROSTER: x', onSpeech: () => {} });
+  await brain.handleUtterance('morning', { roster: '\n\nROSTER: x', digest: '', onSpeech: () => {} });
+  assert.equal(calls[0]!.system, calls[1]!.system);
+});
+
+test('check_feeds is offered as a tool and its result reaches the model', async () => {
+  const seen: unknown[] = [];
+  const { factory, calls } = scripted([
+    {
+      textDeltas: [],
+      final: {
+        content: [{ type: 'tool_use', id: 't1', name: 'check_feeds', input: { query: 'fly.io pricing' } }],
+        stop_reason: 'tool_use',
+      },
+    },
+    {
+      textDeltas: ['They changed pricing Tuesday.'],
+      final: { content: [{ type: 'text', text: 'done' }], stop_reason: 'end_turn' },
+    },
+  ]);
+  const brain = new BrokerBrain(factory, {
+    ...NOOP_EXEC,
+    check_feeds: async (input) => {
+      seen.push(input);
+      return 'Fly.io changed pricing on Tuesday.';
+    },
+  });
+  await brain.handleUtterance('is fly still cheap?', { roster: '', onSpeech: () => {} });
+  assert.deepEqual(seen, [{ query: 'fly.io pricing' }]);
+  const tools = calls[0]!.tools as Array<{ name: string }>;
+  assert.equal(tools.some((t) => t.name === 'check_feeds'), true);
 });
