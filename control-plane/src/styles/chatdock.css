@@ -15,3 +15,68 @@
   padding: 2px 8px;
   gap: 4px;
 }
+
+/* The docked chat's width; the canvas/doc stages reserve exactly this on the
+   right so their content clears it. One constant, two consumers, always in step. */
+:root {
+  --chat-dock-w: min(32vw, 400px);
+}
+
+/* ---- full: the home centerpiece. The section also carries `.stage`, so it
+   inherits the voice-stage layout verbatim; nothing more is needed here. ---- */
+
+/* ---- dock: a fixed column just left of the 72px agent rail, below the navbar.
+   Transcript scrolls; the composer sits at the foot of the column. ---- */
+.chat-dock--dock {
+  position: fixed;
+  top: var(--navbar-h);
+  right: 72px;
+  bottom: 0;
+  width: var(--chat-dock-w);
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 10px;
+  padding: 14px;
+  border-left: 1px solid var(--rail-br);
+  background: color-mix(in srgb, var(--ground-2) 92%, var(--text) 3%);
+}
+.chat-dock--dock .chat-dock__log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+/* The canvas/doc stages ONLY ever render with the dock present, so they always
+   reserve its width on the right (the sidebar main already reserves the 72px
+   agent rail separately). Plan 3b's full-screen mode drops this. */
+.stage.document-stage,
+.stage.diagram-stage,
+.stage.map-stage {
+  padding-right: var(--chat-dock-w);
+}
+
+/* ---- center: dashboards. A mid-screen column pinned to the bottom-centre; the
+   priority-card layout above it is Plan 4. Kept minimal so dashboards is usable
+   now without claiming its final shape. ---- */
+.chat-dock--center {
+  position: fixed;
+  inset: var(--navbar-h) 72px 0 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 24px;
+  pointer-events: none; /* the dashboard behind stays interactive; the dock re-enables its own */
+}
+.chat-dock--center > * {
+  pointer-events: auto;
+  width: min(100%, 720px);
+}
+.chat-dock--center .chat-dock__log {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
