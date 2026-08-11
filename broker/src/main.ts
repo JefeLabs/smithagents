@@ -2235,6 +2235,10 @@ await broker.start();
 const bootWorkspaces = (await swarm.listWorkspaces().catch(() => [])).filter((w) => !w.archived);
 workspaceNames = bootWorkspaces.map((w) => w.name);
 workspaceRecords = bootWorkspaces;
+// Groups load with the workspaces they group — a hello frame between boot and
+// the first mutation must not carry groups:[] (live-observed after a restart:
+// the GROUPS tier vanished and pins showed their groups as "(gone)").
+groupRecords = await swarm.listGroups().catch(() => []);
 defaultWorkspaceName = bootWorkspaces.find((w) => w.default)?.name ?? workspaceNames[0] ?? "default";
 const activeSession = sessionManager.init(); // Session | null — zero sessions is legal (spec §4b)
 if (activeSession) brain.loadHistory(activeSession.brainHistory);
