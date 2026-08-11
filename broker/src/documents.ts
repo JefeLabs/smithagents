@@ -113,7 +113,7 @@ export class DocumentManager {
     p: { sectionId: string; agentId: string; newBody: string; rationale: string },
   ): Doc | null {
     const doc = this.docs.get(docId);
-    if (!doc || !doc.sections.some((s) => s.id === p.sectionId)) return null;
+    if (!doc?.sections.some((s) => s.id === p.sectionId)) return null;
     this.proposalSeq += 1;
     doc.proposals.push({ id: `p${this.proposalSeq}`, ...p, state: "open", createdAt: this.now() });
     doc.updatedAt = this.now();

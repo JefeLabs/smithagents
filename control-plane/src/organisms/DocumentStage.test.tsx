@@ -161,6 +161,12 @@ describe("DocumentStage", () => {
     expect(within(stack).getByRole("note", { name: /suggestion from Gabriel/i })).toBeInTheDocument();
   });
 
+  it("the aimed section carries the outline marker; others don't", () => {
+    render(<DocumentStage doc={DOC} onSaveSection={vi.fn()} aimedSectionId="overview" />);
+    expect(screen.getByRole("region", { name: "What this is" }).className).toContain("doc-section--aimed");
+    expect(screen.getByRole("region", { name: "Non-goals" }).className).not.toContain("doc-section--aimed");
+  });
+
   it("aim buttons render per section and report id + heading; absent when unwired", () => {
     const onAimSection = vi.fn();
     render(<DocumentStage doc={DOC} onSaveSection={vi.fn()} onAimSection={onAimSection} />);

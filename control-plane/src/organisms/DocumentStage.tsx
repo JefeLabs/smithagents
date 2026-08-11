@@ -16,6 +16,8 @@ interface DocumentStageProps {
   shelf?: ReactNode;
   /** Aim the next dock send at a section — the route wires this to the composer's target chip. */
   onAimSection?: (sectionId: string, heading: string) => void;
+  /** The currently aimed section — outlined so the prompt's target area is visible. */
+  aimedSectionId?: string;
   /** Sticky-note decisions (spec: dock-sends-edit-artifact). Resolve to the broker's refusal text or null. */
   onAcceptProposal?: (proposalId: string) => Promise<string | null>;
   onRejectProposal?: (proposalId: string) => Promise<string | null>;
@@ -34,6 +36,7 @@ export function DocumentStage({
   onRename,
   shelf,
   onAimSection,
+  aimedSectionId,
   onAcceptProposal,
   onRejectProposal,
 }: DocumentStageProps) {
@@ -195,6 +198,7 @@ export function DocumentStage({
                     section={s}
                     hint={hintFor(s.id)}
                     onAim={onAimSection ? () => onAimSection(s.id, s.heading) : undefined}
+                    aimed={s.id === aimedSectionId}
                     editing={editingId === s.id}
                     onEdit={() => {
                       setSaveError(null);

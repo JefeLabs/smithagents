@@ -82,6 +82,7 @@ function DocRoute() {
   const { docId } = docRoute.useParams();
   const { data: docs = NO_DOCS, status } = useDocuments();
   const { data: blueprints = NO_BLUEPRINTS } = useBlueprints();
+  const docTarget = useUiStore((s) => s.docTarget);
   // Cold-WS race: on a hard reload of /doc/:id the documents frame hasn't
   // landed yet, so the query is still `pending` — that is not "no such doc",
   // it's "don't know yet". Only a RESOLVED query missing the doc means
@@ -102,6 +103,7 @@ function DocRoute() {
         blueprints={blueprints.filter((b) => b.family === docFamily)}
         shelf={shelf}
         onAimSection={(sectionId, heading) => useUiStore.getState().setDocTarget({ docId: doc.id, sectionId, heading })}
+        aimedSectionId={docTarget?.docId === doc.id ? docTarget.sectionId : undefined}
         onAcceptProposal={(proposalId) => api.acceptProposal(doc.id, proposalId)}
         onRejectProposal={(proposalId) => api.rejectProposal(doc.id, proposalId)}
         onChangeBlueprint={(blueprintId) => api.patchDocBlueprint(doc.id, blueprintId)}

@@ -143,6 +143,14 @@
   text-transform: uppercase;
   color: var(--text-2);
 }
+/* The aimed section: the prompt's target area, outlined so you can see the
+   blast radius before you send. Dashed = selection, not an error state. */
+.doc-section--aimed {
+  outline: 1.5px dashed color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: 8px;
+  border-radius: 4px;
+}
+
 /* Aim-a-section: quiet until the section is hovered or the button focused. */
 .doc-section__aim {
   border: 1px solid transparent;
@@ -212,7 +220,10 @@
   max-width: 46ch;
   border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
   border-radius: 10px;
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  /* Opaque face: mixed over the page ground, not transparent — a stacked
+     note must cover the one beneath it, not bleed its text through. */
+  background: color-mix(in srgb, var(--accent) 10%, var(--ground-2));
+  box-shadow: 0 6px 16px rgb(0 0 0 / 0.18);
   padding: 10px 12px;
   transform: rotate(-0.6deg);
   display: flex;
