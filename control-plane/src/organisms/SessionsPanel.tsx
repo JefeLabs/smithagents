@@ -103,23 +103,10 @@ export function SessionsPanel({
                         <span className="session-row__runtime">{MODE_LABELS[s.runtime]}</span>
                       </span>
                     </button>
-                    {(s.artifacts ?? []).map((docId) => (
-                      <button
-                        key={docId}
-                        type="button"
-                        className="session-row__artifact"
-                        aria-label={`open document ${docId}`}
-                        onClick={() => {
-                          onOpenArtifact(s.id, docId);
-                          onClose();
-                        }}
-                      >
-                        <FileText size={12} />
-                      </button>
-                    ))}
                     {onDelete && (
                       // Hover/focus-revealed (CSS): a permanent trash icon on every
-                      // row invites the one click nobody can take back.
+                      // row invites the one click nobody can take back. Sits on the
+                      // title row (top-right); the artifacts wrap onto their own line.
                       <button
                         type="button"
                         className="session-row__delete"
@@ -128,6 +115,27 @@ export function SessionsPanel({
                       >
                         <Trash2 size={12} />
                       </button>
+                    )}
+                    {(s.artifacts ?? []).length > 0 && (
+                      // Their own full-width wrapping row under the title — a session
+                      // with several documents flows onto extra lines instead of
+                      // overflowing the 230px panel and overlapping the title.
+                      <div className="session-row__artifacts">
+                        {(s.artifacts ?? []).map((docId) => (
+                          <button
+                            key={docId}
+                            type="button"
+                            className="session-row__artifact"
+                            aria-label={`open document ${docId}`}
+                            onClick={() => {
+                              onOpenArtifact(s.id, docId);
+                              onClose();
+                            }}
+                          >
+                            <FileText size={12} />
+                          </button>
+                        ))}
+                      </div>
                     )}
                   </div>
                 ))}
