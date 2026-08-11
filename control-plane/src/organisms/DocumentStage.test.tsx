@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DocT } from "../api/types";
 import { DocumentStage } from "./DocumentStage";
@@ -84,6 +84,50 @@ describe("DocumentStage", () => {
   it("renders the shelf slot inside the stage when provided", () => {
     render(<DocumentStage doc={DOC} onSaveSection={vi.fn()} shelf={<aside aria-label="session documents" />} />);
     expect(screen.getByRole("complementary", { name: "session documents" })).toBeTruthy();
+  });
+
+  it("open proposals render as sticky notes under their section; decided ones don't; accept/dismiss call through", async () => {
+    const onAcceptProposal = vi.fn().mockResolvedValue(null);
+    const onRejectProposal = vi.fn().mockResolvedValue(null);
+    const doc: DocT = {
+      ...DOC,
+      proposals: [
+        {
+          id: "p1",
+          sectionId: DOC.sections[0].id,
+          agentId: "Osvaldo",
+          newBody: "A tighter overview.",
+          rationale: "shorter",
+          state: "open",
+          createdAt: "t",
+        },
+        {
+          id: "p2",
+          sectionId: DOC.sections[0].id,
+          agentId: "Beta",
+          newBody: "x",
+          rationale: "r",
+          state: "rejected",
+          createdAt: "t",
+        },
+      ],
+    };
+    render(
+      <DocumentStage
+        doc={doc}
+        onSaveSection={vi.fn()}
+        onAcceptProposal={onAcceptProposal}
+        onRejectProposal={onRejectProposal}
+      />,
+    );
+    const note = screen.getByRole("note", { name: /suggestion from Osvaldo/i });
+    expect(note).toHaveTextContent("shorter");
+    expect(note).toHaveTextContent(/tighter overview/i);
+    expect(screen.queryByRole("note", { name: /suggestion from Beta/i })).toBeNull(); // decided
+    fireEvent.click(within(note).getByRole("button", { name: "Accept" }));
+    expect(onAcceptProposal).toHaveBeenCalledWith("p1");
+    fireEvent.click(within(note).getByRole("button", { name: "Dismiss" }));
+    expect(onRejectProposal).toHaveBeenCalledWith("p1");
   });
 
   it("aim buttons render per section and report id + heading; absent when unwired", () => {

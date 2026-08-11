@@ -16,6 +16,9 @@ interface DocumentStageProps {
   shelf?: ReactNode;
   /** Aim the next dock send at a section — the route wires this to the composer's target chip. */
   onAimSection?: (sectionId: string, heading: string) => void;
+  /** Sticky-note decisions (spec: dock-sends-edit-artifact). Resolve to the broker's refusal text or null. */
+  onAcceptProposal?: (proposalId: string) => Promise<string | null>;
+  onRejectProposal?: (proposalId: string) => Promise<string | null>;
 }
 
 /**
@@ -31,6 +34,8 @@ export function DocumentStage({
   onRename,
   shelf,
   onAimSection,
+  onAcceptProposal,
+  onRejectProposal,
 }: DocumentStageProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -137,19 +142,51 @@ export function DocumentStage({
           )}
           <div className="document-stage__sections">
             {doc.sections.map((s) => (
-              <SectionCard
-                key={editingId === s.id ? `${s.id}-editing` : s.id}
-                section={s}
-                hint={hintFor(s.id)}
-                onAim={onAimSection ? () => onAimSection(s.id, s.heading) : undefined}
-                editing={editingId === s.id}
-                onEdit={() => {
-                  setSaveError(null);
-                  setEditingId(s.id);
-                }}
-                onCancel={() => setEditingId(null)}
-                onSave={(body) => void save(s.id, body)}
-              />
+              <div key={s.id} className="document-stage__section-slot">
+                {(doc.proposals ?? [])
+                  .filter((p) => p.sectionId === s.id && p.state === "open")
+                  .map((p) => (
+                    // biome-ignore lint/a11y/useSemanticElements: a labelled sticky note, not flowing prose — role="note" names it for AT and tests
+                    <aside key={p.id} className="sticky-note" role="note" aria-label={`suggestion from ${p.agentId}`}>
+                      <span className="sticky-note__agent">{p.agentId}</span>
+                      <span className="sticky-note__rationale">{p.rationale}</span>
+                      <p className="sticky-note__preview">{p.newBody.slice(0, 240)}</p>
+                      <div className="sticky-note__actions">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSaveError(null);
+                            void onAcceptProposal?.(p.id).then((e) => e && setSaveError(e));
+                          }}
+                        >
+                          Accept
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSaveError(null);
+                            void onRejectProposal?.(p.id).then((e) => e && setSaveError(e));
+                          }}
+                        >
+                          Dismiss
+                        </button>
+                      </div>
+                    </aside>
+                  ))}
+                <SectionCard
+                  key={editingId === s.id ? `${s.id}-editing` : s.id}
+                  section={s}
+                  hint={hintFor(s.id)}
+                  onAim={onAimSection ? () => onAimSection(s.id, s.heading) : undefined}
+                  editing={editingId === s.id}
+                  onEdit={() => {
+                    setSaveError(null);
+                    setEditingId(s.id);
+                  }}
+                  onCancel={() => setEditingId(null)}
+                  onSave={(body) => void save(s.id, body)}
+                />
+              </div>
             ))}
           </div>
         </motion.div>

@@ -62,7 +62,10 @@ test("a rewrite naming an unknown section throws — never a partial apply", asy
 });
 
 test("malformed or empty replies throw", async () => {
-  await assert.rejects(runDocEditTurn({ doc: DOC, instruction: "x", ...stub("no json here at all") }), /usable rewrites/);
+  await assert.rejects(
+    runDocEditTurn({ doc: DOC, instruction: "x", ...stub("no json here at all") }),
+    /usable rewrites/,
+  );
   await assert.rejects(
     runDocEditTurn({ doc: DOC, instruction: "x", ...stub('{"rewrites":[],"note":"n"}') }),
     /usable rewrites/,

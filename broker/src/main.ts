@@ -1447,7 +1447,10 @@ const textChannel = new TextChannel(
             for (const rw of r.rewrites) {
               documentManager.addProposal(doc.docId, { ...rw, agentId: editor, rationale: r.note });
             }
-            textChannel.broadcast({ type: "speech", text: `${r.rewrites.length} suggestion(s) from ${editor} on “${targetDoc.title}” — accept or dismiss them on the page.` });
+            textChannel.broadcast({
+              type: "speech",
+              text: `${r.rewrites.length} suggestion(s) from ${editor} on “${targetDoc.title}” — accept or dismiss them on the page.`,
+            });
           } else {
             for (const rw of r.rewrites) documentManager.patchSection(doc.docId, rw.sectionId, rw.newBody);
             textChannel.broadcast({ type: "speech", text: r.note });

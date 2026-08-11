@@ -431,7 +431,8 @@ describe("HomePage — creating a session lands in its conversation", () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
         calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
-        if (url.endsWith("/agents")) return new Response(JSON.stringify({ agents: [], voice: { stt: false, tts: true } }));
+        if (url.endsWith("/agents"))
+          return new Response(JSON.stringify({ agents: [], voice: { stt: false, tts: true } }));
         if (url.endsWith("/workspaces")) return new Response(JSON.stringify({ workspaces: [] }));
         if (url.endsWith("/cli-tools")) return new Response(JSON.stringify({ tools: [] }));
         return new Response(JSON.stringify({ ok: true }), { status: 200 });

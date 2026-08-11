@@ -524,18 +524,35 @@ export async function postDocument(
 }
 
 /** POST /documents/:id/proposals/:pid/accept — apply a sticky-note suggestion. Error string or null. */
-export async function acceptProposal(docId: string, proposalId: string, base: string = BROKER_BASE): Promise<string | null> {
+export async function acceptProposal(
+  docId: string,
+  proposalId: string,
+  base: string = BROKER_BASE,
+): Promise<string | null> {
   return decideProposal(docId, proposalId, "accept", base);
 }
 
 /** POST /documents/:id/proposals/:pid/reject — dismiss a sticky-note suggestion. Error string or null. */
-export async function rejectProposal(docId: string, proposalId: string, base: string = BROKER_BASE): Promise<string | null> {
+export async function rejectProposal(
+  docId: string,
+  proposalId: string,
+  base: string = BROKER_BASE,
+): Promise<string | null> {
   return decideProposal(docId, proposalId, "reject", base);
 }
 
-async function decideProposal(docId: string, proposalId: string, verb: "accept" | "reject", base: string): Promise<string | null> {
+async function decideProposal(
+  docId: string,
+  proposalId: string,
+  verb: "accept" | "reject",
+  base: string,
+): Promise<string | null> {
   try {
-    const res = await brokerFetch(`/documents/${encodeURIComponent(docId)}/proposals/${encodeURIComponent(proposalId)}/${verb}`, base, { method: "POST" });
+    const res = await brokerFetch(
+      `/documents/${encodeURIComponent(docId)}/proposals/${encodeURIComponent(proposalId)}/${verb}`,
+      base,
+      { method: "POST" },
+    );
     if (res.ok) return null;
     const body = (await res.json().catch(() => ({}))) as { error?: string };
     return body.error ?? `HTTP ${res.status}`;

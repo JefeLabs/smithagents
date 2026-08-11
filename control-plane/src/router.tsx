@@ -19,6 +19,7 @@ import { WorkStage } from "./organisms/WorkStage";
 import { HomePage } from "./pages/HomePage";
 import { useBlueprints } from "./queries/http";
 import { useDocuments, useRoster, useSession } from "./queries/pushed";
+import { useUiStore } from "./stores/uiStore";
 
 // Stable empties: a fresh `[]` per render would churn every downstream effect
 // keyed on the array's identity.
@@ -101,6 +102,8 @@ function DocRoute() {
         blueprints={blueprints.filter((b) => b.family === docFamily)}
         shelf={shelf}
         onAimSection={(sectionId, heading) => useUiStore.getState().setDocTarget({ docId: doc.id, sectionId, heading })}
+        onAcceptProposal={(proposalId) => api.acceptProposal(doc.id, proposalId)}
+        onRejectProposal={(proposalId) => api.rejectProposal(doc.id, proposalId)}
         onChangeBlueprint={(blueprintId) => api.patchDocBlueprint(doc.id, blueprintId)}
         onRename={(title) => api.patchDocTitle(doc.id, title)}
         onSaveSection={(sectionId, body) => api.patchDocSection(doc.id, sectionId, body)}

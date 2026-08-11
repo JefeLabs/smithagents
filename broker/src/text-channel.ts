@@ -567,7 +567,10 @@ export class TextChannel {
           const rawDoc = parsed.doc as { docId?: unknown; sectionId?: unknown } | undefined;
           const doc =
             rawDoc && typeof rawDoc.docId === "string"
-              ? { docId: rawDoc.docId, ...(typeof rawDoc.sectionId === "string" ? { sectionId: rawDoc.sectionId } : {}) }
+              ? {
+                  docId: rawDoc.docId,
+                  ...(typeof rawDoc.sectionId === "string" ? { sectionId: rawDoc.sectionId } : {}),
+                }
               : undefined;
           // A DIRECTED send is awaited so a refusal (busy agent, unknown
           // target) can reach the composer. A DOC-CONTEXT send always takes
