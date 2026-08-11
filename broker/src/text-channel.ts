@@ -178,6 +178,8 @@ export class TextChannel {
     private readonly sessions?: {
       create(body: { workspace?: string; runtime?: string; prompt?: string }): Promise<{ error: string; status?: number } | null>;
       activate(id: string): string | null;
+      /** DELETE /sessions/:id — synchronous like `activate`: an error string (unknown id) or null. */
+      remove(id: string): string | null;
     },
     /** Full-setup reset (settings). Returns a report of what was destroyed/preserved. */
     private readonly onReset?: (scope: Record<string, unknown>) => Promise<Record<string, unknown>>,
@@ -887,6 +889,21 @@ export class TextChannel {
         // NOTE: /api-keys/:id/credential is deliberately absent — raw keys never
         // transit 7790 (spec invariant). The verify-match must run BEFORE the bare
         // /api-keys/:id match so PUT/DELETE never swallow /verify; keep this order.
+      }
+      // DELETE /sessions/:id — permanent. Matched before the POST block so the
+      // bare-id shape can't be confused with /sessions itself. Deleting is a
+      // mutation, so it carries the same origin guard the POSTs below use.
+      const sessionDeleteMatch = /^\/sessions\/([^/]+)$/.exec(req.url ?? '');
+      if (req.method === 'DELETE' && sessionDeleteMatch && this.sessions) {
+        if (!isAllowedOrigin(req)) {
+          res.writeHead(403, { ...credentialCors(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: 'origin not allowed' }));
+          return;
+        }
+        const error = this.sessions.remove(decodeURIComponent(sessionDeleteMatch[1]!));
+        res
+          .writeHead(error ? 404 : 200, { ...CORS, 'content-type': 'application/json' })
+          .end(JSON.stringify(error ? { error } : { ok: true }));
+        return;
       }
       const sessionMatch = /^\/sessions(?:\/([^/]+)\/activate)?$/.exec(req.url ?? '');
       if (req.method === 'POST' && sessionMatch && this.sessions) {

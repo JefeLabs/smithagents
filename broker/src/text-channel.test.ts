@@ -1187,6 +1187,7 @@ test('POST /sessions forwards {workspace, runtime, prompt} and maps the handler 
           : null;
       },
       activate: () => null,
+      remove: () => null,
     },
   });
   const port = await channel.start(0);
@@ -1218,6 +1219,7 @@ test('POST /sessions responds 500 instead of hanging when sessions.create() reje
         throw new Error('swarm unreachable');
       },
       activate: () => null,
+      remove: () => null,
     },
   });
   const port = await channel.start(0);
@@ -1234,7 +1236,7 @@ test('POST /sessions responds 500 instead of hanging when sessions.create() reje
   }
 });
 
-test('POST /sessions and /sessions/:id/activate block a disallowed browser Origin; an absent Origin still works', async () => {
+test('POST /sessions, /sessions/:id/activate and DELETE /sessions/:id block a disallowed browser Origin; an absent Origin still works', async () => {
   const calls: unknown[] = [];
   const channel = channelWith({
     sessions: {
@@ -1244,6 +1246,10 @@ test('POST /sessions and /sessions/:id/activate block a disallowed browser Origi
       },
       activate: (id) => {
         calls.push(['activate', id]);
+        return null;
+      },
+      remove: (id) => {
+        calls.push(['remove', id]);
         return null;
       },
     },
@@ -1265,6 +1271,17 @@ test('POST /sessions and /sessions/:id/activate block a disallowed browser Origi
     });
     assert.equal(blockedActivate.status, 403);
     assert.deepEqual(await blockedActivate.json(), { error: 'origin not allowed' });
+
+    // Deleting is the most destructive of the three — a session is gone for
+    // good — so it must refuse a foreign origin exactly like the others.
+    const blockedDelete = await fetch(`http://127.0.0.1:${port}/sessions/s1`, {
+      method: 'DELETE',
+      headers: { origin: 'http://evil.example' },
+    });
+    assert.equal(blockedDelete.status, 403);
+    assert.deepEqual(await blockedDelete.json(), { error: 'origin not allowed' });
+    assert.equal(blockedDelete.headers.get('access-control-allow-origin'), null);
+
     assert.deepEqual(calls, [], 'the sessions dep must never be reached from a disallowed origin');
 
     // No Origin header at all — the smith-broker-send CLI bridge and same-process callers
@@ -1279,9 +1296,13 @@ test('POST /sessions and /sessions/:id/activate block a disallowed browser Origi
     const noOriginActivate = await fetch(`http://127.0.0.1:${port}/sessions/s1/activate`, { method: 'POST' });
     assert.equal(noOriginActivate.status, 200);
 
+    const noOriginDelete = await fetch(`http://127.0.0.1:${port}/sessions/s1`, { method: 'DELETE' });
+    assert.equal(noOriginDelete.status, 200);
+
     assert.deepEqual(calls, [
       ['create', { workspace: 'acme', runtime: 'local-in-process', prompt: 'x' }],
       ['activate', 's1'],
+      ['remove', 's1'],
     ]);
 
     // The control-plane's own dev origin still works too.
@@ -1485,6 +1506,43 @@ test('POST /documents forwards the body and returns the created doc; PATCH updat
     });
     assert.equal(renamed.status, 200);
     assert.deepEqual(renames[0], ['d1', 'Login flow spec']);
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('DELETE /sessions/:id removes the session; an unknown id is 404 and /sessions itself is never deletable', async () => {
+  const calls: string[] = [];
+  const channel = channelWith({
+    sessions: {
+      create: async () => null,
+      activate: () => null,
+      remove: (id) => {
+        calls.push(id);
+        return id === 's1' ? null : `unknown session: ${id}`;
+      },
+    },
+  });
+  const port = await channel.start(0);
+  try {
+    const ok = await fetch(`http://127.0.0.1:${port}/sessions/s1`, { method: 'DELETE' });
+    assert.equal(ok.status, 200);
+    assert.deepEqual(await ok.json(), { ok: true });
+
+    // Unknown id is 404, not the 400 activate uses: DELETE names a resource, and
+    // "there is nothing here to delete" is exactly what 404 means.
+    const missing = await fetch(`http://127.0.0.1:${port}/sessions/s99`, { method: 'DELETE' });
+    assert.equal(missing.status, 404);
+    assert.deepEqual(await missing.json(), { error: 'unknown session: s99' });
+
+    // The collection has no delete: DELETE /sessions must not fall through to
+    // the bare-id shape and wipe something.
+    const collection = await fetch(`http://127.0.0.1:${port}/sessions`, { method: 'DELETE' });
+    assert.equal(collection.status, 404);
+
+    // Ids are percent-decoded the same way activate decodes them.
+    await fetch(`http://127.0.0.1:${port}/sessions/${encodeURIComponent('s 2')}`, { method: 'DELETE' });
+    assert.deepEqual(calls, ['s1', 's99', 's 2']);
   } finally {
     await channel.stop();
   }

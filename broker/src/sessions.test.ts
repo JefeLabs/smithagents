@@ -4,14 +4,19 @@ import { SessionManager, truncateTitle, resolveLazyWorkspace, type Session, type
 
 const T = '2026-01-01T00:00:00.000Z';
 
-function memoryStore(initial: Session[] = []): SessionStoreLike & { saved: Session[] } {
+function memoryStore(initial: Session[] = []): SessionStoreLike & { saved: Session[]; removed: string[] } {
   const byId = new Map(initial.map((s) => [s.id, s]));
   const store = {
     saved: [] as Session[],
+    removed: [] as string[],
     loadAll: () => [...byId.values()],
     save: (s: Session) => {
       byId.set(s.id, JSON.parse(JSON.stringify(s)) as Session);
       store.saved.push(s);
+    },
+    remove: (id: string) => {
+      byId.delete(id);
+      store.removed.push(id);
     },
   };
   return store;
@@ -130,4 +135,72 @@ test('transcript and brain history persist through the store; switching swaps th
   assert.equal(mgr.active().transcript[0]?.text, 'hola equipo');
   assert.equal(mgr.active().brainHistory.length, 1);
   assert.equal(mgr.activate('nope'), null);
+});
+
+test('remove deletes the session from memory and from the store', () => {
+  const store = memoryStore();
+  const mgr = new SessionManager(store);
+  mgr.create('jefelabs', { title: 'keep' });
+  const doomed = mgr.create('jefelabs', { title: 'doomed' });
+  const outcome = mgr.remove(doomed.id);
+  assert.equal(outcome?.removed.id, doomed.id);
+  assert.deepEqual(store.removed, [doomed.id]);
+  assert.deepEqual(
+    mgr.list().map((s) => s.id),
+    ['s1'],
+  );
+});
+
+test('remove of an unknown session reports nothing removed and touches no state', () => {
+  const store = memoryStore();
+  const mgr = new SessionManager(store);
+  mgr.create('jefelabs');
+  assert.equal(mgr.remove('s99'), null);
+  assert.deepEqual(store.removed, []);
+  assert.equal(mgr.active().id, 's1');
+});
+
+test('removing the ACTIVE session hands back the most recent survivor as the new active', () => {
+  const store = memoryStore();
+  const mgr = new SessionManager(store);
+  const older = mgr.create('jefelabs', { title: 'older' });
+  mgr.saveBrainHistory([{ role: 'user', content: 'remember me' }]);
+  const active = mgr.create('acme', { title: 'active' });
+  assert.equal(mgr.active().id, active.id);
+  const outcome = mgr.remove(active.id);
+  // The successor is returned so the caller can reload the brain and re-point
+  // Discord — a deleted active session must not leave either one dangling.
+  assert.equal(outcome?.active?.id, older.id);
+  assert.equal(outcome?.active?.brainHistory[0]?.content, 'remember me');
+  assert.equal(mgr.active().id, older.id);
+});
+
+test('removing the LAST session leaves no active session rather than inventing one', () => {
+  const store = memoryStore();
+  const mgr = new SessionManager(store);
+  const only = mgr.create('jefelabs');
+  const outcome = mgr.remove(only.id);
+  assert.equal(outcome?.active, null);
+  assert.equal(mgr.hasActive(), false);
+  assert.equal(mgr.activeOrNull(), null);
+  assert.deepEqual(mgr.list(), []);
+});
+
+test('removing a NON-active session leaves the active pointer where it was', () => {
+  const store = memoryStore();
+  const mgr = new SessionManager(store);
+  const bystander = mgr.create('jefelabs', { title: 'bystander' });
+  const active = mgr.create('jefelabs', { title: 'active' });
+  const outcome = mgr.remove(bystander.id);
+  assert.equal(outcome?.active?.id, active.id);
+  assert.equal(mgr.active().id, active.id);
+});
+
+test('ids are never reused after a remove — the sequence only moves forward', () => {
+  const store = memoryStore();
+  const mgr = new SessionManager(store);
+  mgr.create('jefelabs');
+  const second = mgr.create('jefelabs');
+  mgr.remove(second.id);
+  assert.equal(mgr.create('jefelabs').id, 's3');
 });

@@ -340,6 +340,13 @@ const sessionStore = {
       console.error('[sessions] persist failed:', err);
     }
   },
+  remove(id: string): void {
+    try {
+      rmSync(join(sessionsDir, `${id}.json`), { force: true });
+    } catch (err) {
+      console.error('[sessions] delete failed:', err);
+    }
+  },
 };
 const sessionManager = new SessionManager(sessionStore);
 
@@ -1068,6 +1075,21 @@ const textChannel = new TextChannel(
       if (!s) return `unknown session: ${id}`;
       brain.loadHistory(s.brainHistory);
       switchDiscord(s.workspace);
+      textChannel.broadcast(sessionFrame());
+      return null;
+    },
+    remove: (id) => {
+      const wasActive = sessionManager.activeOrNull()?.id === id;
+      const outcome = sessionManager.remove(id);
+      if (!outcome) return `unknown session: ${id}`;
+      // Deleting the active session leaves the brain holding a dead
+      // conversation and Discord attending its workspace. Hand both to the
+      // successor — or clear them when nothing survives, exactly as the
+      // conversations reset does below.
+      if (wasActive) {
+        brain.loadHistory(outcome.active?.brainHistory ?? []);
+        switchDiscord(outcome.active?.workspace ?? defaultWorkspaceName);
+      }
       textChannel.broadcast(sessionFrame());
       return null;
     },

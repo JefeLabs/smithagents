@@ -50,6 +50,8 @@ export interface SessionSummary {
 export interface SessionStoreLike {
   loadAll(): Session[];
   save(session: Session): void;
+  /** Erase a session's persisted copy. Called only after it has left the map. */
+  remove(id: string): void;
 }
 
 const MAX_TRANSCRIPT_LINES = 500;
@@ -126,6 +128,33 @@ export class SessionManager {
     if (!session) return null;
     this.activeId = id;
     return session;
+  }
+
+  /**
+   * Delete a session for good. Returns the removed session plus whichever
+   * session is active AFTERWARDS (null when none remain), because deleting the
+   * active one leaves two things dangling that only the caller can fix: the
+   * brain still holds the dead conversation's history, and Discord still
+   * attends its workspace. main.ts reloads both from `active` — the same
+   * contract the reset path honours.
+   *
+   * The successor is the most recently updated survivor, matching init()'s
+   * choice on boot. Documents this session produced are deliberately NOT
+   * deleted: artifacts outlive the conversation that made them, and one
+   * document may be attached to several sessions.
+   */
+  remove(id: string): { removed: Session; active: Session | null } | null {
+    const session = this.sessions.get(id);
+    if (!session) return null;
+    this.sessions.delete(id);
+    this.store.remove(id);
+    if (this.activeId === id) {
+      const successor = [...this.sessions.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] ?? null;
+      this.activeId = successor?.id ?? '';
+    }
+    // `seq` is untouched: ids never get reused, so a deleted s2 can't be
+    // resurrected by the next create and inherit its artifacts.
+    return { removed: session, active: this.activeOrNull() };
   }
 
   active(): Session {
