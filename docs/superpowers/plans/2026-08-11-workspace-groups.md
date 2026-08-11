@@ -1,6 +1,6 @@
 # Workspace Groups Implementation Plan
 
-> **CLAIMED:** in execution by Claude session d43af92a (inline, main checkout) since 2026-08-11. Do not execute concurrently.
+> **EXECUTED:** shipped to main @ 061f7c3 on 2026-08-11 (session d43af92a). All eleven tasks landed, plus two live-smoke fixes (doc-edit schema, boot groups mirror).
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

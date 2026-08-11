@@ -1,7 +1,7 @@
 # Workspace groups as first-class entities — Design
 
 **Date:** 2026-08-11
-**Status:** Approved by Edwin (nested groups; pins down-only; lens navbar; text cards ride along; board-data dashboards deferred to phase 2)
+**Status:** SHIPPED (main @ 061f7c3 — swarm entity+routes, broker proxy/frame/seeding, popover pins, lens navbar, manager section, group scope chips, text cards; live-smoked end to end)
 
 ## Problem
 
