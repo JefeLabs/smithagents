@@ -1,20 +1,14 @@
-import { ArrowRight } from "lucide-react";
-import { useState } from "react";
 import { DASH_SCOPES, DASH_SUGGESTIONS, type SavedDashboard } from "../../data/dashboards";
 
 interface DashboardAskProps {
   scope: string;
   saved: SavedDashboard[];
-  scopeHint: string;
   onScope: (scope: string) => void;
-  /** Submit the typed draft; "" lets the stage fall back to the first suggestion. */
+  /** Compose from a suggestion or a saved dashboard — free-typed asks go through the shared center dock (spec v3). */
   onSubmit: (query: string) => void;
 }
 
-export function DashboardAsk({ scope, saved, scopeHint, onScope, onSubmit }: DashboardAskProps) {
-  // The draft is local: the stage only cares at submit time, and a keystroke
-  // re-render of the whole stage would be noise.
-  const [draft, setDraft] = useState("");
+export function DashboardAsk({ scope, saved, onScope, onSubmit }: DashboardAskProps) {
   return (
     <div className="dash-ask">
       <div className="dash-ask__inner">
@@ -39,28 +33,6 @@ export function DashboardAsk({ scope, saved, scopeHint, onScope, onSubmit }: Das
               {s}
             </button>
           ))}
-        </div>
-
-        <div className="dash-ask__box">
-          <textarea
-            rows={2}
-            value={draft}
-            aria-label="Dashboard question"
-            placeholder="e.g. where is delivery slipping across the release group this quarter?"
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                onSubmit(draft.trim());
-              }
-            }}
-          />
-          <div className="dash-ask__boxrow">
-            <span className="dash-ask__hint">{scopeHint}</span>
-            <button type="button" className="dash-btn dash-btn--primary" onClick={() => onSubmit(draft.trim())}>
-              compose <ArrowRight size={13} aria-hidden="true" />
-            </button>
-          </div>
         </div>
 
         <div className="dash-ask__label">TRY</div>

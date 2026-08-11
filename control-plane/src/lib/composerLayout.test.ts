@@ -8,9 +8,8 @@ describe("layoutForPath", () => {
     expect(layoutForPath("/diagram/d1")).toBe("dock");
     expect(layoutForPath("/map")).toBe("dock");
   });
-  // /dashboards is `center` in Plan 4; hidden until that stage hosts the dock.
-  it("dashboards is hidden until Plan 4 (its mock owns its own compose today)", () =>
-    expect(layoutForPath("/dashboards")).toBe("hidden"));
+  it("dashboards hosts the center dock — the one chat box there (spec v3)", () =>
+    expect(layoutForPath("/dashboards")).toBe("center"));
   it("board and work hide the chat", () => {
     expect(layoutForPath("/board")).toBe("hidden");
     expect(layoutForPath("/work/ignacio")).toBe("hidden");

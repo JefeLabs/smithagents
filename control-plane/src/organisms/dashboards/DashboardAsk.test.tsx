@@ -7,7 +7,6 @@ function renderAsk(over: Partial<Parameters<typeof DashboardAsk>[0]> = {}) {
   const props = {
     scope: "all workspaces",
     saved: DASH_SAVED,
-    scopeHint: "SCOPE · ALL WORKSPACES",
     onScope: vi.fn(),
     onSubmit: vi.fn(),
     ...over,
@@ -26,21 +25,9 @@ describe("DashboardAsk", () => {
     expect(onScope).toHaveBeenCalledWith("release");
   });
 
-  it("Enter submits the trimmed draft; Shift+Enter does not", () => {
-    const { onSubmit } = renderAsk();
-    const box = screen.getByRole("textbox", { name: "Dashboard question" });
-    fireEvent.change(box, { target: { value: "  where is delivery slipping?  " } });
-    fireEvent.keyDown(box, { key: "Enter", shiftKey: true });
-    expect(onSubmit).not.toHaveBeenCalled();
-    fireEvent.keyDown(box, { key: "Enter" });
-    expect(onSubmit).toHaveBeenCalledWith("where is delivery slipping?");
-  });
-
-  it("the compose button submits the draft", () => {
-    const { onSubmit } = renderAsk();
-    fireEvent.change(screen.getByRole("textbox", { name: "Dashboard question" }), { target: { value: "q1" } });
-    fireEvent.click(screen.getByRole("button", { name: /compose/i }));
-    expect(onSubmit).toHaveBeenCalledWith("q1");
+  it("owns no text input — the shared center dock is the one chat box (spec v3)", () => {
+    renderAsk();
+    expect(screen.queryByRole("textbox")).toBeNull();
   });
 
   it("a suggestion submits its own text", () => {

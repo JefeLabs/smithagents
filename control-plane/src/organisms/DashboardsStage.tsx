@@ -89,7 +89,7 @@ export function DashboardsStage({ shelf }: { shelf?: ReactNode } = {}) {
         )}
       </header>
       {view === "ask" && (
-        <DashboardAsk scope={scope} saved={saved} scopeHint={scopeHint(scope)} onScope={setScope} onSubmit={submit} />
+        <DashboardAsk scope={scope} saved={saved} onScope={setScope} onSubmit={submit} />
       )}
       {view === "composing" && <DashboardComposing query={query} scopeHint={scopeHint(scope)} step={step} />}
       {view === "board" && <DashboardBoard query={query} scopeHint={scopeHint(scope)} onFollowup={submit} />}

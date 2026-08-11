@@ -10,12 +10,10 @@ export type ComposerVariant = "full" | "dock" | "center" | "hidden";
 export function layoutForPath(pathname: string): ComposerVariant {
   if (pathname === "/") return "full";
   if (pathname.startsWith("/doc/") || pathname.startsWith("/diagram/") || pathname === "/map") return "dock";
-  // NOTE: /dashboards becomes `center` in Plan 4, which rebuilds the dashboards
-  // stage into a role-aware layout built to host the dock. Today that stage owns
-  // its own centre compose box, so overlaying a second (center) dock collides —
-  // keep it hidden until Plan 4 integrates them. The `center` variant + CSS are
-  // already in place, waiting for that flip.
-  return "hidden"; // /dashboards (until Plan 4), /board, /work/$agent, unrouted
+  // The dashboards stage no longer owns a compose box (spec v3) — the shared
+  // dock's center variant is the one chat box there.
+  if (pathname === "/dashboards") return "center";
+  return "hidden"; // /board, /work/$agent, unrouted
 }
 
 /** Which artifact kind the dock highlights on each surface. */

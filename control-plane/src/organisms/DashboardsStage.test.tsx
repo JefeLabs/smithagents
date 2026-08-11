@@ -22,26 +22,19 @@ describe("DashboardsStage", () => {
     expect(screen.getByText(DASH_SUGGESTIONS[1])).toBeTruthy();
   });
 
-  it("an empty manual submit falls back to the first suggestion", () => {
-    vi.useFakeTimers();
-    render(<DashboardsStage />);
-    fireEvent.keyDown(screen.getByRole("textbox", { name: "Dashboard question" }), { key: "Enter" });
-    act(() => vi.advanceTimersByTime(STEP_MS * 4));
-    expect(screen.getByText(DASH_SUGGESTIONS[0])).toBeTruthy();
-  });
-
   it("new question returns to ask; save appends a JUST SAVED card first", () => {
+    // The free-typed draft path is gone (spec v3: the shared center dock is
+    // the one chat box) — a suggestion drives the same compose walk.
     vi.useFakeTimers();
     render(<DashboardsStage />);
-    const box = screen.getByRole("textbox", { name: "Dashboard question" });
-    fireEvent.change(box, { target: { value: "my question" } });
-    fireEvent.keyDown(box, { key: "Enter" });
+    fireEvent.click(screen.getByText(DASH_SUGGESTIONS[1]));
     act(() => vi.advanceTimersByTime(STEP_MS * 4));
     fireEvent.click(screen.getByText("save dashboard"));
     fireEvent.click(screen.getByText("new question"));
     // Back on ask, with the saved card appended (scope was untouched → ALL).
     expect(screen.getByText("what do you want to know?")).toBeTruthy();
-    expect(screen.getByText("my question")).toBeTruthy();
+    // The question shows twice now: the suggestion chip and the saved card.
+    expect(screen.getAllByText(DASH_SUGGESTIONS[1]).length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText("ALL · JUST SAVED")).toBeTruthy();
   });
 
