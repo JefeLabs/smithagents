@@ -9,6 +9,7 @@
 // (including status:"failed" — that's a real answer, not an error). Exits 1
 // on an unknown taskId or a broker/network failure; 2 on bad usage.
 const BROKER_URL = (process.env.SMITH_BROKER_URL ?? 'http://127.0.0.1:7790').replace(/\/$/, '');
+const TOKEN = process.env.SMITH_BROKER_TOKEN;
 
 const [taskId] = process.argv.slice(2);
 if (!taskId) {
@@ -18,7 +19,9 @@ if (!taskId) {
 
 let res;
 try {
-  res = await fetch(`${BROKER_URL}/tasks/${encodeURIComponent(taskId)}`);
+  res = await fetch(`${BROKER_URL}/tasks/${encodeURIComponent(taskId)}`, {
+    headers: TOKEN ? { authorization: `Bearer ${TOKEN}` } : undefined,
+  });
 } catch (err) {
   console.error(`could not reach the broker at ${BROKER_URL}: ${err.message}`);
   process.exit(1);
