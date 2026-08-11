@@ -1,7 +1,7 @@
 # Dashboards as documents — Design
 
 **Date:** 2026-08-11
-**Status:** Approved by Edwin (question+spec body; doc born on compose; full documents parity)
+**Status:** SHIPPED (main @ 39ea7af — blueprint, DashSpec, canvas, birth-on-compose, pins v2 + session seeding, SAVED=pinned, dock-sends-edit)
 
 ## Problem
 

@@ -1,6 +1,6 @@
 # Dashboards as Documents Implementation Plan
 
-> **CLAIMED:** in execution by Claude session d43af92a (inline, main checkout) since 2026-08-11. Do not execute concurrently.
+> **EXECUTED:** shipped to main @ 39ea7af on 2026-08-11 (session d43af92a). All nine tasks landed; see the spec's Status line.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
