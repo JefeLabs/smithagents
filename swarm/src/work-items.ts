@@ -58,6 +58,8 @@ export interface WorkBoard {
   jira?: { connectorId: string; siteUrl: string; projectKey: string; jql?: string };
   /** Present on every workspace board; absent only on the single personal board. */
   workspaceId?: string;
+  /** Local YYYY-MM-DD of the last midnight sweep. Personal board only. */
+  sweptDay?: string;
 }
 
 const BOARD_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -306,6 +308,42 @@ export function normalizePersonalBoard(board: WorkBoard): WorkBoard {
   if (board.name === "Personal") board.name = "Active To-dos";
   if (!board.columns.some((c) => c.id === "queue")) board.columns.unshift({ id: "queue", name: "Queue" });
   return board;
+}
+
+/** Local calendar day, YYYY-MM-DD — the sweptDay idempotence stamp. */
+export function localDayStamp(now: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`;
+}
+
+/** Milliseconds from `now` to the next local midnight. The Date constructor normalizes the day+1 overflow, which keeps DST days honest. */
+export function msUntilNextMidnight(now: Date): number {
+  return Math.max(1, new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime() - now.getTime());
+}
+
+/**
+ * Day rollover for Active To-dos: everything still in Todo or Doing joins the
+ * end of Queue — Todo's cards first, then Doing's, relative order preserved.
+ * Guarded by sweptDay so a double-fire is a no-op; a stamp-only change still
+ * reports dirty because the stamp must persist. Pure: the caller owns load,
+ * save, and the clock.
+ */
+export function sweepPersonalBoard(board: WorkBoard, today: string): boolean {
+  if (board.type !== "personal" || board.sweptDay === today) return false;
+  if (!board.columns.some((c) => c.id === "queue")) return false;
+  board.sweptDay = today;
+  const rank = (c: WorkCard) => (c.columnId === "todo" ? 0 : 1);
+  const leftovers = board.cards
+    .filter((c) => c.columnId === "todo" || c.columnId === "doing")
+    .sort((a, b) => rank(a) - rank(b) || a.order - b.order);
+  const now = new Date().toISOString();
+  let order = board.cards.filter((c) => c.columnId === "queue").length;
+  for (const c of leftovers) {
+    c.columnId = "queue";
+    c.order = order++;
+    c.updatedAt = now;
+  }
+  return true;
 }
 
 export async function loadBoards(

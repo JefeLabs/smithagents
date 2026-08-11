@@ -18,12 +18,15 @@ import {
   findCardByRef,
   findRouteDestination,
   loadBoards,
+  localDayStamp,
+  msUntilNextMidnight,
   normalizePersonalBoard,
   patchCard,
   removeCard,
   resolveExit,
   routeCard,
   saveBoard,
+  sweepPersonalBoard,
   type WorkBoard,
   WORKSPACE_BOARD_TYPES,
 } from "./work-items.js";
@@ -329,6 +332,49 @@ test("loadBoards migrates a legacy personal file in memory only", async () => {
   assert.equal(boards[0].columns[0].id, "queue");
   // In-memory only: the file still says Personal until the next mutation saves.
   assert.match(await readFile(join(dir, "personal.json"), "utf8"), /"Personal"/);
+});
+
+test("sweepPersonalBoard moves Todo then Doing to the end of Queue, preserving order", () => {
+  const b = createBoard("personal");
+  const queued = addCard(b, { title: "queued", columnId: "queue" });
+  const t1 = addCard(b, { title: "t1", columnId: "todo" });
+  const t2 = addCard(b, { title: "t2", columnId: "todo" });
+  const d1 = addCard(b, { title: "d1", columnId: "doing" });
+  const done = addCard(b, { title: "done", columnId: "done" });
+  assert.equal(sweepPersonalBoard(b, "2026-08-11"), true);
+  const queue = b.cards.filter((c) => c.columnId === "queue").sort((x, y) => x.order - y.order);
+  assert.deepEqual(
+    queue.map((c) => c.id),
+    [queued.id, t1.id, t2.id, d1.id],
+  );
+  assert.deepEqual(
+    queue.map((c) => c.order),
+    [0, 1, 2, 3],
+  );
+  assert.equal(done.columnId, "done");
+  assert.equal(b.sweptDay, "2026-08-11");
+});
+
+test("sweepPersonalBoard is idempotent per day; a stamp-only day still reports dirty", () => {
+  const b = createBoard("personal");
+  assert.equal(sweepPersonalBoard(b, "2026-08-11"), true); // nothing to move, stamp must persist
+  assert.equal(sweepPersonalBoard(b, "2026-08-11"), false); // same day: no-op
+  assert.equal(sweepPersonalBoard(b, "2026-08-12"), true); // next day stamps again
+});
+
+test("sweepPersonalBoard never touches workspace boards", () => {
+  const ws = createBoard("deliver", "acme");
+  addCard(ws, { title: "x", columnId: "in-progress" });
+  assert.equal(sweepPersonalBoard(ws, "2026-08-11"), false);
+  assert.equal(ws.sweptDay, undefined);
+});
+
+test("localDayStamp and msUntilNextMidnight do local-midnight math", () => {
+  const nearMidnight = new Date(2026, 7, 11, 23, 59, 0); // Aug 11, 23:59 local
+  assert.equal(localDayStamp(nearMidnight), "2026-08-11");
+  assert.equal(msUntilNextMidnight(nearMidnight), 60_000);
+  assert.equal(localDayStamp(new Date(2026, 0, 5)), "2026-01-05");
+  assert.equal(msUntilNextMidnight(new Date(2026, 7, 11, 0, 0, 0)), 86_400_000);
 });
 
 test("removeCard deletes and renumbers its column", () => {
