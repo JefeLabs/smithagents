@@ -40,6 +40,13 @@ describe("ArtifactShelf", () => {
     expect(screen.getByRole("button", { name: /doc 6/i })).toBeInTheDocument();
   });
 
+  it("pinned docs carry the marker class; unpinned don't", () => {
+    const docs = [{ ...DOC("d1", "Pinned one"), pins: ["acme"] }, DOC("d2", "Plain one")];
+    render(<ArtifactShelf docs={docs} onOpen={vi.fn()} />);
+    expect(screen.getByRole("button", { name: /pinned one/i }).className).toContain("artifact-shelf__card--pinned");
+    expect(screen.getByRole("button", { name: /plain one/i }).className).not.toContain("artifact-shelf__card--pinned");
+  });
+
   it("shelfDocsFor keeps the session's own artifact order and drops unknown ids", () => {
     const docs = [DOC("d1", "Login spec"), DOC("d2", "Login plan"), DOC("d3", "Old draft")];
     expect(shelfDocsFor({ artifacts: ["d2", "ghost", "d1"] }, docs).map((d) => d.id)).toEqual(["d2", "d1"]);

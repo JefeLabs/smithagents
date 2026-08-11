@@ -26,8 +26,17 @@ export function ArtifactShelf({ docs, onOpen }: ArtifactShelfProps) {
     // bounds it to the stage and overflows), so nothing hides behind a count.
     <aside className="artifact-shelf" aria-label="session documents">
       {docs.map((d) => (
-        <button key={d.id} type="button" className="artifact-shelf__card" onClick={() => onOpen(d.id)}>
-          <span className="artifact-shelf__tag">{d.blueprintId}</span>
+        <button
+          key={d.id}
+          type="button"
+          className={`artifact-shelf__card${d.pins?.length ? " artifact-shelf__card--pinned" : ""}`}
+          onClick={() => onOpen(d.id)}
+        >
+          <span className="artifact-shelf__tag">
+            {d.blueprintId}
+            {/* Workspace-context docs read subtly apart (Edwin: "minor distinguishing appearance"). */}
+            {Boolean(d.pins?.length) && <i className="artifact-shelf__pin" aria-hidden="true" />}
+          </span>
           {/* Decorative rules: the tile reads as a page at a glance, without
               pretending to preview content the shelf never loaded. */}
           <span className="artifact-shelf__rules" aria-hidden="true" />

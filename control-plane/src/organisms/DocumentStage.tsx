@@ -18,6 +18,8 @@ interface DocumentStageProps {
   onAimSection?: (sectionId: string, heading: string) => void;
   /** The currently aimed section — outlined so the prompt's target area is visible. */
   aimedSectionId?: string;
+  /** The workspace pin toggle, built by the route (spec: pin model v2). */
+  pinControl?: ReactNode;
   /** Sticky-note decisions (spec: dock-sends-edit-artifact). Resolve to the broker's refusal text or null. */
   onAcceptProposal?: (proposalId: string) => Promise<string | null>;
   onRejectProposal?: (proposalId: string) => Promise<string | null>;
@@ -37,6 +39,7 @@ export function DocumentStage({
   shelf,
   onAimSection,
   aimedSectionId,
+  pinControl,
   onAcceptProposal,
   onRejectProposal,
 }: DocumentStageProps) {
@@ -106,6 +109,7 @@ export function DocumentStage({
               <h1 className="document-stage__title">{doc.title}</h1>
             )}
             <span className="document-stage__meta">
+              {pinControl}
               {doc.workType} · {doc.status}
               {saved && <em className="document-stage__saved">saved</em>}
             </span>

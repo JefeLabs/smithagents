@@ -129,6 +129,8 @@ export interface DocT {
   participants: string[];
   /** Absent on docs stored before proposals existed. */
   proposals?: ProposalT[];
+  /** Workspaces (group ids later) this doc is pinned to — new sessions there inherit it. */
+  pins?: string[];
   status: "drafting" | "review" | "final";
   createdAt: string;
   updatedAt: string;
@@ -138,8 +140,8 @@ export interface DocT {
 export interface BlueprintT {
   id: string;
   name: string;
-  /** Render family — prose documents vs Mermaid diagrams; the composer groups by it. */
-  family: "document" | "diagram";
+  /** Render family — prose documents, Mermaid diagrams, or spec-driven dashboards; the composer groups by it. */
+  family: "document" | "diagram" | "dashboard";
   workTypes: string[];
   /** The broker sends these; the page uses their `hint` as ghost text. */
   sections?: Array<{ id: string; heading: string; hint?: string }>;

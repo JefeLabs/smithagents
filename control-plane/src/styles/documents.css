@@ -266,6 +266,41 @@
   color: color-mix(in srgb, var(--accent) 85%, var(--text));
 }
 
+/* Workspace-context (pinned) docs read subtly apart on the shelf. */
+.artifact-shelf__card--pinned {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.artifact-shelf__pin {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 80%, var(--text));
+}
+
+/* The pin toggle in canvas title bars. */
+.pin-button {
+  border: 1px solid var(--pill-br);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11.5px;
+  padding: 3px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pin-button--on {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: color-mix(in srgb, var(--accent) 80%, var(--text));
+}
+.pin-button__error {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
 /* The composer's aimed-section chip — one send spends it, click clears it. */
 .composer__doc-target {
   border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);

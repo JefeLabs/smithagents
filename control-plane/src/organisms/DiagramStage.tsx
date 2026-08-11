@@ -13,6 +13,8 @@ export interface DiagramStageProps {
   onSaveSection: (sectionId: string, body: string) => Promise<{ error?: string }>;
   /** The session's staged-artifacts shelf, absolutely positioned over the stage's left edge. Built by the route. */
   shelf?: ReactNode;
+  /** The workspace pin toggle, built by the route (spec: pin model v2). */
+  pinControl?: ReactNode;
 }
 
 /**
@@ -20,7 +22,14 @@ export interface DiagramStageProps {
  * panel, with a same-family type switch. Deliberately chat-free — the app
  * shell owns the one persistent composer that docks beside every stage.
  */
-export function DiagramStage({ doc, blueprints, onChangeBlueprint, onSaveSection, shelf }: DiagramStageProps) {
+export function DiagramStage({
+  doc,
+  blueprints,
+  onChangeBlueprint,
+  onSaveSection,
+  shelf,
+  pinControl,
+}: DiagramStageProps) {
   const section = doc.sections[0];
   const [source, setSource] = useState(section?.body ?? "");
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -101,6 +110,7 @@ export function DiagramStage({ doc, blueprints, onChangeBlueprint, onSaveSection
         >
           Markdown
         </button>
+        {pinControl}
       </div>
       {view === "canvas" ? (
         // Canvas stands alone — the source lives on the Markdown tab.

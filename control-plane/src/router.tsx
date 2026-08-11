@@ -12,6 +12,7 @@ import type { BlueprintT, DocT, RosterAgent } from "./api/types";
 import { agentSeeds } from "./data/agents";
 import { openDocByFamily } from "./lib/pickKind";
 import { ArtifactShelf, shelfDocsFor } from "./molecules/ArtifactShelf";
+import { PinButton } from "./molecules/PinButton";
 import { BoardStage } from "./organisms/BoardStage";
 import { DashboardsStage } from "./organisms/DashboardsStage";
 import { MapStage } from "./organisms/MapStage";
@@ -82,6 +83,7 @@ function DocRoute() {
   const { docId } = docRoute.useParams();
   const { data: docs = NO_DOCS, status } = useDocuments();
   const { data: blueprints = NO_BLUEPRINTS } = useBlueprints();
+  const { data: session = null } = useSession();
   const docTarget = useUiStore((s) => s.docTarget);
   // Cold-WS race: on a hard reload of /doc/:id the documents frame hasn't
   // landed yet, so the query is still `pending` — that is not "no such doc",
@@ -102,6 +104,14 @@ function DocRoute() {
         doc={doc}
         blueprints={blueprints.filter((b) => b.family === docFamily)}
         shelf={shelf}
+        pinControl={
+          <PinButton
+            pins={doc.pins}
+            workspace={session?.workspace}
+            onPin={(t) => api.pinDoc(doc.id, t)}
+            onUnpin={(t) => api.unpinDoc(doc.id, t)}
+          />
+        }
         onAimSection={(sectionId, heading) => useUiStore.getState().setDocTarget({ docId: doc.id, sectionId, heading })}
         aimedSectionId={docTarget?.docId === doc.id ? docTarget.sectionId : undefined}
         onAcceptProposal={(proposalId) => api.acceptProposal(doc.id, proposalId)}
@@ -119,6 +129,7 @@ function DiagramRoute() {
   const { docId } = diagramRoute.useParams();
   const { data: docs = NO_DOCS, status } = useDocuments();
   const { data: blueprints = NO_BLUEPRINTS, status: bpStatus } = useBlueprints();
+  const { data: session = null } = useSession();
   // Diagrams and prose share the /doc store; the blueprint family decides which
   // canvas shows a doc. So wait for BOTH the doc and the blueprints that type it
   // before routing — a pending blueprints query is "don't know the family yet",
@@ -135,6 +146,14 @@ function DiagramRoute() {
         doc={doc}
         blueprints={blueprints.filter((b) => b.family === "diagram")}
         shelf={shelf}
+        pinControl={
+          <PinButton
+            pins={doc.pins}
+            workspace={session?.workspace}
+            onPin={(t) => api.pinDoc(doc.id, t)}
+            onUnpin={(t) => api.unpinDoc(doc.id, t)}
+          />
+        }
         onChangeBlueprint={(blueprintId) => api.patchDocBlueprint(doc.id, blueprintId)}
         onSaveSection={(sectionId, body) => api.patchDocSection(doc.id, sectionId, body)}
       />

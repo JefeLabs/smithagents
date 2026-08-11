@@ -523,6 +523,36 @@ export async function postDocument(
   }
 }
 
+/** POST /documents/:id/pins — pin a doc to a workspace; new sessions there inherit it. Error string or null. */
+export async function pinDoc(docId: string, target: string, base: string = BROKER_BASE): Promise<string | null> {
+  try {
+    const res = await brokerFetch(`/documents/${encodeURIComponent(docId)}/pins`, base, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ target }),
+    });
+    if (res.ok) return null;
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    return body.error ?? `HTTP ${res.status}`;
+  } catch {
+    return "broker unreachable";
+  }
+}
+
+/** DELETE /documents/:id/pins/:target — remove a pin. Error string or null. */
+export async function unpinDoc(docId: string, target: string, base: string = BROKER_BASE): Promise<string | null> {
+  try {
+    const res = await brokerFetch(`/documents/${encodeURIComponent(docId)}/pins/${encodeURIComponent(target)}`, base, {
+      method: "DELETE",
+    });
+    if (res.ok) return null;
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    return body.error ?? `HTTP ${res.status}`;
+  } catch {
+    return "broker unreachable";
+  }
+}
+
 /** POST /documents/:id/proposals/:pid/accept — apply a sticky-note suggestion. Error string or null. */
 export async function acceptProposal(
   docId: string,
