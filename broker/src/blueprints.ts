@@ -21,8 +21,8 @@ export interface BlueprintSection {
 export interface Blueprint {
   id: string;
   name: string;
-  /** Render family — prose documents vs Mermaid diagrams. The composer groups by it. */
-  family: "document" | "diagram";
+  /** Render family — prose documents, Mermaid diagrams, or spec-driven dashboards. The composer groups by it. */
+  family: "document" | "diagram" | "dashboard";
   workTypes: string[];
   sections: BlueprintSection[];
 }
@@ -97,6 +97,19 @@ const DEFAULT_BLUEPRINTS: Blueprint[] = [
         hint: "A Mermaid sequence diagram.",
         starter: "```mermaid\nsequenceDiagram\n  Client->>Server: request\n  Server-->>Client: response\n```",
       },
+    ],
+  },
+  {
+    // A presented dashboard IS a document (spec 2026-08-11): the question
+    // records the ask, the spec holds the fenced JSON the canvas renders.
+    // No starters — the compose flow writes both sections at birth.
+    id: "dashboard",
+    name: "Dashboard",
+    family: "dashboard",
+    workTypes: ["insight"],
+    sections: [
+      { id: "question", heading: "Question", hint: "What you asked, and its scope." },
+      { id: "spec", heading: "Spec", hint: "The composed dashboard, as fenced JSON." },
     ],
   },
 ];

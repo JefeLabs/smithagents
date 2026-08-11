@@ -3,11 +3,26 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { instantiateSections, loadBlueprints } from "./blueprints.ts";
+import { type Blueprint, instantiateSections, loadBlueprints } from "./blueprints.ts";
 
-test("defaults ship spec and implementation-plan plus the er/sequence diagrams", () => {
+test("defaults ship spec and implementation-plan plus the er/sequence diagrams and the dashboard", () => {
   const bps = loadBlueprints(join(tmpdir(), "no-such-dir"));
-  assert.deepEqual(bps.map((b) => b.id).sort(), ["er", "implementation-plan", "sequence", "spec"]);
+  assert.deepEqual(bps.map((b) => b.id).sort(), ["dashboard", "er", "implementation-plan", "sequence", "spec"]);
+  const dash = bps.find((b) => b.id === "dashboard");
+  assert.equal(dash?.family, "dashboard");
+  assert.deepEqual(dash?.workTypes, ["insight"]);
+  assert.deepEqual(
+    dash?.sections.map((s) => s.id),
+    ["question", "spec"],
+  );
+  const sections = instantiateSections(dash as Blueprint, "insight");
+  assert.deepEqual(
+    sections?.map((s) => [s.id, s.body]),
+    [
+      ["question", ""],
+      ["spec", ""],
+    ],
+  );
 });
 
 test("user files merge over defaults by id and add new ids", () => {
