@@ -21,7 +21,14 @@ interface DocumentStageProps {
  * persistent ChatDock docks beside every stage (dock variant on /doc), so the
  * document stage stays router- and store-free and carries only the page.
  */
-export function DocumentStage({ doc, onSaveSection, blueprints, onChangeBlueprint, onRename, shelf }: DocumentStageProps) {
+export function DocumentStage({
+  doc,
+  onSaveSection,
+  blueprints,
+  onChangeBlueprint,
+  onRename,
+  shelf,
+}: DocumentStageProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   // The quiet confirmation that replaces a save button.

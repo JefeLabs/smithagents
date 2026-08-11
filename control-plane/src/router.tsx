@@ -59,7 +59,10 @@ function useShelf() {
   const { data: blueprints = NO_BLUEPRINTS } = useBlueprints();
   const { data: session = null } = useSession();
   return (
-    <ArtifactShelf docs={shelfDocsFor(session, docs)} onOpen={(id) => openDocByFamily(navigate, blueprints, docs, id)} />
+    <ArtifactShelf
+      docs={shelfDocsFor(session, docs)}
+      onOpen={(id) => openDocByFamily(navigate, blueprints, docs, id)}
+    />
   );
 }
 

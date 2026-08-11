@@ -98,11 +98,10 @@ collapses both the shelf and the chat panel for a clean canvas.
   removing the stage's own box, which is what Plan 4's deferral was
   waiting for).
 - `DashboardAsk` drops its `<textarea>` + submit affordance; the scope
-  chips and saved-dashboards list remain. Its `onSubmit` prop and the
-  stage's mock `ask → composing` transition become unreachable UI for
-  now — deliberately left in place (dead-end mock furniture) until the
-  real chat-driven composition wires in; the saved-dashboard open path
-  (`→ board` view) is untouched.
+  chips and saved-dashboards list remain. Its free-typed draft path goes
+  away; the TRY suggestions and SAVED cards still call `onSubmit`, so the
+  mock `ask → composing → board` flow stays reachable through them until
+  the real chat-driven composition wires in.
 - The `center` variant CSS already exists (chatdock.css:62-82); no CSS
   work beyond the focus rules above.
 
