@@ -142,7 +142,28 @@ continues where you author.
   Documents/Diagrams entry if present) — the kind row under the chat box is the
   navigation now. All routes stay reachable.
 
-### 8. Full-screen mode (canvas stages)
+### 8. Shared canvas-stage chrome
+
+- **Canvas stages** = every kind presented on a canvas: **Diagrams**, **User
+  Story Maps**, **Dashboards**. Because they're all canvas-presented, they share
+  the same chrome regardless of their (different) underlying data models:
+  - **right-docked chat** (the composer dock on the right, so you converse while
+    you work the canvas) — User Story Maps gains the docked chat it lacks today,
+    matching the diagram stage;
+  - **full-screen focus mode** with Esc (§8.1 below);
+  - the canvas layout + corner controls (pan/zoom feel, full-screen toggle).
+- **Zoom/controls reposition for the chat dock:** the canvas's zoom/pan control
+  panel defaults to a corner the right chat dock would occlude, so with chat
+  docked right it moves clear of it (e.g. to the bottom-left). In full-screen
+  (chat collapsed to a slim input) the panel can return to its natural spot. The
+  rule: canvas controls are never hidden behind the chat.
+- **Implementation:** a shared `CanvasStage` layout wrapper (chat dock +
+  full-screen affordance + Esc wiring) that `DiagramStage`, `MapStage`, and the
+  dashboards board render inside. Data models are untouched — a story map stays
+  the capability-story-map model, a dashboard the client mock, a diagram a
+  `family: "diagram"` document. Parity is in the *chrome*, not the storage.
+
+### 8.1 Full-screen mode
 
 - **Which kinds:** the canvas-presented stages — **Diagrams**, **User Story
   Maps**, and **Dashboards** (its board). Documents (a prose column) do not get
@@ -223,3 +244,6 @@ Dashboards/Map are pure navigations; Documents/Diagrams create-then-navigate.
 - Making dashboards data-real (stays the client mock).
 - Seeding the new artifact from the typed chat text (the draft travels with the
   chat but isn't consumed as a seed).
+- Folding User Story Maps into the session document shelf as first-class
+  artifacts (they keep their capability-story-map model; parity is the canvas
+  *chrome*, not shelf membership).
