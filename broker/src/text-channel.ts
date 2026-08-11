@@ -426,6 +426,21 @@ export class TextChannel {
       // Ceremony routes authenticate by pairing code / passkey, not a session.
       const EXEMPT = new Set(['/auth/register/options', '/auth/register/verify', '/auth/login/options', '/auth/login/verify', '/auth/me']);
 
+      // CSRF: the session cookie is SameSite=None in cloud, so the browser
+      // sends it on cross-site requests — the built-in CSRF protection is gone.
+      // A state-changing request that carries an Origin must carry an ALLOWED
+      // one (the tenant's own SPA). Requests with no Origin are non-browser
+      // (curl, the Bearer bridge); they carry no ambient cookie and so cannot
+      // be a CSRF vector. Only enforced in required (cloud) mode — OPTIONS has
+      // already returned above, so this only sees real methods.
+      if (auth?.required && req.method !== 'GET' && req.method !== 'HEAD') {
+        const origin = req.headers.origin;
+        if (origin && !ALLOWED_ORIGINS.has(origin) && origin !== auth.webOrigin) {
+          res.writeHead(403, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify({ error: 'origin not allowed' }));
+          return;
+        }
+      }
+
       if (pathname === '/auth/me') {
         if (auth?.required && !identity) {
           res.writeHead(401, { ...credentialCors(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: 'unauthorized' }));
