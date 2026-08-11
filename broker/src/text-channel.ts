@@ -392,6 +392,12 @@ export class TextChannel {
       rediscover(id: string): Promise<unknown>;
       remove(id: string): Promise<unknown>;
     },
+    /** Workspace groups CRUD (spec 2026-08-11-workspace-groups) — same passthrough shape as `workspaces`. */
+    private readonly groups?: {
+      list(): Promise<Record<string, unknown>[]>;
+      save(body: Record<string, unknown>, isNew: boolean): Promise<Record<string, unknown>>;
+      remove(name: string): Promise<Record<string, unknown>>;
+    },
   ) {}
 
   private clientSeq = 0;
@@ -899,6 +905,53 @@ export class TextChannel {
         if (req.method === "DELETE" && workspaceMatch && this.workspaces) {
           void this.workspaces
             .remove(decodeURIComponent(workspaceMatch[1]))
+            .then((r) => json("error" in r ? 409 : 200, r), fail);
+          return;
+        }
+        if (req.method === "GET" && url.pathname === "/groups" && this.groups) {
+          void this.groups.list().then((groups) => json(200, { groups }), fail);
+          return;
+        }
+        if (req.method === "POST" && url.pathname === "/groups" && this.groups) {
+          const groups = this.groups;
+          let body = "";
+          req.on("data", (c) => {
+            body += c;
+          });
+          req.on("end", () => {
+            let parsed: Record<string, unknown> = {};
+            try {
+              parsed = JSON.parse(body || "{}") as Record<string, unknown>;
+            } catch {
+              return json(400, { error: "body must be JSON" });
+            }
+            void groups.save(parsed, true).then((r) => json(r.error ? 400 : 201, r), fail);
+          });
+          return;
+        }
+        const groupMatch = /^\/groups\/([^/]+)$/.exec(url.pathname);
+        if (req.method === "PUT" && groupMatch && this.groups) {
+          const groups = this.groups;
+          let body = "";
+          req.on("data", (c) => {
+            body += c;
+          });
+          req.on("end", () => {
+            let parsed: Record<string, unknown> = {};
+            try {
+              parsed = JSON.parse(body || "{}") as Record<string, unknown>;
+            } catch {
+              return json(400, { error: "body must be JSON" });
+            }
+            void groups
+              .save({ ...parsed, name: decodeURIComponent(groupMatch[1]) }, false)
+              .then((r) => json(r.error ? 400 : 200, r), fail);
+          });
+          return;
+        }
+        if (req.method === "DELETE" && groupMatch && this.groups) {
+          void this.groups
+            .remove(decodeURIComponent(groupMatch[1]))
             .then((r) => json("error" in r ? 409 : 200, r), fail);
           return;
         }

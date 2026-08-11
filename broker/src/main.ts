@@ -70,7 +70,13 @@ import { generateSessionTitle } from "./session-title.ts";
 import { type ExecutionMode, resolveLazyWorkspace, type Session, SessionManager, truncateTitle } from "./sessions.ts";
 import { DeepgramSttStream, deepgramLiveOptions, type LiveLike } from "./stt.ts";
 import { applyModeChange, decideJoin, SurfacePolicy, surfaceModes } from "./surface-modes.ts";
-import { SwarmClient, type SwarmWorkspace, type WorkspaceBody } from "./swarm-client.ts";
+import {
+  SwarmClient,
+  type SwarmGroup,
+  type SwarmGroupBody,
+  type SwarmWorkspace,
+  type WorkspaceBody,
+} from "./swarm-client.ts";
 import { parseTarget, resolveTarget } from "./targets.ts";
 import { type ChannelFrame, type RosterEntry, TextChannel } from "./text-channel.ts";
 import { mintRoomToken } from "./token.ts";
@@ -641,6 +647,7 @@ const rosterFrame = (roster: UiRoster): ChannelFrame => ({
 
 let workspaceNames: string[] = [];
 let workspaceRecords: SwarmWorkspace[] = [];
+let groupRecords: SwarmGroup[] = [];
 let defaultWorkspaceName = "default";
 
 // Which workspace Discord is currently attending — set by every switchDiscord
@@ -669,6 +676,7 @@ function sessionFrame() {
     sessions: sessionManager.list(),
     transcript: (s?.transcript ?? []).map((t) => ({ role: t.role, text: t.text })),
     workspaces: workspaceNames,
+    groups: groupRecords,
   };
 }
 
@@ -681,6 +689,7 @@ function documentsFrame() {
 // sessions) and re-push the session frame that carries them to every client.
 async function refreshWorkspaceNames(): Promise<void> {
   const all = await swarm.listWorkspaces().catch(() => []);
+  groupRecords = await swarm.listGroups().catch(() => []);
   workspaceRecords = all.filter((w) => !w.archived);
   workspaceNames = workspaceRecords.map((w) => w.name);
   defaultWorkspaceName = workspaceRecords.find((w) => w.default)?.name ?? workspaceNames[0] ?? "default";
@@ -830,6 +839,33 @@ const me = {
   get: () => swarm.getMe() as unknown as Promise<Record<string, unknown>>,
   update: (body: Record<string, unknown>) =>
     swarm.updateMe(body as { name?: string }) as unknown as Promise<Record<string, unknown>>,
+};
+
+// Workspace groups CRUD (spec 2026-08-11-workspace-groups): thin swarm
+// passthrough like `workspaces` above; every mutation re-pulls the mirror and
+// re-pushes the session frame that carries `groups` to every client.
+const groups = {
+  list: () => swarm.listGroups() as unknown as Promise<Record<string, unknown>[]>,
+  save: async (body: Record<string, unknown>, isNew: boolean): Promise<Record<string, unknown>> => {
+    try {
+      const result = isNew
+        ? await swarm.createGroup(body as unknown as SwarmGroupBody)
+        : await swarm.updateGroup(String(body.name), body as Partial<SwarmGroupBody>);
+      await refreshWorkspaceNames();
+      return result as unknown as Record<string, unknown>;
+    } catch (err) {
+      return { error: String((err as Error).message) };
+    }
+  },
+  remove: async (name: string): Promise<Record<string, unknown>> => {
+    try {
+      await swarm.deleteGroup(name);
+      await refreshWorkspaceNames();
+      return { ok: true };
+    } catch (err) {
+      return { error: String((err as Error).message) };
+    }
+  },
 };
 
 // Per-workspace Discord channel config (channels manager UI): same thin
@@ -1599,6 +1635,7 @@ const textChannel = new TextChannel(
       return { ok: true };
     },
   },
+  groups,
 );
 
 /**

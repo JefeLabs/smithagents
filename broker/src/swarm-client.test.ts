@@ -98,6 +98,10 @@ test("lifecycle methods hit the right swarm routes", async () => {
   await client.archiveWorkspace("w");
   await client.deleteWorkspace("w");
   await client.workspaceUsage("w");
+  await client.listGroups();
+  await client.createGroup({ name: "g", workspaces: [], groups: [] });
+  await client.updateGroup("g", { workspaces: ["w"] });
+  await client.deleteGroup("g");
   assert.deepEqual(calls, [
     "GET /agents/wilkin/usage",
     "POST /agents/wilkin/archive",
@@ -107,6 +111,10 @@ test("lifecycle methods hit the right swarm routes", async () => {
     "POST /workspaces/w/archive",
     "DELETE /workspaces/w",
     "GET /workspaces/w/usage",
+    "GET /groups",
+    "POST /groups",
+    "PUT /groups/g",
+    "DELETE /groups/g",
   ]);
 });
 

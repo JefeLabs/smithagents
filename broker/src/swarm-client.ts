@@ -105,6 +105,20 @@ export interface SwarmWorkspace extends WorkspaceBody {
   archived?: boolean;
 }
 
+/** What POST/PUT /groups accept — membership is names, nesting allowed. */
+export interface SwarmGroupBody {
+  name: string;
+  description?: string;
+  workspaces: string[];
+  groups: string[];
+  color?: string;
+}
+
+/** What GET /groups returns: the group plus its transitive member workspaces. */
+export interface SwarmGroup extends SwarmGroupBody {
+  expansion: string[];
+}
+
 export interface MeRecord {
   id: string;
   name: string;
@@ -349,6 +363,26 @@ export class SwarmClient {
   async listWorkspaces(): Promise<SwarmWorkspace[]> {
     const r = await this.http("GET", "/workspaces");
     return (r.workspaces as SwarmWorkspace[]) ?? [];
+  }
+
+  // Workspace groups (spec 2026-08-11-workspace-groups). The swarm's GET
+  // carries each group's precomputed transitive `expansion` — consumers never
+  // re-walk membership.
+  async listGroups(): Promise<SwarmGroup[]> {
+    const r = await this.http("GET", "/groups");
+    return (r.groups as SwarmGroup[]) ?? [];
+  }
+
+  async createGroup(body: SwarmGroupBody): Promise<Record<string, unknown>> {
+    return await this.http("POST", "/groups", body);
+  }
+
+  async updateGroup(name: string, body: Partial<SwarmGroupBody>): Promise<Record<string, unknown>> {
+    return await this.http("PUT", `/groups/${encodeURIComponent(name)}`, body);
+  }
+
+  async deleteGroup(name: string): Promise<void> {
+    await this.http("DELETE", `/groups/${encodeURIComponent(name)}`, undefined);
   }
 
   async executionModes(): Promise<Record<string, boolean>> {
