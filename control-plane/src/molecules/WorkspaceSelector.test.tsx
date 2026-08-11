@@ -2,7 +2,7 @@ import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as api from "../api/broker";
-import type { SessionSummary } from "../api/types";
+import type { GroupT, SessionSummary } from "../api/types";
 import { qk } from "../queries/keys";
 import { useUiStore } from "../stores/uiStore";
 import { renderWithProviders } from "../test/renderWithProviders";
@@ -11,29 +11,37 @@ import { WorkspaceSelector } from "./WorkspaceSelector";
 // The real action, captured before any test overrides it — restored in afterEach so
 // an override in one case can never leak `setNewWorkspaceOpen` into the next.
 const REAL_SET_NEW_WORKSPACE_OPEN = useUiStore.getState().setNewWorkspaceOpen;
+const REAL_SET_WORKSPACES_OPEN = useUiStore.getState().setWorkspacesOpen;
 
 afterEach(() => {
   vi.restoreAllMocks();
-  useUiStore.setState({ setNewWorkspaceOpen: REAL_SET_NEW_WORKSPACE_OPEN });
+  useUiStore.setState({
+    setNewWorkspaceOpen: REAL_SET_NEW_WORKSPACE_OPEN,
+    setWorkspacesOpen: REAL_SET_WORKSPACES_OPEN,
+  });
 });
 
 interface SessionOpts {
   workspaces?: string[];
   sessions?: SessionSummary[];
+  groups?: GroupT[];
   activate?: (id: string) => void;
   setNewWorkspaceOpen?: (open: boolean) => void;
+  setWorkspacesOpen?: (open: boolean) => void;
 }
 
 /** Seeds the pushed-query cache the way the socket store would, per src/test/renderWithProviders.tsx. */
 function renderWithSession(session: { workspace: string }, opts: SessionOpts = {}) {
-  const { workspaces = [], sessions = [], activate, setNewWorkspaceOpen } = opts;
+  const { workspaces = [], sessions = [], groups = [], activate, setNewWorkspaceOpen, setWorkspacesOpen } = opts;
   if (activate) vi.spyOn(api, "activateSession").mockImplementation(async (id) => activate(id));
   if (setNewWorkspaceOpen) useUiStore.setState({ setNewWorkspaceOpen });
+  if (setWorkspacesOpen) useUiStore.setState({ setWorkspacesOpen });
 
   const { client } = renderWithProviders(<WorkspaceSelector />);
   client.setQueryData(qk.session, { id: "s0", title: "t", workspace: session.workspace, runtime: "local-in-process" });
   client.setQueryData(qk.sessions, sessions);
   client.setQueryData(qk.workspaces, workspaces);
+  client.setQueryData(qk.groups, groups);
   return { client };
 }
 
@@ -138,6 +146,62 @@ describe("WorkspaceSelector", () => {
     await userEvent.click(await screen.findByRole("button", { name: /acme/ }));
     await userEvent.click(await screen.findByRole("option", { name: "acme" }));
     expect(activate).not.toHaveBeenCalled();
+  });
+
+  it("picking a GROUP applies the lens — viewedWorkspaces becomes the expansion, no session activates", async () => {
+    const activate = vi.fn();
+    renderWithSession(
+      { workspace: "acme" },
+      {
+        workspaces: ["acme", "labs"],
+        groups: [{ name: "frontend", workspaces: ["acme", "labs"], groups: [], expansion: ["acme", "labs"] }],
+        activate,
+      },
+    );
+    await userEvent.click(await screen.findByRole("button", { name: /acme/ }));
+    await userEvent.click(await screen.findByRole("option", { name: "frontend" }));
+    expect(useUiStore.getState().activeLens).toEqual({ group: "frontend" });
+    expect([...(useUiStore.getState().viewedWorkspaces as ReadonlySet<string>)].sort()).toEqual(["acme", "labs"]);
+    expect(activate).not.toHaveBeenCalled();
+  });
+
+  it("picking a workspace clears an active lens and activates as always", async () => {
+    const activate = vi.fn();
+    renderWithSession(
+      { workspace: "acme" },
+      {
+        workspaces: ["acme", "labs"],
+        groups: [{ name: "frontend", workspaces: ["labs"], groups: [], expansion: ["labs"] }],
+        sessions: [
+          {
+            id: "s7",
+            workspace: "labs",
+            updatedAt: "2026-08-08T00:00:00Z",
+            title: "t",
+            active: false,
+            runtime: "local-in-process",
+            artifacts: [],
+          },
+        ],
+        activate,
+      },
+    );
+    await userEvent.click(await screen.findByRole("button", { name: /acme/ }));
+    await userEvent.click(await screen.findByRole("option", { name: "frontend" }));
+    expect(useUiStore.getState().activeLens).toEqual({ group: "frontend" });
+    await userEvent.click(await screen.findByRole("button", { name: /frontend/ }));
+    await userEvent.click(await screen.findByRole("option", { name: "labs" }));
+    expect(useUiStore.getState().activeLens).toBeNull();
+    expect(activate).toHaveBeenCalledWith("s7");
+  });
+
+  it("offers New group…, opening the workspace manager", async () => {
+    const setWorkspacesOpen = vi.fn();
+    renderWithSession({ workspace: "acme" }, { workspaces: ["acme"], setWorkspacesOpen });
+    await userEvent.click(await screen.findByRole("button", { name: /acme/ }));
+    await userEvent.click(await screen.findByRole("option", { name: /new group/i }));
+    expect(setWorkspacesOpen).toHaveBeenCalledWith(true);
+    expect(useUiStore.getState().composer).toBeNull();
   });
 
   it("a workspace literally named 'New workspace' is still a real selection, not the create-workspace command", async () => {

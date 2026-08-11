@@ -45,6 +45,16 @@ describe("uiStore", () => {
     expect(useUiStore.getState().focusMode).toBe(false);
   });
 
+  it("a group lens sets viewedWorkspaces to the expansion; clearing resets both", () => {
+    expect(useUiStore.getState().activeLens).toBeNull();
+    useUiStore.getState().setLens("frontend", ["acme-web", "labs"]);
+    expect(useUiStore.getState().activeLens).toEqual({ group: "frontend" });
+    expect([...(useUiStore.getState().viewedWorkspaces as ReadonlySet<string>)].sort()).toEqual(["acme-web", "labs"]);
+    useUiStore.getState().clearLens();
+    expect(useUiStore.getState().activeLens).toBeNull();
+    expect((useUiStore.getState().viewedWorkspaces as ReadonlySet<string>).size).toBe(0);
+  });
+
   it("docTarget sets and clears", () => {
     expect(useUiStore.getState().docTarget).toBeNull();
     useUiStore.getState().setDocTarget({ docId: "d1", sectionId: "approach", heading: "Approach" });

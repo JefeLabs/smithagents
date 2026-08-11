@@ -33,6 +33,15 @@ interface UiState {
   focusMode: boolean;
   toggleFocus: () => void;
   exitFocus: () => void;
+  /**
+   * The group LENS (spec 2026-08-11-workspace-groups): picking a group in the
+   * navbar focuses Board/Map on its member workspaces via `viewedWorkspaces`
+   * and labels the selector. View state only — the active session never moves,
+   * and the lens adds no pin shelf (decision 5).
+   */
+  activeLens: { group: string } | null;
+  setLens: (group: string, expansion: string[]) => void;
+  clearLens: () => void;
   /** The aimed section for the next dock send — an instruction about a specific part of the page. */
   docTarget: { docId: string; sectionId: string; heading: string } | null;
   setDocTarget: (target: { docId: string; sectionId: string; heading: string }) => void;
@@ -92,6 +101,7 @@ const initial = {
   removing: null,
   voiceNotice: null,
   focusMode: false,
+  activeLens: null,
   docTarget: null,
   viewedWorkspaces: new Set<string>(),
 } satisfies Partial<UiState>;
@@ -108,6 +118,10 @@ export const useUiStore = create<UiState>((set) => ({
   resetGrid: () => set({ gridParams: GRID_DEFAULTS }),
   toggleFocus: () => set((s) => ({ focusMode: !s.focusMode })),
   exitFocus: () => set({ focusMode: false }),
+  setLens: (group, expansion) => set({ activeLens: { group }, viewedWorkspaces: new Set(expansion) }),
+  // An empty viewedWorkspaces means "no explicit selection" — the stages fall
+  // back to the active session's workspace, exactly the pre-lens default.
+  clearLens: () => set({ activeLens: null, viewedWorkspaces: new Set<string>() }),
   setDocTarget: (docTarget) => set({ docTarget }),
   clearDocTarget: () => set({ docTarget: null }),
   toggleSessions: () => set((s) => ({ sessionsOpen: !s.sessionsOpen })),
