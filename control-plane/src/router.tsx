@@ -39,9 +39,10 @@ const NO_BLUEPRINTS: BlueprintT[] = [];
 /**
  * The composer kind row's click handler. Chat/Dashboards/Map navigate to their
  * stage; Documents/Diagrams create a fresh blueprint doc of the matching family
- * and open it. (Plan 2 will route diagram-family docs to a Mermaid canvas; here
- * they open in the prose document stage, and with no diagram blueprint yet a
- * diagram click falls back to the first blueprint.)
+ * and open it — a document-family doc on the prose stage (`/doc`), a
+ * diagram-family doc on the Mermaid canvas (`/diagram`). With no blueprint of
+ * the asked family, it falls back to the first blueprint and routes by whatever
+ * family that turns out to be.
  */
 function makePickKind(
   navigate: ReturnType<typeof useNavigate>,
@@ -61,7 +62,11 @@ function makePickKind(
         created,
         ...(prev ?? []).filter((d: DocT) => d.id !== created.id),
       ]);
-      void navigate({ to: "/doc/$docId", params: { docId: created.id } });
+      const fam = blueprints.find((b) => b.id === created.blueprintId)?.family;
+      void navigate({
+        to: fam === "diagram" ? "/diagram/$docId" : "/doc/$docId",
+        params: { docId: created.id },
+      });
     });
   };
 }
@@ -126,7 +131,18 @@ function VoiceRoute() {
       onPickKind={makePickKind(navigate, qc, blueprints)}
       activeKind="chat"
       shelf={
-        <ArtifactShelf docs={shelfDocs} onOpen={(docId) => void navigate({ to: "/doc/$docId", params: { docId } })} />
+        <ArtifactShelf
+          docs={shelfDocs}
+          onOpen={(docId) => {
+            // A diagram opens on its canvas, prose on the page — same family split
+            // the kind row uses, so the shelf and the composer agree.
+            const fam = blueprints.find((b) => b.id === docs.find((d) => d.id === docId)?.blueprintId)?.family;
+            void navigate({
+              to: fam === "diagram" ? "/diagram/$docId" : "/doc/$docId",
+              params: { docId },
+            });
+          }}
+        />
       }
     />
   );

@@ -148,6 +148,51 @@ describe("stage routing", () => {
     await waitFor(() => expect(router.state.location.pathname).toBe("/doc/d1"));
   });
 
+  it("the Diagrams kind creates a diagram doc and opens /diagram", async () => {
+    const posts: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/blueprints"))
+          return new Response(
+            JSON.stringify({
+              blueprints: [
+                { id: "spec", name: "Spec", family: "document", workTypes: ["feature"] },
+                { id: "er", name: "Database design", family: "diagram", workTypes: ["feature"] },
+              ],
+            }),
+          );
+        if (url.endsWith("/documents") && init?.method === "POST") {
+          posts.push(String(JSON.parse(String(init.body)).blueprintId));
+          return new Response(
+            JSON.stringify({
+              doc: {
+                id: "dg1",
+                title: "ER",
+                blueprintId: "er",
+                workType: "feature",
+                status: "drafting",
+                participants: [],
+                createdAt: "",
+                updatedAt: "",
+                artifacts: [],
+                sections: [{ id: "diagram", heading: "Diagram", body: "erDiagram" }],
+              },
+            }),
+          );
+        }
+        if (url.endsWith("/agents"))
+          return new Response(JSON.stringify({ agents: [], voice: { stt: false, tts: false } }));
+        return new Response(JSON.stringify({}));
+      }),
+    );
+    const router = await renderAt("/");
+    await userEvent.click(screen.getByRole("button", { name: "Diagrams" }));
+    await waitFor(() => expect(posts[0]).toBe("er")); // used the diagram-family blueprint
+    await waitFor(() => expect(router.state.location.pathname).toBe("/diagram/dg1"));
+  });
+
   it("clicking the active board tool stays on the board (no toggle)", async () => {
     const router = await renderAt("/");
     await userEvent.click(screen.getByRole("row", { name: /^board$/i }));
