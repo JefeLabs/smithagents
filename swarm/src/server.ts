@@ -70,6 +70,15 @@ import { buildExecutionModes, loadContainersFile, probeDocker, saveContainersFil
 import { DeviceRegistry } from "./device-registry.js";
 import { isValidModelId } from "./drivers/model-flag.js";
 import {
+  assertGroup,
+  expandGroup,
+  loadGroupsFromDir,
+  removeGroupFile,
+  saveGroup,
+  type WorkspaceGroup,
+  wouldCycle,
+} from "./groups.js";
+import {
   type AgentName,
   AgentNamePool,
   createRuntime,
@@ -256,6 +265,7 @@ export class OrchestratorServer {
 
   // Workspaces — named repo groupings delegations can target (loaded at start)
   private workspaces: Workspace[] = [];
+  private groups: WorkspaceGroup[] = [];
 
   constructor(config?: Partial<ServerConfig>) {
     this.config = { ...DEFAULT_SERVER_CONFIG, ...config };
@@ -311,6 +321,11 @@ export class OrchestratorServer {
   /** Reread `.smith/workspaces/*.json` — called at boot and after every mutation below. */
   private async reloadWorkspaces(): Promise<void> {
     this.workspaces = await loadWorkspacesFromDir(resolve(process.cwd(), ".smith/workspaces"));
+  }
+
+  /** Reread `.smith/groups/*.json` — boot and after every /groups mutation. */
+  private async reloadGroups(): Promise<void> {
+    this.groups = await loadGroupsFromDir(resolve(process.cwd(), ".smith/groups"));
   }
 
   /**
@@ -369,6 +384,7 @@ export class OrchestratorServer {
     await this.reconcileSessions();
 
     await this.reloadWorkspaces();
+    await this.reloadGroups();
     if (this.workspaces.length > 0) {
       this.app.log.info(
         `Workspaces: ${this.workspaces.map((w) => `${w.name}(${w.repos.map((r) => r.name).join(",")})`).join(" ")}`,
@@ -1730,6 +1746,94 @@ export class OrchestratorServer {
           color: w.color,
         })),
       };
+    });
+
+    // ---- workspace groups (spec 2026-08-11-workspace-groups) ----
+    // GET carries each group's precomputed transitive expansion so no other
+    // service (broker seeding, control-plane lens) reimplements traversal.
+    this.app.get("/groups", async () => ({
+      groups: this.groups.map((g) => ({
+        ...g,
+        expansion: [...expandGroup(g.name, this.groups, this.workspaces)].sort(),
+      })),
+    }));
+
+    this.app.post("/groups", async (req, reply) => {
+      const dir = resolve(process.cwd(), ".smith/groups");
+      let candidate: WorkspaceGroup;
+      try {
+        candidate = assertGroup("request", req.body);
+      } catch (err) {
+        return reply.status(400).send({ error: String((err as Error).message) });
+      }
+      const name = candidate.name
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "");
+      if (!name) return reply.status(400).send({ error: "Invalid group name" });
+      const all = await loadGroupsFromDir(dir);
+      if (all.some((g) => g.name === name)) {
+        return reply.status(409).send({ error: `Group "${name}" already exists` });
+      }
+      const group: WorkspaceGroup = {
+        name,
+        description: candidate.description?.trim() || undefined,
+        workspaces: candidate.workspaces,
+        groups: candidate.groups,
+        color: candidate.color?.trim() || undefined,
+      };
+      // Membership refs are NOT validated for existence — a dangling ref is
+      // stale data that expandGroup skips (delete never cascades). Cycles are
+      // the one structural error.
+      if (wouldCycle(group, all)) {
+        return reply.status(400).send({ error: "group would contain itself" });
+      }
+      try {
+        await saveGroup(dir, group);
+      } catch (err) {
+        return reply.status(400).send({ error: String((err as Error).message) });
+      }
+      await this.reloadGroups();
+      return reply.status(201).send({ group });
+    });
+
+    this.app.put<{ Params: { name: string } }>("/groups/:name", async (req, reply) => {
+      const dir = resolve(process.cwd(), ".smith/groups");
+      const b = req.body as Partial<WorkspaceGroup>;
+      const all = await loadGroupsFromDir(dir);
+      const existing = all.find((g) => g.name === req.params.name);
+      if (!existing) return reply.status(404).send({ error: `Unknown group: ${req.params.name}` });
+      const merged: WorkspaceGroup = {
+        ...existing,
+        // The name is the file key and what pins point at — immutable.
+        name: existing.name,
+        description: b.description !== undefined ? b.description.trim() || undefined : existing.description,
+        workspaces: b.workspaces ?? existing.workspaces,
+        groups: b.groups ?? existing.groups,
+        color: b.color !== undefined ? b.color.trim() || undefined : existing.color,
+      };
+      try {
+        assertGroup("request", merged);
+      } catch (err) {
+        return reply.status(400).send({ error: String((err as Error).message) });
+      }
+      if (wouldCycle(merged, all)) {
+        return reply.status(400).send({ error: "group would contain itself" });
+      }
+      await saveGroup(dir, merged);
+      await this.reloadGroups();
+      return { group: merged };
+    });
+
+    this.app.delete<{ Params: { name: string } }>("/groups/:name", async (req, reply) => {
+      const dir = resolve(process.cwd(), ".smith/groups");
+      const all = await loadGroupsFromDir(dir);
+      const existing = all.find((g) => g.name === req.params.name);
+      if (!existing) return reply.status(404).send({ error: `Unknown group: ${req.params.name}` });
+      await removeGroupFile(dir, existing.name);
+      await this.reloadGroups();
+      return { ok: true, deleted: existing.name };
     });
 
     const redactUser = (u: User | null) => ({

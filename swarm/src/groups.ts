@@ -1,7 +1,7 @@
 // Workspace groups — nested, named sets of workspaces and other groups.
 // One JSON file per group under .smith/groups/, mirroring workspaces.ts.
 // Spec: docs/superpowers/specs/2026-08-11-workspace-groups-design.md
-import { readdir, readFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Workspace } from "./workspaces.js";
 
@@ -41,6 +41,26 @@ export async function loadGroupsFromDir(dir: string): Promise<WorkspaceGroup[]> 
     groups.push(assertGroup(file, JSON.parse(await readFile(join(dir, file), "utf8"))));
   }
   return groups;
+}
+
+/** Write one group to `dir`. Mirror of workspaces.saveWorkspace. */
+export async function saveGroup(dir: string, group: WorkspaceGroup): Promise<void> {
+  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(group.name)) {
+    throw new Error(`Invalid group name "${group.name}": use lowercase letters, digits and dashes`);
+  }
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, `${group.name}.json`), `${JSON.stringify(group, null, 2)}\n`);
+}
+
+export async function removeGroupFile(dir: string, name: string): Promise<void> {
+  try {
+    await rm(join(dir, `${name}.json`));
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      throw new Error(`Group "${name}" not found`);
+    }
+    throw error;
+  }
 }
 
 /**
