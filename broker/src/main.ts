@@ -9,6 +9,7 @@ import { createInterface } from 'node:readline';
 import { ElevenLabsVoiceProvider } from '@smithagents/voice';
 import { resolveAvatarEngine } from './avatar-engine.ts';
 import { AvatarGenerator, type AvatarRequest } from './avatar-generator.ts';
+import { BrokerAuth } from './auth.ts';
 import { BrokerBrain, type StreamFactory } from './brain.ts';
 import { Broker, TTS_SAMPLE_RATE } from './broker.ts';
 import { AdapterHub } from './channels.ts';
@@ -1001,6 +1002,15 @@ const creation = {
     avatarFile: (file: string) => swarm.avatarFile(file),
 };
 
+const brokerAuth = new BrokerAuth(config.auth.file, {
+  rpId: config.auth.rpId,
+  webOrigin: config.auth.webOrigin,
+  bridgeToken: config.auth.bridgeToken,
+  required: config.auth.required,
+});
+await brokerAuth.load();
+if (config.auth.required) console.log('[broker] inbound auth REQUIRED — passkey sessions + bridge token');
+
 const textChannel = new TextChannel(
   handleUserText,
   () => [
@@ -1248,6 +1258,7 @@ const textChannel = new TextChannel(
       return null;
     },
   },
+  brokerAuth,
 );
 const micSessions = new MicSessionGate<DeepgramSttStream>();
 
@@ -1397,7 +1408,7 @@ workspaceRecords = bootWorkspaces;
 defaultWorkspaceName = bootWorkspaces.find((w) => w.default)?.name ?? workspaceNames[0] ?? 'default';
 const activeSession = sessionManager.init(); // Session | null — zero sessions is legal (spec §4b)
 if (activeSession) brain.loadHistory(activeSession.brainHistory);
-const textPort = await textChannel.start(config.textPort);
+const textPort = await textChannel.start(config.textPort, config.host);
 console.log(`[broker] running — polling swarm for open meetings. Text channel on http://127.0.0.1:${textPort}. Type a line to simulate an utterance.`);
 
 // Discord attends only when a workspace has its own bot token configured (via

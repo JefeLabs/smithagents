@@ -20,6 +20,10 @@ const BROKER_URL = (process.env.SMITH_BROKER_URL ?? 'http://127.0.0.1:7790').rep
 const BROKER_WS = `${BROKER_URL.replace(/^http/, 'ws')}/events`;
 const SOURCE = process.env.SMITH_BRIDGE_SOURCE ?? 'bridge';
 const TIMEOUT_MS = Number(process.env.SMITH_BROKER_SEND_TIMEOUT_MS ?? 45000);
+// A cloud broker runs with auth required; the bridge is a Bearer client.
+// Node's ws can set upgrade headers, so no query-param workaround is needed.
+const TOKEN = process.env.SMITH_BROKER_TOKEN;
+const authHeaders = TOKEN ? { authorization: `Bearer ${TOKEN}` } : undefined;
 
 const [prdPath, ...rest] = process.argv.slice(2);
 if (!prdPath) {
@@ -29,7 +33,7 @@ if (!prdPath) {
 const instruction = rest.join(' ');
 const text = `Edwin (via ${SOURCE}): delegate ${prdPath}${instruction ? ` — ${instruction}` : ''}`;
 
-const ws = new WebSocket(BROKER_WS);
+const ws = new WebSocket(BROKER_WS, authHeaders ? { headers: authHeaders } : undefined);
 
 const result = await new Promise((resolve, reject) => {
   let lastSpeech = null;
@@ -58,7 +62,7 @@ const result = await new Promise((resolve, reject) => {
   ws.on('open', () => {
     fetch(`${BROKER_URL}/utterance`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...authHeaders },
       body: JSON.stringify({ text }),
     }).catch((err) => {
       clearTimeout(timer);

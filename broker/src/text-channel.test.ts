@@ -1,7 +1,39 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { WebSocket } from 'ws';
 import { TextChannel, type ChannelFrame, workUpdateFrames } from './text-channel.ts';
+import { BrokerAuth, type WebAuthnAdapter } from './auth.ts';
+
+const AUTH_CRED = { id: 'cred-1', publicKey: new Uint8Array([1, 2, 3]), counter: 0, transports: ['internal'] };
+
+/** The same 4-method fake used in auth.test.ts — ceremonies pass when response.ok !== false. */
+function fakeWebauthnAdapter(): WebAuthnAdapter {
+  return {
+    async generateRegistrationOptions({ userName }) { return { challenge: 'challenge-1', user: { name: userName } }; },
+    async verifyRegistrationResponse({ response }) {
+      const ok = (response as { ok?: boolean }).ok !== false;
+      return ok ? { verified: true, registrationInfo: { credential: AUTH_CRED } } : { verified: false };
+    },
+    async generateAuthenticationOptions() { return { challenge: 'challenge-1' }; },
+    async verifyAuthenticationResponse({ response, credential }) {
+      const ok = (response as { ok?: boolean }).ok !== false;
+      return ok ? { verified: true, authenticationInfo: { newCounter: credential.counter + 1 } } : { verified: false };
+    },
+  };
+}
+
+async function makeAuth(required: boolean, bridgeToken?: string): Promise<BrokerAuth> {
+  const dir = await mkdtemp(join(tmpdir(), 'bauth-'));
+  const auth = new BrokerAuth(join(dir, 'auth.json'), {
+    rpId: 'localhost', webOrigin: 'http://localhost:1420', required, bridgeToken,
+    webauthn: fakeWebauthnAdapter(),
+  });
+  await auth.load();
+  return auth;
+}
 
 // The control-plane's Vite dev origin (see control-plane/vite.config.ts,
 // tauri.conf.json devUrl) — the one entry in text-channel.ts's ALLOWED_ORIGINS.
@@ -60,7 +92,9 @@ const stubWorkspaceVerify = {
 
 /** Builds a channel with only the trailing (agent/removal/workspace/surfaces) handlers under test wired in. */
 function channelWith(opts: {
+  mic?: ConstructorParameters<typeof TextChannel>[4];
   sessions?: ConstructorParameters<typeof TextChannel>[5];
+  onReset?: ConstructorParameters<typeof TextChannel>[6];
   removal?: ConstructorParameters<typeof TextChannel>[8];
   workspaces?: ConstructorParameters<typeof TextChannel>[9];
   creation?: ConstructorParameters<typeof TextChannel>[7];
@@ -78,15 +112,16 @@ function channelWith(opts: {
   polish?: ConstructorParameters<typeof TextChannel>[21];
   blueprints?: ConstructorParameters<typeof TextChannel>[22];
   documents?: ConstructorParameters<typeof TextChannel>[23];
+  auth?: ConstructorParameters<typeof TextChannel>[24];
 }): TextChannel {
   return new TextChannel(
     () => {},
     () => [],
     undefined,
     undefined,
-    undefined,
+    opts.mic,
     opts.sessions,
-    undefined,
+    opts.onReset,
     opts.creation ?? stubCreation,
     opts.removal,
     opts.workspaces,
@@ -104,6 +139,7 @@ function channelWith(opts: {
     opts.polish,
     opts.blueprints,
     opts.documents,
+    opts.auth,
   );
 }
 
@@ -1546,4 +1582,149 @@ test('DELETE /sessions/:id removes the session; an unknown id is 404 and /sessio
   } finally {
     await channel.stop();
   }
+});
+
+// ---------------------------------------------------------------------------
+// Phase 1a: HTTP identity gate + /auth ceremony
+// ---------------------------------------------------------------------------
+
+test('required mode: unauthenticated POST /utterance is 401; bridge bearer passes; open mode unchanged', async () => {
+  const auth = await makeAuth(true, 'bridge-secret');
+  const channel = channelWith({ auth });
+  const port = await channel.start(0);
+  try {
+    const denied = await fetch(`http://127.0.0.1:${port}/utterance`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: 'hi' }) });
+    assert.equal(denied.status, 401);
+    const allowed = await fetch(`http://127.0.0.1:${port}/utterance`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer bridge-secret' }, body: JSON.stringify({ text: 'hi' }) });
+    assert.notEqual(allowed.status, 401);
+  } finally { await channel.stop(); }
+});
+
+test('required mode: full passkey ceremony over HTTP yields a cookie that passes the gate', async () => {
+  const auth = await makeAuth(true);
+  const invite = auth.mintInvite();
+  const channel = channelWith({ auth });
+  const port = await channel.start(0);
+  try {
+    const opt = await fetch(`http://127.0.0.1:${port}/auth/register/options`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: invite.code, name: 'edwin' }) });
+    assert.equal(opt.status, 200);
+    const verify = await fetch(`http://127.0.0.1:${port}/auth/register/verify`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: invite.code, response: { ok: true } }) });
+    assert.equal(verify.status, 201);
+    const cookie = verify.headers.get('set-cookie') ?? '';
+    assert.match(cookie, /smith_session=.+HttpOnly/s);
+    const me = await fetch(`http://127.0.0.1:${port}/auth/me`, { headers: { cookie: cookie.split(';')[0]! } });
+    assert.equal(me.status, 200);
+    assert.equal(((await me.json()) as { kind: string }).kind, 'human');
+  } finally { await channel.stop(); }
+});
+
+test('required mode: bad invite is 410, /auth/me without session is 401, bridge cannot POST /reset', async () => {
+  const auth = await makeAuth(true, 'bridge-secret');
+  const channel = channelWith({ auth, onReset: async () => ({}) });
+  const port = await channel.start(0);
+  try {
+    const bad = await fetch(`http://127.0.0.1:${port}/auth/register/options`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: 'XXXX-XXXX', name: 'x' }) });
+    assert.equal(bad.status, 410);
+    assert.equal((await fetch(`http://127.0.0.1:${port}/auth/me`)).status, 401);
+    const reset = await fetch(`http://127.0.0.1:${port}/reset`, { method: 'POST', headers: { authorization: 'Bearer bridge-secret' } });
+    assert.equal(reset.status, 403);
+  } finally { await channel.stop(); }
+});
+
+test('open mode: /auth/me reports a local human; absent Origin still works on /utterance (open-mode compat)', async () => {
+  const auth = await makeAuth(false);
+  const channel = channelWith({ auth });
+  const port = await channel.start(0);
+  try {
+    const me = await fetch(`http://127.0.0.1:${port}/auth/me`);
+    assert.equal(me.status, 200);
+    const body = (await me.json()) as { kind: string; local?: boolean };
+    assert.equal(body.kind, 'human');
+    assert.equal(body.local, true);
+    const utter = await fetch(`http://127.0.0.1:${port}/utterance`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: 'hi' }) });
+    assert.notEqual(utter.status, 401);
+  } finally { await channel.stop(); }
+});
+
+test('preflight OPTIONS answers 204 with authorization allowed, even in required mode', async () => {
+  const auth = await makeAuth(true);
+  const channel = channelWith({ auth });
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/utterance`, { method: 'OPTIONS' });
+    assert.equal(res.status, 204);
+    assert.match(res.headers.get('access-control-allow-headers') ?? '', /authorization/i);
+  } finally { await channel.stop(); }
+});
+
+// ---------------------------------------------------------------------------
+// Phase 1a: WS upgrade identity + mic gating
+// (channelWith's helloFrames is () => [], so these key off open/close, not a frame.)
+// ---------------------------------------------------------------------------
+
+/** Resolve on 'open', reject with the close code on 'close'/'error'. */
+function connectAuthed(port: number, headers?: Record<string, string>): Promise<WebSocket> {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/events`, { headers });
+    ws.once('open', () => resolve(ws));
+    ws.once('close', (code) => reject(new Error(`closed ${code}`)));
+    ws.once('error', () => { /* 'close' carries the code */ });
+  });
+}
+
+test('required mode: WS without credential is closed 4401; bridge token connects', async () => {
+  const auth = await makeAuth(true, 'bridge-secret');
+  const channel = channelWith({ auth, mic: { start: () => {}, stop: () => {}, audio: () => {} } });
+  const port = await channel.start(0);
+  try {
+    const rejected = new WebSocket(`ws://127.0.0.1:${port}/events`);
+    const closeCode = await new Promise<number>((res) => rejected.on('close', (c) => res(c)));
+    assert.equal(closeCode, 4401);
+
+    const ok = await connectAuthed(port, { authorization: 'Bearer bridge-secret' });
+    assert.equal(ok.readyState, WebSocket.OPEN);
+    ok.close();
+  } finally { await channel.stop(); }
+});
+
+test('required mode: bridge mic-start is ignored (mic is human-only)', async () => {
+  const auth = await makeAuth(true, 'bridge-secret');
+  const started: number[] = [];
+  const channel = channelWith({ auth, mic: { start: (id: number) => started.push(id), stop: () => {}, audio: () => {} } });
+  const port = await channel.start(0);
+  try {
+    const bridge = await connectAuthed(port, { authorization: 'Bearer bridge-secret' });
+    bridge.send(JSON.stringify({ type: 'mic-start' }));
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(started.length, 0, 'bridge cannot open a mic');
+    bridge.close();
+  } finally { await channel.stop(); }
+});
+
+test('required mode: a session cookie authenticates the WS upgrade', async () => {
+  const auth = await makeAuth(true);
+  const invite = auth.mintInvite();
+  await auth.beginRegistration(invite.code, 'edwin');
+  const { sessionToken } = await auth.finishRegistration(invite.code, { ok: true });
+  const channel = channelWith({ auth });
+  const port = await channel.start(0);
+  try {
+    const ws = await connectAuthed(port, { cookie: `smith_session=${sessionToken}` });
+    assert.equal(ws.readyState, WebSocket.OPEN);
+    ws.close();
+  } finally { await channel.stop(); }
+});
+
+test('open mode: WS connects with no credential and mic works as before', async () => {
+  const auth = await makeAuth(false);
+  const started: number[] = [];
+  const channel = channelWith({ auth, mic: { start: (id: number) => started.push(id), stop: () => {}, audio: () => {} } });
+  const port = await channel.start(0);
+  try {
+    const ws = await connect(port);
+    ws.send(JSON.stringify({ type: 'mic-start' }));
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(started.length, 1, 'open-mode client is a local human');
+    ws.close();
+  } finally { await channel.stop(); }
 });
