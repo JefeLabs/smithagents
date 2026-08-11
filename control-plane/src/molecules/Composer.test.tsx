@@ -234,37 +234,32 @@ describe("Composer polish", () => {
     rerender(<Composer onSend={vi.fn()} onPolish={vi.fn()} />);
     expect(screen.getByRole("button", { name: /polish/i }).getAttribute("aria-disabled")).toBe("true");
   });
-  it("arming document mode routes the send to onSendDocument", async () => {
+  it("hides the kind row until engaged, reveals on focus", async () => {
+    render(<Composer onSend={vi.fn()} onPickKind={vi.fn()} />);
+    expect(screen.queryByRole("group", { name: /artifact kind/i })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("textbox"));
+    expect(screen.getByRole("group", { name: /artifact kind/i })).toBeInTheDocument();
+  });
+
+  it("clicking a kind calls onPickKind and never sends", async () => {
+    const onPickKind = vi.fn();
     const onSend = vi.fn();
-    const onSendDocument = vi.fn().mockResolvedValue(undefined);
-    render(<Composer onSend={onSend} onSendDocument={onSendDocument} />);
-    await userEvent.click(screen.getByRole("button", { name: /^document$/i }));
-    const box = screen.getByRole("textbox", { name: /describe the document/i });
-    await userEvent.type(box, "Spec out login{Enter}");
-    await waitFor(() => expect(onSendDocument).toHaveBeenCalledWith("Spec out login"));
+    render(<Composer onSend={onSend} onPickKind={onPickKind} />);
+    await userEvent.click(screen.getByRole("textbox"));
+    await userEvent.click(screen.getByRole("button", { name: "Diagrams" }));
+    expect(onPickKind).toHaveBeenCalledWith("diagrams");
     expect(onSend).not.toHaveBeenCalled();
-    await waitFor(() => expect((box as HTMLTextAreaElement).value).toBe(""));
   });
 
-  it("a failed document send keeps the draft and stays armed", async () => {
-    const onSendDocument = vi.fn().mockResolvedValue({ error: "broker unreachable" });
-    render(<Composer onSend={vi.fn()} onSendDocument={onSendDocument} />);
-    await userEvent.click(screen.getByRole("button", { name: /^document$/i }));
-    const box = screen.getByRole("textbox", { name: /describe the document/i });
-    await userEvent.type(box, "Draft kept{Enter}");
-    expect(await screen.findByText(/broker unreachable/)).toBeTruthy();
-    expect((box as HTMLTextAreaElement).value).toBe("Draft kept");
-    expect(screen.getByRole("button", { name: /^document$/i }).getAttribute("aria-pressed")).toBe("true");
+  it("the active kind button is marked current", async () => {
+    render(<Composer onSend={vi.fn()} onPickKind={vi.fn()} activeKind="map" />);
+    await userEvent.click(screen.getByRole("textbox"));
+    expect(screen.getByRole("button", { name: "User Story Maps" }).getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("no group without onSendDocument; on a document surface chat presses call onKindChat", async () => {
-    const { rerender } = render(<Composer onSend={vi.fn()} />);
-    expect(screen.queryByRole("button", { name: /^document$/i })).toBeNull();
-    const onKindChat = vi.fn();
-    rerender(<Composer onSend={vi.fn()} kind="document" onKindChat={onKindChat} />);
-    expect(screen.getByRole("button", { name: /^document$/i }).getAttribute("aria-pressed")).toBe("true");
-    await userEvent.click(screen.getByRole("button", { name: /^chat$/i }));
-    expect(onKindChat).toHaveBeenCalled();
+  it("no kind row without onPickKind", () => {
+    render(<Composer onSend={vi.fn()} />);
+    expect(screen.queryByRole("group", { name: /artifact kind/i })).not.toBeInTheDocument();
   });
 });
 

@@ -3,6 +3,7 @@ import { PromptInput } from "@heroui-pro/react";
 import { ArrowUp, AudioLines, Mic, Plus, Sparkles, Volume2, VolumeX } from "lucide-react";
 import { useRef, useState } from "react";
 import type { RosterAgent, Target } from "../api/types";
+import { ARTIFACT_KINDS, type ArtifactKind } from "../lib/artifactKinds";
 
 interface ComposerProps {
   /**
@@ -24,15 +25,13 @@ interface ComposerProps {
   onVoiceBlocked?: () => void;
   /** Rewrites the draft in place; the polish action renders only when this is wired. */
   onPolish?: (text: string) => Promise<string | null>;
-  /** Which surface this composer sits on — the group shows it as the active kind. */
-  kind?: "chat" | "document";
-  /** Document surface only: pressing "chat" leaves for the conversation. */
-  onKindChat?: () => void;
   /**
-   * Chat surface: arming "document" is free and reversible — THIS is what a send
-   * commits to, creating the document from the very text you typed.
+   * The artifact-kind row (reveal-on-engage). Clicking a kind navigates
+   * immediately — it does not arm a send. Omit and no kind row renders.
    */
-  onSendDocument?: (text: string) => Promise<{ error?: string } | undefined>;
+  onPickKind?: (kind: ArtifactKind) => void;
+  /** The current surface's kind, highlighted in the row. */
+  activeKind?: ArtifactKind;
 }
 
 /** HeroUI's Select speaks string Keys; the wire speaks Target objects. Encode here, decode on the way out. */
@@ -74,9 +73,8 @@ export function Composer({
   sttEnabled = true,
   onVoiceBlocked,
   onPolish,
-  kind = "chat",
-  onKindChat,
-  onSendDocument,
+  onPickKind,
+  activeKind = "chat",
 }: ComposerProps) {
   const [draft, setDraft] = useState("");
   const [holding, setHolding] = useState(false);
@@ -86,8 +84,10 @@ export function Composer({
   // every send — you can never leak a message to a CLI by forgetting a mode.
   const [target, setTarget] = useState<Target>({ kind: "host" });
   const [refusal, setRefusal] = useState<string | null>(null);
-  // Arming is local and free: nothing is created until a send commits it.
-  const [armed, setArmed] = useState(false);
+  // The kind row reveals while the user is engaged with the box, and collapses
+  // when idle — focus OR a non-empty draft counts as engaged.
+  const [focused, setFocused] = useState(false);
+  const engaged = focused || draft.trim() !== "";
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const startHold = () => {
@@ -108,18 +108,6 @@ export function Composer({
   const submit = () => {
     const text = draft.trim();
     if (!text || disabled) return;
-    if (armed && onSendDocument) {
-      void onSendDocument(text).then((r) => {
-        if (r?.error) {
-          setPolishError(r.error); // same status line the polish failure uses
-          return;
-        }
-        setDraft("");
-        setArmed(false);
-        setPolishError(null);
-      });
-      return;
-    }
     // Host sends call onSend(text) with ONE argument, exactly as before this
     // feature — every existing caller and test depends on that call shape.
     const outcome = target.kind === "host" ? onSend(text) : onSend(text, target);
@@ -152,14 +140,10 @@ export function Composer({
             ref={textareaRef}
             disableAutosize
             rows={1}
-            aria-label={armed ? "describe the document you want" : "Type a request"}
-            placeholder={
-              disabled
-                ? "Broker offline — start the broker to chat…"
-                : armed
-                  ? "describe the document you want…"
-                  : "Type a request…"
-            }
+            aria-label="Type a request"
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
+            placeholder={disabled ? "Broker offline — start the broker to chat…" : "Type a request…"}
             onChange={(e) => {
               setDraft(e.target.value);
               setPolishError(null);
@@ -215,27 +199,25 @@ export function Composer({
                 {refusal}
               </span>
             )}
-            {(onSendDocument || kind === "document") && (
-              // biome-ignore lint/a11y/useSemanticElements: same as the chips row — a toolbar-embedded toggle pair, not a form fieldset
-              <div className="composer__kind-group" role="group" aria-label="composer mode">
-                <button
-                  type="button"
-                  className={`composer__kind${kind === "chat" && !armed ? " composer__kind--on" : ""}`}
-                  aria-pressed={kind === "chat" && !armed}
-                  onClick={() => (kind === "document" ? onKindChat?.() : setArmed(false))}
-                >
-                  chat
-                </button>
-                <button
-                  type="button"
-                  className={`composer__kind${kind === "document" || armed ? " composer__kind--on" : ""}`}
-                  aria-pressed={kind === "document" || armed}
-                  onClick={() => {
-                    if (kind !== "document") setArmed(true);
-                  }}
-                >
-                  document
-                </button>
+            {onPickKind && engaged && (
+              // biome-ignore lint/a11y/useSemanticElements: a toolbar-embedded nav row, not a form fieldset
+              <div className="composer__kind-group" role="group" aria-label="artifact kind">
+                {ARTIFACT_KINDS.map((k) => (
+                  <button
+                    key={k.kind}
+                    type="button"
+                    className={`composer__kind${activeKind === k.kind ? " composer__kind--on" : ""}`}
+                    aria-pressed={activeKind === k.kind}
+                    // A nav trigger fired on mousedown so it beats the textarea's
+                    // blur (which would collapse the row before the click lands).
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      onPickKind(k.kind);
+                    }}
+                  >
+                    {k.label}
+                  </button>
+                ))}
               </div>
             )}
           </PromptInput.ToolbarStart>
