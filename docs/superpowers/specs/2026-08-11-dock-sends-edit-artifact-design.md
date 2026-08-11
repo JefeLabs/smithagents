@@ -1,7 +1,7 @@
 # Dock sends edit the artifact on screen — Design
 
 **Date:** 2026-08-11
-**Status:** Approved by Edwin (direct-apply for your own instructions; section-level targeting; sticky-note Proposals for targeted crew agents — "when there are multiple agents helping, suggestions that are accepted")
+**Status:** SHIPPED (direct-apply verified live end-to-end: instruction → edit turn → section updated on canvas + transcript ack. Crew→proposal path unit/route-tested; its LIVE exercise is blocked by the pre-existing directed-send gap — the swarm agent registry returns empty, so `resolveTarget` 404s on rail crew for plain chat too. See composer-target-selector's OPEN note.)
 
 ## Problem
 
