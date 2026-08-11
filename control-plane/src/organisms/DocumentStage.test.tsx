@@ -80,4 +80,9 @@ describe("DocumentStage", () => {
     fireEvent.click(other);
     expect(onChangeBlueprint).not.toHaveBeenCalled();
   });
+
+  it("renders the shelf slot inside the stage when provided", () => {
+    render(<DocumentStage doc={DOC} onSaveSection={vi.fn()} shelf={<aside aria-label="session documents" />} />);
+    expect(screen.getByRole("complementary", { name: "session documents" })).toBeTruthy();
+  });
 });

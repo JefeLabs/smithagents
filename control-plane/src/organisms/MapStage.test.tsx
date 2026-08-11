@@ -1157,4 +1157,9 @@ describe("MapStage editing", () => {
     expect(within(panel).getByText(/slice from 2 selected/i)).toBeDefined();
     expect(document.querySelectorAll(".react-flow__node.selected")).toHaveLength(2);
   });
+
+  it("renders the shelf slot inside the stage when provided", () => {
+    renderWithProviders(<MapStage shelf={<aside aria-label="session documents" />} />);
+    expect(screen.getByRole("complementary", { name: "session documents" })).toBeTruthy();
+  });
 });

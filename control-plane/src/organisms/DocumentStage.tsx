@@ -1,5 +1,5 @@
 import { motion, useReducedMotion } from "motion/react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import type { BlueprintT, DocT } from "../api/types";
 import { SectionCard } from "./document/SectionCard";
 
@@ -12,6 +12,8 @@ interface DocumentStageProps {
   onChangeBlueprint?: (blueprintId: string) => Promise<{ error?: string }>;
   /** Rename the page. The H1 commits on blur, like every other line here. */
   onRename?: (title: string) => Promise<{ error?: string }>;
+  /** The session's staged-artifacts shelf, absolutely positioned over the stage's left edge. Built by the route. */
+  shelf?: ReactNode;
 }
 
 /**
@@ -19,7 +21,7 @@ interface DocumentStageProps {
  * persistent ChatDock docks beside every stage (dock variant on /doc), so the
  * document stage stays router- and store-free and carries only the page.
  */
-export function DocumentStage({ doc, onSaveSection, blueprints, onChangeBlueprint, onRename }: DocumentStageProps) {
+export function DocumentStage({ doc, onSaveSection, blueprints, onChangeBlueprint, onRename, shelf }: DocumentStageProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   // The quiet confirmation that replaces a save button.
@@ -46,6 +48,7 @@ export function DocumentStage({ doc, onSaveSection, blueprints, onChangeBlueprin
 
   return (
     <section className="stage document-stage" aria-label="Document">
+      {shelf}
       <div className="document-stage__doc">
         <motion.div
           className="document-stage__rise"

@@ -4,7 +4,7 @@ import { Background, Controls, MiniMap, type Node, type OnNodeDrag, ReactFlow, u
 // and being unlayered keeps xyflow's own chrome authoritative over them.
 import "@xyflow/react/dist/style.css";
 import { Map as MapIcon } from "lucide-react";
-import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import type { CapActivityT, CapabilityT, CapSliceT, CapStoryT } from "../api/types";
 import { ALL_WORKSPACES } from "../lib/board-aggregate";
@@ -88,7 +88,7 @@ interface MapComposerValues {
  * stacks, with slices carved below. Cards and spec docs are downstream
  * views; every text edit happens here and only here.
  */
-export function MapStage() {
+export function MapStage({ shelf }: { shelf?: ReactNode } = {}) {
   const capabilitiesQuery = useCapabilities();
   const capabilities = capabilitiesQuery.data?.capabilities ?? [];
   const capErrors = capabilitiesQuery.data?.errors ?? [];
@@ -876,6 +876,7 @@ export function MapStage() {
 
   return (
     <section className="stage map-stage" aria-label="Story map">
+      {shelf}
       <header className="map-stage__bar">
         <MapIcon size={14} strokeWidth={2} />
         {/* The FOURTH level of the blank-card rule, and the last one that was still a

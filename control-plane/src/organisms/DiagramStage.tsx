@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import type { BlueprintT, DocT } from "../api/types";
 import { MermaidBlock } from "../molecules/MermaidBlock";
 
@@ -11,6 +11,8 @@ export interface DiagramStageProps {
   onChangeBlueprint?: (blueprintId: string) => Promise<{ error?: string }>;
   /** Persist the edited Mermaid source. Commits on blur. */
   onSaveSection: (sectionId: string, body: string) => Promise<{ error?: string }>;
+  /** The session's staged-artifacts shelf, absolutely positioned over the stage's left edge. Built by the route. */
+  shelf?: ReactNode;
 }
 
 /**
@@ -18,7 +20,7 @@ export interface DiagramStageProps {
  * panel, with a same-family type switch. Deliberately chat-free — the app
  * shell owns the one persistent composer that docks beside every stage.
  */
-export function DiagramStage({ doc, blueprints, onChangeBlueprint, onSaveSection }: DiagramStageProps) {
+export function DiagramStage({ doc, blueprints, onChangeBlueprint, onSaveSection, shelf }: DiagramStageProps) {
   const section = doc.sections[0];
   const [source, setSource] = useState(section?.body ?? "");
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -41,6 +43,7 @@ export function DiagramStage({ doc, blueprints, onChangeBlueprint, onSaveSection
 
   return (
     <section className="stage diagram-stage" aria-label="Diagram">
+      {shelf}
       {onChangeBlueprint && blueprints && blueprints.length > 1 && (
         // biome-ignore lint/a11y/useSemanticElements: a toolbar-style toggle set above the canvas, not a form fieldset
         <div className="diagram-stage__types" role="group" aria-label="diagram type">

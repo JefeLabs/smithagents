@@ -46,4 +46,16 @@ describe("DiagramStage", () => {
     expect(within(group).getByRole("button", { name: "Database design" })).toBeInTheDocument();
     expect(within(group).getByRole("button", { name: "Sequence diagram" })).toBeInTheDocument();
   });
+
+  it("renders the shelf slot inside the stage when provided", () => {
+    render(
+      <DiagramStage
+        doc={DOC}
+        blueprints={BPS}
+        onSaveSection={vi.fn().mockResolvedValue({})}
+        shelf={<aside aria-label="session documents" />}
+      />,
+    );
+    expect(screen.getByRole("complementary", { name: "session documents" })).toBeTruthy();
+  });
 });

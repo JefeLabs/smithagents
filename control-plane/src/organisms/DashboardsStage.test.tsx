@@ -67,4 +67,9 @@ describe("DashboardsStage", () => {
     unmount();
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  it("renders the shelf slot inside the stage when provided", () => {
+    render(<DashboardsStage shelf={<aside aria-label="session documents" />} />);
+    expect(screen.getByRole("complementary", { name: "session documents" })).toBeTruthy();
+  });
 });

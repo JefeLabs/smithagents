@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import {
   DASH_SAVED,
   DASH_STEPS,
@@ -19,7 +19,7 @@ const STEP_MS = 620;
  * client-side: the state machine below is the whole "backend", and
  * data/dashboards.ts is the whole "payload". Router-free like every organism.
  */
-export function DashboardsStage() {
+export function DashboardsStage({ shelf }: { shelf?: ReactNode } = {}) {
   const [view, setView] = useState<DashView>("ask");
   const [query, setQuery] = useState("");
   const [scope, setScope] = useState("all workspaces");
@@ -57,6 +57,7 @@ export function DashboardsStage() {
 
   return (
     <section className="stage dashboards-stage" aria-label="Dashboards">
+      {shelf}
       <header className="dashboards-stage__bar">
         <div className="dashboards-stage__title">dashboards</div>
         <span className="dashboards-stage__badge">AGENT COMPOSED</span>
