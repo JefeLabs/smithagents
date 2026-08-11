@@ -9,7 +9,7 @@ import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { Blueprint } from './blueprints.ts';
 import type { Doc } from './documents.ts';
-import { AuthError, type BrokerAuth, type Identity } from './auth.ts';
+import { AuthError, parseCookies, type BrokerAuth, type Identity } from './auth.ts';
 
 export interface RosterEntry {
   id: string;
@@ -89,7 +89,8 @@ const CORS = {
   // browser write at preflight while `curl -X PATCH` succeeds, because curl sends no
   // preflight — so the route looks healthy from the terminal and is dead in the app.
   'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'content-type',
+  // 'authorization' is here so the bridge's Bearer header survives preflight.
+  'Access-Control-Allow-Headers': 'content-type, authorization',
 };
 
 // Routes that touch credential-presence data need a real origin check, unlike the
@@ -121,10 +122,27 @@ function credentialCors(req: IncomingMessage): Record<string, string> {
   const origin = req.headers.origin;
   const headers: Record<string, string> = {
     'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'content-type',
+    'Access-Control-Allow-Headers': 'content-type, authorization',
+    // The /auth ceremony and session cookie both require credentialed CORS.
+    'Access-Control-Allow-Credentials': 'true',
   };
   if (origin && ALLOWED_ORIGINS.has(origin)) headers['Access-Control-Allow-Origin'] = origin;
   return headers;
+}
+
+/** Set-Cookie for a fresh session; Secure only when the origin is https. */
+function sessionCookie(token: string, webOrigin: string): string {
+  const secure = webOrigin.startsWith('https://') ? '; Secure' : '';
+  return `smith_session=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=2592000${secure}`;
+}
+
+/** Read a request body to string (JSON routes). */
+function readBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => resolve(body));
+  });
 }
 
 /** Frames the channel owes its clients after a successful mutating /work call. */
@@ -301,6 +319,71 @@ export class TextChannel {
 
   private clientSeq = 0;
 
+  /**
+   * The /auth/* ceremony surface. Only reached when `this.auth` is set.
+   * `/auth/me` is handled inline in start(); everything else lands here.
+   */
+  private async handleAuthRoute(
+    req: IncomingMessage,
+    res: import('node:http').ServerResponse,
+    pathname: string,
+    identity: Identity | null,
+  ): Promise<void> {
+    const auth = this.auth!;
+    const cors = credentialCors(req);
+    const json = (status: number, body: unknown, extra: Record<string, string> = {}) =>
+      res.writeHead(status, { ...cors, 'content-type': 'application/json', ...extra }).end(JSON.stringify(body));
+
+    if (req.method !== 'POST') { json(405, { error: 'method not allowed' }); return; }
+    const parseBody = async <T>(): Promise<T> => JSON.parse((await readBody(req)) || '{}') as T;
+
+    try {
+      if (pathname === '/auth/invites') {
+        if (auth.required && (!identity || identity.kind !== 'human')) { json(401, { error: 'unauthorized' }); return; }
+        json(201, auth.mintInvite());
+        return;
+      }
+      if (pathname === '/auth/register/options') {
+        const { code, name } = await parseBody<{ code?: string; name?: string }>();
+        if (!code || !name) { json(400, { error: 'code and name required' }); return; }
+        json(200, await auth.beginRegistration(code, name));
+        return;
+      }
+      if (pathname === '/auth/register/verify') {
+        const { code, response } = await parseBody<{ code?: string; response?: unknown }>();
+        if (!code) { json(400, { error: 'code required' }); return; }
+        const { userId, name, sessionToken } = await auth.finishRegistration(code, response);
+        json(201, { userId, name }, { 'set-cookie': sessionCookie(sessionToken, auth.webOrigin) });
+        return;
+      }
+      if (pathname === '/auth/login/options') {
+        json(200, await auth.beginLogin());
+        return;
+      }
+      if (pathname === '/auth/login/verify') {
+        const { response } = await parseBody<{ response?: unknown }>();
+        const { userId, name, sessionToken } = await auth.finishLogin(response);
+        json(200, { userId, name }, { 'set-cookie': sessionCookie(sessionToken, auth.webOrigin) });
+        return;
+      }
+      if (pathname === '/auth/logout') {
+        if (auth.required && !identity) { json(401, { error: 'unauthorized' }); return; }
+        const token = parseCookies(req.headers.cookie).smith_session;
+        if (token) auth.logout(token);
+        res.writeHead(204, { ...cors, 'set-cookie': 'smith_session=; HttpOnly; Path=/; Max-Age=0' }).end();
+        return;
+      }
+      json(404, { error: 'unknown auth route' });
+    } catch (err) {
+      if (err instanceof AuthError) {
+        const status = err.code === 'invalid-code' ? 410 : err.code === 'verify-failed' ? 400 : 401;
+        json(status, { error: err.code });
+        return;
+      }
+      throw err;
+    }
+  }
+
   /** Bind host:port (0 = ephemeral for tests); resolves the actual port. */
   start(port: number, host = '127.0.0.1'): Promise<number> {
     const server = createServer((req, res) => {
@@ -308,6 +391,38 @@ export class TextChannel {
         res.writeHead(204, CORS).end();
         return;
       }
+
+      // ── Identity gate + /auth ceremony ──────────────────────────────
+      // Runs after preflight so browser writes are never blocked at OPTIONS.
+      // In open mode (no auth configured) this whole block is inert.
+      const auth = this.auth;
+      const pathname = new URL(req.url ?? '/', 'http://localhost').pathname;
+      const identity: Identity | null = auth?.resolveIdentity(req) ?? null;
+      // Ceremony routes authenticate by pairing code / passkey, not a session.
+      const EXEMPT = new Set(['/auth/register/options', '/auth/register/verify', '/auth/login/options', '/auth/login/verify', '/auth/me']);
+
+      if (pathname === '/auth/me') {
+        if (auth?.required && !identity) {
+          res.writeHead(401, { ...credentialCors(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: 'unauthorized' }));
+        } else {
+          const body = identity && identity.kind !== 'bridge' ? identity : { kind: 'human', local: true };
+          res.writeHead(200, { ...credentialCors(req), 'content-type': 'application/json' }).end(JSON.stringify(body));
+        }
+        return;
+      }
+
+      if (auth && pathname.startsWith('/auth/')) {
+        void this.handleAuthRoute(req, res, pathname, identity).catch((err: unknown) =>
+          res.writeHead(500, { ...credentialCors(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: String(err) })),
+        );
+        return;
+      }
+
+      if (auth?.required && !identity && !EXEMPT.has(pathname)) {
+        res.writeHead(401, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify({ error: 'unauthorized' }));
+        return;
+      }
+
       if (req.method === 'POST' && req.url === '/utterance') {
         let body = '';
         req.on('data', (c) => {
@@ -350,6 +465,11 @@ export class TextChannel {
         return;
       }
       if (req.method === 'POST' && req.url === '/reset' && this.onReset) {
+        // A full-install reset is a human action — never let a bridge trigger it.
+        if (auth?.required && identity?.kind === 'bridge') {
+          res.writeHead(403, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify({ error: 'reset is not permitted for bridge clients' }));
+          return;
+        }
         let body = '';
         req.on('data', (c) => {
           body += c;

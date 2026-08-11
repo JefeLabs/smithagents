@@ -143,8 +143,12 @@ export class BrokerAuth {
   private readonly invites: PendingInvite[] = [];
   private readonly loginChallenges = new Set<string>();
 
+  /** The WebAuthn expected origin — needed by the cookie's Secure flag. */
+  readonly webOrigin: string;
+
   constructor(private readonly filePath: string, private readonly opts: BrokerAuthOptions) {
     this.required = opts.required;
+    this.webOrigin = opts.webOrigin;
     this.webauthn = opts.webauthn ?? defaultAdapter;
   }
 
