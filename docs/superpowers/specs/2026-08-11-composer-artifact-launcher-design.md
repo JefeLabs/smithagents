@@ -292,7 +292,7 @@ new store state, the URL is the single source of truth (back/forward just work):
 | --- | --- | --- |
 | `/` | `full` | Centerpiece: empty-hero ("mic is yours") → transcript, composer at bottom, **kind buttons**, artifact shelf |
 | `/doc/$id` `/diagram/$id` `/map` | `dock` | Right column: mini-transcript above the input, **kind row → a `<select>`** (a narrow dock has no room for five buttons) |
-| `/dashboards` | `center` | Mid-screen (Plan 4 details the priority-card layout) |
+| `/dashboards` | `center` (Plan 4) | Mid-screen. **Deferred:** shipped `hidden` in Plan 3 — the dashboards mock owns its own centre compose box, so a second center dock collided (caught in the Plan 3 smoke). Plan 4 rebuilds the stage to host the dock and flips the mapping to `center`; the variant + CSS are already in place. |
 | `/board` `/work/$agent`, and while the session-birth `NewSessionScreen` shows | `hidden` | No chat box |
 
 **Consequences.** `VoiceStage` is retired — its hero + transcript become the `full`
