@@ -21,17 +21,17 @@ const DOC: DocT = {
 describe("DocumentStage", () => {
   afterEach(() => cleanup());
 
-  it("renders the title, every section, and the docked chat", () => {
-    render(<DocumentStage doc={DOC} onSaveSection={vi.fn()} chat={<div data-testid="dock" />} />);
+  it("renders the title and every section (document-only; chat is the shell's)", () => {
+    render(<DocumentStage doc={DOC} onSaveSection={vi.fn()} />);
+    expect(screen.getByRole("region", { name: "Document" })).toBeInTheDocument();
     expect(screen.getByText("Login spec")).toBeTruthy();
     expect(screen.getByText("What this is")).toBeTruthy();
     expect(screen.getByText("Non-goals")).toBeTruthy();
-    expect(screen.getByTestId("dock")).toBeTruthy();
   });
 
   it("one section edits at a time and save round-trips", async () => {
     const onSaveSection = vi.fn().mockResolvedValue({});
-    render(<DocumentStage doc={DOC} onSaveSection={onSaveSection} chat={null} />);
+    render(<DocumentStage doc={DOC} onSaveSection={onSaveSection} />);
     fireEvent.click(screen.getByRole("button", { name: /edit what this is/i }));
     // entering one section's edit mode leaves the other read-only
     expect(screen.queryByRole("button", { name: /edit what this is/i })).toBeNull();
@@ -48,7 +48,7 @@ describe("DocumentStage", () => {
 
   it("a failed save keeps edit mode and shows the error", async () => {
     const onSaveSection = vi.fn().mockResolvedValue({ error: "broker unreachable" });
-    render(<DocumentStage doc={DOC} onSaveSection={onSaveSection} chat={null} />);
+    render(<DocumentStage doc={DOC} onSaveSection={onSaveSection} />);
     fireEvent.click(screen.getByRole("button", { name: /edit non-goals/i }));
     const surface = await screen.findByRole("textbox", { name: /non-goals/i });
     fireEvent.blur(surface);
@@ -65,13 +65,7 @@ describe("DocumentStage", () => {
     const onChangeBlueprint = vi.fn().mockResolvedValue({});
     const empty = { ...DOC, sections: DOC.sections.map((s) => ({ ...s, body: "" })) };
     render(
-      <DocumentStage
-        doc={empty}
-        onSaveSection={vi.fn()}
-        blueprints={BPS}
-        onChangeBlueprint={onChangeBlueprint}
-        chat={null}
-      />,
+      <DocumentStage doc={empty} onSaveSection={vi.fn()} blueprints={BPS} onChangeBlueprint={onChangeBlueprint} />,
     );
     fireEvent.click(screen.getByRole("button", { name: /implementation plan/i }));
     await waitFor(() => expect(onChangeBlueprint).toHaveBeenCalledWith("implementation-plan"));
@@ -80,15 +74,7 @@ describe("DocumentStage", () => {
   // The blueprints share no section ids — re-casting written work would destroy it.
   it("the type switch locks once the document has content", () => {
     const onChangeBlueprint = vi.fn();
-    render(
-      <DocumentStage
-        doc={DOC}
-        onSaveSection={vi.fn()}
-        blueprints={BPS}
-        onChangeBlueprint={onChangeBlueprint}
-        chat={null}
-      />,
-    );
+    render(<DocumentStage doc={DOC} onSaveSection={vi.fn()} blueprints={BPS} onChangeBlueprint={onChangeBlueprint} />);
     const other = screen.getByRole("button", { name: /implementation plan/i });
     expect(other).toBeDisabled();
     fireEvent.click(other);

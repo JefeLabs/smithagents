@@ -31,11 +31,7 @@
   padding: 4px;
 }
 
-/* ---- document stage (pair/mob phase 1) ---- */
-.document-stage__split {
-  flex: 1;
-  min-height: 0;
-}
+/* ---- document stage: the page, full-width (chat is the shell's dock now) ---- */
 .document-stage__doc {
   display: flex;
   flex-direction: column;
@@ -118,42 +114,9 @@
   padding: 8px 12px;
   font-size: 12px;
 }
-/* ---- the docked chat: the same column height as the page beside it ----
-   The sheet sets the rhythm (18px above, 40px below); the dock matches it so
-   both columns start and end on the same lines instead of the chat running the
-   full stage while the page floats inside it. */
-.document-stage__chat {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-}
-.document-stage__dock-rise {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  margin: 18px 18px 40px 0;
-  border-left: 1px solid var(--rail-br);
-  padding-left: 14px;
-}
-.document-stage__dock {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  gap: 10px;
-}
-/* The transcript takes the slack; the composer sits at the bottom of the column,
-   level with the foot of the page. components.css caps `.transcript` at 220px
-   for the voice stage, where it floats above a centred composer — in this column
-   that cap strands the composer mid-air with dead space beneath it. */
-.document-stage__dock .transcript {
-  flex: 1;
-  min-height: 0;
-  max-height: none;
-  overflow-y: auto;
-}
+/* The chat column moved out of the document stage: one persistent ChatDock now
+   docks beside every stage from the shell (Plan 3), so the old
+   .document-stage__chat/__dock/__dock-rise/__split rules are gone. */
 
 .document-stage__sections {
   display: flex;

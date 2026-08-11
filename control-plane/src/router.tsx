@@ -1,4 +1,3 @@
-import { useQueryClient } from "@tanstack/react-query";
 import {
   createHashHistory,
   createRootRoute,
@@ -9,26 +8,18 @@ import {
 } from "@tanstack/react-router";
 import { lazy, Suspense } from "react";
 import * as api from "./api/broker";
-import type { BlueprintT, ChatMessage, DocT, RosterAgent } from "./api/types";
+import type { BlueprintT, DocT, RosterAgent } from "./api/types";
 import { agentSeeds } from "./data/agents";
-import { useVoiceStatus } from "./hooks/useVoiceStatus";
-import { makePickKind } from "./lib/pickKind";
-import { Composer } from "./molecules/Composer";
-import { Transcript } from "./molecules/Transcript";
 import { BoardStage } from "./organisms/BoardStage";
 import { DashboardsStage } from "./organisms/DashboardsStage";
 import { MapStage } from "./organisms/MapStage";
 import { WorkStage } from "./organisms/WorkStage";
 import { HomePage } from "./pages/HomePage";
-import { useBlueprints, useVoiceSettings } from "./queries/http";
-import { useDocuments, useRoster, useTranscript } from "./queries/pushed";
-import { useAudioStore } from "./stores/audioStore";
-import { useSocketStore } from "./stores/socketStore";
-import { useUiStore } from "./stores/uiStore";
+import { useBlueprints } from "./queries/http";
+import { useDocuments, useRoster } from "./queries/pushed";
 
 // Stable empties: a fresh `[]` per render would churn every downstream effect
 // keyed on the array's identity.
-const NO_MESSAGES: ChatMessage[] = [];
 const NO_ROSTER: RosterAgent[] = [];
 const NO_DOCS: DocT[] = [];
 const NO_BLUEPRINTS: BlueprintT[] = [];
@@ -69,27 +60,8 @@ function DashboardsRoute() {
 
 function DocRoute() {
   const { docId } = docRoute.useParams();
-  const navigate = useNavigate();
-  const qc = useQueryClient();
   const { data: docs = NO_DOCS, status } = useDocuments();
-  const { data: rosterFrame } = useRoster();
   const { data: blueprints = NO_BLUEPRINTS } = useBlueprints();
-  const { data: messages = NO_MESSAGES } = useTranscript();
-  const connected = useSocketStore((c) => c.connected);
-  // The docked chat IS this session's conversation, so it carries the same voice
-  // controls the voice stage does. usePushToTalk owns the hardware at app scope
-  // (HomePage) and publishes through audioStore, so this route only asks for the
-  // toggles — it never holds a MediaStream of its own.
-  const micLive = useAudioStore((a) => a.micLive);
-  const toggleMic = useAudioStore((a) => a.toggleMic);
-  const soundOn = useAudioStore((a) => a.soundOn);
-  const toggleSound = useAudioStore((a) => a.toggleSound);
-  const showVoiceBlockedNotice = useUiStore((u) => u.showVoiceBlockedNotice);
-  const { voice } = useVoiceStatus();
-  const { data: voicePrefs } = useVoiceSettings();
-  // Same hide-inactive rule as the voice stage: only a CONFIRMED no-STT broker
-  // the user asked to hide drops the mic entirely.
-  const hideMic = Boolean(voicePrefs?.hideInactive) && !voice.stt;
   // Cold-WS race: on a hard reload of /doc/:id the documents frame hasn't
   // landed yet, so the query is still `pending` — that is not "no such doc",
   // it's "don't know yet". Only a RESOLVED query missing the doc means
@@ -102,6 +74,7 @@ function DocRoute() {
   // sense within a family — you can't turn a prose page into an ER diagram. So
   // the switch sees only same-family blueprints. (DiagramRoute filters likewise.)
   const docFamily = blueprints.find((b) => b.id === doc.blueprintId)?.family ?? "document";
+  // Document-only: the shell's dock-variant ChatDock provides chat on /doc.
   return (
     <Suspense fallback={null}>
       <DocumentStage
@@ -110,25 +83,6 @@ function DocRoute() {
         onChangeBlueprint={(blueprintId) => api.patchDocBlueprint(doc.id, blueprintId)}
         onRename={(title) => api.patchDocTitle(doc.id, title)}
         onSaveSection={(sectionId, body) => api.patchDocSection(doc.id, sectionId, body)}
-        chat={
-          <div className="document-stage__dock">
-            <Transcript messages={messages} />
-            <Composer
-              onSend={api.postUtterance}
-              targets={rosterFrame?.agents ?? NO_ROSTER}
-              disabled={!connected}
-              onPolish={api.polishDraft}
-              micLive={micLive}
-              onMicToggle={hideMic ? undefined : toggleMic}
-              soundOn={soundOn}
-              onSoundToggle={toggleSound}
-              sttEnabled={voice.stt}
-              onVoiceBlocked={showVoiceBlockedNotice}
-              onPickKind={makePickKind(navigate, qc, blueprints)}
-              activeKind="documents"
-            />
-          </div>
-        }
       />
     </Suspense>
   );
