@@ -53,7 +53,7 @@ export function BoardTabs({ tabs, activeKey, addable, adding, onAddingChange, on
             type="button"
             role="tab"
             aria-selected={t.key === activeKey}
-            className={`board-tabs__tab${t.key === activeKey ? " is-active" : ""}`}
+            className={`board-tabs__tab${t.type === "personal" ? " board-tabs__tab--planner" : ""}${t.key === activeKey ? " is-active" : ""}`}
             onClick={() => onSelect(t.key)}
           >
             {t.label}

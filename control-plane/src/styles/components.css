@@ -3491,6 +3491,18 @@ button.logo {
   background: rgba(255, 255, 255, 0.05);
   opacity: 1;
 }
+/* The Action Planner is the one personal surface in the strip — the accent
+   tint marks it apart from the workspace boards in every theme. AFTER the
+   generic is-active rule: equal specificity, so source order decides. */
+.board-tabs__tab--planner {
+  color: color-mix(in srgb, var(--accent) 75%, var(--text));
+  opacity: 0.85;
+}
+.board-tabs__tab--planner.is-active {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  opacity: 1;
+}
 .board-tabs__add {
   position: relative;
 }

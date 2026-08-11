@@ -5,15 +5,15 @@ export const ALL_WORKSPACES = "*";
 
 export type BoardTypeT = "personal" | "ideation" | "plan" | "deliver" | "release" | "reactive" | "maintenance";
 
-/** Mirrors the swarm's BOARD_TYPE_ORDER — personal always first. */
+/** Mirrors the swarm's BOARD_TYPE_ORDER — personal always first, release always last. */
 export const BOARD_TYPE_ORDER_UI: BoardTypeT[] = [
   "personal",
   "ideation",
   "plan",
   "deliver",
-  "release",
   "reactive",
   "maintenance",
+  "release",
 ];
 
 /** The six workspace types. Personal is deliberately absent — it belongs to no workspace. */
@@ -21,19 +21,19 @@ export const WORKSPACE_BOARD_TYPES_UI: Exclude<BoardTypeT, "personal">[] = [
   "ideation",
   "plan",
   "deliver",
-  "release",
   "reactive",
   "maintenance",
+  "release",
 ];
 
 export const BOARD_TYPE_LABELS_UI: Record<BoardTypeT, string> = {
-  personal: "Active To-dos",
-  ideation: "Ideation",
+  personal: "Action Planner",
+  ideation: "Ideate",
   plan: "Plan",
   deliver: "Deliver",
   release: "Release",
-  reactive: "Reactive",
-  maintenance: "Maintenance",
+  reactive: "React",
+  maintenance: "Maintain",
 };
 
 export interface TabDescriptor {
@@ -143,10 +143,10 @@ export const BOARD_ROUTES_UI: Record<BoardTypeT, RouteExitT[]> = {
   reactive: [
     { from: "triage", toType: "maintenance", toColumn: "triage", label: "To maintenance" },
     { from: "triage", toType: "ideation", toColumn: "intake", label: "To ideation" },
-    { from: "triage", toType: "personal", toColumn: "queue", label: "Escalate to Active To-dos" },
+    { from: "triage", toType: "personal", toColumn: "queue", label: "Escalate to Action Planner" },
   ],
   ideation: [],
-  maintenance: [{ from: "triage", toType: "personal", toColumn: "queue", label: "Escalate to Active To-dos" }],
+  maintenance: [{ from: "triage", toType: "personal", toColumn: "queue", label: "Escalate to Action Planner" }],
   personal: [],
 };
 

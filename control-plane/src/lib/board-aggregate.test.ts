@@ -55,7 +55,7 @@ describe("tabsFor", () => {
 
 describe("WORKSPACE_BOARD_TYPES_UI", () => {
   it("has exactly the six workspace types, in canonical order, never personal", () => {
-    expect(WORKSPACE_BOARD_TYPES_UI).toEqual(["ideation", "plan", "deliver", "release", "reactive", "maintenance"]);
+    expect(WORKSPACE_BOARD_TYPES_UI).toEqual(["ideation", "plan", "deliver", "reactive", "maintenance", "release"]);
     expect(WORKSPACE_BOARD_TYPES_UI).toHaveLength(6);
     expect(WORKSPACE_BOARD_TYPES_UI).not.toContain("personal");
   });
@@ -69,8 +69,8 @@ describe("WORKSPACE_BOARD_TYPES_UI", () => {
 
 describe("addableTypes", () => {
   it("offers the six workspace types not yet present, never personal", () => {
-    expect(addableTypes(BOARDS, "acme")).toEqual(["deliver", "release", "reactive", "maintenance"]);
-    expect(addableTypes(BOARDS, "globex")).toEqual(["ideation", "deliver", "release", "reactive", "maintenance"]);
+    expect(addableTypes(BOARDS, "acme")).toEqual(["deliver", "reactive", "maintenance", "release"]);
+    expect(addableTypes(BOARDS, "globex")).toEqual(["ideation", "deliver", "reactive", "maintenance", "release"]);
     expect(addableTypes(BOARDS, "acme")).not.toContain("personal");
   });
 });
