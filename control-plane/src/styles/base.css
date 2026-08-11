@@ -129,21 +129,25 @@ body {
   gap: 10px;
 }
 
-/* The dock is a hard boundary for PAGE-like stages — the document and a
-   displayed dashboard reserve its width (spec v4/v5). The zoomable canvases
-   (diagram, story map) deliberately keep full-bleed freedom: pan/zoom makes
-   underlap harmless there. These live HERE, not chatdock.css: that file is
-   imported into layer(legacy), and no layered declaration can outrank the
-   unlayered `padding: 14px` shorthand above — a chatdock.css version of this
-   rule is silently dead. Focus view drops the dock, so the right side falls
-   back to the shorthand's 14px. */
+/* The dock is a hard boundary for the document, diagram, and docked-dashboard
+   stages — they reserve its width (spec v4/v5 + Edwin 2026-08-11: diagrams
+   too). Only the story map keeps full-bleed freedom: pan/zoom makes underlap
+   harmless there. These live HERE, not chatdock.css: that file is imported
+   into layer(legacy), and no layered declaration can outrank the unlayered
+   `padding: 14px` shorthand above — a chatdock.css version of this rule is
+   silently dead. Focus view drops the dock, so each side falls back to its
+   own default (14px shorthand; diagram has none). */
 .stage.document-stage,
+.stage.diagram-stage,
 .stage.dashboards-stage--docked {
   padding-right: var(--chat-dock-w);
 }
 body[data-focus] .stage.document-stage,
 body[data-focus] .stage.dashboards-stage--docked {
   padding-right: 14px;
+}
+body[data-focus] .stage.diagram-stage {
+  padding-right: 0;
 }
 
 /* The shelf owns a real left column: when it rendered tiles (`:has` misses the

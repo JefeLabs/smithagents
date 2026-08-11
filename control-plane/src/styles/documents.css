@@ -586,25 +586,42 @@
   gap: 6px;
   padding: 4px 0;
 }
-/* Click-to-copy source view: reads like a code block, behaves like a button. */
+/* The markdown view: still the editor, in the document page's column (78ch,
+   centered) so the two markdown surfaces share one width. The copy button
+   pins to the block's corner and copies the fenced form. */
 .diagram-stage__markdown {
+  position: relative;
+  display: flex;
   flex: 1;
   min-height: 0;
-  overflow: auto;
-  text-align: left;
+  width: min(100%, 78ch);
+  margin-inline: auto;
+}
+.diagram-stage__markdown textarea {
+  flex: 1;
+  resize: none;
   border: 1px solid var(--pill-br);
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.02);
   color: var(--text);
   padding: 14px;
-  cursor: copy;
-}
-.diagram-stage__markdown pre {
-  margin: 0;
   font-family: ui-monospace, monospace;
   font-size: 12.5px;
   line-height: 1.55;
-  white-space: pre-wrap;
+}
+.diagram-stage__copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  border: 1px solid var(--pill-br);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 9px;
+  cursor: pointer;
 }
 .diagram-stage__source {
   flex: none;

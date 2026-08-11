@@ -47,18 +47,21 @@ describe("DiagramStage", () => {
     expect(within(group).getByRole("button", { name: "Sequence diagram" })).toBeInTheDocument();
   });
 
-  it("toggles to a markdown view that copies the fenced source on click", async () => {
+  it("toggles to an editable markdown view with one-click fenced copy", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
-    render(<DiagramStage doc={DOC} blueprints={BPS} onSaveSection={vi.fn().mockResolvedValue({})} />);
-    // Canvas is the default: the editor is present, the markdown block is not.
-    expect(screen.getByRole("textbox", { name: "Mermaid source" })).toBeInTheDocument();
+    const onSave = vi.fn().mockResolvedValue({});
+    render(<DiagramStage doc={DOC} blueprints={BPS} onSaveSection={onSave} />);
+    // Canvas is the default: no copy affordance there.
     expect(screen.queryByRole("button", { name: /copy mermaid markdown/i })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Markdown" }));
-    expect(screen.queryByRole("textbox", { name: "Mermaid source" })).toBeNull();
-    const block = screen.getByRole("button", { name: /copy mermaid markdown/i });
-    fireEvent.click(block);
-    expect(writeText).toHaveBeenCalledWith(`\`\`\`mermaid\n${DOC.sections[0].body}\n\`\`\``);
+    // Still the editor: typing + blur commits, same as the canvas source panel.
+    const box = screen.getByRole("textbox", { name: "Mermaid source" });
+    fireEvent.change(box, { target: { value: "erDiagram\n  A ||--o{ B : has" } });
+    fireEvent.blur(box);
+    expect(onSave).toHaveBeenCalledWith(DOC.sections[0].id, "erDiagram\n  A ||--o{ B : has");
+    fireEvent.click(screen.getByRole("button", { name: /copy mermaid markdown/i }));
+    expect(writeText).toHaveBeenCalledWith("```mermaid\nerDiagram\n  A ||--o{ B : has\n```");
     expect(await screen.findByText("copied")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Canvas" }));
     expect(screen.getByRole("textbox", { name: "Mermaid source" })).toBeInTheDocument();

@@ -117,16 +117,25 @@ export function DiagramStage({ doc, blueprints, onChangeBlueprint, onSaveSection
           />
         </>
       ) : (
-        // The whole block is the copy affordance — one click puts the fenced
-        // Mermaid on the clipboard, ready to paste into any markdown doc.
-        <button
-          type="button"
-          className="diagram-stage__markdown"
-          aria-label="Copy Mermaid markdown"
-          onClick={copyMarkdown}
-        >
-          <pre>{fenced}</pre>
-        </button>
+        // The markdown view is still the EDITOR — same source, same
+        // blur-commit — plus a one-click copy of the fenced form.
+        <div className="diagram-stage__markdown">
+          <button
+            type="button"
+            className="diagram-stage__copy"
+            aria-label="Copy Mermaid markdown"
+            onClick={copyMarkdown}
+          >
+            copy
+          </button>
+          <textarea
+            aria-label="Mermaid source"
+            value={source}
+            spellCheck={false}
+            onChange={(e) => setSource(e.target.value)}
+            onBlur={() => void commit()}
+          />
+        </div>
       )}
       {saved && <em className="diagram-stage__saved">saved</em>}
       {copied && <em className="diagram-stage__saved">copied</em>}
