@@ -190,6 +190,25 @@
     display: flex;
   }
 }
+/* Rail ↔ logo vertical alignment: the navbar logo sits at 16px padding with a
+   30px box, so its center is x=31. HeroUI's icon rail is 48px (center x=24),
+   which reads as the logo hanging off-axis. 62px puts the rail's center at
+   exactly 31 — the icon column lines up under the logo with no logo change.
+   The menu stretches to the rail's inner width and each item centers its icon,
+   so only the container width needs overriding. */
+.sidebar[data-state="collapsed"][data-collapsible="icon"] {
+  width: 62px;
+}
+/* HeroUI renders the lucide icons at 16px — too small for the wider bar. The
+   slot is sized here and the svg fills it. */
+.sidebar__menu-icon {
+  width: 22px;
+  height: 22px;
+}
+.sidebar__menu-icon svg {
+  width: 22px;
+  height: 22px;
+}
 .sidebar__main {
   min-height: 0; /* same reason as .sidebar above */
   /* The right rail (AgentRoster) is still position:fixed — HeroUI Phase 2 work,
