@@ -20,6 +20,7 @@ import { parseFeed, youtubeFeedUrl } from './feeds/rss.ts';
 import { weatherLine, weatherUrl } from './feeds/weather.ts';
 import { CADENCE_MS, dueSources, recordOutcome } from './feeds/ingest.ts';
 import type { FeedSource } from './feeds/types.ts';
+import { urlRejectionReason } from './feeds/url-guard.ts';
 import { ElectionScheduler, runElection, type AskFactory } from './election.ts';
 import { parseTarget, resolveTarget } from './targets.ts';
 import { createDiscordTextLifecycle } from './discord-text-lifecycle.ts';
@@ -1353,6 +1354,10 @@ const textChannel = new TextChannel(
       if (!url.trim()) return { error: 'a feed needs a URL' };
       // A YouTube channel URL is not itself a feed; every channel has one.
       const locator = youtubeFeedUrl(url) ?? url;
+      // The broker fetches this on a timer from inside the trust boundary, so
+      // an internal or non-http target is refused before it is ever stored.
+      const refusal = urlRejectionReason(locator);
+      if (refusal) return { error: refusal };
       const id = `m${Date.now().toString(36)}`;
       feedStore.putSource({
         id,
@@ -1415,6 +1420,10 @@ async function fetchSource(source: FeedSource): Promise<{ ok: boolean; error?: s
       return { ok: true };
     }
     if (source.kind === 'rss') {
+      // Checked again here, not only at add time: a source written before this
+      // guard existed — or edited on disk — must not get a free pass (SSRF).
+      const refusal = urlRejectionReason(source.locator);
+      if (refusal) return { ok: false, error: refusal };
       const res = await fetch(source.locator);
       const items = parseFeed(source, await res.text());
       // Zero items from a feed that should have some is a failure, not a quiet success.
