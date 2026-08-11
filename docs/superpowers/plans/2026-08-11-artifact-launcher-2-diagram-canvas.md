@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> **Claimed by:** _(unclaimed — write your session id here before executing)_
+> **Claimed by:** session 9af857dc (inline, worktree `.claude/worktrees/diagram-canvas` @ `feat/diagram-canvas`, off origin/main 6a862ac, 2026-08-11)
 
 **Goal:** Make the `Diagrams` kind real: a diagram is a `family: "diagram"` document whose section body is Mermaid text, opened on a `DiagramStage` canvas (rendered Mermaid + a source panel + a same-family type switch) at `/diagram/$docId`, created with a starter diagram from the `er`/`sequence` blueprints.
 
