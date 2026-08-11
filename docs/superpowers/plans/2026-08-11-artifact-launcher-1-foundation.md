@@ -239,6 +239,13 @@ it("no longer offers Dashboards or Map in the rail (they're composer-triggered)"
 
 ---
 
+## Task 7 evidence (executed 2026-08-11, session 9af857dc)
+
+- **Control-plane suite:** 731 tests, 77 files, 0 failures. **Broker suite:** 557, 0 failures. **tsc:** clean (both packages). **biome lint:** exit 0 (7 pre-existing warnings incl. `noConfusingVoidType` on the unchanged `onSend` union). **Production build:** `pnpm build` exit 0 (`✓ built in 6.36s`).
+- **Functional coverage (integration, not just unit):** `router.test.tsx` renders the real composer + real router and asserts — the kind row is present; clicking **Dashboards** navigates to `/dashboards`; clicking **Documents** POSTs `/documents` (document-family blueprint) and opens `/doc/d1`; clicking **User Story Maps** reaches `/map`; the rail no longer renders Dashboards/Map rows. Composer unit tests assert the persistent third-row render, click→`onPickKind`, active-highlight, and that Chat's `onSend` path is untouched.
+- **Deviations from the plan (both driven by user refinement mid-execution):** (1) the kind row is a **persistent third row** between input and controls, not reveal-on-engage — the tests and CSS were updated accordingly; (2) new CSS makes the kind buttons **flush with the composer background at rest, surfacing a chip background on `.composer:hover`** (buttons blend into the box until the mouse is over it).
+- **Not run headlessly (flagged, not skipped):** a visual browser smoke of the three-row layout and the hover-blend styling — no functional risk (behavior is test-covered), but the *appearance* wants a human or Playwright pass. Diagrams currently opens a prose doc (no diagram blueprint exists yet); the Mermaid canvas is Plan 2.
+
 ## Self-review notes
 - **Spec coverage (Plan 1 slice):** kind row + reveal-on-engage (§4) ✓; click=navigate `onPickKind` (§4, §5) ✓; create-by-family (§5) ✓; blueprint `family` (§1) ✓; nav cleanup (§7) ✓. Deferred to later plans: Mermaid diagram canvas + `/diagram` route (§2, Plan 2); shelf `onOpen` route-by-family (Plan 2, once `/diagram` exists); three-column chat-right layout + shared canvas chrome + full-screen (§3, §8, Plan 3); dashboards centered layout (§9, Plan 4). Diagram-family docs open in the prose `DocumentStage` until Plan 2 — an intentional, working intermediate.
 - **Chat-send untouched:** Tasks 4–5 only remove the document-arm; every existing composer/router/HomePage test must stay green (called out in each task).
