@@ -41,6 +41,7 @@ test('instantiateSections activates conditional sections per workType', () => {
   const bp = {
     id: 'x',
     name: 'X',
+    family: 'document' as const,
     workTypes: ['feature', 'bugfix'],
     sections: [
       { id: 'a', heading: 'Always' },
@@ -59,11 +60,26 @@ test('instantiateSections activates conditional sections per workType', () => {
 });
 
 test('instantiateSections rejects an undeclared workType', () => {
-  const bp = { id: 'x', name: 'X', workTypes: ['feature'], sections: [{ id: 'a', heading: 'A' }] };
+  const bp = { id: 'x', name: 'X', family: 'document' as const, workTypes: ['feature'], sections: [{ id: 'a', heading: 'A' }] };
   assert.equal(instantiateSections(bp, 'bugfix'), null);
 });
 
 test('instantiated sections start with empty bodies', () => {
-  const bp = { id: 'x', name: 'X', workTypes: ['feature'], sections: [{ id: 'a', heading: 'A' }] };
+  const bp = { id: 'x', name: 'X', family: 'document' as const, workTypes: ['feature'], sections: [{ id: 'a', heading: 'A' }] };
   assert.deepEqual(instantiateSections(bp, 'feature'), [{ id: 'a', heading: 'A', body: '' }]);
+});
+
+test('default blueprints declare a family; spec and plan are documents', () => {
+  const bps = loadBlueprints(join(tmpdir(), 'no-such-dir'));
+  assert.equal(bps.find((b) => b.id === 'spec')?.family, 'document');
+  assert.equal(bps.find((b) => b.id === 'implementation-plan')?.family, 'document');
+  // Every blueprint must declare a family (no undefined leaks to the UI grouping).
+  assert.ok(bps.every((b) => b.family === 'document' || b.family === 'diagram'));
+});
+
+test('a user blueprint file without family defaults to document', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bp-'));
+  writeFileSync(join(dir, 'custom.json'), JSON.stringify({ id: 'custom', name: 'Custom', workTypes: ['feature'], sections: [{ id: 's', heading: 'S' }] }));
+  const bp = loadBlueprints(dir).find((b) => b.id === 'custom');
+  assert.equal(bp?.family, 'document');
 });

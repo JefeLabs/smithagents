@@ -1445,7 +1445,7 @@ test('POST /polish returns the rewrite, 400 on empty text, 502 when the rewrite 
 
 test('GET /blueprints returns the loaded set', async () => {
   const channel = channelWith({
-    blueprints: () => [{ id: 'spec', name: 'Design Spec', workTypes: ['feature'], sections: [] }],
+    blueprints: () => [{ id: 'spec', name: 'Design Spec', family: 'document' as const, workTypes: ['feature'], sections: [] }],
   });
   const port = await channel.start(0);
   try {

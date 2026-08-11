@@ -19,6 +19,8 @@ export interface BlueprintSection {
 export interface Blueprint {
   id: string;
   name: string;
+  /** Render family — prose documents vs Mermaid diagrams. The composer groups by it. */
+  family: 'document' | 'diagram';
   workTypes: string[];
   sections: BlueprintSection[];
 }
@@ -27,6 +29,7 @@ const DEFAULT_BLUEPRINTS: Blueprint[] = [
   {
     id: 'spec',
     name: 'Design Spec',
+    family: 'document',
     workTypes: ['feature', 'bugfix', 'integration'],
     sections: [
       { id: 'overview', heading: 'What this is', hint: 'Two paragraphs, plain language.', required: true },
@@ -41,6 +44,7 @@ const DEFAULT_BLUEPRINTS: Blueprint[] = [
   {
     id: 'implementation-plan',
     name: 'Implementation Plan',
+    family: 'document',
     workTypes: ['feature', 'bugfix', 'integration'],
     sections: [
       { id: 'goal', heading: 'Goal', hint: 'One sentence.', required: true },
@@ -60,7 +64,9 @@ export function loadBlueprints(dir: string = process.env.BROKER_BLUEPRINTS_DIR ?
       try {
         const bp = JSON.parse(readFileSync(join(dir, f), 'utf8')) as Blueprint;
         if (typeof bp.id === 'string' && Array.isArray(bp.sections) && Array.isArray(bp.workTypes)) {
-          byId.set(bp.id, bp);
+          // A user file may omit family; a plain prose doc is the safe default,
+          // so the UI grouping never sees an undefined family.
+          byId.set(bp.id, { ...bp, family: bp.family === 'diagram' ? 'diagram' : 'document' });
         }
       } catch {
         /* skip malformed file; defaults must survive a bad user edit */

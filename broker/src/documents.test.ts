@@ -6,6 +6,7 @@ import { type Doc, DocumentManager } from './documents.ts';
 const BP: Blueprint = {
   id: 'spec',
   name: 'Design Spec',
+  family: 'document',
   workTypes: ['feature', 'bugfix'],
   sections: [
     { id: 'overview', heading: 'What this is' },
@@ -87,6 +88,7 @@ test('changeBlueprint re-instantiates an untouched document under the new bluepr
   const PLAN: Blueprint = {
     id: 'implementation-plan',
     name: 'Implementation Plan',
+    family: 'document',
     workTypes: ['feature'],
     sections: [{ id: 'goal', heading: 'Goal' }, { id: 'tasks', heading: 'Tasks' }],
   };
@@ -100,7 +102,7 @@ test('changeBlueprint re-instantiates an untouched document under the new bluepr
 
 test('changeBlueprint refuses once any section has text, and on an unknown doc', () => {
   const { m } = manager();
-  const PLAN: Blueprint = { id: 'p', name: 'P', workTypes: ['feature'], sections: [{ id: 'goal', heading: 'Goal' }] };
+  const PLAN: Blueprint = { id: 'p', name: 'P', family: 'document', workTypes: ['feature'], sections: [{ id: 'goal', heading: 'Goal' }] };
   const doc = m.create(BP, 'feature', 'T')!;
   m.patchSection(doc.id, 'overview', 'Something written.');
   assert.equal(m.changeBlueprint(doc.id, PLAN), null);
