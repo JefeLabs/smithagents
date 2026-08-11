@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Broker, type BridgeLike, type SttLike, type SwarmClientLike, TTS_SAMPLE_RATE } from './broker.ts';
 import { AgentDirectory } from './directory.ts';
-import type { BrainLike, TurnOrigin } from './broker.ts';
+import type { BrainLike, RosterState, TurnOrigin } from './broker.ts';
 import type { RegistryAgent, SwarmEvent, SwarmMeeting, SwarmWorkspace } from './swarm-client.ts';
 
 const AGENTS: RegistryAgent[] = [
@@ -93,6 +93,8 @@ function makeBroker(
     onRosterChange?: (roster: { agents: Array<{ status: string }>; squads: unknown[] }) => void;
     onTaskDispatched?: (d: { taskId: string; agent: string; task: string }) => void;
     identityName?: string;
+    onGroupChanged?: (groupId: string) => void;
+    rosterStore?: { load(): RosterState | null; save(state: RosterState): void };
   },
 ) {
   const directory = new AgentDirectory();
@@ -100,6 +102,8 @@ function makeBroker(
     onRosterChange: opts?.onRosterChange,
     identityName: opts?.identityName,
     onTaskDispatched: opts?.onTaskDispatched,
+    onGroupChanged: opts?.onGroupChanged,
+    rosterStore: opts?.rosterStore,
     swarm: f.swarm,
     directory,
     brain: f.brain,
@@ -1032,3 +1036,98 @@ function basicDeps(f: ReturnType<typeof makeFakes>, directory: AgentDirectory) {
     pollMs: 999999,
   };
 }
+
+// ---- group leadership (composer target selector, spec §5) ----
+
+const JOSEFINA: RegistryAgent = {
+  id: 'josefina', name: 'Josefina', role: 'Product Manager', directives: 'Be Josefina.',
+  engine: { cli: 'claude', model: 'claude-sonnet-5' },
+};
+
+function memoryRosterStore() {
+  const saved: RosterState[] = [];
+  return { saved, load: () => null, save: (s: RosterState) => saved.push(structuredClone(s)) };
+}
+
+/** A broker whose directory knows Manuel, Ignacio and Josefina. */
+async function brokerWithCrew(opts?: Parameters<typeof makeBroker>[1]) {
+  const f = makeFakes([]);
+  f.swarm.registry = async () => [...AGENTS, IGNACIO, JOSEFINA];
+  const b = makeBroker(f, opts);
+  await b.start();
+  await b.stop();
+  return b;
+}
+
+test('a group with no election yet is led by the highest-ranked member, not the first added', async () => {
+  const b = await brokerWithCrew();
+  // Ignacio (specialist, unranked) is added first; Josefina (Product Manager) outranks him.
+  assert.equal(b.compose({ op: 'form', agents: ['Ignacio', 'Josefina'] }), null);
+  assert.equal(b.uiRoster().groups[0]!.leader, 'josefina');
+});
+
+test('setGroupLeader records the vote and survives a roster-state round trip', async () => {
+  const store = memoryRosterStore();
+  const b = await brokerWithCrew({ rosterStore: store });
+  b.compose({ op: 'form', agents: ['Ignacio', 'Josefina'] });
+  const id = b.uiRoster().groups[0]!.id;
+  b.setGroupLeader(id, 'ignacio', {
+    claims: [{ agent: 'ignacio', willing: true, confidence: 0.8, reason: 'I know this system' }],
+    at: '2026-08-10T00:00:00.000Z',
+    method: 'vote',
+  });
+  assert.equal(b.uiRoster().groups[0]!.leader, 'ignacio');
+  const saved = store.saved.at(-1)!;
+  assert.equal(saved.groups[0]!.leader, 'ignacio');
+  assert.equal(saved.groups[0]!.election?.method, 'vote');
+});
+
+test('setGroupLeader for a group that dissolved mid-vote is a no-op, not a crash', async () => {
+  const b = await brokerWithCrew();
+  b.setGroupLeader('g99', 'josefina', { claims: [], at: 'now', method: 'rank' });
+  assert.deepEqual(b.uiRoster().groups, []);
+});
+
+test('groupCandidates carries directives and BOTH role vocabularies', async () => {
+  const b = await brokerWithCrew();
+  b.compose({ op: 'form', agents: ['Ignacio', 'Josefina'] });
+  const id = b.uiRoster().groups[0]!.id;
+  const candidates = b.groupCandidates(id)!;
+  assert.equal(candidates.length, 2);
+  assert.ok(candidates.every((c) => c.directives.length > 0));
+  assert.ok(candidates.every((c) => typeof c.role === 'string'));
+});
+
+test('groupCandidates for an unknown group is null', async () => {
+  const b = await brokerWithCrew();
+  assert.equal(b.groupCandidates('nope'), null);
+});
+
+test('forming a group announces the change so an election can run', async () => {
+  const changed: string[] = [];
+  const b = await brokerWithCrew({ onGroupChanged: (id) => changed.push(id) });
+  b.compose({ op: 'form', agents: ['Ignacio', 'Josefina'] });
+  assert.equal(changed.length, 1);
+  assert.equal(changed[0], b.uiRoster().groups[0]!.id);
+});
+
+test('adding and removing a member each announce the change', async () => {
+  const changed: string[] = [];
+  const b = await brokerWithCrew({ onGroupChanged: (id) => changed.push(id) });
+  b.compose({ op: 'form', agents: ['Ignacio', 'Josefina'] });
+  const id = b.uiRoster().groups[0]!.id;
+  assert.equal(b.compose({ op: 'add', target: `group-${id}`, agent: 'Manuel' }), null);
+  assert.equal(changed.length, 2);
+  assert.equal(b.compose({ op: 'remove', target: `group-${id}`, agent: 'Manuel' }), null);
+  assert.equal(changed.length, 3);
+});
+
+test('a group that dissolves to one member announces nothing — there is no group left to lead', async () => {
+  const changed: string[] = [];
+  const b = await brokerWithCrew({ onGroupChanged: (id) => changed.push(id) });
+  b.compose({ op: 'form', agents: ['Ignacio', 'Josefina'] });
+  const id = b.uiRoster().groups[0]!.id;
+  changed.length = 0;
+  b.compose({ op: 'remove', target: `group-${id}`, agent: 'Josefina' }); // dissolves: < 2 members
+  assert.deepEqual(changed, []);
+});

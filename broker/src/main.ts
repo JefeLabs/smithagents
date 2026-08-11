@@ -14,6 +14,7 @@ import { BrokerBrain, type StreamFactory } from './brain.ts';
 import { Broker, TTS_SAMPLE_RATE } from './broker.ts';
 import { AdapterHub } from './channels.ts';
 import { loadBrokerConfig } from './config.ts';
+import { ElectionScheduler, runElection, type AskFactory } from './election.ts';
 import { createDiscordTextLifecycle } from './discord-text-lifecycle.ts';
 import { createDiscordVoiceLifecycle } from './discord-voice-lifecycle.ts';
 import { createDiscordWorkspaceSwitcher } from './discord-workspace-switcher.ts';
@@ -519,19 +520,23 @@ const toRosterEntries = (roster: UiRoster): RosterEntry[] => {
       listening: isListening(m.name),
     }),
   ),
-  ...roster.groups.map(
-    (g, i): RosterEntry => ({
+  ...roster.groups.map((g, i): RosterEntry => {
+    // Until the composer-target work this read `members[0]` — the first agent
+    // dragged in, presented as the leader. It is now whoever the group's own
+    // members claimed (or the rank ladder, while a vote is still in flight).
+    const leaderName = g.members.find((m) => m.id === g.leader)?.name ?? g.members[0]?.name ?? '?';
+    return {
       id: `group-${g.id}`,
       name: g.name[0]!.toUpperCase() + g.name.slice(1),
-      role: `Squad — led by ${g.members[0]?.name ?? '?'}`,
+      role: `Squad — led by ${leaderName}`,
       ring: GROUP_RING_PALETTE[i % GROUP_RING_PALETTE.length],
       status: 'idle',
       kind: 'squad',
-      hand: g.members[0] ? roster.hands[g.members[0].name] : undefined,
-      listening: isListening(g.name, g.members[0]?.name),
+      hand: roster.hands[leaderName],
+      listening: isListening(g.name, leaderName),
       members: g.members.map((m) => m.name),
-    }),
-  ),
+    };
+  }),
   ];
 };
 
@@ -1346,6 +1351,8 @@ broker = new Broker(
       return { workspace: active?.workspace, session: active?.id };
     },
     rosterStore,
+    // A group's membership changed — its members re-claim leadership (spec §5.3).
+    onGroupChanged: (groupId) => elections.schedule(groupId),
     makeStt: () => new DeepgramSttStream(makeDeepgramLive),
     makeBridge: () => new LiveKitRoomBridge(),
     speak,
@@ -1400,6 +1407,46 @@ broker = new Broker(
   },
   { repository: config.swarm.repository },
 );
+
+/**
+ * Elections run on the broker's own model client — never through the agents'
+ * coding CLIs, which would start a tmux session per voter and mark the whole
+ * group busy just to hold a vote (spec §5.1). One short call per member,
+ * seeded with only that member's directives, so each answers as itself.
+ *
+ * `claude-haiku-4-5` matches BrokerBrain's default: an election is a small
+ * judgement call, the same weight class as a brain turn.
+ */
+const askForClaim: AskFactory = async ({ system, prompt }) => {
+  const message = await anthropic.messages.create({
+    model: 'claude-haiku-4-5',
+    max_tokens: 200,
+    system,
+    messages: [{ role: 'user', content: prompt }],
+  });
+  return message.content.map((block) => ('text' in block ? block.text : '')).join('');
+};
+
+const elections = new ElectionScheduler({
+  run: async (groupId) => {
+    const candidates = broker.groupCandidates(groupId);
+    // compose() dissolves any group below two members, so this is a guard
+    // against a group vanishing mid-debounce rather than a real branch.
+    if (!candidates || candidates.length < 2) return null;
+    const group = broker.uiRoster().groups.find((g) => g.id === groupId);
+    if (!group) return null;
+    return runElection(askForClaim, { name: group.name }, candidates);
+  },
+  onResult: (groupId, result) => {
+    if (!result.leader) return;
+    broker.setGroupLeader(groupId, result.leader, {
+      claims: result.claims,
+      at: new Date().toISOString(),
+      method: result.method,
+    });
+    console.log(`[election] ${groupId} → ${result.leader} (${result.method})`);
+  },
+});
 
 await broker.start();
 const bootWorkspaces = (await swarm.listWorkspaces().catch(() => [])).filter((w) => !w.archived);
