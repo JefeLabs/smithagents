@@ -3,7 +3,7 @@ import { Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useCallback, useEffect } from "react";
 import * as api from "../api/broker";
 import { BROKER_BASE } from "../api/broker";
-import type { BlueprintT, ChatMessage, DocT, RosterAgent, SessionSummary } from "../api/types";
+import type { BlueprintT, ChatMessage, DocT, GroupT, RosterAgent, SessionSummary } from "../api/types";
 import { type AgentSeed, agentSeeds } from "../data/agents";
 import { usePushToTalk } from "../hooks/usePushToTalk";
 import { useSpokenReplies } from "../hooks/useSpokenReplies";
@@ -32,7 +32,15 @@ import { WorkspaceManagerModal } from "../organisms/WorkspaceManagerModal";
 import { useEngineWarnings } from "../queries/health";
 import { useBlueprints, useVoiceSettings } from "../queries/http";
 import { qk } from "../queries/keys";
-import { useDocuments, useRoster, useSession, useSessions, useTranscript, useWorkspaces } from "../queries/pushed";
+import {
+  useDocuments,
+  useGroups,
+  useRoster,
+  useSession,
+  useSessions,
+  useTranscript,
+  useWorkspaces,
+} from "../queries/pushed";
 import { hasNativeFolderPicker, pickFolder } from "../services/nativeDialog";
 import { useAudioStore } from "../stores/audioStore";
 import { useSocketStore } from "../stores/socketStore";
@@ -48,6 +56,7 @@ const NO_WORKSPACES: string[] = [];
 const NO_MESSAGES: ChatMessage[] = [];
 const NO_DOCS: DocT[] = [];
 const NO_BLUEPRINTS: BlueprintT[] = [];
+const NO_GROUPS: GroupT[] = [];
 
 export function HomePage() {
   // The broker socket is opened here, at app scope, and closed with the page.
@@ -69,6 +78,7 @@ export function HomePage() {
   const { data: session = null, status: sessionStatus } = useSession();
   const { data: sessions = NO_SESSIONS } = useSessions();
   const { data: workspaces = NO_WORKSPACES } = useWorkspaces();
+  const { data: groups = NO_GROUPS } = useGroups();
   const { data: rosterFrame } = useRoster();
   const roster = rosterFrame?.agents ?? NO_ROSTER;
   const identity = rosterFrame?.identity ?? null;
@@ -420,6 +430,9 @@ export function HomePage() {
             verifyAtlassian={api.verifyWorkspaceAtlassian}
             verifyRepoGithub={api.verifyRepoGithub}
             listMyConnectors={api.getMyConnectors}
+            groups={groups}
+            saveGroup={api.saveGroup}
+            deleteGroup={api.deleteGroup}
           />
           <NewWorkspaceModal
             open={newWorkspaceOpen}

@@ -2,9 +2,10 @@ import { Button } from "@heroui/react";
 import { Plus, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useFieldArray, useForm } from "react-hook-form";
-import type { ConnectorInstanceRecord, WorkspaceRecord } from "../api/types";
+import type { ConnectorInstanceRecord, GroupT, WorkspaceRecord } from "../api/types";
 import { ConfirmSheet } from "../molecules/ConfirmSheet";
 import { FormCheckbox, FormColorSwatch, FormSelect, FormTextField, ModalShell } from "../molecules/form";
+import { GroupsSection } from "./GroupsSection";
 
 interface WorkspaceManagerModalProps {
   open: boolean;
@@ -17,6 +18,13 @@ interface WorkspaceManagerModalProps {
   // Optional so HomePage.tsx (wired up in a later task) isn't forced to pass it before
   // it has a real implementation to hand over — defaults to an empty roster below.
   listMyConnectors?: () => Promise<ConnectorInstanceRecord[]>;
+  /** Workspace groups (spec 2026-08-11-workspace-groups §5) — the section renders only when all three are provided. */
+  groups?: GroupT[];
+  saveGroup?: (
+    body: { name: string; description?: string; color?: string; workspaces: string[]; groups: string[] },
+    isNew: boolean,
+  ) => Promise<{ error?: string }>;
+  deleteGroup?: (name: string) => Promise<{ error?: string }>;
 }
 
 /**
@@ -197,6 +205,9 @@ export function WorkspaceManagerModal({
   verifyAtlassian,
   verifyRepoGithub,
   listMyConnectors = async () => [],
+  groups,
+  saveGroup,
+  deleteGroup,
 }: WorkspaceManagerModalProps) {
   const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([]);
   const [connectors, setConnectors] = useState<ConnectorInstanceRecord[]>([]);
@@ -549,6 +560,14 @@ export function WorkspaceManagerModal({
         onConfirm={() => void confirmRemoval()}
         onCancel={() => setRemoving(null)}
       />
+      {groups && saveGroup && deleteGroup && (
+        <GroupsSection
+          groups={groups}
+          workspaces={active.map((w) => w.name)}
+          onSave={saveGroup}
+          onDelete={deleteGroup}
+        />
+      )}
     </ModalShell>
   );
 }
