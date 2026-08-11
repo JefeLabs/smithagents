@@ -2592,6 +2592,9 @@ button.logo {
 }
 .board-stage__columns {
   display: flex;
+  /* `safe` keeps the leftmost column reachable when the row overflows —
+     plain `center` + overflow-x would clip it off-scroll. */
+  justify-content: safe center;
   gap: 10px;
   flex: 1;
   min-height: 0;
