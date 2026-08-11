@@ -1477,22 +1477,45 @@ async function makeCard(item: FeedItem, workspace: string, currentVersion: strin
  */
 async function deriveFromManifests(): Promise<void> {
   const workspaces = await swarm.listWorkspaces().catch(() => []);
+  const manifestIo = {
+    read(path: string) {
+      try {
+        return readFileSync(path, 'utf8');
+      } catch {
+        return null;
+      }
+    },
+  };
+  /**
+   * A repo root plus its immediate subdirectories. Monorepos — this one
+   * included — keep no manifest at the root: smithagents' live workspace
+   * points at the repo root while every package.json sits one level down in
+   * broker/, control-plane/, swarm/. Depth 1 covers that without walking a
+   * whole tree.
+   */
+  const scanDirs = (root: string): string[] => {
+    try {
+      const children = readdirSync(root, { withFileTypes: true })
+        .filter((e) => e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules')
+        .map((e) => `${root}/${e.name}`);
+      return [root, ...children];
+    } catch {
+      return [root];
+    }
+  };
+
   const deps = workspaces
     .filter((w) => !w.archived)
     .flatMap((w) =>
       (w.repos ?? []).flatMap((repo) =>
-        readManifests(
-          {
-            read(path) {
-              try {
-                return readFileSync(path, 'utf8');
-              } catch {
-                return null;
-              }
-            },
-          },
-          repo.path,
-        ).map((d) => ({ ...d, workspace: w.name })),
+        scanDirs(repo.path).flatMap((dir) =>
+          readManifests(manifestIo, dir).map((d) => ({
+            ...d,
+            // Name the package, not just the file: "broker/package.json".
+            manifest: dir === repo.path ? d.manifest : `${dir.slice(repo.path.length + 1)}/${d.manifest}`,
+            workspace: w.name,
+          })),
+        ),
       ),
     );
   if (!deps.length) return;
@@ -1703,6 +1726,9 @@ let unspokenReleaseIds: string[] = [];
  * invents a speaker.
  */
 function releaseOwners(): Record<string, string> {
+  // This runs at module load, before `broker` is constructed — and at boot
+  // there is no roster to attribute to anyway. Anderson delivers unattributed.
+  if (typeof broker === 'undefined') return {};
   const roster = broker.uiRoster().agents;
   const owners: Record<string, string> = {};
   for (const source of feedStore.sources()) {
