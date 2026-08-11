@@ -142,6 +142,28 @@ body[data-focus] .stage.dashboards-stage--docked {
   padding-right: 14px;
 }
 
+/* The shelf owns a real left column: when it rendered tiles (`:has` misses the
+   empty case — ArtifactShelf returns null then), the canvas content starts
+   right of it instead of sliding underneath. 176px = 28px inset + 8px pad +
+   116px tile + 8px pad + 16px gutter. Unlayered for the same reason as the
+   docked rule above. Focus view hides the shelf, so the shorthand's 14px
+   returns. Home is exempt on purpose — there the shelf floats over the chat. */
+.stage.document-stage:has(.artifact-shelf),
+.stage.diagram-stage:has(.artifact-shelf),
+.stage.map-stage:has(.artifact-shelf),
+.stage.dashboards-stage:has(.artifact-shelf) {
+  padding-left: 176px;
+}
+body[data-focus] .stage.document-stage:has(.artifact-shelf),
+body[data-focus] .stage.map-stage:has(.artifact-shelf),
+body[data-focus] .stage.dashboards-stage:has(.artifact-shelf) {
+  padding-left: 14px;
+}
+/* diagram-stage is not in the 14px shorthand list above — its default is 0. */
+body[data-focus] .stage.diagram-stage:has(.artifact-shelf) {
+  padding-left: 0;
+}
+
 /* React Flow's own controls, themed. Its stylesheet is imported from
    MapStage.tsx as a bare `import "@xyflow/react/dist/style.css"`, which Vite
    injects UNLAYERED — so it beats components.css too, and its defaults (white
