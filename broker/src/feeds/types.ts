@@ -18,6 +18,8 @@ export interface FeedSource {
   dismissed?: boolean;
   /** Workspace whose repo declared this (derived release sources only) — decides the card's board. */
   workspace?: string;
+  /** The topic this source belongs to. Absent on manifest-derived sources. */
+  topicId?: string;
 }
 
 export interface FeedItem {
@@ -47,4 +49,6 @@ export interface FeedState {
   candidates: Record<string, { mentions: number; sessions: string[]; firstSeen: string; lastSeen: string }>;
   /** dependency name → last version we have already reacted to. */
   seenVersions: Record<string, string>;
+  /** In-flight discovery dispatches: taskId → topicId. SwarmEvent carries no metadata, so this IS the correlation. */
+  pendingDiscoveries: Record<string, string>;
 }

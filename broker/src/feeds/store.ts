@@ -16,7 +16,7 @@ export interface FeedIo {
   write(name: string, body: string): void;
 }
 
-const EMPTY_STATE: FeedState = { sources: {}, xUsage: {}, candidates: {}, seenVersions: {} };
+const EMPTY_STATE: FeedState = { sources: {}, xUsage: {}, candidates: {}, seenVersions: {}, pendingDiscoveries: {} };
 
 export class FeedStore {
   constructor(

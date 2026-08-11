@@ -13,7 +13,7 @@ const rss: FeedSource = {
   origin: 'manual',
   enabled: true,
 };
-const EMPTY: FeedState = { sources: {}, xUsage: {}, candidates: {}, seenVersions: {} };
+const EMPTY: FeedState = { sources: {}, xUsage: {}, candidates: {}, seenVersions: {}, pendingDiscoveries: {} };
 
 test('a never-fetched source is due', () => {
   assert.deepEqual(

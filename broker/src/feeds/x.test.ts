@@ -13,7 +13,7 @@ const SOURCE: FeedSource = {
   enabled: true,
 };
 
-const EMPTY: FeedState = { sources: {}, xUsage: {}, candidates: {}, seenVersions: {} };
+const EMPTY: FeedState = { sources: {}, xUsage: {}, candidates: {}, seenVersions: {}, pendingDiscoveries: {} };
 const NOW = '2026-08-11T10:00:00Z';
 
 test('parses posts into items', () => {
