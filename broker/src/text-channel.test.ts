@@ -2173,3 +2173,63 @@ test('the mutating topic routes refuse a disallowed browser Origin', async () =>
     await channel.stop();
   }
 });
+
+// ---- CORS must survive credentialed requests ----
+// The control plane routes every call through `brokerFetch`, which sends
+// `credentials: "include"`. A wildcard Access-Control-Allow-Origin is ILLEGAL
+// for a credentialed request: the browser discards the response before the app
+// sees it. This is what broke the boards view (2026-08-11).
+
+test('an ALLOWED origin gets its own origin echoed and credentials allowed, never a wildcard', async () => {
+  const channel = channelWith({});
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/work/boards`, { headers: { Origin: 'http://localhost:1420' } });
+    assert.notEqual(
+      res.headers.get('access-control-allow-origin'),
+      '*',
+      'a wildcard makes the browser discard a credentialed response',
+    );
+    assert.equal(res.headers.get('access-control-allow-origin'), 'http://localhost:1420');
+    assert.equal(res.headers.get('access-control-allow-credentials'), 'true');
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('the OPTIONS preflight answers a credentialed request the same way', async () => {
+  const channel = channelWith({});
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/work/boards`, {
+      method: 'OPTIONS',
+      headers: { Origin: 'http://localhost:1420', 'Access-Control-Request-Method': 'POST' },
+    });
+    assert.equal(res.headers.get('access-control-allow-origin'), 'http://localhost:1420');
+    assert.equal(res.headers.get('access-control-allow-credentials'), 'true');
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('a non-browser caller (no Origin) still gets the open wildcard — curl and the CLI bridge depend on it', async () => {
+  const channel = channelWith({});
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/work/boards`);
+    assert.equal(res.headers.get('access-control-allow-origin'), '*');
+  } finally {
+    await channel.stop();
+  }
+});
+
+test('an UNKNOWN origin gets no allow-origin at all, rather than a credentialed pass', async () => {
+  const channel = channelWith({});
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/work/boards`, { headers: { Origin: 'http://evil.example' } });
+    assert.equal(res.headers.get('access-control-allow-origin'), null);
+  } finally {
+    await channel.stop();
+  }
+});
