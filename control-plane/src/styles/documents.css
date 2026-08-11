@@ -353,8 +353,13 @@
    activate button the appearance the row used to have. */
 .session-row {
   display: flex;
+  /* The title (+ delete) hold the first line; the artifacts wrap onto their own
+     line below instead of overflowing the 230px panel and overlapping the title.
+     `main` is flex:1, so components.css's `justify-content: space-between` has no
+     free space to act on here — delete simply sits at the title's right. */
+  flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
+  gap: 6px 4px;
 }
 .session-row__main {
   flex: 1;
@@ -369,6 +374,14 @@
   color: inherit;
   text-align: left;
   cursor: pointer;
+}
+/* The artifacts' own line: a full-width wrapping strip beneath the title, so any
+   number of documents flows onto extra rows rather than off the panel edge. */
+.session-row__artifacts {
+  flex: 1 1 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 .session-row__artifact {
   flex: none;
