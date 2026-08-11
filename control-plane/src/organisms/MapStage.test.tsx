@@ -1158,6 +1158,14 @@ describe("MapStage editing", () => {
     expect(document.querySelectorAll(".react-flow__node.selected")).toHaveLength(2);
   });
 
+  it("offers a pan-mode toggle in the zoom controls cluster", async () => {
+    renderMapStage();
+    const pan = await screen.findByRole("button", { name: /pan mode/i });
+    expect(pan.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(pan);
+    expect(pan.getAttribute("aria-pressed")).toBe("true");
+  });
+
   it("renders the shelf slot inside the stage when provided", () => {
     renderWithProviders(<MapStage shelf={<aside aria-label="session documents" />} />);
     expect(screen.getByRole("complementary", { name: "session documents" })).toBeTruthy();

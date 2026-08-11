@@ -1,4 +1,13 @@
-import { Background, Controls, MiniMap, type Node, type OnNodeDrag, ReactFlow, useNodesState } from "@xyflow/react";
+import {
+  Background,
+  ControlButton,
+  Controls,
+  MiniMap,
+  type Node,
+  type OnNodeDrag,
+  ReactFlow,
+  useNodesState,
+} from "@xyflow/react";
 // Unlayered on purpose. Every selector in this sheet is `.react-flow`-scoped, so
 // it cannot reach the card rules components.css contributes to layer(legacy) —
 // and being unlayered keeps xyflow's own chrome authoritative over them.
@@ -117,6 +126,9 @@ export function MapStage({ shelf }: { shelf?: ReactNode } = {}) {
   }, [viewed, session?.workspace]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Pan mode: left-drag pans instead of lassoing — toggled from the zoom
+  // controls cluster, where the hand tool lives in every canvas app.
+  const [panMode, setPanMode] = useState(false);
 
   // Each remaining composer is a write-once text box: type, press Enter, it clears.
   // planTexts is keyed by slice id and registered as the bands render, which is why
@@ -1015,10 +1027,10 @@ export function MapStage({ shelf }: { shelf?: ReactNode } = {}) {
               // when the pointerdown lands on the pane ITSELF (`event.target ===
               // container.current`), so a drag beginning on any card — draggable or not —
               // never becomes a selection rectangle.
-              selectionOnDrag
+              selectionOnDrag={!panMode}
               multiSelectionKeyCode="Shift"
               selectionKeyCode={null}
-              panOnDrag={[1, 2]}
+              panOnDrag={panMode ? true : [1, 2]}
               // Not in the brief, and load-bearing. xyflow defaults this TRUE, which routes
               // node selection through drag start instead of click: measured in the browser,
               // a click selected nothing and a 3px twitch selected the card. That costs both
@@ -1028,7 +1040,16 @@ export function MapStage({ shelf }: { shelf?: ReactNode } = {}) {
               fitView
             >
               <Background />
-              <Controls />
+              <Controls>
+                <ControlButton
+                  onClick={() => setPanMode((p) => !p)}
+                  aria-pressed={panMode}
+                  aria-label="Pan mode"
+                  title="pan with left-drag (off: left-drag lassoes)"
+                >
+                  ✋
+                </ControlButton>
+              </Controls>
               <MiniMap pannable zoomable />
               <SlicePanel
                 slices={[...cap.slices].sort((a, b) => a.order - b.order)}
