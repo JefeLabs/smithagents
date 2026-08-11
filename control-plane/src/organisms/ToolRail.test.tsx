@@ -77,4 +77,22 @@ describe("ToolRail", () => {
     renderRail();
     expect(screen.queryByRole("button", { name: "Home" })).toBeNull();
   });
+
+  it("shows the Focus toggle above Settings when enabled, hides it otherwise", async () => {
+    const onToggleFocus = vi.fn();
+    renderRail({ showFocus: true, focusActive: false, onToggleFocus });
+    const rows = screen.getAllByRole("row").map((el) => el.textContent);
+    expect(rows.indexOf("Focus")).toBeGreaterThan(-1);
+    expect(rows.indexOf("Focus")).toBeLessThan(rows.indexOf("Settings"));
+    await userEvent.click(screen.getByRole("row", { name: "Focus" }));
+    expect(onToggleFocus).toHaveBeenCalledTimes(1);
+    cleanup();
+    renderRail();
+    expect(screen.queryByRole("row", { name: "Focus" })).toBeNull();
+  });
+
+  it("focusActive lights the Focus row via data-current", () => {
+    renderRail({ showFocus: true, focusActive: true });
+    expect(screen.getByRole("row", { name: "Focus" }).getAttribute("data-current")).toBe("true");
+  });
 });

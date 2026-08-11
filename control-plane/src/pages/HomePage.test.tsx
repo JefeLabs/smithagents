@@ -404,4 +404,12 @@ describe("HomePage — creating a session lands in its conversation", () => {
     expect(await screen.findByText(/not available/)).toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/board");
   });
+
+  it("focus mode stamps body[data-focus]; Esc exits", async () => {
+    renderApp();
+    await userEvent.click(await screen.findByRole("row", { name: "Focus" }));
+    expect(document.body.hasAttribute("data-focus")).toBe(true);
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(document.body.hasAttribute("data-focus")).toBe(false));
+  });
 });

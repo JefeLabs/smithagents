@@ -10,7 +10,7 @@ import { useSpokenReplies } from "../hooks/useSpokenReplies";
 import { useTheme } from "../hooks/useTheme";
 import { useVoiceStatus } from "../hooks/useVoiceStatus";
 import { ALL_WORKSPACES } from "../lib/board-aggregate";
-import { kindForPath, layoutForPath } from "../lib/composerLayout";
+import { isKindSurface, kindForPath, layoutForPath } from "../lib/composerLayout";
 import { makePickKind, openDocByFamily } from "../lib/pickKind";
 import { AlertMenu } from "../molecules/AlertMenu";
 import { ArtifactShelf, shelfDocsFor } from "../molecules/ArtifactShelf";
@@ -75,6 +75,9 @@ export function HomePage() {
 
   // One field per selector, never the whole store: a whole-store selection
   // re-renders this page on every unrelated UI change.
+  const focusMode = useUiStore((s) => s.focusMode);
+  const toggleFocus = useUiStore((s) => s.toggleFocus);
+  const exitFocus = useUiStore((s) => s.exitFocus);
   const modalOpen = useUiStore((s) => s.modalOpen);
   const editingId = useUiStore((s) => s.editingId);
   const tunerOpen = useUiStore((s) => s.tunerOpen);
@@ -156,6 +159,22 @@ export function HomePage() {
   const dockVariant = layoutForPath(pathname);
   const shelfDocs = shelfDocsFor(session, docs);
 
+  // Focus collapses chrome via CSS alone — a body-level stamp so every
+  // surface's selectors see it without prop-drilling through HeroUI wrappers.
+  useEffect(() => {
+    document.body.toggleAttribute("data-focus", focusMode);
+    return () => document.body.removeAttribute("data-focus");
+  }, [focusMode]);
+
+  useEffect(() => {
+    if (!focusMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") exitFocus();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [focusMode, exitFocus]);
+
   // Picking another session backs out of an explicitly-opened composer (spec §3) — without
   // this, an explicit composer stays rendered with a possibly-stale locked workspace after
   // the activated session's frame lands.
@@ -233,6 +252,9 @@ export function HomePage() {
           }
           onSessions={toggleSessions}
           onSettings={() => setSettingsOpen(true)}
+          showFocus={isKindSurface(pathname)}
+          focusActive={focusMode}
+          onToggleFocus={toggleFocus}
         />
       }
       rightRail={

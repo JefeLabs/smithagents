@@ -59,6 +59,20 @@
 /* ---- center: dashboards. A mid-screen column pinned to the bottom-centre; the
    priority-card layout above it is Plan 4. Kept minimal so dashboards is usable
    now without claiming its final shape. ---- */
+/* ---- focus view: body[data-focus] collapses the shelf and the docked chat.
+   The FULL dock (home) survives — on Chat the conversation IS the stage. ---- */
+body[data-focus] .artifact-shelf {
+  display: none;
+}
+body[data-focus] .chat-dock:not(.chat-dock--full) {
+  display: none;
+}
+body[data-focus] .stage.document-stage,
+body[data-focus] .stage.diagram-stage,
+body[data-focus] .stage.map-stage {
+  padding-right: 0; /* the canvas reclaims the dock's reserved width (Plan 3b note above) */
+}
+
 .chat-dock--center {
   position: fixed;
   inset: var(--navbar-h) 72px 0 0;

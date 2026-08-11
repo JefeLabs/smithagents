@@ -1,5 +1,5 @@
 import { Sidebar } from "@heroui-pro/react";
-import { History, Plus, Settings, SquareKanban } from "lucide-react";
+import { Focus, History, Plus, Settings, SquareKanban } from "lucide-react";
 
 interface ToolRailProps {
   /** Current stage route ("/", "/board", "/map", "/dashboards", "/work/<id>") — drives the highlight. */
@@ -10,6 +10,10 @@ interface ToolRailProps {
   onSessions?: () => void;
   /** Settings — the reset surface. */
   onSettings?: () => void;
+  /** Focus view toggle — shown only on the composer-kind surfaces. */
+  showFocus?: boolean;
+  focusActive?: boolean;
+  onToggleFocus?: () => void;
 }
 
 // The operator avatar lives in the Navbar (src/molecules/OperatorAvatar.tsx),
@@ -19,7 +23,15 @@ interface ToolRailProps {
 // callback (wired in ControlPlaneLayout) rather than an onClick prop here — that is
 // also what drives `isCurrent`'s highlight, so there is one source of truth for
 // "where does this item go" instead of two.
-export function ToolRail({ activeRoute = "/", onNewSession, onSessions, onSettings }: ToolRailProps) {
+export function ToolRail({
+  activeRoute = "/",
+  onNewSession,
+  onSessions,
+  onSettings,
+  showFocus,
+  focusActive,
+  onToggleFocus,
+}: ToolRailProps) {
   return (
     <Sidebar>
       {/* No Sidebar.Header — the logo lives in the navbar now. */}
@@ -55,6 +67,16 @@ export function ToolRail({ activeRoute = "/", onNewSession, onSessions, onSettin
       </Sidebar.Content>
       <Sidebar.Footer>
         <Sidebar.Menu aria-label="Settings">
+          {showFocus && (
+            <Sidebar.MenuItem onAction={onToggleFocus} isCurrent={Boolean(focusActive)}>
+              <Sidebar.MenuIcon>
+                <Focus />
+              </Sidebar.MenuIcon>
+              <Sidebar.MenuItemContent>
+                <Sidebar.MenuLabel>Focus</Sidebar.MenuLabel>
+              </Sidebar.MenuItemContent>
+            </Sidebar.MenuItem>
+          )}
           <Sidebar.MenuItem onAction={onSettings}>
             <Sidebar.MenuIcon>
               <Settings />
