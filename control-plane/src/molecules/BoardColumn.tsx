@@ -54,7 +54,10 @@ export function BoardColumn({
   const droppable = useDroppable({ id: `column:${col.id}` });
   const flat = clusters.flatMap((g) => g.cards);
   return (
-    <div ref={droppable.setNodeRef} className={`board-column${droppable.isOver ? " is-over" : ""}`}>
+    <div
+      ref={droppable.setNodeRef}
+      className={`board-column${col.id === "queue" ? " board-column--queue" : ""}${droppable.isOver ? " is-over" : ""}`}
+    >
       <h3 className="board-column__name">{col.name}</h3>
       <SortableContext items={flat.map((c) => c.id)} strategy={verticalListSortingStrategy}>
         <div className="board-column__cards">

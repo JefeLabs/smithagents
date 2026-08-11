@@ -2610,6 +2610,17 @@ button.logo {
   padding: 10px;
   background: rgba(255, 255, 255, 0.02);
 }
+/* Queue is the system's intake lane, not a working column — it reads grayed
+   back so the eye starts at the first working lane. Neutral mixes track every
+   theme's own text tokens. */
+.board-column--queue {
+  background: color-mix(in srgb, var(--text-dim) 8%, transparent);
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--text-dim) 35%, transparent);
+}
+.board-column--queue .board-column__name {
+  color: var(--text-dim);
+}
 .board-column__name {
   font-size: 11px;
   text-transform: uppercase;
