@@ -148,8 +148,10 @@ continues where you author.
   Maps**, and **Dashboards** (its board). Documents (a prose column) do not get
   full-screen.
 - **Behavior:** a full-screen toggle (a control in the canvas's corner) enters a
-  focus mode that **hides the top navbar and the left rail + document shelf**,
-  and **collapses the chat to just its input** (the composer input bar only — no
+  focus mode that shows **only the canvas and a minimal chat input**. Everything
+  else hides: the top navbar, the left rail, and the **left shelf of the
+  session's other documents** ("other docs" — the `ArtifactShelf` tiles). The
+  chat **collapses to just its input** (the composer input bar only — no
   transcript panel), so the canvas fills the viewport. **Esc returns to the
   normal three-column view.**
 - **Mechanism:** a single `uiStore.fullscreen` boolean drives it (app shell hides
