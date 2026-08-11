@@ -5,15 +5,15 @@ export const ALL_WORKSPACES = "*";
 
 export type BoardTypeT = "personal" | "ideation" | "plan" | "deliver" | "release" | "reactive" | "maintenance";
 
-/** Mirrors the swarm's BOARD_TYPE_ORDER — personal always last. */
+/** Mirrors the swarm's BOARD_TYPE_ORDER — personal always first. */
 export const BOARD_TYPE_ORDER_UI: BoardTypeT[] = [
+  "personal",
   "ideation",
   "plan",
   "deliver",
   "release",
   "reactive",
   "maintenance",
-  "personal",
 ];
 
 /** The six workspace types. Personal is deliberately absent — it belongs to no workspace. */
@@ -27,7 +27,7 @@ export const WORKSPACE_BOARD_TYPES_UI: Exclude<BoardTypeT, "personal">[] = [
 ];
 
 export const BOARD_TYPE_LABELS_UI: Record<BoardTypeT, string> = {
-  personal: "Personal",
+  personal: "Active To-dos",
   ideation: "Ideation",
   plan: "Plan",
   deliver: "Deliver",
@@ -60,13 +60,24 @@ export interface Cluster {
 
 /**
  * Personal is context-invariant: it is the one tab whose content is not a
- * function of the dropdown, so it is appended explicitly rather than falling
+ * function of the dropdown, so it is prepended explicitly rather than falling
  * out of a `workspaceId === undefined` filter — which is how it would get
- * folded into the aggregate by accident later.
+ * folded into the aggregate by accident later. It leads the strip: Active
+ * To-dos is the first thing the boards stage shows.
  */
 export function tabsFor(boards: WorkBoardT[], scope: ReadonlySet<string> | typeof ALL_WORKSPACES): TabDescriptor[] {
   const all = scope === ALL_WORKSPACES;
   const tabs: TabDescriptor[] = [];
+  const personal = boards.find((b) => b.type === "personal");
+  if (personal) {
+    tabs.push({
+      key: "personal",
+      label: personal.name,
+      type: "personal",
+      boardIds: [personal.id],
+      clustered: false,
+    });
+  }
   for (const type of WORKSPACE_BOARD_TYPES_UI) {
     const matches = boards.filter(
       (b) => b.type === type && (all ? Boolean(b.workspaceId) : scope.has(b.workspaceId ?? "")),
@@ -78,16 +89,6 @@ export function tabsFor(boards: WorkBoardT[], scope: ReadonlySet<string> | typeo
       type,
       boardIds: matches.map((b) => b.id),
       clustered: all || scope.size > 1,
-    });
-  }
-  const personal = boards.find((b) => b.type === "personal");
-  if (personal) {
-    tabs.push({
-      key: "personal",
-      label: personal.name,
-      type: "personal",
-      boardIds: [personal.id],
-      clustered: false,
     });
   }
   return tabs;
@@ -142,9 +143,10 @@ export const BOARD_ROUTES_UI: Record<BoardTypeT, RouteExitT[]> = {
   reactive: [
     { from: "triage", toType: "maintenance", toColumn: "triage", label: "To maintenance" },
     { from: "triage", toType: "ideation", toColumn: "intake", label: "To ideation" },
+    { from: "triage", toType: "personal", toColumn: "queue", label: "Escalate to Active To-dos" },
   ],
   ideation: [],
-  maintenance: [],
+  maintenance: [{ from: "triage", toType: "personal", toColumn: "queue", label: "Escalate to Active To-dos" }],
   personal: [],
 };
 

@@ -6,6 +6,7 @@ import {
   BOARD_TYPE_ORDER_UI,
   clusterByWorkspace,
   collectCards,
+  exitsForUI,
   tabsFor,
   WORKSPACE_BOARD_TYPES_UI,
 } from "./board-aggregate";
@@ -21,16 +22,16 @@ const BOARDS = [
 ];
 
 describe("tabsFor", () => {
-  it("in workspace scope lists that workspace's boards in canonical order, personal last", () => {
+  it("in workspace scope lists personal first, then that workspace's boards in canonical order", () => {
     const tabs = tabsFor(BOARDS, new Set(["acme"]));
-    expect(tabs.map((t) => t.type)).toEqual(["ideation", "plan", "personal"]);
-    expect(tabs[0].boardIds).toEqual(["acme-ideation"]);
-    expect(tabs[2].boardIds).toEqual(["personal"]);
+    expect(tabs.map((t) => t.type)).toEqual(["personal", "ideation", "plan"]);
+    expect(tabs[0].boardIds).toEqual(["personal"]);
+    expect(tabs[1].boardIds).toEqual(["acme-ideation"]);
   });
 
   it("in all scope collapses to types and unions the board ids", () => {
     const tabs = tabsFor(BOARDS, ALL_WORKSPACES);
-    expect(tabs.map((t) => t.type)).toEqual(["ideation", "plan", "personal"]);
+    expect(tabs.map((t) => t.type)).toEqual(["personal", "ideation", "plan"]);
     expect(tabs.find((t) => t.type === "plan")?.boardIds).toEqual(["acme-plan", "globex-plan"]);
     expect(tabs.find((t) => t.type === "plan")?.clustered).toBe(true);
     expect(tabs.find((t) => t.type === "personal")?.clustered).toBe(false);
@@ -42,7 +43,7 @@ describe("tabsFor", () => {
 
   it("a multiselect of two workspaces unions their boards and clusters, same as all scope", () => {
     const tabs = tabsFor(BOARDS, new Set(["acme", "globex"]));
-    expect(tabs.map((t) => t.type)).toEqual(["ideation", "plan", "personal"]);
+    expect(tabs.map((t) => t.type)).toEqual(["personal", "ideation", "plan"]);
     const plan = tabs.find((t) => t.type === "plan");
     expect(plan?.boardIds).toEqual(["acme-plan", "globex-plan"]);
     expect(plan?.clustered).toBe(true);
@@ -59,10 +60,10 @@ describe("WORKSPACE_BOARD_TYPES_UI", () => {
     expect(WORKSPACE_BOARD_TYPES_UI).not.toContain("personal");
   });
 
-  it("is the same ordering BOARD_TYPE_ORDER_UI states, with personal last", () => {
+  it("is the same ordering BOARD_TYPE_ORDER_UI states, with personal first", () => {
     // Two hand-written lists of the same thing. Nothing reads both today, so
     // only this assertion stops a seventh type landing in one and not the other.
-    expect(BOARD_TYPE_ORDER_UI).toEqual([...WORKSPACE_BOARD_TYPES_UI, "personal"]);
+    expect(BOARD_TYPE_ORDER_UI).toEqual(["personal", ...WORKSPACE_BOARD_TYPES_UI]);
   });
 });
 
@@ -110,5 +111,13 @@ describe("collectCards + clusterByWorkspace", () => {
       { id: "y", title: "y", columnId: "spec", order: 0 },
     ]);
     expect(clusterByWorkspace(collectCards([b], "spec"), false)[0].cards.map((c) => c.id)).toEqual(["y", "x"]);
+  });
+});
+
+describe("exitsForUI", () => {
+  it("maintenance and reactive triage offer the escalate exit to the personal queue", () => {
+    expect(exitsForUI("maintenance", "triage").map((e) => e.toColumn)).toEqual(["queue"]);
+    expect(exitsForUI("reactive", "triage").map((e) => e.toType)).toEqual(["maintenance", "ideation", "personal"]);
+    expect(exitsForUI("maintenance", "doing")).toEqual([]);
   });
 });
