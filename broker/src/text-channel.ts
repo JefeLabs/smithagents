@@ -353,6 +353,9 @@ export class TextChannel {
       patchSection(docId: string, sectionId: string, body: string): string | null;
       changeBlueprint(docId: string, blueprintId: string): string | null;
       rename(docId: string, title: string): string | null;
+      /** Sticky-note decisions — error string or null, mapped to 404/200 like patchSection. */
+      acceptProposal(docId: string, proposalId: string): string | null;
+      rejectProposal(docId: string, proposalId: string): string | null;
     },
     /** Connection identity (passkey humans + bridge bearer). Absent = open mode. */
     private readonly auth?: BrokerAuth,
@@ -1454,6 +1457,21 @@ export class TextChannel {
               .writeHead(error ? 409 : 200, { ...corsFor(req), "content-type": "application/json" })
               .end(JSON.stringify(error ? { error } : { ok: true }));
           });
+          return;
+        }
+
+        // POST /documents/:id/proposals/:pid/accept|reject — sticky-note decisions.
+        const proposalMatch = /^\/documents\/([^/]+)\/proposals\/([^/]+)\/(accept|reject)$/.exec(url.pathname);
+        if (req.method === "POST" && proposalMatch && this.documents) {
+          const documents = this.documents;
+          if (originBlocked()) return;
+          const docId = decodeURIComponent(proposalMatch[1]);
+          const pid = decodeURIComponent(proposalMatch[2]);
+          const error =
+            proposalMatch[3] === "accept" ? documents.acceptProposal(docId, pid) : documents.rejectProposal(docId, pid);
+          res
+            .writeHead(error ? 404 : 200, { ...corsFor(req), "content-type": "application/json" })
+            .end(JSON.stringify(error ? { error } : { ok: true }));
           return;
         }
 

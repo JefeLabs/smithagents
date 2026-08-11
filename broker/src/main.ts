@@ -1380,6 +1380,18 @@ const textChannel = new TextChannel(
       textChannel.broadcast(documentsFrame());
       return null;
     },
+    acceptProposal: (docId, proposalId) => {
+      const doc = documentManager.acceptProposal(docId, proposalId);
+      if (!doc) return `unknown or already-decided proposal: ${docId}/${proposalId}`;
+      textChannel.broadcast(documentsFrame());
+      return null;
+    },
+    rejectProposal: (docId, proposalId) => {
+      const doc = documentManager.rejectProposal(docId, proposalId);
+      if (!doc) return `unknown or already-decided proposal: ${docId}/${proposalId}`;
+      textChannel.broadcast(documentsFrame());
+      return null;
+    },
     patchSection: (docId, sectionId, body) => {
       const doc = documentManager.patchSection(docId, sectionId, body);
       if (!doc) return `unknown document or section: ${docId}/${sectionId}`;

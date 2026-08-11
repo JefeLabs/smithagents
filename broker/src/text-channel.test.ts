@@ -1566,6 +1566,8 @@ test("POST /documents forwards the body and returns the created doc; PATCH updat
         renames.push([docId, title]);
         return docId === "d1" ? null : `cannot rename ${docId}`;
       },
+      acceptProposal: () => null,
+      rejectProposal: () => null,
     },
   });
   const port = await channel.start(0);
@@ -1938,6 +1940,39 @@ test("POST /utterance with a target dispatches instead of taking a brain turn", 
     assert.equal(res.status, 200);
     assert.deepEqual(await res.json(), { ok: true, taskId: "t1" });
     assert.deepEqual(calls, [{ text: "look at the auth bug", target: { kind: "agent", id: "osvaldo" } }]);
+  } finally {
+    await channel.stop();
+  }
+});
+
+test("POST /documents/:id/proposals/:pid accept and reject map null→200 and error→404", async () => {
+  const decided: Array<[string, string, string]> = [];
+  const channel = channelWith({
+    documents: {
+      create: async () => ({ error: "unused" }),
+      patchSection: () => null,
+      changeBlueprint: () => null,
+      rename: () => null,
+      acceptProposal: (docId: string, pid: string) => {
+        decided.push(["accept", docId, pid]);
+        return pid === "p1" ? null : `unknown proposal: ${pid}`;
+      },
+      rejectProposal: (docId: string, pid: string) => {
+        decided.push(["reject", docId, pid]);
+        return pid === "p1" ? null : `unknown proposal: ${pid}`;
+      },
+    },
+  });
+  const port = await channel.start(0);
+  try {
+    const ok = await fetch(`http://127.0.0.1:${port}/documents/d1/proposals/p1/accept`, { method: "POST" });
+    assert.equal(ok.status, 200);
+    const gone = await fetch(`http://127.0.0.1:${port}/documents/d1/proposals/p9/reject`, { method: "POST" });
+    assert.equal(gone.status, 404);
+    assert.deepEqual(decided, [
+      ["accept", "d1", "p1"],
+      ["reject", "d1", "p9"],
+    ]);
   } finally {
     await channel.stop();
   }
