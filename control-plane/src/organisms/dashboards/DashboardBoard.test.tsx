@@ -44,4 +44,27 @@ describe("DashboardBoard", () => {
     fireEvent.click(screen.getByText(DASH_FOLLOWUPS[1]));
     expect(onFollowup).toHaveBeenCalledWith(DASH_FOLLOWUPS[1]);
   });
+
+  it("renders from a DashSpec when given — spec KPIs and titles, not the fixtures", () => {
+    const spec = {
+      summary: "custom summary line",
+      kpis: [
+        { label: "SPEC KPI ONE", value: "7", delta: "+1", tone: "ok" as const },
+        { label: "SPEC KPI TWO", value: "9%", tone: "high" as const },
+      ],
+      charts: [
+        { kind: "line" as const, title: "custom line title" },
+        { kind: "bars" as const, title: "custom bars title" },
+      ],
+      table: { title: "custom table", columns: ["group", "risk"], rows: [["release", "high"]] },
+    };
+    render(<DashboardBoard spec={spec} query="q" scopeHint="SCOPE" onFollowup={vi.fn()} />);
+    expect(screen.getByText("custom summary line")).toBeInTheDocument();
+    expect(screen.getByText("SPEC KPI ONE")).toBeInTheDocument();
+    expect(screen.getByText("SPEC KPI TWO")).toBeInTheDocument();
+    expect(screen.queryByText("ACTIVE WORKSPACES")).toBeNull(); // fixture-only KPI
+    expect(screen.getByText("custom line title")).toBeInTheDocument();
+    expect(screen.getByText("custom bars title")).toBeInTheDocument();
+    expect(screen.getByText("custom table")).toBeInTheDocument();
+  });
 });

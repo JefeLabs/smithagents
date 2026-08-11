@@ -10,6 +10,7 @@ import {
   DASH_STAGE_BARS,
   DASH_WEEKS,
 } from "../../data/dashboards";
+import type { DashSpec } from "../../lib/dashboardSpec";
 import { seriesPath, sparkPath } from "../../lib/dashboard-paths";
 
 const CHART_W = 640;
@@ -22,6 +23,8 @@ interface DashboardBoardProps {
   query: string;
   scopeHint: string;
   onFollowup: (query: string) => void;
+  /** A dashboard DOCUMENT's spec — when given, summary/KPIs/titles/table render from it (spec 2026-08-11). Absent = the mock fixtures. */
+  spec?: DashSpec;
 }
 
 const ChartHitBand = ({ i, w, onHover }: { i: number; w: string; onHover: (idx: number) => void }) => (
@@ -39,16 +42,23 @@ const ChartHitBand = ({ i, w, onHover }: { i: number; w: string; onHover: (idx: 
   </>
 );
 
-export function DashboardBoard({ query, scopeHint, onFollowup }: DashboardBoardProps) {
+export function DashboardBoard({ query, scopeHint, onFollowup, spec }: DashboardBoardProps) {
   const [hover, setHover] = useState<number | null>(null);
   const maxStage = Math.max(...DASH_STAGE_BARS.map((s) => s.value));
+  // Spec-or-fixture selection: a doc-backed dashboard renders its own words
+  // and numbers; the series visuals stay decorative fixtures either way.
+  const answer = spec?.summary ?? DASH_ANSWER;
+  const kpis: Array<{ label: string; value: string; delta?: string; tone?: string; bar?: number }> =
+    spec?.kpis ?? DASH_KPIS;
+  const lineTitle = spec?.charts.find((c) => c.kind === "line")?.title ?? "throughput vs. intake";
+  const barsTitle = spec?.charts.find((c) => c.kind === "bars")?.title ?? "where work is sitting";
   return (
     <div className="dash-board">
       <div className="dash-board__banner">
         <Sparkles size={16} aria-hidden="true" />
         <div>
           <div className="dash-board__question">{query}</div>
-          <div className="dash-board__answer">{DASH_ANSWER}</div>
+          <div className="dash-board__answer">{answer}</div>
           <div className="dash-board__meta">
             <span>{scopeHint}</span>
             <span>12 WEEKS</span>
@@ -58,16 +68,18 @@ export function DashboardBoard({ query, scopeHint, onFollowup }: DashboardBoardP
       </div>
 
       <div className="dash-board__kpis">
-        {DASH_KPIS.map((k) => (
+        {kpis.map((k) => (
           <div key={k.label} className="dash-kpi">
             <div className="dash-kpi__label">{k.label}</div>
             <div className="dash-kpi__row">
               <span className="dash-kpi__value">{k.value}</span>
-              <span className={`dash-kpi__delta dash-tone--${k.tone}`}>{k.delta}</span>
+              {k.delta && <span className={`dash-kpi__delta dash-tone--${k.tone ?? "ok"}`}>{k.delta}</span>}
             </div>
-            <div className="dash-kpi__meter">
-              <div className={`dash-kpi__fill dash-fill--${k.tone}`} style={{ width: `${k.bar * 100}%` }} />
-            </div>
+            {k.bar !== undefined && (
+              <div className="dash-kpi__meter">
+                <div className={`dash-kpi__fill dash-fill--${k.tone ?? "ok"}`} style={{ width: `${k.bar * 100}%` }} />
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -75,7 +87,7 @@ export function DashboardBoard({ query, scopeHint, onFollowup }: DashboardBoardP
       <div className="dash-board__charts">
         <section className="dash-panel" aria-label="Throughput vs intake">
           <div className="dash-panel__head">
-            <span>throughput vs. intake</span>
+            <span>{lineTitle}</span>
             <span className="dash-panel__legend">
               <i className="dash-legend__swatch dash-legend__swatch--line" /> shipped
               <i className="dash-legend__swatch dash-legend__swatch--ref" /> intake
@@ -136,7 +148,7 @@ export function DashboardBoard({ query, scopeHint, onFollowup }: DashboardBoardP
 
         <section className="dash-panel" aria-label="Cards by stage">
           <div className="dash-panel__head">
-            <span>where work is sitting</span>
+            <span>{barsTitle}</span>
           </div>
           <div className="dash-panel__sub">CARDS BY STAGE</div>
           <div className="dash-stagebars">
@@ -154,45 +166,79 @@ export function DashboardBoard({ query, scopeHint, onFollowup }: DashboardBoardP
         </section>
       </div>
 
-      <section className="dash-table" aria-label="Workspace groups">
-        <div className="dash-table__toprow">
-          <span>workspace groups</span>
-          <span className="dash-table__sort">SORTED BY RISK</span>
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th>GROUP</th>
-              <th>CARDS</th>
-              <th>WIP</th>
-              <th>CYCLE</th>
-              <th>12-WEEK TREND</th>
-              <th>RISK</th>
-            </tr>
-          </thead>
-          <tbody>
-            {DASH_ROWS.map((r) => (
-              <tr key={r.name}>
-                <td className="dash-table__group">
-                  <i className={`dash-table__dot dash-fill--${r.risk}`} />
-                  {r.name}
-                </td>
-                <td className="dash-table__num">{r.cards}</td>
-                <td className="dash-table__num">{r.wip}</td>
-                <td className="dash-table__num">{r.cycle}</td>
-                <td>
-                  <svg viewBox="0 0 100 22" className="dash-table__spark" aria-hidden="true">
-                    <path d={sparkPath(r.trend)} className={`dash-spark--${r.risk}`} />
-                  </svg>
-                </td>
-                <td>
-                  <span className={`dash-pill dash-pill--${r.risk}`}>{r.risk}</span>
-                </td>
+      {spec?.table ? (
+        // A doc-backed dashboard's table renders its OWN columns and rows —
+        // risk-like cells still get the pill treatment.
+        <section className="dash-table" aria-label={spec.table.title}>
+          <div className="dash-table__toprow">
+            <span>{spec.table.title}</span>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                {spec.table.columns.map((c) => (
+                  <th key={c}>{c.toUpperCase()}</th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
+            </thead>
+            <tbody>
+              {spec.table.rows.map((row) => (
+                <tr key={row.join("|")}>
+                  {row.map((cell, i) => (
+                    <td key={`${spec.table?.columns[i] ?? i}:${cell}`}>
+                      {cell === "ok" || cell === "watch" || cell === "high" ? (
+                        <span className={`dash-pill dash-pill--${cell}`}>{cell}</span>
+                      ) : (
+                        cell
+                      )}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      ) : (
+        <section className="dash-table" aria-label="Workspace groups">
+          <div className="dash-table__toprow">
+            <span>workspace groups</span>
+            <span className="dash-table__sort">SORTED BY RISK</span>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>GROUP</th>
+                <th>CARDS</th>
+                <th>WIP</th>
+                <th>CYCLE</th>
+                <th>12-WEEK TREND</th>
+                <th>RISK</th>
+              </tr>
+            </thead>
+            <tbody>
+              {DASH_ROWS.map((r) => (
+                <tr key={r.name}>
+                  <td className="dash-table__group">
+                    <i className={`dash-table__dot dash-fill--${r.risk}`} />
+                    {r.name}
+                  </td>
+                  <td className="dash-table__num">{r.cards}</td>
+                  <td className="dash-table__num">{r.wip}</td>
+                  <td className="dash-table__num">{r.cycle}</td>
+                  <td>
+                    <svg viewBox="0 0 100 22" className="dash-table__spark" aria-hidden="true">
+                      <path d={sparkPath(r.trend)} className={`dash-spark--${r.risk}`} />
+                    </svg>
+                  </td>
+                  <td>
+                    <span className={`dash-pill dash-pill--${r.risk}`}>{r.risk}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
 
       <div className="dash-board__followups">
         {DASH_FOLLOWUPS.map((f) => (
