@@ -41,6 +41,7 @@
     "@xyflow/react": "^12.11.2",
     "lucide-react": "^1.25.0",
     "marked": "^18.0.9",
+    "mermaid": "^11.16.1",
     "motion": "^13.0.0",
     "react": "^19.0.0",
     "react-aria-components": "^1.20.0",
