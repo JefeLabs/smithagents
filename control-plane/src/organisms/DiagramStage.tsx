@@ -103,19 +103,10 @@ export function DiagramStage({ doc, blueprints, onChangeBlueprint, onSaveSection
         </button>
       </div>
       {view === "canvas" ? (
-        <>
-          <div className="diagram-stage__canvas">
-            <MermaidBlock code={source} />
-          </div>
-          <textarea
-            className="diagram-stage__source"
-            aria-label="Mermaid source"
-            value={source}
-            spellCheck={false}
-            onChange={(e) => setSource(e.target.value)}
-            onBlur={() => void commit()}
-          />
-        </>
+        // Canvas stands alone — the source lives on the Markdown tab.
+        <div className="diagram-stage__canvas">
+          <MermaidBlock code={source} />
+        </div>
       ) : (
         // The markdown view is still the EDITOR — same source, same
         // blur-commit — plus a one-click copy of the fenced form.

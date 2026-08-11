@@ -31,9 +31,11 @@ describe("DiagramStage", () => {
     render(<DiagramStage doc={DOC} blueprints={BPS} onSaveSection={vi.fn().mockResolvedValue({})} />);
     expect(screen.getByTestId("mermaid")).toHaveTextContent("erDiagram");
   });
-  it("editing the source saves the section body", async () => {
+  it("the canvas view is canvas ONLY — the source lives on the Markdown tab", async () => {
     const onSave = vi.fn().mockResolvedValue({});
     render(<DiagramStage doc={DOC} blueprints={BPS} onSaveSection={onSave} />);
+    expect(screen.queryByRole("textbox", { name: /mermaid source/i })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Markdown" }));
     const src = screen.getByRole("textbox", { name: /mermaid source/i });
     await userEvent.clear(src);
     await userEvent.type(src, "sequenceDiagram");
@@ -55,7 +57,7 @@ describe("DiagramStage", () => {
     // Canvas is the default: no copy affordance there.
     expect(screen.queryByRole("button", { name: /copy mermaid markdown/i })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Markdown" }));
-    // Still the editor: typing + blur commits, same as the canvas source panel.
+    // Still the editor: typing + blur commits.
     const box = screen.getByRole("textbox", { name: "Mermaid source" });
     fireEvent.change(box, { target: { value: "erDiagram\n  A ||--o{ B : has" } });
     fireEvent.blur(box);
@@ -63,8 +65,10 @@ describe("DiagramStage", () => {
     fireEvent.click(screen.getByRole("button", { name: /copy mermaid markdown/i }));
     expect(writeText).toHaveBeenCalledWith("```mermaid\nerDiagram\n  A ||--o{ B : has\n```");
     expect(await screen.findByText("copied")).toBeInTheDocument();
+    // Back on Canvas the editor goes away — the canvas stands alone.
     fireEvent.click(screen.getByRole("button", { name: "Canvas" }));
-    expect(screen.getByRole("textbox", { name: "Mermaid source" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Mermaid source" })).toBeNull();
+    expect(screen.getByTestId("mermaid")).toBeInTheDocument();
     vi.unstubAllGlobals();
   });
 
