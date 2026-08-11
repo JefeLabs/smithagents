@@ -1998,3 +1998,61 @@ test('the mutating feed routes refuse a disallowed browser Origin', async () => 
     await channel.stop();
   }
 });
+
+// ---- CSRF: SameSite=None removes the browser's cross-site protection, so a
+// mutating request carrying a disallowed Origin must be refused (spec 1b) ----
+
+test('required mode: a mutating request from a disallowed Origin is 403 (CSRF), even with a valid bearer', async () => {
+  const auth = await makeAuth(true, 'bridge-secret');
+  const channel = channelWith({ auth });
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/utterance`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: 'https://evil.example', authorization: 'Bearer bridge-secret' },
+      body: JSON.stringify({ text: 'do something bad' }),
+    });
+    assert.equal(res.status, 403);
+  } finally { await channel.stop(); }
+});
+
+test('required mode: the bridge (no Origin) and the configured cloud webOrigin both pass the CSRF guard', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'csrf-'));
+  const auth = new BrokerAuth(join(dir, 'auth.json'), {
+    rpId: 'cell.example.com', webOrigin: 'https://cell.example.com', required: true, bridgeToken: 'bridge-secret',
+    webauthn: fakeWebauthnAdapter(),
+  });
+  await auth.load();
+  const channel = channelWith({ auth });
+  const port = await channel.start(0);
+  try {
+    // Bridge: no Origin header, Bearer creds — not a CSRF vector, must pass.
+    const bridge = await fetch(`http://127.0.0.1:${port}/utterance`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer bridge-secret' },
+      body: JSON.stringify({ text: 'from the bridge' }),
+    });
+    assert.notEqual(bridge.status, 403);
+    // The tenant's own SPA origin is allowed even though it isn't a dev origin.
+    const spa = await fetch(`http://127.0.0.1:${port}/utterance`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: 'https://cell.example.com', authorization: 'Bearer bridge-secret' },
+      body: JSON.stringify({ text: 'from the spa' }),
+    });
+    assert.notEqual(spa.status, 403);
+  } finally { await channel.stop(); }
+});
+
+test('open mode: no CSRF guard — a cross-origin mutating request is not blocked', async () => {
+  const auth = await makeAuth(false);
+  const channel = channelWith({ auth });
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/utterance`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: 'https://evil.example' },
+      body: JSON.stringify({ text: 'hi' }),
+    });
+    assert.notEqual(res.status, 403);
+  } finally { await channel.stop(); }
+});
