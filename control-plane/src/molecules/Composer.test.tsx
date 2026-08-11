@@ -339,6 +339,21 @@ describe("target selector", () => {
     expect(screen.getByRole("textbox")).toHaveValue("look at the auth bug");
   });
 
+  it("strips the freed- prefix a dragged-out squad member carries, or the broker 404s", async () => {
+    const onSend = vi.fn();
+    render(
+      <Composer
+        onSend={onSend}
+        targets={[{ id: "freed-osvaldo", name: "Osvaldo", role: "senior", status: "idle", kind: "agent" }]}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /send to/i }));
+    await userEvent.click(await screen.findByRole("option", { name: /Osvaldo/ }));
+    await userEvent.type(screen.getByRole("textbox"), "take a look");
+    await userEvent.click(screen.getByRole("button", { name: /^send$/i }));
+    expect(onSend).toHaveBeenCalledWith("take a look", { kind: "agent", id: "osvaldo" });
+  });
+
   it("names a group's elected leader so you know who actually receives it", async () => {
     render(<Composer onSend={vi.fn()} targets={TARGETS} />);
     await userEvent.click(screen.getByRole("button", { name: /send to/i }));

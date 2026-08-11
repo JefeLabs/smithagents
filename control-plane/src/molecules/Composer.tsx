@@ -48,10 +48,18 @@ export function parseTargetKey(key: string): Target {
   return { kind: "host" };
 }
 
-/** A rail entry's id carries its own prefix (`squad-alpha`, `group-g1`); strip it for the wire. */
+/**
+ * A rail entry's id carries its own prefix; the wire wants the bare id.
+ *
+ * `freed-` matters as much as the other two: a squad member dragged out to
+ * stand alone rides the roster as `freed-osvaldo` while the registry — and so
+ * the broker's target resolution — only knows `osvaldo`. compose() strips the
+ * same prefix for the same reason (broker.ts).
+ */
 function targetOf(entry: RosterAgent): Target {
   if (entry.id.startsWith("squad-")) return { kind: "squad", id: entry.id.slice("squad-".length) };
   if (entry.id.startsWith("group-")) return { kind: "group", id: entry.id.slice("group-".length) };
+  if (entry.id.startsWith("freed-")) return { kind: "agent", id: entry.id.slice("freed-".length) };
   return { kind: "agent", id: entry.id };
 }
 
