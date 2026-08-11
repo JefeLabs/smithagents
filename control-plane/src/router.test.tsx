@@ -295,6 +295,44 @@ describe("stage routing", () => {
     expect(await screen.findByRole("region", { name: "Document" })).toBeTruthy();
   });
 
+  it("the /doc canvas shows the session's staged-artifacts shelf", async () => {
+    await renderAt("/doc/d1", (client) => {
+      client.setQueryData(qk.documents, [
+        {
+          id: "d1",
+          title: "Login spec",
+          blueprintId: "spec",
+          workType: "feature",
+          sections: [{ id: "overview", heading: "What this is", body: "Words." }],
+          participants: [],
+          status: "drafting",
+          createdAt: "t",
+          updatedAt: "t",
+        },
+        {
+          id: "d2",
+          title: "Login plan",
+          blueprintId: "spec",
+          workType: "feature",
+          sections: [{ id: "overview", heading: "What this is", body: "Steps." }],
+          participants: [],
+          status: "drafting",
+          createdAt: "t",
+          updatedAt: "t",
+        },
+      ]);
+      client.setQueryData(qk.session, {
+        id: "s1",
+        title: "Login spec",
+        workspace: "acme",
+        runtime: "local-in-process",
+        artifacts: ["d1", "d2"],
+      });
+    });
+    const shelf = await screen.findByRole("complementary", { name: "session documents" });
+    expect(within(shelf).getAllByRole("button")).toHaveLength(2);
+  });
+
   it("a pending documents query does not bounce home — it renders once resolved", async () => {
     // No seed for qk.documents: the query stays `pending`, the same window a
     // hard reload of /doc/:id lands in before the socket's first documents

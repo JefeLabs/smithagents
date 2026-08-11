@@ -10,13 +10,15 @@ import { lazy, Suspense } from "react";
 import * as api from "./api/broker";
 import type { BlueprintT, DocT, RosterAgent } from "./api/types";
 import { agentSeeds } from "./data/agents";
+import { openDocByFamily } from "./lib/pickKind";
+import { ArtifactShelf, shelfDocsFor } from "./molecules/ArtifactShelf";
 import { BoardStage } from "./organisms/BoardStage";
 import { DashboardsStage } from "./organisms/DashboardsStage";
 import { MapStage } from "./organisms/MapStage";
 import { WorkStage } from "./organisms/WorkStage";
 import { HomePage } from "./pages/HomePage";
 import { useBlueprints } from "./queries/http";
-import { useDocuments, useRoster } from "./queries/pushed";
+import { useDocuments, useRoster, useSession } from "./queries/pushed";
 
 // Stable empties: a fresh `[]` per render would churn every downstream effect
 // keyed on the array's identity.
@@ -50,15 +52,29 @@ function BoardRoute() {
   return <BoardStage roster={rosterFrame?.agents ?? NO_ROSTER} />;
 }
 
+/** The shelf every kind canvas renders — the active session's docs, opened by family. */
+function useShelf() {
+  const navigate = useNavigate();
+  const { data: docs = NO_DOCS } = useDocuments();
+  const { data: blueprints = NO_BLUEPRINTS } = useBlueprints();
+  const { data: session = null } = useSession();
+  return (
+    <ArtifactShelf docs={shelfDocsFor(session, docs)} onOpen={(id) => openDocByFamily(navigate, blueprints, docs, id)} />
+  );
+}
+
 function MapRoute() {
-  return <MapStage />;
+  const shelf = useShelf();
+  return <MapStage shelf={shelf} />;
 }
 
 function DashboardsRoute() {
-  return <DashboardsStage />;
+  const shelf = useShelf();
+  return <DashboardsStage shelf={shelf} />;
 }
 
 function DocRoute() {
+  const shelf = useShelf();
   const { docId } = docRoute.useParams();
   const { data: docs = NO_DOCS, status } = useDocuments();
   const { data: blueprints = NO_BLUEPRINTS } = useBlueprints();
@@ -80,6 +96,7 @@ function DocRoute() {
       <DocumentStage
         doc={doc}
         blueprints={blueprints.filter((b) => b.family === docFamily)}
+        shelf={shelf}
         onChangeBlueprint={(blueprintId) => api.patchDocBlueprint(doc.id, blueprintId)}
         onRename={(title) => api.patchDocTitle(doc.id, title)}
         onSaveSection={(sectionId, body) => api.patchDocSection(doc.id, sectionId, body)}
@@ -89,6 +106,7 @@ function DocRoute() {
 }
 
 function DiagramRoute() {
+  const shelf = useShelf();
   const { docId } = diagramRoute.useParams();
   const { data: docs = NO_DOCS, status } = useDocuments();
   const { data: blueprints = NO_BLUEPRINTS, status: bpStatus } = useBlueprints();
@@ -107,6 +125,7 @@ function DiagramRoute() {
       <DiagramStage
         doc={doc}
         blueprints={blueprints.filter((b) => b.family === "diagram")}
+        shelf={shelf}
         onChangeBlueprint={(blueprintId) => api.patchDocBlueprint(doc.id, blueprintId)}
         onSaveSection={(sectionId, body) => api.patchDocSection(doc.id, sectionId, body)}
       />
