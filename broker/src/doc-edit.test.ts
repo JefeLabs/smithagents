@@ -49,6 +49,25 @@ test("happy path: parses the fenced JSON, validates sections, carries target + p
   assert.match(params.messages[0].content, /tighten the approach/);
 });
 
+test("a dashboard doc's prompt carries the spec schema — texts[] included", async () => {
+  const { calls, create } = stub('```json\n{"rewrites":[{"sectionId":"spec","newBody":"{}"}],"note":"n"}\n```');
+  await runDocEditTurn({
+    doc: { ...DOC, blueprintId: "dashboard", sections: [{ id: "spec", heading: "Spec", body: "{}" }] },
+    instruction: "add a text card",
+    create,
+  });
+  const content = String((calls[0] as { messages: Array<{ content: string }> }).messages[0]!.content);
+  assert.match(content, /SPEC SCHEMA/);
+  assert.match(content, /texts\?:/);
+  // A prose doc's prompt does NOT carry it.
+  const second = stub('```json\n{"rewrites":[{"sectionId":"overview","newBody":"x"}],"note":"n"}\n```');
+  await runDocEditTurn({ doc: DOC, instruction: "tighten", create: second.create });
+  assert.doesNotMatch(
+    String((second.calls[0] as { messages: Array<{ content: string }> }).messages[0]!.content),
+    /SPEC SCHEMA/,
+  );
+});
+
 test("bare JSON (no fence) parses too; model overridable", async () => {
   const { calls, create } = stub('{"rewrites":[{"sectionId":"overview","newBody":"X"}],"note":"n"}');
   const r = await runDocEditTurn({ doc: DOC, instruction: "x", create, model: "claude-haiku-4-5" });

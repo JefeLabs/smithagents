@@ -37,6 +37,19 @@ export async function runDocEditTurn(opts: {
   const content = [
     `DOCUMENT: ${doc.title} (blueprint ${doc.blueprintId}, ${doc.workType})`,
     sections,
+    // Dashboard docs render their spec section as JSON (hand-mirrored schema:
+    // control-plane/src/lib/dashboardSpec.ts). Without this contract the model
+    // mimics the existing JSON's shape and silently drops OPTIONAL fields it
+    // was asked to add — live-observed: "add a text card" produced a rewrite
+    // with no texts[] and a note claiming success.
+    doc.blueprintId === "dashboard"
+      ? 'SPEC SCHEMA: the "spec" section is ONE fenced ```json object: { summary: string, ' +
+        'kpis: [{label, value, delta?, tone?: "ok"|"watch"|"high"}], ' +
+        'charts: [{kind: "line"|"bars", title, series?}], ' +
+        "table?: {title, columns: string[], rows: string[][]}, " +
+        "texts?: [{title: string, body: string, source?: string}] }. " +
+        'texts are prose answer cards (source is a label like "session s2") — add or edit them there.'
+      : "",
     targetSectionId ? `TARGET SECTION: ${targetSectionId} — the instruction is about this section.` : "",
     `INSTRUCTION: ${instruction}`,
   ]
