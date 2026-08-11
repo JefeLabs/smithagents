@@ -45,7 +45,9 @@ export function importIssues(
       existing.updatedAt = new Date().toISOString();
       updated += 1;
     } else {
-      const card = addCard(board, { title: issue.summary });
+      // Imported issues are system intake, so they land leftmost — on the
+      // personal board that is the Queue, not addCard's Todo default.
+      const card = addCard(board, { title: issue.summary, columnId: board.columns[0]?.id });
       card.jira = { key: issue.key, url: issue.url };
       created += 1;
     }

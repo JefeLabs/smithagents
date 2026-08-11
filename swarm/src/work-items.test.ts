@@ -12,6 +12,7 @@ import {
   boardIdFor,
   type CardFlag,
   createBoard,
+  defaultColumnFor,
   deleteBoardFile,
   exitsFor,
   findCardByRef,
@@ -28,7 +29,7 @@ import {
 test("templates: seven typed column sets, ids unique and slug-shaped", () => {
   assert.deepEqual(
     BOARD_TEMPLATES.personal.map((c) => c.name),
-    ["Todo", "Doing", "Done", "Not Doing"],
+    ["Queue", "Todo", "Doing", "Done", "Not Doing"],
   );
   assert.deepEqual(
     BOARD_TEMPLATES.ideation.map((c) => c.name),
@@ -61,8 +62,8 @@ test("templates: seven typed column sets, ids unique and slug-shaped", () => {
   }
 });
 
-test("type order puts personal last and WORKSPACE_BOARD_TYPES excludes it", () => {
-  assert.deepEqual(BOARD_TYPE_ORDER, ["ideation", "plan", "deliver", "release", "reactive", "maintenance", "personal"]);
+test("type order puts personal first and WORKSPACE_BOARD_TYPES excludes it", () => {
+  assert.deepEqual(BOARD_TYPE_ORDER, ["personal", "ideation", "plan", "deliver", "release", "reactive", "maintenance"]);
   assert.equal(WORKSPACE_BOARD_TYPES.includes("personal" as BoardType), false);
   assert.equal(WORKSPACE_BOARD_TYPES.length, 6);
 });
@@ -81,7 +82,7 @@ test("createBoard derives id from workspace+type, seeds the label, copies column
 test("createBoard: personal is workspace-less with a fixed id; mismatches throw", () => {
   const p = createBoard("personal");
   assert.equal(p.id, "personal");
-  assert.equal(p.name, "Personal");
+  assert.equal(p.name, "Active To-dos");
   assert.equal(p.workspaceId, undefined);
   assert.throws(() => createBoard("personal", "acme"), /workspace/i);
   assert.throws(() => createBoard("deliver"), /workspace/i);
@@ -101,13 +102,17 @@ test("assertBoard rejects a file with a missing or unknown type", async () => {
   for (const e of errors) assert.match(e.error, /type/i);
 });
 
-test("addCard appends to the leftmost column by default and orders sequentially", () => {
+test("addCard defaults to Todo on the personal board, leftmost elsewhere; orders sequentially", () => {
   const b = createBoard("personal");
   const a = addCard(b, { title: "first" });
   const c = addCard(b, { title: "second" });
-  assert.equal(a.columnId, b.columns[0].id);
+  assert.equal(defaultColumnFor(b), "todo");
+  assert.equal(a.columnId, "todo");
   assert.deepEqual([a.order, c.order], [0, 1]);
   assert.ok(a.id !== c.id && a.createdAt && a.updatedAt);
+  const ws = createBoard("deliver", "acme");
+  assert.equal(defaultColumnFor(ws), "ready");
+  assert.equal(addCard(ws, { title: "x" }).columnId, "ready");
   assert.throws(() => addCard(b, { title: "  " }), /title/i);
   assert.throws(() => addCard(b, { title: "x", columnId: "nope" }), /column/i);
 });
@@ -138,7 +143,7 @@ test("patchCard moves between columns at a target index and renumbers both colum
 
 test("same-column reorder via order only", () => {
   const b = createBoard("personal");
-  const col = b.columns[0].id;
+  const col = "todo"; // where default adds land on the personal board
   const c1 = addCard(b, { title: "a" });
   const c2 = addCard(b, { title: "b" });
   const c3 = addCard(b, { title: "c" });

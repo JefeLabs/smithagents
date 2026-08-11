@@ -341,7 +341,7 @@ test("ensurePersonalBoard creates exactly one workspace-less board and is idempo
   assert.equal(boards[0].workspaceId, undefined);
   assert.deepEqual(
     boards[0].columns.map((c) => c.name),
-    ["Todo", "Doing", "Done", "Not Doing"],
+    ["Queue", "Todo", "Doing", "Done", "Not Doing"],
   );
 });
 

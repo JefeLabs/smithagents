@@ -64,21 +64,21 @@ const BOARD_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 export type BoardType = "personal" | "ideation" | "plan" | "deliver" | "release" | "reactive" | "maintenance";
 
-/** Tab order. personal is always last; the other six are the workspace types. */
+/** Tab order. personal is always first; the other six are the workspace types. */
 export const BOARD_TYPE_ORDER: BoardType[] = [
+  "personal",
   "ideation",
   "plan",
   "deliver",
   "release",
   "reactive",
   "maintenance",
-  "personal",
 ];
 
 export const WORKSPACE_BOARD_TYPES: BoardType[] = BOARD_TYPE_ORDER.filter((t) => t !== "personal");
 
 export const BOARD_TYPE_LABELS: Record<BoardType, string> = {
-  personal: "Personal",
+  personal: "Active To-dos",
   ideation: "Ideation",
   plan: "Plan",
   deliver: "Deliver",
@@ -92,6 +92,7 @@ export const BOARD_TYPE_LABELS: Record<BoardType, string> = {
 // which is why plan and deliver have neither.
 export const BOARD_TEMPLATES: Record<BoardType, WorkColumn[]> = {
   personal: [
+    { id: "queue", name: "Queue" },
     { id: "todo", name: "Todo" },
     { id: "doing", name: "Doing" },
     { id: "done", name: "Done" },
@@ -329,10 +330,20 @@ function renumber(board: WorkBoard, columnId: string): void {
     });
 }
 
+/**
+ * Quick-adds land where the user works, not where the system routes: the
+ * personal board's leftmost column is the Queue intake (sweep + escalations
+ * only), so fresh cards default to Todo there and to the leftmost column
+ * everywhere else.
+ */
+export function defaultColumnFor(board: WorkBoard): string | undefined {
+  return board.type === "personal" ? "todo" : board.columns[0]?.id;
+}
+
 export function addCard(board: WorkBoard, input: { title: string; notes?: string; columnId?: string }): WorkCard {
   const title = input.title?.trim();
   if (!title) throw new Error("Card title is required");
-  const columnId = input.columnId ?? board.columns[0]?.id;
+  const columnId = input.columnId ?? defaultColumnFor(board);
   if (!board.columns.some((c) => c.id === columnId)) throw new Error(`Unknown column: ${input.columnId}`);
   const now = new Date().toISOString();
   const card: WorkCard = {
