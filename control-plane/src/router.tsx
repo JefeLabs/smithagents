@@ -33,6 +33,10 @@ const NO_BLUEPRINTS: BlueprintT[] = [];
 const DocumentStage = lazy(() => import("./organisms/DocumentStage").then((m) => ({ default: m.DocumentStage })));
 // mermaid is heavy too; a session that never opens a diagram shouldn't ship it.
 const DiagramStage = lazy(() => import("./organisms/DiagramStage").then((m) => ({ default: m.DiagramStage })));
+// The dashboard doc canvas shares the presentation chunk with the launcher.
+const DashboardDocStage = lazy(() =>
+  import("./organisms/DashboardDocStage").then((m) => ({ default: m.DashboardDocStage })),
+);
 
 /**
  * Route components are deliberately thin: they read broker state from the
@@ -161,6 +165,37 @@ function DiagramRoute() {
   );
 }
 
+function DashboardDocRoute() {
+  const shelf = useShelf();
+  const { docId } = dashboardDocRoute.useParams();
+  const { data: docs = NO_DOCS, status } = useDocuments();
+  const { data: blueprints = NO_BLUEPRINTS, status: bpStatus } = useBlueprints();
+  const { data: session = null } = useSession();
+  // Same both-resolved gate as DiagramRoute: family decides the canvas.
+  if (status !== "success" || bpStatus !== "success") return null;
+  const doc = docs.find((d) => d.id === docId);
+  if (!doc) return <Navigate to="/" replace />;
+  const family = blueprints.find((b) => b.id === doc.blueprintId)?.family;
+  if (family !== "dashboard") return <Navigate to="/doc/$docId" params={{ docId }} replace />;
+  return (
+    <Suspense fallback={null}>
+      <DashboardDocStage
+        doc={doc}
+        shelf={shelf}
+        pinControl={
+          <PinButton
+            pins={doc.pins}
+            workspace={session?.workspace}
+            onPin={(t) => api.pinDoc(doc.id, t)}
+            onUnpin={(t) => api.unpinDoc(doc.id, t)}
+          />
+        }
+        onRename={(title) => api.patchDocTitle(doc.id, title)}
+      />
+    </Suspense>
+  );
+}
+
 function WorkRoute() {
   const navigate = useNavigate();
   const { agentId } = workRoute.useParams();
@@ -199,6 +234,11 @@ const diagramRoute = createRoute({
   path: "/diagram/$docId",
   component: DiagramRoute,
 });
+const dashboardDocRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/dashboard/$docId",
+  component: DashboardDocRoute,
+});
 const workRoute = createRoute({ getParentRoute: () => rootRoute, path: "/work/$agentId", component: WorkRoute });
 
 const routeTree = rootRoute.addChildren([
@@ -208,6 +248,7 @@ const routeTree = rootRoute.addChildren([
   dashboardsRoute,
   docRoute,
   diagramRoute,
+  dashboardDocRoute,
   workRoute,
 ]);
 

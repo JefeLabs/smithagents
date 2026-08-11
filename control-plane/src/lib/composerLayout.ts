@@ -9,7 +9,13 @@ export type ComposerVariant = "full" | "dock" | "center" | "hidden";
  */
 export function layoutForPath(pathname: string): ComposerVariant {
   if (pathname === "/") return "full";
-  if (pathname.startsWith("/doc/") || pathname.startsWith("/diagram/") || pathname === "/map") return "dock";
+  if (
+    pathname.startsWith("/doc/") ||
+    pathname.startsWith("/diagram/") ||
+    pathname.startsWith("/dashboard/") ||
+    pathname === "/map"
+  )
+    return "dock";
   // The dashboards stage no longer owns a compose box (spec v3) — the shared
   // dock's center variant is the one chat box there.
   if (pathname === "/dashboards") return "center";
@@ -25,6 +31,7 @@ export function isKindSurface(pathname: string): boolean {
 export function kindForPath(pathname: string): ArtifactKind {
   if (pathname.startsWith("/doc/")) return "documents";
   if (pathname.startsWith("/diagram/")) return "diagrams";
+  if (pathname.startsWith("/dashboard/")) return "dashboards";
   if (pathname === "/map") return "map";
   if (pathname === "/dashboards") return "dashboards";
   return "chat";

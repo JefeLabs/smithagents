@@ -7,6 +7,7 @@ describe("layoutForPath", () => {
     expect(layoutForPath("/doc/d1")).toBe("dock");
     expect(layoutForPath("/diagram/d1")).toBe("dock");
     expect(layoutForPath("/map")).toBe("dock");
+    expect(layoutForPath("/dashboard/d1")).toBe("dock"); // a PRESENTED dashboard is a doc canvas
   });
   it("dashboards hosts the center dock — the one chat box there (spec v3)", () =>
     expect(layoutForPath("/dashboards")).toBe("center"));
@@ -23,6 +24,7 @@ describe("kindForPath", () => {
     expect(kindForPath("/diagram/d1")).toBe("diagrams");
     expect(kindForPath("/map")).toBe("map");
     expect(kindForPath("/dashboards")).toBe("dashboards");
+    expect(kindForPath("/dashboard/d1")).toBe("dashboards");
     expect(kindForPath("/board")).toBe("chat"); // hidden dock still needs a valid default
   });
 });

@@ -53,7 +53,7 @@ export function makePickKind(
 export function openDocByFamily(navigate: Navigate, blueprints: BlueprintT[], docs: DocT[], docId: string): void {
   const fam = blueprints.find((b) => b.id === docs.find((d) => d.id === docId)?.blueprintId)?.family;
   void navigate({
-    to: fam === "diagram" ? "/diagram/$docId" : "/doc/$docId",
+    to: fam === "diagram" ? "/diagram/$docId" : fam === "dashboard" ? "/dashboard/$docId" : "/doc/$docId",
     params: { docId },
   });
 }
