@@ -142,6 +142,25 @@ continues where you author.
   Documents/Diagrams entry if present) — the kind row under the chat box is the
   navigation now. All routes stay reachable.
 
+### 8. Full-screen mode (canvas stages)
+
+- **Which kinds:** the canvas-presented stages — **Diagrams**, **User Story
+  Maps**, and **Dashboards** (its board). Documents (a prose column) do not get
+  full-screen.
+- **Behavior:** a full-screen toggle (a control in the canvas's corner) enters a
+  focus mode that **hides the top navbar and the left rail + document shelf**,
+  and **collapses the chat to just its input** (the composer input bar only — no
+  transcript panel), so the canvas fills the viewport. **Esc returns to the
+  normal three-column view.**
+- **Mechanism:** a single `uiStore.fullscreen` boolean drives it (app shell hides
+  navbar/rail when set; the stage collapses shelf + chat). A global `keydown`
+  Esc handler (registered while `fullscreen`) clears it. The minimal chat input
+  still works — you can talk to the crew while focused — and the kind row still
+  reveals on engage, so switching kinds or exiting stays reachable without the
+  rail.
+- **Non-canvas stays put:** entering a Document (prose) never engages
+  full-screen; Chat/home is unaffected.
+
 ## Data flow
 
 ```
@@ -177,6 +196,10 @@ Dashboards/Map are pure navigations; Documents/Diagrams create-then-navigate.
 - **Mermaid:** `MermaidBlock`/canvas compiles valid Mermaid and shows the
   source+error fallback on invalid input (jsdom can't lay out SVG — assert the
   compile call + fallback branch; a real render is a manual/Playwright check).
+- **Full-screen:** toggling `uiStore.fullscreen` on a canvas stage hides
+  navbar/rail/shelf and collapses chat to its input; Esc clears it; a Document
+  (prose) stage never enters full-screen. (Assert the store flag + conditional
+  render/keydown, not pixels.)
 - Whole control-plane + broker suites stay green (Chat/home behavior unchanged).
 
 ## Build order (one feature, two natural steps)
