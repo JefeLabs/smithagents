@@ -1,7 +1,7 @@
 # Staged-artifacts shelf on every kind surface + focus view — Design
 
-**Date:** 2026-08-11 (v2 — scope expanded mid-review)
-**Status:** Approved by Edwin (v2: all five kind surfaces; focus view collapses shelf + docked chat; toggle = left-rail control above Settings + Esc)
+**Date:** 2026-08-11 (v3 — dashboards dock added mid-review)
+**Status:** Approved by Edwin (v2: all five kind surfaces; focus view collapses shelf + docked chat; toggle = left-rail control above Settings + Esc. v3: /dashboards uses the shared ChatDock — the center variant replaces the stage's own ask box)
 
 ## Problem
 
@@ -18,6 +18,10 @@ collapses both the shelf and the chat panel for a clean canvas.
 2. **Focus toggle:** a control on the left rail (ToolRail footer menu),
    placed **above Settings**; Esc also exits while focus is on.
 3. **Collapse:** fully hidden — no minimized edge tabs.
+4. **Dashboards chat box (v3):** the shared ChatDock's `center` variant
+   replaces DashboardAsk's own prompt input. Scope chips and saved
+   dashboards stay as stage furniture; dock sends are normal chat for now —
+   chat-driven dashboard composition arrives with the real backend.
 
 ## Design
 
@@ -87,10 +91,28 @@ collapses both the shelf and the chat panel for a clean canvas.
 - **Esc:** a `keydown` listener HomePage binds only while `focusMode` is
   on → `exitFocus()`.
 
+### Dashboards on the shared dock (v3)
+
+- `layoutForPath` returns `"center"` for `/dashboards` (the deferral note
+  and its comment go away — this resolves the compose-box collision by
+  removing the stage's own box, which is what Plan 4's deferral was
+  waiting for).
+- `DashboardAsk` drops its `<textarea>` + submit affordance; the scope
+  chips and saved-dashboards list remain. Its `onSubmit` prop and the
+  stage's mock `ask → composing` transition become unreachable UI for
+  now — deliberately left in place (dead-end mock furniture) until the
+  real chat-driven composition wires in; the saved-dashboard open path
+  (`→ board` view) is untouched.
+- The `center` variant CSS already exists (chatdock.css:62-82); no CSS
+  work beyond the focus rules above.
+
 ### Testing
 
 - Unit: `shelfDocsFor` (session order kept, unknown ids dropped, null
-  session), `isKindSurface`, uiStore focus actions.
+  session), `isKindSurface`, uiStore focus actions, `layoutForPath`
+  returning `center` for `/dashboards`.
+- DashboardAsk: no textbox rendered; scope chips + saved list still
+  work (existing tests adjust).
 - Stage tests (all four): the shelf slot renders when passed.
 - Router tests: the shelf (aria-label "session documents") appears on
   `/doc/$docId` when the session has artifacts (pattern extends to the
