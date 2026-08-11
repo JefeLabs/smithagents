@@ -13,27 +13,20 @@
 // a RuntimeAdapter (tmux or docker) resolved from the task manifest.
 // ---------------------------------------------------------------------------
 
-import { EventEmitter } from 'node:events';
-import { execFile } from 'node:child_process';
-import { appendFile, copyFile, mkdir, writeFile } from 'node:fs/promises';
-import { dirname, resolve, join } from 'node:path';
-
-import type {
-  OrchestratorConfig,
-  TaskManifest,
-  TaskResult,
-  DispatcherEvent,
-  RuntimeType,
-} from './types.js';
-import type { RuntimeAdapter } from './runtime.js';
-import { getDriver } from './drivers/index.js';
-import { createRuntime } from './runtime.js';
-import type { WorkerPool } from './remote-runtime.js';
-import { QuarantineManager } from './quarantine.js';
-import { loadWorkspacesFromDir } from './workspaces.js';
-import { loadUsersFromDir, resolveCurrentUser } from './users.js';
-import { gateReason, loadCliToolsFile, refreshCliTool } from './cli-tools.js';
-import { ToolLaunchError } from './drivers/errors.js';
+import { execFile } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { appendFile, copyFile, mkdir, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import { gateReason, loadCliToolsFile, refreshCliTool } from "./cli-tools.js";
+import { ToolLaunchError } from "./drivers/errors.js";
+import { getDriver } from "./drivers/index.js";
+import { QuarantineManager } from "./quarantine.js";
+import type { WorkerPool } from "./remote-runtime.js";
+import type { RuntimeAdapter } from "./runtime.js";
+import { createRuntime } from "./runtime.js";
+import type { DispatcherEvent, OrchestratorConfig, RuntimeType, TaskManifest, TaskResult } from "./types.js";
+import { loadUsersFromDir, resolveCurrentUser } from "./users.js";
+import { loadWorkspacesFromDir } from "./workspaces.js";
 
 /**
  * Fire-and-Forget Dispatcher.
@@ -103,14 +96,16 @@ export class Dispatcher extends EventEmitter {
 
     // CLI tool registry gate (spec): refuse before any worktree exists. Only
     // confirmed negatives block; a stale 'active' self-corrects below.
-    const cliFile = await loadCliToolsFile(join(this.config.smithRoot, 'cli-tools.json'));
+    const cliFile = await loadCliToolsFile(join(this.config.smithRoot, "cli-tools.json"));
     const cliGate = gateReason(cliFile, manifest.agent);
     if (cliGate) {
       // A blocked attempt is itself a freshness signal: re-probe so a stale
       // confirmed-negative self-corrects (mirrors the warm-session path).
-      void refreshCliTool(join(this.config.smithRoot, 'cli-tools.json'), this.config.agentCommands, manifest.agent).catch(
-        () => {},
-      );
+      void refreshCliTool(
+        join(this.config.smithRoot, "cli-tools.json"),
+        this.config.agentCommands,
+        manifest.agent,
+      ).catch(() => {});
       throw new ToolLaunchError(manifest.agent, `subscription-inactive: ${cliGate}`);
     }
 
@@ -123,11 +118,10 @@ export class Dispatcher extends EventEmitter {
     // runtime was removed by spec 2026-08-07. API-created tasks arrive
     // already resolved (resolveTaskRuntime at POST /tasks); this chain
     // covers directly-constructed manifests.
-    const runtimeType: RuntimeType =
-      manifest.runtime ?? this.config.defaultRuntime;
+    const runtimeType: RuntimeType = manifest.runtime ?? this.config.defaultRuntime;
     const runtime = createRuntime(runtimeType, this.config.docker, this.workerPool);
 
-    let worktreePath = '';
+    let worktreePath = "";
 
     try {
       // Phase 1: Prepare the isolated worktree environment
@@ -138,7 +132,7 @@ export class Dispatcher extends EventEmitter {
 
       // Phase 3: Emit dispatch event and launch
       this.emitEvent({
-        type: 'task:dispatched',
+        type: "task:dispatched",
         taskId: manifest.taskId,
         sessionName,
       });
@@ -161,14 +155,14 @@ export class Dispatcher extends EventEmitter {
 
       const result: TaskResult = {
         taskId: manifest.taskId,
-        outcome: exitCode === 0 ? 'completed' : 'failed',
+        outcome: exitCode === 0 ? "completed" : "failed",
         exitCode,
         sessionName,
         worktreePath,
         startedAt,
         completedAt,
         durationMs,
-        logs: join(this.config.logsDir, manifest.taskId, 'session.log'),
+        logs: join(this.config.logsDir, manifest.taskId, "session.log"),
       };
 
       // Phase 5.5: successful work goes up for human review — push the task
@@ -193,9 +187,11 @@ export class Dispatcher extends EventEmitter {
     } catch (err) {
       // Any dispatch failure refreshes this tool's status (spec: on-failure
       // re-probe) — cheap, async, and harmless when the cause was elsewhere.
-      void refreshCliTool(join(this.config.smithRoot, 'cli-tools.json'), this.config.agentCommands, manifest.agent).catch(
-        () => {},
-      );
+      void refreshCliTool(
+        join(this.config.smithRoot, "cli-tools.json"),
+        this.config.agentCommands,
+        manifest.agent,
+      ).catch(() => {});
       throw err;
     } finally {
       // Phase 8: ALWAYS tear down — kill orphan sessions, clean up
@@ -223,7 +219,7 @@ export class Dispatcher extends EventEmitter {
     const env: Record<string, string> = {};
     if (!manifest.context.repoPath) return { env };
 
-    const workspaces = await loadWorkspacesFromDir(resolve(root, '.smith/workspaces'));
+    const workspaces = await loadWorkspacesFromDir(resolve(root, ".smith/workspaces"));
     const workspace = workspaces.find((w) => w.repos.some((r) => r.path === manifest.context.repoPath));
     // repoPath is server-resolved from the workspace registry (see
     // prepareWorktree), so failing to find a match here means this task
@@ -231,16 +227,16 @@ export class Dispatcher extends EventEmitter {
     if (!workspace) return { env };
     const repo = workspace.repos.find((r) => r.path === manifest.context.repoPath);
 
-    const users = await loadUsersFromDir(resolve(root, '.smith/users'));
+    const users = await loadUsersFromDir(resolve(root, ".smith/users"));
     const user = resolveCurrentUser(users);
 
     const atlassianConnector = workspace.atlassian?.connectorId
-      ? user?.connectors?.find((c) => c.id === workspace.atlassian!.connectorId && c.vendorId === 'atlassian')
+      ? user?.connectors?.find((c) => c.id === workspace.atlassian!.connectorId && c.vendorId === "atlassian")
       : undefined;
     const atlassian = workspace.atlassian && atlassianConnector ? workspace.atlassian : undefined;
     if (atlassian && atlassianConnector) {
-      env.SMITH_ATLASSIAN_EMAIL = atlassianConnector.fields.email ?? '';
-      env.SMITH_ATLASSIAN_TOKEN = atlassianConnector.fields.apiToken ?? '';
+      env.SMITH_ATLASSIAN_EMAIL = atlassianConnector.fields.email ?? "";
+      env.SMITH_ATLASSIAN_TOKEN = atlassianConnector.fields.apiToken ?? "";
     }
 
     // GH_TOKEN now resolves per-repo through repo.github.connectorId — a real
@@ -248,7 +244,7 @@ export class Dispatcher extends EventEmitter {
     // token the user has", ignoring repo config). Two repos in the same
     // workspace can legitimately resolve to two different tokens.
     const githubConnector = repo?.github?.connectorId
-      ? user?.connectors?.find((c) => c.id === repo.github!.connectorId && c.vendorId === 'github')
+      ? user?.connectors?.find((c) => c.id === repo.github!.connectorId && c.vendorId === "github")
       : undefined;
     if (githubConnector?.fields.token) {
       env.GH_TOKEN = githubConnector.fields.token;
@@ -282,31 +278,22 @@ export class Dispatcher extends EventEmitter {
     // git flag (argument injection). branchName is derived from a server-issued
     // UUID taskId, so it can't begin with `-`.
     const baseBranch = manifest.context.branch;
-    if (!/^[A-Za-z0-9._/-]+$/.test(baseBranch) || baseBranch.startsWith('-')) {
+    if (!/^[A-Za-z0-9._/-]+$/.test(baseBranch) || baseBranch.startsWith("-")) {
       throw new Error(`Invalid base branch: ${baseBranch}`);
     }
     const branchName = `smith/${manifest.taskId}`;
-    await this.git([
-      'worktree', 'add',
-      worktreePath,
-      '-b', branchName,
-      '--',
-      baseBranch,
-    ], repoRoot);
+    await this.git(["worktree", "add", worktreePath, "-b", branchName, "--", baseBranch], repoRoot);
 
     // Inject the smith-delegate tool into the worktree's bin/ directory
     // so the Alpha agent can find it on PATH
-    const worktreeBin = join(worktreePath, 'bin');
+    const worktreeBin = join(worktreePath, "bin");
     await mkdir(worktreeBin, { recursive: true });
-    await copyFile(
-      resolve(this.config.delegateBin),
-      join(worktreeBin, 'smith-delegate'),
-    );
+    await copyFile(resolve(this.config.delegateBin), join(worktreeBin, "smith-delegate"));
 
     // Materialize the composed-agent profile into the tool's native config
     // (design §5): by the time the CLI starts, the agent already is that
     // persona — instructions arrive via the worktree, not only the prompt.
-    const injected = ['bin/smith-delegate'];
+    const injected = ["bin/smith-delegate"];
     const driver = getDriver(manifest.agent);
     if (driver && manifest.profile) {
       injected.push(...(await driver.materialize(manifest.profile, worktreePath, connections.atlassian)));
@@ -314,9 +301,9 @@ export class Dispatcher extends EventEmitter {
 
     // Injected artifacts are plumbing, not work product — exclude them locally
     // so neither the agent's commit nor the auto-commit sweeps them up.
-    const excludeFile = await this.git(['rev-parse', '--git-path', 'info/exclude'], worktreePath);
+    const excludeFile = await this.git(["rev-parse", "--git-path", "info/exclude"], worktreePath);
     await mkdir(dirname(resolve(worktreePath, excludeFile)), { recursive: true });
-    await appendFile(resolve(worktreePath, excludeFile), `${injected.join('\n')}\n`);
+    await appendFile(resolve(worktreePath, excludeFile), `${injected.join("\n")}\n`);
 
     return worktreePath;
   }
@@ -331,16 +318,13 @@ export class Dispatcher extends EventEmitter {
    * Prompt escaping uses single quotes with embedded quote escaping
    * to prevent shell injection.
    */
-  private buildAgentCommand(
-    manifest: TaskManifest,
-    worktreePath: string,
-  ): string {
+  private buildAgentCommand(manifest: TaskManifest, worktreePath: string): string {
     const agentCmd = this.config.agentCommands[manifest.agent];
     // Work must land on the task branch — the worktree is disposable, commits
     // are not. The dispatcher also auto-commits leftovers after exit.
     const promptWithCommit = `${manifest.prompt}\n\nWhen you finish: stage and commit ALL your changes on the current branch with a concise conventional commit message. Do not push.`;
     const escapedPrompt = promptWithCommit.replace(/'/g, "'\\''");
-    const binDir = join(worktreePath, 'bin');
+    const binDir = join(worktreePath, "bin");
 
     // Build the full command with PATH injection. Tools with a driver own
     // their invocation shape; the legacy flag map covers the rest until they
@@ -350,10 +334,7 @@ export class Dispatcher extends EventEmitter {
       ? driver.taskCommand(agentCmd, escapedPrompt, manifest.model)
       : `${agentCmd} ${this.getPromptFlag(manifest.agent)} '${escapedPrompt}'`;
 
-    return [
-      `export PATH="${binDir}:$PATH"`,
-      invocation,
-    ].join(' && ');
+    return [`export PATH="${binDir}:$PATH"`, invocation].join(" && ");
   }
 
   /**
@@ -363,13 +344,16 @@ export class Dispatcher extends EventEmitter {
    * Legacy per-tool prompt flags, used only for tools without a driver.
    * Driven tools build their own invocation via driver.taskCommand.
    */
-  private getPromptFlag(agent: TaskManifest['agent']): string {
+  private getPromptFlag(agent: TaskManifest["agent"]): string {
     switch (agent) {
-      case 'agy':   return '--task';
-      case 'claude': return '--print';
-      case 'codex':  return '';  // codex uses positional arg
+      case "agy":
+        return "--task";
+      case "claude":
+        return "--print";
+      case "codex":
+        return ""; // codex uses positional arg
       default:
-        return '--prompt';
+        return "--prompt";
     }
   }
 
@@ -383,15 +367,12 @@ export class Dispatcher extends EventEmitter {
    * The orchestrator's job here is simple: emit the event so the
    * verification pipeline (Phase 7) can pick it up.
    */
-  private async onCompleted(
-    manifest: TaskManifest,
-    result: TaskResult,
-  ): Promise<void> {
+  private async onCompleted(manifest: TaskManifest, result: TaskResult): Promise<void> {
     // Write the result to the logs directory for audit
     await this.writeResultLog(manifest.taskId, result);
 
     this.emitEvent({
-      type: 'task:completed',
+      type: "task:completed",
       taskId: manifest.taskId,
       result,
     });
@@ -404,12 +385,9 @@ export class Dispatcher extends EventEmitter {
    * human review. This is the conservative approach: we'd rather have
    * a human look at a flaky failure than burn tokens re-running it.
    */
-  private async onFailed(
-    manifest: TaskManifest,
-    result: TaskResult,
-  ): Promise<void> {
-    const reason = `Alpha agent exited with code ${result.exitCode}. ` +
-      `Task quarantined for human review (no automatic retries).`;
+  private async onFailed(manifest: TaskManifest, result: TaskResult): Promise<void> {
+    const reason =
+      `Alpha agent exited with code ${result.exitCode}. ` + `Task quarantined for human review (no automatic retries).`;
 
     // Write the result log
     await this.writeResultLog(manifest.taskId, result);
@@ -418,13 +396,13 @@ export class Dispatcher extends EventEmitter {
     await this.quarantine.quarantine(result, reason);
 
     this.emitEvent({
-      type: 'task:failed',
+      type: "task:failed",
       taskId: manifest.taskId,
       result,
     });
 
     this.emitEvent({
-      type: 'task:quarantined',
+      type: "task:quarantined",
       taskId: manifest.taskId,
       reason,
     });
@@ -444,34 +422,27 @@ export class Dispatcher extends EventEmitter {
    * This is the "orphan cleanup" — even if the Alpha agent forgot to
    * clean up its children, we nuke everything from orbit.
    */
-  private async teardown(
-    taskId: string,
-    sessionName: string,
-    runtime: RuntimeAdapter,
-  ): Promise<void> {
+  private async teardown(taskId: string, sessionName: string, runtime: RuntimeAdapter): Promise<void> {
     try {
       // Kill the primary session and any sub-sessions
       const killed = await runtime.killPattern(sessionName);
 
       // Also kill any lingering sub-* sessions
       // (these might have been spawned with different naming)
-      const subKilled = await runtime.killPattern('sub-');
+      const subKilled = await runtime.killPattern("sub-");
 
       const totalKilled = killed + subKilled;
 
       if (totalKilled > 0) {
         this.emitEvent({
-          type: 'session:orphan_cleanup',
+          type: "session:orphan_cleanup",
           sessionPattern: `${sessionName}*`,
           killed: totalKilled,
         });
       }
     } catch (error) {
       // Teardown should never throw — log and continue
-      console.error(
-        `[dispatcher] teardown error for task ${taskId}:`,
-        error,
-      );
+      console.error(`[dispatcher] teardown error for task ${taskId}:`, error);
     }
   }
 
@@ -483,16 +454,12 @@ export class Dispatcher extends EventEmitter {
    * Capture session output and write it to the logs dir.
    * Works with any RuntimeAdapter — tmux captures pane, docker captures logs.
    */
-  private async captureSessionLogs(
-    taskId: string,
-    runtime: RuntimeAdapter,
-    sessionName: string,
-  ): Promise<void> {
+  private async captureSessionLogs(taskId: string, runtime: RuntimeAdapter, sessionName: string): Promise<void> {
     try {
       const output = await runtime.captureOutput(sessionName);
       const logDir = join(this.config.logsDir, taskId);
       await mkdir(logDir, { recursive: true });
-      await writeFile(join(logDir, 'session.log'), output, 'utf-8');
+      await writeFile(join(logDir, "session.log"), output, "utf-8");
     } catch {
       // Best-effort logging — don't let it break the flow
     }
@@ -501,18 +468,11 @@ export class Dispatcher extends EventEmitter {
   /**
    * Write the TaskResult JSON to the logs directory.
    */
-  private async writeResultLog(
-    taskId: string,
-    result: TaskResult,
-  ): Promise<void> {
+  private async writeResultLog(taskId: string, result: TaskResult): Promise<void> {
     try {
       const logDir = join(this.config.logsDir, taskId);
       await mkdir(logDir, { recursive: true });
-      await writeFile(
-        join(logDir, 'result.json'),
-        JSON.stringify(result, null, 2),
-        'utf-8',
-      );
+      await writeFile(join(logDir, "result.json"), JSON.stringify(result, null, 2), "utf-8");
     } catch {
       // Best-effort — don't break the dispatch flow
     }
@@ -535,23 +495,23 @@ export class Dispatcher extends EventEmitter {
    * incomplete) — it is forensic value, not garbage. Never throws: a commit
    * failure must not turn a completed task into a failed one.
    */
-  private async ensureWorkCommitted(
-    manifest: TaskManifest,
-    worktreePath: string,
-    completed: boolean,
-  ): Promise<void> {
+  private async ensureWorkCommitted(manifest: TaskManifest, worktreePath: string, completed: boolean): Promise<void> {
     if (!worktreePath) return;
     try {
-      const status = await this.git(['status', '--porcelain'], worktreePath);
+      const status = await this.git(["status", "--porcelain"], worktreePath);
       if (!status) return;
       const agent = manifest.agentName ?? manifest.agent;
-      await this.git(['add', '-A'], worktreePath);
+      await this.git(["add", "-A"], worktreePath);
       await this.git(
         [
-          '-c', `user.name=${agent} (smith)`,
-          '-c', 'user.email=crew@smithagents.local',
-          'commit', '-q', '-m',
-          `${completed ? 'task' : 'task(incomplete)'}: ${agent} — ${manifest.taskId}\n\nAuto-committed by the dispatcher after the agent session exited${completed ? '' : ' with a non-zero code'}.`,
+          "-c",
+          `user.name=${agent} (smith)`,
+          "-c",
+          "user.email=crew@smithagents.local",
+          "commit",
+          "-q",
+          "-m",
+          `${completed ? "task" : "task(incomplete)"}: ${agent} — ${manifest.taskId}\n\nAuto-committed by the dispatcher after the agent session exited${completed ? "" : " with a non-zero code"}.`,
         ],
         worktreePath,
       );
@@ -566,55 +526,54 @@ export class Dispatcher extends EventEmitter {
    * manifest.pullRequest.autoCreate = false. Returns the PR URL, or
    * undefined when there is no remote, no work, or gh fails.
    */
-  private async openPullRequest(
-    manifest: TaskManifest,
-    worktreePath: string,
-  ): Promise<string | undefined> {
+  private async openPullRequest(manifest: TaskManifest, worktreePath: string): Promise<string | undefined> {
     const pr = manifest.pullRequest ?? {};
     if (pr.autoCreate === false) return undefined;
     const base = pr.targetBranch ?? manifest.context.branch;
     const branchName = `smith/${manifest.taskId}`;
     const agent = manifest.agentName ?? manifest.agent;
     try {
-      const remotes = await this.git(['remote'], worktreePath);
-      if (!remotes.split('\n').includes('origin')) return undefined;
-      const commits = await this.git(['rev-list', '--count', `${base}..HEAD`], worktreePath);
-      if (commits === '0') return undefined;
-      await this.git(['push', '-u', 'origin', branchName], worktreePath);
+      const remotes = await this.git(["remote"], worktreePath);
+      if (!remotes.split("\n").includes("origin")) return undefined;
+      const commits = await this.git(["rev-list", "--count", `${base}..HEAD`], worktreePath);
+      if (commits === "0") return undefined;
+      await this.git(["push", "-u", "origin", branchName], worktreePath);
 
-      const firstSubject = (await this.git(['log', '--reverse', '--format=%s', `${base}..HEAD`], worktreePath)).split('\n')[0];
+      const firstSubject = (await this.git(["log", "--reverse", "--format=%s", `${base}..HEAD`], worktreePath)).split(
+        "\n",
+      )[0];
       const title = pr.titlePattern
         ? pr.titlePattern
-            .replace('{taskId}', manifest.taskId)
-            .replace('{agent}', agent)
-            .replace('{prompt}', firstSubject ?? '')
+            .replace("{taskId}", manifest.taskId)
+            .replace("{agent}", agent)
+            .replace("{prompt}", firstSubject ?? "")
         : (firstSubject ?? `task ${manifest.taskId}`);
-      const taskText = manifest.prompt.split('Task from the live meeting:').pop()?.trim() ?? manifest.prompt;
-      const ticketKey = typeof manifest.metadata?.ticketKey === 'string' ? manifest.metadata.ticketKey : undefined;
+      const taskText = manifest.prompt.split("Task from the live meeting:").pop()?.trim() ?? manifest.prompt;
+      const ticketKey = typeof manifest.metadata?.ticketKey === "string" ? manifest.metadata.ticketKey : undefined;
       const body = [
         `Delegated task \`${manifest.taskId}\`, completed by **${agent}**.`,
-        '',
-        '## Task',
-        '',
+        "",
+        "## Task",
+        "",
         taskText,
-        ...(ticketKey ? ['', `Closes ${ticketKey}`] : []),
-        '',
-        '---',
-        '🤖 Delegated to the crew via smithagents',
-      ].join('\n');
+        ...(ticketKey ? ["", `Closes ${ticketKey}`] : []),
+        "",
+        "---",
+        "🤖 Delegated to the crew via smithagents",
+      ].join("\n");
 
-      const args = ['pr', 'create', '--head', branchName, '--base', base, '--title', title, '--body', body];
-      for (const label of pr.labels ?? []) args.push('--label', label);
-      for (const reviewer of pr.reviewers ?? []) args.push('--reviewer', reviewer);
+      const args = ["pr", "create", "--head", branchName, "--base", base, "--title", title, "--body", body];
+      for (const label of pr.labels ?? []) args.push("--label", label);
+      for (const reviewer of pr.reviewers ?? []) args.push("--reviewer", reviewer);
       const wantDraft = pr.draft !== false;
       try {
-        const url = await this.run('gh', wantDraft ? [...args, '--draft'] : args, worktreePath);
-        return url.split('\n').pop()?.trim();
+        const url = await this.run("gh", wantDraft ? [...args, "--draft"] : args, worktreePath);
+        return url.split("\n").pop()?.trim();
       } catch (err) {
         // Draft PRs are unavailable on some plans/private repos — retry normal.
         if (wantDraft && /draft/i.test(String(err))) {
-          const url = await this.run('gh', args, worktreePath);
-          return url.split('\n').pop()?.trim();
+          const url = await this.run("gh", args, worktreePath);
+          return url.split("\n").pop()?.trim();
         }
         throw err;
       }
@@ -628,7 +587,7 @@ export class Dispatcher extends EventEmitter {
    * Execute a git command and return stdout.
    */
   private git(args: string[], cwd?: string): Promise<string> {
-    return this.run('git', args, cwd);
+    return this.run("git", args, cwd);
   }
 
   /** Execute a command, resolving stdout — stderr surfaces in the rejection. */
@@ -636,9 +595,7 @@ export class Dispatcher extends EventEmitter {
     return new Promise((resolve, reject) => {
       execFile(cmd, args, { cwd }, (error, stdout, stderr) => {
         if (error) {
-          reject(
-            new Error(`${cmd} ${args[0]} failed: ${stderr || error.message}`),
-          );
+          reject(new Error(`${cmd} ${args[0]} failed: ${stderr || error.message}`));
           return;
         }
         resolve(stdout.trim());

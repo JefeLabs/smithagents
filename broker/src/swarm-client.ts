@@ -3,7 +3,7 @@
  * imports: swarm is a service and these wire types mirror its contract
  * (swarm/src/server.ts routes). If swarm's API changes, this file changes.
  */
-import WebSocket from 'ws';
+import WebSocket from "ws";
 
 export interface SpeechProfile {
   voiceName?: string;
@@ -16,7 +16,7 @@ export interface ConnectorFieldDef {
   key: string;
   label: string;
   secret: boolean;
-  type?: 'text' | 'select';
+  type?: "text" | "select";
   options?: { value: string; label: string }[];
 }
 
@@ -37,7 +37,7 @@ export interface ConnectorInstanceRecord {
 
 export interface CliToolStatusRecord {
   detected: boolean;
-  authOk: boolean | 'unknown';
+  authOk: boolean | "unknown";
   enabled: boolean;
   detail: string;
   version?: string;
@@ -64,7 +64,7 @@ export interface RegistryAgent {
   name: string;
   role: string;
   directives: string;
-  engine: { cli: 'agy' | 'claude' | 'codex'; model: string };
+  engine: { cli: "agy" | "claude" | "codex"; model: string };
   persona?: { style: string };
   voice?: { provider: string; voiceId?: string; speech?: SpeechProfile };
   avatarRing?: string;
@@ -77,7 +77,7 @@ export interface RegistryAgent {
 
 export interface SwarmSquad {
   id: string;
-  status: 'active' | 'idle';
+  status: "active" | "idle";
   taskId?: string | null;
   leader: { name: string; role: string };
   members: Array<{ name: string; role: string }>;
@@ -146,20 +146,20 @@ export interface SwarmMeeting {
   id: string;
   roomName: string;
   agentIds: string[];
-  mode: 'solo' | 'council';
-  status: 'open' | 'closed';
+  mode: "solo" | "council";
+  status: "open" | "closed";
   createdAt: string;
 }
 
 export type SwarmEvent =
-  | ({ type: 'state:snapshot' } & Record<string, unknown>)
-  | { type: 'task:dispatched'; taskId: string; sessionName: string }
-  | { type: 'task:completed'; taskId: string; result: unknown; workCardRef?: { boardId: string; cardId: string } }
-  | { type: 'task:failed'; taskId: string; result: unknown; workCardRef?: { boardId: string; cardId: string } }
-  | { type: 'task:quarantined'; taskId: string; reason: string };
+  | ({ type: "state:snapshot" } & Record<string, unknown>)
+  | { type: "task:dispatched"; taskId: string; sessionName: string }
+  | { type: "task:completed"; taskId: string; result: unknown; workCardRef?: { boardId: string; cardId: string } }
+  | { type: "task:failed"; taskId: string; result: unknown; workCardRef?: { boardId: string; cardId: string } }
+  | { type: "task:quarantined"; taskId: string; reason: string };
 
 export interface WsLike {
-  on(ev: 'open' | 'message' | 'close' | 'error', cb: (arg?: unknown) => void): void;
+  on(ev: "open" | "message" | "close" | "error", cb: (arg?: unknown) => void): void;
   close(): void;
 }
 
@@ -177,7 +177,7 @@ export class SwarmClient {
   private readonly wsFactory: (url: string) => WsLike;
 
   constructor(opts: SwarmClientOptions) {
-    this.baseUrl = opts.baseUrl.replace(/\/$/, '');
+    this.baseUrl = opts.baseUrl.replace(/\/$/, "");
     this.token = opts.token;
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.wsFactory = opts.wsFactory ?? ((url) => new WebSocket(url) as unknown as WsLike);
@@ -185,7 +185,7 @@ export class SwarmClient {
 
   async submitTask(req: {
     prompt: string;
-    agent: 'agy' | 'claude' | 'codex';
+    agent: "agy" | "claude" | "codex";
     repository: string;
     branch?: string;
     workspace?: string;
@@ -196,25 +196,31 @@ export class SwarmClient {
     const body = {
       prompt: req.prompt,
       agent: req.agent,
-      context: { files: [], repository: req.repository, branch: req.branch ?? '', workspace: req.workspace, repo: req.repo },
+      context: {
+        files: [],
+        repository: req.repository,
+        branch: req.branch ?? "",
+        workspace: req.workspace,
+        repo: req.repo,
+      },
       runtime: req.runtime,
       metadata: req.metadata,
     };
-    const r = await this.http('POST', '/tasks', body);
+    const r = await this.http("POST", "/tasks", body);
     return { taskId: r.taskId as string, agentName: (r.agentName as string | null) ?? null };
   }
 
   async getOutput(taskIdOrName: string): Promise<{ taskId: string; output: string }> {
-    const r = await this.http('GET', `/tasks/${encodeURIComponent(taskIdOrName)}/output`);
+    const r = await this.http("GET", `/tasks/${encodeURIComponent(taskIdOrName)}/output`);
     return { taskId: r.taskId as string, output: r.output as string };
   }
 
   async steer(taskIdOrName: string, message: string): Promise<void> {
-    await this.http('POST', `/tasks/${encodeURIComponent(taskIdOrName)}/steer`, { message });
+    await this.http("POST", `/tasks/${encodeURIComponent(taskIdOrName)}/steer`, { message });
   }
 
   async killTask(taskIdOrName: string): Promise<void> {
-    await this.http('POST', `/tasks/${encodeURIComponent(taskIdOrName)}/kill`, {});
+    await this.http("POST", `/tasks/${encodeURIComponent(taskIdOrName)}/kill`, {});
   }
 
   /**
@@ -228,7 +234,7 @@ export class SwarmClient {
   async getTask(taskId: string): Promise<{ taskId: string; status: string; result?: unknown } | null> {
     const headers: Record<string, string> = {};
     if (this.token) headers.authorization = `Bearer ${this.token}`;
-    const res = await this.fetchImpl(`${this.baseUrl}/tasks/${encodeURIComponent(taskId)}`, { method: 'GET', headers });
+    const res = await this.fetchImpl(`${this.baseUrl}/tasks/${encodeURIComponent(taskId)}`, { method: "GET", headers });
     if (res.status === 404) return null;
     if (!res.ok) {
       const detail = await res
@@ -241,25 +247,28 @@ export class SwarmClient {
   }
 
   async registry(): Promise<RegistryAgent[]> {
-    const r = await this.http('GET', '/agents/registry');
+    const r = await this.http("GET", "/agents/registry");
     return r.agents as RegistryAgent[];
   }
 
   async listMeetings(): Promise<SwarmMeeting[]> {
-    const r = await this.http('GET', '/meetings');
+    const r = await this.http("GET", "/meetings");
     return r.meetings as SwarmMeeting[];
   }
 
   async listSquads(): Promise<SwarmSquad[]> {
-    const r = await this.http('GET', '/squads');
+    const r = await this.http("GET", "/squads");
     return (r.squads as SwarmSquad[]).filter((s) => s.leader?.name);
   }
 
   /** IDs of tasks the swarm currently considers live (queued or active). */
   async listLiveTaskIds(): Promise<Set<string>> {
-    const r = await this.http('GET', '/tasks');
+    const r = await this.http("GET", "/tasks");
     const ids = new Set<string>();
-    for (const t of [...((r.active as Array<{ taskId: string }>) ?? []), ...((r.queued as Array<{ taskId: string }>) ?? [])]) {
+    for (const t of [
+      ...((r.active as Array<{ taskId: string }>) ?? []),
+      ...((r.queued as Array<{ taskId: string }>) ?? []),
+    ]) {
       ids.add(t.taskId);
     }
     return ids;
@@ -267,12 +276,12 @@ export class SwarmClient {
 
   /** Tiered runtime reset on the orchestrator (remote workers are never killed). */
   async reset(scope: { runtime?: boolean; worktrees?: boolean; agents?: boolean }): Promise<Record<string, unknown>> {
-    return this.http('POST', '/reset', scope);
+    return this.http("POST", "/reset", scope);
   }
 
   /** Stereotypes, quick questions and reaction levels for the creation wizard. */
   async agentCatalog(): Promise<Record<string, unknown>> {
-    return this.http('GET', '/agents/catalog');
+    return this.http("GET", "/agents/catalog");
   }
 
   /**
@@ -286,7 +295,7 @@ export class SwarmClient {
   async avatarFile(file: string): Promise<Buffer | null> {
     const headers: Record<string, string> = {};
     if (this.token) headers.authorization = `Bearer ${this.token}`;
-    const res = await this.fetchImpl(`${this.baseUrl}/avatars/${encodeURIComponent(file)}`, { method: 'GET', headers });
+    const res = await this.fetchImpl(`${this.baseUrl}/avatars/${encodeURIComponent(file)}`, { method: "GET", headers });
     if (res.status === 404) return null;
     if (!res.ok) throw new Error(`swarm GET /avatars/${file} -> ${res.status}`);
     return Buffer.from(await res.arrayBuffer());
@@ -294,73 +303,78 @@ export class SwarmClient {
 
   /** Create a composed agent from the wizard payload. */
   async createAgent(body: Record<string, unknown>): Promise<Record<string, unknown>> {
-    return this.http('POST', '/agents', body);
+    return this.http("POST", "/agents", body);
   }
 
   async updateAgent(id: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
-    return this.http('PUT', `/agents/${encodeURIComponent(id)}`, body);
+    return this.http("PUT", `/agents/${encodeURIComponent(id)}`, body);
   }
 
   async agentUsage(id: string): Promise<{ warmSessions: number; activeTasks: number }> {
-    const r = await this.http('GET', `/agents/${encodeURIComponent(id)}/usage`);
+    const r = await this.http("GET", `/agents/${encodeURIComponent(id)}/usage`);
     return { warmSessions: r.warmSessions as number, activeTasks: r.activeTasks as number };
   }
 
   async archiveAgent(id: string): Promise<void> {
-    await this.http('POST', `/agents/${encodeURIComponent(id)}/archive`, {});
+    await this.http("POST", `/agents/${encodeURIComponent(id)}/archive`, {});
   }
 
   async deleteAgent(id: string): Promise<void> {
-    await this.http('DELETE', `/agents/${encodeURIComponent(id)}`, undefined);
+    await this.http("DELETE", `/agents/${encodeURIComponent(id)}`, undefined);
   }
 
   async createWorkspace(body: WorkspaceBody): Promise<SwarmWorkspace> {
-    const r = await this.http('POST', '/workspaces', body);
+    const r = await this.http("POST", "/workspaces", body);
     return r as unknown as SwarmWorkspace;
   }
 
   async updateWorkspace(name: string, body: Partial<WorkspaceBody>): Promise<SwarmWorkspace> {
-    const r = await this.http('PUT', `/workspaces/${encodeURIComponent(name)}`, body);
+    const r = await this.http("PUT", `/workspaces/${encodeURIComponent(name)}`, body);
     return r as unknown as SwarmWorkspace;
   }
 
   async archiveWorkspace(name: string): Promise<void> {
-    await this.http('POST', `/workspaces/${encodeURIComponent(name)}/archive`, {});
+    await this.http("POST", `/workspaces/${encodeURIComponent(name)}/archive`, {});
   }
 
   async deleteWorkspace(name: string): Promise<void> {
-    await this.http('DELETE', `/workspaces/${encodeURIComponent(name)}`, undefined);
+    await this.http("DELETE", `/workspaces/${encodeURIComponent(name)}`, undefined);
   }
 
   async workspaceUsage(name: string): Promise<{ activeTasks: number }> {
-    const r = await this.http('GET', `/workspaces/${encodeURIComponent(name)}/usage`);
+    const r = await this.http("GET", `/workspaces/${encodeURIComponent(name)}/usage`);
     return { activeTasks: r.activeTasks as number };
   }
 
   async listWorkspaces(): Promise<SwarmWorkspace[]> {
-    const r = await this.http('GET', '/workspaces');
+    const r = await this.http("GET", "/workspaces");
     return (r.workspaces as SwarmWorkspace[]) ?? [];
   }
 
   async executionModes(): Promise<Record<string, boolean>> {
-    const r = await this.http('GET', '/execution-modes');
+    const r = await this.http("GET", "/execution-modes");
     return (r.modes as Record<string, boolean>) ?? {};
   }
 
   async containers(): Promise<{ version: 1; docker: { enabled: boolean } }> {
-    return (await this.http('GET', '/containers')) as never;
+    return (await this.http("GET", "/containers")) as never;
   }
 
   async setContainers(dockerEnabled: boolean): Promise<{ version: 1; docker: { enabled: boolean } }> {
-    return (await this.http('PUT', '/containers', { docker: { enabled: dockerEnabled } })) as never;
+    return (await this.http("PUT", "/containers", { docker: { enabled: dockerEnabled } })) as never;
   }
 
   async verifyContainers(): Promise<{ ok: boolean; detail: string }> {
-    return (await this.http('POST', '/containers/verify', {})) as never;
+    return (await this.http("POST", "/containers/verify", {})) as never;
   }
 
-  async lookupTicket(workspace: string, ticketKey: string): Promise<{ ok: boolean; ticket?: TicketResult; detail?: string }> {
-    return this.http('POST', `/workspaces/${encodeURIComponent(workspace)}/atlassian/lookup-ticket`, { ticketKey }) as unknown as Promise<{
+  async lookupTicket(
+    workspace: string,
+    ticketKey: string,
+  ): Promise<{ ok: boolean; ticket?: TicketResult; detail?: string }> {
+    return this.http("POST", `/workspaces/${encodeURIComponent(workspace)}/atlassian/lookup-ticket`, {
+      ticketKey,
+    }) as unknown as Promise<{
       ok: boolean;
       ticket?: TicketResult;
       detail?: string;
@@ -368,7 +382,9 @@ export class SwarmClient {
   }
 
   async searchDocs(workspace: string, query: string): Promise<{ ok: boolean; docs?: DocResult[]; detail?: string }> {
-    return this.http('POST', `/workspaces/${encodeURIComponent(workspace)}/atlassian/search-docs`, { query }) as unknown as Promise<{
+    return this.http("POST", `/workspaces/${encodeURIComponent(workspace)}/atlassian/search-docs`, {
+      query,
+    }) as unknown as Promise<{
       ok: boolean;
       docs?: DocResult[];
       detail?: string;
@@ -376,94 +392,129 @@ export class SwarmClient {
   }
 
   async getMe(): Promise<MeRecord> {
-    return this.http('GET', '/me') as unknown as Promise<MeRecord>;
+    return this.http("GET", "/me") as unknown as Promise<MeRecord>;
   }
 
   async updateMe(body: { name?: string }): Promise<MeRecord> {
-    return this.http('PUT', '/me', body) as unknown as Promise<MeRecord>;
+    return this.http("PUT", "/me", body) as unknown as Promise<MeRecord>;
   }
 
   async getConnectorVendors(): Promise<ConnectorVendorMeta[]> {
-    return this.http('GET', '/connectors/vendors') as unknown as Promise<ConnectorVendorMeta[]>;
+    return this.http("GET", "/connectors/vendors") as unknown as Promise<ConnectorVendorMeta[]>;
   }
 
   async getMyConnectors(): Promise<ConnectorInstanceRecord[]> {
-    return this.http('GET', '/me/connectors') as unknown as Promise<ConnectorInstanceRecord[]>;
+    return this.http("GET", "/me/connectors") as unknown as Promise<ConnectorInstanceRecord[]>;
   }
 
-  async addConnector(body: { vendorId: string; label: string; fields: Record<string, string> }): Promise<ConnectorInstanceRecord> {
-    return this.http('POST', '/me/connectors', body) as unknown as Promise<ConnectorInstanceRecord>;
+  async addConnector(body: {
+    vendorId: string;
+    label: string;
+    fields: Record<string, string>;
+  }): Promise<ConnectorInstanceRecord> {
+    return this.http("POST", "/me/connectors", body) as unknown as Promise<ConnectorInstanceRecord>;
   }
 
-  async updateConnector(id: string, body: { label?: string; fields?: Record<string, string> }): Promise<ConnectorInstanceRecord> {
-    return this.http('PUT', `/me/connectors/${encodeURIComponent(id)}`, body) as unknown as Promise<ConnectorInstanceRecord>;
+  async updateConnector(
+    id: string,
+    body: { label?: string; fields?: Record<string, string> },
+  ): Promise<ConnectorInstanceRecord> {
+    return this.http(
+      "PUT",
+      `/me/connectors/${encodeURIComponent(id)}`,
+      body,
+    ) as unknown as Promise<ConnectorInstanceRecord>;
   }
 
   async deleteConnector(id: string): Promise<{ ok: boolean }> {
-    return this.http('DELETE', `/me/connectors/${encodeURIComponent(id)}`) as unknown as Promise<{ ok: boolean }>;
+    return this.http("DELETE", `/me/connectors/${encodeURIComponent(id)}`) as unknown as Promise<{ ok: boolean }>;
   }
 
   async verifyConnector(id: string, extra?: Record<string, string>): Promise<VerifyResult> {
-    return this.http('POST', `/me/connectors/${encodeURIComponent(id)}/verify`, { extra }) as unknown as Promise<VerifyResult>;
+    return this.http("POST", `/me/connectors/${encodeURIComponent(id)}/verify`, {
+      extra,
+    }) as unknown as Promise<VerifyResult>;
   }
 
   async listCliTools(): Promise<{ tools: CliToolListing[] }> {
-    return this.http('GET', '/cli-tools') as unknown as Promise<{ tools: CliToolListing[] }>;
+    return this.http("GET", "/cli-tools") as unknown as Promise<{ tools: CliToolListing[] }>;
   }
 
   async refreshCliTools(tool?: string): Promise<{ tools: CliToolListing[] }> {
-    return this.http('POST', `/cli-tools/refresh${tool ? `?tool=${encodeURIComponent(tool)}` : ''}`) as unknown as Promise<{
+    return this.http(
+      "POST",
+      `/cli-tools/refresh${tool ? `?tool=${encodeURIComponent(tool)}` : ""}`,
+    ) as unknown as Promise<{
       tools: CliToolListing[];
     }>;
   }
 
   async setCliToolEnabled(id: string, enabled: boolean): Promise<{ tools: CliToolListing[] }> {
-    return this.http('PUT', `/cli-tools/${encodeURIComponent(id)}`, { enabled }) as unknown as Promise<{
+    return this.http("PUT", `/cli-tools/${encodeURIComponent(id)}`, { enabled }) as unknown as Promise<{
       tools: CliToolListing[];
     }>;
   }
 
   async listApiKeys() {
-    return this.http('GET', '/api-keys') as unknown as Promise<Record<string, unknown>>;
+    return this.http("GET", "/api-keys") as unknown as Promise<Record<string, unknown>>;
   }
   async saveApiKey(id: string, key: string) {
-    return this.http('PUT', `/api-keys/${encodeURIComponent(id)}`, { key }) as unknown as Promise<Record<string, unknown>>;
+    return this.http("PUT", `/api-keys/${encodeURIComponent(id)}`, { key }) as unknown as Promise<
+      Record<string, unknown>
+    >;
   }
   async verifyApiKey(id: string) {
-    return this.http('POST', `/api-keys/${encodeURIComponent(id)}/verify`) as unknown as Promise<Record<string, unknown>>;
+    return this.http("POST", `/api-keys/${encodeURIComponent(id)}/verify`) as unknown as Promise<
+      Record<string, unknown>
+    >;
   }
   async deleteApiKey(id: string) {
-    return this.http('DELETE', `/api-keys/${encodeURIComponent(id)}`) as unknown as Promise<Record<string, unknown>>;
+    return this.http("DELETE", `/api-keys/${encodeURIComponent(id)}`) as unknown as Promise<Record<string, unknown>>;
   }
   async getApiKeyCredential(id: string) {
-    return this.http('GET', `/api-keys/${encodeURIComponent(id)}/credential`) as unknown as Promise<{ key?: string; error?: string }>;
+    return this.http("GET", `/api-keys/${encodeURIComponent(id)}/credential`) as unknown as Promise<{
+      key?: string;
+      error?: string;
+    }>;
   }
 
   async verifyWorkspaceAtlassian(name: string): Promise<VerifyResult> {
-    return this.http('POST', `/workspaces/${encodeURIComponent(name)}/verify-atlassian`, {}) as unknown as Promise<VerifyResult>;
+    return this.http(
+      "POST",
+      `/workspaces/${encodeURIComponent(name)}/verify-atlassian`,
+      {},
+    ) as unknown as Promise<VerifyResult>;
   }
 
   async verifyRepoGithub(name: string, repoName: string): Promise<VerifyResult> {
     return this.http(
-      'POST',
+      "POST",
       `/workspaces/${encodeURIComponent(name)}/repos/${encodeURIComponent(repoName)}/verify-github`,
       {},
     ) as unknown as Promise<VerifyResult>;
   }
 
   async getWorkspaceChannels(name: string): Promise<ChannelsRecord> {
-    return this.http('GET', `/workspaces/${encodeURIComponent(name)}/channels`) as unknown as Promise<ChannelsRecord>;
+    return this.http("GET", `/workspaces/${encodeURIComponent(name)}/channels`) as unknown as Promise<ChannelsRecord>;
   }
 
   async saveWorkspaceChannels(
     name: string,
     body: { discord?: { botToken: string; textChannels: string[]; voiceChannels: string[] } },
   ): Promise<ChannelsRecord> {
-    return this.http('PUT', `/workspaces/${encodeURIComponent(name)}/channels`, body) as unknown as Promise<ChannelsRecord>;
+    return this.http(
+      "PUT",
+      `/workspaces/${encodeURIComponent(name)}/channels`,
+      body,
+    ) as unknown as Promise<ChannelsRecord>;
   }
 
   async verifyWorkspaceDiscord(name: string): Promise<VerifyResult> {
-    return this.http('POST', `/workspaces/${encodeURIComponent(name)}/channels/verify-discord`, {}) as unknown as Promise<VerifyResult>;
+    return this.http(
+      "POST",
+      `/workspaces/${encodeURIComponent(name)}/channels/verify-discord`,
+      {},
+    ) as unknown as Promise<VerifyResult>;
   }
 
   /**
@@ -478,7 +529,10 @@ export class SwarmClient {
    */
   async getWorkspaceDiscordConfig(name: string): Promise<DiscordChannelsConfig | null> {
     try {
-      return (await this.http('GET', `/workspaces/${encodeURIComponent(name)}/channels/discord-token`)) as unknown as DiscordChannelsConfig;
+      return (await this.http(
+        "GET",
+        `/workspaces/${encodeURIComponent(name)}/channels/discord-token`,
+      )) as unknown as DiscordChannelsConfig;
     } catch {
       return null;
     }
@@ -492,24 +546,24 @@ export class SwarmClient {
    */
   async getVoiceKeys(): Promise<VoiceKeys | null> {
     try {
-      return (await this.http('GET', '/me/voice/keys')) as unknown as VoiceKeys;
+      return (await this.http("GET", "/me/voice/keys")) as unknown as VoiceKeys;
     } catch {
       return null;
     }
   }
 
   async getMyVoice(): Promise<Record<string, unknown>> {
-    return this.http('GET', '/me/voice');
+    return this.http("GET", "/me/voice");
   }
 
   async saveMyVoice(body: unknown): Promise<Record<string, unknown>> {
-    return this.http('PUT', '/me/voice', body);
+    return this.http("PUT", "/me/voice", body);
   }
 
   /** Subscribe to /ws events. Reconnects every 2s until the returned fn is called. */
   subscribe(onEvent: (e: SwarmEvent) => void): () => void {
     const wsUrl =
-      this.baseUrl.replace(/^http/, 'ws') + '/ws' + (this.token ? `?token=${encodeURIComponent(this.token)}` : '');
+      this.baseUrl.replace(/^http/, "ws") + "/ws" + (this.token ? `?token=${encodeURIComponent(this.token)}` : "");
     let stopped = false;
     let current: WsLike | null = null;
     let timer: NodeJS.Timeout | null = null;
@@ -518,17 +572,17 @@ export class SwarmClient {
       if (stopped) return;
       const ws = this.wsFactory(wsUrl);
       current = ws;
-      ws.on('message', (data) => {
+      ws.on("message", (data) => {
         try {
           onEvent(JSON.parse(String(data)) as SwarmEvent);
         } catch {
           /* non-JSON frame — ignore */
         }
       });
-      ws.on('close', () => {
+      ws.on("close", () => {
         if (!stopped) timer = setTimeout(connect, 2000);
       });
-      ws.on('error', () => {
+      ws.on("error", () => {
         /* close follows; reconnect handles it */
       });
     };
@@ -545,7 +599,10 @@ export class SwarmClient {
   async work(method: string, path: string, body?: unknown): Promise<{ status: number; payload: unknown }> {
     const res = await this.fetchImpl(`${this.baseUrl}${path}`, {
       method,
-      headers: { ...(body !== undefined ? { 'content-type': 'application/json' } : {}), ...(this.token ? { authorization: `Bearer ${this.token}` } : {}) },
+      headers: {
+        ...(body !== undefined ? { "content-type": "application/json" } : {}),
+        ...(this.token ? { authorization: `Bearer ${this.token}` } : {}),
+      },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
     return { status: res.status, payload: await res.json().catch(() => ({})) };
@@ -558,7 +615,7 @@ export class SwarmClient {
     // what deleteAgent/deleteWorkspace send. That 400 silently defeated every
     // delete-outcome removal through the broker until this was e2e-tested.
     const headers: Record<string, string> = {};
-    if (body !== undefined) headers['content-type'] = 'application/json';
+    if (body !== undefined) headers["content-type"] = "application/json";
     if (this.token) headers.authorization = `Bearer ${this.token}`;
     const res = await this.fetchImpl(`${this.baseUrl}${path}`, {
       method,

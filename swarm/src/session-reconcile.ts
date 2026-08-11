@@ -22,11 +22,11 @@ export interface ReconcileFacts {
 
 export type ReconcileAction =
   /** Take the live process back under management, as-is. */
-  | 'adopt'
+  | "adopt"
   /** Drop the record; there is no live process behind it. */
-  | 'forget'
+  | "forget"
   /** Kill the live process, then drop the record. */
-  | 'kill';
+  | "kill";
 
 export interface ReconcileVerdict {
   action: ReconcileAction;
@@ -45,14 +45,14 @@ export function classifySession(facts: ReconcileFacts): ReconcileVerdict {
   // Mechanical: the process is gone, so there is nothing to adopt. The record
   // is a tombstone from a crash, a reboot, or a manual tmux kill.
   if (!facts.processAlive) {
-    return { action: 'forget', reason: 'tmux session is gone; record is stale' };
+    return { action: "forget", reason: "tmux session is gone; record is stale" };
   }
 
   // Mechanical: the agent file is byte-identical to launch time, so the live
   // process still matches its definition exactly. This is the happy path — a
   // plain server restart with the crew untouched.
   if (facts.currentProfileHash === facts.recordedProfileHash) {
-    return { action: 'adopt', reason: 'profile unchanged; session still matches its definition' };
+    return { action: "adopt", reason: "profile unchanged; session still matches its definition" };
   }
 
   // Policy: the process is alive but its definition moved out from under it.
@@ -79,7 +79,7 @@ export function classifySession(facts: ReconcileFacts): ReconcileVerdict {
  */
 function resolveChangedProfile(facts: ReconcileFacts): ReconcileVerdict {
   if (facts.currentProfileHash === null) {
-    return { action: 'adopt', reason: 'agent definition is gone, but the live process was left running' };
+    return { action: "adopt", reason: "agent definition is gone, but the live process was left running" };
   }
-  return { action: 'adopt', reason: 'profile changed since launch; live process kept' };
+  return { action: "adopt", reason: "profile changed since launch; live process kept" };
 }

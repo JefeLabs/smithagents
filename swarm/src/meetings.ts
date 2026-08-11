@@ -1,22 +1,22 @@
-import { randomUUID } from 'node:crypto';
-import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
+import { randomUUID } from "node:crypto";
 // Agent dispatch types — verified against the installed @livekit/protocol
 // version (Task 4 pulls current docs for the worker side).
-import { RoomConfiguration, RoomAgentDispatch } from '@livekit/protocol';
-import type { ComposedAgent } from './agents.js';
-import { findAgent } from './agents.js';
-import type { LiveKitConfig } from './config.js';
+import { RoomAgentDispatch, RoomConfiguration } from "@livekit/protocol";
+import { AccessToken, RoomServiceClient } from "livekit-server-sdk";
+import type { ComposedAgent } from "./agents.js";
+import { findAgent } from "./agents.js";
+import type { LiveKitConfig } from "./config.js";
 
 // The name the LiveKit agent worker registers under (Task 4 `cli.runApp`).
 // Explicit dispatch (below) uses it to route our worker into a meeting room.
-const AGENT_NAME = 'smith-agent';
+const AGENT_NAME = "smith-agent";
 
 export interface Meeting {
   id: string;
   roomName: string;
   agentIds: string[];
-  mode: 'solo' | 'council';
-  status: 'open' | 'closed';
+  mode: "solo" | "council";
+  status: "open" | "closed";
   createdAt: string;
 }
 
@@ -52,13 +52,13 @@ export class MeetingOrchestrator {
     deps?: { roomService?: RoomServiceLike; mintToken?: MintToken },
   ) {
     // livekit-server-sdk's RoomServiceClient takes an HTTP(S) host; LIVEKIT_URL is ws(s).
-    const httpUrl = cfg.url.replace(/^ws/, 'http');
+    const httpUrl = cfg.url.replace(/^ws/, "http");
     this.roomService =
       deps?.roomService ?? (new RoomServiceClient(httpUrl, cfg.apiKey, cfg.apiSecret) as unknown as RoomServiceLike);
     this.mintToken =
       deps?.mintToken ??
       (async (identity, room, agentIds) => {
-        const at = new AccessToken(cfg.apiKey, cfg.apiSecret, { identity, ttl: '2h' });
+        const at = new AccessToken(cfg.apiKey, cfg.apiSecret, { identity, ttl: "2h" });
         at.addGrant({ roomJoin: true, room });
         // Explicit agent dispatch: LiveKit sends our worker into this room and
         // hands it the chosen composed-agent ids as metadata (Task 4 reads them).
@@ -71,15 +71,15 @@ export class MeetingOrchestrator {
 
   async open(scope: { agent?: string; all?: boolean }): Promise<MeetingJoin> {
     let agentIds: string[];
-    let mode: Meeting['mode'];
+    let mode: Meeting["mode"];
     if (scope.all) {
       agentIds = this.agents.map((a) => a.id);
-      mode = 'council';
+      mode = "council";
     } else {
       const found = scope.agent ? findAgent(this.agents, scope.agent) : undefined;
       if (!found) throw new Error(`unknown agent: ${scope.agent}`);
       agentIds = [found.id];
-      mode = 'solo';
+      mode = "solo";
     }
 
     const id = randomUUID();
@@ -93,20 +93,20 @@ export class MeetingOrchestrator {
       roomName,
       agentIds,
       mode,
-      status: 'open',
+      status: "open",
       createdAt: new Date().toISOString(),
     };
     this.meetings.set(id, meeting);
 
-    const participantToken = await this.mintToken('human', roomName, agentIds);
+    const participantToken = await this.mintToken("human", roomName, agentIds);
     return { meetingId: id, roomName, serverUrl: this.cfg.url, participantToken };
   }
 
   async close(id: string): Promise<void> {
     const meeting = this.meetings.get(id);
-    if (!meeting || meeting.status === 'closed') return;
+    if (!meeting || meeting.status === "closed") return;
     await this.roomService.deleteRoom(meeting.roomName);
-    meeting.status = 'closed';
+    meeting.status = "closed";
   }
 
   list(): Meeting[] {

@@ -1,12 +1,12 @@
 // Composed-agent registry — the swarm owns agent identity as data.
 // One JSON file per agent under .smith/agents/. Replaces the old anonymous
 // name pool + hardcoded squad rosters (see the v1 design spec).
-import { readdir, readFile, mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import type { Gender, Reactions } from './personas.js';
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import type { Gender, Reactions } from "./personas.js";
 
 export interface AgentEngine {
-  cli: 'agy' | 'claude' | 'codex' | 'opencode' | 'copilot';
+  cli: "agy" | "claude" | "codex" | "opencode" | "copilot";
   model: string;
 }
 
@@ -57,13 +57,13 @@ function assertAgent(file: string, v: unknown): ComposedAgent {
   const engine = o.engine as Record<string, unknown> | undefined;
   const ok =
     o &&
-    typeof o.id === 'string' &&
-    typeof o.name === 'string' &&
-    typeof o.role === 'string' &&
-    typeof o.directives === 'string' &&
+    typeof o.id === "string" &&
+    typeof o.name === "string" &&
+    typeof o.role === "string" &&
+    typeof o.directives === "string" &&
     engine &&
-    typeof engine.cli === 'string' &&
-    typeof engine.model === 'string';
+    typeof engine.cli === "string" &&
+    typeof engine.model === "string";
   if (!ok) {
     throw new Error(`Invalid composed-agent file ${file}: requires id, name, role, directives, engine{cli,model}`);
   }
@@ -78,10 +78,10 @@ export async function loadAgents(dir: string): Promise<ComposedAgent[]> {
   } catch {
     return [];
   }
-  const files = entries.filter((f) => f.endsWith('.json'));
+  const files = entries.filter((f) => f.endsWith(".json"));
   const agents: ComposedAgent[] = [];
   for (const file of files) {
-    const raw = await readFile(join(dir, file), 'utf8');
+    const raw = await readFile(join(dir, file), "utf8");
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);

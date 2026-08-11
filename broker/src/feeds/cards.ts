@@ -8,10 +8,10 @@
  * Card creation is a SEPARATE consumer from the digest. If this fails, the
  * release is still spoken — nothing about small talk depends on the boards.
  */
-import type { FeedItem } from './types.ts';
+import type { FeedItem } from "./types.ts";
 
-export function boardTypeFor(item: FeedItem): 'reactive' | 'maintenance' {
-  return item.release?.security ? 'reactive' : 'maintenance';
+export function boardTypeFor(item: FeedItem): "reactive" | "maintenance" {
+  return item.release?.security ? "reactive" : "maintenance";
 }
 
 export function cardTitle(item: FeedItem, currentVersion: string): string {
@@ -29,8 +29,8 @@ export async function cardForRelease(
   item: FeedItem,
   ctx: { workspace: string; currentVersion: string },
 ): Promise<{ carded: boolean; reason?: string }> {
-  if (!item.release) return { carded: false, reason: 'not a release' };
-  if (item.cardedAt) return { carded: false, reason: 'already carded' };
+  if (!item.release) return { carded: false, reason: "not a release" };
+  if (item.cardedAt) return { carded: false, reason: "already carded" };
 
   const wanted = boardTypeFor(item);
   try {
@@ -38,7 +38,7 @@ export async function cardForRelease(
     if (!board) return { carded: false, reason: `no ${wanted} board for ${ctx.workspace}` };
 
     const notes = await deps.plan(item, ctx.currentVersion);
-    await deps.addCard(board.id, { title: cardTitle(item, ctx.currentVersion), notes, columnId: 'triage' });
+    await deps.addCard(board.id, { title: cardTitle(item, ctx.currentVersion), notes, columnId: "triage" });
     return { carded: true };
   } catch (err) {
     return { carded: false, reason: String((err as Error).message ?? err) };

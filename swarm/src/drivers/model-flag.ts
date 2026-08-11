@@ -35,7 +35,7 @@ export function isValidModelId(id: string): boolean {
  */
 export function modelFlag(model?: string): string {
   const id = model?.trim();
-  if (!id || id === 'default') return '';
+  if (!id || id === "default") return "";
   if (!isValidModelId(id)) {
     throw new Error(
       `Invalid model id ${JSON.stringify(id)}. Expected something like "claude-opus" or ` +

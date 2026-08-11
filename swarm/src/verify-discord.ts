@@ -9,13 +9,13 @@ export interface VerifyResult {
   detail: string;
 }
 
-const DISCORD_API = 'https://discord.com/api/v10';
+const DISCORD_API = "https://discord.com/api/v10";
 
 export async function verifyDiscordToken(token: string, fetchImpl: typeof fetch = fetch): Promise<VerifyResult> {
   try {
     const res = await fetchImpl(`${DISCORD_API}/users/@me`, { headers: { authorization: `Bot ${token}` } });
     const body = (await res.json().catch(() => ({}))) as { username?: string; message?: string };
-    if (!res.ok) return { ok: false, detail: `Discord ${res.status}: ${body.message ?? 'unauthorized'}` };
+    if (!res.ok) return { ok: false, detail: `Discord ${res.status}: ${body.message ?? "unauthorized"}` };
     return { ok: true, detail: `Bot authenticated as ${body.username}` };
   } catch (err) {
     return { ok: false, detail: `Could not reach Discord: ${err instanceof Error ? err.message : String(err)}` };

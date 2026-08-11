@@ -11,13 +11,13 @@
 // Tasks opt into Docker mode via a `runtime` field on the manifest.
 // ---------------------------------------------------------------------------
 
-import { execFile } from 'node:child_process';
-import { readFile, unlink, mkdir, writeFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import type { DockerConfig, RuntimeType } from './types.js';
-import type { WorkerPool } from './remote-runtime.js';
+import { execFile } from "node:child_process";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { WorkerPool } from "./remote-runtime.js";
+import type { DockerConfig, RuntimeType } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // RuntimeAdapter Interface
@@ -116,48 +116,36 @@ export class TmuxRuntime implements RuntimeAdapter {
   private readonly exitDir: string;
 
   constructor() {
-    this.exitDir = join(tmpdir(), '.smith-exits');
+    this.exitDir = join(tmpdir(), ".smith-exits");
   }
 
-  async launch(
-    sessionName: string,
-    command: string,
-    cwd: string,
-    env?: Record<string, string>,
-  ): Promise<void> {
+  async launch(sessionName: string, command: string, cwd: string, env?: Record<string, string>): Promise<void> {
     await mkdir(this.exitDir, { recursive: true });
 
     const exitFile = this.exitFilePath(sessionName);
     const channel = `${sessionName}-done`;
 
-    const wrappedCommand = [
-      command,
-      `; echo $? > ${this.shellEscape(exitFile)}`,
-      `; tmux wait-for -S ${channel}`,
-    ].join(' ');
+    const wrappedCommand = [command, `; echo $? > ${this.shellEscape(exitFile)}`, `; tmux wait-for -S ${channel}`].join(
+      " ",
+    );
 
-    const envArgs = env ? Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]) : [];
+    const envArgs = env ? Object.entries(env).flatMap(([k, v]) => ["-e", `${k}=${v}`]) : [];
 
-    await this.tmux([
-      'new-session',
-      '-d',
-      ...envArgs,
-      '-s', sessionName,
-      '-c', cwd,
-      wrappedCommand,
-    ]);
+    await this.tmux(["new-session", "-d", ...envArgs, "-s", sessionName, "-c", cwd, wrappedCommand]);
   }
 
   async waitFor(sessionName: string): Promise<number> {
     const channel = `${sessionName}-done`;
     const exitFile = this.exitFilePath(sessionName);
 
-    await this.tmux(['wait-for', channel]);
+    await this.tmux(["wait-for", channel]);
 
     try {
-      const raw = await readFile(exitFile, 'utf-8');
+      const raw = await readFile(exitFile, "utf-8");
       const code = parseInt(raw.trim(), 10);
-      await unlink(exitFile).catch(() => {/* ignore */});
+      await unlink(exitFile).catch(() => {
+        /* ignore */
+      });
       return isNaN(code) ? 1 : code;
     } catch {
       return 1;
@@ -166,7 +154,7 @@ export class TmuxRuntime implements RuntimeAdapter {
 
   async exists(sessionName: string): Promise<boolean> {
     try {
-      await this.tmux(['has-session', '-t', sessionName]);
+      await this.tmux(["has-session", "-t", sessionName]);
       return true;
     } catch {
       return false;
@@ -175,7 +163,7 @@ export class TmuxRuntime implements RuntimeAdapter {
 
   async kill(sessionName: string): Promise<void> {
     try {
-      await this.tmux(['kill-session', '-t', sessionName]);
+      await this.tmux(["kill-session", "-t", sessionName]);
     } catch {
       // Already dead — fine
     }
@@ -186,20 +174,20 @@ export class TmuxRuntime implements RuntimeAdapter {
     let killed = 0;
     for (const name of sessions) {
       try {
-        await this.tmux(['kill-session', '-t', name]);
+        await this.tmux(["kill-session", "-t", name]);
         killed++;
-      } catch { /* continue */ }
+      } catch {
+        /* continue */
+      }
     }
     return killed;
   }
 
   async listByPrefix(prefix: string): Promise<string[]> {
     try {
-      const { stdout } = await this.tmux([
-        'list-sessions', '-F', '#{session_name}',
-      ]);
+      const { stdout } = await this.tmux(["list-sessions", "-F", "#{session_name}"]);
       return stdout
-        .split('\n')
+        .split("\n")
         .map((l) => l.trim())
         .filter((n) => n.startsWith(prefix));
     } catch {
@@ -209,54 +197,42 @@ export class TmuxRuntime implements RuntimeAdapter {
 
   async captureOutput(sessionName: string): Promise<string> {
     try {
-      const { stdout } = await this.tmux([
-        'capture-pane', '-t', sessionName, '-p', '-S', '-',
-      ]);
+      const { stdout } = await this.tmux(["capture-pane", "-t", sessionName, "-p", "-S", "-"]);
       return stdout;
     } catch {
-      return '';
+      return "";
     }
   }
 
-  async sendKeys(
-    sessionName: string,
-    keys: string,
-    target?: string,
-  ): Promise<void> {
-    const tmuxTarget = target
-      ? `${sessionName}:${target}`
-      : sessionName;
+  async sendKeys(sessionName: string, keys: string, target?: string): Promise<void> {
+    const tmuxTarget = target ? `${sessionName}:${target}` : sessionName;
 
-    await this.tmux(['send-keys', '-t', tmuxTarget, keys, 'Enter']);
+    await this.tmux(["send-keys", "-t", tmuxTarget, keys, "Enter"]);
   }
 
-  async sendText(
-    sessionName: string,
-    text: string,
-    target?: string,
-  ): Promise<void> {
+  async sendText(sessionName: string, text: string, target?: string): Promise<void> {
     const tmuxTarget = target ? `${sessionName}:${target}` : sessionName;
     const buffer = `smith-input-${Date.now()}`;
     // set-buffer + paste-buffer -p = bracketed paste: multi-line text arrives
     // as one input block; -d frees the buffer after pasting.
-    await this.tmux(['set-buffer', '-b', buffer, '--', text]);
-    await this.tmux(['paste-buffer', '-p', '-d', '-b', buffer, '-t', tmuxTarget]);
-    await this.tmux(['send-keys', '-t', tmuxTarget, 'Enter']);
+    await this.tmux(["set-buffer", "-b", buffer, "--", text]);
+    await this.tmux(["paste-buffer", "-p", "-d", "-b", buffer, "-t", tmuxTarget]);
+    await this.tmux(["send-keys", "-t", tmuxTarget, "Enter"]);
   }
 
   // ── Private helpers ──────────────────────────────────────────────────
 
-  private tmux(
-    args: string[],
-  ): Promise<{ stdout: string; stderr: string }> {
+  private tmux(args: string[]): Promise<{ stdout: string; stderr: string }> {
     return new Promise((resolve, reject) => {
-      execFile('tmux', args, { timeout: 0 }, (error, stdout, stderr) => {
+      execFile("tmux", args, { timeout: 0 }, (error, stdout, stderr) => {
         if (error) {
-          if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-            reject(new Error(
-              'tmux is not installed or not in PATH. ' +
-              'Install with: brew install tmux (macOS) or apt-get install tmux (Linux)',
-            ));
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+            reject(
+              new Error(
+                "tmux is not installed or not in PATH. " +
+                  "Install with: brew install tmux (macOS) or apt-get install tmux (Linux)",
+              ),
+            );
             return;
           }
           reject(error);
@@ -306,68 +282,61 @@ export class DockerRuntime implements RuntimeAdapter {
     this.dockerConfig = dockerConfig;
   }
 
-  async launch(
-    sessionName: string,
-    command: string,
-    cwd: string,
-    env?: Record<string, string>,
-  ): Promise<void> {
-    const {
-      image,
-      network,
-      extraMounts,
-      extraEnv,
-      cpuLimit,
-      memoryLimit,
-      shmSize,
-    } = this.dockerConfig;
+  async launch(sessionName: string, command: string, cwd: string, env?: Record<string, string>): Promise<void> {
+    const { image, network, extraMounts, extraEnv, cpuLimit, memoryLimit, shmSize } = this.dockerConfig;
 
     // Build docker run args
     const args: string[] = [
-      'run', '-d',
-      '--name', sessionName,
+      "run",
+      "-d",
+      "--name",
+      sessionName,
 
       // Mount the worktree into the container at /workspace
-      '-v', `${cwd}:/workspace`,
-      '-w', '/workspace',
+      "-v",
+      `${cwd}:/workspace`,
+      "-w",
+      "/workspace",
 
       // Environment variables
-      '-e', 'SMITH_RUNTIME=docker',
-      '-e', `SMITH_SESSION=${sessionName}`,
+      "-e",
+      "SMITH_RUNTIME=docker",
+      "-e",
+      `SMITH_SESSION=${sessionName}`,
     ];
 
     // Network mode
     if (network) {
-      args.push('--network', network);
+      args.push("--network", network);
     }
 
     // Resource limits
     if (cpuLimit) {
-      args.push('--cpus', cpuLimit);
+      args.push("--cpus", cpuLimit);
     }
     if (memoryLimit) {
-      args.push('--memory', memoryLimit);
+      args.push("--memory", memoryLimit);
     }
 
     // Shared memory for Playwright/Chromium (default: 2g)
-    args.push('--shm-size', shmSize ?? '2g');
+    args.push("--shm-size", shmSize ?? "2g");
 
     // Extra volume mounts (e.g., SSH keys, git config)
     if (extraMounts) {
       for (const mount of extraMounts) {
-        args.push('-v', mount);
+        args.push("-v", mount);
       }
     }
 
     // Extra environment variables
     if (extraEnv) {
       for (const [key, value] of Object.entries(extraEnv)) {
-        args.push('-e', `${key}=${value}`);
+        args.push("-e", `${key}=${value}`);
       }
     }
     if (env) {
       for (const [key, value] of Object.entries(env)) {
-        args.push('-e', `${key}=${value}`);
+        args.push("-e", `${key}=${value}`);
       }
     }
 
@@ -376,7 +345,8 @@ export class DockerRuntime implements RuntimeAdapter {
     // spawn tmux sessions inside the same container
     args.push(
       image,
-      '/bin/bash', '-c',
+      "/bin/bash",
+      "-c",
       `tmux new-session -d -s main '${command.replace(/'/g, "'\\''")}' && tmux wait-for main-done`,
     );
 
@@ -387,8 +357,8 @@ export class DockerRuntime implements RuntimeAdapter {
     // `docker wait` blocks until the container stops and prints the exit code
     try {
       const { stdout } = await this.docker(
-        ['wait', sessionName],
-        0,  // no timeout — block indefinitely
+        ["wait", sessionName],
+        0, // no timeout — block indefinitely
       );
       const code = parseInt(stdout.trim(), 10);
       return isNaN(code) ? 1 : code;
@@ -399,10 +369,8 @@ export class DockerRuntime implements RuntimeAdapter {
 
   async exists(sessionName: string): Promise<boolean> {
     try {
-      const { stdout } = await this.docker([
-        'inspect', '-f', '{{.State.Running}}', sessionName,
-      ]);
-      return stdout.trim() === 'true';
+      const { stdout } = await this.docker(["inspect", "-f", "{{.State.Running}}", sessionName]);
+      return stdout.trim() === "true";
     } catch {
       return false;
     }
@@ -410,7 +378,7 @@ export class DockerRuntime implements RuntimeAdapter {
 
   async kill(sessionName: string): Promise<void> {
     try {
-      await this.docker(['rm', '-f', sessionName]);
+      await this.docker(["rm", "-f", sessionName]);
     } catch {
       // Container may already be gone
     }
@@ -421,22 +389,20 @@ export class DockerRuntime implements RuntimeAdapter {
     let killed = 0;
     for (const name of containers) {
       try {
-        await this.docker(['rm', '-f', name]);
+        await this.docker(["rm", "-f", name]);
         killed++;
-      } catch { /* continue */ }
+      } catch {
+        /* continue */
+      }
     }
     return killed;
   }
 
   async listByPrefix(prefix: string): Promise<string[]> {
     try {
-      const { stdout } = await this.docker([
-        'ps', '-a',
-        '--filter', `name=^${prefix}`,
-        '--format', '{{.Names}}',
-      ]);
+      const { stdout } = await this.docker(["ps", "-a", "--filter", `name=^${prefix}`, "--format", "{{.Names}}"]);
       return stdout
-        .split('\n')
+        .split("\n")
         .map((l) => l.trim())
         .filter((n) => n.length > 0);
     } catch {
@@ -446,68 +412,49 @@ export class DockerRuntime implements RuntimeAdapter {
 
   async captureOutput(sessionName: string): Promise<string> {
     try {
-      const { stdout } = await this.docker([
-        'logs', '--tail', '5000', sessionName,
-      ]);
+      const { stdout } = await this.docker(["logs", "--tail", "5000", sessionName]);
       return stdout;
     } catch {
-      return '';
+      return "";
     }
   }
 
-  async sendKeys(
-    sessionName: string,
-    keys: string,
-    target?: string,
-  ): Promise<void> {
+  async sendKeys(sessionName: string, keys: string, target?: string): Promise<void> {
     // Reach into the container's tmux server via docker exec.
     // The tmux target inside the container is the session name
     // (typically "main" for the Alpha agent).
-    const tmuxTarget = target ?? 'main';
+    const tmuxTarget = target ?? "main";
 
-    await this.docker([
-      'exec', sessionName,
-      'tmux', 'send-keys', '-t', tmuxTarget, keys, 'Enter',
-    ]);
+    await this.docker(["exec", sessionName, "tmux", "send-keys", "-t", tmuxTarget, keys, "Enter"]);
   }
 
-  async sendText(
-    sessionName: string,
-    text: string,
-    target?: string,
-  ): Promise<void> {
-    const tmuxTarget = target ?? 'main';
+  async sendText(sessionName: string, text: string, target?: string): Promise<void> {
+    const tmuxTarget = target ?? "main";
     const buffer = `smith-input-${Date.now()}`;
-    await this.docker(['exec', sessionName, 'tmux', 'set-buffer', '-b', buffer, '--', text]);
-    await this.docker(['exec', sessionName, 'tmux', 'paste-buffer', '-p', '-d', '-b', buffer, '-t', tmuxTarget]);
-    await this.docker(['exec', sessionName, 'tmux', 'send-keys', '-t', tmuxTarget, 'Enter']);
+    await this.docker(["exec", sessionName, "tmux", "set-buffer", "-b", buffer, "--", text]);
+    await this.docker(["exec", sessionName, "tmux", "paste-buffer", "-p", "-d", "-b", buffer, "-t", tmuxTarget]);
+    await this.docker(["exec", sessionName, "tmux", "send-keys", "-t", tmuxTarget, "Enter"]);
   }
 
   // ── Private helpers ──────────────────────────────────────────────────
 
-  private docker(
-    args: string[],
-    timeout: number = 30_000,
-  ): Promise<{ stdout: string; stderr: string }> {
+  private docker(args: string[], timeout: number = 30_000): Promise<{ stdout: string; stderr: string }> {
     return new Promise((resolve, reject) => {
-      execFile(
-        'docker', args,
-        { timeout, maxBuffer: 10 * 1024 * 1024 },
-        (error, stdout, stderr) => {
-          if (error) {
-            if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-              reject(new Error(
-                'Docker is not installed or not in PATH. ' +
-                'Install from: https://docs.docker.com/get-docker/',
-              ));
-              return;
-            }
-            reject(error);
+      execFile("docker", args, { timeout, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
+        if (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+            reject(
+              new Error(
+                "Docker is not installed or not in PATH. " + "Install from: https://docs.docker.com/get-docker/",
+              ),
+            );
             return;
           }
-          resolve({ stdout, stderr });
-        },
-      );
+          reject(error);
+          return;
+        }
+        resolve({ stdout, stderr });
+      });
     });
   }
 }
@@ -529,32 +476,33 @@ export function createRuntime(
   workerPool?: WorkerPool,
 ): RuntimeAdapter {
   switch (runtime) {
-    case 'tmux':
+    case "tmux":
       return new TmuxRuntime();
 
-    case 'docker':
+    case "docker":
       if (!dockerConfig) {
         throw new Error(
-          'DockerConfig is required when runtime is "docker". ' +
-          'Provide it via OrchestratorConfig.docker.',
+          'DockerConfig is required when runtime is "docker". ' + "Provide it via OrchestratorConfig.docker.",
         );
       }
       return new DockerRuntime(dockerConfig);
 
-    case 'remote':
-    case 'remote-tmux':
-    case 'remote-docker': {
+    case "remote":
+    case "remote-tmux":
+    case "remote-docker": {
       if (!workerPool) {
         throw new Error(
           'WorkerPool is required when runtime is "remote". ' +
-          'The server must have a WorkerPool with connected workers.',
+            "The server must have a WorkerPool with connected workers.",
         );
       }
       // Lazy + require (not a top-level import) to avoid a runtime circular
       // import; createRequire is the ESM-legal way to do that synchronously
       // since this package has no global `require`.
-      const { RemoteRuntime } = createRequire(import.meta.url)('./remote-runtime.js') as typeof import('./remote-runtime.js');
-      const kind = runtime === 'remote-tmux' ? 'tmux' : runtime === 'remote-docker' ? 'docker' : undefined;
+      const { RemoteRuntime } = createRequire(import.meta.url)(
+        "./remote-runtime.js",
+      ) as typeof import("./remote-runtime.js");
+      const kind = runtime === "remote-tmux" ? "tmux" : runtime === "remote-docker" ? "docker" : undefined;
       return new RemoteRuntime(workerPool, kind);
     }
 

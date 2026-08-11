@@ -10,7 +10,7 @@
  * a vote. Instead each member gets one short call on the broker's existing
  * model client, seeded with only that member's directives.
  */
-import { pickLeader, type Claim, type Rankable } from './leadership.ts';
+import { type Claim, pickLeader, type Rankable } from "./leadership.ts";
 
 /** One short, non-streaming model call. Injected so tests script it without network. */
 export type AskFactory = (params: { system: string; prompt: string }) => Promise<string>;
@@ -29,7 +29,7 @@ export interface Candidate {
 export interface ElectionResult {
   leader: string | null;
   claims: Claim[];
-  method: 'vote' | 'rank';
+  method: "vote" | "rank";
 }
 
 /** Both role vocabularies, as leadership.ts wants them. */
@@ -52,7 +52,7 @@ export function parseClaim(agent: string, raw: string): Claim {
         agent,
         willing: Boolean(body.willing),
         confidence: Number.isFinite(confidence) ? Math.min(1, Math.max(0, confidence)) : 0,
-        reason: typeof body.reason === 'string' ? body.reason : '',
+        reason: typeof body.reason === "string" ? body.reason : "",
       };
     } catch {
       /* fall through to the decline below */
@@ -62,15 +62,15 @@ export function parseClaim(agent: string, raw: string): Claim {
 }
 
 function promptFor(groupName: string, members: Candidate[]): string {
-  const roster = members.map((m) => `- ${m.name} (${m.role})`).join('\n');
+  const roster = members.map((m) => `- ${m.name} (${m.role})`).join("\n");
   return [
     `A working group called "${groupName}" has just formed. Its members:`,
     roster,
-    '',
-    'Should YOU lead this group? Consider what the group is for and what you are for.',
-    'Answer with JSON only, no prose:',
+    "",
+    "Should YOU lead this group? Consider what the group is for and what you are for.",
+    "Answer with JSON only, no prose:",
     '{"willing": true|false, "confidence": 0.0-1.0, "reason": "one short sentence"}',
-  ].join('\n');
+  ].join("\n");
 }
 
 /**

@@ -6,12 +6,23 @@
  * Every dependency is injected (structural interfaces) so the whole loop
  * unit-tests with fakes; main.ts builds the real ones.
  */
-import type { AgentDirectory, AgentPresence } from './directory.ts';
-import type { BrainTurn } from './brain.ts';
-import type { MemoryPort, MemoryScope } from './memory.ts';
-import { whoIsAddressed } from './addressing.ts';
-import { deriveLeader, type Claim } from './leadership.ts';
-import type { ChannelsRecord, RegistryAgent, SwarmEvent, SwarmMeeting, SwarmSquad, SwarmWorkspace, TicketResult, DocResult, VerifyResult } from './swarm-client.ts';
+
+import { whoIsAddressed } from "./addressing.ts";
+import type { BrainTurn } from "./brain.ts";
+import type { AgentDirectory, AgentPresence } from "./directory.ts";
+import { type Claim, deriveLeader } from "./leadership.ts";
+import type { MemoryPort, MemoryScope } from "./memory.ts";
+import type {
+  ChannelsRecord,
+  DocResult,
+  RegistryAgent,
+  SwarmEvent,
+  SwarmMeeting,
+  SwarmSquad,
+  SwarmWorkspace,
+  TicketResult,
+  VerifyResult,
+} from "./swarm-client.ts";
 
 export interface SwarmClientLike {
   listMeetings(): Promise<SwarmMeeting[]>;
@@ -22,7 +33,7 @@ export interface SwarmClientLike {
   subscribe(onEvent: (e: SwarmEvent) => void): () => void;
   submitTask(req: {
     prompt: string;
-    agent: 'agy' | 'claude' | 'codex';
+    agent: "agy" | "claude" | "codex";
     repository: string;
     branch?: string;
     metadata?: Record<string, unknown>;
@@ -36,7 +47,10 @@ export interface SwarmClientLike {
   lookupTicket(workspace: string, ticketKey: string): Promise<{ ok: boolean; ticket?: TicketResult; detail?: string }>;
   searchDocs(workspace: string, query: string): Promise<{ ok: boolean; docs?: DocResult[]; detail?: string }>;
   getWorkspaceChannels(name: string): Promise<ChannelsRecord>;
-  saveWorkspaceChannels(name: string, body: { discord?: { botToken: string; textChannels: string[]; voiceChannels: string[] } }): Promise<ChannelsRecord>;
+  saveWorkspaceChannels(
+    name: string,
+    body: { discord?: { botToken: string; textChannels: string[]; voiceChannels: string[] } },
+  ): Promise<ChannelsRecord>;
   verifyWorkspaceDiscord(name: string): Promise<VerifyResult>;
 }
 
@@ -134,7 +148,7 @@ export interface RosterState {
     /** Elected leader (agent id). Absent until the first election lands. */
     leader?: string;
     /** The vote behind `leader` — evidence when the choice looks surprising. */
-    election?: { claims: Claim[]; at: string; method: 'vote' | 'rank' };
+    election?: { claims: Claim[]; at: string; method: "vote" | "rank" };
   }>;
   squadEdits: Array<[string, { added: string[]; removed: string[] }]>;
   groupSeq: number;
@@ -161,7 +175,7 @@ interface ActiveMeeting {
 export class Broker {
   private active: ActiveMeeting | null = null;
   /** An already-connected external audio surface (e.g. Discord VC) — see attachVoiceSurface. */
-  private externalSurface: { publishPcm: BridgeLike['publishPcm'] } | null = null;
+  private externalSurface: { publishPcm: BridgeLike["publishPcm"] } | null = null;
   /** Meeting id already logged as declined for the attached external surface — logs once per meeting, not once per poll tick. */
   private declinedMeetingId: string | null = null;
   private unsubscribe: (() => void) | null = null;
@@ -190,38 +204,44 @@ export class Broker {
 
   /** Tool executors handed to the brain; public for tests + reuse. */
   readonly executors = {
-    delegate: async (input: { agent: string; task: string; workspace?: string; repo?: string; ticketKey?: string }): Promise<string> => {
+    delegate: async (input: {
+      agent: string;
+      task: string;
+      workspace?: string;
+      repo?: string;
+      ticketKey?: string;
+    }): Promise<string> => {
       const r = await this.dispatchWork({
         agent: input.agent,
         task: input.task,
         workspace: input.workspace,
         repo: input.repo,
-        metadata: { source: 'broker-meeting', ticketKey: input.ticketKey },
+        metadata: { source: "broker-meeting", ticketKey: input.ticketKey },
         // This is a conversational/meeting delegation turn — it inherits the active
         // session's execution mode (human ruling 2026-08-07). The board's dispatch path
         // (main.ts workBoards.delegate) calls dispatchWork directly without this flag.
         inheritSessionRuntime: true,
       });
-      if ('error' in r) {
-        return r.error.startsWith('There is no agent')
+      if ("error" in r) {
+        return r.error.startsWith("There is no agent")
           ? `${r.error} Offer one from the roster.`
           : `${r.error} Offer an idle agent instead.`;
       }
       return `Delegated to ${r.agentDisplayName}: task ${r.taskId} queued. They will work asynchronously; you will be notified on completion.`;
     },
     remember: async (input: { key: string; text: string; scope: string }): Promise<string> => {
-      if (!this.deps.memory) return 'Memory is not available in this deployment.';
+      if (!this.deps.memory) return "Memory is not available in this deployment.";
       const base = this.deps.memoryScope?.() ?? {};
       // 'global' deliberately drops every dimension; 'workspace' keeps the
       // workspace but not the session, so the fact outlives the conversation.
       const scope: MemoryScope =
-        input.scope === 'global' ? {} : input.scope === 'workspace' ? { workspace: base.workspace } : base;
-      const entry = this.deps.memory.remember({ key: input.key, text: input.text, scope, source: 'human' });
+        input.scope === "global" ? {} : input.scope === "workspace" ? { workspace: base.workspace } : base;
+      const entry = this.deps.memory.remember({ key: input.key, text: input.text, scope, source: "human" });
       return `Remembered "${entry.key}" at ${input.scope} scope. Confirm it in one short line.`;
     },
     raise_hand: async (input: { agent: string; reason: string }): Promise<string> => {
       const name = input.agent.trim();
-      if (!name) return 'raise_hand needs an agent name.';
+      if (!name) return "raise_hand needs an agent name.";
       this.raisedHands.set(name, input.reason);
       this.notifyRoster();
       return `${name}'s hand is up (${input.reason}). The human sees it and may call on them — do not speak for them now.`;
@@ -230,9 +250,10 @@ export class Broker {
       const agent = this.deps.directory.resolve(input.agent);
       if (!agent) return `There is no agent named "${input.agent}".`;
       const presence = this.deps.directory.snapshot().find((p) => p.agent.id === agent.id);
-      if (!presence || presence.status !== 'busy' || !presence.taskId) return `${agent.name} is not working on anything right now.`;
+      if (!presence || presence.status !== "busy" || !presence.taskId)
+        return `${agent.name} is not working on anything right now.`;
       const { output } = await this.deps.swarm.getOutput(presence.taskId);
-      const tail = output.split('\n').slice(-25).join('\n');
+      const tail = output.split("\n").slice(-25).join("\n");
       return `Live terminal tail for ${agent.name} (summarize for speech, do not read verbatim):\n${tail}`;
     },
     lookup_ticket: async (input: { ticketKey: string; workspace: string }): Promise<string> => {
@@ -242,9 +263,9 @@ export class Broker {
     },
     search_docs: async (input: { query: string; workspace: string }): Promise<string> => {
       const r = await this.deps.swarm.searchDocs(input.workspace, input.query);
-      if (!r.ok) return r.detail ?? 'Could not search docs.';
+      if (!r.ok) return r.detail ?? "Could not search docs.";
       if (!r.docs?.length) return `No Confluence docs found for "${input.query}".`;
-      return r.docs.map((d) => `${d.title} — ${d.url}`).join('\n');
+      return r.docs.map((d) => `${d.title} — ${d.url}`).join("\n");
     },
   };
 
@@ -270,7 +291,7 @@ export class Broker {
   }): Promise<{ taskId: string; agentName: string | null; agentDisplayName: string } | { error: string }> {
     const agent = this.deps.directory.resolve(input.agent);
     if (!agent) return { error: `There is no agent named "${input.agent}".` };
-    const busy = this.deps.directory.snapshot().find((p) => p.agent.id === agent.id && p.status === 'busy');
+    const busy = this.deps.directory.snapshot().find((p) => p.agent.id === agent.id && p.status === "busy");
     if (busy) return { error: `${agent.name} is busy with: ${busy.taskSummary ?? busy.taskId}.` };
     const { taskId, agentName } = await this.deps.swarm.submitTask({
       prompt: `${agent.directives}\n\n---\nTask from the live meeting:\n${input.task}`,
@@ -281,13 +302,17 @@ export class Broker {
       metadata: { composedAgentId: agent.id, ...input.metadata },
       runtime: input.inheritSessionRuntime ? this.deps.sessionRuntime?.() : undefined,
     });
-    this.deps.directory.bindTask(agent.id, { taskId, summary: input.task.slice(0, 80), swarmName: agentName ?? undefined });
+    this.deps.directory.bindTask(agent.id, {
+      taskId,
+      summary: input.task.slice(0, 80),
+      swarmName: agentName ?? undefined,
+    });
     this.deps.onTaskDispatched?.({ taskId, agent: agent.name, task: input.task });
     this.notifyRoster();
     return { taskId, agentName, agentDisplayName: agent.name };
   }
 
-  private repository = '';
+  private repository = "";
   private squads: SwarmSquad[] = [];
   private workspaces: SwarmWorkspace[] = [];
   /** Raised hands by display name (agents or squad leaders) -> one-line reason. */
@@ -300,7 +325,7 @@ export class Broker {
     name: string;
     memberIds: string[];
     leader?: string;
-    election?: { claims: Claim[]; at: string; method: 'vote' | 'rank' };
+    election?: { claims: Claim[]; at: string; method: "vote" | "rank" };
   }> = [];
   /** Conversation-layer edits to swarm squads: agents dragged in/out via the UI. */
   private squadEdits = new Map<string, { added: string[]; removed: string[] }>();
@@ -310,7 +335,7 @@ export class Broker {
     private readonly deps: BrokerDeps,
     opts?: { repository?: string },
   ) {
-    this.repository = opts?.repository ?? '';
+    this.repository = opts?.repository ?? "";
   }
 
   async start(): Promise<void> {
@@ -353,7 +378,7 @@ export class Broker {
       this.squads = squads;
       this.notifyRoster();
     }
-    const open = meetings.find((m) => m.status === 'open');
+    const open = meetings.find((m) => m.status === "open");
     if (this.active && (!open || open.id !== this.active.meeting.id)) await this.leaveMeeting();
     if (open && !this.active) {
       if (this.externalSurface) {
@@ -361,7 +386,7 @@ export class Broker {
         // Logged once per meeting (not once per poll tick) to avoid log spam.
         if (this.declinedMeetingId !== open.id) {
           this.declinedMeetingId = open.id;
-          console.log('[meetings] declined — a Discord voice session is live');
+          console.log("[meetings] declined — a Discord voice session is live");
         }
       } else {
         this.joining = true;
@@ -421,7 +446,10 @@ export class Broker {
   private addressableNames(): string[] {
     const grouped = this.groupedAgentIds();
     const names = [
-      ...this.deps.directory.snapshot().filter((p) => !grouped.has(p.agent.id)).map((p) => p.agent.name),
+      ...this.deps.directory
+        .snapshot()
+        .filter((p) => !grouped.has(p.agent.id))
+        .map((p) => p.agent.name),
       ...this.squads.flatMap((s) => [s.id, s.leader.name]),
       ...this.groups.map((g) => g.name),
     ];
@@ -444,7 +472,7 @@ export class Broker {
       await bridge.connect({ url: this.deps.livekitUrl, token });
     } catch (err) {
       stt.stop();
-      console.error('[broker] failed to join meeting:', err);
+      console.error("[broker] failed to join meeting:", err);
       return; // this.active stays null — next poll retries
     }
     this.active = { meeting, bridge, stt };
@@ -472,9 +500,9 @@ export class Broker {
    * (see pollOnce) so the two never fight over the mic. First-come-wins: the
    * caller is expected to retry on the next voice-state event.
    */
-  attachVoiceSurface(surface: { publishPcm: BridgeLike['publishPcm'] }): boolean {
+  attachVoiceSurface(surface: { publishPcm: BridgeLike["publishPcm"] }): boolean {
     if (this.active || this.joining) {
-      console.log('[voice] attachVoiceSurface declined — a meeting is active or joining');
+      console.log("[voice] attachVoiceSurface declined — a meeting is active or joining");
       return false;
     }
     this.externalSurface = surface;
@@ -492,12 +520,12 @@ export class Broker {
 
   private onSwarmEvent(e: SwarmEvent): void {
     this.deps.onSwarmEvent?.(e);
-    if (e.type === 'task:completed' || e.type === 'task:failed') {
+    if (e.type === "task:completed" || e.type === "task:failed") {
       const presence = this.deps.directory.findByTask(e.taskId);
       if (presence && this.active) {
-        const verdict = e.type === 'task:completed' ? 'finished' : 'FAILED';
+        const verdict = e.type === "task:completed" ? "finished" : "FAILED";
         const prUrl = (e as { result?: { pullRequestUrl?: string } }).result?.pullRequestUrl;
-        const note = `${presence.agent.name} ${verdict} the delegated task (${presence.taskSummary ?? e.taskId}).${prUrl ? ` A pull request is open for review at ${prUrl} — mention that it's ready for review, do not read the URL aloud.` : ''} Tell the human in one short sentence.`;
+        const note = `${presence.agent.name} ${verdict} the delegated task (${presence.taskSummary ?? e.taskId}).${prUrl ? ` A pull request is open for review at ${prUrl} — mention that it's ready for review, do not read the URL aloud.` : ""} Tell the human in one short sentence.`;
         void this.enqueueTurn(() => this.deps.brain.handleSystemNote(note, this.makeTurn()));
       }
     }
@@ -524,8 +552,7 @@ export class Broker {
         const members = g.memberIds.map((id) => ({ id, name: byId(id)?.name ?? id }));
         // An election may not have landed yet (or may have failed) — the ladder
         // is always underneath, so a group is never leaderless (spec §2).
-        const leader =
-          g.leader ?? deriveLeader(g.memberIds.map((id) => ({ id, roles: [byId(id)?.role ?? ''] })));
+        const leader = g.leader ?? deriveLeader(g.memberIds.map((id) => ({ id, roles: [byId(id)?.role ?? ""] })));
         return { id: g.id, name: g.name, leader: leader ?? undefined, members };
       }),
       freed: [...this.squadEdits.entries()].flatMap(([squadId, edits]) =>
@@ -577,7 +604,7 @@ export class Broker {
   setGroupLeader(
     groupId: string,
     leader: string,
-    election: { claims: Claim[]; at: string; method: 'vote' | 'rank' },
+    election: { claims: Claim[]; at: string; method: "vote" | "rank" },
   ): void {
     const group = this.groups.find((g) => g.id === groupId);
     if (!group) return; // dissolved while the vote ran
@@ -606,14 +633,20 @@ export class Broker {
   private persistRosterState(): void {
     this.deps.rosterStore?.save({
       groups: this.groups.map((g) => ({ ...g, memberIds: [...g.memberIds] })),
-      squadEdits: [...this.squadEdits.entries()].map(([id, e]) => [id, { added: [...e.added], removed: [...e.removed] }]),
+      squadEdits: [...this.squadEdits.entries()].map(([id, e]) => [
+        id,
+        { added: [...e.added], removed: [...e.removed] },
+      ]),
       groupSeq: this.groupSeq,
     });
   }
 
   /** IDs of registry agents currently living inside a group or squad — they have no solo existence. */
   private groupedAgentIds(): Set<string> {
-    return new Set([...this.groups.flatMap((g) => g.memberIds), ...[...this.squadEdits.values()].flatMap((e) => e.added)]);
+    return new Set([
+      ...this.groups.flatMap((g) => g.memberIds),
+      ...[...this.squadEdits.values()].flatMap((e) => e.added),
+    ]);
   }
 
   /** An agent exists solo OR in exactly one squad — joining anywhere detaches them from everywhere else. */
@@ -660,27 +693,35 @@ export class Broker {
     const agent = this.deps.directory.resolve(nameOrId);
     if (agent) {
       const p = this.deps.directory.snapshot().find((x) => x.agent.id === agent.id);
-      return p?.status === 'busy' ? `${agent.name} is working (${p.taskSummary ?? p.taskId}) — cancel or wait before editing` : null;
+      return p?.status === "busy"
+        ? `${agent.name} is working (${p.taskSummary ?? p.taskId}) — cancel or wait before editing`
+        : null;
     }
-    const key = nameOrId.replace(/^(squad|group)-/, '').toLowerCase();
+    const key = nameOrId.replace(/^(squad|group)-/, "").toLowerCase();
     const squad = this.squads.find((s) => s.id === key);
-    if (squad?.status === 'active') return `squad ${squad.id} is working — cancel or wait before editing`;
+    if (squad?.status === "active") return `squad ${squad.id} is working — cancel or wait before editing`;
     const group = this.groups.find((g) => g.id === key || g.name === key);
-    if (group) for (const id of group.memberIds) {
-      const reason = this.busyReason(id);
-      if (reason) return `squad ${group.name}: ${reason}`;
-    }
+    if (group)
+      for (const id of group.memberIds) {
+        const reason = this.busyReason(id);
+        if (reason) return `squad ${group.name}: ${reason}`;
+      }
     return null;
   }
 
-  compose(op: { op: 'form'; agents: string[] } | { op: 'add' | 'remove'; target: string; agent: string }): string | null {
-    const GROUP_NAMES = ['delta', 'epsilon', 'zeta', 'eta', 'theta', 'iota', 'kappa'];
+  compose(
+    op: { op: "form"; agents: string[] } | { op: "add" | "remove"; target: string; agent: string },
+  ): string | null {
+    const GROUP_NAMES = ["delta", "epsilon", "zeta", "eta", "theta", "iota", "kappa"];
     const resolveId = (nameOrId: string) => this.deps.directory.resolve(nameOrId)?.id;
-    const locked = op.op === 'form' ? op.agents.map((a) => this.busyReason(a)).find(Boolean) : (this.busyReason(op.agent) ?? this.busyReason(op.target));
+    const locked =
+      op.op === "form"
+        ? op.agents.map((a) => this.busyReason(a)).find(Boolean)
+        : (this.busyReason(op.agent) ?? this.busyReason(op.target));
     if (locked) return locked;
-    if (op.op === 'form') {
+    if (op.op === "form") {
       const ids = [...new Set(op.agents.map(resolveId))];
-      if (ids.length < 2 || ids.some((id) => !id)) return 'form needs two distinct known agents';
+      if (ids.length < 2 || ids.some((id) => !id)) return "form needs two distinct known agents";
       for (const id of ids as string[]) this.detachEverywhere(id);
       const name = GROUP_NAMES[this.groupSeq % GROUP_NAMES.length]!;
       this.groupSeq += 1;
@@ -691,17 +732,17 @@ export class Broker {
       this.deps.onGroupChanged?.(`g${this.groupSeq}`);
       return null;
     }
-    op = { ...op, agent: op.agent.replace(/^freed-/, '') }; // UI roster ids for freed members carry a prefix
+    op = { ...op, agent: op.agent.replace(/^freed-/, "") }; // UI roster ids for freed members carry a prefix
     const registryId = resolveId(op.agent);
     const group = this.groups.find((g) => g.id === op.target || `group-${g.id}` === op.target);
     if (group) {
       if (!registryId) return `unknown agent: ${op.agent}`; // groups hold registry agents only
-      if (op.op === 'add' && !group.memberIds.includes(registryId)) {
+      if (op.op === "add" && !group.memberIds.includes(registryId)) {
         this.detachEverywhere(registryId);
         if (!this.groups.includes(group)) return `squad dissolved while moving ${op.agent}`; // detaching emptied it
         group.memberIds.push(registryId);
       }
-      if (op.op === 'remove') {
+      if (op.op === "remove") {
         group.memberIds = group.memberIds.filter((id) => id !== registryId);
         if (group.memberIds.length < 2) this.groups = this.groups.filter((g) => g !== group); // a squad of one dissolves
       }
@@ -715,8 +756,10 @@ export class Broker {
     const squad = this.squads.find((s) => s.id === op.target || `squad-${s.id}` === op.target);
     if (!squad) return `unknown squad or group: ${op.target}`;
     const edits = this.squadEdits.get(squad.id) ?? { added: [], removed: [] };
-    if (op.op === 'add') {
-      const freedName = squad.members.find((m) => m.name.toLowerCase() === op.agent.toLowerCase() && edits.removed.includes(m.name))?.name;
+    if (op.op === "add") {
+      const freedName = squad.members.find(
+        (m) => m.name.toLowerCase() === op.agent.toLowerCase() && edits.removed.includes(m.name),
+      )?.name;
       if (freedName) {
         // A freed original member dragged back home rejoins their squad.
         edits.removed = edits.removed.filter((n) => n !== freedName);
@@ -728,7 +771,7 @@ export class Broker {
         edits.added.push(registryId);
       }
     }
-    if (op.op === 'remove') {
+    if (op.op === "remove") {
       if (registryId && edits.added.includes(registryId)) edits.added = edits.added.filter((id) => id !== registryId);
       else {
         // Removing an original squad member (Fabian, Osvaldo, …) is a
@@ -752,11 +795,11 @@ export class Broker {
     const agent = this.deps.directory.resolve(name);
     if (agent) {
       const p = this.deps.directory.snapshot().find((x) => x.agent.id === agent.id);
-      return p?.status === 'busy' && p.taskId ? { taskId: p.taskId, label: agent.name } : null;
+      return p?.status === "busy" && p.taskId ? { taskId: p.taskId, label: agent.name } : null;
     }
-    const key = name.replace(/^(squad|group)-/, '').toLowerCase();
+    const key = name.replace(/^(squad|group)-/, "").toLowerCase();
     const squad = this.squads.find((s) => s.id === key);
-    if (squad?.status === 'active' && squad.taskId) return { taskId: squad.taskId, label: `squad ${squad.id}` };
+    if (squad?.status === "active" && squad.taskId) return { taskId: squad.taskId, label: `squad ${squad.id}` };
     const group = this.groups.find((g) => g.id === key || g.name === key);
     if (group) {
       for (const id of group.memberIds) {
@@ -772,7 +815,7 @@ export class Broker {
     const task = this.taskFor(name);
     if (!task) return { busy: false };
     const { output } = await this.deps.swarm.getOutput(task.taskId);
-    return { busy: true, label: task.label, output: output.split('\n').slice(-40).join('\n') };
+    return { busy: true, label: task.label, output: output.split("\n").slice(-40).join("\n") };
   }
 
   /** Steer a working agent/squad mid-task. Returns an error string or null. */
@@ -812,7 +855,7 @@ export class Broker {
       try {
         await fn();
       } catch (err) {
-        console.error('[broker] brain turn failed:', err);
+        console.error("[broker] brain turn failed:", err);
       }
     });
     this.turnQueue = next;
@@ -837,16 +880,16 @@ export class Broker {
         return m ? [`${m.name} (${m.role}, currently solo — formerly of ${squadId}) — idle`] : [];
       }),
     );
-    if (freed.length > 0) out += `\n${freed.join('\n')}`;
+    if (freed.length > 0) out += `\n${freed.join("\n")}`;
     const delegable = this.deps.directory
       .snapshot()
       .map((p) => p.agent.name)
-      .join(', ');
+      .join(", ");
     out += `\n\nDelegable (ONLY these can take delegated tasks — squad members and squad leaders cannot, they only speak): ${delegable}`;
     if (this.workspaces.length > 0) {
       const wsLines = this.workspaces
-        .map((w) => `${w.name}${w.default ? ' (default)' : ''}: ${w.repos.map((r) => r.name).join(', ')}`)
-        .join('\n');
+        .map((w) => `${w.name}${w.default ? " (default)" : ""}: ${w.repos.map((r) => r.name).join(", ")}`)
+        .join("\n");
       out += `\n\nWorkspaces & repos (pass repo — and workspace if not the default — when delegating):\n${wsLines}`;
     }
     if (this.squads.length > 0) {
@@ -857,22 +900,22 @@ export class Broker {
             .map((m) => `${m.name} (${m.role})`)
             .concat((edits?.added ?? []).map((id) => `${this.deps.directory.resolve(id)?.name ?? id} (guest)`))
             .filter((line) => !(edits?.removed ?? []).some((name) => line.startsWith(`${name} (`)));
-          return `${s.id} — leader: ${s.leader.name}; members: ${members.join(', ')} — ${s.status}`;
+          return `${s.id} — leader: ${s.leader.name}; members: ${members.join(", ")} — ${s.status}`;
         })
-        .join('\n');
+        .join("\n");
       out += `\n\nSquads (address one and only its leader answers):\n${squadLines}`;
     }
     if (this.groups.length > 0) {
       const groupLines = this.groups
         .map((g) => {
           const names = g.memberIds.map((id) => this.deps.directory.resolve(id)?.name ?? id);
-          return `${g.name} — leader: ${names[0]}; members: ${names.join(', ')}`;
+          return `${g.name} — leader: ${names[0]}; members: ${names.join(", ")}`;
         })
-        .join('\n');
+        .join("\n");
       out += `\n\nUser-formed squads (same rule — only the leader answers for the squad):\n${groupLines}`;
     }
     if (this.raisedHands.size > 0) {
-      const handLines = [...this.raisedHands].map(([name, reason]) => `${name}: ${reason}`).join('\n');
+      const handLines = [...this.raisedHands].map(([name, reason]) => `${name}: ${reason}`).join("\n");
       out += `\n\nRaised hands (already up — do not re-raise; they speak only when the human calls on them):\n${handLines}`;
     }
     return out;
@@ -884,10 +927,10 @@ export class Broker {
    * instead of reciting everything it knows.
    */
   private describeMemoryForBrain(utterance?: string): string {
-    if (!this.deps.memory || !utterance) return '';
+    if (!this.deps.memory || !utterance) return "";
     const hits = this.deps.memory.recall({ text: utterance, scope: this.deps.memoryScope?.() ?? {} });
-    if (hits.length === 0) return '';
-    const lines = hits.map((h) => `- ${h.text}`).join('\n');
+    if (hits.length === 0) return "";
+    const lines = hits.map((h) => `- ${h.text}`).join("\n");
     return `\n\nWhat the crew remembers (relevant to this turn — use it naturally, never recite it):\n${lines}`;
   }
 
@@ -930,7 +973,7 @@ export class Broker {
           await surface.publishPcm(bytes, TTS_SAMPLE_RATE, personaId);
         }
       } catch (err) {
-        console.error('[broker] speech chunk failed:', err);
+        console.error("[broker] speech chunk failed:", err);
       }
     };
     this.speaking = this.speaking.then(run);

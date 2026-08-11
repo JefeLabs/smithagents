@@ -1,11 +1,5 @@
 import { spawn } from "node:child_process";
-import type {
-  AudioChunk,
-  SynthesisRequest,
-  SynthesisResult,
-  VoiceCapabilities,
-  VoiceProvider,
-} from "../types.ts";
+import type { AudioChunk, SynthesisRequest, SynthesisResult, VoiceCapabilities, VoiceProvider } from "../types.ts";
 
 export interface LocalVoiceOptions {
   /** Path to the local TTS binary (Piper, or an MLX-audio CLI wrapper). */

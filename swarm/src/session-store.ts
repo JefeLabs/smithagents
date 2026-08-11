@@ -11,8 +11,8 @@
 // SessionState; the driver instance and the launch-time `preexisting` set are
 // rebuilt on adoption rather than serialized.
 
-import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 /** The subset of a live session that survives a restart. */
 export interface SessionRecord {
@@ -56,9 +56,9 @@ export class SessionStore {
     }
     const records: SessionRecord[] = [];
     for (const name of names) {
-      if (!name.endsWith('.json')) continue;
+      if (!name.endsWith(".json")) continue;
       try {
-        const parsed = JSON.parse(await readFile(join(this.dir, name), 'utf8')) as SessionRecord;
+        const parsed = JSON.parse(await readFile(join(this.dir, name), "utf8")) as SessionRecord;
         if (parsed?.id && parsed.tmuxSession) records.push(parsed);
       } catch {
         // Unreadable record — the session it described is unreachable anyway.

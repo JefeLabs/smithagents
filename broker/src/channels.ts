@@ -18,7 +18,7 @@
  * reset on every `setActiveOrigin` call so a new turn never inherits the
  * previous turn's speaker.
  */
-import type { TurnOrigin } from './broker.ts';
+import type { TurnOrigin } from "./broker.ts";
 
 export interface ChannelSpeechLine {
   agentId?: string;
@@ -92,8 +92,7 @@ export class AdapterHub {
     const { speaker, spokenText } = this.deps.resolveSpeaker(text);
     if (speaker) {
       const q = speaker.toLowerCase();
-      this.lastSpeaker =
-        this.deps.agents().find((a) => a.id.toLowerCase() === q || a.name.toLowerCase() === q) ?? null;
+      this.lastSpeaker = this.deps.agents().find((a) => a.id.toLowerCase() === q || a.name.toLowerCase() === q) ?? null;
     }
     const agent = this.lastSpeaker;
     if (!agent) return; // narrator/unknown lines stay out of external channels

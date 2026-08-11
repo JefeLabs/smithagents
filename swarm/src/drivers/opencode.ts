@@ -13,12 +13,12 @@
 // The driver's "session file" is a synthetic path (db::sessionId) so the
 // session manager's file-shaped interface still works; parseSessionFile is
 // therefore not used for discovery and only exists for interface parity.
-import { writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { query } from './sqlite.js';
-import { modelFlag } from './model-flag.js';
-import type { AgentProfile, CommandRunner, NormalizedMessage, ToolDriver } from './types.js';
+import { writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { modelFlag } from "./model-flag.js";
+import { query } from "./sqlite.js";
+import type { AgentProfile, CommandRunner, NormalizedMessage, ToolDriver } from "./types.js";
 
 interface MessageEnvelope {
   role?: string;
@@ -26,14 +26,14 @@ interface MessageEnvelope {
 }
 
 export class OpencodeDriver implements ToolDriver {
-  readonly id = 'opencode';
+  readonly id = "opencode";
 
   constructor(
-    private readonly dataDir: string = process.env.OPENCODE_DATA_DIR ?? join(homedir(), '.local/share/opencode'),
+    private readonly dataDir: string = process.env.OPENCODE_DATA_DIR ?? join(homedir(), ".local/share/opencode"),
   ) {}
 
   private get db(): string {
-    return join(this.dataDir, 'opencode.db');
+    return join(this.dataDir, "opencode.db");
   }
 
   interactiveCommand(baseCommand: string, model?: string): string {
@@ -50,19 +50,19 @@ export class OpencodeDriver implements ToolDriver {
 
   /** Synthetic handles: `db::<sessionId>` for sessions rooted at `cwd`. */
   async listSessionFiles(cwd: string): Promise<string[]> {
-    const rows = await query(this.db, 'select id from session where directory = ? order by rowid desc limit 20', [cwd]);
+    const rows = await query(this.db, "select id from session where directory = ? order by rowid desc limit 20", [cwd]);
     return rows.map((r) => `db::${r.id}`);
   }
 
   /** Interface parity only — opencode content is read from the database. */
   parseSessionFile(content: string): NormalizedMessage[] {
-    if (!content.startsWith('db::')) return [];
+    if (!content.startsWith("db::")) return [];
     return [];
   }
 
   /** The real read path: messages for one session, newest last. */
   async readMessages(handle: string): Promise<NormalizedMessage[]> {
-    const sessionId = handle.replace(/^db::/, '');
+    const sessionId = handle.replace(/^db::/, "");
     const rows = await query(
       this.db,
       `select m.id, m.time_created, m.data,
@@ -76,62 +76,70 @@ export class OpencodeDriver implements ToolDriver {
     for (const row of rows) {
       let envelope: MessageEnvelope = {};
       try {
-        envelope = JSON.parse(row.data ?? '{}') as MessageEnvelope;
+        envelope = JSON.parse(row.data ?? "{}") as MessageEnvelope;
       } catch {
         continue; // a malformed envelope is one message, not a broken session
       }
-      if (envelope.role !== 'user' && envelope.role !== 'assistant') continue;
-      const text = extractText(row.parts ?? '');
+      if (envelope.role !== "user" && envelope.role !== "assistant") continue;
+      const text = extractText(row.parts ?? "");
       messages.push({
         role: envelope.role,
         text,
         timestamp: new Date(Number(row.time_created ?? 0)).toISOString(),
         uuid: row.id,
         // Completion is opencode's own stamp, not our inference.
-        stopReason: envelope.role === 'assistant' && envelope.time?.completed ? 'end_turn' : null,
+        stopReason: envelope.role === "assistant" && envelope.time?.completed ? "end_turn" : null,
       });
     }
     return messages;
   }
 
   isTurnComplete(messages: NormalizedMessage[], sinceIso: string): boolean {
-    return messages.some((m) => m.role === 'assistant' && m.stopReason === 'end_turn' && (m.timestamp ?? '') > sinceIso);
+    return messages.some(
+      (m) => m.role === "assistant" && m.stopReason === "end_turn" && (m.timestamp ?? "") > sinceIso,
+    );
   }
 
   async materialize(agent: AgentProfile, worktreePath: string): Promise<string[]> {
     await writeFile(
-      join(worktreePath, 'AGENTS.md'),
-      [`# ${agent.name} — ${agent.role}`, '', agent.directives, '', `You are ${agent.name}. Stay within your role's domain.`, ''].join('\n'),
+      join(worktreePath, "AGENTS.md"),
+      [
+        `# ${agent.name} — ${agent.role}`,
+        "",
+        agent.directives,
+        "",
+        `You are ${agent.name}. Stay within your role's domain.`,
+        "",
+      ].join("\n"),
     );
-    return ['AGENTS.md'];
+    return ["AGENTS.md"];
   }
 
   async verifyAuth(
     binary: string,
     run: CommandRunner,
     timeoutMs: number,
-  ): Promise<{ ok: boolean | 'unknown'; detail: string }> {
+  ): Promise<{ ok: boolean | "unknown"; detail: string }> {
     // `opencode auth list` exits 0 and prints the credential store. opencode
     // also runs local models, so this probe never confirms a negative — a
     // working auth store is ok, anything else is unknown.
-    const res = await run([binary, 'auth', 'list'], timeoutMs);
-    if (res.code === 0) return { ok: true, detail: 'auth store accessible' };
-    return { ok: 'unknown', detail: 'auth list unavailable' };
+    const res = await run([binary, "auth", "list"], timeoutMs);
+    if (res.code === 0) return { ok: true, detail: "auth store accessible" };
+    return { ok: "unknown", detail: "auth list unavailable" };
   }
 }
 
 /** Parts are JSON blobs; keep the text ones and drop tool/step internals. */
 function extractText(joined: string): string {
   const out: string[] = [];
-  for (const chunk of joined.split('\n')) {
+  for (const chunk of joined.split("\n")) {
     if (!chunk.trim()) continue;
     try {
       const part = JSON.parse(chunk) as { type?: string; text?: string };
-      if (part.type === 'text' && part.text) out.push(part.text);
+      if (part.type === "text" && part.text) out.push(part.text);
     } catch {
       // non-JSON part — ignore rather than fail the whole message
     }
   }
-  return out.join('\n');
+  return out.join("\n");
 }
-

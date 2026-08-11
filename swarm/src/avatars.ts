@@ -4,8 +4,8 @@
 // under assets/avatars/. avatarData/avatarPreset are transport-only fields
 // on the create/update routes — this module turns them into files and a
 // stored filename, and nothing else ever touches the bytes.
-import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 /** Same stem rule as agent ids (agents.ts) — also the traversal guard. */
 export const AVATAR_FILE_RE = /^[a-z0-9][a-z0-9-]{0,63}\.png$/;
@@ -15,12 +15,12 @@ const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
 
 /** Decode and validate a base64 avatar payload. Throws a user-facing Error. */
 export function decodeAvatarData(avatarData: string): Buffer {
-  const buf = Buffer.from(avatarData, 'base64');
+  const buf = Buffer.from(avatarData, "base64");
   if (buf.length > MAX_AVATAR_BYTES) {
-    throw new Error('avatar image must be under 2 MB');
+    throw new Error("avatar image must be under 2 MB");
   }
   if (buf.length < PNG_MAGIC.length || !buf.subarray(0, PNG_MAGIC.length).equals(PNG_MAGIC)) {
-    throw new Error('avatar image must be a PNG');
+    throw new Error("avatar image must be a PNG");
   }
   return buf;
 }

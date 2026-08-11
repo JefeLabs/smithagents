@@ -36,21 +36,21 @@ export class DeepgramSttStream {
 
   start(onUtterance: (text: string) => void): void {
     this.live = this.liveFactory();
-    this.live.on('Open', () => {
+    this.live.on("Open", () => {
       this.open = true;
       const queued = this.preOpen;
       this.preOpen = [];
       for (const pcm of queued) this.live?.send(pcm);
     });
-    this.live.on('Close', () => {
+    this.live.on("Close", () => {
       this.open = false;
     });
-    this.live.on('Results', (data) => {
+    this.live.on("Results", (data) => {
       const ev = data as ResultsEvent;
-      const transcript = ev.channel?.alternatives?.[0]?.transcript?.trim() ?? '';
+      const transcript = ev.channel?.alternatives?.[0]?.transcript?.trim() ?? "";
       if (ev.is_final && transcript.length > 0) this.segments.push(transcript);
       if (ev.speech_final) {
-        const utterance = this.segments.join(' ').trim();
+        const utterance = this.segments.join(" ").trim();
         this.segments = [];
         if (utterance.length > 0) onUtterance(utterance);
       }
@@ -58,7 +58,10 @@ export class DeepgramSttStream {
   }
 
   sendAudio(pcm: Uint8Array): void {
-    if (!this.open) return this.buffer(pcm);
+    if (!this.open) {
+      this.buffer(pcm);
+      return;
+    }
     try {
       this.live?.send(pcm);
     } catch {
@@ -86,18 +89,15 @@ export class DeepgramSttStream {
  * `language` defaults to 'multi' — nova-3's code-switching mode (Spanish+English in
  * one utterance); pin DEEPGRAM_LANGUAGE=en or es-419 to override. `endpointing: 300`
  * is load-bearing for meeting etiquette — do not change it here. */
-export function deepgramLiveOptions(
-  sampleRate: number,
-  env: NodeJS.ProcessEnv = process.env,
-): Record<string, unknown> {
+export function deepgramLiveOptions(sampleRate: number, env: NodeJS.ProcessEnv = process.env): Record<string, unknown> {
   return {
-    model: 'nova-3',
-    language: env.DEEPGRAM_LANGUAGE || 'multi',
-    encoding: 'linear16',
+    model: "nova-3",
+    language: env.DEEPGRAM_LANGUAGE || "multi",
+    encoding: "linear16",
     sample_rate: sampleRate,
     channels: 1,
-    interim_results: 'true',
-    smart_format: 'true',
+    interim_results: "true",
+    smart_format: "true",
     endpointing: 300,
   };
 }

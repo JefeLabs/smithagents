@@ -8,12 +8,12 @@
 // Prints {"status","prUrl","raw"} to stdout and exits 0 for any known task
 // (including status:"failed" — that's a real answer, not an error). Exits 1
 // on an unknown taskId or a broker/network failure; 2 on bad usage.
-const BROKER_URL = (process.env.SMITH_BROKER_URL ?? 'http://127.0.0.1:7790').replace(/\/$/, '');
+const BROKER_URL = (process.env.SMITH_BROKER_URL ?? "http://127.0.0.1:7790").replace(/\/$/, "");
 const TOKEN = process.env.SMITH_BROKER_TOKEN;
 
 const [taskId] = process.argv.slice(2);
 if (!taskId) {
-  console.error('usage: smith-broker-check <taskId>');
+  console.error("usage: smith-broker-check <taskId>");
   process.exit(2);
 }
 

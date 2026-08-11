@@ -1,31 +1,31 @@
 // Persistent-session lifecycle against REAL tmux (design §8), with a scripted
 // fake tool so no model API is involved: the "TUI" echoes each input line into
 // its session file as a completed assistant turn.
-import assert from 'node:assert/strict';
-import { after, before, test } from 'node:test';
-import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { AgentSessionManager } from './agent-sessions.js';
-import type { ComposedAgent } from './agents.js';
-import { SessionDeadError, ToolLaunchError } from './drivers/errors.js';
-import type { NormalizedMessage, ToolDriver } from './drivers/types.js';
-import { TmuxRuntime } from './runtime.js';
-import { SessionStore } from './session-store.js';
-import { createHash, randomUUID } from 'node:crypto';
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { after, before, test } from "node:test";
+import { AgentSessionManager } from "./agent-sessions.js";
+import type { ComposedAgent } from "./agents.js";
+import { SessionDeadError, ToolLaunchError } from "./drivers/errors.js";
+import type { NormalizedMessage, ToolDriver } from "./drivers/types.js";
+import { TmuxRuntime } from "./runtime.js";
+import { SessionStore } from "./session-store.js";
 
 const AGENT: ComposedAgent = {
-  id: 'manuel',
-  name: 'Manuel',
-  role: 'The Architect',
-  directives: 'Own the routing.',
-  engine: { cli: 'claude', model: 'claude-opus' },
+  id: "manuel",
+  name: "Manuel",
+  role: "The Architect",
+  directives: "Own the routing.",
+  engine: { cli: "claude", model: "claude-opus" },
 };
 
 /** Fake driver over a line-oriented session-file format the script below writes. */
 class FakeDriver implements ToolDriver {
-  readonly id = 'claude';
+  readonly id = "claude";
 
   interactiveCommand(baseCommand: string): string {
     return baseCommand;
@@ -34,7 +34,7 @@ class FakeDriver implements ToolDriver {
     return `${baseCommand} '${escapedPrompt}'`;
   }
   sessionDir(cwd: string): string {
-    return join(cwd, '.fake-sessions');
+    return join(cwd, ".fake-sessions");
   }
   async listSessionFiles(cwd: string): Promise<string[]> {
     try {
@@ -45,17 +45,19 @@ class FakeDriver implements ToolDriver {
   }
   parseSessionFile(content: string): NormalizedMessage[] {
     return content
-      .split('\n')
+      .split("\n")
       .filter((l) => l.trim())
-      .map((l) => JSON.parse(l) as { role: 'user' | 'assistant'; text: string; done?: boolean; ts?: string })
-      .map((e) => ({ role: e.role, text: e.text, stopReason: e.done ? 'end_turn' : null, timestamp: e.ts }));
+      .map((l) => JSON.parse(l) as { role: "user" | "assistant"; text: string; done?: boolean; ts?: string })
+      .map((e) => ({ role: e.role, text: e.text, stopReason: e.done ? "end_turn" : null, timestamp: e.ts }));
   }
   isTurnComplete(messages: NormalizedMessage[], sinceIso: string): boolean {
-    return messages.some((m) => m.role === 'assistant' && m.stopReason === 'end_turn' && (m.timestamp ?? '') > sinceIso);
+    return messages.some(
+      (m) => m.role === "assistant" && m.stopReason === "end_turn" && (m.timestamp ?? "") > sinceIso,
+    );
   }
   async materialize(agent: ComposedAgent, worktreePath: string): Promise<string[]> {
-    writeFileSync(join(worktreePath, 'AGENT.md'), `# ${agent.name}\n${agent.directives}\n`);
-    return ['AGENT.md'];
+    writeFileSync(join(worktreePath, "AGENT.md"), `# ${agent.name}\n${agent.directives}\n`);
+    return ["AGENT.md"];
   }
 }
 
@@ -66,13 +68,15 @@ let manager: AgentSessionManager;
 const created: string[] = [];
 
 before(() => {
-  repoRoot = mkdtempSync(join(tmpdir(), 'smith-sessions-'));
-  execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repoRoot });
-  execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'root'], { cwd: repoRoot });
+  repoRoot = mkdtempSync(join(tmpdir(), "smith-sessions-"));
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repoRoot });
+  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "root"], {
+    cwd: repoRoot,
+  });
 
   // The fake TUI: creates its session file (readiness), then echoes every
   // stdin line as a user entry + a completed assistant entry.
-  toolScript = join(repoRoot, 'fake-tool.sh');
+  toolScript = join(repoRoot, "fake-tool.sh");
   writeFileSync(
     toolScript,
     `#!/bin/bash
@@ -91,7 +95,7 @@ done
 
   manager = new AgentSessionManager(runtime, {
     agentCommands: { claude: toolScript },
-    worktreeDir: '.smith/worktrees',
+    worktreeDir: ".smith/worktrees",
     resolveDriver: () => new FakeDriver(),
     pollIntervalMs: 100,
     readinessTimeoutMs: 10_000,
@@ -106,51 +110,51 @@ after(async () => {
   rmSync(repoRoot, { recursive: true, force: true });
 });
 
-test('create: worktree on its own branch, profile materialized + excluded, pinned hash, ready', async () => {
-  const info = await manager.create(AGENT, JSON.stringify(AGENT), repoRoot, 'main');
+test("create: worktree on its own branch, profile materialized + excluded, pinned hash, ready", async () => {
+  const info = await manager.create(AGENT, JSON.stringify(AGENT), repoRoot, "main");
   created.push(info.id);
-  assert.equal(info.status, 'ready');
+  assert.equal(info.status, "ready");
   assert.match(info.branch, /^smith\/session-/);
   assert.equal(info.profileHash.length, 16);
   // Materialized profile exists in the worktree but is invisible to git.
-  execFileSync('test', ['-f', join(info.cwd, 'AGENT.md')]);
-  const ignored = execFileSync('git', ['check-ignore', 'AGENT.md'], { cwd: info.cwd }).toString().trim();
-  assert.equal(ignored, 'AGENT.md');
+  execFileSync("test", ["-f", join(info.cwd, "AGENT.md")]);
+  const ignored = execFileSync("git", ["check-ignore", "AGENT.md"], { cwd: info.cwd }).toString().trim();
+  assert.equal(ignored, "AGENT.md");
 });
 
-test('send: one turn in, parsed completed turn out — detected from the session file', async () => {
-  const info = await manager.create(AGENT, JSON.stringify(AGENT), repoRoot, 'main');
+test("send: one turn in, parsed completed turn out — detected from the session file", async () => {
+  const info = await manager.create(AGENT, JSON.stringify(AGENT), repoRoot, "main");
   created.push(info.id);
-  const turn = await manager.send(info.id, 'hola crew');
-  const assistant = turn.find((m) => m.role === 'assistant');
-  assert.ok(assistant, 'assistant reply present');
+  const turn = await manager.send(info.id, "hola crew");
+  const assistant = turn.find((m) => m.role === "assistant");
+  assert.ok(assistant, "assistant reply present");
   assert.match(assistant.text, /hola crew/);
-  assert.equal(assistant.stopReason, 'end_turn');
+  assert.equal(assistant.stopReason, "end_turn");
   const all = await manager.messages(info.id);
   assert.ok(all.length >= 2);
   const listed = (await manager.list()).find((s) => s.id === info.id);
   assert.equal(listed?.turns, 1);
 });
 
-test('death is surfaced, never silently respawned', async () => {
-  const info = await manager.create(AGENT, JSON.stringify(AGENT), repoRoot, 'main');
+test("death is surfaced, never silently respawned", async () => {
+  const info = await manager.create(AGENT, JSON.stringify(AGENT), repoRoot, "main");
   created.push(info.id);
   // Kill the process out from under the manager — as a crash would.
-  execFileSync('tmux', ['kill-session', '-t', `smith-warm-${info.id}`]);
-  await assert.rejects(manager.send(info.id, 'anyone home?'), SessionDeadError);
+  execFileSync("tmux", ["kill-session", "-t", `smith-warm-${info.id}`]);
+  await assert.rejects(manager.send(info.id, "anyone home?"), SessionDeadError);
   const listed = (await manager.list()).find((s) => s.id === info.id);
-  assert.equal(listed?.status, 'dead');
+  assert.equal(listed?.status, "dead");
 });
 
-test('launch failure is a typed error naming the tool', async () => {
+test("launch failure is a typed error naming the tool", async () => {
   const broken = new AgentSessionManager(runtime, {
-    agentCommands: { claude: '/nonexistent/tool-binary' },
-    worktreeDir: '.smith/worktrees',
+    agentCommands: { claude: "/nonexistent/tool-binary" },
+    worktreeDir: ".smith/worktrees",
     resolveDriver: () => new FakeDriver(),
     pollIntervalMs: 100,
     readinessTimeoutMs: 3_000,
   });
-  await assert.rejects(broken.create(AGENT, '{}', repoRoot, 'main'), ToolLaunchError);
+  await assert.rejects(broken.create(AGENT, "{}", repoRoot, "main"), ToolLaunchError);
 });
 
 // ── Boot reconciliation (real tmux) ────────────────────────────────────────
@@ -158,30 +162,30 @@ test('launch failure is a typed error naming the tool', async () => {
 // tests restart the MANAGER (a fresh instance over the same store) while the
 // tmux process keeps running, which is exactly what a swarm restart looks like.
 
-test('reconcile: a session that outlived the server is adopted and still usable', async () => {
-  const store = new SessionStore(join(repoRoot, '.smith/sessions'));
+test("reconcile: a session that outlived the server is adopted and still usable", async () => {
+  const store = new SessionStore(join(repoRoot, ".smith/sessions"));
   const first = new AgentSessionManager(runtime, {
     agentCommands: { claude: toolScript },
-    worktreeDir: '.smith/worktrees',
+    worktreeDir: ".smith/worktrees",
     resolveDriver: () => new FakeDriver(),
     pollIntervalMs: 100,
     readinessTimeoutMs: 10_000,
     turnTimeoutMs: 10_000,
     store,
   });
-  const info = await first.create(AGENT, JSON.stringify(AGENT), repoRoot, 'main');
+  const info = await first.create(AGENT, JSON.stringify(AGENT), repoRoot, "main");
   created.push(info.id);
 
   // The server dies; the tmux process does not.
   const reborn = new AgentSessionManager(runtime, {
     agentCommands: { claude: toolScript },
-    worktreeDir: '.smith/worktrees',
+    worktreeDir: ".smith/worktrees",
     resolveDriver: () => new FakeDriver(),
     pollIntervalMs: 100,
     turnTimeoutMs: 10_000,
     store,
   });
-  const hash = createHash('sha256').update(JSON.stringify(AGENT)).digest('hex').slice(0, 16);
+  const hash = createHash("sha256").update(JSON.stringify(AGENT)).digest("hex").slice(0, 16);
   const summary = await reborn.reconcile(new Map([[AGENT.id, hash]]));
 
   assert.equal(summary.adopted, 1);
@@ -189,24 +193,24 @@ test('reconcile: a session that outlived the server is adopted and still usable'
   // tests share this tmux server and legitimately show up as orphans here.)
   assert.ok(
     !summary.orphans.includes(`smith-warm-${info.id}`),
-    'an adopted session must not also be reported as an orphan',
+    "an adopted session must not also be reported as an orphan",
   );
   // Adoption is only real if the handle works: send a turn through it.
-  const replies = await reborn.send(info.id, 'still there?');
-  assert.match(replies.map((m) => m.text).join(' '), /echo: still there\?/);
+  const replies = await reborn.send(info.id, "still there?");
+  assert.match(replies.map((m) => m.text).join(" "), /echo: still there\?/);
 });
 
-test('reconcile: a record whose process died is forgotten and its file removed', async () => {
-  const store = new SessionStore(join(repoRoot, '.smith/sessions-dead'));
+test("reconcile: a record whose process died is forgotten and its file removed", async () => {
+  const store = new SessionStore(join(repoRoot, ".smith/sessions-dead"));
   const first = new AgentSessionManager(runtime, {
     agentCommands: { claude: toolScript },
-    worktreeDir: '.smith/worktrees',
+    worktreeDir: ".smith/worktrees",
     resolveDriver: () => new FakeDriver(),
     pollIntervalMs: 100,
     readinessTimeoutMs: 10_000,
     store,
   });
-  const info = await first.create(AGENT, JSON.stringify(AGENT), repoRoot, 'main');
+  const info = await first.create(AGENT, JSON.stringify(AGENT), repoRoot, "main");
   assert.equal((await store.load()).length, 1);
 
   // Kill the process out from under the record, as a reboot would.
@@ -214,24 +218,24 @@ test('reconcile: a record whose process died is forgotten and its file removed',
 
   const reborn = new AgentSessionManager(runtime, {
     agentCommands: { claude: toolScript },
-    worktreeDir: '.smith/worktrees',
+    worktreeDir: ".smith/worktrees",
     resolveDriver: () => new FakeDriver(),
     store,
   });
   const summary = await reborn.reconcile(new Map());
   assert.equal(summary.forgotten, 1);
   assert.equal(summary.adopted, 0);
-  assert.deepEqual(await store.load(), [], 'a stale record must not linger to be re-adopted');
+  assert.deepEqual(await store.load(), [], "a stale record must not linger to be re-adopted");
 });
 
-test('reconcile: a live warm session with no record is reported, never silently killed', async () => {
-  const store = new SessionStore(join(repoRoot, '.smith/sessions-orphan'));
+test("reconcile: a live warm session with no record is reported, never silently killed", async () => {
+  const store = new SessionStore(join(repoRoot, ".smith/sessions-orphan"));
   const orphan = `smith-warm-${randomUUID()}`;
-  await runtime.launch(orphan, 'sleep 60', repoRoot);
+  await runtime.launch(orphan, "sleep 60", repoRoot);
 
   const manager2 = new AgentSessionManager(runtime, {
     agentCommands: { claude: toolScript },
-    worktreeDir: '.smith/worktrees',
+    worktreeDir: ".smith/worktrees",
     resolveDriver: () => new FakeDriver(),
     store,
   });
@@ -239,22 +243,22 @@ test('reconcile: a live warm session with no record is reported, never silently 
 
   // Other tests' sessions share this tmux server and are equally unaccounted
   // for by this store, so assert inclusion rather than exclusivity.
-  assert.ok(summary.orphans.includes(orphan), 'the unrecorded live session is reported');
+  assert.ok(summary.orphans.includes(orphan), "the unrecorded live session is reported");
   assert.equal(summary.killed, 0);
-  assert.equal(await runtime.exists(orphan), true, 'an unexplained live process is left for a human to inspect');
+  assert.equal(await runtime.exists(orphan), true, "an unexplained live process is left for a human to inspect");
   await runtime.kill(orphan);
 });
 
-test('create() refuses when toolGate reports a reason — before any worktree or tmux work', async () => {
+test("create() refuses when toolGate reports a reason — before any worktree or tmux work", async () => {
   const gated = new AgentSessionManager(runtime, {
-    agentCommands: { claude: 'true' },
-    worktreeDir: '.smith/worktrees',
+    agentCommands: { claude: "true" },
+    worktreeDir: ".smith/worktrees",
     resolveDriver: () => new FakeDriver(),
-    toolGate: async () => 'not logged in — run `claude /login`',
+    toolGate: async () => "not logged in — run `claude /login`",
   });
   await assert.rejects(
     // repoRoot is deliberately bogus: the gate must fire before git touches it.
-    () => gated.create(AGENT, JSON.stringify(AGENT), '/nonexistent-repo-root', 'main'),
+    () => gated.create(AGENT, JSON.stringify(AGENT), "/nonexistent-repo-root", "main"),
     (err: unknown) => {
       assert.ok(err instanceof ToolLaunchError);
       assert.match((err as Error).message, /subscription-inactive: not logged in/);

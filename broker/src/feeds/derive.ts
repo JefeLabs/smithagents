@@ -4,9 +4,9 @@
  * Returns the DERIVED set only — the caller merges it with manual sources, so
  * a bug here can never delete something the human added by hand.
  */
-import type { Dependency } from './manifests.ts';
-import type { FeedSource } from './types.ts';
-import type { Ecosystem } from './versions.ts';
+import type { Dependency } from "./manifests.ts";
+import type { FeedSource } from "./types.ts";
+import type { Ecosystem } from "./versions.ts";
 
 /** Stable, so regeneration updates a source in place instead of duplicating it. */
 export function releaseSourceId(name: string, workspace: string): string {
@@ -26,11 +26,11 @@ export function deriveSources(input: {
     if (out.has(id)) return;
     out.set(id, {
       id,
-      label: name.includes(':') ? name.split(':')[1]! : name,
-      kind: 'registry',
+      label: name.includes(":") ? name.split(":")[1]! : name,
+      kind: "registry",
       locator: `${eco}:${name}`,
-      tag: 'release',
-      origin: 'derived',
+      tag: "release",
+      origin: "derived",
       reason,
       enabled: true,
       // A dismissal is a standing instruction, not a one-off (spec §4.3).
@@ -43,7 +43,7 @@ export function deriveSources(input: {
     add(dep.name, dep.eco, dep.workspace, `from ${dep.manifest} in ${dep.workspace}`);
   }
   for (const p of input.promoted) {
-    add(p.name, p.eco, '', `you've mentioned ${p.name} ${p.mentions}×`);
+    add(p.name, p.eco, "", `you've mentioned ${p.name} ${p.mentions}×`);
   }
   return [...out.values()];
 }

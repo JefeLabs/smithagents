@@ -1,34 +1,34 @@
-import assert from 'node:assert/strict';
-import { test } from 'node:test';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { TextChannel } from './text-channel.ts';
-import { BrokerAuth } from './auth.ts';
+import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import { BrokerAuth } from "./auth.ts";
+import { TextChannel } from "./text-channel.ts";
 
 const execFileAsync = promisify(execFile);
-const BIN_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin');
+const BIN_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "bin");
 
 /** promisify(execFile) rejects with this shape; typed once so the strict-mode
  * `assert.rejects` validators below can read code/stderr without casts inline. */
 type ExecFailure = { code?: number; stdout?: string; stderr?: string };
 
-test('smith-broker-send posts the tagged utterance and prints the task-dispatched handle', async () => {
+test("smith-broker-send posts the tagged utterance and prints the task-dispatched handle", async () => {
   const channel = new TextChannel((text) => {
     // Stand in for the brain: any utterance immediately "dispatches" a task.
-    channel.broadcast({ type: 'task-dispatched', taskId: 't-1', agent: 'Manuel', task: text });
+    channel.broadcast({ type: "task-dispatched", taskId: "t-1", agent: "Manuel", task: text });
   });
   const port = await channel.start(0);
   try {
-    const { stdout } = await execFileAsync('node', [join(BIN_DIR, 'smith-broker-send.mjs'), 'docs/prd.md', 'ship it'], {
-      env: { ...process.env, SMITH_BROKER_URL: `http://127.0.0.1:${port}`, SMITH_BRIDGE_SOURCE: 'claude-code' },
+    const { stdout } = await execFileAsync("node", [join(BIN_DIR, "smith-broker-send.mjs"), "docs/prd.md", "ship it"], {
+      env: { ...process.env, SMITH_BROKER_URL: `http://127.0.0.1:${port}`, SMITH_BRIDGE_SOURCE: "claude-code" },
     });
     const handle = JSON.parse(stdout);
-    assert.equal(handle.taskId, 't-1');
-    assert.equal(handle.agent, 'Manuel');
+    assert.equal(handle.taskId, "t-1");
+    assert.equal(handle.agent, "Manuel");
     assert.match(handle.task, /docs\/prd\.md/);
     assert.match(handle.task, /ship it/);
     assert.match(handle.task, /via claude-code/);
@@ -37,20 +37,20 @@ test('smith-broker-send posts the tagged utterance and prints the task-dispatche
   }
 });
 
-test('smith-broker-send times out with the brain\'s reply and exits non-zero when nothing was dispatched', async () => {
+test("smith-broker-send times out with the brain's reply and exits non-zero when nothing was dispatched", async () => {
   const channel = new TextChannel(() => {
-    channel.broadcast({ type: 'utterance', text: 'Manuel: which repo is this for?' });
+    channel.broadcast({ type: "utterance", text: "Manuel: which repo is this for?" });
   });
   const port = await channel.start(0);
   try {
     await assert.rejects(
-      execFileAsync('node', [join(BIN_DIR, 'smith-broker-send.mjs'), 'docs/prd.md'], {
-        env: { ...process.env, SMITH_BROKER_URL: `http://127.0.0.1:${port}`, SMITH_BROKER_SEND_TIMEOUT_MS: '300' },
+      execFileAsync("node", [join(BIN_DIR, "smith-broker-send.mjs"), "docs/prd.md"], {
+        env: { ...process.env, SMITH_BROKER_URL: `http://127.0.0.1:${port}`, SMITH_BROKER_SEND_TIMEOUT_MS: "300" },
       }),
       (err: unknown) => {
         const e = err as ExecFailure;
         assert.equal(e.code, 1);
-        assert.match(e.stderr ?? '', /which repo is this for/);
+        assert.match(e.stderr ?? "", /which repo is this for/);
         return true;
       },
     );
@@ -59,28 +59,57 @@ test('smith-broker-send times out with the brain\'s reply and exits non-zero whe
   }
 });
 
-test('required mode: send bin authenticates with SMITH_BROKER_TOKEN; without it the gate refuses', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'binauth-'));
-  const auth = new BrokerAuth(join(dir, 'auth.json'), {
-    rpId: 'localhost', webOrigin: 'http://localhost:1420', required: true, bridgeToken: 'bridge-secret',
+test("required mode: send bin authenticates with SMITH_BROKER_TOKEN; without it the gate refuses", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "binauth-"));
+  const auth = new BrokerAuth(join(dir, "auth.json"), {
+    rpId: "localhost",
+    webOrigin: "http://localhost:1420",
+    required: true,
+    bridgeToken: "bridge-secret",
   });
   await auth.load();
   // onUtterance at index 0 stands in for the brain; auth at index 24. All
   // middle slots default to undefined.
   const channel = new TextChannel(
-    (text) => channel.broadcast({ type: 'task-dispatched', taskId: 't-9', agent: 'Manuel', task: text }),
-    () => [], undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-    undefined, undefined, undefined, undefined, undefined, auth,
+    (text) => channel.broadcast({ type: "task-dispatched", taskId: "t-9", agent: "Manuel", task: text }),
+    () => [],
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    auth,
   );
   const port = await channel.start(0);
   const run = (extraEnv: Record<string, string>) =>
-    execFileAsync('node', [join(BIN_DIR, 'smith-broker-send.mjs'), 'docs/prd.md', 'ping'], {
-      env: { ...process.env, SMITH_BROKER_URL: `http://127.0.0.1:${port}`, SMITH_BROKER_SEND_TIMEOUT_MS: '2500', ...extraEnv },
+    execFileAsync("node", [join(BIN_DIR, "smith-broker-send.mjs"), "docs/prd.md", "ping"], {
+      env: {
+        ...process.env,
+        SMITH_BROKER_URL: `http://127.0.0.1:${port}`,
+        SMITH_BROKER_SEND_TIMEOUT_MS: "2500",
+        ...extraEnv,
+      },
     });
   try {
-    const { stdout } = await run({ SMITH_BROKER_TOKEN: 'bridge-secret' });
-    assert.equal(JSON.parse(stdout).taskId, 't-9', 'token path reaches the brain and dispatches');
+    const { stdout } = await run({ SMITH_BROKER_TOKEN: "bridge-secret" });
+    assert.equal(JSON.parse(stdout).taskId, "t-9", "token path reaches the brain and dispatches");
 
     await assert.rejects(run({}), (err: unknown) => {
       // No token → POST /utterance is 401, nothing dispatches → send exits 1.
@@ -92,8 +121,8 @@ test('required mode: send bin authenticates with SMITH_BROKER_TOKEN; without it 
   }
 });
 
-test('smith-broker-send exits 2 with no prd-path argument', async () => {
-  await assert.rejects(execFileAsync('node', [join(BIN_DIR, 'smith-broker-send.mjs')]), (err: unknown) => {
+test("smith-broker-send exits 2 with no prd-path argument", async () => {
+  await assert.rejects(execFileAsync("node", [join(BIN_DIR, "smith-broker-send.mjs")]), (err: unknown) => {
     assert.equal((err as ExecFailure).code, 2);
     return true;
   });
@@ -122,31 +151,33 @@ function channelWithTasks(get: (taskId: string) => Promise<Record<string, unknow
   );
 }
 
-test('smith-broker-check prints status and prUrl for a completed task, exits 0', async () => {
+test("smith-broker-check prints status and prUrl for a completed task, exits 0", async () => {
   const channel = channelWithTasks(async (taskId) =>
-    taskId === 't-1' ? { taskId: 't-1', status: 'completed', result: { pullRequestUrl: 'https://github.com/x/y/pull/1' } } : null,
+    taskId === "t-1"
+      ? { taskId: "t-1", status: "completed", result: { pullRequestUrl: "https://github.com/x/y/pull/1" } }
+      : null,
   );
   const port = await channel.start(0);
   try {
-    const { stdout } = await execFileAsync('node', [join(BIN_DIR, 'smith-broker-check.mjs'), 't-1'], {
+    const { stdout } = await execFileAsync("node", [join(BIN_DIR, "smith-broker-check.mjs"), "t-1"], {
       env: { ...process.env, SMITH_BROKER_URL: `http://127.0.0.1:${port}` },
     });
     assert.deepEqual(JSON.parse(stdout), {
-      status: 'completed',
-      prUrl: 'https://github.com/x/y/pull/1',
-      raw: { taskId: 't-1', status: 'completed', result: { pullRequestUrl: 'https://github.com/x/y/pull/1' } },
+      status: "completed",
+      prUrl: "https://github.com/x/y/pull/1",
+      raw: { taskId: "t-1", status: "completed", result: { pullRequestUrl: "https://github.com/x/y/pull/1" } },
     });
   } finally {
     await channel.stop();
   }
 });
 
-test('smith-broker-check exits non-zero on an unknown taskId', async () => {
+test("smith-broker-check exits non-zero on an unknown taskId", async () => {
   const channel = channelWithTasks(async () => null);
   const port = await channel.start(0);
   try {
     await assert.rejects(
-      execFileAsync('node', [join(BIN_DIR, 'smith-broker-check.mjs'), 'nope'], {
+      execFileAsync("node", [join(BIN_DIR, "smith-broker-check.mjs"), "nope"], {
         env: { ...process.env, SMITH_BROKER_URL: `http://127.0.0.1:${port}` },
       }),
       (err: unknown) => {
@@ -159,8 +190,8 @@ test('smith-broker-check exits non-zero on an unknown taskId', async () => {
   }
 });
 
-test('smith-broker-check exits 2 with no taskId argument', async () => {
-  await assert.rejects(execFileAsync('node', [join(BIN_DIR, 'smith-broker-check.mjs')]), (err: unknown) => {
+test("smith-broker-check exits 2 with no taskId argument", async () => {
+  await assert.rejects(execFileAsync("node", [join(BIN_DIR, "smith-broker-check.mjs")]), (err: unknown) => {
     assert.equal((err as ExecFailure).code, 2);
     return true;
   });

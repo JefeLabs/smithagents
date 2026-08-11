@@ -35,17 +35,17 @@
  * (boot-time init, and again on every session create/activate), sourced from
  * that workspace's own saved Discord config — not a startup-only env-var boot.
  */
-import { spawnSync } from 'node:child_process';
-import type { SttLike } from './broker.ts';
+import { spawnSync } from "node:child_process";
+import type { SttLike } from "./broker.ts";
 import type {
-  createDiscordVoiceSurface as realCreateDiscordVoiceSurface,
   DiscordVoiceOptions,
+  createDiscordVoiceSurface as realCreateDiscordVoiceSurface,
   VoiceConnectionLike,
   VoiceGatewayLike,
   VoiceReceiverLike,
-} from './discord-voice.ts';
-import { surfaceModes } from './surface-modes.ts';
-import type { PresenceEvent, VoicePresence as RealVoicePresence } from './voice-presence.ts';
+} from "./discord-voice.ts";
+import { surfaceModes } from "./surface-modes.ts";
+import type { PresenceEvent, VoicePresence as RealVoicePresence } from "./voice-presence.ts";
 
 type DiscordVoiceSurface = ReturnType<typeof realCreateDiscordVoiceSurface>;
 
@@ -60,7 +60,10 @@ type DiscordVoiceSurface = ReturnType<typeof realCreateDiscordVoiceSurface>;
 export interface DiscordEarClientLike {
   login(token: string): Promise<unknown>;
   destroy(): Promise<unknown>;
-  on(event: 'voiceStateUpdate', handler: (oldState: DiscordEarVoiceStateLike, newState: DiscordEarVoiceStateLike) => void): void;
+  on(
+    event: "voiceStateUpdate",
+    handler: (oldState: DiscordEarVoiceStateLike, newState: DiscordEarVoiceStateLike) => void,
+  ): void;
   channels: {
     fetch(channelId: string): Promise<DiscordEarVoiceChannelLike | null>;
     cache: { get(channelId: string): DiscordEarVoiceChannelLike | undefined };
@@ -84,7 +87,7 @@ export interface DiscordVoiceLifecycleDeps {
   directory: { list(): Array<{ id: string; channels?: unknown }> };
   policy: { revokeAll(surface: string): void };
   broker: {
-    attachVoiceSurface(surface: { publishPcm: DiscordVoiceSurface['publishPcm'] }): boolean;
+    attachVoiceSurface(surface: { publishPcm: DiscordVoiceSurface["publishPcm"] }): boolean;
     detachVoiceSurface(): void;
   };
   onUtterance: (text: string) => void;
@@ -104,14 +107,14 @@ export interface DiscordVoiceLifecycleDeps {
 }
 
 function realFfmpegAvailable(): boolean {
-  const check = spawnSync('ffmpeg', ['-version']);
+  const check = spawnSync("ffmpeg", ["-version"]);
   return !(check.error || check.status !== 0);
 }
 
 /** Wraps a real, freshly-constructed discord.js Client into `DiscordEarClientLike` — same shape-adapting role as discord-adapter.ts's `realClient()`. */
 function realEarClient(
-  DiscordClient: typeof import('discord.js').Client,
-  GatewayIntentBits: typeof import('discord.js').GatewayIntentBits,
+  DiscordClient: typeof import("discord.js").Client,
+  GatewayIntentBits: typeof import("discord.js").GatewayIntentBits,
 ): DiscordEarClientLike {
   const client = new DiscordClient({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
   return {
@@ -188,19 +191,26 @@ export interface DiscordVoiceLifecycle {
 export function createDiscordVoiceLifecycle(deps: DiscordVoiceLifecycleDeps): DiscordVoiceLifecycle {
   let activeVoiceTeardown: (() => Promise<void>) | null = null;
 
-  async function bootDiscordVoice(token: string | undefined, allowlist: string[]): Promise<(() => Promise<void>) | null> {
+  async function bootDiscordVoice(
+    token: string | undefined,
+    allowlist: string[],
+  ): Promise<(() => Promise<void>) | null> {
     const ffmpegAvailable = deps.checkFfmpeg ?? realFfmpegAvailable;
     if (!ffmpegAvailable()) {
-      console.error('[discord-voice] ffmpeg not found on PATH — voice disabled (install ffmpeg to enable Discord voice).');
+      console.error(
+        "[discord-voice] ffmpeg not found on PATH — voice disabled (install ffmpeg to enable Discord voice).",
+      );
       return null;
     }
     if (!token) {
-      console.error('[discord-voice] this workspace has voice channels configured but no saved Discord bot token — the ear has no bot identity. Voice disabled.');
+      console.error(
+        "[discord-voice] this workspace has voice channels configured but no saved Discord bot token — the ear has no bot identity. Voice disabled.",
+      );
       return null;
     }
     const caps = deps.voiceCapabilities?.() ?? { stt: true, tts: true };
     if (!caps.stt && !caps.tts) {
-      console.error('[discord-voice] no STT or TTS keys configured — voice disabled. Add keys in Settings → Voice.');
+      console.error("[discord-voice] no STT or TTS keys configured — voice disabled. Add keys in Settings → Voice.");
       return null;
     }
     const earToken = token;
@@ -212,11 +222,11 @@ export function createDiscordVoiceLifecycle(deps: DiscordVoiceLifecycleDeps): Di
       { Client: DiscordClient, GatewayIntentBits },
       voice,
     ] = await Promise.all([
-      import('./discord-voice.ts'),
-      import('./discord-audio.ts'),
-      import('./voice-presence.ts'),
-      import('discord.js'),
-      import('@discordjs/voice'),
+      import("./discord-voice.ts"),
+      import("./discord-audio.ts"),
+      import("./voice-presence.ts"),
+      import("discord.js"),
+      import("@discordjs/voice"),
     ]);
     const {
       joinVoiceChannel,
@@ -235,18 +245,18 @@ export function createDiscordVoiceLifecycle(deps: DiscordVoiceLifecycleDeps): Di
     // with one whose id uses a dash in the same spot.
     const agentTokens = new Map<string, string>();
     for (const [key, value] of Object.entries(process.env)) {
-      if (key === 'DISCORD_TOKEN' || !key.startsWith('DISCORD_TOKEN_') || !value) continue;
-      agentTokens.set(key.slice('DISCORD_TOKEN_'.length).toLowerCase().replaceAll('_', '-'), value);
+      if (key === "DISCORD_TOKEN" || !key.startsWith("DISCORD_TOKEN_") || !value) continue;
+      agentTokens.set(key.slice("DISCORD_TOKEN_".length).toLowerCase().replaceAll("_", "-"), value);
     }
     // Not just autojoin: an on-request agent can be summoned into a live room
     // later (joinAgent), so it needs a bot token minted up front the same as
     // an autojoin agent — only 'disabled' is excluded here.
-    const designated = deps.directory.list().filter((a) => surfaceModes(a)['discord-voice'] !== 'disabled');
+    const designated = deps.directory.list().filter((a) => surfaceModes(a)["discord-voice"] !== "disabled");
     const mouths = designated.filter((a) => agentTokens.has(a.id)).map((a) => a.id);
     const degraded = designated.filter((a) => !agentTokens.has(a.id)).map((a) => a.id);
     console.log(`[discord-voice] ear starting — ${allowlist.length} channel(s) allowlisted`);
-    console.log(`[discord-voice] agent mouths (own bot token): ${mouths.length ? mouths.join(', ') : '(none)'}`);
-    console.log(`[discord-voice] agents degraded (share the ear): ${degraded.length ? degraded.join(', ') : '(none)'}`);
+    console.log(`[discord-voice] agent mouths (own bot token): ${mouths.length ? mouths.join(", ") : "(none)"}`);
+    console.log(`[discord-voice] agents degraded (share the ear): ${degraded.length ? degraded.join(", ") : "(none)"}`);
 
     const earClient = await (deps.createEarClient ?? (() => realEarClient(DiscordClient, GatewayIntentBits)))();
     await earClient.login(earToken);
@@ -259,7 +269,7 @@ export function createDiscordVoiceLifecycle(deps: DiscordVoiceLifecycleDeps): Di
     // shared flag let a rejoin's `true` unmask a still-in-flight speaking-start
     // from the previous, already-destroyed connection (see task-5-report.md's
     // fix-round section for the exact race).
-    let speakingStartCb: Parameters<VoiceReceiverLike['onSpeakingStart']>[0] | null = null;
+    let speakingStartCb: Parameters<VoiceReceiverLike["onSpeakingStart"]>[0] | null = null;
     const receiverProxy: VoiceReceiverLike = {
       onSpeakingStart(cb) {
         speakingStartCb = cb;
@@ -287,8 +297,8 @@ export function createDiscordVoiceLifecycle(deps: DiscordVoiceLifecycleDeps): Di
         const connection = joinVoiceChannel({
           channelId,
           guildId: channel.guild.id,
-          group: 'ear',
-          adapterCreator: channel.guild.voiceAdapterCreator as Parameters<typeof joinVoiceChannel>[0]['adapterCreator'],
+          group: "ear",
+          adapterCreator: channel.guild.voiceAdapterCreator as Parameters<typeof joinVoiceChannel>[0]["adapterCreator"],
           selfDeaf: false,
           selfMute: false,
         });
@@ -298,8 +308,8 @@ export function createDiscordVoiceLifecycle(deps: DiscordVoiceLifecycleDeps): Di
         // both AudioPlayer and VoiceConnection fire 'error' for routine,
         // non-fatal conditions.
         const player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play } });
-        player.on('error', (err) => console.error(`[discord-voice] ear audio player error: ${String(err)}`));
-        connection.on('error', (err) => console.error(`[discord-voice] ear voice connection error: ${String(err)}`));
+        player.on("error", (err) => console.error(`[discord-voice] ear audio player error: ${String(err)}`));
+        connection.on("error", (err) => console.error(`[discord-voice] ear voice connection error: ${String(err)}`));
         connection.subscribe(player);
 
         // Scoped to THIS connection only — a rejoin gets its own `alive`, so
@@ -365,12 +375,14 @@ export function createDiscordVoiceLifecycle(deps: DiscordVoiceLifecycleDeps): Di
     async function onPresenceEvent(event: PresenceEvent): Promise<void> {
       if (tornDown) return;
       const action = presence.handle(event, humanCountFor);
-      if (action.type === 'join-crew') {
+      if (action.type === "join-crew") {
         // First-come-wins per broker.ts's attachVoiceSurface contract: declined
         // (a meeting is active or joining) means log + skip + no markJoined —
         // the next qualifying presence event retries from scratch.
         if (!deps.broker.attachVoiceSurface(surface)) {
-          console.log('[discord-voice] attach declined (a meeting is active or joining) — will retry on the next presence event');
+          console.log(
+            "[discord-voice] attach declined (a meeting is active or joining) — will retry on the next presence event",
+          );
           return;
         }
         try {
@@ -381,23 +393,25 @@ export function createDiscordVoiceLifecycle(deps: DiscordVoiceLifecycleDeps): Di
           // designated agent degrades to the ear), and a bare "ear + 0 agent
           // mouth(s)" reads as a failure without it.
           const connectedCount = surface.connectedAgentIds().length;
-          const designatedCount = deps.directory.list().filter((a) => surfaceModes(a)['discord-voice'] !== 'disabled').length;
+          const designatedCount = deps.directory
+            .list()
+            .filter((a) => surfaceModes(a)["discord-voice"] !== "disabled").length;
           const degradedCount = designatedCount - connectedCount;
           console.log(
             `[discord-voice] joined ${action.channelId} — ear + ${connectedCount} agent mouth(s)` +
-              (degradedCount > 0 ? `, ${degradedCount} degraded` : ''),
+              (degradedCount > 0 ? `, ${degradedCount} degraded` : ""),
           );
         } catch (err) {
           console.error(`[discord-voice] join failed for ${action.channelId}: ${String(err)}`);
           deps.broker.detachVoiceSurface();
-          presence.handle({ type: 'join-failed', channelId: action.channelId }, humanCountFor);
+          presence.handle({ type: "join-failed", channelId: action.channelId }, humanCountFor);
         }
-      } else if (action.type === 'leave-crew') {
+      } else if (action.type === "leave-crew") {
         await surface.leaveAll();
         // On-request admissions are runtime-only for the life of one crew
         // presence in the room — the next room join starts every on-request
         // agent unadmitted again.
-        deps.policy.revokeAll('discord-voice');
+        deps.policy.revokeAll("discord-voice");
         deps.broker.detachVoiceSurface();
         presence.markLeft();
         console.log(`[discord-voice] left ${action.channelId}`);
@@ -415,7 +429,7 @@ export function createDiscordVoiceLifecycle(deps: DiscordVoiceLifecycleDeps): Di
     // through one serial promise settles each before the next is evaluated —
     // mirrors broker.ts's `speaking` serial-chain pattern.
     let presenceChain: Promise<void> = Promise.resolve();
-    earClient.on('voiceStateUpdate', (oldState, newState) => {
+    earClient.on("voiceStateUpdate", (oldState, newState) => {
       presenceChain = presenceChain
         .then(async () => {
           const leftId = oldState.channelId;
@@ -425,12 +439,14 @@ export function createDiscordVoiceLifecycle(deps: DiscordVoiceLifecycleDeps): Di
             newState.member ??
             oldState.member ??
             (await newState.guild.members.fetch(newState.id).catch((err: unknown) => {
-              console.error(`[discord-voice] couldn't resolve guild member ${newState.id} for a voice presence update — dropping it: ${String(err)}`);
+              console.error(
+                `[discord-voice] couldn't resolve guild member ${newState.id} for a voice presence update — dropping it: ${String(err)}`,
+              );
               return null;
             }));
           if (!member || member.user.bot) return; // human = !member.user.bot; bots (our own mouths included) never drive presence
-          if (leftId) await onPresenceEvent({ type: 'human-left', channelId: leftId });
-          if (joinedId) await onPresenceEvent({ type: 'human-joined', channelId: joinedId });
+          if (leftId) await onPresenceEvent({ type: "human-left", channelId: leftId });
+          if (joinedId) await onPresenceEvent({ type: "human-joined", channelId: joinedId });
         })
         .catch((err) => console.error(`[discord-voice] presence handling failed: ${String(err)}`)); // one bad event must not wedge the chain
     });
@@ -466,7 +482,7 @@ export function createDiscordVoiceLifecycle(deps: DiscordVoiceLifecycleDeps): Di
       // failed leaveAll can never leave broker still attached to a surface
       // this function is about to destroy, or leave an on-request admission
       // behind for a room the crew is no longer in.
-      deps.policy.revokeAll('discord-voice');
+      deps.policy.revokeAll("discord-voice");
       deps.broker.detachVoiceSurface();
       await earClient.destroy();
       deps.onSurfaceChange(null, null);

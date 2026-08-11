@@ -18,7 +18,7 @@
 // ---------------------------------------------------------------------------
 
 export interface WorkerRegisterMessage {
-  type: 'register';
+  type: "register";
   /** Unique worker ID (stable across reconnects) */
   workerId: string;
   /** Human-readable name (e.g., "gpu-box-01") */
@@ -32,27 +32,27 @@ export interface WorkerRegisterMessage {
   /** Which agent CLIs are installed */
   agents: string[];
   /** Available runtimes on this worker */
-  runtimes: Array<'tmux' | 'docker'>;
+  runtimes: Array<"tmux" | "docker">;
   /** Worker version */
   version: string;
 }
 
 export interface TaskAcceptedMessage {
-  type: 'task:accepted';
+  type: "task:accepted";
   taskId: string;
   sessionName: string;
   workerId: string;
 }
 
 export interface TaskCompletedMessage {
-  type: 'task:completed';
+  type: "task:completed";
   taskId: string;
   sessionName: string;
   exitCode: number;
 }
 
 export interface TaskFailedMessage {
-  type: 'task:failed';
+  type: "task:failed";
   taskId: string;
   sessionName: string;
   exitCode: number;
@@ -60,7 +60,7 @@ export interface TaskFailedMessage {
 }
 
 export interface OutputChunkMessage {
-  type: 'output:chunk';
+  type: "output:chunk";
   taskId: string;
   sessionName: string;
   output: string;
@@ -68,7 +68,7 @@ export interface OutputChunkMessage {
 }
 
 export interface WorkerHeartbeatMessage {
-  type: 'heartbeat';
+  type: "heartbeat";
   workerId: string;
   activeCount: number;
   capacity: number;
@@ -87,14 +87,14 @@ export type WorkerMessage =
 // ---------------------------------------------------------------------------
 
 export interface RegisteredMessage {
-  type: 'registered';
+  type: "registered";
   accepted: boolean;
   orchestratorId: string;
   message?: string;
 }
 
 export interface TaskDispatchMessage {
-  type: 'task:dispatch';
+  type: "task:dispatch";
   taskId: string;
   sessionName: string;
   command: string;
@@ -103,7 +103,7 @@ export interface TaskDispatchMessage {
 }
 
 export interface TaskSteerMessage {
-  type: 'task:steer';
+  type: "task:steer";
   taskId: string;
   sessionName: string;
   keys: string;
@@ -111,13 +111,13 @@ export interface TaskSteerMessage {
 }
 
 export interface TaskKillMessage {
-  type: 'task:kill';
+  type: "task:kill";
   taskId: string;
   sessionName: string;
 }
 
 export interface OutputRequestMessage {
-  type: 'output:request';
+  type: "output:request";
   taskId: string;
   sessionName: string;
 }
@@ -155,7 +155,7 @@ export interface ConnectedWorker {
   capacity: number;
   activeCount: number;
   agents: string[];
-  runtimes: Array<'tmux' | 'docker'>;
+  runtimes: Array<"tmux" | "docker">;
   version: string;
   connectedAt: string;
   lastHeartbeat: string;

@@ -3,10 +3,10 @@
  * ABOVE the feed pipe — approving a topic writes ordinary FeedSource rows, and
  * everything downstream (ingest, digest, check_feeds, cards) is untouched.
  */
-import type { FeedIo } from './store.ts';
+import type { FeedIo } from "./store.ts";
 
 export interface Candidate {
-  kind: 'site' | 'github' | 'youtube' | 'x';
+  kind: "site" | "github" | "youtube" | "x";
   url: string;
   label: string;
   /** Why the agent believes this is the right source — shown in the review list. */
@@ -18,7 +18,7 @@ export interface Candidate {
 export interface Topic {
   id: string;
   name: string;
-  status: 'discovering' | 'pending' | 'active';
+  status: "discovering" | "pending" | "active";
   /** Why it is in this status when something went wrong. Every non-active status has one. */
   note?: string;
   candidates: Candidate[];
@@ -31,9 +31,9 @@ export interface Topic {
 export function slugify(name: string): string {
   const slug = name
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  return slug || 'topic';
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || "topic";
 }
 
 export class TopicStore {
@@ -41,7 +41,7 @@ export class TopicStore {
 
   all(): Topic[] {
     try {
-      const raw = this.io.read('topics.json');
+      const raw = this.io.read("topics.json");
       return raw ? (JSON.parse(raw) as Topic[]) : [];
     } catch {
       return []; // a bad write must not brick the broker
@@ -54,10 +54,17 @@ export class TopicStore {
 
   put(topic: Topic): void {
     const rest = this.all().filter((t) => t.id !== topic.id);
-    this.io.write('topics.json', JSON.stringify([...rest, topic], null, 2));
+    this.io.write("topics.json", JSON.stringify([...rest, topic], null, 2));
   }
 
   remove(id: string): void {
-    this.io.write('topics.json', JSON.stringify(this.all().filter((t) => t.id !== id), null, 2));
+    this.io.write(
+      "topics.json",
+      JSON.stringify(
+        this.all().filter((t) => t.id !== id),
+        null,
+        2,
+      ),
+    );
   }
 }

@@ -14,7 +14,7 @@
  * the door open for a similarity backend behind this same port if the corpus
  * ever outgrows it.
  */
-export type MemoryScopeKind = 'global' | 'workspace' | 'session' | 'agent';
+export type MemoryScopeKind = "global" | "workspace" | "session" | "agent";
 
 export interface MemoryScope {
   workspace?: string;
@@ -32,7 +32,7 @@ export interface MemoryEntry {
   createdAt: string;
   updatedAt: string;
   /** Who asked for it: the human's turn, or the crew noticing something. */
-  source: 'human' | 'crew';
+  source: "human" | "crew";
 }
 
 export interface RecallQuery {
@@ -42,7 +42,7 @@ export interface RecallQuery {
 }
 
 export interface MemoryPort {
-  remember(input: { key: string; text: string; scope: MemoryScope; source?: 'human' | 'crew' }): MemoryEntry;
+  remember(input: { key: string; text: string; scope: MemoryScope; source?: "human" | "crew" }): MemoryEntry;
   recall(query: RecallQuery): MemoryEntry[];
   forget(key: string, scope: MemoryScope): boolean;
   all(scope?: MemoryScope): MemoryEntry[];
@@ -55,9 +55,10 @@ export interface MemoryStoreFile {
 
 /** Words that carry no signal in a corpus this small. */
 const STOPWORDS = new Set(
-  ('a an and are as at be but by for from has have how i if in is it its of on or that the their then there these this to was what when where which who will with you your' +
-    ' quiero para pero como este esta los las del una uno por con que')
-    .split(' '),
+  (
+    "a an and are as at be but by for from has have how i if in is it its of on or that the their then there these this to was what when where which who will with you your" +
+    " quiero para pero como este esta los las del una uno por con que"
+  ).split(" "),
 );
 
 const MAX_ENTRIES = 500;
@@ -69,10 +70,10 @@ const MAX_ENTRIES = 500;
  * handful of English endings that actually cost us matches.
  */
 function stem(token: string): string {
-  for (const suffix of ['ing', 'ies', 'es', 'ed', 's']) {
+  for (const suffix of ["ing", "ies", "es", "ed", "s"]) {
     if (token.length > suffix.length + 2 && token.endsWith(suffix)) {
       const base = token.slice(0, -suffix.length);
-      return suffix === 'ies' ? `${base}y` : base;
+      return suffix === "ies" ? `${base}y` : base;
     }
   }
   return token;
@@ -81,8 +82,8 @@ function stem(token: string): string {
 export function tokenize(text: string): string[] {
   return text
     .toLowerCase()
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '') // fold accents so "sesión" matches "sesion"
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "") // fold accents so "sesión" matches "sesion"
     .split(/[^a-z0-9]+/)
     .filter((t) => t.length > 2 && !STOPWORDS.has(t))
     .map(stem);
@@ -100,7 +101,7 @@ export class LocalMemory implements MemoryPort {
     this.seq = this.entries.length;
   }
 
-  remember(input: { key: string; text: string; scope: MemoryScope; source?: 'human' | 'crew' }): MemoryEntry {
+  remember(input: { key: string; text: string; scope: MemoryScope; source?: "human" | "crew" }): MemoryEntry {
     const key = input.key.trim().toLowerCase();
     const at = this.now();
     // Same key in the same scope is an UPDATE, not a duplicate — otherwise a
@@ -121,7 +122,7 @@ export class LocalMemory implements MemoryPort {
       scope: { ...input.scope },
       createdAt: at,
       updatedAt: at,
-      source: input.source ?? 'human',
+      source: input.source ?? "human",
     };
     this.entries.push(entry);
     // Oldest-first eviction keeps the file bounded without a background job.

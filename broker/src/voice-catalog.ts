@@ -10,9 +10,9 @@
  *     and no TTS round-trip, which is what makes a reaction feel like a
  *     reaction instead of a request.
  */
-import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 export interface CatalogVoice {
   voiceId: string;
@@ -49,7 +49,7 @@ export class VoiceCatalog {
     private readonly apiKey: string,
     private readonly cacheDir: string,
     private readonly fetchImpl: typeof fetch = fetch,
-    private readonly baseUrl = 'https://api.elevenlabs.io',
+    private readonly baseUrl = "https://api.elevenlabs.io",
   ) {}
 
   /**
@@ -62,12 +62,12 @@ export class VoiceCatalog {
       page_size: String(query.pageSize ?? 24),
       page: String(query.page ?? 0),
     });
-    if (query.search) params.set('search', query.search);
-    if (query.gender) params.set('gender', query.gender);
-    if (query.language) params.set('language', query.language);
+    if (query.search) params.set("search", query.search);
+    if (query.gender) params.set("gender", query.gender);
+    if (query.language) params.set("language", query.language);
 
     const shared = await this.fetchImpl(`${this.baseUrl}/v1/shared-voices?${params}`, {
-      headers: { 'xi-api-key': this.apiKey },
+      headers: { "xi-api-key": this.apiKey },
     }).catch(() => null);
 
     if (shared?.ok) {
@@ -75,17 +75,17 @@ export class VoiceCatalog {
       return { voices: (body.voices ?? []).map(toCatalogVoice), hasMore: Boolean(body.has_more) };
     }
 
-    const own = await this.fetchImpl(`${this.baseUrl}/v1/voices`, { headers: { 'xi-api-key': this.apiKey } });
+    const own = await this.fetchImpl(`${this.baseUrl}/v1/voices`, { headers: { "xi-api-key": this.apiKey } });
     if (!own.ok) {
       // A 401 here is almost always key SCOPE, not a bad key: browsing needs
       // the voices_read permission that TTS-only keys lack. Say so plainly —
       // the wizard shows this text to the user.
-      const detail = await own.text().catch(() => '');
+      const detail = await own.text().catch(() => "");
       if (own.status === 401 && /voices_read|missing_permissions/.test(detail)) {
         throw new Error(
           'This ElevenLabs API key cannot browse voices — it is missing the "voices_read" permission. ' +
-            'Enable Voices → Read on the key (or create a new one) at elevenlabs.io → Profile → API Keys. ' +
-            'Speech still works; only the catalog is blocked.',
+            "Enable Voices → Read on the key (or create a new one) at elevenlabs.io → Profile → API Keys. " +
+            "Speech still works; only the catalog is blocked.",
         );
       }
       throw new Error(`ElevenLabs voice list failed: ${own.status}`);
@@ -98,16 +98,16 @@ export class VoiceCatalog {
 
   /** Synthesize one line, cached by (voice, text) so repeats are free. */
   async synthesize(voiceId: string, text: string): Promise<Buffer> {
-    const key = createHash('sha256').update(`${voiceId}:${text}`).digest('hex').slice(0, 32);
+    const key = createHash("sha256").update(`${voiceId}:${text}`).digest("hex").slice(0, 32);
     const file = join(this.cacheDir, `${key}.mp3`);
     if (existsSync(file)) return readFileSync(file);
 
     const res = await this.fetchImpl(`${this.baseUrl}/v1/text-to-speech/${voiceId}?output_format=mp3_44100_128`, {
-      method: 'POST',
-      headers: { 'xi-api-key': this.apiKey, 'content-type': 'application/json' },
-      body: JSON.stringify({ text, model_id: 'eleven_flash_v2_5' }),
+      method: "POST",
+      headers: { "xi-api-key": this.apiKey, "content-type": "application/json" },
+      body: JSON.stringify({ text, model_id: "eleven_flash_v2_5" }),
     });
-    if (!res.ok) throw new Error(`ElevenLabs TTS failed: ${res.status} ${await res.text().catch(() => '')}`);
+    if (!res.ok) throw new Error(`ElevenLabs TTS failed: ${res.status} ${await res.text().catch(() => "")}`);
     const audio = Buffer.from(await res.arrayBuffer());
     mkdirSync(this.cacheDir, { recursive: true });
     writeFileSync(file, audio);

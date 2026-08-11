@@ -4,18 +4,18 @@
  * (what UIs render) and the brain's conversation history (what the model
  * remembers), so switching sessions swaps both wholesale.
  */
-import type { HistoryEntry } from './brain.ts';
-import type { TurnOrigin } from './broker.ts';
+import type { HistoryEntry } from "./brain.ts";
+import type { TurnOrigin } from "./broker.ts";
 
 export interface TranscriptLine {
-  role: 'user' | 'broker';
+  role: "user" | "broker";
   text: string;
   at: string;
 }
 
-export type ExecutionMode = 'local-in-process' | 'local-docker' | 'remote-in-process' | 'remote-docker';
+export type ExecutionMode = "local-in-process" | "local-docker" | "remote-in-process" | "remote-docker";
 
-const LEGACY_MODE: ExecutionMode = 'local-in-process';
+const LEGACY_MODE: ExecutionMode = "local-in-process";
 
 export interface Session {
   id: string;
@@ -58,8 +58,8 @@ const MAX_TRANSCRIPT_LINES = 500;
 
 /** Collapse whitespace, cap at 40 chars with an ellipsis (spec §3). */
 export function truncateTitle(text: string): string {
-  const clean = text.replace(/\s+/g, ' ').trim();
-  if (!clean) return 'New session';
+  const clean = text.replace(/\s+/g, " ").trim();
+  if (!clean) return "New session";
   return clean.length <= 40 ? clean : `${clean.slice(0, 39).trimEnd()}…`;
 }
 
@@ -69,12 +69,12 @@ export function resolveLazyWorkspace(
   attendedDiscordWorkspace: string | null,
   defaultWorkspace: string,
 ): string {
-  return origin?.kind === 'discord' ? (attendedDiscordWorkspace ?? defaultWorkspace) : defaultWorkspace;
+  return origin?.kind === "discord" ? (attendedDiscordWorkspace ?? defaultWorkspace) : defaultWorkspace;
 }
 
 export class SessionManager {
   private sessions = new Map<string, Session>();
-  private activeId = '';
+  private activeId = "";
   private seq = 0;
 
   constructor(
@@ -89,14 +89,14 @@ export class SessionManager {
       // Phase-1 files carried kind:"document" + docId. Fold that into artifacts
       // and drop the dead fields; they vanish from disk on the next save.
       const legacy = s as Session & { kind?: string; docId?: string };
-      if (!s.artifacts) s.artifacts = legacy.kind === 'document' && legacy.docId ? [legacy.docId] : [];
+      if (!s.artifacts) s.artifacts = legacy.kind === "document" && legacy.docId ? [legacy.docId] : [];
       delete legacy.kind;
       delete legacy.docId;
       this.sessions.set(s.id, s);
       this.seq = Math.max(this.seq, Number(/^s(\d+)$/.exec(s.id)?.[1] ?? 0));
     }
     const latest = [...this.sessions.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] ?? null;
-    this.activeId = latest?.id ?? '';
+    this.activeId = latest?.id ?? "";
     return latest;
   }
 
@@ -150,7 +150,7 @@ export class SessionManager {
     this.store.remove(id);
     if (this.activeId === id) {
       const successor = [...this.sessions.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] ?? null;
-      this.activeId = successor?.id ?? '';
+      this.activeId = successor?.id ?? "";
     }
     // `seq` is untouched: ids never get reused, so a deleted s2 can't be
     // resurrected by the next create and inherit its artifacts.
@@ -159,7 +159,7 @@ export class SessionManager {
 
   active(): Session {
     const session = this.sessions.get(this.activeId);
-    if (!session) throw new Error('no active session — call init() first');
+    if (!session) throw new Error("no active session — call init() first");
     return session;
   }
 
@@ -221,14 +221,15 @@ export class SessionManager {
   /** Wipe every conversation. Creates nothing — the UI lands on the composer (spec §4b). */
   resetAll(): void {
     this.sessions.clear();
-    this.activeId = '';
+    this.activeId = "";
     this.seq = 0;
   }
 
-  appendTranscript(role: 'user' | 'broker', text: string): void {
+  appendTranscript(role: "user" | "broker", text: string): void {
     const session = this.active();
     session.transcript.push({ role, text, at: this.now() });
-    if (session.transcript.length > MAX_TRANSCRIPT_LINES) session.transcript.splice(0, session.transcript.length - MAX_TRANSCRIPT_LINES);
+    if (session.transcript.length > MAX_TRANSCRIPT_LINES)
+      session.transcript.splice(0, session.transcript.length - MAX_TRANSCRIPT_LINES);
     session.updatedAt = this.now();
     this.store.save(session);
   }

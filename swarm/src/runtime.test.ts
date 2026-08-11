@@ -1,36 +1,38 @@
-import { test } from 'node:test';
-import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { TmuxRuntime, createRuntime } from './runtime.js';
-import { WorkerPool } from './remote-runtime.js';
+import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import { WorkerPool } from "./remote-runtime.js";
+import { createRuntime, TmuxRuntime } from "./runtime.js";
 
-test('TmuxRuntime.launch: env vars are exported inside the wrapped command, not interpolated into it', async () => {
+test("TmuxRuntime.launch: env vars are exported inside the wrapped command, not interpolated into it", async () => {
   const runtime = new TmuxRuntime();
   const sessionName = `test-env-${Date.now()}`;
-  const dir = await mkdtemp(join(tmpdir(), 'launch-env-'));
-  const outFile = join(dir, 'out.txt');
+  const dir = await mkdtemp(join(tmpdir(), "launch-env-"));
+  const outFile = join(dir, "out.txt");
   try {
-    await runtime.launch(sessionName, `echo "$SMITH_TEST_TOKEN" > ${outFile}`, dir, { SMITH_TEST_TOKEN: 'super-secret' });
+    await runtime.launch(sessionName, `echo "$SMITH_TEST_TOKEN" > ${outFile}`, dir, {
+      SMITH_TEST_TOKEN: "super-secret",
+    });
     await runtime.waitFor(sessionName);
-    const content = await readFile(outFile, 'utf8');
-    assert.equal(content.trim(), 'super-secret');
+    const content = await readFile(outFile, "utf8");
+    assert.equal(content.trim(), "super-secret");
   } finally {
     await runtime.kill(sessionName).catch(() => {});
     await rm(dir, { recursive: true, force: true });
   }
 });
 
-test('createRuntime: remote without a WorkerPool throws; with one, returns the RemoteRuntime adapter', () => {
-  assert.throws(() => createRuntime('remote'), /WorkerPool is required/);
-  const adapter = createRuntime('remote', undefined, new WorkerPool());
-  assert.equal(adapter.constructor.name, 'RemoteRuntime');
+test("createRuntime: remote without a WorkerPool throws; with one, returns the RemoteRuntime adapter", () => {
+  assert.throws(() => createRuntime("remote"), /WorkerPool is required/);
+  const adapter = createRuntime("remote", undefined, new WorkerPool());
+  assert.equal(adapter.constructor.name, "RemoteRuntime");
 });
 
-test('createRuntime maps remote-tmux and remote-docker to kind-filtered RemoteRuntime', () => {
+test("createRuntime maps remote-tmux and remote-docker to kind-filtered RemoteRuntime", () => {
   const pool = new WorkerPool();
-  assert.ok(createRuntime('remote-tmux', undefined, pool));
-  assert.ok(createRuntime('remote-docker', undefined, pool));
-  assert.throws(() => createRuntime('remote-tmux'), /WorkerPool is required/);
+  assert.ok(createRuntime("remote-tmux", undefined, pool));
+  assert.ok(createRuntime("remote-docker", undefined, pool));
+  assert.throws(() => createRuntime("remote-tmux"), /WorkerPool is required/);
 });

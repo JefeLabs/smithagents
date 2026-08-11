@@ -46,36 +46,36 @@ export interface MessagesClient {
 }
 
 const SCHEMA = {
-  type: 'object',
+  type: "object",
   additionalProperties: false,
-  required: ['name', 'role', 'backstory', 'style', 'directives', 'reactions', 'quickAnswers'],
+  required: ["name", "role", "backstory", "style", "directives", "reactions", "quickAnswers"],
   properties: {
-    name: { type: 'string', description: 'First name only. Fits the crew; never one already taken.' },
-    role: { type: 'string', description: 'Short title, e.g. "Security Engineer" or "The Skeptic of QA".' },
-    backstory: { type: 'string', description: '2-3 sentences of history that explain how they work.' },
-    style: { type: 'string', description: 'How they speak in meetings: tone, rhythm, verbal habits.' },
-    directives: { type: 'string', description: 'What they own and how they approach it — the work prompt.' },
+    name: { type: "string", description: "First name only. Fits the crew; never one already taken." },
+    role: { type: "string", description: 'Short title, e.g. "Security Engineer" or "The Skeptic of QA".' },
+    backstory: { type: "string", description: "2-3 sentences of history that explain how they work." },
+    style: { type: "string", description: "How they speak in meetings: tone, rhythm, verbal habits." },
+    directives: { type: "string", description: "What they own and how they approach it — the work prompt." },
     reactions: {
-      type: 'array',
+      type: "array",
       items: {
-        type: 'object',
+        type: "object",
         additionalProperties: false,
-        required: ['level', 'line'],
+        required: ["level", "line"],
         properties: {
-          level: { type: 'string' },
-          line: { type: 'string', description: 'One spoken sentence, in character, under 90 characters.' },
+          level: { type: "string" },
+          line: { type: "string", description: "One spoken sentence, in character, under 90 characters." },
         },
       },
     },
     quickAnswers: {
-      type: 'array',
+      type: "array",
       items: {
-        type: 'object',
+        type: "object",
         additionalProperties: false,
-        required: ['id', 'answer'],
+        required: ["id", "answer"],
         properties: {
-          id: { type: 'string' },
-          answer: { type: 'string', description: 'One or two spoken sentences, in character.' },
+          id: { type: "string" },
+          answer: { type: "string", description: "One or two spoken sentences, in character." },
         },
       },
     },
@@ -85,39 +85,41 @@ const SCHEMA = {
 export class PersonaGenerator {
   constructor(
     private readonly client: MessagesClient,
-    private readonly model = 'claude-opus-5',
+    private readonly model = "claude-opus-5",
   ) {}
 
   async generate(req: GenerateRequest): Promise<PersonaDraft> {
     const brief = [
-      req.stereotypeLabel ? `Archetype: ${req.stereotypeLabel} — ${req.stereotypeStyle ?? ''}` : 'Archetype: your choice.',
-      req.jobRoleLabel ? `Job: ${req.jobRoleLabel} — ${req.jobRoleDirectives ?? ''}` : 'Job: your choice.',
-      req.gender && req.gender !== 'neutral' ? `Gender: ${req.gender}.` : '',
-      req.hint ? `The human asks for: ${req.hint}` : '',
-      req.crewContext ? `Existing crew: ${req.crewContext}` : '',
-      req.existingNames?.length ? `Names already taken (do NOT reuse): ${req.existingNames.join(', ')}.` : '',
-      '',
-      `Write one reaction line for EACH of these levels, in this exact id set: ${req.reactionLevels.join(', ')}.`,
-      'Answer EACH of these questions in character, keyed by id:',
+      req.stereotypeLabel
+        ? `Archetype: ${req.stereotypeLabel} — ${req.stereotypeStyle ?? ""}`
+        : "Archetype: your choice.",
+      req.jobRoleLabel ? `Job: ${req.jobRoleLabel} — ${req.jobRoleDirectives ?? ""}` : "Job: your choice.",
+      req.gender && req.gender !== "neutral" ? `Gender: ${req.gender}.` : "",
+      req.hint ? `The human asks for: ${req.hint}` : "",
+      req.crewContext ? `Existing crew: ${req.crewContext}` : "",
+      req.existingNames?.length ? `Names already taken (do NOT reuse): ${req.existingNames.join(", ")}.` : "",
+      "",
+      `Write one reaction line for EACH of these levels, in this exact id set: ${req.reactionLevels.join(", ")}.`,
+      "Answer EACH of these questions in character, keyed by id:",
       ...req.quickQuestions.map((q) => `  ${q.id}: ${q.question}`),
     ]
       .filter(Boolean)
-      .join('\n');
+      .join("\n");
 
     const response = await this.client.messages.create({
       model: this.model,
       max_tokens: 4096,
       system:
-        'You invent a member of a tight AI engineering crew. ' +
+        "You invent a member of a tight AI engineering crew. " +
         `They speak ${req.speech ?? 'English with natural Dominican Spanish sprinkled in ("dale", "tranquilo", "mi gente")'}, ` +
-        'and every line you write is SPOKEN ALOUD in a live meeting: short, human, never bulleted, never corporate. ' +
-        'Give them a specific personality with edges — likes, irritations, a way of disagreeing that is theirs alone. ' +
-        'Vary rhythm between agents; avoid stock phrasing.',
-      messages: [{ role: 'user', content: brief }],
-      output_config: { format: { type: 'json_schema', schema: SCHEMA } },
+        "and every line you write is SPOKEN ALOUD in a live meeting: short, human, never bulleted, never corporate. " +
+        "Give them a specific personality with edges — likes, irritations, a way of disagreeing that is theirs alone. " +
+        "Vary rhythm between agents; avoid stock phrasing.",
+      messages: [{ role: "user", content: brief }],
+      output_config: { format: { type: "json_schema", schema: SCHEMA } },
     });
 
-    const text = response.content.find((b) => b.type === 'text')?.text ?? '';
+    const text = response.content.find((b) => b.type === "text")?.text ?? "";
     let draft: PersonaDraft;
     try {
       draft = JSON.parse(text) as PersonaDraft;
@@ -153,7 +155,7 @@ export function draftToAgentBody(
     language: opts.language,
     persona: { style: draft.style },
     directives: draft.directives,
-    engine: { cli: 'claude', model: 'claude-opus' },
+    engine: { cli: "claude", model: "claude-opus" },
     voice: opts.voiceId ? { voiceId: opts.voiceId } : undefined,
     reactions: Object.fromEntries(draft.reactions.map((r) => [r.level, [r.line]])),
     quickAnswers: Object.fromEntries(draft.quickAnswers.map((a) => [a.id, a.answer])),

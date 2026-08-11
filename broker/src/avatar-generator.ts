@@ -7,7 +7,7 @@
  * normalized to a 512×512 PNG so the swarm's 2 MB avatarData cap and the
  * roster's 40px rendering never meet a surprise.
  */
-import sharp from 'sharp';
+import sharp from "sharp";
 
 export interface AvatarRequest {
   name?: string;
@@ -27,17 +27,17 @@ export interface ImagesClient {
 }
 
 const HOUSE_STYLE =
-  'Flat vector bust portrait of a software professional, bold geometric shapes, limited warm palette, ' +
-  'solid single-color background, centered, square crop, no text, no logos, no watermark.';
+  "Flat vector bust portrait of a software professional, bold geometric shapes, limited warm palette, " +
+  "solid single-color background, centered, square crop, no text, no logos, no watermark.";
 
 export function buildAvatarPrompt(req: AvatarRequest): string {
-  const subject = req.gender === 'male' ? 'A man' : req.gender === 'female' ? 'A woman' : 'A person';
+  const subject = req.gender === "male" ? "A man" : req.gender === "female" ? "A woman" : "A person";
   const clauses = [
     HOUSE_STYLE,
-    `${subject}${req.name ? ` called ${req.name}` : ''}${req.role ? `, a ${req.role}` : ''}.`,
+    `${subject}${req.name ? ` called ${req.name}` : ""}${req.role ? `, a ${req.role}` : ""}.`,
   ];
   if (req.backstory) clauses.push(`Character notes: ${req.backstory.slice(0, 400)}`);
-  return clauses.join(' ');
+  return clauses.join(" ");
 }
 
 export class AvatarGenerator {
@@ -51,11 +51,11 @@ export class AvatarGenerator {
     const res = await this.client.models.generateContent({
       model: this.model,
       contents: buildAvatarPrompt(req),
-      config: { responseModalities: ['IMAGE'] },
+      config: { responseModalities: ["IMAGE"] },
     });
     const data = res.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data)?.inlineData?.data;
-    if (!data) throw new Error('Gemini returned no image — try again');
-    const png = await sharp(Buffer.from(data, 'base64')).resize(512, 512, { fit: 'cover' }).png().toBuffer();
-    return png.toString('base64');
+    if (!data) throw new Error("Gemini returned no image — try again");
+    const png = await sharp(Buffer.from(data, "base64")).resize(512, 512, { fit: "cover" }).png().toBuffer();
+    return png.toString("base64");
   }
 }

@@ -5,20 +5,20 @@
 // and user-enabled. One untracked JSON file under .smith/ — a machine fact,
 // not a per-user fact, so it does not live on the User record. The gate rule
 // throughout: block only confirmed negatives, never ignorance.
-import { execFile } from 'node:child_process';
-import { mkdir, open, readFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
-import { getDriver } from './drivers/index.js';
-import type { CommandRunner, ToolDriver } from './drivers/types.js';
-import type { EngineOption } from './personas.js';
+import { execFile } from "node:child_process";
+import { mkdir, open, readFile } from "node:fs/promises";
+import { dirname } from "node:path";
+import { getDriver } from "./drivers/index.js";
+import type { CommandRunner, ToolDriver } from "./drivers/types.js";
+import type { EngineOption } from "./personas.js";
 
 export interface CliToolStatus {
-  detected: boolean;              // binary resolvable on PATH
-  authOk: boolean | 'unknown';    // driver auth probe result
-  enabled: boolean;               // user toggle; defaults true on first detection
-  detail: string;                 // human-readable, e.g. "logged in as …"
-  version?: string;               // tool-reported version when cheaply available
-  lastCheckedAt: string;          // ISO timestamp of last probe
+  detected: boolean; // binary resolvable on PATH
+  authOk: boolean | "unknown"; // driver auth probe result
+  enabled: boolean; // user toggle; defaults true on first detection
+  detail: string; // human-readable, e.g. "logged in as …"
+  version?: string; // tool-reported version when cheaply available
+  lastCheckedAt: string; // ISO timestamp of last probe
 }
 
 export interface CliToolsFile {
@@ -39,8 +39,8 @@ export function emptyCliToolsFile(): CliToolsFile {
 /** Corrupt or missing file -> empty (the next sweep regenerates it). */
 export async function loadCliToolsFile(path: string): Promise<CliToolsFile> {
   try {
-    const parsed = JSON.parse(await readFile(path, 'utf8')) as CliToolsFile;
-    if (parsed?.version === 1 && parsed.tools && typeof parsed.tools === 'object') return parsed;
+    const parsed = JSON.parse(await readFile(path, "utf8")) as CliToolsFile;
+    if (parsed?.version === 1 && parsed.tools && typeof parsed.tools === "object") return parsed;
     return emptyCliToolsFile();
   } catch {
     return emptyCliToolsFile();
@@ -50,7 +50,7 @@ export async function loadCliToolsFile(path: string): Promise<CliToolsFile> {
 /** Owner-only permissions, mirror of channels.ts saveChannels. */
 export async function saveCliToolsFile(path: string, file: CliToolsFile): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const fh = await open(path, 'w', 0o600);
+  const fh = await open(path, "w", 0o600);
   try {
     await fh.writeFile(`${JSON.stringify(file, null, 2)}\n`);
   } finally {
@@ -70,15 +70,15 @@ export function isActive(status: CliToolStatus | undefined): boolean {
 
 /** Human reason a tool is inactive; '' when active. */
 export function inactiveDetail(status: CliToolStatus | undefined): string {
-  if (!status || isActive(status)) return '';
-  if (!status.detected) return status.detail || 'binary not found on PATH';
-  if (!status.enabled) return 'disabled in Settings → CLI Tools';
-  return status.detail || 'not logged in';
+  if (!status || isActive(status)) return "";
+  if (!status.detected) return status.detail || "binary not found on PATH";
+  if (!status.enabled) return "disabled in Settings → CLI Tools";
+  return status.detail || "not logged in";
 }
 
 /** '' when `cli` may be assigned/launched; else the human reason to refuse. */
 export function gateReason(file: CliToolsFile, cli: string): string {
-  return isActive(file.tools[cli]) ? '' : inactiveDetail(file.tools[cli]);
+  return isActive(file.tools[cli]) ? "" : inactiveDetail(file.tools[cli]);
 }
 
 export function buildCliToolListings(engines: EngineOption[], file: CliToolsFile): CliToolListing[] {
@@ -97,8 +97,8 @@ export const defaultRunner: CommandRunner = (argv, timeoutMs) =>
   new Promise((done) => {
     execFile(argv[0]!, argv.slice(1), { timeout: timeoutMs }, (err, stdout, stderr) => {
       const code = err
-        ? typeof (err as { code?: unknown }).code === 'number'
-          ? ((err as { code: number }).code)
+        ? typeof (err as { code?: unknown }).code === "number"
+          ? (err as { code: number }).code
           : null // killed by timeout/signal
         : 0;
       done({ code, stdout: String(stdout), stderr: String(stderr) });
@@ -111,7 +111,7 @@ export interface SweepDeps {
   /** Which tools to keep entries for — pass ENGINES.map(e => e.cli). */
   clis: string[];
   run?: CommandRunner;
-  resolveDriver?: (id: string) => Pick<ToolDriver, 'verifyAuth'> | null;
+  resolveDriver?: (id: string) => Pick<ToolDriver, "verifyAuth"> | null;
   authTimeoutMs?: number;
   now?: () => string;
 }
@@ -137,32 +137,32 @@ export async function sweepCliTools(path: string, deps: SweepDeps, only?: string
       const enabled = file.tools[cli]?.enabled ?? true;
       const entry: CliToolStatus = {
         detected: false,
-        authOk: 'unknown',
+        authOk: "unknown",
         enabled,
-        detail: '',
+        detail: "",
         lastCheckedAt: now(),
       };
       try {
-        const found = await run(['/bin/sh', '-c', `command -v -- ${binary}`], VERSION_TIMEOUT_MS);
+        const found = await run(["/bin/sh", "-c", `command -v -- ${binary}`], VERSION_TIMEOUT_MS);
         entry.detected = found.code === 0 && found.stdout.trim().length > 0;
         if (!entry.detected) {
           entry.detail = `${binary} not found on PATH`;
         } else {
-          const ver = await run([binary, '--version'], VERSION_TIMEOUT_MS);
-          if (ver.code === 0 && ver.stdout.trim()) entry.version = ver.stdout.trim().split('\n')[0]!;
+          const ver = await run([binary, "--version"], VERSION_TIMEOUT_MS);
+          if (ver.code === 0 && ver.stdout.trim()) entry.version = ver.stdout.trim().split("\n")[0]!;
           const probe = resolveDriver(cli)?.verifyAuth;
           if (probe) {
             const auth = await probe(binary, run, authTimeoutMs);
             entry.authOk = auth.ok;
             entry.detail = auth.detail;
           } else {
-            entry.authOk = 'unknown';
-            entry.detail = 'no auth probe for this tool';
+            entry.authOk = "unknown";
+            entry.detail = "no auth probe for this tool";
           }
         }
       } catch (err) {
         // A probe failure is not a confirmed negative — record it, stay 'unknown'.
-        entry.authOk = 'unknown';
+        entry.authOk = "unknown";
         entry.detail = `probe failed: ${String((err as Error).message ?? err)}`;
       }
       file.tools[cli] = entry;
@@ -174,10 +174,6 @@ export async function sweepCliTools(path: string, deps: SweepDeps, only?: string
 }
 
 /** One-tool sweep with production deps — the launch-failure self-correction hook. */
-export async function refreshCliTool(
-  path: string,
-  agentCommands: Record<string, string>,
-  cli: string,
-): Promise<void> {
+export async function refreshCliTool(path: string, agentCommands: Record<string, string>, cli: string): Promise<void> {
   await sweepCliTools(path, { agentCommands, clis: [cli] }, cli);
 }

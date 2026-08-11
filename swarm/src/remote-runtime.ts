@@ -6,22 +6,22 @@
 // manages the WebSocket connections; this adapter just sends messages.
 // ---------------------------------------------------------------------------
 
-import type { RuntimeAdapter } from './runtime.js';
 import type {
   ConnectedWorker,
-  TaskDispatchMessage,
-  TaskSteerMessage,
-  TaskKillMessage,
-  OutputRequestMessage,
   OutputChunkMessage,
+  OutputRequestMessage,
+  TaskDispatchMessage,
+  TaskKillMessage,
+  TaskSteerMessage,
   WorkerMessage,
-} from './remote-types.js';
+} from "./remote-types.js";
+import type { RuntimeAdapter } from "./runtime.js";
 
 // ---------------------------------------------------------------------------
 // Worker Pool — manages connected remote workers
 // ---------------------------------------------------------------------------
 
-import type WebSocket from 'ws';
+import type WebSocket from "ws";
 
 interface PendingOutput {
   resolve: (output: string) => void;
@@ -82,7 +82,11 @@ export class WorkerPool {
   disconnectWorker(workerId: string): boolean {
     const entry = this.workers.get(workerId);
     if (!entry) return false;
-    try { entry.ws.close(); } catch { /* already dead */ }
+    try {
+      entry.ws.close();
+    } catch {
+      /* already dead */
+    }
     this.removeWorker(workerId);
     return true;
   }
@@ -96,7 +100,11 @@ export class WorkerPool {
     const reaped: string[] = [];
     for (const [workerId, entry] of this.workers) {
       if (now - Date.parse(entry.info.lastHeartbeat) <= maxAgeMs) continue;
-      try { (entry.ws as { terminate?: () => void }).terminate?.(); } catch { /* already dead */ }
+      try {
+        (entry.ws as { terminate?: () => void }).terminate?.();
+      } catch {
+        /* already dead */
+      }
       reaped.push(workerId);
     }
     for (const id of reaped) this.removeWorker(id);
@@ -111,14 +119,14 @@ export class WorkerPool {
     if (!entry) return;
 
     switch (msg.type) {
-      case 'task:accepted':
+      case "task:accepted":
         this.sessionWorker.set(msg.sessionName, workerId);
         entry.info.activeCount++;
         entry.info.tasks.add(msg.taskId);
         break;
 
-      case 'task:completed':
-      case 'task:failed': {
+      case "task:completed":
+      case "task:failed": {
         entry.info.activeCount = Math.max(0, entry.info.activeCount - 1);
         entry.info.tasks.delete(msg.taskId);
         // Resolve pending waitFor
@@ -130,7 +138,7 @@ export class WorkerPool {
         break;
       }
 
-      case 'output:chunk':
+      case "output:chunk": {
         // Cache latest output
         this.outputCache.set(msg.sessionName, msg.output);
         // Resolve pending output request if any
@@ -141,8 +149,9 @@ export class WorkerPool {
           this.pendingOutputs.delete(msg.sessionName);
         }
         break;
+      }
 
-      case 'heartbeat':
+      case "heartbeat":
         entry.info.activeCount = msg.activeCount;
         entry.info.lastHeartbeat = new Date().toISOString();
         break;
@@ -153,7 +162,7 @@ export class WorkerPool {
    * Pick the best worker for a new task (least loaded with capacity).
    * If kind is specified, filters to workers advertising that runtime.
    */
-  private pickWorker(kind?: 'tmux' | 'docker'): { info: ConnectedWorker; ws: WebSocket } | null {
+  private pickWorker(kind?: "tmux" | "docker"): { info: ConnectedWorker; ws: WebSocket } | null {
     let best: { info: ConnectedWorker; ws: WebSocket } | null = null;
     let bestLoad = Infinity;
 
@@ -190,17 +199,25 @@ export class WorkerPool {
    * Dispatch a task to the least-loaded worker.
    * If kind is specified, routes to a worker advertising that runtime.
    */
-  async launch(sessionName: string, command: string, cwd: string, env?: Record<string, string>, kind?: 'tmux' | 'docker'): Promise<void> {
+  async launch(
+    sessionName: string,
+    command: string,
+    cwd: string,
+    env?: Record<string, string>,
+    kind?: "tmux" | "docker",
+  ): Promise<void> {
     const worker = this.pickWorker(kind);
     if (!worker) {
-      throw new Error(kind ? `No remote workers advertising "${kind}" with capacity` : 'No remote workers available with capacity');
+      throw new Error(
+        kind ? `No remote workers advertising "${kind}" with capacity` : "No remote workers available with capacity",
+      );
     }
 
     // env carries secrets (Atlassian/GitHub tokens) — smith-worker doesn't consume
     // this field yet, so don't transmit it until it does. Re-add once the worker
     // protocol actually reads and injects it.
     const msg: TaskDispatchMessage = {
-      type: 'task:dispatch',
+      type: "task:dispatch",
       taskId: sessionName, // session name is the task identity
       sessionName,
       command,
@@ -232,7 +249,7 @@ export class WorkerPool {
    */
   async kill(sessionName: string): Promise<void> {
     const msg: TaskKillMessage = {
-      type: 'task:kill',
+      type: "task:kill",
       taskId: sessionName,
       sessionName,
     };
@@ -271,7 +288,7 @@ export class WorkerPool {
 
     // Request fresh output
     const msg: OutputRequestMessage = {
-      type: 'output:request',
+      type: "output:request",
       taskId: sessionName,
       sessionName,
     };
@@ -293,7 +310,7 @@ export class WorkerPool {
    */
   async sendKeys(sessionName: string, keys: string, target?: string): Promise<void> {
     const msg: TaskSteerMessage = {
-      type: 'task:steer',
+      type: "task:steer",
       taskId: sessionName,
       sessionName,
       keys,
@@ -357,7 +374,7 @@ export class WorkerPool {
 export class RemoteRuntime implements RuntimeAdapter {
   constructor(
     private readonly pool: WorkerPool,
-    private readonly kind?: 'tmux' | 'docker',
+    private readonly kind?: "tmux" | "docker",
   ) {}
 
   launch(sessionName: string, command: string, cwd: string, env?: Record<string, string>): Promise<void> {

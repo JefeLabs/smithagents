@@ -1,10 +1,10 @@
 // Users — the current-operator record credentials live on (design
 // §"Settled decisions": config/credential split). One JSON file per user
 // under .smith/users/, untracked (holds secrets) unlike agents/workspaces.
-import { readdir, readFile, mkdir, open } from 'node:fs/promises';
-import { join } from 'node:path';
-import { findVendor } from './connectors.js';
-import { encryptSecret, decryptSecret, isEncrypted, resolveMasterKey } from './secretbox.js';
+import { mkdir, open, readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { findVendor } from "./connectors.js";
+import { decryptSecret, encryptSecret, isEncrypted, resolveMasterKey } from "./secretbox.js";
 
 export interface ConnectorInstance {
   id: string;
@@ -58,17 +58,22 @@ function upgradeLegacyConnectors(raw: User & LegacyUserFields): User {
   if (rest.connectors) return rest;
   const connectors: ConnectorInstance[] = [];
   if (atlassian) {
-    connectors.push({ id: `legacy-${rest.id}-atlassian`, vendorId: 'atlassian', label: 'default', fields: { ...atlassian } });
+    connectors.push({
+      id: `legacy-${rest.id}-atlassian`,
+      vendorId: "atlassian",
+      label: "default",
+      fields: { ...atlassian },
+    });
   }
   if (github) {
-    connectors.push({ id: `legacy-${rest.id}-github`, vendorId: 'github', label: 'default', fields: { ...github } });
+    connectors.push({ id: `legacy-${rest.id}-github`, vendorId: "github", label: "default", fields: { ...github } });
   }
   return connectors.length ? { ...rest, connectors } : rest;
 }
 
 function assertUser(file: string, v: unknown): User {
   const o = v as Partial<User> & LegacyUserFields;
-  const ok = o && typeof o.id === 'string' && typeof o.name === 'string';
+  const ok = o && typeof o.id === "string" && typeof o.name === "string";
   if (!ok) {
     throw new Error(`Invalid user file ${file}: requires id and name`);
   }
@@ -80,18 +85,13 @@ function secretKeysFor(vendorId: string): Set<string> {
   return new Set((findVendor(vendorId)?.fields ?? []).filter((f) => f.secret).map((f) => f.key));
 }
 
-function mapSecretFields(
-  user: User,
-  fn: (value: string, isSecret: boolean) => string,
-): User {
+function mapSecretFields(user: User, fn: (value: string, isSecret: boolean) => string): User {
   if (!user.connectors) return user;
   return {
     ...user,
     connectors: user.connectors.map((c) => {
       const secrets = secretKeysFor(c.vendorId);
-      const fields = Object.fromEntries(
-        Object.entries(c.fields).map(([k, v]) => [k, fn(v, secrets.has(k))]),
-      );
+      const fields = Object.fromEntries(Object.entries(c.fields).map(([k, v]) => [k, fn(v, secrets.has(k))]));
       return { ...c, fields };
     }),
   };
@@ -126,8 +126,8 @@ export async function loadUsersFromDir(dir: string): Promise<User[]> {
   }
   const users: User[] = [];
   const key = await resolveMasterKey();
-  for (const file of entries.filter((f) => f.endsWith('.json'))) {
-    const raw = await readFile(join(dir, file), 'utf8');
+  for (const file of entries.filter((f) => f.endsWith(".json"))) {
+    const raw = await readFile(join(dir, file), "utf8");
     users.push(decryptUser(assertUser(file, JSON.parse(raw)), key));
   }
   return users;
@@ -142,7 +142,7 @@ export async function saveUser(dir: string, user: User): Promise<void> {
   const filePath = join(dir, `${user.id}.json`);
   const key = await resolveMasterKey();
   const toWrite = encryptUser(user, key);
-  const fh = await open(filePath, 'w', 0o600);
+  const fh = await open(filePath, "w", 0o600);
   try {
     await fh.writeFile(`${JSON.stringify(toWrite, null, 2)}\n`);
   } finally {
@@ -172,9 +172,9 @@ export async function sweepEncryptUsers(dir: string): Promise<number> {
     return 0;
   }
   let rewritten = 0;
-  for (const file of entries.filter((f) => f.endsWith('.json'))) {
+  for (const file of entries.filter((f) => f.endsWith(".json"))) {
     try {
-      const raw = assertUser(file, JSON.parse(await readFile(join(dir, file), 'utf8')));
+      const raw = assertUser(file, JSON.parse(await readFile(join(dir, file), "utf8")));
       const hasPlaintextSecret = (raw.connectors ?? []).some((c) => {
         const secrets = secretKeysFor(c.vendorId);
         return Object.entries(c.fields).some(([k, v]) => secrets.has(k) && v && !isEncrypted(v));

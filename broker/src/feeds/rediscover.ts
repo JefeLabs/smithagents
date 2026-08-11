@@ -4,18 +4,16 @@
  * Returns CANDIDATES, never sources: re-discovery must never activate anything
  * by itself. Flagging is advisory — a flagged source keeps polling.
  */
-import type { Candidate, Topic } from './topics.ts';
-import type { FeedSource } from './types.ts';
+import type { Candidate, Topic } from "./topics.ts";
+import type { FeedSource } from "./types.ts";
 
 /** Six months: long enough that a quiet-but-alive blog is not mistaken for a dead one. */
 const QUIET_DAYS = 180;
 
-export function diffBundle(input: {
-  topic: Topic;
-  fresh: Candidate[];
-  approved: FeedSource[];
-  now: string;
-}): { additions: Candidate[]; flagged: string[] } {
+export function diffBundle(input: { topic: Topic; fresh: Candidate[]; approved: FeedSource[]; now: string }): {
+  additions: Candidate[];
+  flagged: string[];
+} {
   const declined = new Set(input.topic.declined);
   const approvedLocators = new Set(input.approved.map((s) => s.locator));
 

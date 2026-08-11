@@ -15,16 +15,16 @@
  * Designed so no two names sound alike when spoken aloud.
  */
 export const AGENT_ROSTER = [
-  'Sebastian',  // se-BAS-tian
-  'Dominic',    // DOM-i-nic
-  'Nathaniel',  // na-THAN-iel
-  'Tobias',     // to-BI-as
-  'Cameron',    // CAM-er-on
-  'Samantha',   // sa-MAN-tha
-  'Natasha',    // na-TA-sha
-  'Camila',     // ca-MI-la
-  'Olivia',     // o-LI-via
-  'Vanessa',    // va-NES-sa
+  "Sebastian", // se-BAS-tian
+  "Dominic", // DOM-i-nic
+  "Nathaniel", // na-THAN-iel
+  "Tobias", // to-BI-as
+  "Cameron", // CAM-er-on
+  "Samantha", // sa-MAN-tha
+  "Natasha", // na-TA-sha
+  "Camila", // ca-MI-la
+  "Olivia", // o-LI-via
+  "Vanessa", // va-NES-sa
 ] as const;
 
 export type AgentName = (typeof AGENT_ROSTER)[number];
@@ -162,9 +162,7 @@ export function parseAgentName(name: string): {
   name: string;
   isValid: boolean;
 } {
-  const match = AGENT_ROSTER.find(
-    (n) => n.toLowerCase() === name.toLowerCase(),
-  );
+  const match = AGENT_ROSTER.find((n) => n.toLowerCase() === name.toLowerCase());
   return { name: match ?? name, isValid: !!match };
 }
 
@@ -172,7 +170,7 @@ function simpleHash(str: string): number {
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
     const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
+    hash = (hash << 5) - hash + char;
     hash |= 0;
   }
   return Math.abs(hash);

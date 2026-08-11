@@ -1,13 +1,13 @@
-import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import type { createDiscordVoiceSurface } from "./discord-voice.ts";
 import {
   createDiscordVoiceLifecycle,
   type DiscordEarClientLike,
   type DiscordEarVoiceStateLike,
   type DiscordVoiceLifecycleDeps,
-} from './discord-voice-lifecycle.ts';
-import type { createDiscordVoiceSurface } from './discord-voice.ts';
-import type { VoicePresence } from './voice-presence.ts';
+} from "./discord-voice-lifecycle.ts";
+import type { VoicePresence } from "./voice-presence.ts";
 
 type Surface = ReturnType<typeof createDiscordVoiceSurface>;
 
@@ -15,7 +15,8 @@ type Surface = ReturnType<typeof createDiscordVoiceSurface>;
 function fakeEarClient() {
   const loginCalls: string[] = [];
   let destroyCalls = 0;
-  const voiceStateHandlers: Array<(oldState: DiscordEarVoiceStateLike, newState: DiscordEarVoiceStateLike) => void> = [];
+  const voiceStateHandlers: Array<(oldState: DiscordEarVoiceStateLike, newState: DiscordEarVoiceStateLike) => void> =
+    [];
   const client: DiscordEarClientLike = {
     login: async (token) => {
       loginCalls.push(token);
@@ -24,11 +25,11 @@ function fakeEarClient() {
       destroyCalls += 1;
     },
     on: (event, handler) => {
-      if (event === 'voiceStateUpdate') voiceStateHandlers.push(handler);
+      if (event === "voiceStateUpdate") voiceStateHandlers.push(handler);
     },
     channels: {
       fetch: async () => {
-        throw new Error('channels.fetch should not be called in this test');
+        throw new Error("channels.fetch should not be called in this test");
       },
       cache: { get: () => undefined },
     },
@@ -61,7 +62,7 @@ function fakeDeps(overrides: Partial<DiscordVoiceLifecycleDeps> = {}) {
     },
     onUtterance: (text) => void utterances.push(text),
     makeStt: () => {
-      throw new Error('makeStt should not be called in this test');
+      throw new Error("makeStt should not be called in this test");
     },
     onSurfaceChange: (surface, presence) => void surfaceChanges.push({ surface, presence }),
     checkFfmpeg: () => true,
@@ -70,52 +71,52 @@ function fakeDeps(overrides: Partial<DiscordVoiceLifecycleDeps> = {}) {
   return { deps, revoked, attachCalls, detachCalls: () => detachCalls, utterances, surfaceChanges };
 }
 
-test('bootDiscordVoice: ffmpeg unavailable returns null without constructing an ear client', async () => {
+test("bootDiscordVoice: ffmpeg unavailable returns null without constructing an ear client", async () => {
   const { deps, surfaceChanges } = fakeDeps({
     checkFfmpeg: () => false,
     createEarClient: () => {
-      throw new Error('createEarClient should not be called when ffmpeg is unavailable');
+      throw new Error("createEarClient should not be called when ffmpeg is unavailable");
     },
   });
   const lifecycle = createDiscordVoiceLifecycle(deps);
-  const result = await lifecycle.bootDiscordVoice('tok', ['chan-1']);
+  const result = await lifecycle.bootDiscordVoice("tok", ["chan-1"]);
   assert.equal(result, null);
   assert.deepEqual(surfaceChanges, []);
 });
 
-test('bootDiscordVoice: missing token returns null without constructing an ear client', async () => {
+test("bootDiscordVoice: missing token returns null without constructing an ear client", async () => {
   const { deps, surfaceChanges } = fakeDeps({
     createEarClient: () => {
-      throw new Error('createEarClient should not be called when the token is missing');
+      throw new Error("createEarClient should not be called when the token is missing");
     },
   });
   const lifecycle = createDiscordVoiceLifecycle(deps);
-  const result = await lifecycle.bootDiscordVoice(undefined, ['chan-1']);
+  const result = await lifecycle.bootDiscordVoice(undefined, ["chan-1"]);
   assert.equal(result, null);
   assert.deepEqual(surfaceChanges, []);
 });
 
-test('bootDiscordVoice: no STT or TTS keys configured returns null without constructing an ear client', async () => {
+test("bootDiscordVoice: no STT or TTS keys configured returns null without constructing an ear client", async () => {
   const { deps, surfaceChanges } = fakeDeps({
     voiceCapabilities: () => ({ stt: false, tts: false }),
     createEarClient: () => {
-      throw new Error('createEarClient should not be called when no voice keys are configured');
+      throw new Error("createEarClient should not be called when no voice keys are configured");
     },
   });
   const lifecycle = createDiscordVoiceLifecycle(deps);
-  const result = await lifecycle.bootDiscordVoice('tok', ['chan-1']);
+  const result = await lifecycle.bootDiscordVoice("tok", ["chan-1"]);
   assert.equal(result, null);
   assert.deepEqual(surfaceChanges, []);
 });
 
-test('bootDiscordVoice: logs in the injected ear client and reports the new surface/presence via onSurfaceChange', async () => {
+test("bootDiscordVoice: logs in the injected ear client and reports the new surface/presence via onSurfaceChange", async () => {
   const fakeClient = fakeEarClient();
   const { deps, surfaceChanges } = fakeDeps({ createEarClient: () => fakeClient.client });
   const lifecycle = createDiscordVoiceLifecycle(deps);
-  const teardown = await lifecycle.bootDiscordVoice('ear-tok', ['chan-1']);
+  const teardown = await lifecycle.bootDiscordVoice("ear-tok", ["chan-1"]);
 
-  assert.equal(typeof teardown, 'function');
-  assert.deepEqual(fakeClient.loginCalls, ['ear-tok']);
+  assert.equal(typeof teardown, "function");
+  assert.deepEqual(fakeClient.loginCalls, ["ear-tok"]);
   assert.equal(surfaceChanges.length, 1);
   assert.notEqual(surfaceChanges[0]!.surface, null);
   assert.notEqual(surfaceChanges[0]!.presence, null);
@@ -123,32 +124,32 @@ test('bootDiscordVoice: logs in the injected ear client and reports the new surf
   assert.equal(fakeClient.voiceStateHandlers.length, 1);
 });
 
-test('the returned teardown closure destroys the ear client, revokes discord-voice admissions, detaches the broker surface, and resets onSurfaceChange to (null, null)', async () => {
+test("the returned teardown closure destroys the ear client, revokes discord-voice admissions, detaches the broker surface, and resets onSurfaceChange to (null, null)", async () => {
   const fakeClient = fakeEarClient();
   const { deps, revoked, detachCalls, surfaceChanges } = fakeDeps({ createEarClient: () => fakeClient.client });
   const lifecycle = createDiscordVoiceLifecycle(deps);
-  const teardown = await lifecycle.bootDiscordVoice('ear-tok', ['chan-1']);
+  const teardown = await lifecycle.bootDiscordVoice("ear-tok", ["chan-1"]);
 
   await teardown!();
 
   assert.equal(fakeClient.destroyCalls(), 1);
-  assert.deepEqual(revoked, ['discord-voice']);
+  assert.deepEqual(revoked, ["discord-voice"]);
   assert.equal(detachCalls(), 1);
   assert.equal(surfaceChanges.length, 2);
   assert.deepEqual(surfaceChanges[1], { surface: null, presence: null });
 });
 
-test('teardown is safe when nothing was ever joined — leaveAll no-ops rather than throwing', async () => {
+test("teardown is safe when nothing was ever joined — leaveAll no-ops rather than throwing", async () => {
   const fakeClient = fakeEarClient();
   const { deps } = fakeDeps({ createEarClient: () => fakeClient.client });
   const lifecycle = createDiscordVoiceLifecycle(deps);
-  const teardown = await lifecycle.bootDiscordVoice('ear-tok', ['chan-1']);
+  const teardown = await lifecycle.bootDiscordVoice("ear-tok", ["chan-1"]);
 
   await assert.doesNotReject(() => teardown!());
   assert.equal(fakeClient.destroyCalls(), 1);
 });
 
-test('bootDiscordVoice can be called again after a previous teardown, logging in a fresh ear client', async () => {
+test("bootDiscordVoice can be called again after a previous teardown, logging in a fresh ear client", async () => {
   const clients = [fakeEarClient(), fakeEarClient()];
   let created = 0;
   const { deps, surfaceChanges } = fakeDeps({
@@ -156,14 +157,14 @@ test('bootDiscordVoice can be called again after a previous teardown, logging in
   });
   const lifecycle = createDiscordVoiceLifecycle(deps);
 
-  const firstTeardown = await lifecycle.bootDiscordVoice('tok', ['chan-1']);
+  const firstTeardown = await lifecycle.bootDiscordVoice("tok", ["chan-1"]);
   await firstTeardown!();
-  const secondTeardown = await lifecycle.bootDiscordVoice('tok', ['chan-1']);
+  const secondTeardown = await lifecycle.bootDiscordVoice("tok", ["chan-1"]);
 
   assert.equal(created, 2);
-  assert.deepEqual(clients[0]!.loginCalls, ['tok']);
+  assert.deepEqual(clients[0]!.loginCalls, ["tok"]);
   assert.equal(clients[0]!.destroyCalls(), 1);
-  assert.deepEqual(clients[1]!.loginCalls, ['tok']);
+  assert.deepEqual(clients[1]!.loginCalls, ["tok"]);
   assert.equal(clients[1]!.destroyCalls(), 0);
   // (null,null) from the first teardown, then a fresh (surface,presence) from the second boot.
   assert.equal(surfaceChanges.length, 3);
@@ -174,24 +175,24 @@ test('bootDiscordVoice can be called again after a previous teardown, logging in
   assert.equal(clients[1]!.destroyCalls(), 1);
 });
 
-test('two independent lifecycles do not share state', async () => {
+test("two independent lifecycles do not share state", async () => {
   const a = fakeDeps({ createEarClient: () => fakeEarClient().client });
   const b = fakeDeps({ createEarClient: () => fakeEarClient().client });
   const lifecycleA = createDiscordVoiceLifecycle(a.deps);
   const lifecycleB = createDiscordVoiceLifecycle(b.deps);
 
-  await lifecycleA.bootDiscordVoice('tok', ['chan-1']);
+  await lifecycleA.bootDiscordVoice("tok", ["chan-1"]);
   assert.equal(a.surfaceChanges.length, 1);
   assert.equal(b.surfaceChanges.length, 0);
 });
 
-test('activeVoiceTeardown tracks the active boot; teardownDiscordVoice() tears it down and is idempotent', async () => {
+test("activeVoiceTeardown tracks the active boot; teardownDiscordVoice() tears it down and is idempotent", async () => {
   const fakeClient = fakeEarClient();
   const { deps } = fakeDeps({ createEarClient: () => fakeClient.client });
   const lifecycle = createDiscordVoiceLifecycle(deps);
 
   assert.equal(lifecycle.activeVoiceTeardown, null);
-  const teardown = await lifecycle.bootDiscordVoice('tok', ['chan-1']);
+  const teardown = await lifecycle.bootDiscordVoice("tok", ["chan-1"]);
   assert.equal(lifecycle.activeVoiceTeardown, teardown);
 
   await lifecycle.teardownDiscordVoice();
@@ -203,12 +204,12 @@ test('activeVoiceTeardown tracks the active boot; teardownDiscordVoice() tears i
   assert.equal(fakeClient.destroyCalls(), 1);
 });
 
-test('calling the returned teardown closure directly (bypassing teardownDiscordVoice) also clears activeVoiceTeardown', async () => {
+test("calling the returned teardown closure directly (bypassing teardownDiscordVoice) also clears activeVoiceTeardown", async () => {
   const fakeClient = fakeEarClient();
   const { deps } = fakeDeps({ createEarClient: () => fakeClient.client });
   const lifecycle = createDiscordVoiceLifecycle(deps);
 
-  const teardown = await lifecycle.bootDiscordVoice('tok', ['chan-1']);
+  const teardown = await lifecycle.bootDiscordVoice("tok", ["chan-1"]);
   await teardown!();
   assert.equal(lifecycle.activeVoiceTeardown, null);
   // teardownDiscordVoice must not re-destroy an already-destroyed client, since activeVoiceTeardown is already cleared.
@@ -221,7 +222,7 @@ function flushMicrotasks(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
-test('teardown quiesces in-flight presence handling: lets an already-started join finish (even if it ultimately fails) before leaving/destroying, and the torn-down guard stops a later-queued event from starting a new one', async () => {
+test("teardown quiesces in-flight presence handling: lets an already-started join finish (even if it ultimately fails) before leaving/destroying, and the torn-down guard stops a later-queued event from starting a new one", async () => {
   const fakeClient = fakeEarClient();
   let resolveFetchGate: (() => void) | undefined;
   const fetchGate = new Promise<void>((resolve) => {
@@ -240,7 +241,9 @@ test('teardown quiesces in-flight presence handling: lets an already-started joi
         // reaching the real gateway/joinVoiceChannel.
         fetch: async () => {
           await fetchGate;
-          throw new Error('simulated channel fetch failure — ends the in-flight join without touching the real gateway');
+          throw new Error(
+            "simulated channel fetch failure — ends the in-flight join without touching the real gateway",
+          );
         },
         cache: fakeClient.client.channels.cache,
       },
@@ -256,7 +259,7 @@ test('teardown quiesces in-flight presence handling: lets an already-started joi
     },
   });
   const lifecycle = createDiscordVoiceLifecycle(deps);
-  const teardown = await lifecycle.bootDiscordVoice('tok', ['chan-1']);
+  const teardown = await lifecycle.bootDiscordVoice("tok", ["chan-1"]);
   const onVoiceStateUpdate = fakeClient.voiceStateHandlers[0]!;
   const human = { user: { bot: false } };
 
@@ -267,8 +270,8 @@ test('teardown quiesces in-flight presence handling: lets an already-started joi
   // gated channels.fetch above. This join is genuinely in flight by the time
   // teardown() is called below.
   onVoiceStateUpdate(
-    { channelId: null, id: 'user-1', member: human, guild: { members: { fetch: async () => human } } },
-    { channelId: 'chan-1', id: 'user-1', member: human, guild: { members: { fetch: async () => human } } },
+    { channelId: null, id: "user-1", member: human, guild: { members: { fetch: async () => human } } },
+    { channelId: "chan-1", id: "user-1", member: human, guild: { members: { fetch: async () => human } } },
   );
   await flushMicrotasks(); // let event 1 run synchronously up through attachVoiceSurface and into the gated fetch
   assert.equal(attachCount, 1); // confirms the join genuinely started BEFORE teardown begins below
@@ -280,8 +283,8 @@ test('teardown quiesces in-flight presence handling: lets an already-started joi
   // member resolution is immediate too, but it's still queued behind event
   // 1 on the serial chain, so it only runs once event 1's join settles.
   onVoiceStateUpdate(
-    { channelId: null, id: 'user-2', member: human, guild: { members: { fetch: async () => human } } },
-    { channelId: 'chan-1', id: 'user-2', member: human, guild: { members: { fetch: async () => human } } },
+    { channelId: null, id: "user-2", member: human, guild: { members: { fetch: async () => human } } },
+    { channelId: "chan-1", id: "user-2", member: human, guild: { members: { fetch: async () => human } } },
   );
 
   await flushMicrotasks();

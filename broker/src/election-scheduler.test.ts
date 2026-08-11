@@ -1,6 +1,6 @@
-import assert from 'node:assert/strict';
-import { test } from 'node:test';
-import { ElectionScheduler, type ElectionResult } from './election.ts';
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { type ElectionResult, ElectionScheduler } from "./election.ts";
 
 /** A hand-cranked clock: timers fire only when you say so. */
 function fakeTimer() {
@@ -27,9 +27,9 @@ function fakeTimer() {
   };
 }
 
-const RESULT: ElectionResult = { leader: 'josefina', claims: [], method: 'vote' };
+const RESULT: ElectionResult = { leader: "josefina", claims: [], method: "vote" };
 
-test('three rapid changes to one group hold ONE vote', async () => {
+test("three rapid changes to one group hold ONE vote", async () => {
   const timer = fakeTimer();
   let runs = 0;
   const scheduler = new ElectionScheduler({
@@ -40,16 +40,16 @@ test('three rapid changes to one group hold ONE vote', async () => {
     onResult: () => {},
     timer: timer.api,
   });
-  scheduler.schedule('g1');
-  scheduler.schedule('g1');
-  scheduler.schedule('g1');
-  assert.equal(timer.pending(), 1, 'each schedule must replace the pending one');
+  scheduler.schedule("g1");
+  scheduler.schedule("g1");
+  scheduler.schedule("g1");
+  assert.equal(timer.pending(), 1, "each schedule must replace the pending one");
   timer.fire();
   await new Promise((r) => setImmediate(r));
   assert.equal(runs, 1);
 });
 
-test('different groups elect independently', async () => {
+test("different groups elect independently", async () => {
   const timer = fakeTimer();
   const ran: string[] = [];
   const scheduler = new ElectionScheduler({
@@ -60,14 +60,14 @@ test('different groups elect independently', async () => {
     onResult: () => {},
     timer: timer.api,
   });
-  scheduler.schedule('g1');
-  scheduler.schedule('g2');
+  scheduler.schedule("g1");
+  scheduler.schedule("g2");
   timer.fire();
   await new Promise((r) => setImmediate(r));
-  assert.deepEqual(ran.sort(), ['g1', 'g2']);
+  assert.deepEqual(ran.sort(), ["g1", "g2"]);
 });
 
-test('a change DURING an election supersedes it — the stale result is discarded', async () => {
+test("a change DURING an election supersedes it — the stale result is discarded", async () => {
   const timer = fakeTimer();
   const delivered: ElectionResult[] = [];
   let release!: (r: ElectionResult) => void;
@@ -79,17 +79,17 @@ test('a change DURING an election supersedes it — the stale result is discarde
     onResult: (_id, r) => delivered.push(r),
     timer: timer.api,
   });
-  scheduler.schedule('g1');
+  scheduler.schedule("g1");
   timer.fire(); // election in flight
 
-  scheduler.schedule('g1'); // membership changed underneath it
-  release({ leader: 'stale', claims: [], method: 'vote' });
+  scheduler.schedule("g1"); // membership changed underneath it
+  release({ leader: "stale", claims: [], method: "vote" });
   await new Promise((r) => setImmediate(r));
 
-  assert.deepEqual(delivered, [], 'a superseded election must never be written');
+  assert.deepEqual(delivered, [], "a superseded election must never be written");
 });
 
-test('a run returning null (group vanished) delivers nothing', async () => {
+test("a run returning null (group vanished) delivers nothing", async () => {
   const timer = fakeTimer();
   const delivered: string[] = [];
   const scheduler = new ElectionScheduler({
@@ -97,23 +97,23 @@ test('a run returning null (group vanished) delivers nothing', async () => {
     onResult: (id) => delivered.push(id),
     timer: timer.api,
   });
-  scheduler.schedule('g1');
+  scheduler.schedule("g1");
   timer.fire();
   await new Promise((r) => setImmediate(r));
   assert.deepEqual(delivered, []);
 });
 
-test('a throwing run is swallowed — the broker must not crash on an election', async () => {
+test("a throwing run is swallowed — the broker must not crash on an election", async () => {
   const timer = fakeTimer();
   const scheduler = new ElectionScheduler({
     run: async () => {
-      throw new Error('boom');
+      throw new Error("boom");
     },
     onResult: () => {},
     timer: timer.api,
   });
-  scheduler.schedule('g1');
+  scheduler.schedule("g1");
   timer.fire();
   await new Promise((r) => setImmediate(r));
-  assert.ok(true, 'reaching here without an unhandled rejection is the assertion');
+  assert.ok(true, "reaching here without an unhandled rejection is the assertion");
 });

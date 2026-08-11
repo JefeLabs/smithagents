@@ -80,16 +80,16 @@ export function deriveLeader(members: Rankable[]): string | null {
  * outright. `method` records which decided, so a surprising leader is always
  * explainable in the UI.
  */
-export function pickLeader(claims: Claim[], members: Rankable[]): { leader: string | null; method: 'vote' | 'rank' } {
+export function pickLeader(claims: Claim[], members: Rankable[]): { leader: string | null; method: "vote" | "rank" } {
   const ids = new Set(members.map((m) => m.id));
   const willing = claims.filter((c) => c.willing && ids.has(c.agent));
-  if (willing.length === 0) return { leader: deriveLeader(members), method: 'rank' };
+  if (willing.length === 0) return { leader: deriveLeader(members), method: "rank" };
 
   const top = Math.max(...willing.map((c) => c.confidence));
   const tied = willing.filter((c) => c.confidence === top).map((c) => c.agent);
-  if (tied.length === 1) return { leader: tied[0]!, method: 'vote' };
+  if (tied.length === 1) return { leader: tied[0]!, method: "vote" };
 
   // Tie among the willing — the ladder breaks it, but a vote still happened.
   const tiedMembers = members.filter((m) => tied.includes(m.id));
-  return { leader: deriveLeader(tiedMembers), method: 'vote' };
+  return { leader: deriveLeader(tiedMembers), method: "vote" };
 }

@@ -1,16 +1,16 @@
-import assert from 'node:assert/strict';
-import { test } from 'node:test';
-import type { Blueprint } from './blueprints.ts';
-import { type Doc, DocumentManager } from './documents.ts';
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import type { Blueprint } from "./blueprints.ts";
+import { type Doc, DocumentManager } from "./documents.ts";
 
 const BP: Blueprint = {
-  id: 'spec',
-  name: 'Design Spec',
-  family: 'document',
-  workTypes: ['feature', 'bugfix'],
+  id: "spec",
+  name: "Design Spec",
+  family: "document",
+  workTypes: ["feature", "bugfix"],
   sections: [
-    { id: 'overview', heading: 'What this is' },
-    { id: 'repro', heading: 'Reproduction', when: { workType: ['bugfix'] } },
+    { id: "overview", heading: "What this is" },
+    { id: "repro", heading: "Reproduction", when: { workType: ["bugfix"] } },
   ],
 };
 
@@ -18,113 +18,134 @@ function manager(saved: Doc[] = []) {
   const writes: Doc[] = [];
   const m = new DocumentManager(
     { loadAll: () => saved, save: (d) => writes.push(structuredClone(d)) },
-    () => '2026-08-10T12:00:00.000Z',
+    () => "2026-08-10T12:00:00.000Z",
   );
   m.init();
   return { m, writes };
 }
 
-test('create instantiates sections for the work type and persists', () => {
+test("create instantiates sections for the work type and persists", () => {
   const { m, writes } = manager();
-  const doc = m.create(BP, 'bugfix', 'Login breaks on resume');
+  const doc = m.create(BP, "bugfix", "Login breaks on resume");
   assert.ok(doc);
-  assert.equal(doc.id, 'd1');
-  assert.deepEqual(doc.sections.map((s) => s.id), ['overview', 'repro']);
-  assert.equal(doc.status, 'drafting');
+  assert.equal(doc.id, "d1");
+  assert.deepEqual(
+    doc.sections.map((s) => s.id),
+    ["overview", "repro"],
+  );
+  assert.equal(doc.status, "drafting");
   assert.deepEqual(doc.participants, []);
   assert.equal(writes.length, 1);
 });
 
-test('create returns null for an undeclared work type and persists nothing', () => {
+test("create returns null for an undeclared work type and persists nothing", () => {
   const { m, writes } = manager();
-  assert.equal(m.create(BP, 'decision', 'x'), null);
+  assert.equal(m.create(BP, "decision", "x"), null);
   assert.equal(writes.length, 0);
 });
 
-test('patchSection replaces the body, bumps updatedAt, persists', () => {
+test("patchSection replaces the body, bumps updatedAt, persists", () => {
   const { m, writes } = manager();
-  const doc = m.create(BP, 'feature', 'T')!;
-  const patched = m.patchSection(doc.id, 'overview', 'It does the thing.');
-  assert.equal(patched?.sections.find((s) => s.id === 'overview')?.body, 'It does the thing.');
+  const doc = m.create(BP, "feature", "T")!;
+  const patched = m.patchSection(doc.id, "overview", "It does the thing.");
+  assert.equal(patched?.sections.find((s) => s.id === "overview")?.body, "It does the thing.");
   assert.equal(writes.length, 2);
 });
 
-test('patchSection on unknown doc or section is null, nothing persists', () => {
+test("patchSection on unknown doc or section is null, nothing persists", () => {
   const { m, writes } = manager();
-  const doc = m.create(BP, 'feature', 'T')!;
-  assert.equal(m.patchSection('d99', 'overview', 'x'), null);
-  assert.equal(m.patchSection(doc.id, 'nope', 'x'), null);
+  const doc = m.create(BP, "feature", "T")!;
+  assert.equal(m.patchSection("d99", "overview", "x"), null);
+  assert.equal(m.patchSection(doc.id, "nope", "x"), null);
   assert.equal(writes.length, 1);
 });
 
-test('init loads persisted docs and continues the id sequence', () => {
+test("init loads persisted docs and continues the id sequence", () => {
   const persisted: Doc = {
-    id: 'd7',
-    title: 'Old',
-    blueprintId: 'spec',
-    workType: 'feature',
-    sections: [{ id: 'overview', heading: 'What this is', body: 'old' }],
+    id: "d7",
+    title: "Old",
+    blueprintId: "spec",
+    workType: "feature",
+    sections: [{ id: "overview", heading: "What this is", body: "old" }],
     participants: [],
     proposals: [],
-    status: 'drafting',
-    createdAt: '2026-08-01T00:00:00.000Z',
-    updatedAt: '2026-08-01T00:00:00.000Z',
+    status: "drafting",
+    createdAt: "2026-08-01T00:00:00.000Z",
+    updatedAt: "2026-08-01T00:00:00.000Z",
   };
   const { m } = manager([persisted]);
-  assert.equal(m.get('d7')?.title, 'Old');
-  assert.equal(m.create(BP, 'feature', 'New')?.id, 'd8');
+  assert.equal(m.get("d7")?.title, "Old");
+  assert.equal(m.create(BP, "feature", "New")?.id, "d8");
 });
 
-test('list is newest-updated first', () => {
+test("list is newest-updated first", () => {
   const { m } = manager();
-  const a = m.create(BP, 'feature', 'A')!;
-  m.create(BP, 'feature', 'B');
-  m.patchSection(a.id, 'overview', 'bump'); // same fake clock, but patch re-saves; order falls back to insertion — assert both present
-  assert.deepEqual(m.list().map((d) => d.title).sort(), ['A', 'B']);
+  const a = m.create(BP, "feature", "A")!;
+  m.create(BP, "feature", "B");
+  m.patchSection(a.id, "overview", "bump"); // same fake clock, but patch re-saves; order falls back to insertion — assert both present
+  assert.deepEqual(
+    m
+      .list()
+      .map((d) => d.title)
+      .sort(),
+    ["A", "B"],
+  );
 });
 
-test('changeBlueprint re-instantiates an untouched document under the new blueprint', () => {
+test("changeBlueprint re-instantiates an untouched document under the new blueprint", () => {
   const { m } = manager();
   const PLAN: Blueprint = {
-    id: 'implementation-plan',
-    name: 'Implementation Plan',
-    family: 'document',
-    workTypes: ['feature'],
-    sections: [{ id: 'goal', heading: 'Goal' }, { id: 'tasks', heading: 'Tasks' }],
+    id: "implementation-plan",
+    name: "Implementation Plan",
+    family: "document",
+    workTypes: ["feature"],
+    sections: [
+      { id: "goal", heading: "Goal" },
+      { id: "tasks", heading: "Tasks" },
+    ],
   };
-  const doc = m.create(BP, 'feature', 'Login work')!;
+  const doc = m.create(BP, "feature", "Login work")!;
   const recast = m.changeBlueprint(doc.id, PLAN);
-  assert.equal(recast?.blueprintId, 'implementation-plan');
-  assert.equal(recast?.workType, 'feature');
-  assert.deepEqual(recast?.sections.map((s) => s.id), ['goal', 'tasks']);
-  assert.equal(recast?.title, 'Login work'); // the title is the user's words, not the blueprint's
+  assert.equal(recast?.blueprintId, "implementation-plan");
+  assert.equal(recast?.workType, "feature");
+  assert.deepEqual(
+    recast?.sections.map((s) => s.id),
+    ["goal", "tasks"],
+  );
+  assert.equal(recast?.title, "Login work"); // the title is the user's words, not the blueprint's
 });
 
-test('changeBlueprint refuses once any section has text, and on an unknown doc', () => {
+test("changeBlueprint refuses once any section has text, and on an unknown doc", () => {
   const { m } = manager();
-  const PLAN: Blueprint = { id: 'p', name: 'P', family: 'document', workTypes: ['feature'], sections: [{ id: 'goal', heading: 'Goal' }] };
-  const doc = m.create(BP, 'feature', 'T')!;
-  m.patchSection(doc.id, 'overview', 'Something written.');
+  const PLAN: Blueprint = {
+    id: "p",
+    name: "P",
+    family: "document",
+    workTypes: ["feature"],
+    sections: [{ id: "goal", heading: "Goal" }],
+  };
+  const doc = m.create(BP, "feature", "T")!;
+  m.patchSection(doc.id, "overview", "Something written.");
   assert.equal(m.changeBlueprint(doc.id, PLAN), null);
-  assert.equal(m.get(doc.id)?.blueprintId, 'spec'); // untouched
-  assert.equal(m.changeBlueprint('d99', PLAN), null);
+  assert.equal(m.get(doc.id)?.blueprintId, "spec"); // untouched
+  assert.equal(m.changeBlueprint("d99", PLAN), null);
 });
 
-test('rename sets a collapsed title, refuses blank, refuses unknown docs', () => {
+test("rename sets a collapsed title, refuses blank, refuses unknown docs", () => {
   const { m } = manager();
-  const doc = m.create(BP, 'feature', 'Old name')!;
-  assert.equal(m.rename(doc.id, '  Login   flow  spec ')?.title, 'Login flow spec');
-  assert.equal(m.rename(doc.id, '   '), null);
-  assert.equal(m.get(doc.id)?.title, 'Login flow spec'); // the blank never landed
-  assert.equal(m.rename('d99', 'x'), null);
+  const doc = m.create(BP, "feature", "Old name")!;
+  assert.equal(m.rename(doc.id, "  Login   flow  spec ")?.title, "Login flow spec");
+  assert.equal(m.rename(doc.id, "   "), null);
+  assert.equal(m.get(doc.id)?.title, "Login flow spec"); // the blank never landed
+  assert.equal(m.rename("d99", "x"), null);
 });
 
-test('patchSection stores normalized markdown, whatever spelling arrived', () => {
+test("patchSection stores normalized markdown, whatever spelling arrived", () => {
   const { m } = manager();
-  const doc = m.create(BP, 'feature', 'T')!;
-  m.patchSection(doc.id, 'overview', '*em* and __strong__');
-  const stored = m.get(doc.id)?.sections.find((s) => s.id === 'overview')?.body;
-  m.patchSection(doc.id, 'overview', '_em_ and **strong**');
-  assert.equal(m.get(doc.id)?.sections.find((s) => s.id === 'overview')?.body, stored);
-  assert.match(stored ?? '', /_em_/); // the canonical spelling, not the input's
+  const doc = m.create(BP, "feature", "T")!;
+  m.patchSection(doc.id, "overview", "*em* and __strong__");
+  const stored = m.get(doc.id)?.sections.find((s) => s.id === "overview")?.body;
+  m.patchSection(doc.id, "overview", "_em_ and **strong**");
+  assert.equal(m.get(doc.id)?.sections.find((s) => s.id === "overview")?.body, stored);
+  assert.match(stored ?? "", /_em_/); // the canonical spelling, not the input's
 });

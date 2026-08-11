@@ -5,9 +5,9 @@
 // Cards may LINK to a Jira issue or a delegated agent task; neither linkage
 // is required, and execution state never moves a card — columns belong to
 // the human.
-import { randomUUID } from 'node:crypto';
-import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { randomUUID } from "node:crypto";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 export interface WorkColumn {
   id: string;
@@ -16,7 +16,7 @@ export interface WorkColumn {
   jiraStatus?: string;
 }
 
-export type FlagKind = 'blocked' | 'at-risk' | 'waiting';
+export type FlagKind = "blocked" | "at-risk" | "waiting";
 
 /** Orthogonal to columnId — a flagged card keeps its position. */
 export interface CardFlag {
@@ -26,7 +26,7 @@ export interface CardFlag {
   since: string;
 }
 
-const FLAG_KINDS: FlagKind[] = ['blocked', 'at-risk', 'waiting'];
+const FLAG_KINDS: FlagKind[] = ["blocked", "at-risk", "waiting"];
 
 export interface WorkCard {
   id: string;
@@ -38,7 +38,7 @@ export interface WorkCard {
   createdAt: string;
   updatedAt: string;
   jira?: { key: string; url: string; lastPushError?: string };
-  delegation?: { agentId: string; taskId: string; state: 'working' | 'completed' | 'failed'; prUrl?: string };
+  delegation?: { agentId: string; taskId: string; state: "working" | "completed" | "failed"; prUrl?: string };
   /** Acceptance-criteria checklist — authored by hand in v1, replaced wholesale on PATCH. Never a column. */
   stories?: Array<{ id: string; text: string; done: boolean; verifiedBy?: string }>;
   /** Set when this card tracks a capability slice — its checklist becomes a toggle-only view of the capability's stories. */
@@ -62,25 +62,29 @@ export interface WorkBoard {
 
 const BOARD_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
-export type BoardType =
-  | 'personal' | 'ideation' | 'plan' | 'deliver'
-  | 'release'  | 'reactive' | 'maintenance';
+export type BoardType = "personal" | "ideation" | "plan" | "deliver" | "release" | "reactive" | "maintenance";
 
 /** Tab order. personal is always last; the other six are the workspace types. */
 export const BOARD_TYPE_ORDER: BoardType[] = [
-  'ideation', 'plan', 'deliver', 'release', 'reactive', 'maintenance', 'personal',
+  "ideation",
+  "plan",
+  "deliver",
+  "release",
+  "reactive",
+  "maintenance",
+  "personal",
 ];
 
-export const WORKSPACE_BOARD_TYPES: BoardType[] = BOARD_TYPE_ORDER.filter((t) => t !== 'personal');
+export const WORKSPACE_BOARD_TYPES: BoardType[] = BOARD_TYPE_ORDER.filter((t) => t !== "personal");
 
 export const BOARD_TYPE_LABELS: Record<BoardType, string> = {
-  personal: 'Personal',
-  ideation: 'Ideation',
-  plan: 'Plan',
-  deliver: 'Deliver',
-  release: 'Release',
-  reactive: 'Reactive',
-  maintenance: 'Maintenance',
+  personal: "Personal",
+  ideation: "Ideation",
+  plan: "Plan",
+  deliver: "Deliver",
+  release: "Release",
+  reactive: "Reactive",
+  maintenance: "Maintenance",
 };
 
 // Boards that own an outcome get a terminal column (Killed / Won't do / Not
@@ -88,55 +92,59 @@ export const BOARD_TYPE_LABELS: Record<BoardType, string> = {
 // which is why plan and deliver have neither.
 export const BOARD_TEMPLATES: Record<BoardType, WorkColumn[]> = {
   personal: [
-    { id: 'todo', name: 'Todo' },
-    { id: 'doing', name: 'Doing' },
-    { id: 'done', name: 'Done' },
-    { id: 'not-doing', name: 'Not Doing' },
+    { id: "todo", name: "Todo" },
+    { id: "doing", name: "Doing" },
+    { id: "done", name: "Done" },
+    { id: "not-doing", name: "Not Doing" },
   ],
   ideation: [
-    { id: 'intake', name: 'Intake' },
-    { id: 'scoping', name: 'Scoping' },
-    { id: 'confirm', name: 'Confirm' },
-    { id: 'killed', name: 'Killed' },
+    { id: "intake", name: "Intake" },
+    { id: "scoping", name: "Scoping" },
+    { id: "confirm", name: "Confirm" },
+    { id: "killed", name: "Killed" },
   ],
   plan: [
-    { id: 'spec', name: 'Spec' },
-    { id: 'tech-design', name: 'Tech design' },
-    { id: 'decomposed', name: 'Decomposed' },
-    { id: 'ready', name: 'Ready' },
+    { id: "spec", name: "Spec" },
+    { id: "tech-design", name: "Tech design" },
+    { id: "decomposed", name: "Decomposed" },
+    { id: "ready", name: "Ready" },
   ],
   deliver: [
-    { id: 'ready', name: 'Ready' },
-    { id: 'in-progress', name: 'In progress' },
-    { id: 'review', name: 'Review' },
-    { id: 'verify', name: 'Verify' },
-    { id: 'merged', name: 'Merged' },
+    { id: "ready", name: "Ready" },
+    { id: "in-progress", name: "In progress" },
+    { id: "review", name: "Review" },
+    { id: "verify", name: "Verify" },
+    { id: "merged", name: "Merged" },
   ],
   release: [
-    { id: 'cut', name: 'Cut' },
-    { id: 'regression', name: 'Regression' },
-    { id: 'sign-off', name: 'Sign-off' },
-    { id: 'ship', name: 'Ship' },
-    { id: 'rollback', name: 'Rollback' },
+    { id: "cut", name: "Cut" },
+    { id: "regression", name: "Regression" },
+    { id: "sign-off", name: "Sign-off" },
+    { id: "ship", name: "Ship" },
+    { id: "rollback", name: "Rollback" },
   ],
   reactive: [
-    { id: 'triage', name: 'Triage' },
-    { id: 'diagnose', name: 'Diagnose' },
-    { id: 'fix', name: 'Fix' },
-    { id: 'verify', name: 'Verify' },
-    { id: 'closed', name: 'Closed' },
+    { id: "triage", name: "Triage" },
+    { id: "diagnose", name: "Diagnose" },
+    { id: "fix", name: "Fix" },
+    { id: "verify", name: "Verify" },
+    { id: "closed", name: "Closed" },
   ],
   maintenance: [
-    { id: 'triage', name: 'Triage' },
-    { id: 'queued', name: 'Queued' },
-    { id: 'doing', name: 'Doing' },
-    { id: 'done', name: 'Done' },
-    { id: 'wont-do', name: "Won't do" },
+    { id: "triage", name: "Triage" },
+    { id: "queued", name: "Queued" },
+    { id: "doing", name: "Doing" },
+    { id: "done", name: "Done" },
+    { id: "wont-do", name: "Won't do" },
   ],
 };
 
 function slug(v: string): string {
-  return v.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  return v
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
 }
 
 /** The on-disk id (and filename) of a workspace's board of a given type. */
@@ -150,9 +158,9 @@ export function boardIdFor(workspaceId: string, type: BoardType): string {
  */
 export function createBoard(type: BoardType, workspaceId?: string): WorkBoard {
   if (!BOARD_TEMPLATES[type]) throw new Error(`Unknown board type: ${type}`);
-  if (type === 'personal' && workspaceId) throw new Error('The personal board belongs to no workspace');
-  if (type !== 'personal' && !workspaceId) throw new Error(`Board type "${type}" requires a workspace`);
-  const id = type === 'personal' ? 'personal' : boardIdFor(workspaceId as string, type);
+  if (type === "personal" && workspaceId) throw new Error("The personal board belongs to no workspace");
+  if (type !== "personal" && !workspaceId) throw new Error(`Board type "${type}" requires a workspace`);
+  const id = type === "personal" ? "personal" : boardIdFor(workspaceId as string, type);
   if (!BOARD_ID_RE.test(id)) throw new Error(`Workspace "${workspaceId}" does not reduce to a usable board id`);
   const board: WorkBoard = {
     id,
@@ -182,19 +190,17 @@ export interface RouteExit {
  */
 export const BOARD_ROUTES: Record<BoardType, RouteExit[]> = {
   plan: [
-    { from: 'tech-design', toType: 'ideation', toColumn: 'scoping', label: 'Back to ideation' },
-    { from: 'ready', toType: 'deliver', toColumn: 'ready', label: 'Send to deliver' },
+    { from: "tech-design", toType: "ideation", toColumn: "scoping", label: "Back to ideation" },
+    { from: "ready", toType: "deliver", toColumn: "ready", label: "Send to deliver" },
   ],
-  deliver: [
-    { from: 'in-progress', toType: 'plan', toColumn: 'tech-design', label: 'Back to plan' },
-  ],
+  deliver: [{ from: "in-progress", toType: "plan", toColumn: "tech-design", label: "Back to plan" }],
   release: [
-    { from: 'regression', toType: 'deliver', toColumn: 'in-progress', label: 'Drop change to deliver' },
-    { from: 'rollback', toType: 'maintenance', toColumn: 'triage', label: 'To maintenance' },
+    { from: "regression", toType: "deliver", toColumn: "in-progress", label: "Drop change to deliver" },
+    { from: "rollback", toType: "maintenance", toColumn: "triage", label: "To maintenance" },
   ],
   reactive: [
-    { from: 'triage', toType: 'maintenance', toColumn: 'triage', label: 'To maintenance' },
-    { from: 'triage', toType: 'ideation', toColumn: 'intake', label: 'To ideation' },
+    { from: "triage", toType: "maintenance", toColumn: "triage", label: "To maintenance" },
+    { from: "triage", toType: "ideation", toColumn: "intake", label: "To ideation" },
   ],
   ideation: [],
   maintenance: [],
@@ -226,13 +232,7 @@ export function findRouteDestination(boards: WorkBoard[], source: WorkBoard, exi
   return boards.find((b) => b.type === exit.toType && b.workspaceId === source.workspaceId);
 }
 
-export function routeCard(
-  source: WorkBoard,
-  dest: WorkBoard,
-  cardId: string,
-  exit: RouteExit,
-  now: string,
-): RoutePlan {
+export function routeCard(source: WorkBoard, dest: WorkBoard, cardId: string, exit: RouteExit, now: string): RoutePlan {
   const card = source.cards.find((c) => c.id === cardId);
   if (!card) throw new Error(`Unknown card: ${cardId}`);
   const trace = { boardId: source.id, boardType: source.type, columnId: card.columnId, at: now };
@@ -276,15 +276,21 @@ export function findCardByRef(
 function assertBoard(file: string, v: unknown): WorkBoard {
   const o = v as WorkBoard;
   const ok =
-    o && typeof o.id === 'string' && typeof o.name === 'string' &&
-    typeof o.type === 'string' && Boolean(BOARD_TEMPLATES[o.type]) &&
-    Array.isArray(o.columns) && o.columns.every((c) => typeof c?.id === 'string' && typeof c?.name === 'string') &&
+    o &&
+    typeof o.id === "string" &&
+    typeof o.name === "string" &&
+    typeof o.type === "string" &&
+    Boolean(BOARD_TEMPLATES[o.type]) &&
+    Array.isArray(o.columns) &&
+    o.columns.every((c) => typeof c?.id === "string" && typeof c?.name === "string") &&
     Array.isArray(o.cards);
   if (!ok) throw new Error(`Invalid work-board file ${file}: requires id, name, a known type, columns[], cards[]`);
   return o;
 }
 
-export async function loadBoards(dir: string): Promise<{ boards: WorkBoard[]; errors: Array<{ file: string; error: string }> }> {
+export async function loadBoards(
+  dir: string,
+): Promise<{ boards: WorkBoard[]; errors: Array<{ file: string; error: string }> }> {
   let entries: string[];
   try {
     entries = await readdir(dir);
@@ -293,9 +299,9 @@ export async function loadBoards(dir: string): Promise<{ boards: WorkBoard[]; er
   }
   const boards: WorkBoard[] = [];
   const errors: Array<{ file: string; error: string }> = [];
-  for (const file of entries.filter((f) => f.endsWith('.json'))) {
+  for (const file of entries.filter((f) => f.endsWith(".json"))) {
     try {
-      boards.push(assertBoard(file, JSON.parse(await readFile(join(dir, file), 'utf8'))));
+      boards.push(assertBoard(file, JSON.parse(await readFile(join(dir, file), "utf8"))));
     } catch (err) {
       errors.push({ file, error: String((err as Error).message) });
     }
@@ -325,7 +331,7 @@ function renumber(board: WorkBoard, columnId: string): void {
 
 export function addCard(board: WorkBoard, input: { title: string; notes?: string; columnId?: string }): WorkCard {
   const title = input.title?.trim();
-  if (!title) throw new Error('Card title is required');
+  if (!title) throw new Error("Card title is required");
   const columnId = input.columnId ?? board.columns[0]?.id;
   if (!board.columns.some((c) => c.id === columnId)) throw new Error(`Unknown column: ${input.columnId}`);
   const now = new Date().toISOString();
@@ -345,8 +351,9 @@ export function addCard(board: WorkBoard, input: { title: string; notes?: string
 export function patchCard(
   board: WorkBoard,
   cardId: string,
-  patch: Partial<Pick<WorkCard, 'title' | 'notes' | 'columnId' | 'order' | 'jira' | 'delegation' | 'stories' | 'capabilityRef'>>
-    & { flag?: { kind: FlagKind; reason?: string } | null },
+  patch: Partial<
+    Pick<WorkCard, "title" | "notes" | "columnId" | "order" | "jira" | "delegation" | "stories" | "capabilityRef">
+  > & { flag?: { kind: FlagKind; reason?: string } | null },
 ): WorkCard {
   const card = board.cards.find((c) => c.id === cardId);
   if (!card) throw new Error(`Unknown card: ${cardId}`);
@@ -376,7 +383,9 @@ export function patchCard(
   }
   if (patch.columnId !== undefined || patch.order !== undefined) {
     const toColumn = patch.columnId ?? card.columnId;
-    const siblings = board.cards.filter((c) => c.columnId === toColumn && c.id !== card.id).sort((a, b) => a.order - b.order);
+    const siblings = board.cards
+      .filter((c) => c.columnId === toColumn && c.id !== card.id)
+      .sort((a, b) => a.order - b.order);
     const at = Math.max(0, Math.min(patch.order ?? siblings.length, siblings.length));
     card.columnId = toColumn;
     siblings.splice(at, 0, card);

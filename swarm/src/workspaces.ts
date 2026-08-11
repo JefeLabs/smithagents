@@ -1,10 +1,11 @@
 // Workspaces — named groupings of one or more repos the crew can work in.
 // One JSON file per workspace under .smith/workspaces/. Delegations name a
 // workspace/repo; the dispatcher cuts the task's worktree from that repo.
-import { readdir, readFile, mkdir, writeFile, rm } from 'node:fs/promises';
-import { isAbsolute, join } from 'node:path';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+
+import { execFile } from "node:child_process";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { isAbsolute, join } from "node:path";
+import { promisify } from "node:util";
 
 export interface WorkspaceRepo {
   name: string;
@@ -43,10 +44,10 @@ function assertWorkspace(file: string, v: unknown): Workspace {
   const o = v as Partial<Workspace>;
   const ok =
     o &&
-    typeof o.name === 'string' &&
+    typeof o.name === "string" &&
     Array.isArray(o.repos) &&
     o.repos.length > 0 &&
-    o.repos.every((r) => r && typeof r.name === 'string' && typeof r.path === 'string' && isAbsolute(r.path));
+    o.repos.every((r) => r && typeof r.name === "string" && typeof r.path === "string" && isAbsolute(r.path));
   if (!ok) {
     throw new Error(`Invalid workspace file ${file}: requires name and repos[]{name, absolute path}`);
   }
@@ -62,8 +63,8 @@ export async function loadWorkspacesFromDir(dir: string): Promise<Workspace[]> {
     return [];
   }
   const workspaces: Workspace[] = [];
-  for (const file of entries.filter((f) => f.endsWith('.json'))) {
-    const raw = await readFile(join(dir, file), 'utf8');
+  for (const file of entries.filter((f) => f.endsWith(".json"))) {
+    const raw = await readFile(join(dir, file), "utf8");
     workspaces.push(assertWorkspace(file, JSON.parse(raw)));
   }
   return workspaces;
@@ -81,7 +82,7 @@ export function activeWorkspaces(workspaces: Workspace[]): Workspace[] {
  * this it would round-trip straight to disk).
  */
 export function normalizeRepoBranch(repos: Array<WorkspaceRepo & { initGit?: boolean }>): WorkspaceRepo[] {
-  return repos.map(({ initGit: _initGit, ...r }) => ({ ...r, branch: r.branch?.trim() || 'main' }));
+  return repos.map(({ initGit: _initGit, ...r }) => ({ ...r, branch: r.branch?.trim() || "main" }));
 }
 
 /**
@@ -99,7 +100,9 @@ export function resolveRepo(
     ? live.find((w) => w.name.toLowerCase() === workspaceName.toLowerCase())
     : (live.find((w) => w.default) ?? live[0]);
   if (!workspace) return null;
-  const repo = repoName ? workspace.repos.find((r) => r.name.toLowerCase() === repoName.toLowerCase()) : workspace.repos[0];
+  const repo = repoName
+    ? workspace.repos.find((r) => r.name.toLowerCase() === repoName.toLowerCase())
+    : workspace.repos[0];
   return repo ? { workspace, repo } : null;
 }
 
@@ -116,7 +119,7 @@ export async function removeWorkspaceFile(dir: string, name: string): Promise<vo
   try {
     await rm(join(dir, `${name}.json`));
   } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       throw new Error(`Workspace "${name}" not found`);
     }
     throw error;
@@ -126,7 +129,7 @@ export async function removeWorkspaceFile(dir: string, name: string): Promise<vo
 /** True when `path` is inside a git repository (worktrees are cut from here). */
 export async function isGitRepo(path: string): Promise<boolean> {
   try {
-    await promisify(execFile)('git', ['rev-parse', '--git-dir'], { cwd: path });
+    await promisify(execFile)("git", ["rev-parse", "--git-dir"], { cwd: path });
     return true;
   } catch {
     return false;
@@ -135,7 +138,7 @@ export async function isGitRepo(path: string): Promise<boolean> {
 
 /** `git init` an existing directory — the one case where workspace creation may create the repo instead of rejecting the path (creation-time `initGit` flag). */
 export async function initGitRepo(path: string): Promise<void> {
-  await promisify(execFile)('git', ['init'], { cwd: path });
+  await promisify(execFile)("git", ["init"], { cwd: path });
 }
 
 /**

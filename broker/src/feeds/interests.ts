@@ -6,8 +6,8 @@
  * resolve the name in a package registry before it becomes a source — that
  * resolution is what drops conversational noise.
  */
-import type { Dependency } from './manifests.ts';
-import type { FeedState } from './types.ts';
+import type { Dependency } from "./manifests.ts";
+import type { FeedState } from "./types.ts";
 
 const PROMOTE_MENTIONS = 3;
 const PROMOTE_SESSIONS = 2;
@@ -16,36 +16,36 @@ const EXPIRE_DAYS = 30;
 
 /** Words that look like proper nouns in ordinary prose. Not exhaustive; the registry check is the real filter. */
 const STOPWORDS = new Set([
-  'the',
-  'this',
-  'that',
-  'thing',
-  'today',
-  'tomorrow',
-  'monday',
-  'tuesday',
-  'wednesday',
-  'thursday',
-  'friday',
-  'saturday',
-  'sunday',
-  'ok',
-  'okay',
-  'yes',
-  'no',
-  'hola',
-  'gracias',
-  'bueno',
-  'claro',
-  'ahora',
-  'manana',
-  'hoy',
-  'and',
-  'but',
-  'for',
-  'you',
-  'we',
-  'it',
+  "the",
+  "this",
+  "that",
+  "thing",
+  "today",
+  "tomorrow",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+  "ok",
+  "okay",
+  "yes",
+  "no",
+  "hola",
+  "gracias",
+  "bueno",
+  "claro",
+  "ahora",
+  "manana",
+  "hoy",
+  "and",
+  "but",
+  "for",
+  "you",
+  "we",
+  "it",
 ]);
 
 const PACKAGE_SHAPED = /^@?[a-z0-9][a-z0-9._-]{2,}$/;
@@ -57,7 +57,7 @@ export function extractCandidates(text: string, exclude: string[]): string[] {
   for (const raw of text.split(/[^\w@./-]+/)) {
     // Trim edge punctuation before anything else: "jefelabs." must hit the ban
     // list, and "works." must not read as a package name.
-    const token = raw.replace(/^[.\-_]+|[.\-_]+$/g, '');
+    const token = raw.replace(/^[.\-_]+|[.\-_]+$/g, "");
     if (!token || banned.has(token.toLowerCase()) || STOPWORDS.has(token.toLowerCase())) continue;
     // A package name must contain a separator; a bare lowercase word is prose.
     const isPackage = PACKAGE_SHAPED.test(token) && /[-._@]/.test(token);
@@ -67,11 +67,11 @@ export function extractCandidates(text: string, exclude: string[]): string[] {
 }
 
 export function recordMentions(
-  state: Pick<FeedState, 'candidates'>,
+  state: Pick<FeedState, "candidates">,
   names: string[],
   sessionId: string,
   at: string,
-): FeedState['candidates'] {
+): FeedState["candidates"] {
   const next = { ...state.candidates };
   for (const name of names) {
     const prior = next[name];
@@ -87,7 +87,7 @@ export function recordMentions(
   return next;
 }
 
-export function promotable(candidates: FeedState['candidates'], at: string): string[] {
+export function promotable(candidates: FeedState["candidates"], at: string): string[] {
   const now = Date.parse(at);
   return Object.entries(candidates)
     .filter(([, c]) => {
@@ -97,7 +97,7 @@ export function promotable(candidates: FeedState['candidates'], at: string): str
     .map(([name]) => name);
 }
 
-export function expired(candidates: FeedState['candidates'], at: string): string[] {
+export function expired(candidates: FeedState["candidates"], at: string): string[] {
   const now = Date.parse(at);
   return Object.entries(candidates)
     .filter(([, c]) => now - Date.parse(c.lastSeen) > EXPIRE_DAYS * 86_400_000)
@@ -110,19 +110,19 @@ export function expired(candidates: FeedState['candidates'], at: string): string
  * rather than a speaker being invented.
  */
 const OWNERS: Array<{ role: string; match: (d: Dependency) => boolean }> = [
-  { role: 'Mobile Engineer', match: (d) => d.eco === 'cargo' || /^(react-native|expo|capacitor)/.test(d.name) },
+  { role: "Mobile Engineer", match: (d) => d.eco === "cargo" || /^(react-native|expo|capacitor)/.test(d.name) },
   {
-    role: 'Frontend Engineer',
-    match: (d) => d.eco === 'npm' && /^(react|vue|svelte|vite|next|tailwind|@heroui)/.test(d.name),
+    role: "Frontend Engineer",
+    match: (d) => d.eco === "npm" && /^(react|vue|svelte|vite|next|tailwind|@heroui)/.test(d.name),
   },
-  { role: 'Backend Engineer', match: (d) => d.eco === 'maven' || /^(express|fastify|nest)/.test(d.name) },
-  { role: 'DevOps / Platform', match: (d) => /^(docker|terraform|kubernetes)/.test(d.name) || /-cli$/.test(d.name) },
-  { role: 'Data / ML Engineer', match: (d) => /^(pandas|numpy|torch|langchain|@anthropic-ai)/.test(d.name) },
+  { role: "Backend Engineer", match: (d) => d.eco === "maven" || /^(express|fastify|nest)/.test(d.name) },
+  { role: "DevOps / Platform", match: (d) => /^(docker|terraform|kubernetes)/.test(d.name) || /-cli$/.test(d.name) },
+  { role: "Data / ML Engineer", match: (d) => /^(pandas|numpy|torch|langchain|@anthropic-ai)/.test(d.name) },
 ];
 
 export function ownerRole(dep: Dependency, security: boolean): string | null {
   // Security outranks the table: a CVE is the Security Engineer's business
   // whatever ecosystem it arrived from (spec §4.2).
-  if (security) return 'Security Engineer';
+  if (security) return "Security Engineer";
   return OWNERS.find((o) => o.match(dep))?.role ?? null;
 }

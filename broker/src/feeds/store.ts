@@ -6,7 +6,7 @@
  * `spokenAt`/`cardedAt` markers ride the item, so a trimmed release can never
  * be announced or carded a second time.
  */
-import type { FeedItem, FeedSource, FeedState } from './types.ts';
+import type { FeedItem, FeedSource, FeedState } from "./types.ts";
 
 const MAX_ITEMS = 500;
 const MAX_AGE_DAYS = 30;
@@ -39,21 +39,28 @@ export class FeedStore {
   }
 
   sources(): FeedSource[] {
-    return this.load<FeedSource[]>('sources.json', []);
+    return this.load<FeedSource[]>("sources.json", []);
   }
 
   putSource(source: FeedSource): void {
     const all = this.sources().filter((s) => s.id !== source.id);
     all.push(source);
-    this.io.write('sources.json', JSON.stringify(all, null, 2));
+    this.io.write("sources.json", JSON.stringify(all, null, 2));
   }
 
   removeSource(id: string): void {
-    this.io.write('sources.json', JSON.stringify(this.sources().filter((s) => s.id !== id), null, 2));
+    this.io.write(
+      "sources.json",
+      JSON.stringify(
+        this.sources().filter((s) => s.id !== id),
+        null,
+        2,
+      ),
+    );
   }
 
   items(): FeedItem[] {
-    return this.load<FeedItem[]>('items.json', []);
+    return this.load<FeedItem[]>("items.json", []);
   }
 
   /** Adds unseen items and returns ONLY those — re-fetching a feed yields nothing. */
@@ -73,10 +80,10 @@ export class FeedStore {
       // newest entry was 47 days old when this was first run live, so age
       // trimming silently deleted every release the moment it arrived. Releases
       // are pruned by the 500 cap only.
-      .filter((i) => i.tag === 'release' || Date.parse(i.publishedAt) >= cutoff)
+      .filter((i) => i.tag === "release" || Date.parse(i.publishedAt) >= cutoff)
       .sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt))
       .slice(0, MAX_ITEMS);
-    this.io.write('items.json', JSON.stringify(kept, null, 2));
+    this.io.write("items.json", JSON.stringify(kept, null, 2));
   }
 
   markSpoken(ids: string[], at: string): void {
@@ -89,10 +96,10 @@ export class FeedStore {
   }
 
   state(): FeedState {
-    return { ...EMPTY_STATE, ...this.load<Partial<FeedState>>('state.json', {}) };
+    return { ...EMPTY_STATE, ...this.load<Partial<FeedState>>("state.json", {}) };
   }
 
   patchState(patch: Partial<FeedState>): void {
-    this.io.write('state.json', JSON.stringify({ ...this.state(), ...patch }, null, 2));
+    this.io.write("state.json", JSON.stringify({ ...this.state(), ...patch }, null, 2));
   }
 }

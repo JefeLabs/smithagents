@@ -18,7 +18,7 @@ export interface ChunkerOptions {
 }
 
 export class SpeechChunker {
-  private buf = '';
+  private buf = "";
   private readonly maxChars: number;
   private readonly minChars: number;
 
@@ -37,14 +37,14 @@ export class SpeechChunker {
 
   flush(): void {
     const text = this.buf.trim();
-    this.buf = '';
+    this.buf = "";
     if (text.length > 0) this.onChunk(text);
   }
 
   private drain(): void {
     for (;;) {
       // Rule 0 — newline is a hard boundary (speaker/paragraph separator).
-      const nl = this.buf.indexOf('\n');
+      const nl = this.buf.indexOf("\n");
       if (nl >= 0) {
         this.emit(this.buf.slice(0, nl));
         this.buf = this.buf.slice(nl + 1);
@@ -56,6 +56,7 @@ export class SpeechChunker {
       const re = /[.!?]["')\]]?\s/g;
       let cut = -1;
       let m: RegExpExecArray | null;
+      // biome-ignore lint/suspicious/noAssignInExpressions: canonical regex exec loop
       while ((m = re.exec(this.buf)) !== null) {
         const end = m.index + m[0].length;
         if (end >= this.minChars) {
@@ -71,7 +72,7 @@ export class SpeechChunker {
       // Rule 2 — hard cap at a word boundary.
       if (this.buf.length > this.maxChars) {
         const window = this.buf.slice(0, this.maxChars + 1);
-        const lastSpace = window.lastIndexOf(' ');
+        const lastSpace = window.lastIndexOf(" ");
         const cut = lastSpace > 0 ? lastSpace : this.maxChars;
         this.emit(this.buf.slice(0, cut));
         this.buf = this.buf.slice(cut);

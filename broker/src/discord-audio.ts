@@ -33,11 +33,11 @@
  * `discord-voice.ts`'s module header, "The ear" section) — that's for
  * whoever wires main.ts's real ear connection through.
  */
-import { Readable, Transform } from 'node:stream';
-import { EndBehaviorType, type VoiceReceiver } from '@discordjs/voice';
-import type { Guild } from 'discord.js';
-import prism from 'prism-media';
-import type { VoiceReceiverLike } from './discord-voice.ts';
+import { Readable, Transform } from "node:stream";
+import { EndBehaviorType, type VoiceReceiver } from "@discordjs/voice";
+import type { Guild } from "discord.js";
+import prism from "prism-media";
+import type { VoiceReceiverLike } from "./discord-voice.ts";
 
 const DISCORD_SAMPLE_RATE = 48000;
 // Rate of the incoming TTS PCM — mirrors broker.ts's TTS_SAMPLE_RATE (same env,
@@ -67,8 +67,20 @@ export function pcm44kMonoToOpus(pcm44kMono: AsyncIterable<Uint8Array>): Readabl
     args: [
       // Input rate MUST match the broker's TTS output (broker.ts TTS_SAMPLE_RATE,
       // same env + default) or the voice plays back pitch-shifted.
-      '-f', 's16le', '-ar', String(TTS_INPUT_RATE), '-ac', '1', '-i', '-',
-      '-f', 's16le', '-ar', String(DISCORD_SAMPLE_RATE), '-ac', String(DISCORD_CHANNELS),
+      "-f",
+      "s16le",
+      "-ar",
+      String(TTS_INPUT_RATE),
+      "-ac",
+      "1",
+      "-i",
+      "-",
+      "-f",
+      "s16le",
+      "-ar",
+      String(DISCORD_SAMPLE_RATE),
+      "-ac",
+      String(DISCORD_CHANNELS),
     ],
   });
   const opusEncoder = new prism.opus.Encoder({
@@ -78,9 +90,9 @@ export function pcm44kMonoToOpus(pcm44kMono: AsyncIterable<Uint8Array>): Readabl
   });
 
   const input = toReadable(pcm44kMono);
-  input.on('error', (err) => ffmpeg.destroy(err));
+  input.on("error", (err) => ffmpeg.destroy(err));
   input.pipe(ffmpeg);
-  ffmpeg.on('error', (err) => opusEncoder.destroy(err));
+  ffmpeg.on("error", (err) => opusEncoder.destroy(err));
   return ffmpeg.pipe(opusEncoder);
 }
 
@@ -115,7 +127,7 @@ function opusToPcm48kMono(opusPackets: Readable): Readable {
     channels: DISCORD_CHANNELS,
     frameSize: OPUS_FRAME_SIZE,
   });
-  opusPackets.on('error', (err) => decoder.destroy(err));
+  opusPackets.on("error", (err) => decoder.destroy(err));
   opusPackets.pipe(decoder);
   return decoder.pipe(stereoToMono());
 }
@@ -133,11 +145,13 @@ function opusToPcm48kMono(opusPackets: Readable): Readable {
 export function realReceiver(voiceReceiver: VoiceReceiver, guild: Guild): VoiceReceiverLike {
   return {
     onSpeakingStart(cb) {
-      voiceReceiver.speaking.on('start', (userId) => {
+      voiceReceiver.speaking.on("start", (userId) => {
         void (async () => {
           // Left before we could resolve who they are — nothing to attribute to.
           const member = await guild.members.fetch(userId).catch((err: unknown) => {
-            console.error(`[discord-voice] couldn't resolve guild member ${userId} for a voice speaking-start — dropping their audio: ${String(err)}`);
+            console.error(
+              `[discord-voice] couldn't resolve guild member ${userId} for a voice speaking-start — dropping their audio: ${String(err)}`,
+            );
             return null;
           });
           if (!member) return;

@@ -2,61 +2,55 @@
 // @smith/orchestrator — Public API barrel export
 // ---------------------------------------------------------------------------
 
-export { Dispatcher } from './dispatcher.js';
-export { TmuxRuntime, DockerRuntime, createRuntime } from './runtime.js';
-export type { RuntimeAdapter } from './runtime.js';
-export { OrchestratorServer } from './server.js';
-export type { ServerConfig } from './server.js';
-export { QuarantineManager } from './quarantine.js';
-export { loadConfig } from './config.js';
+export type { AgentEngine, AgentVoice, ComposedAgent } from "./agents.js";
+// Composed-agent registry
+export { findAgent, loadAgents } from "./agents.js";
+export { loadConfig } from "./config.js";
+export { Dispatcher } from "./dispatcher.js";
+export type { Meeting, MeetingJoin } from "./meetings.js";
+// Meetings
+export { MeetingOrchestrator } from "./meetings.js";
+export type { AgentName } from "./names.js";
 export {
-  AgentNamePool,
   AGENT_ROSTER,
+  AgentNamePool,
   generateAgentName,
   parseAgentName,
-} from './names.js';
-export type { AgentName } from './names.js';
+} from "./names.js";
+export { QuarantineManager } from "./quarantine.js";
 
 // Remote execution
-export { RemoteRuntime, WorkerPool } from './remote-runtime.js';
-export { SmithWorker, startWorker } from './worker.js';
-export * from './remote-types.js';
-
-// Squads
-export {
-  SquadPool,
-  SQUAD_ROSTER,
-  SQUAD_MEMBERS,
-  DEFAULT_ROLE_PERMISSIONS,
-  buildSquadLaunchScript,
-  buildPermissionGrant,
-  formatPermissionBlock,
-  validateCompliance,
-  getOutputFilename,
-} from './squads.js';
+export { RemoteRuntime, WorkerPool } from "./remote-runtime.js";
+export * from "./remote-types.js";
+export type { RuntimeAdapter } from "./runtime.js";
+// Re-export TmuxSessionManager as a backwards-compatible alias
+export { createRuntime, DockerRuntime, TmuxRuntime, TmuxRuntime as TmuxSessionManager } from "./runtime.js";
+export type { ServerConfig } from "./server.js";
+export { OrchestratorServer } from "./server.js";
 export type {
-  SquadId,
-  SquadRole,
-  SquadModel,
-  SquadMode,
-  SquadMember,
-  SquadDefinition,
-  SquadManifest,
   AgentOutputContract,
-  PermissionGrant,
   ComplianceResult,
   ComplianceViolation,
-} from './squads.js';
-
-export * from './types.js';
-
-// Re-export TmuxSessionManager as a backwards-compatible alias
-export { TmuxRuntime as TmuxSessionManager } from './runtime.js';
-
-// Composed-agent registry
-export { loadAgents, findAgent } from './agents.js';
-export type { ComposedAgent, AgentEngine, AgentVoice } from './agents.js';
-
-// Meetings
-export { MeetingOrchestrator } from './meetings.js';
-export type { Meeting, MeetingJoin } from './meetings.js';
+  PermissionGrant,
+  SquadDefinition,
+  SquadId,
+  SquadManifest,
+  SquadMember,
+  SquadMode,
+  SquadModel,
+  SquadRole,
+} from "./squads.js";
+// Squads
+export {
+  buildPermissionGrant,
+  buildSquadLaunchScript,
+  DEFAULT_ROLE_PERMISSIONS,
+  formatPermissionBlock,
+  getOutputFilename,
+  SQUAD_MEMBERS,
+  SQUAD_ROSTER,
+  SquadPool,
+  validateCompliance,
+} from "./squads.js";
+export * from "./types.js";
+export { SmithWorker, startWorker } from "./worker.js";

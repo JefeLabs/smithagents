@@ -10,14 +10,14 @@
  */
 
 export type PresenceEvent =
-  | { type: 'human-joined'; channelId: string }
-  | { type: 'human-left'; channelId: string }
-  | { type: 'join-failed'; channelId: string };
+  | { type: "human-joined"; channelId: string }
+  | { type: "human-left"; channelId: string }
+  | { type: "join-failed"; channelId: string };
 
 export type PresenceAction =
-  | { type: 'join-crew'; channelId: string }
-  | { type: 'leave-crew'; channelId: string }
-  | { type: 'none' };
+  | { type: "join-crew"; channelId: string }
+  | { type: "leave-crew"; channelId: string }
+  | { type: "none" };
 
 export class VoicePresence {
   private allowlist: Set<string>;
@@ -28,48 +28,48 @@ export class VoicePresence {
   }
 
   handle(e: PresenceEvent, humanCountFor: (channelId: string) => number): PresenceAction {
-    if (e.type === 'human-joined') {
+    if (e.type === "human-joined") {
       // Ignore if channel not allowlisted
       if (!this.allowlist.has(e.channelId)) {
-        return { type: 'none' };
+        return { type: "none" };
       }
 
       // Single-room rule: if already joined to a channel, reject
       if (this.joined !== null) {
-        return { type: 'none' };
+        return { type: "none" };
       }
 
       // Join decision is transition-based (unjoined + allowlisted → join), not count-gated.
       // humanCountFor is only consulted on human-left.
-      return { type: 'join-crew', channelId: e.channelId };
+      return { type: "join-crew", channelId: e.channelId };
     }
 
-    if (e.type === 'human-left') {
+    if (e.type === "human-left") {
       // Ignore if not currently joined
       if (this.joined === null) {
-        return { type: 'none' };
+        return { type: "none" };
       }
 
       // Ignore if event is for a different channel
       if (e.channelId !== this.joined) {
-        return { type: 'none' };
+        return { type: "none" };
       }
 
       // If humans drop to zero, leave
       const count = humanCountFor(e.channelId);
       if (count === 0) {
-        return { type: 'leave-crew', channelId: e.channelId };
+        return { type: "leave-crew", channelId: e.channelId };
       }
 
-      return { type: 'none' };
+      return { type: "none" };
     }
 
-    if (e.type === 'join-failed') {
+    if (e.type === "join-failed") {
       // State stays unjoined so next human-joined retries
-      return { type: 'none' };
+      return { type: "none" };
     }
 
-    return { type: 'none' };
+    return { type: "none" };
   }
 
   joinedChannel(): string | null {

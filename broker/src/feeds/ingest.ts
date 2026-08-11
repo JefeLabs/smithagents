@@ -4,9 +4,9 @@
  * Pure scheduling decisions — the actual fetching lives in main.ts's wiring,
  * so this file can be tested against a clock with no network at all.
  */
-import type { FeedSource, FeedState } from './types.ts';
+import type { FeedSource, FeedState } from "./types.ts";
 
-export const CADENCE_MS: Record<FeedSource['kind'], number> = {
+export const CADENCE_MS: Record<FeedSource["kind"], number> = {
   rss: 20 * 60_000,
   weather: 30 * 60_000,
   x: 30 * 60_000,

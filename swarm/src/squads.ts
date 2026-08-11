@@ -1,11 +1,11 @@
-export type SquadId = 'alpha' | 'beta' | 'gamma';
-export type SquadRole = 'leader' | 'architect' | 'senior' | 'developer';
-export type SquadModel = 'gemini-pro' | 'claude-fable' | 'claude-opus' | 'claude-sonnet';
-export type SquadMode = 'solo' | 'squad' | 'council';
+export type SquadId = "alpha" | "beta" | "gamma";
+export type SquadRole = "leader" | "architect" | "senior" | "developer";
+export type SquadModel = "gemini-pro" | "claude-fable" | "claude-opus" | "claude-sonnet";
+export type SquadMode = "solo" | "squad" | "council";
 
 export interface SquadMember {
-  name: string;           // 3-syllable voice name
-  pane: number;           // 1-4 (0 reserved for human in council)
+  name: string; // 3-syllable voice name
+  pane: number; // 1-4 (0 reserved for human in council)
   model: SquadModel;
   role: SquadRole;
   squad: SquadId;
@@ -13,27 +13,27 @@ export interface SquadMember {
 
 export interface SquadDefinition {
   id: SquadId;
-  members: [SquadMember, SquadMember, SquadMember, SquadMember];  // exactly 4
-  leader: SquadMember;    // convenience ref to pane 1
+  members: [SquadMember, SquadMember, SquadMember, SquadMember]; // exactly 4
+  leader: SquadMember; // convenience ref to pane 1
 }
 
 export interface SquadManifest {
   squadId: SquadId;
-  mode: SquadMode;        // solo=1 agent, squad=2-4, council=2-4+human
+  mode: SquadMode; // solo=1 agent, squad=2-4, council=2-4+human
   taskId: string;
   prompt: string;
-  agents: SquadMember[];  // which members are active (1-4)
-  sessionName: string;    // tmux session name
+  agents: SquadMember[]; // which members are active (1-4)
+  sessionName: string; // tmux session name
   containerName?: string; // docker container name
   createdAt: string;
-  status: 'queued' | 'dispatched' | 'running' | 'completed' | 'failed';
+  status: "queued" | "dispatched" | "running" | "completed" | "failed";
 }
 
 // JSON output contract - what sub-agents write to disk
 export interface AgentOutputContract {
-  agent: string;          // name
-  role: string;           // role
-  status: 'SUCCESS' | 'FAILED';
+  agent: string; // name
+  role: string; // role
+  status: "SUCCESS" | "FAILED";
   exitCode: number;
   summary: string;
   changes: {
@@ -100,7 +100,7 @@ export interface ComplianceResult {
 }
 
 export interface ComplianceViolation {
-  type: 'unauthorized_write' | 'unauthorized_exec' | 'denied_operation';
+  type: "unauthorized_write" | "unauthorized_exec" | "denied_operation";
   detail: string;
   file?: string;
   command?: string;
@@ -112,30 +112,30 @@ export interface ComplianceViolation {
  * The leader can override these, but these are sensible starting points
  * so the leader doesn't have to specify everything from scratch.
  */
-export const DEFAULT_ROLE_PERMISSIONS: Record<SquadRole, PermissionGrant['permissions']> = {
+export const DEFAULT_ROLE_PERMISSIONS: Record<SquadRole, PermissionGrant["permissions"]> = {
   leader: {
-    write: ['**'],
-    read: ['**'],
-    exec: ['*'],
+    write: ["**"],
+    read: ["**"],
+    exec: ["*"],
     deny: [],
   },
   architect: {
-    write: ['docs/**', 'src/**/*.ts', 'package.json', 'tsconfig*.json', '.smith/**'],
-    read: ['**'],
-    exec: ['pnpm typecheck', 'pnpm biome check', 'git log', 'git diff', 'git status'],
-    deny: ['git push', 'git merge', 'rm -rf'],
+    write: ["docs/**", "src/**/*.ts", "package.json", "tsconfig*.json", ".smith/**"],
+    read: ["**"],
+    exec: ["pnpm typecheck", "pnpm biome check", "git log", "git diff", "git status"],
+    deny: ["git push", "git merge", "rm -rf"],
   },
   senior: {
-    write: ['src/**', 'tests/**', 'package.json'],
-    read: ['**'],
-    exec: ['pnpm test', 'pnpm typecheck', 'pnpm biome check', 'pnpm build', 'git add', 'git commit'],
-    deny: ['git push', 'git merge', 'git rebase', 'rm -rf'],
+    write: ["src/**", "tests/**", "package.json"],
+    read: ["**"],
+    exec: ["pnpm test", "pnpm typecheck", "pnpm biome check", "pnpm build", "git add", "git commit"],
+    deny: ["git push", "git merge", "git rebase", "rm -rf"],
   },
   developer: {
-    write: ['src/components/**', 'src/views/**', 'tests/**', 'tests/e2e/**'],
-    read: ['src/**', 'tests/**', 'package.json', 'tsconfig*.json'],
-    exec: ['pnpm test', 'pnpm biome check', 'pnpm playwright test'],
-    deny: ['git push', 'git merge', 'git rebase', 'rm -rf', 'pnpm build'],
+    write: ["src/components/**", "src/views/**", "tests/**", "tests/e2e/**"],
+    read: ["src/**", "tests/**", "package.json", "tsconfig*.json"],
+    exec: ["pnpm test", "pnpm biome check", "pnpm playwright test"],
+    deny: ["git push", "git merge", "git rebase", "rm -rf", "pnpm build"],
   },
 };
 
@@ -150,7 +150,7 @@ export function buildPermissionGrant(
   leader: SquadMember,
   taskId: string,
   scope: string,
-  overrides?: Partial<PermissionGrant['permissions']>,
+  overrides?: Partial<PermissionGrant["permissions"]>,
 ): PermissionGrant {
   const defaults = DEFAULT_ROLE_PERMISSIONS[agent.role];
   return {
@@ -200,7 +200,7 @@ export function formatPermissionBlock(grant: PermissionGrant): string {
   lines.push(`Output your result to: ${getOutputFilename(grant.agent.toLowerCase())}`);
   lines.push(`You MUST stay within these permissions. Violations will be audited.`);
   lines.push(`=== END GRANT ===`);
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
 /**
@@ -210,17 +210,14 @@ export function formatPermissionBlock(grant: PermissionGrant): string {
  * JSON output contract. Checks that modified/created files match
  * the write permissions.
  */
-export function validateCompliance(
-  grant: PermissionGrant,
-  output: AgentOutputContract,
-): ComplianceResult {
+export function validateCompliance(grant: PermissionGrant, output: AgentOutputContract): ComplianceResult {
   const violations: ComplianceViolation[] = [];
 
   // Check modified files against write permissions
   for (const file of output.changes.modifiedFiles) {
     if (!matchesAnyGlob(file, grant.permissions.write)) {
       violations.push({
-        type: 'unauthorized_write',
+        type: "unauthorized_write",
         detail: `Modified file not covered by write permissions`,
         file,
       });
@@ -231,7 +228,7 @@ export function validateCompliance(
   for (const file of output.changes.createdFiles) {
     if (!matchesAnyGlob(file, grant.permissions.write)) {
       violations.push({
-        type: 'unauthorized_write',
+        type: "unauthorized_write",
         detail: `Created file not covered by write permissions`,
         file,
       });
@@ -242,7 +239,7 @@ export function validateCompliance(
   if (output.verification.command) {
     if (!matchesAnyGlob(output.verification.command, grant.permissions.exec)) {
       violations.push({
-        type: 'unauthorized_exec',
+        type: "unauthorized_exec",
         detail: `Executed command not in allowed exec list`,
         command: output.verification.command,
       });
@@ -267,21 +264,19 @@ export function validateCompliance(
  */
 function matchesAnyGlob(path: string, patterns: string[]): boolean {
   for (const pattern of patterns) {
-    if (pattern === '**' || pattern === '*') return true;
+    if (pattern === "**" || pattern === "*") return true;
     if (pattern === path) return true;
-    if (pattern.endsWith('/**')) {
+    if (pattern.endsWith("/**")) {
       const prefix = pattern.slice(0, -3);
-      if (path.startsWith(prefix + '/') || path === prefix) return true;
+      if (path.startsWith(prefix + "/") || path === prefix) return true;
     }
-    if (pattern.endsWith('/*')) {
+    if (pattern.endsWith("/*")) {
       const prefix = pattern.slice(0, -2);
-      if (path.startsWith(prefix + '/') && !path.slice(prefix.length + 1).includes('/')) return true;
+      if (path.startsWith(prefix + "/") && !path.slice(prefix.length + 1).includes("/")) return true;
     }
     // Simple wildcard in filename: src/**/*.ts
-    if (pattern.includes('*')) {
-      const regex = new RegExp(
-        '^' + pattern.replace(/\*\*/g, '.*').replace(/\*/g, '[^/]*') + '$',
-      );
+    if (pattern.includes("*")) {
+      const regex = new RegExp("^" + pattern.replace(/\*\*/g, ".*").replace(/\*/g, "[^/]*") + "$");
       if (regex.test(path)) return true;
     }
   }
@@ -292,20 +287,20 @@ function matchesAnyGlob(path: string, patterns: string[]): boolean {
 // kept: initial encodes role (G=leader, F=architect, O=senior, S=developer),
 // three syllables each for clean TTS.
 export const SQUAD_MEMBERS: SquadMember[] = [
-  { name: 'Gabriel', pane: 1, model: 'gemini-pro', role: 'leader', squad: 'alpha' },
-  { name: 'Fabian', pane: 2, model: 'claude-fable', role: 'architect', squad: 'alpha' },
-  { name: 'Osvaldo', pane: 3, model: 'claude-opus', role: 'senior', squad: 'alpha' },
-  { name: 'Santiago', pane: 4, model: 'claude-sonnet', role: 'developer', squad: 'alpha' },
+  { name: "Gabriel", pane: 1, model: "gemini-pro", role: "leader", squad: "alpha" },
+  { name: "Fabian", pane: 2, model: "claude-fable", role: "architect", squad: "alpha" },
+  { name: "Osvaldo", pane: 3, model: "claude-opus", role: "senior", squad: "alpha" },
+  { name: "Santiago", pane: 4, model: "claude-sonnet", role: "developer", squad: "alpha" },
 
-  { name: 'Gustavo', pane: 1, model: 'gemini-pro', role: 'leader', squad: 'beta' },
-  { name: 'Fernando', pane: 2, model: 'claude-fable', role: 'architect', squad: 'beta' },
-  { name: 'Orlando', pane: 3, model: 'claude-opus', role: 'senior', squad: 'beta' },
-  { name: 'Sebastian', pane: 4, model: 'claude-sonnet', role: 'developer', squad: 'beta' },
+  { name: "Gustavo", pane: 1, model: "gemini-pro", role: "leader", squad: "beta" },
+  { name: "Fernando", pane: 2, model: "claude-fable", role: "architect", squad: "beta" },
+  { name: "Orlando", pane: 3, model: "claude-opus", role: "senior", squad: "beta" },
+  { name: "Sebastian", pane: 4, model: "claude-sonnet", role: "developer", squad: "beta" },
 
-  { name: 'Graciela', pane: 1, model: 'gemini-pro', role: 'leader', squad: 'gamma' },
-  { name: 'Francisca', pane: 2, model: 'claude-fable', role: 'architect', squad: 'gamma' },
-  { name: 'Ofelia', pane: 3, model: 'claude-opus', role: 'senior', squad: 'gamma' },
-  { name: 'Soledad', pane: 4, model: 'claude-sonnet', role: 'developer', squad: 'gamma' }
+  { name: "Graciela", pane: 1, model: "gemini-pro", role: "leader", squad: "gamma" },
+  { name: "Francisca", pane: 2, model: "claude-fable", role: "architect", squad: "gamma" },
+  { name: "Ofelia", pane: 3, model: "claude-opus", role: "senior", squad: "gamma" },
+  { name: "Soledad", pane: 4, model: "claude-sonnet", role: "developer", squad: "gamma" },
 ];
 
 /**
@@ -316,20 +311,20 @@ export const SQUAD_MEMBERS: SquadMember[] = [
  */
 export const SQUAD_ROSTER: SquadDefinition[] = [
   {
-    id: 'alpha',
-    members: SQUAD_MEMBERS.filter(m => m.squad === 'alpha') as [SquadMember, SquadMember, SquadMember, SquadMember],
-    leader: SQUAD_MEMBERS.find(m => m.squad === 'alpha' && m.role === 'leader')!
+    id: "alpha",
+    members: SQUAD_MEMBERS.filter((m) => m.squad === "alpha") as [SquadMember, SquadMember, SquadMember, SquadMember],
+    leader: SQUAD_MEMBERS.find((m) => m.squad === "alpha" && m.role === "leader")!,
   },
   {
-    id: 'beta',
-    members: SQUAD_MEMBERS.filter(m => m.squad === 'beta') as [SquadMember, SquadMember, SquadMember, SquadMember],
-    leader: SQUAD_MEMBERS.find(m => m.squad === 'beta' && m.role === 'leader')!
+    id: "beta",
+    members: SQUAD_MEMBERS.filter((m) => m.squad === "beta") as [SquadMember, SquadMember, SquadMember, SquadMember],
+    leader: SQUAD_MEMBERS.find((m) => m.squad === "beta" && m.role === "leader")!,
   },
   {
-    id: 'gamma',
-    members: SQUAD_MEMBERS.filter(m => m.squad === 'gamma') as [SquadMember, SquadMember, SquadMember, SquadMember],
-    leader: SQUAD_MEMBERS.find(m => m.squad === 'gamma' && m.role === 'leader')!
-  }
+    id: "gamma",
+    members: SQUAD_MEMBERS.filter((m) => m.squad === "gamma") as [SquadMember, SquadMember, SquadMember, SquadMember],
+    leader: SQUAD_MEMBERS.find((m) => m.squad === "gamma" && m.role === "leader")!,
+  },
 ];
 
 /** Replace the live roster in place (boot-time load, reset). */
@@ -345,8 +340,8 @@ export interface SquadFile {
 }
 
 function toDefinition(file: SquadFile): SquadDefinition {
-  const members = file.members.map((m) => ({ ...m, squad: file.id as SquadId })) as SquadDefinition['members'];
-  const leader = members.find((m) => m.role === 'leader') ?? members[0];
+  const members = file.members.map((m) => ({ ...m, squad: file.id as SquadId })) as SquadDefinition["members"];
+  const leader = members.find((m) => m.role === "leader") ?? members[0];
   return { id: file.id as SquadId, members, leader };
 }
 
@@ -357,8 +352,8 @@ function toDefinition(file: SquadFile): SquadDefinition {
  * (e.g. after a settings reset), never a reason to resurrect the defaults.
  */
 export async function loadSquadsFromDir(dir: string): Promise<SquadDefinition[]> {
-  const { readdir, readFile, mkdir, writeFile } = await import('node:fs/promises');
-  const { join } = await import('node:path');
+  const { readdir, readFile, mkdir, writeFile } = await import("node:fs/promises");
+  const { join } = await import("node:path");
   let entries: string[];
   try {
     entries = await readdir(dir);
@@ -374,8 +369,8 @@ export async function loadSquadsFromDir(dir: string): Promise<SquadDefinition[]>
     return [...SQUAD_ROSTER];
   }
   const defs: SquadDefinition[] = [];
-  for (const entry of entries.filter((f) => f.endsWith('.json'))) {
-    const raw = await readFile(join(dir, entry), 'utf8');
+  for (const entry of entries.filter((f) => f.endsWith(".json"))) {
+    const raw = await readFile(join(dir, entry), "utf8");
     const parsed = JSON.parse(raw) as SquadFile;
     if (!parsed.id || !Array.isArray(parsed.members) || parsed.members.length === 0) {
       throw new Error(`Invalid squad file ${entry}: requires id and a non-empty members[]`);
@@ -404,36 +399,34 @@ export class SquadPool {
 
   resolve(nameOrId: string): SquadId | null {
     const lower = nameOrId.toLowerCase();
-    const byId = SQUAD_ROSTER.find(s => s.id === lower);
+    const byId = SQUAD_ROSTER.find((s) => s.id === lower);
     if (byId) return byId.id;
 
-    const byName = SQUAD_MEMBERS.find(m => m.name.toLowerCase() === lower);
+    const byName = SQUAD_MEMBERS.find((m) => m.name.toLowerCase() === lower);
     if (byName) return byName.squad;
 
     return null;
   }
 
   getSquad(squadId: SquadId): SquadDefinition {
-    const squad = SQUAD_ROSTER.find(s => s.id === squadId);
+    const squad = SQUAD_ROSTER.find((s) => s.id === squadId);
     if (!squad) throw new Error(`Squad ${squadId} not found`);
     return squad;
   }
 
   getMemberByName(name: string): SquadMember | undefined {
-    return SQUAD_MEMBERS.find(m => m.name.toLowerCase() === name.toLowerCase());
+    return SQUAD_MEMBERS.find((m) => m.name.toLowerCase() === name.toLowerCase());
   }
 
   list(): Array<{ squadId: SquadId; taskId: string }> {
     return Array.from(this.activeAssignments.entries()).map(([squadId, taskId]) => ({
       squadId,
-      taskId
+      taskId,
     }));
   }
 
   available(): SquadId[] {
-    return SQUAD_ROSTER
-      .filter(s => !this.activeAssignments.has(s.id))
-      .map(s => s.id);
+    return SQUAD_ROSTER.filter((s) => !this.activeAssignments.has(s.id)).map((s) => s.id);
   }
 
   isActive(squadId: SquadId): boolean {
@@ -444,11 +437,11 @@ export class SquadPool {
 export function getOutputFilename(agentName: string): string {
   const now = new Date();
   const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  const hours = String(now.getHours()).padStart(2, '0');
-  const minutes = String(now.getMinutes()).padStart(2, '0');
-  
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  const hours = String(now.getHours()).padStart(2, "0");
+  const minutes = String(now.getMinutes()).padStart(2, "0");
+
   return `${year}-${month}${day}-${hours}:${minutes}.${agentName}.json`;
 }
 
@@ -464,50 +457,54 @@ export function getOutputFilename(agentName: string): string {
  */
 export function buildSquadLaunchScript(manifest: SquadManifest): string {
   const { sessionName, agents, prompt } = manifest;
-  
+
   if (agents.length === 0) {
     return `echo "No agents to launch in squad"`;
   }
 
-  const leader = agents.find(a => a.role === 'leader') ?? agents[0];
-  const subAgents = agents.filter(a => a.name !== leader.name);
+  const leader = agents.find((a) => a.role === "leader") ?? agents[0];
+  const subAgents = agents.filter((a) => a.name !== leader.name);
   const lines: string[] = [];
-  
+
   lines.push(`#!/bin/bash`);
   lines.push(`set -e`);
   lines.push(``);
   lines.push(`# --- Squad ${manifest.squadId} Launch Script ---`);
   lines.push(`# Leader: ${leader.name} (${leader.model})`);
-  lines.push(`# Members: ${agents.map(a => a.name).join(', ')}`);
+  lines.push(`# Members: ${agents.map((a) => a.name).join(", ")}`);
   lines.push(``);
-  
+
   // Create permissions directory
   lines.push(`mkdir -p .smith/permissions`);
   lines.push(``);
-  
+
   // Write permission grants for each sub-agent
   for (const agent of subAgents) {
     const defaults = DEFAULT_ROLE_PERMISSIONS[agent.role];
-    const grantJson = JSON.stringify({
-      agent: agent.name,
-      grantedBy: leader.name,
-      squad: manifest.squadId,
-      taskId: manifest.taskId,
-      permissions: defaults,
-      scope: prompt.substring(0, 200),
-      expiresWithTask: true,
-      grantedAt: new Date().toISOString(),
-    } satisfies PermissionGrant, null, 2);
-    
+    const grantJson = JSON.stringify(
+      {
+        agent: agent.name,
+        grantedBy: leader.name,
+        squad: manifest.squadId,
+        taskId: manifest.taskId,
+        permissions: defaults,
+        scope: prompt.substring(0, 200),
+        expiresWithTask: true,
+        grantedAt: new Date().toISOString(),
+      } satisfies PermissionGrant,
+      null,
+      2,
+    );
+
     lines.push(`cat > .smith/permissions/${agent.name.toLowerCase()}.json << 'PERM_EOF'`);
     lines.push(grantJson);
     lines.push(`PERM_EOF`);
     lines.push(``);
   }
-  
+
   // Create tmux session
   lines.push(`tmux new-session -d -s ${sessionName}`);
-  
+
   // Create panes
   for (let i = 1; i < agents.length; i++) {
     lines.push(`tmux split-window -t ${sessionName}`);
@@ -522,36 +519,35 @@ export function buildSquadLaunchScript(manifest: SquadManifest): string {
     lines.push(`tmux send-keys -t ${sessionName}.${paneIndex} "${startCmd}" C-m`);
   });
   lines.push(``);
-  
+
   // Send prompt ONLY to the leader — includes delegation instructions
   const leaderIndex = agents.indexOf(leader);
   const escapedPrompt = prompt.replace(/'/g, "'\\''");
-  
+
   // Build the leader's full prompt with delegation context
   const leaderPrompt = [
     escapedPrompt,
-    '',
-    '---',
+    "",
+    "---",
     `You are ${leader.name}, the Squad Leader for Squad ${manifest.squadId.toUpperCase()}.`,
     `You have ${subAgents.length} sub-agent(s) available in this tmux session:`,
-    ...subAgents.map(a => `  - ${a.name} (${a.role}, pane ${agents.indexOf(a)}, ${a.model})`),
-    '',
-    'DELEGATION PROTOCOL:',
-    '1. Plan the work breakdown for your team',
-    '2. Permission grants are pre-written at .smith/permissions/<name>.json',
-    '3. Delegate to each agent via: tmux send-keys -t ' + sessionName + '.<pane> -l "<prompt>"',
-    '4. Include the permission block from their grant file in your delegation prompt',
-    '5. Monitor their output JSON files: ' + subAgents.map(a => getOutputFilename(a.name.toLowerCase())).join(', '),
-    '6. Validate compliance: each agent must only modify files within their write permissions',
-    '7. On success: compile results and exit 0',
-    '8. On unrecoverable failure: exit 1 (quarantine)',
-  ].join('\\n');
-  
+    ...subAgents.map((a) => `  - ${a.name} (${a.role}, pane ${agents.indexOf(a)}, ${a.model})`),
+    "",
+    "DELEGATION PROTOCOL:",
+    "1. Plan the work breakdown for your team",
+    "2. Permission grants are pre-written at .smith/permissions/<name>.json",
+    "3. Delegate to each agent via: tmux send-keys -t " + sessionName + '.<pane> -l "<prompt>"',
+    "4. Include the permission block from their grant file in your delegation prompt",
+    "5. Monitor their output JSON files: " + subAgents.map((a) => getOutputFilename(a.name.toLowerCase())).join(", "),
+    "6. Validate compliance: each agent must only modify files within their write permissions",
+    "7. On success: compile results and exit 0",
+    "8. On unrecoverable failure: exit 1 (quarantine)",
+  ].join("\\n");
+
   lines.push(`# Send prompt to leader only`);
   lines.push(`tmux send-keys -t ${sessionName}.${leaderIndex} $'${leaderPrompt}' C-m`);
   lines.push(``);
   lines.push(`tmux attach-session -t ${sessionName}`);
 
-  return lines.join('\n');
+  return lines.join("\n");
 }
-

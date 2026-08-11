@@ -1,8 +1,8 @@
 // Removal lifecycle facts for composed agents. Swarm reports what IT knows —
 // warm-session records and live tasks. Conversation evidence lives in the
 // broker, which owns the archive-vs-delete decision (spec §1).
-import type { ComposedAgent } from './agents.js';
-import type { SessionRecord } from './session-store.js';
+import type { ComposedAgent } from "./agents.js";
+import type { SessionRecord } from "./session-store.js";
 
 export interface AgentUsage {
   warmSessions: number;

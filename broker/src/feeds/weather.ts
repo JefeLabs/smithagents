@@ -7,14 +7,14 @@
 
 /** WMO weather codes, collapsed to words a person would actually say. */
 function sky(code: number): string {
-  if (code === 0) return 'clear';
-  if (code <= 2) return 'partly cloudy';
-  if (code === 3) return 'overcast';
-  if (code >= 95) return 'storms';
-  if (code >= 80) return 'showers';
-  if (code >= 61) return 'rain';
-  if (code >= 45) return 'fog';
-  return 'clear';
+  if (code === 0) return "clear";
+  if (code <= 2) return "partly cloudy";
+  if (code === 3) return "overcast";
+  if (code >= 95) return "storms";
+  if (code >= 80) return "showers";
+  if (code >= 61) return "rain";
+  if (code >= 45) return "fog";
+  return "clear";
 }
 
 export function weatherUrl(lat: number, lon: number): string {
@@ -30,7 +30,7 @@ export function weatherLine(body: unknown): string | null {
     hourly?: { time?: string[]; precipitation_probability?: number[] };
   } | null;
   const temp = b?.current?.temperature_2m;
-  if (typeof temp !== 'number') return null;
+  if (typeof temp !== "number") return null;
 
   const base = `${Math.round(temp)}°C, ${sky(b?.current?.weather_code ?? 0)}`;
   const times = b?.hourly?.time ?? [];

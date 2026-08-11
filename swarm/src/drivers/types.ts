@@ -11,7 +11,7 @@ export interface AgentProfile {
 
 /** A session-file message normalized across tools. */
 export interface NormalizedMessage {
-  role: 'user' | 'assistant';
+  role: "user" | "assistant";
   /** Concatenated text content (tool-use payloads and internals are elided). */
   text: string;
   timestamp?: string;
@@ -103,5 +103,5 @@ export interface ToolDriver {
     binary: string,
     run: CommandRunner,
     timeoutMs: number,
-  ): Promise<{ ok: boolean | 'unknown'; detail: string }>;
+  ): Promise<{ ok: boolean | "unknown"; detail: string }>;
 }

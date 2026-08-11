@@ -2,13 +2,13 @@
 // GET /me/voice/keys so pasting a key in Settings takes effect without a
 // broker restart. Swarm-unreachable (client returns null) keeps the last
 // good keys — voice shouldn't flap off because swarm restarted.
-import type { VoiceKeys } from './swarm-client.ts';
+import type { VoiceKeys } from "./swarm-client.ts";
 
 export const VOICE_KEYS_TTL_MS = 20_000;
 
-export const VOICE_STT_HINT = 'Add a Deepgram key in Settings → Integrations, then select it under Settings → Voice.';
+export const VOICE_STT_HINT = "Add a Deepgram key in Settings → Integrations, then select it under Settings → Voice.";
 export const VOICE_TTS_HINT =
-  'No text-to-speech key — add an ElevenLabs key in Settings → Integrations, then select it under Settings → Voice.';
+  "No text-to-speech key — add an ElevenLabs key in Settings → Integrations, then select it under Settings → Voice.";
 
 export class VoiceKeyResolver {
   private cached: VoiceKeys = { stt: null, tts: null };

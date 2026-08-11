@@ -9,41 +9,41 @@
  * failed the voice designation (discord-voice.ts), so it parses as
  * text-autojoin + voice-disabled.
  */
-export type SurfaceMode = 'autojoin' | 'on-request' | 'disabled';
+export type SurfaceMode = "autojoin" | "on-request" | "disabled";
 export type SurfaceModeMap = Record<string, SurfaceMode>;
-export const KNOWN_SURFACES = ['discord', 'discord-voice'] as const;
+export const KNOWN_SURFACES = ["discord", "discord-voice"] as const;
 
-const MODES: ReadonlySet<string> = new Set(['autojoin', 'on-request', 'disabled']);
+const MODES: ReadonlySet<string> = new Set(["autojoin", "on-request", "disabled"]);
 /** Retired surface keys: skipped in every branch so old agent files stay valid. */
-const RETIRED_SURFACES: ReadonlySet<string> = new Set(['tauri']);
+const RETIRED_SURFACES: ReadonlySet<string> = new Set(["tauri"]);
 
 export function surfaceModes(agent: { channels?: unknown }): SurfaceModeMap {
   const channels = agent.channels;
   if (channels === undefined || channels === null) {
-    return { discord: 'autojoin', 'discord-voice': 'disabled' };
+    return { discord: "autojoin", "discord-voice": "disabled" };
   }
   if (Array.isArray(channels)) {
     const out: SurfaceModeMap = {};
     for (const surface of KNOWN_SURFACES) {
-      out[surface] = channels.includes(surface) ? 'autojoin' : 'disabled';
+      out[surface] = channels.includes(surface) ? "autojoin" : "disabled";
     }
     for (const surface of channels) {
-      if (typeof surface === 'string' && !RETIRED_SURFACES.has(surface) && !(surface in out)) {
-        out[surface] = 'autojoin';
+      if (typeof surface === "string" && !RETIRED_SURFACES.has(surface) && !(surface in out)) {
+        out[surface] = "autojoin";
       }
     }
     return out;
   }
-  if (typeof channels === 'object') {
+  if (typeof channels === "object") {
     const out: SurfaceModeMap = {};
-    for (const surface of KNOWN_SURFACES) out[surface] = 'disabled';
+    for (const surface of KNOWN_SURFACES) out[surface] = "disabled";
     for (const [surface, mode] of Object.entries(channels as Record<string, unknown>)) {
       if (RETIRED_SURFACES.has(surface)) continue;
-      out[surface] = typeof mode === 'string' && MODES.has(mode) ? (mode as SurfaceMode) : 'disabled';
+      out[surface] = typeof mode === "string" && MODES.has(mode) ? (mode as SurfaceMode) : "disabled";
     }
     return out;
   }
-  return { discord: 'disabled', 'discord-voice': 'disabled' };
+  return { discord: "disabled", "discord-voice": "disabled" };
 }
 
 export class SurfacePolicy {
@@ -53,14 +53,14 @@ export class SurfacePolicy {
 
   modeFor(agentId: string, surface: string): SurfaceMode {
     const agent = this.getAgents().find((a) => a.id === agentId);
-    if (!agent) return 'disabled';
-    return surfaceModes(agent)[surface] ?? 'disabled';
+    if (!agent) return "disabled";
+    return surfaceModes(agent)[surface] ?? "disabled";
   }
 
   attends(agentId: string, surface: string): boolean {
     const mode = this.modeFor(agentId, surface);
-    if (mode === 'autojoin') return true;
-    if (mode === 'on-request') return this.admissions.has(`${agentId}:${surface}`);
+    if (mode === "autojoin") return true;
+    if (mode === "on-request") return this.admissions.has(`${agentId}:${surface}`);
     return false;
   }
 
@@ -88,12 +88,12 @@ export class SurfacePolicy {
  * still performs the actual join/no-op), but records no admission — an
  * autojoin surface doesn't need one, and revoking it later would wrongly gate
  * an agent that was never on-request to begin with. */
-export type JoinDecision = { type: 'reject'; status: number; error: string } | { type: 'admit' } | { type: 'allow' };
+export type JoinDecision = { type: "reject"; status: number; error: string } | { type: "admit" } | { type: "allow" };
 
 export function decideJoin(agentId: string, surface: string, mode: SurfaceMode): JoinDecision {
-  if (mode === 'disabled') return { type: 'reject', status: 409, error: `${agentId} is disabled on ${surface}` };
-  if (mode === 'on-request') return { type: 'admit' };
-  return { type: 'allow' };
+  if (mode === "disabled") return { type: "reject", status: 409, error: `${agentId} is disabled on ${surface}` };
+  if (mode === "on-request") return { type: "admit" };
+  return { type: "allow" };
 }
 
 /** Enforce a mode change's immediate effects. Voice: disabled ejects now;
@@ -113,13 +113,13 @@ export async function applyModeChange(
 ): Promise<void> {
   const surfaces = new Set([...Object.keys(before), ...Object.keys(after)]);
   for (const surface of surfaces) {
-    const from = before[surface] ?? 'disabled';
-    const to = after[surface] ?? 'disabled';
+    const from = before[surface] ?? "disabled";
+    const to = after[surface] ?? "disabled";
     if (from === to) continue;
-    if (surface === 'discord-voice') {
-      if (to === 'disabled') {
+    if (surface === "discord-voice") {
+      if (to === "disabled") {
         deps.leaveAgent(agentId);
-      } else if (to === 'autojoin' && deps.roomActive()) {
+      } else if (to === "autojoin" && deps.roomActive()) {
         try {
           await deps.joinAgent(agentId);
         } catch (err) {

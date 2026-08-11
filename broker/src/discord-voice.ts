@@ -112,8 +112,8 @@
  * Task 3.
  */
 
-import type { SttLike } from './broker.ts';
-import { surfaceModes } from './surface-modes.ts';
+import type { SttLike } from "./broker.ts";
+import { surfaceModes } from "./surface-modes.ts";
 
 export interface VoiceConnectionLike {
   playPcm(pcm44kMono: AsyncIterable<Uint8Array>): Promise<void>; // resolves when the utterance finishes
@@ -148,7 +148,7 @@ export interface DiscordVoiceOptions {
   receiver?: VoiceReceiverLike;
 }
 
-const VOICE_DESIGNATION = 'discord-voice';
+const VOICE_DESIGNATION = "discord-voice";
 
 /** Discord's voice receive side is always 48kHz, regardless of the mouths' 44.1kHz playback rate. */
 const EAR_SAMPLE_RATE = 48000;
@@ -287,7 +287,9 @@ export function createDiscordVoiceSurface(opts: DiscordVoiceOptions): {
     try {
       for await (const chunk of pcm48kMono) stt.sendAudio(chunk);
     } catch (err) {
-      log(`[discord-voice] ${displayName}'s STT session failed — dropping their audio, other speakers unaffected: ${String(err)}`);
+      log(
+        `[discord-voice] ${displayName}'s STT session failed — dropping their audio, other speakers unaffected: ${String(err)}`,
+      );
       stt.stop();
       // Only clear the map entry if it's still THIS session — a newer
       // speaking-start for the same user may already have replaced it
@@ -382,7 +384,7 @@ export function createDiscordVoiceSurface(opts: DiscordVoiceOptions): {
     ear = openMouth(earConnection);
     currentChannelId = channelId;
 
-    const designated = opts.agents().filter((a) => surfaceModes(a)[VOICE_DESIGNATION] === 'autojoin');
+    const designated = opts.agents().filter((a) => surfaceModes(a)[VOICE_DESIGNATION] === "autojoin");
     for (const agent of designated) {
       const token = opts.agentTokens.get(agent.id);
       if (!token) {
@@ -433,7 +435,7 @@ export function createDiscordVoiceSurface(opts: DiscordVoiceOptions): {
    * Task 5's join endpoint build on, not a re-check of the agent's mode.
    */
   async function joinAgent(agentId: string): Promise<void> {
-    if (currentChannelId === null) throw new Error('no active voice channel');
+    if (currentChannelId === null) throw new Error("no active voice channel");
     if (agentMouths.has(agentId)) return; // already connected — no-op
     const token = opts.agentTokens.get(agentId);
     if (!token) throw new Error(`${agentId} has no bot token`);
@@ -489,9 +491,9 @@ export function realGateway(): VoiceGatewayLike {
   return {
     async join(channelId: string, token: string): Promise<VoiceConnectionLike> {
       const [{ Client, GatewayIntentBits }, voice, { pcm44kMonoToOpus }] = await Promise.all([
-        import('discord.js'),
-        import('@discordjs/voice'),
-        import('./discord-audio.ts'),
+        import("discord.js"),
+        import("@discordjs/voice"),
+        import("./discord-audio.ts"),
       ]);
       const {
         joinVoiceChannel,
@@ -507,7 +509,7 @@ export function realGateway(): VoiceGatewayLike {
       const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
       await client.login(token);
       if (!client.isReady()) {
-        await new Promise<void>((resolve) => client.once('ready', () => resolve()));
+        await new Promise<void>((resolve) => client.once("ready", () => resolve()));
       }
 
       const channel = await client.channels.fetch(channelId);
@@ -539,8 +541,10 @@ export function realGateway(): VoiceGatewayLike {
       // down. Both fire it for routine conditions (a stream error mid-play,
       // ordinary voice-networking hiccups), not just fatal ones.
       const player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play } });
-      player.on('error', (err) => console.error(`[discord-voice] ${identity} audio player error: ${String(err)}`));
-      connection.on('error', (err) => console.error(`[discord-voice] ${identity} voice connection error: ${String(err)}`));
+      player.on("error", (err) => console.error(`[discord-voice] ${identity} audio player error: ${String(err)}`));
+      connection.on("error", (err) =>
+        console.error(`[discord-voice] ${identity} voice connection error: ${String(err)}`),
+      );
       connection.subscribe(player);
 
       return {

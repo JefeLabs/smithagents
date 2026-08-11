@@ -3,83 +3,84 @@
  * the stdin dev channel: every line typed is treated as a spoken utterance,
  * so the full brain -> delegate -> TTS pipeline is testable without a mic.
  */
-import Anthropic from '@anthropic-ai/sdk';
-import { DeepgramClient } from '@deepgram/sdk';
-import { createInterface } from 'node:readline';
-import { ElevenLabsVoiceProvider } from '@smithagents/voice';
-import { resolveAvatarEngine } from './avatar-engine.ts';
-import { AvatarGenerator, type AvatarRequest } from './avatar-generator.ts';
-import { BrokerAuth } from './auth.ts';
-import { BrokerBrain, type StreamFactory } from './brain.ts';
-import { Broker, TTS_SAMPLE_RATE } from './broker.ts';
-import { AdapterHub } from './channels.ts';
-import { loadBrokerConfig } from './config.ts';
-import { FeedStore } from './feeds/store.ts';
-import { buildDigest } from './feeds/digest.ts';
-import { parseFeed, youtubeFeedUrl } from './feeds/rss.ts';
-import { weatherLine, weatherUrl } from './feeds/weather.ts';
-import { CADENCE_MS, dueSources, recordOutcome } from './feeds/ingest.ts';
-import type { FeedItem, FeedSource } from './feeds/types.ts';
-import { urlRejectionReason } from './feeds/url-guard.ts';
-import { TopicStore, slugify, type Topic } from './feeds/topics.ts';
-import { parseBundle } from './feeds/bundle.ts';
-import { approve, repoKey } from './feeds/approve.ts';
-import { diffBundle } from './feeds/rediscover.ts';
-import { startDiscovery } from './feeds/discovery.ts';
-import { latestFromAtom } from './feeds/atom-release.ts';
-import { readManifests } from './feeds/manifests.ts';
-import { deriveSources } from './feeds/derive.ts';
-import { ownerRole } from './feeds/interests.ts';
-import { cardForRelease } from './feeds/cards.ts';
+
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { createInterface } from "node:readline";
+import Anthropic from "@anthropic-ai/sdk";
+import { DeepgramClient } from "@deepgram/sdk";
+import { ElevenLabsVoiceProvider } from "@smithagents/voice";
+import { BrokerAuth } from "./auth.ts";
+import { resolveAvatarEngine } from "./avatar-engine.ts";
+import { AvatarGenerator, type AvatarRequest } from "./avatar-generator.ts";
+import { loadBlueprints } from "./blueprints.ts";
+import { BrokerBrain, type StreamFactory } from "./brain.ts";
+import type { RosterState, TurnOrigin, UiRoster } from "./broker.ts";
+import { Broker, TTS_SAMPLE_RATE } from "./broker.ts";
+import { AdapterHub } from "./channels.ts";
+import { loadBrokerConfig } from "./config.ts";
+import { AgentDirectory } from "./directory.ts";
+import { isDiscordTextActive } from "./discord-state.ts";
+import { createDiscordTextLifecycle } from "./discord-text-lifecycle.ts";
+// Type-only — erased at compile time, so this does NOT violate
+// discord-voice-lifecycle.ts's own lazy-boot gate (nothing voice-specific
+// runtime-loads unless the active workspace's own Discord config has voice
+// channels configured; see that module's header).
+import type { createDiscordVoiceSurface } from "./discord-voice.ts";
+import { createDiscordVoiceLifecycle } from "./discord-voice-lifecycle.ts";
+import { createDiscordWorkspaceSwitcher } from "./discord-workspace-switcher.ts";
+import { type Doc, DocumentManager } from "./documents.ts";
+import { type AskFactory, ElectionScheduler, runElection } from "./election.ts";
+import { EXEC_TO_RUNTIME, isExecutionMode } from "./execution-modes.ts";
+import { approve, repoKey } from "./feeds/approve.ts";
+import { latestFromAtom } from "./feeds/atom-release.ts";
+import { parseBundle } from "./feeds/bundle.ts";
+import { cardForRelease } from "./feeds/cards.ts";
+import { deriveSources } from "./feeds/derive.ts";
+import { buildDigest } from "./feeds/digest.ts";
+import { startDiscovery } from "./feeds/discovery.ts";
+import { CADENCE_MS, dueSources, recordOutcome } from "./feeds/ingest.ts";
+import { ownerRole } from "./feeds/interests.ts";
+import { readManifests } from "./feeds/manifests.ts";
+import { diffBundle } from "./feeds/rediscover.ts";
+import { parseFeed, youtubeFeedUrl } from "./feeds/rss.ts";
+import { FeedStore } from "./feeds/store.ts";
+import { slugify, type Topic, TopicStore } from "./feeds/topics.ts";
+import type { FeedItem, FeedSource } from "./feeds/types.ts";
+import { urlRejectionReason } from "./feeds/url-guard.ts";
 import {
   classifyBump,
+  type Ecosystem,
   githubAtomUrl,
   latestVersion,
   mentionsSecurity,
   qualifies,
   repositoryUrl,
-  type Ecosystem,
-} from './feeds/versions.ts';
-import { ElectionScheduler, runElection, type AskFactory } from './election.ts';
-import { parseTarget, resolveTarget } from './targets.ts';
-import { createDiscordTextLifecycle } from './discord-text-lifecycle.ts';
-import { createDiscordVoiceLifecycle } from './discord-voice-lifecycle.ts';
-import { createDiscordWorkspaceSwitcher } from './discord-workspace-switcher.ts';
-import { AgentDirectory } from './directory.ts';
-import { LiveKitRoomBridge } from './room.ts';
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import type { RosterState, TurnOrigin, UiRoster } from './broker.ts';
-// Type-only — erased at compile time, so this does NOT violate
-// discord-voice-lifecycle.ts's own lazy-boot gate (nothing voice-specific
-// runtime-loads unless the active workspace's own Discord config has voice
-// channels configured; see that module's header).
-import type { createDiscordVoiceSurface } from './discord-voice.ts';
-import type { VoicePresence } from './voice-presence.ts';
-import { applyModeChange, decideJoin, surfaceModes, SurfacePolicy } from './surface-modes.ts';
-import { LocalMemory, type MemoryEntry } from './memory.ts';
-import { MicSessionGate } from './mic-gate.ts';
-import { SessionManager, truncateTitle, resolveLazyWorkspace, type Session, type ExecutionMode } from './sessions.ts';
-import { EXEC_TO_RUNTIME, isExecutionMode } from './execution-modes.ts';
-import { generateSessionTitle } from './session-title.ts';
-import { polishText } from './polish.ts';
-import { DeepgramSttStream, type LiveLike, deepgramLiveOptions } from './stt.ts';
-import { SwarmClient, type SwarmSquad, type SwarmWorkspace, type WorkspaceBody } from './swarm-client.ts';
-import { VoiceKeyResolver, VOICE_STT_HINT, VOICE_TTS_HINT } from './voice-keys.ts';
-import { PersonaGenerator, draftToAgentBody, type PersonaDraft } from './persona-generator.ts';
-import { loadIdentity, promptInfo } from './identity.ts';
-import { VoiceCatalog } from './voice-catalog.ts';
-import { TextChannel, type ChannelFrame, type RosterEntry } from './text-channel.ts';
-import { createRemovalService } from './removal.ts';
-import { mintRoomToken } from './token.ts';
-import { isDiscordTextActive } from './discord-state.ts';
-import { DocumentManager, type Doc } from './documents.ts';
-import { loadBlueprints } from './blueprints.ts';
+} from "./feeds/versions.ts";
+import { weatherLine, weatherUrl } from "./feeds/weather.ts";
+import { loadIdentity, promptInfo } from "./identity.ts";
+import { LocalMemory, type MemoryEntry } from "./memory.ts";
+import { MicSessionGate } from "./mic-gate.ts";
+import { draftToAgentBody, type PersonaDraft, PersonaGenerator } from "./persona-generator.ts";
+import { polishText } from "./polish.ts";
+import { createRemovalService } from "./removal.ts";
+import { LiveKitRoomBridge } from "./room.ts";
+import { generateSessionTitle } from "./session-title.ts";
+import { type ExecutionMode, resolveLazyWorkspace, type Session, SessionManager, truncateTitle } from "./sessions.ts";
+import { DeepgramSttStream, deepgramLiveOptions, type LiveLike } from "./stt.ts";
+import { applyModeChange, decideJoin, SurfacePolicy, surfaceModes } from "./surface-modes.ts";
+import { SwarmClient, type SwarmSquad, type SwarmWorkspace, type WorkspaceBody } from "./swarm-client.ts";
+import { parseTarget, resolveTarget } from "./targets.ts";
+import { type ChannelFrame, type RosterEntry, TextChannel } from "./text-channel.ts";
+import { mintRoomToken } from "./token.ts";
+import { VoiceCatalog } from "./voice-catalog.ts";
+import { VOICE_STT_HINT, VOICE_TTS_HINT, VoiceKeyResolver } from "./voice-keys.ts";
+import type { VoicePresence } from "./voice-presence.ts";
 
 // Defense in depth: the brain-turn queue in broker.ts isolates errors from
 // every turn it runs, but this catches anything outside that queue so a
 // stray rejection never takes the whole process down under Node defaults.
-process.on('unhandledRejection', (err) => console.error('[broker] unhandled rejection:', err));
+process.on("unhandledRejection", (err) => console.error("[broker] unhandled rejection:", err));
 
 const config = loadBrokerConfig();
 
@@ -98,12 +99,14 @@ const avatarEngine = () =>
   resolveAvatarEngine({
     getGoogleKey: async () => {
       if (config.geminiApiKey) return config.geminiApiKey; // legacy .env still honored
-      const r = await swarm.getApiKeyCredential('google').catch(() => ({ error: 'swarm unreachable' }) as const);
-      return 'key' in r && r.key ? r.key : null;
+      const r = await swarm.getApiKeyCredential("google").catch(() => ({ error: "swarm unreachable" }) as const);
+      return "key" in r && r.key ? r.key : null;
     },
     isAgyActive: async () => {
-      const r = (await swarm.listCliTools().catch(() => null)) as { tools?: Array<{ cli: string; active: boolean }> } | null;
-      return Boolean(r?.tools?.find((t) => t.cli === 'agy')?.active);
+      const r = (await swarm.listCliTools().catch(() => null)) as {
+        tools?: Array<{ cli: string; active: boolean }>;
+      } | null;
+      return Boolean(r?.tools?.find((t) => t.cli === "agy")?.active);
     },
   });
 const directory = new AgentDirectory();
@@ -168,7 +171,7 @@ async function currentTts(): Promise<{ provider: ElevenLabsVoiceProvider; catalo
     ttsCache = {
       key,
       provider: new ElevenLabsVoiceProvider({ apiKey: key }),
-      catalog: new VoiceCatalog(key, process.env.BROKER_VOICE_CACHE_DIR ?? '.smith/voice-cache'),
+      catalog: new VoiceCatalog(key, process.env.BROKER_VOICE_CACHE_DIR ?? ".smith/voice-cache"),
     };
   }
   return ttsCache;
@@ -187,7 +190,7 @@ const TTS_TIMEOUT_MS = Number(process.env.TTS_TIMEOUT_MS ?? 30_000);
 // Recognize either by name so the caller can rethrow something readable.
 function isTtsTimeout(err: unknown): boolean {
   const name = (err as { name?: string } | undefined)?.name;
-  return name === 'TimeoutError' || name === 'AbortError';
+  return name === "TimeoutError" || name === "AbortError";
 }
 
 // Meeting TTS speaks with the per-agent cast — same voices as the app's audio
@@ -204,10 +207,10 @@ async function* speak(text: string): AsyncIterable<Uint8Array> {
   const attempt = (voiceId: string) =>
     t.provider.stream({
       text: spokenText,
-      personaId: speaker ?? 'broker',
-      format: 'pcm_s16le',
+      personaId: speaker ?? "broker",
+      format: "pcm_s16le",
       sampleRate: TTS_SAMPLE_RATE,
-      voice: { provider: 'elevenlabs', voiceId },
+      voice: { provider: "elevenlabs", voiceId },
       signal: AbortSignal.timeout(TTS_TIMEOUT_MS),
     });
   const voiceId = elevenVoiceFor(speaker);
@@ -248,7 +251,7 @@ async function* speak(text: string): AsyncIterable<Uint8Array> {
 // passes it explicitly rather than relying on the default matching by
 // coincidence — see makeVoiceStt below.
 function makeDeepgramLive(sampleRate = 48000): LiveLike {
-  type Socket = Awaited<ReturnType<DeepgramClient['listen']['v1']['connect']>>;
+  type Socket = Awaited<ReturnType<DeepgramClient["listen"]["v1"]["connect"]>>;
   let socket: Socket | null = null;
   let resultsCb: ((data?: unknown) => void) | null = null;
   const pending: Uint8Array[] = [];
@@ -268,7 +271,7 @@ function makeDeepgramLive(sampleRate = 48000): LiveLike {
         s.close();
         return null;
       }
-      s.on('message', (message) => resultsCb?.(message));
+      s.on("message", (message) => resultsCb?.(message));
       // connect() resolves as soon as the socket object exists, not once the
       // websocket handshake completes — open it and wait before sending.
       s.connect();
@@ -282,13 +285,13 @@ function makeDeepgramLive(sampleRate = 48000): LiveLike {
       return s;
     })
     .catch((err: unknown) => {
-      console.error('[stt] deepgram connect failed:', err);
+      console.error("[stt] deepgram connect failed:", err);
       return null;
     });
 
   return {
     on: (event, cb) => {
-      if (event === 'Results') resultsCb = cb;
+      if (event === "Results") resultsCb = cb;
     },
     send: (data) => {
       if (socket) socket.sendMedia(data);
@@ -302,8 +305,8 @@ function makeDeepgramLive(sampleRate = 48000): LiveLike {
 }
 
 // The broker's own identity (host persona, default Anderson) — data, not code.
-const identityFile = process.env.BROKER_IDENTITY_FILE ?? '.smith/identity.json';
-const identity = loadIdentity(() => readFileSync(identityFile, 'utf8'));
+const identityFile = process.env.BROKER_IDENTITY_FILE ?? ".smith/identity.json";
+const identity = loadIdentity(() => readFileSync(identityFile, "utf8"));
 
 // TDZ: the brain's executors close over `broker` and `creation`, which this
 // same statement group constructs. Declared first and assigned after — the
@@ -321,13 +324,25 @@ const brain = new BrokerBrain(
     // A meeting-sourced turn (broker.ts's stt.start callback) can run with no
     // active session — activeOrNull() falls back to the default workspace
     // rather than throwing (sessionManager.active() would).
-    delegate: (input) => broker.executors.delegate({ ...input, workspace: input.workspace ?? sessionManager.activeOrNull()?.workspace ?? defaultWorkspaceName }),
+    delegate: (input) =>
+      broker.executors.delegate({
+        ...input,
+        workspace: input.workspace ?? sessionManager.activeOrNull()?.workspace ?? defaultWorkspaceName,
+      }),
     check_status: (input) => broker.executors.check_status(input),
     raise_hand: (input) => broker.executors.raise_hand(input),
     remember: (input) => broker.executors.remember(input),
     // Scoped to the current conversation's workspace only — never model-choosable, unlike delegate's optional workspace.
-    lookup_ticket: (input) => broker.executors.lookup_ticket({ ...input, workspace: sessionManager.activeOrNull()?.workspace ?? defaultWorkspaceName }),
-    search_docs: (input) => broker.executors.search_docs({ ...input, workspace: sessionManager.activeOrNull()?.workspace ?? defaultWorkspaceName }),
+    lookup_ticket: (input) =>
+      broker.executors.lookup_ticket({
+        ...input,
+        workspace: sessionManager.activeOrNull()?.workspace ?? defaultWorkspaceName,
+      }),
+    search_docs: (input) =>
+      broker.executors.search_docs({
+        ...input,
+        workspace: sessionManager.activeOrNull()?.workspace ?? defaultWorkspaceName,
+      }),
     /**
      * Depth, when small talk turns into a real question (spec §7). Keyword
      * matching over a few hundred short items — no embeddings, no vector
@@ -336,8 +351,8 @@ const brain = new BrokerBrain(
     track_topic: async ({ name }) => {
       const id = slugify(name);
       const existing = topicStore.get(id);
-      if (existing?.status === 'discovering') return `Already looking into ${name}.`;
-      const topic: Topic = existing ?? { id, name, status: 'discovering', candidates: [], declined: [] };
+      if (existing?.status === "discovering") return `Already looking into ${name}.`;
+      const topic: Topic = existing ?? { id, name, status: "discovering", candidates: [], declined: [] };
       topicStore.put(topic);
       await beginDiscovery(topic);
       const after = topicStore.get(id);
@@ -364,9 +379,9 @@ const brain = new BrokerBrain(
         .map((i) => {
           const ageHours = Math.round((Date.now() - Date.parse(i.publishedAt)) / 3_600_000);
           const age = ageHours < 24 ? `${ageHours}h ago` : `${Math.round(ageHours / 24)}d ago`;
-          return `- ${i.title} (${age})${i.summary ? `\n  ${i.summary}` : ''}`;
+          return `- ${i.title} (${age})${i.summary ? `\n  ${i.summary}` : ""}`;
         })
-        .join('\n');
+        .join("\n");
     },
     // Voice-driven agent creation: draft under the host's control, persist
     // only on the human's explicit yes.
@@ -378,25 +393,27 @@ const brain = new BrokerBrain(
     confirm_agent: async ({ accept }) => {
       const draft = pendingDraft;
       pendingDraft = null;
-      if (!draft) return 'no pending draft — call draft_agent first';
+      if (!draft) return "no pending draft — call draft_agent first";
       if (!accept) return `discarded the draft for ${draft.name}`;
       const created = (await creation.create(
-        draftToAgentBody(draft, { language: 'en-do', voiceId: DEFAULT_ELEVEN_VOICE }),
+        draftToAgentBody(draft, { language: "en-do", voiceId: DEFAULT_ELEVEN_VOICE }),
       )) as { error?: string };
-      return created.error ? `creation failed: ${created.error}` : `${draft.name} is on the crew — their real voice still needs casting in the wizard`;
+      return created.error
+        ? `creation failed: ${created.error}`
+        : `${draft.name} is on the crew — their real voice still needs casting in the wizard`;
     },
   },
   { identity: promptInfo(identity) },
 );
 
 // Sessions — workspace-scoped conversations persisted under .smith/sessions/.
-const sessionsDir = process.env.BROKER_SESSIONS_DIR ?? '.smith/sessions';
+const sessionsDir = process.env.BROKER_SESSIONS_DIR ?? ".smith/sessions";
 const sessionStore = {
   loadAll(): Session[] {
     try {
       return readdirSync(sessionsDir)
-        .filter((f) => f.endsWith('.json'))
-        .map((f) => JSON.parse(readFileSync(join(sessionsDir, f), 'utf8')) as Session);
+        .filter((f) => f.endsWith(".json"))
+        .map((f) => JSON.parse(readFileSync(join(sessionsDir, f), "utf8")) as Session);
     } catch {
       return [];
     }
@@ -406,27 +423,27 @@ const sessionStore = {
       mkdirSync(sessionsDir, { recursive: true });
       writeFileSync(join(sessionsDir, `${session.id}.json`), JSON.stringify(session, null, 2));
     } catch (err) {
-      console.error('[sessions] persist failed:', err);
+      console.error("[sessions] persist failed:", err);
     }
   },
   remove(id: string): void {
     try {
       rmSync(join(sessionsDir, `${id}.json`), { force: true });
     } catch (err) {
-      console.error('[sessions] delete failed:', err);
+      console.error("[sessions] delete failed:", err);
     }
   },
 };
 const sessionManager = new SessionManager(sessionStore);
 
 // Documents — blueprint-instantiated work products persisted under .smith/documents/.
-const documentsDir = process.env.BROKER_DOCUMENTS_DIR ?? '.smith/documents';
+const documentsDir = process.env.BROKER_DOCUMENTS_DIR ?? ".smith/documents";
 const documentStore = {
   loadAll(): Doc[] {
     try {
       return readdirSync(documentsDir)
-        .filter((f) => f.endsWith('.json'))
-        .map((f) => JSON.parse(readFileSync(join(documentsDir, f), 'utf8')) as Doc);
+        .filter((f) => f.endsWith(".json"))
+        .map((f) => JSON.parse(readFileSync(join(documentsDir, f), "utf8")) as Doc);
     } catch {
       return [];
     }
@@ -436,7 +453,7 @@ const documentStore = {
       mkdirSync(documentsDir, { recursive: true });
       writeFileSync(join(documentsDir, `${doc.id}.json`), JSON.stringify(doc, null, 2));
     } catch (err) {
-      console.error('[documents] persist failed:', err);
+      console.error("[documents] persist failed:", err);
     }
   },
 };
@@ -446,11 +463,11 @@ const blueprints = loadBlueprints();
 
 // Crew memory — durable facts recalled into every turn. One inspectable JSON
 // file; the crew's continuity across conversations lives here.
-const memoryFile = process.env.BROKER_MEMORY_FILE ?? '.smith/memory.json';
+const memoryFile = process.env.BROKER_MEMORY_FILE ?? ".smith/memory.json";
 const memory = new LocalMemory({
   load(): MemoryEntry[] {
     try {
-      return JSON.parse(readFileSync(memoryFile, 'utf8')) as MemoryEntry[];
+      return JSON.parse(readFileSync(memoryFile, "utf8")) as MemoryEntry[];
     } catch {
       return [];
     }
@@ -460,7 +477,7 @@ const memory = new LocalMemory({
       mkdirSync(dirname(memoryFile), { recursive: true });
       writeFileSync(memoryFile, JSON.stringify(entries, null, 2));
     } catch (err) {
-      console.error('[memory] persist failed:', err);
+      console.error("[memory] persist failed:", err);
     }
   },
 });
@@ -468,39 +485,39 @@ const memory = new LocalMemory({
 // One model call fills the whole creation wizard (structured output).
 const personaGenerator = new PersonaGenerator(anthropic as never);
 
-const SQUAD_RINGS: Record<string, string> = { alpha: '#5fd0b0', beta: '#f2778f', gamma: '#9b8cff' };
+const SQUAD_RINGS: Record<string, string> = { alpha: "#5fd0b0", beta: "#f2778f", gamma: "#9b8cff" };
 
 // ElevenLabs voices for speakers without a persona file (squad members).
 // Persona-file agents carry their own voice.voiceId. Swap freely from the voice library.
 const SQUAD_VOICES: Record<string, string> = {
-  Gabriel: '4GMf9CnVFI2n0w4K1Gm4', // Edwin's pick — Latin male, alpha leader
-  Gustavo: 'aviXFY7Zd7b9DnCUwaCh', // Edwin's pick — Latin male, beta leader
-  Graciela: 'AxFLn9byyiDbMn5fmyqu', // Edwin's pick — gamma leader
-  Santiago: 'htFfPSZGJwjBv1CL0aMD', // Edwin's pick — Latin voice, alpha developer
-  Soledad: '2Lb1en5ujrODDIqmp7F3', // Edwin's pick — female, gamma developer
-  Francisca: 'saqk76H0L3GCnuHtLDw6', // Edwin's pick — female Latin, gamma architect
-  Ofelia: 'nTkjq09AuYgsNR8E4sDe', // Edwin's pick — female, gamma senior
+  Gabriel: "4GMf9CnVFI2n0w4K1Gm4", // Edwin's pick — Latin male, alpha leader
+  Gustavo: "aviXFY7Zd7b9DnCUwaCh", // Edwin's pick — Latin male, beta leader
+  Graciela: "AxFLn9byyiDbMn5fmyqu", // Edwin's pick — gamma leader
+  Santiago: "htFfPSZGJwjBv1CL0aMD", // Edwin's pick — Latin voice, alpha developer
+  Soledad: "2Lb1en5ujrODDIqmp7F3", // Edwin's pick — female, gamma developer
+  Francisca: "saqk76H0L3GCnuHtLDw6", // Edwin's pick — female Latin, gamma architect
+  Ofelia: "nTkjq09AuYgsNR8E4sDe", // Edwin's pick — female, gamma senior
   // Spare (unassigned): m7yTemJqdIqrcNleANfX — female Latin. Open male slots:
   // Fabian, Osvaldo (alpha), Fernando, Orlando, Sebastian (beta).
 };
-const DEFAULT_ELEVEN_VOICE = 'wutgczPT1RZgTX0H3qRJ'; // Edwin's pick — female Latin, fallback for unmapped speakers
+const DEFAULT_ELEVEN_VOICE = "wutgczPT1RZgTX0H3qRJ"; // Edwin's pick — female Latin, fallback for unmapped speakers
 
 // Premade stand-ins: ElevenLabs blocks LIBRARY voices on free API plans (402
 // paid_plan_required) but allows premade ones. When a picked voice 402s we
 // retry with these, so the crew still speaks on the free tier — the real picks
 // take over automatically once the plan is upgraded. Distinct voice per speaker.
 const PREMADE_STANDINS: Record<string, string> = {
-  Manuel: 'ErXwobaYiN019PkySvjV', // Antoni
-  Octavio: 'pNInz6obpgDQGcFmaJgB', // Adam
-  Aurelio: 'TxGEqnHWrfWFTfGW9XjX', // Josh
-  Gabriel: 'yoZ06aMxZJJ28mfd3POQ', // Sam
-  Gustavo: 'VR6AewLTigWG4xSOukaG', // Arnold
-  Graciela: '21m00Tcm4TlvDq8ikWAM', // Rachel
-  Francisca: 'EXAVITQu4vr4xnSDxMaL', // Bella
-  Ofelia: 'MF3mGyEYCl7XYWbV9V6O', // Elli
-  Soledad: 'AZnzlk1XvdvUeBnXmlld', // Domi
+  Manuel: "ErXwobaYiN019PkySvjV", // Antoni
+  Octavio: "pNInz6obpgDQGcFmaJgB", // Adam
+  Aurelio: "TxGEqnHWrfWFTfGW9XjX", // Josh
+  Gabriel: "yoZ06aMxZJJ28mfd3POQ", // Sam
+  Gustavo: "VR6AewLTigWG4xSOukaG", // Arnold
+  Graciela: "21m00Tcm4TlvDq8ikWAM", // Rachel
+  Francisca: "EXAVITQu4vr4xnSDxMaL", // Bella
+  Ofelia: "MF3mGyEYCl7XYWbV9V6O", // Elli
+  Soledad: "AZnzlk1XvdvUeBnXmlld", // Domi
 };
-const PREMADE_DEFAULT = 'ErXwobaYiN019PkySvjV'; // Antoni
+const PREMADE_DEFAULT = "ErXwobaYiN019PkySvjV"; // Antoni
 
 const SPEAKER_RE = /^([A-Z][\w-]{1,24}):\s+(.*)$/s;
 
@@ -526,11 +543,12 @@ function resolveSpokenLineForChannels(text: string): { speaker?: string; spokenT
 
 function elevenVoiceFor(speaker?: string): string {
   // The host identity resolves first — it lives in identity.json, not the registry.
-  if (speaker && identity.voice.voiceId && speaker.toLowerCase() === identity.name.toLowerCase()) return identity.voice.voiceId;
+  if (speaker && identity.voice.voiceId && speaker.toLowerCase() === identity.name.toLowerCase())
+    return identity.voice.voiceId;
   return (speaker && (directory.resolve(speaker)?.voice?.voiceId ?? SQUAD_VOICES[speaker])) ?? DEFAULT_ELEVEN_VOICE;
 }
 
-const GROUP_RING_PALETTE = ['#5fd0b0', '#f2778f', '#9b8cff', '#f2b04a', '#6f8dff', '#d977c8'];
+const GROUP_RING_PALETTE = ["#5fd0b0", "#f2778f", "#9b8cff", "#f2b04a", "#6f8dff", "#d977c8"];
 
 const toRosterEntries = (roster: UiRoster): RosterEntry[] => {
   // Names are matched case-insensitively: the brain and the human both say
@@ -540,76 +558,76 @@ const toRosterEntries = (roster: UiRoster): RosterEntry[] => {
   const isListening = (...names: Array<string | undefined>) =>
     names.some((n) => n !== undefined && addressed.has(n.toLowerCase())) || undefined;
   return [
-  // The tauri app is the management console: every agent always appears in
-  // its roster. Surface attendance (SurfacePolicy) gates Discord only.
-  ...roster.agents.map(
-    (p): RosterEntry => ({
-      id: p.agent.id,
-      name: p.agent.name,
-      role: p.agent.role,
-      ring: p.agent.avatarRing,
-      avatar: p.agent.avatar,
-      status: p.status,
-      taskSummary: p.taskSummary,
-      kind: 'agent',
-      speech: p.agent.voice?.speech,
-      hand: roster.hands[p.agent.name],
-      listening: isListening(p.agent.name),
+    // The tauri app is the management console: every agent always appears in
+    // its roster. Surface attendance (SurfacePolicy) gates Discord only.
+    ...roster.agents.map(
+      (p): RosterEntry => ({
+        id: p.agent.id,
+        name: p.agent.name,
+        role: p.agent.role,
+        ring: p.agent.avatarRing,
+        avatar: p.agent.avatar,
+        status: p.status,
+        taskSummary: p.taskSummary,
+        kind: "agent",
+        speech: p.agent.voice?.speech,
+        hand: roster.hands[p.agent.name],
+        listening: isListening(p.agent.name),
+      }),
+    ),
+    ...roster.squads.map(
+      (s): RosterEntry => ({
+        id: `squad-${s.id}`,
+        name: s.id[0]!.toUpperCase() + s.id.slice(1),
+        role: `Squad — led by ${s.leader.name}`,
+        ring: SQUAD_RINGS[s.id],
+        status: s.status === "active" ? "busy" : "idle",
+        kind: "squad",
+        // A squad's hand is its leader's hand (either name may be used by the brain).
+        hand: roster.hands[s.leader.name] ?? roster.hands[s.id[0]!.toUpperCase() + s.id.slice(1)],
+        // A squad listens when addressed by its id or through its leader.
+        listening: isListening(s.id, s.leader.name),
+        members: s.members
+          .map((m) => m.name)
+          .concat(s.extraMembers)
+          .filter((name) => !s.removedMembers.includes(name)),
+      }),
+    ),
+    ...roster.freed.map(
+      (m): RosterEntry => ({
+        id: `freed-${m.name.toLowerCase()}`,
+        name: m.name,
+        role: m.role,
+        ring: SQUAD_RINGS[m.squadId], // keeps their squad lineage visible
+        status: "idle",
+        kind: "agent",
+        hand: roster.hands[m.name],
+        listening: isListening(m.name),
+      }),
+    ),
+    ...roster.groups.map((g, i): RosterEntry => {
+      // Until the composer-target work this read `members[0]` — the first agent
+      // dragged in, presented as the leader. It is now whoever the group's own
+      // members claimed (or the rank ladder, while a vote is still in flight).
+      const leaderName = g.members.find((m) => m.id === g.leader)?.name ?? g.members[0]?.name ?? "?";
+      return {
+        id: `group-${g.id}`,
+        name: g.name[0]!.toUpperCase() + g.name.slice(1),
+        role: `Squad — led by ${leaderName}`,
+        ring: GROUP_RING_PALETTE[i % GROUP_RING_PALETTE.length],
+        status: "idle",
+        kind: "squad",
+        hand: roster.hands[leaderName],
+        listening: isListening(g.name, leaderName),
+        members: g.members.map((m) => m.name),
+      };
     }),
-  ),
-  ...roster.squads.map(
-    (s): RosterEntry => ({
-      id: `squad-${s.id}`,
-      name: s.id[0]!.toUpperCase() + s.id.slice(1),
-      role: `Squad — led by ${s.leader.name}`,
-      ring: SQUAD_RINGS[s.id],
-      status: s.status === 'active' ? 'busy' : 'idle',
-      kind: 'squad',
-      // A squad's hand is its leader's hand (either name may be used by the brain).
-      hand: roster.hands[s.leader.name] ?? roster.hands[s.id[0]!.toUpperCase() + s.id.slice(1)],
-      // A squad listens when addressed by its id or through its leader.
-      listening: isListening(s.id, s.leader.name),
-      members: s.members
-        .map((m) => m.name)
-        .concat(s.extraMembers)
-        .filter((name) => !s.removedMembers.includes(name)),
-    }),
-  ),
-  ...roster.freed.map(
-    (m): RosterEntry => ({
-      id: `freed-${m.name.toLowerCase()}`,
-      name: m.name,
-      role: m.role,
-      ring: SQUAD_RINGS[m.squadId], // keeps their squad lineage visible
-      status: 'idle',
-      kind: 'agent',
-      hand: roster.hands[m.name],
-      listening: isListening(m.name),
-    }),
-  ),
-  ...roster.groups.map((g, i): RosterEntry => {
-    // Until the composer-target work this read `members[0]` — the first agent
-    // dragged in, presented as the leader. It is now whoever the group's own
-    // members claimed (or the rank ladder, while a vote is still in flight).
-    const leaderName = g.members.find((m) => m.id === g.leader)?.name ?? g.members[0]?.name ?? '?';
-    return {
-      id: `group-${g.id}`,
-      name: g.name[0]!.toUpperCase() + g.name.slice(1),
-      role: `Squad — led by ${leaderName}`,
-      ring: GROUP_RING_PALETTE[i % GROUP_RING_PALETTE.length],
-      status: 'idle',
-      kind: 'squad',
-      hand: roster.hands[leaderName],
-      listening: isListening(g.name, leaderName),
-      members: g.members.map((m) => m.name),
-    };
-  }),
   ];
 };
 
 /** The full roster frame: crew entries plus the host identity — the host is never in `agents`. */
 const rosterFrame = (roster: UiRoster): ChannelFrame => ({
-  type: 'roster',
+  type: "roster",
   agents: toRosterEntries(roster),
   identity: {
     name: identity.name,
@@ -621,7 +639,7 @@ const rosterFrame = (roster: UiRoster): ChannelFrame => ({
 
 let workspaceNames: string[] = [];
 let workspaceRecords: SwarmWorkspace[] = [];
-let defaultWorkspaceName = 'default';
+let defaultWorkspaceName = "default";
 
 // Which workspace Discord is currently attending — set by every switchDiscord
 // call (boot, session create/activate, reset). Feeds resolveLazyWorkspace so a
@@ -642,7 +660,7 @@ function switchDiscord(workspaceName: string): void {
 function sessionFrame() {
   const s = sessionManager.activeOrNull();
   return {
-    type: 'session' as const,
+    type: "session" as const,
     session: s
       ? { id: s.id, title: s.title, workspace: s.workspace, runtime: s.runtime, artifacts: s.artifacts ?? [] }
       : null,
@@ -654,7 +672,7 @@ function sessionFrame() {
 
 /** Full-frame-on-change, like `sessionFrame()` — every document, not a diff. */
 function documentsFrame() {
-  return { type: 'documents' as const, documents: documentManager.list() };
+  return { type: "documents" as const, documents: documentManager.list() };
 }
 
 // Re-fetch workspace records (active only — archived workspaces can't host new
@@ -663,7 +681,7 @@ async function refreshWorkspaceNames(): Promise<void> {
   const all = await swarm.listWorkspaces().catch(() => []);
   workspaceRecords = all.filter((w) => !w.archived);
   workspaceNames = workspaceRecords.map((w) => w.name);
-  defaultWorkspaceName = workspaceRecords.find((w) => w.default)?.name ?? workspaceNames[0] ?? 'default';
+  defaultWorkspaceName = workspaceRecords.find((w) => w.default)?.name ?? workspaceNames[0] ?? "default";
   await broker.refreshWorkspaces();
   textChannel.broadcast(sessionFrame());
 }
@@ -674,13 +692,16 @@ async function refreshWorkspaceNames(): Promise<void> {
  * and broadcast. Used by the sessions HTTP route (explicit create) and lazy
  * creation (handleUserText) alike, so both paths stay in lockstep.
  */
-function startSession(workspace: string, opts: { runtime: ExecutionMode; title: string; awaitingTitle?: boolean }): Session {
+function startSession(
+  workspace: string,
+  opts: { runtime: ExecutionMode; title: string; awaitingTitle?: boolean },
+): Session {
   const s = sessionManager.create(workspace, { ...opts });
   brain.loadHistory(s.brainHistory);
   const rec = workspaceRecords.find((w) => w.name === workspace);
   if (rec?.description || rec?.links?.length) {
-    const links = rec.links?.length ? `\nlinks:\n${rec.links.join('\n')}` : '';
-    brain.seedContext(`workspace "${workspace}": ${rec.description ?? ''}${links}`);
+    const links = rec.links?.length ? `\nlinks:\n${rec.links.join("\n")}` : "";
+    brain.seedContext(`workspace "${workspace}": ${rec.description ?? ""}${links}`);
     sessionManager.saveBrainHistory(brain.exportHistory());
   }
   switchDiscord(workspace);
@@ -702,13 +723,13 @@ function handleUserText(text: string, origin?: TurnOrigin): void {
   // here. Channel-originated text (Discord, …) has no such entry point of
   // its own — the hub calls straight into this function — so this is the
   // one place to do it for that path, matching the existing frame shape.
-  if (origin) textChannel.broadcast({ type: 'utterance', text });
+  if (origin) textChannel.broadcast({ type: "utterance", text });
   const lazilyCreated = !sessionManager.hasActive();
   if (lazilyCreated) {
     const workspace = resolveLazyWorkspace(origin, attendedDiscordWorkspace, defaultWorkspaceName);
-    startSession(workspace, { runtime: 'local-in-process', title: truncateTitle(text), awaitingTitle: true });
+    startSession(workspace, { runtime: "local-in-process", title: truncateTitle(text), awaitingTitle: true });
   }
-  sessionManager.appendTranscript('user', text);
+  sessionManager.appendTranscript("user", text);
   // startSession (above) already broadcast a session frame, but with an
   // EMPTY transcript — this line hadn't been appended yet. The client's
   // session frame is a full replace of the message list (useBrokerChat's
@@ -739,10 +760,10 @@ function handleUserText(text: string, origin?: TurnOrigin): void {
 async function maybeRetitle(): Promise<void> {
   const s = sessionManager.activeOrNull();
   if (!s?.awaitingTitle) return;
-  const firstUser = s.transcript.find((t) => t.role === 'user')?.text ?? '';
-  const firstReply = s.transcript.find((t) => t.role === 'broker')?.text ?? '';
+  const firstUser = s.transcript.find((t) => t.role === "user")?.text ?? "";
+  const firstReply = s.transcript.find((t) => t.role === "broker")?.text ?? "";
   if (!firstReply) return; // no reply landed yet — the next turn retries
-  const title = await generateSessionTitle(streamFactory, 'claude-haiku-4-5', firstUser, firstReply);
+  const title = await generateSessionTitle(streamFactory, "claude-haiku-4-5", firstUser, firstReply);
   if (title && sessionManager.retitle(s.id, title)) textChannel.broadcast(sessionFrame());
 }
 
@@ -783,12 +804,13 @@ const workspaces = {
       if (inUse) await swarm.archiveWorkspace(name);
       else await swarm.deleteWorkspace(name);
       await refreshWorkspaceNames();
-      return { outcome: inUse ? 'archived' : 'deleted' };
+      return { outcome: inUse ? "archived" : "deleted" };
     } catch (err) {
       return { error: String((err as Error).message) };
     }
   },
-  verifyAtlassian: (name: string) => swarm.verifyWorkspaceAtlassian(name) as unknown as Promise<Record<string, unknown>>,
+  verifyAtlassian: (name: string) =>
+    swarm.verifyWorkspaceAtlassian(name) as unknown as Promise<Record<string, unknown>>,
   verifyGithubRepo: (name: string, repoName: string) =>
     swarm.verifyRepoGithub(name, repoName) as unknown as Promise<Record<string, unknown>>,
 };
@@ -799,9 +821,7 @@ const workspaces = {
 const me = {
   get: () => swarm.getMe() as unknown as Promise<Record<string, unknown>>,
   update: (body: Record<string, unknown>) =>
-    swarm.updateMe(body as { name?: string }) as unknown as Promise<
-      Record<string, unknown>
-    >,
+    swarm.updateMe(body as { name?: string }) as unknown as Promise<Record<string, unknown>>,
 };
 
 // Per-workspace Discord channel config (channels manager UI): same thin
@@ -809,9 +829,10 @@ const me = {
 const channels = {
   get: (name: string) => swarm.getWorkspaceChannels(name) as unknown as Promise<Record<string, unknown>>,
   save: (name: string, body: Record<string, unknown>) =>
-    swarm.saveWorkspaceChannels(name, body as { discord?: { botToken: string; textChannels: string[]; voiceChannels: string[] } }) as unknown as Promise<
-      Record<string, unknown>
-    >,
+    swarm.saveWorkspaceChannels(
+      name,
+      body as { discord?: { botToken: string; textChannels: string[]; voiceChannels: string[] } },
+    ) as unknown as Promise<Record<string, unknown>>,
   verifyDiscord: (name: string) => swarm.verifyWorkspaceDiscord(name) as unknown as Promise<Record<string, unknown>>,
 };
 
@@ -821,9 +842,9 @@ const connectors = {
   vendors: () => swarm.getConnectorVendors() as unknown as Promise<Record<string, unknown>[]>,
   list: () => swarm.getMyConnectors() as unknown as Promise<Record<string, unknown>[]>,
   add: (body: Record<string, unknown>) =>
-    swarm.addConnector(body as { vendorId: string; label: string; fields: Record<string, string> }) as unknown as Promise<
-      Record<string, unknown>
-    >,
+    swarm.addConnector(
+      body as { vendorId: string; label: string; fields: Record<string, string> },
+    ) as unknown as Promise<Record<string, unknown>>,
   update: (id: string, body: Record<string, unknown>) =>
     swarm.updateConnector(id, body as { label?: string; fields?: Record<string, string> }) as unknown as Promise<
       Record<string, unknown>
@@ -862,21 +883,28 @@ const cliTools = {
 const workBoards = {
   proxy: (method: string, path: string, body?: unknown) => swarm.work(method, path, body),
   delegate: async (body: Record<string, unknown>): Promise<{ taskId: string } | { error: string }> => {
-    const b = body as { boardId?: string; cardId?: string; agentId?: string; workspace?: string; repo?: string; prompt?: string };
+    const b = body as {
+      boardId?: string;
+      cardId?: string;
+      agentId?: string;
+      workspace?: string;
+      repo?: string;
+      prompt?: string;
+    };
     if (!b.boardId || !b.cardId || !b.agentId || !b.prompt?.trim()) {
-      return { error: 'body must be {boardId, cardId, agentId, prompt, workspace?, repo?}' };
+      return { error: "body must be {boardId, cardId, agentId, prompt, workspace?, repo?}" };
     }
     const r = await broker.dispatchWork({
       agent: b.agentId,
       task: b.prompt,
       workspace: b.workspace,
       repo: b.repo,
-      metadata: { source: 'work-board', workCardRef: { boardId: b.boardId, cardId: b.cardId } },
+      metadata: { source: "work-board", workCardRef: { boardId: b.boardId, cardId: b.cardId } },
     });
-    if ('error' in r) return r;
+    if ("error" in r) return r;
     // Bind the card before answering so the board's next fetch shows the working badge.
-    await swarm.work('PATCH', `/work/boards/${encodeURIComponent(b.boardId)}/cards/${encodeURIComponent(b.cardId)}`, {
-      delegation: { agentId: b.agentId, taskId: r.taskId, state: 'working' },
+    await swarm.work("PATCH", `/work/boards/${encodeURIComponent(b.boardId)}/cards/${encodeURIComponent(b.cardId)}`, {
+      delegation: { agentId: b.agentId, taskId: r.taskId, state: "working" },
     });
     return { taskId: r.taskId };
   },
@@ -909,177 +937,181 @@ const voice = {
 // fetches — the UI learns in one request whether to render the Generate
 // button at all.
 const creation = {
-    catalog: async () => ({ ...(await swarm.agentCatalog()), avatarGen: (await avatarEngine())?.kind ?? null }),
-    records: async () => (await swarm.registry()) as unknown as Record<string, unknown>[],
-    update: async (id: string, body: Record<string, unknown>) => {
-      // Fail open on the BEFORE read: this registry read did not exist before
-      // this wrapper, so a transient read hiccup must never block a PUT that
-      // previously had zero read dependency. `before === null` means "no
-      // reliable diff possible" — enforcement below falls back to
-      // restrictive-only (never guesses at a join; see the `before` branch
-      // further down) — the write itself still proceeds either way.
-      let before: ReturnType<typeof surfaceModes> | null = null;
+  catalog: async () => ({ ...(await swarm.agentCatalog()), avatarGen: (await avatarEngine())?.kind ?? null }),
+  records: async () => (await swarm.registry()) as unknown as Record<string, unknown>[],
+  update: async (id: string, body: Record<string, unknown>) => {
+    // Fail open on the BEFORE read: this registry read did not exist before
+    // this wrapper, so a transient read hiccup must never block a PUT that
+    // previously had zero read dependency. `before === null` means "no
+    // reliable diff possible" — enforcement below falls back to
+    // restrictive-only (never guesses at a join; see the `before` branch
+    // further down) — the write itself still proceeds either way.
+    let before: ReturnType<typeof surfaceModes> | null = null;
+    try {
+      before = surfaceModes((await swarm.registry()).find((a) => a.id === id) ?? {});
+    } catch (err) {
+      console.error(
+        `[surface-modes] pre-PUT registry read failed for ${id}; write proceeds, enforcement falls back to restrictive-only: ${String(err)}`,
+      );
+    }
+    const result = await swarm.updateAgent(id, body);
+    if (!result.error) {
+      // The write already succeeded and persisted by this point — nothing
+      // below may reject the update promise or override `result`; every
+      // failure here is logged and swallowed, never surfaced to the client.
       try {
-        before = surfaceModes((await swarm.registry()).find((a) => a.id === id) ?? {});
-      } catch (err) {
-        console.error(`[surface-modes] pre-PUT registry read failed for ${id}; write proceeds, enforcement falls back to restrictive-only: ${String(err)}`);
-      }
-      const result = await swarm.updateAgent(id, body);
-      if (!result.error) {
-        // The write already succeeded and persisted by this point — nothing
-        // below may reject the update promise or override `result`; every
-        // failure here is logged and swallowed, never surfaced to the client.
+        let after: ReturnType<typeof surfaceModes>;
         try {
-          let after: ReturnType<typeof surfaceModes>;
-          try {
-            const registryAfterPut = await swarm.registry();
-            after = surfaceModes(registryAfterPut.find((a) => a.id === id) ?? {});
-            // directory is otherwise seeded only at broker start() and
-            // resetComposition() (broker.ts) — never on an individual PUT,
-            // and the 2s poll timer doesn't touch it either. Reusing the
-            // registry read this PUT already made to re-seed here (same
-            // archived filter as those two call sites) is what keeps
-            // SurfacePolicy (which reads directory.list()) from enforcing a
-            // STALE pre-PUT mode: without this, Discord text would keep
-            // relaying a disabled agent, and the next crew VC join would use
-            // stale designation (an ejected agent comes back when the crew
-            // rejoins). Broadcast afterward matches every other
-            // roster-changing path's own frame.
-            directory.seed(registryAfterPut.filter((a) => !a.archived));
-            textChannel.broadcast(rosterFrame(broker.uiRoster()));
-          } catch (err) {
-            // Registry outage right after a successful write: fall back to
-            // deriving the after-map from the PUT body itself. This is
-            // genuinely correct for the SurfacePolicyPopover's PUT
-            // (useSurfacePolicy.ts's setMode sends the full stored record
-            // plus the updated channels) and for swarm's own merge
-            // (buildAgentUpdate: channels: b.channels ?? existing.channels).
-            // The remaining exposure is narrower: a client that omits
-            // `channels` on its PUT body — today, the edit wizard
-            // (AddAgentModal.tsx) — hits the legacy absent-channels default
-            // (discord-voice: disabled) here instead of its real persisted
-            // channels, if this exact read fails. Also: the directory.seed()
-            // above did NOT run on this path (no fresh registry list to seed
-            // from), so it stays stale until some other PUT's AFTER read
-            // succeeds — there is no poll that corrects this on its own.
-            console.error(`[surface-modes] AFTER registry read failed for ${id}; enforcement uses the PUT body as the after-map: ${String(err)}`);
-            after = surfaceModes(body);
-          }
-
-          if (before) {
-            await applyModeChange(
-              {
-                leaveAgent: (agentId) => voiceSurface?.leaveAgent(agentId),
-                joinAgent: async (agentId) => {
-                  await voiceSurface?.joinAgent(agentId);
-                },
-                roomActive: () => voiceSurface !== null && voicePresence !== null && voicePresence.joinedChannel() !== null,
-                revoke: (agentId, surface) => policy.revoke(agentId, surface),
-                log: (line) => console.log(line),
-              },
-              id,
-              before,
-              after,
-            );
-          } else {
-            // BEFORE was unknowable (its registry read failed): no reliable
-            // diff exists, so never guess at a JOIN (the permissive side —
-            // skipping it is safe). An explicit disable must never silently
-            // no-op just because a read hiccuped, though, so run
-            // restrictive-only enforcement off the after-map alone: revoke
-            // every non-autojoin surface, and eject from voice if it's
-            // explicitly disabled.
-            for (const [surface, mode] of Object.entries(after)) {
-              if (mode !== 'autojoin') policy.revoke(id, surface);
-            }
-            if (after['discord-voice'] === 'disabled') voiceSurface?.leaveAgent(id);
-          }
+          const registryAfterPut = await swarm.registry();
+          after = surfaceModes(registryAfterPut.find((a) => a.id === id) ?? {});
+          // directory is otherwise seeded only at broker start() and
+          // resetComposition() (broker.ts) — never on an individual PUT,
+          // and the 2s poll timer doesn't touch it either. Reusing the
+          // registry read this PUT already made to re-seed here (same
+          // archived filter as those two call sites) is what keeps
+          // SurfacePolicy (which reads directory.list()) from enforcing a
+          // STALE pre-PUT mode: without this, Discord text would keep
+          // relaying a disabled agent, and the next crew VC join would use
+          // stale designation (an ejected agent comes back when the crew
+          // rejoins). Broadcast afterward matches every other
+          // roster-changing path's own frame.
+          directory.seed(registryAfterPut.filter((a) => !a.archived));
+          textChannel.broadcast(rosterFrame(broker.uiRoster()));
         } catch (err) {
-          console.error(`[surface-modes] enforcement skipped after PUT ${id}: ${String(err)}`);
+          // Registry outage right after a successful write: fall back to
+          // deriving the after-map from the PUT body itself. This is
+          // genuinely correct for the SurfacePolicyPopover's PUT
+          // (useSurfacePolicy.ts's setMode sends the full stored record
+          // plus the updated channels) and for swarm's own merge
+          // (buildAgentUpdate: channels: b.channels ?? existing.channels).
+          // The remaining exposure is narrower: a client that omits
+          // `channels` on its PUT body — today, the edit wizard
+          // (AddAgentModal.tsx) — hits the legacy absent-channels default
+          // (discord-voice: disabled) here instead of its real persisted
+          // channels, if this exact read fails. Also: the directory.seed()
+          // above did NOT run on this path (no fresh registry list to seed
+          // from), so it stays stale until some other PUT's AFTER read
+          // succeeds — there is no poll that corrects this on its own.
+          console.error(
+            `[surface-modes] AFTER registry read failed for ${id}; enforcement uses the PUT body as the after-map: ${String(err)}`,
+          );
+          after = surfaceModes(body);
         }
-      }
-      return result;
-    },
-    generate: async (body: Record<string, unknown>) => {
-      const b = body as Record<string, string>;
-      const catalog = (await swarm.agentCatalog()) as {
-        stereotypes?: Array<{ id: string; label: string; style: string }>;
-        jobRoles?: Array<{ id: string; label: string; directives: string }>;
-        quickQuestions?: Array<{ id: string; question: string }>;
-        reactionLevels?: string[];
-        languages?: Array<{ id: string; label: string; speech: string }>;
-      };
-      const stereotype = catalog.stereotypes?.find((s) => s.id === b.stereotype);
-      const jobRole = catalog.jobRoles?.find((r) => r.id === b.jobRole);
-      const crew = directory.snapshot().map((p) => `${p.agent.name} (${p.agent.role})`);
-      const draft = await personaGenerator.generate({
-        stereotypeLabel: stereotype?.label,
-        stereotypeStyle: stereotype?.style,
-        jobRoleLabel: jobRole?.label,
-        jobRoleDirectives: jobRole?.directives,
-        gender: b.gender,
-        hint: b.hint,
-        // The chosen primary language decides how every generated line sounds.
-        speech: catalog.languages?.find((l) => l.id === b.language)?.speech,
-        crewContext: crew.join(', '),
-        existingNames: directory.snapshot().map((p) => p.agent.name),
-        reactionLevels: catalog.reactionLevels ?? [],
-        quickQuestions: catalog.quickQuestions ?? [],
-      });
-      return draft as unknown as Record<string, unknown>;
-    },
-    voices: async (query: Record<string, string>) => {
-      const t = await currentTts();
-      if (!t) return { voices: [], hasMore: false, error: VOICE_TTS_HINT };
-      return t.catalog.browse({
-        search: query.search,
-        gender: query.gender,
-        language: query.language,
-        page: query.page ? Number(query.page) : undefined,
-      });
-    },
-    preview: async (voiceId: string, text: string) => {
-      const t = await currentTts();
-      if (!t) throw new Error(VOICE_TTS_HINT);
-      return t.catalog.synthesize(voiceId, text);
-    },
-    create: async (body: Record<string, unknown>) => {
-      const created = await swarm.createAgent(body);
-      // Warm the cache so the new agent's fixed lines play instantly. Best
-      // effort: a partial cache still beats none, and never blocks creation.
-      const agent = created as {
-        id?: string;
-        voice?: { voiceId?: string };
-        reactions?: Record<string, string[]>;
-        quickAnswers?: Record<string, string>;
-      };
-      const t = await currentTts();
-      if (t && agent.voice?.voiceId) {
-        const lines = [
-          ...Object.values(agent.reactions ?? {}).flat(),
-          ...Object.values(agent.quickAnswers ?? {}),
-        ];
-        const warm = await t.catalog.warmAgent(agent.voice.voiceId, lines).catch(() => ({ cached: 0, failed: [] }));
-        // Roster refresh so the new agent appears immediately.
-        await broker.resetComposition().catch(() => {});
-        return { ...created, voiceCache: warm };
-      }
-      await broker.resetComposition().catch(() => {});
-      return created;
-    },
-    generateAvatar: async (body: Record<string, unknown>) => {
-      const engine = await avatarEngine();
-      if (!engine) {
-        return { error: 'no image engine available — add a Google key in Settings → API Keys, or install Antigravity (agy)' };
-      }
-      try {
-        const generator = new AvatarGenerator(engine.client, config.geminiImageModel);
-        return { imageData: await generator.generate(body as AvatarRequest), engine: engine.kind };
+
+        if (before) {
+          await applyModeChange(
+            {
+              leaveAgent: (agentId) => voiceSurface?.leaveAgent(agentId),
+              joinAgent: async (agentId) => {
+                await voiceSurface?.joinAgent(agentId);
+              },
+              roomActive: () =>
+                voiceSurface !== null && voicePresence !== null && voicePresence.joinedChannel() !== null,
+              revoke: (agentId, surface) => policy.revoke(agentId, surface),
+              log: (line) => console.log(line),
+            },
+            id,
+            before,
+            after,
+          );
+        } else {
+          // BEFORE was unknowable (its registry read failed): no reliable
+          // diff exists, so never guess at a JOIN (the permissive side —
+          // skipping it is safe). An explicit disable must never silently
+          // no-op just because a read hiccuped, though, so run
+          // restrictive-only enforcement off the after-map alone: revoke
+          // every non-autojoin surface, and eject from voice if it's
+          // explicitly disabled.
+          for (const [surface, mode] of Object.entries(after)) {
+            if (mode !== "autojoin") policy.revoke(id, surface);
+          }
+          if (after["discord-voice"] === "disabled") voiceSurface?.leaveAgent(id);
+        }
       } catch (err) {
-        return { error: String((err as Error).message) };
+        console.error(`[surface-modes] enforcement skipped after PUT ${id}: ${String(err)}`);
       }
-    },
-    avatarFile: (file: string) => swarm.avatarFile(file),
+    }
+    return result;
+  },
+  generate: async (body: Record<string, unknown>) => {
+    const b = body as Record<string, string>;
+    const catalog = (await swarm.agentCatalog()) as {
+      stereotypes?: Array<{ id: string; label: string; style: string }>;
+      jobRoles?: Array<{ id: string; label: string; directives: string }>;
+      quickQuestions?: Array<{ id: string; question: string }>;
+      reactionLevels?: string[];
+      languages?: Array<{ id: string; label: string; speech: string }>;
+    };
+    const stereotype = catalog.stereotypes?.find((s) => s.id === b.stereotype);
+    const jobRole = catalog.jobRoles?.find((r) => r.id === b.jobRole);
+    const crew = directory.snapshot().map((p) => `${p.agent.name} (${p.agent.role})`);
+    const draft = await personaGenerator.generate({
+      stereotypeLabel: stereotype?.label,
+      stereotypeStyle: stereotype?.style,
+      jobRoleLabel: jobRole?.label,
+      jobRoleDirectives: jobRole?.directives,
+      gender: b.gender,
+      hint: b.hint,
+      // The chosen primary language decides how every generated line sounds.
+      speech: catalog.languages?.find((l) => l.id === b.language)?.speech,
+      crewContext: crew.join(", "),
+      existingNames: directory.snapshot().map((p) => p.agent.name),
+      reactionLevels: catalog.reactionLevels ?? [],
+      quickQuestions: catalog.quickQuestions ?? [],
+    });
+    return draft as unknown as Record<string, unknown>;
+  },
+  voices: async (query: Record<string, string>) => {
+    const t = await currentTts();
+    if (!t) return { voices: [], hasMore: false, error: VOICE_TTS_HINT };
+    return t.catalog.browse({
+      search: query.search,
+      gender: query.gender,
+      language: query.language,
+      page: query.page ? Number(query.page) : undefined,
+    });
+  },
+  preview: async (voiceId: string, text: string) => {
+    const t = await currentTts();
+    if (!t) throw new Error(VOICE_TTS_HINT);
+    return t.catalog.synthesize(voiceId, text);
+  },
+  create: async (body: Record<string, unknown>) => {
+    const created = await swarm.createAgent(body);
+    // Warm the cache so the new agent's fixed lines play instantly. Best
+    // effort: a partial cache still beats none, and never blocks creation.
+    const agent = created as {
+      id?: string;
+      voice?: { voiceId?: string };
+      reactions?: Record<string, string[]>;
+      quickAnswers?: Record<string, string>;
+    };
+    const t = await currentTts();
+    if (t && agent.voice?.voiceId) {
+      const lines = [...Object.values(agent.reactions ?? {}).flat(), ...Object.values(agent.quickAnswers ?? {})];
+      const warm = await t.catalog.warmAgent(agent.voice.voiceId, lines).catch(() => ({ cached: 0, failed: [] }));
+      // Roster refresh so the new agent appears immediately.
+      await broker.resetComposition().catch(() => {});
+      return { ...created, voiceCache: warm };
+    }
+    await broker.resetComposition().catch(() => {});
+    return created;
+  },
+  generateAvatar: async (body: Record<string, unknown>) => {
+    const engine = await avatarEngine();
+    if (!engine) {
+      return {
+        error: "no image engine available — add a Google key in Settings → API Keys, or install Antigravity (agy)",
+      };
+    }
+    try {
+      const generator = new AvatarGenerator(engine.client, config.geminiImageModel);
+      return { imageData: await generator.generate(body as AvatarRequest), engine: engine.kind };
+    } catch (err) {
+      return { error: String((err as Error).message) };
+    }
+  },
+  avatarFile: (file: string) => swarm.avatarFile(file),
 };
 
 const brokerAuth = new BrokerAuth(config.auth.file, {
@@ -1089,29 +1121,30 @@ const brokerAuth = new BrokerAuth(config.auth.file, {
   required: config.auth.required,
 });
 await brokerAuth.load();
-if (config.auth.required) console.log('[broker] inbound auth REQUIRED — passkey sessions + bridge token');
+if (config.auth.required) console.log("[broker] inbound auth REQUIRED — passkey sessions + bridge token");
 
 const textChannel = new TextChannel(
   handleUserText,
   () => [
-    { type: 'config', audio: voiceKeys.statusSync().tts },
+    { type: "config", audio: voiceKeys.statusSync().tts },
     rosterFrame(broker.uiRoster()),
     sessionFrame(),
     documentsFrame(),
   ],
   (body) => {
     const op = body as { op?: string; agents?: unknown; target?: unknown; agent?: unknown };
-    if (op.op === 'form' && Array.isArray(op.agents) && op.agents.every((a) => typeof a === 'string')) {
-      return broker.compose({ op: 'form', agents: op.agents as string[] });
+    if (op.op === "form" && Array.isArray(op.agents) && op.agents.every((a) => typeof a === "string")) {
+      return broker.compose({ op: "form", agents: op.agents as string[] });
     }
-    if ((op.op === 'add' || op.op === 'remove') && typeof op.target === 'string' && typeof op.agent === 'string') {
+    if ((op.op === "add" || op.op === "remove") && typeof op.target === "string" && typeof op.agent === "string") {
       return broker.compose({ op: op.op, target: op.target, agent: op.agent });
     }
     return 'body must be {op:"form",agents:[..]} or {op:"add"|"remove",target,agent}';
   },
   {
     activity: (name) => broker.activity(name),
-    steer: (name, message) => (message.trim() ? broker.steerWork(name, message) : Promise.resolve('steering message is empty')),
+    steer: (name, message) =>
+      message.trim() ? broker.steerWork(name, message) : Promise.resolve("steering message is empty"),
     cancel: (name) => broker.cancelWork(name),
   },
   {
@@ -1124,13 +1157,13 @@ const textChannel = new TextChannel(
       if (!micSessions.reserve(clientId)) return;
       void (async () => {
         if (!(await voiceKeys.sttKey())) {
-          textChannel.broadcast({ type: 'notice', text: VOICE_STT_HINT });
+          textChannel.broadcast({ type: "notice", text: VOICE_STT_HINT });
           micSessions.cancel(clientId);
           return;
         }
         const stt = new DeepgramSttStream(makeDeepgramLive);
         stt.start((utterance) => {
-          textChannel.broadcast({ type: 'utterance', text: utterance });
+          textChannel.broadcast({ type: "utterance", text: utterance });
           handleUserText(utterance);
         });
         // A mic-stop can land while we were awaiting the key above — commit()
@@ -1147,16 +1180,18 @@ const textChannel = new TextChannel(
   {
     create: async (body) => {
       const workspace = body.workspace;
-      const prompt = body.prompt?.trim() ?? '';
-      if (!workspace || !workspaceNames.includes(workspace)) return { error: `unknown workspace: ${body.workspace ?? '(none)'}` };
-      if (!prompt) return { error: 'prompt is required' };
-      if (!isExecutionMode(body.runtime)) return { error: `runtime must be one of: ${Object.keys(EXEC_TO_RUNTIME).join(', ')}` };
+      const prompt = body.prompt?.trim() ?? "";
+      if (!workspace || !workspaceNames.includes(workspace))
+        return { error: `unknown workspace: ${body.workspace ?? "(none)"}` };
+      if (!prompt) return { error: "prompt is required" };
+      if (!isExecutionMode(body.runtime))
+        return { error: `runtime must be one of: ${Object.keys(EXEC_TO_RUNTIME).join(", ")}` };
       const modes = await swarm.executionModes().catch(() => null);
       if (modes && modes[body.runtime] === false) {
         return { error: `execution mode "${body.runtime}" is not available`, status: 409 };
       }
       startSession(workspace, { runtime: body.runtime, title: truncateTitle(prompt), awaitingTitle: true });
-      textChannel.broadcast({ type: 'utterance', text: prompt }); // entry-point broadcast, same as POST /utterance
+      textChannel.broadcast({ type: "utterance", text: prompt }); // entry-point broadcast, same as POST /utterance
       handleUserText(prompt);
       return null;
     },
@@ -1200,7 +1235,7 @@ const textChannel = new TextChannel(
       .catch((err: unknown) => ({ error: `swarm reset failed: ${String(err)}` }));
 
     if (wants.conversations) {
-      for (const file of readdirSync(sessionsDir).filter((f) => f.endsWith('.json'))) {
+      for (const file of readdirSync(sessionsDir).filter((f) => f.endsWith(".json"))) {
         rmSync(join(sessionsDir, file), { force: true });
       }
       sessionManager.resetAll();
@@ -1226,23 +1261,26 @@ const textChannel = new TextChannel(
       const voiceIds = new Set(voiceSurface?.connectedAgentIds() ?? []);
       for (const a of directory.list()) {
         out[a.id] = {
-          discord: isDiscordTextActive(discordTextLifecycle) && policy.attends(a.id, 'discord'),
-          'discord-voice': voiceIds.has(a.id),
+          discord: isDiscordTextActive(discordTextLifecycle) && policy.attends(a.id, "discord"),
+          "discord-voice": voiceIds.has(a.id),
         };
       }
       return out;
     },
     info: () => ({ configured: isDiscordTextActive(discordTextLifecycle), voiceReady: voiceSurface !== null }),
     join: async (agentId, surface) => {
-      if (surface === 'discord-voice') {
+      if (surface === "discord-voice") {
         // Mode check first: an explicitly disabled agent must never end up
         // in the VC just because it holds a minted bot token.
         const decision = decideJoin(agentId, surface, policy.modeFor(agentId, surface));
-        if (decision.type === 'reject') return { error: decision.error, status: decision.status };
+        if (decision.type === "reject") return { error: decision.error, status: decision.status };
         if (!voiceSurface) {
           const caps = voiceKeys.statusSync();
           return {
-            error: !caps.stt && !caps.tts ? `Discord voice needs voice keys — ${VOICE_STT_HINT}` : 'Discord voice is not configured',
+            error:
+              !caps.stt && !caps.tts
+                ? `Discord voice needs voice keys — ${VOICE_STT_HINT}`
+                : "Discord voice is not configured",
             status: 409,
           };
         }
@@ -1253,20 +1291,21 @@ const textChannel = new TextChannel(
         }
         // autojoin needs no admission (it already attends by mode alone);
         // only on-request records one.
-        if (decision.type === 'admit') policy.admit(agentId, surface);
+        if (decision.type === "admit") policy.admit(agentId, surface);
         // Spec §5: voice boots on either capability alone — hint the missing
         // half rather than blocking the join outright.
         const caps = voiceKeys.statusSync();
         if (!caps.stt || !caps.tts) {
-          textChannel.broadcast({ type: 'notice', text: caps.stt ? VOICE_TTS_HINT : VOICE_STT_HINT });
+          textChannel.broadcast({ type: "notice", text: caps.stt ? VOICE_TTS_HINT : VOICE_STT_HINT });
         }
         return { ok: true } as const;
       }
-      if (surface !== 'discord') return { error: `unknown surface: ${surface}`, status: 404 };
+      if (surface !== "discord") return { error: `unknown surface: ${surface}`, status: 404 };
       const decision = decideJoin(agentId, surface, policy.modeFor(agentId, surface));
-      if (decision.type === 'reject') return { error: decision.error, status: decision.status };
-      if (surface === 'discord' && !isDiscordTextActive(discordTextLifecycle)) return { error: 'Discord is not configured', status: 409 };
-      if (decision.type === 'admit') policy.admit(agentId, surface);
+      if (decision.type === "reject") return { error: decision.error, status: decision.status };
+      if (surface === "discord" && !isDiscordTextActive(discordTextLifecycle))
+        return { error: "Discord is not configured", status: 409 };
+      if (decision.type === "admit") policy.admit(agentId, surface);
       return { ok: true } as const;
     },
   },
@@ -1286,28 +1325,30 @@ const textChannel = new TextChannel(
   },
   (text) => {
     const s = sessionManager.activeOrNull();
-    const context = s?.transcript.slice(-6).map((t) => `${t.role}: ${t.text}`).join('\n');
-    return polishText(streamFactory, 'claude-haiku-4-5', text, context);
+    const context = s?.transcript
+      .slice(-6)
+      .map((t) => `${t.role}: ${t.text}`)
+      .join("\n");
+    return polishText(streamFactory, "claude-haiku-4-5", text, context);
   },
   () => blueprints,
   {
     create: async (body) => {
       const bp = blueprints.find((b) => b.id === body.blueprintId);
-      if (!bp) return { error: `unknown blueprint: ${body.blueprintId ?? '(none)'}` };
+      if (!bp) return { error: `unknown blueprint: ${body.blueprintId ?? "(none)"}` };
       // An absent work type takes the blueprint's first — the composer sends a
       // blueprint chip and its text, nothing more.
-      const workType = body.workType ?? bp.workTypes[0] ?? '';
-      if (!bp.workTypes.includes(workType))
-        return { error: `workType must be one of: ${bp.workTypes.join(', ')}` };
-      const text = (body.text ?? '').trim();
-      if (!text) return { error: 'text is required' };
+      const workType = body.workType ?? bp.workTypes[0] ?? "";
+      if (!bp.workTypes.includes(workType)) return { error: `workType must be one of: ${bp.workTypes.join(", ")}` };
+      const text = (body.text ?? "").trim();
+      if (!text) return { error: "text is required" };
       const doc = documentManager.create(bp, workType, truncateTitle(text));
-      if (!doc) return { error: 'could not create document' };
+      if (!doc) return { error: "could not create document" };
       // The send is still a send: the room hears it, the brain answers it in
       // context, and a session gets lazily created here exactly as it would for
       // a plain chat send — which is also how the document inherits the active
       // session's runtime and workspace (it attaches, it never spawns).
-      textChannel.broadcast({ type: 'utterance', text });
+      textChannel.broadcast({ type: "utterance", text });
       handleUserText(text);
       const active = sessionManager.activeOrNull();
       if (active) sessionManager.addArtifact(active.id, doc.id);
@@ -1355,14 +1396,14 @@ const textChannel = new TextChannel(
           id: g.id,
           name: g.name,
           leader: g.leader,
-          members: g.members.map((m) => ({ id: m.id, name: m.name, roles: [directory.resolve(m.id)?.role ?? ''] })),
+          members: g.members.map((m) => ({ id: m.id, name: m.name, roles: [directory.resolve(m.id)?.role ?? ""] })),
         })),
         agents: roster.agents.map((p) => ({ id: p.agent.id, name: p.agent.name })),
       });
 
-      if ('error' in resolution) return { error: resolution.error, status: 404 };
-      if (resolution.kind === 'brain') {
-        textChannel.broadcast({ type: 'utterance', text });
+      if ("error" in resolution) return { error: resolution.error, status: 404 };
+      if (resolution.kind === "brain") {
+        textChannel.broadcast({ type: "utterance", text });
         handleUserText(text);
         return { ok: true as const };
       }
@@ -1370,8 +1411,8 @@ const textChannel = new TextChannel(
       // and now the composer): busy-refusal, the directives-prefixed prompt,
       // task binding and roster refresh all come from there.
       const dispatched = await broker.dispatchWork({ agent: resolution.name, task: text, inheritSessionRuntime: true });
-      if ('error' in dispatched) return { error: dispatched.error, status: 409 };
-      textChannel.broadcast({ type: 'utterance', text });
+      if ("error" in dispatched) return { error: dispatched.error, status: 409 };
+      textChannel.broadcast({ type: "utterance", text });
       return { ok: true as const, taskId: dispatched.taskId };
     },
   },
@@ -1382,7 +1423,7 @@ const textChannel = new TextChannel(
       weather: feedStore.state().weather ?? null,
     }),
     add: async ({ url, tag }) => {
-      if (!url.trim()) return { error: 'a feed needs a URL' };
+      if (!url.trim()) return { error: "a feed needs a URL" };
       // A YouTube channel URL is not itself a feed; every channel has one.
       const locator = youtubeFeedUrl(url) ?? url;
       // The broker fetches this on a timer from inside the trust boundary, so
@@ -1392,11 +1433,11 @@ const textChannel = new TextChannel(
       const id = `m${Date.now().toString(36)}`;
       feedStore.putSource({
         id,
-        label: new URL(locator).hostname.replace(/^www\./, ''),
-        kind: 'rss',
+        label: new URL(locator).hostname.replace(/^www\./, ""),
+        kind: "rss",
         locator,
-        tag: (tag as FeedSource['tag']) || 'news',
-        origin: 'manual',
+        tag: (tag as FeedSource["tag"]) || "news",
+        origin: "manual",
         enabled: true,
       });
       return { ok: true, id };
@@ -1417,14 +1458,14 @@ const textChannel = new TextChannel(
       return { ok: true };
     },
     weather: async ({ location }) => {
-      const [lat, lon] = location.split(',').map(Number);
+      const [lat, lon] = location.split(",").map(Number);
       feedStore.putSource({
-        id: 'weather',
+        id: "weather",
         label: location,
-        kind: 'weather',
-        locator: Number.isFinite(lat) && Number.isFinite(lon) ? `${lat},${lon}` : '18.48,-69.93',
-        tag: 'weather',
-        origin: 'manual',
+        kind: "weather",
+        locator: Number.isFinite(lat) && Number.isFinite(lon) ? `${lat},${lon}` : "18.48,-69.93",
+        tag: "weather",
+        origin: "manual",
         enabled: true,
       });
       return { ok: true };
@@ -1437,11 +1478,11 @@ const textChannel = new TextChannel(
       sources: feedStore.sources().filter((src) => src.topicId),
     }),
     track: async ({ name }) => {
-      if (!name.trim()) return { error: 'a topic needs a name' };
+      if (!name.trim()) return { error: "a topic needs a name" };
       const id = slugify(name);
       const existing = topicStore.get(id);
-      if (existing?.status === 'discovering') return { error: `already looking into ${name}` };
-      const topic: Topic = existing ?? { id, name, status: 'discovering', candidates: [], declined: [] };
+      if (existing?.status === "discovering") return { error: `already looking into ${name}` };
+      const topic: Topic = existing ?? { id, name, status: "discovering", candidates: [], declined: [] };
       topicStore.put(topic);
       await beginDiscovery(topic);
       return { ok: true, id };
@@ -1480,7 +1521,7 @@ const REDISCOVER_MS = 30 * 86_400_000;
 setInterval(() => {
   const inFlight = new Set(Object.values(feedStore.state().pendingDiscoveries));
   for (const topic of topicStore.all()) {
-    if (topic.status !== 'active' || inFlight.has(topic.id)) continue;
+    if (topic.status !== "active" || inFlight.has(topic.id)) continue;
     const last = topic.lastDiscoveredAt ? Date.parse(topic.lastDiscoveredAt) : 0;
     if (Date.now() - last < REDISCOVER_MS) continue;
     void beginDiscovery(topic);
@@ -1506,29 +1547,29 @@ async function makeCard(item: FeedItem, workspace: string, currentVersion: strin
   const result = await cardForRelease(
     {
       boards: async () => {
-        const { payload } = await workBoards.proxy('GET', '/work/boards');
+        const { payload } = await workBoards.proxy("GET", "/work/boards");
         return ((payload as { boards?: Array<{ id: string; type: string; workspaceId?: string }> }).boards ?? []).map(
           (b) => ({ id: b.id, type: b.type, workspaceId: b.workspaceId }),
         );
       },
       addCard: async (boardId, card) => {
-        const { status } = await workBoards.proxy('POST', `/work/boards/${boardId}/cards`, card);
+        const { status } = await workBoards.proxy("POST", `/work/boards/${boardId}/cards`, card);
         if (status >= 400) throw new Error(`board rejected the card (${status})`);
       },
       plan: async (release, from) => {
         const message = await anthropic.messages.create({
-          model: 'claude-haiku-4-5',
+          model: "claude-haiku-4-5",
           max_tokens: 400,
           system:
-            'You write short upgrade plans for a working engineer. At most 5 numbered steps, imperative, specific to the change. No preamble.',
+            "You write short upgrade plans for a working engineer. At most 5 numbered steps, imperative, specific to the change. No preamble.",
           messages: [
             {
-              role: 'user',
-              content: `We are on ${release.release!.name} ${from} and ${release.release!.version} is out.\n\nRelease notes:\n${release.summary || '(none available)'}\n\nWhat should we do?`,
+              role: "user",
+              content: `We are on ${release.release!.name} ${from} and ${release.release!.version} is out.\n\nRelease notes:\n${release.summary || "(none available)"}\n\nWhat should we do?`,
             },
           ],
         });
-        return message.content.map((b) => ('text' in b ? b.text : '')).join('');
+        return message.content.map((b) => ("text" in b ? b.text : "")).join("");
       },
       now: () => new Date().toISOString(),
     },
@@ -1546,7 +1587,7 @@ async function makeCard(item: FeedItem, workspace: string, currentVersion: strin
 /** The agent a discovery goes to: any idle one, else the first on the roster. */
 function discoveryAgent(): string {
   const roster = broker.uiRoster().agents;
-  return (roster.find((p) => p.status === 'idle') ?? roster[0])?.agent.name ?? '';
+  return (roster.find((p) => p.status === "idle") ?? roster[0])?.agent.name ?? "";
 }
 
 /**
@@ -1559,7 +1600,7 @@ async function beginDiscovery(topic: Topic): Promise<void> {
     {
       dispatch: async (task) => {
         const r = await broker.dispatchWork({ agent: discoveryAgent(), task, inheritSessionRuntime: false });
-        return 'error' in r ? { error: r.error } : { taskId: r.taskId };
+        return "error" in r ? { error: r.error } : { taskId: r.taskId };
       },
       bundlePath,
     },
@@ -1583,7 +1624,7 @@ function landDiscovery(taskId: string): void {
   if (!topic) return;
   let raw: string | null = null;
   try {
-    raw = readFileSync(bundlePath(topicId), 'utf8');
+    raw = readFileSync(bundlePath(topicId), "utf8");
   } catch {
     raw = null;
   }
@@ -1594,8 +1635,8 @@ function landDiscovery(taskId: string): void {
   const additions = approved.length
     ? diffBundle({ topic, fresh: candidates, approved, now: new Date().toISOString() }).additions
     : candidates;
-  topicStore.put({ ...topic, status: 'pending', candidates: additions, note });
-  console.log(`[topics] ${topicId}: ${additions.length} candidate(s)${note ? ` — ${note}` : ''}`);
+  topicStore.put({ ...topic, status: "pending", candidates: additions, note });
+  console.log(`[topics] ${topicId}: ${additions.length} candidate(s)${note ? ` — ${note}` : ""}`);
 }
 
 /**
@@ -1608,7 +1649,7 @@ async function deriveFromManifests(): Promise<void> {
   const manifestIo = {
     read(path: string) {
       try {
-        return readFileSync(path, 'utf8');
+        return readFileSync(path, "utf8");
       } catch {
         return null;
       }
@@ -1624,7 +1665,7 @@ async function deriveFromManifests(): Promise<void> {
   const scanDirs = (root: string): string[] => {
     try {
       const children = readdirSync(root, { withFileTypes: true })
-        .filter((e) => e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules')
+        .filter((e) => e.isDirectory() && !e.name.startsWith(".") && e.name !== "node_modules")
         .map((e) => `${root}/${e.name}`);
       return [root, ...children];
     } catch {
@@ -1650,7 +1691,7 @@ async function deriveFromManifests(): Promise<void> {
 
   const existing = feedStore.sources();
   const derived = deriveSources({ deps, promoted: [], existing });
-  const manual = existing.filter((s) => s.origin === 'manual');
+  const manual = existing.filter((s) => s.origin === "manual");
   const state = feedStore.state();
   const seen = { ...state.seenVersions };
   // Seed each dependency's baseline from the manifest, so the first poll
@@ -1659,7 +1700,7 @@ async function deriveFromManifests(): Promise<void> {
 
   feedStore.patchState({ seenVersions: seen });
   for (const source of [...manual, ...derived]) feedStore.putSource(source);
-  const removed = existing.filter((s) => s.origin === 'derived' && !derived.some((d) => d.id === s.id));
+  const removed = existing.filter((s) => s.origin === "derived" && !derived.some((d) => d.id === s.id));
   for (const gone of removed) feedStore.removeSource(gone.id);
   console.log(`[feeds] derived ${derived.length} release sources from ${deps.length} dependencies`);
 }
@@ -1667,24 +1708,23 @@ async function deriveFromManifests(): Promise<void> {
 void deriveFromManifests();
 setInterval(() => void deriveFromManifests(), DERIVE_TICK_MS).unref();
 
-
 async function fetchSource(source: FeedSource): Promise<{ ok: boolean; error?: string }> {
   try {
-    if (source.kind === 'weather') {
-      const [lat, lon] = source.locator.split(',').map(Number);
+    if (source.kind === "weather") {
+      const [lat, lon] = source.locator.split(",").map(Number);
       const res = await fetch(weatherUrl(lat ?? 18.48, lon ?? -69.93));
       const line = weatherLine(await res.json());
-      if (!line) return { ok: false, error: 'unreadable weather response' };
+      if (!line) return { ok: false, error: "unreadable weather response" };
       feedStore.patchState({ weather: { text: line, at: new Date().toISOString() } });
       return { ok: true };
     }
     // A topic's github source is a RELEASE source: without this it would fall
     // to the generic rss branch below and store entries as plain items with no
     // metadata — the exact bug this feature exists to fix.
-    if (source.kind === 'rss' && source.tag === 'release' && source.topicId) {
+    if (source.kind === "rss" && source.tag === "release" && source.topicId) {
       const res = await fetch(source.locator);
       const latest = latestFromAtom(await res.text());
-      if (!latest) return { ok: false, error: 'no versioned release found in the feed' };
+      if (!latest) return { ok: false, error: "no versioned release found in the feed" };
 
       const key = repoKey(source.locator) ?? source.locator;
       const state = feedStore.state();
@@ -1705,7 +1745,7 @@ async function fetchSource(source: FeedSource): Promise<{ ok: boolean; error?: s
         {
           id: `${source.id}@${latest.version}`,
           sourceId: source.id,
-          tag: 'release',
+          tag: "release",
           title: `${source.label} ${latest.version}`,
           publishedAt: latest.publishedAt ?? new Date().toISOString(),
           summary: latest.notes.slice(0, 400),
@@ -1716,7 +1756,7 @@ async function fetchSource(source: FeedSource): Promise<{ ok: boolean; error?: s
       if (fresh) void makeCard(fresh, defaultWorkspaceName, from);
       return { ok: true };
     }
-    if (source.kind === 'rss') {
+    if (source.kind === "rss") {
       // Checked again here, not only at add time: a source written before this
       // guard existed — or edited on disk — must not get a free pass (SSRF).
       const refusal = urlRejectionReason(source.locator);
@@ -1724,13 +1764,13 @@ async function fetchSource(source: FeedSource): Promise<{ ok: boolean; error?: s
       const res = await fetch(source.locator);
       const items = parseFeed(source, await res.text());
       // Zero items from a feed that should have some is a failure, not a quiet success.
-      if (!items.length) return { ok: false, error: 'no items parsed' };
+      if (!items.length) return { ok: false, error: "no items parsed" };
       feedStore.addItems(items);
       return { ok: true };
     }
-    if (source.kind === 'registry') {
-      const [eco, ...rest] = source.locator.split(':');
-      const name = rest.join(':');
+    if (source.kind === "registry") {
+      const [eco, ...rest] = source.locator.split(":");
+      const name = rest.join(":");
       const fetchJson = async (url: string) => (await fetch(url)).json();
       const latest = await latestVersion(fetchJson, eco as Ecosystem, name);
       if (!latest) return { ok: false, error: `no version found for ${name}` };
@@ -1748,13 +1788,13 @@ async function fetchSource(source: FeedSource): Promise<{ ok: boolean; error?: s
 
       // Cheap check done; notes are fetched ONLY now, and only to decide
       // whether a patch is a security patch (spec §5).
-      let notes = '';
+      let notes = "";
       const repo = await repositoryUrl(fetchJson, eco as Ecosystem, name);
       const atom = repo ? githubAtomUrl(repo) : null;
       if (atom) {
         notes = await fetch(atom)
           .then((r) => r.text())
-          .catch(() => '');
+          .catch(() => "");
       }
       const security = mentionsSecurity(notes);
       // The baseline moves whether or not this one is worth telling you about,
@@ -1766,7 +1806,7 @@ async function fetchSource(source: FeedSource): Promise<{ ok: boolean; error?: s
         {
           id: `${source.id}@${latest}`,
           sourceId: source.id,
-          tag: 'release',
+          tag: "release",
           title: `${source.label} ${latest}`,
           publishedAt: new Date().toISOString(),
           summary: notes.slice(0, 400),
@@ -1827,42 +1867,47 @@ function broadcastSpokenAudio(text: string): void {
       const sid = sessionManager.activeOrNull()?.id ?? null;
       if (ttsHintSessionId !== sid) {
         ttsHintSessionId = sid;
-        textChannel.broadcast({ type: 'notice', text: VOICE_TTS_HINT });
+        textChannel.broadcast({ type: "notice", text: VOICE_TTS_HINT });
       }
       return;
     }
     if (textChannel.clientCount === 0) return; // nobody listening — don't spend credits
     const synth = (id: string) =>
-      t.provider.synthesize({ text: spokenText, personaId: speaker ?? 'broker', format: 'mp3', voice: { provider: 'elevenlabs', voiceId: id } });
+      t.provider.synthesize({
+        text: spokenText,
+        personaId: speaker ?? "broker",
+        format: "mp3",
+        voice: { provider: "elevenlabs", voiceId: id },
+      });
     try {
-      let result;
+      let result: Awaited<ReturnType<typeof synth>>;
       try {
         result = await synth(voiceId);
       } catch (err) {
         const standIn = (speaker && PREMADE_STANDINS[speaker]) ?? PREMADE_DEFAULT;
         if (!/402|payment_required|paid_plan_required/.test(String(err)) || standIn === voiceId) throw err;
-        console.error(`[tts] ${speaker ?? 'default'} voice needs a paid ElevenLabs plan — using premade stand-in`);
+        console.error(`[tts] ${speaker ?? "default"} voice needs a paid ElevenLabs plan — using premade stand-in`);
         result = await synth(standIn);
       }
       textChannel.broadcast({
-        type: 'audio',
+        type: "audio",
         speaker,
-        mime: 'audio/mpeg',
-        dataB64: Buffer.from(result.data).toString('base64'),
+        mime: "audio/mpeg",
+        dataB64: Buffer.from(result.data).toString("base64"),
       });
     } catch (err) {
-      console.error('[tts] elevenlabs synthesis failed:', err);
+      console.error("[tts] elevenlabs synthesis failed:", err);
     }
   });
 }
 
 // Personal tracking feeds (spec 2026-08-11): three files under .smith/feeds/,
 // read and written through the same kind of io seam the session store uses.
-const feedsDir = process.env.BROKER_FEEDS_DIR ?? '.smith/feeds';
+const feedsDir = process.env.BROKER_FEEDS_DIR ?? ".smith/feeds";
 const feedsIo = {
   read(name: string) {
     try {
-      return readFileSync(join(feedsDir, name), 'utf8');
+      return readFileSync(join(feedsDir, name), "utf8");
     } catch {
       return null;
     }
@@ -1872,7 +1917,7 @@ const feedsIo = {
       mkdirSync(feedsDir, { recursive: true });
       writeFileSync(join(feedsDir, name), body);
     } catch (err) {
-      console.error('[feeds] persist failed:', err);
+      console.error("[feeds] persist failed:", err);
     }
   },
 };
@@ -1880,7 +1925,7 @@ const feedStore = new FeedStore(feedsIo);
 const topicStore = new TopicStore(feedsIo);
 
 // Where a discovery agent writes its bundle (topics spec §3.1).
-const topicsDir = process.env.BROKER_TOPICS_DIR ?? '.smith/topics';
+const topicsDir = process.env.BROKER_TOPICS_DIR ?? ".smith/topics";
 const bundlePath = (topicId: string) => `${topicsDir}/${topicId}.json`;
 
 /**
@@ -1888,7 +1933,7 @@ const bundlePath = (topicId: string) => `${topicsDir}/${topicId}.json`;
  * fetch (spec §6). Empty until feeds exist, which keeps the brain's prompt
  * byte-for-byte unchanged on a fresh install.
  */
-let currentDigest = '';
+let currentDigest = "";
 /** Releases named in the digest the crew has not yet said out loud. */
 let unspokenReleaseIds: string[] = [];
 
@@ -1900,14 +1945,14 @@ let unspokenReleaseIds: string[] = [];
 function releaseOwners(): Record<string, string> {
   // This runs at module load, before `broker` is constructed — and at boot
   // there is no roster to attribute to anyway. Anderson delivers unattributed.
-  if (typeof broker === 'undefined') return {};
+  if (typeof broker === "undefined") return {};
   const roster = broker.uiRoster().agents;
   const owners: Record<string, string> = {};
   for (const source of feedStore.sources()) {
-    if (source.tag !== 'release') continue;
-    const [eco, ...rest] = source.locator.split(':');
-    const name = rest.join(':');
-    const role = ownerRole({ name, eco: eco as Ecosystem, version: '', manifest: '' }, false);
+    if (source.tag !== "release") continue;
+    const [eco, ...rest] = source.locator.split(":");
+    const name = rest.join(":");
+    const role = ownerRole({ name, eco: eco as Ecosystem, version: "", manifest: "" }, false);
     if (!role) continue;
     const agent = roster.find((p) => p.agent.role.toLowerCase() === role.toLowerCase());
     if (agent) owners[name] = agent.agent.name;
@@ -1928,11 +1973,11 @@ function refreshDigest(): void {
 refreshDigest();
 
 // Roster composition survives restarts — user-formed squads are arrangements, not session state.
-const stateFile = process.env.BROKER_STATE_FILE ?? '.smith/roster-state.json';
+const stateFile = process.env.BROKER_STATE_FILE ?? ".smith/roster-state.json";
 const rosterStore = {
   load(): RosterState | null {
     try {
-      return JSON.parse(readFileSync(stateFile, 'utf8')) as RosterState;
+      return JSON.parse(readFileSync(stateFile, "utf8")) as RosterState;
     } catch {
       return null; // first run, or unreadable — start from the config baseline
     }
@@ -1942,7 +1987,7 @@ const rosterStore = {
       mkdirSync(dirname(stateFile), { recursive: true });
       writeFileSync(stateFile, JSON.stringify(state, null, 2));
     } catch (err) {
-      console.error('[roster] persist failed:', err);
+      console.error("[roster] persist failed:", err);
     }
   },
 };
@@ -1980,8 +2025,8 @@ broker = new Broker(
       // reason to lazily birth one (unlike a human's first message), so
       // this narrows to "persist the line if there's somewhere to persist
       // it" rather than lazily creating a session here too.
-      if (sessionManager.hasActive()) sessionManager.appendTranscript('broker', text);
-      textChannel.broadcast({ type: 'speech', text });
+      if (sessionManager.hasActive()) sessionManager.appendTranscript("broker", text);
+      textChannel.broadcast({ type: "speech", text });
       broadcastSpokenAudio(text);
       adapterHub.dispatchSpeech(text);
     },
@@ -1991,15 +2036,16 @@ broker = new Broker(
     onTurnStart: (origin) => adapterHub.setActiveOrigin(origin),
     onTurnEnd: () => adapterHub.setActiveOrigin(undefined),
     onRosterChange: (roster) => textChannel.broadcast(rosterFrame(roster)),
-    onTaskDispatched: (d) => textChannel.broadcast({ type: 'task-dispatched', taskId: d.taskId, agent: d.agent, task: d.task }),
+    onTaskDispatched: (d) =>
+      textChannel.broadcast({ type: "task-dispatched", taskId: d.taskId, agent: d.agent, task: d.task }),
     // A completed/failed task carrying workCardRef (added by the swarm — see
     // Task 2/3) means a work-board card just changed; the board stage
     // refetches on this frame instead of the broker duplicating card state.
     onSwarmEvent: (e) => {
       // A discovery task finishing is how a topic's bundle arrives (topics spec §3).
-      if (e.type === 'task:completed' || e.type === 'task:failed') landDiscovery(e.taskId);
-      if ((e.type === 'task:completed' || e.type === 'task:failed') && e.workCardRef) {
-        textChannel.broadcast({ type: 'board-updated', boardId: e.workCardRef.boardId });
+      if (e.type === "task:completed" || e.type === "task:failed") landDiscovery(e.taskId);
+      if ((e.type === "task:completed" || e.type === "task:failed") && e.workCardRef) {
+        textChannel.broadcast({ type: "board-updated", boardId: e.workCardRef.boardId });
       }
     },
     mintToken: (roomName) =>
@@ -2007,7 +2053,7 @@ broker = new Broker(
         apiKey: config.livekit.apiKey,
         apiSecret: config.livekit.apiSecret,
         roomName,
-        identity: 'smith-broker',
+        identity: "smith-broker",
       }),
     livekitUrl: config.livekit.url,
     identityName: identity.name,
@@ -2030,12 +2076,12 @@ broker = new Broker(
  */
 const askForClaim: AskFactory = async ({ system, prompt }) => {
   const message = await anthropic.messages.create({
-    model: 'claude-haiku-4-5',
+    model: "claude-haiku-4-5",
     max_tokens: 200,
     system,
-    messages: [{ role: 'user', content: prompt }],
+    messages: [{ role: "user", content: prompt }],
   });
-  return message.content.map((block) => ('text' in block ? block.text : '')).join('');
+  return message.content.map((block) => ("text" in block ? block.text : "")).join("");
 };
 
 const elections = new ElectionScheduler({
@@ -2063,11 +2109,13 @@ await broker.start();
 const bootWorkspaces = (await swarm.listWorkspaces().catch(() => [])).filter((w) => !w.archived);
 workspaceNames = bootWorkspaces.map((w) => w.name);
 workspaceRecords = bootWorkspaces;
-defaultWorkspaceName = bootWorkspaces.find((w) => w.default)?.name ?? workspaceNames[0] ?? 'default';
+defaultWorkspaceName = bootWorkspaces.find((w) => w.default)?.name ?? workspaceNames[0] ?? "default";
 const activeSession = sessionManager.init(); // Session | null — zero sessions is legal (spec §4b)
 if (activeSession) brain.loadHistory(activeSession.brainHistory);
 const textPort = await textChannel.start(config.textPort, config.host);
-console.log(`[broker] running — polling swarm for open meetings. Text channel on http://127.0.0.1:${textPort}. Type a line to simulate an utterance.`);
+console.log(
+  `[broker] running — polling swarm for open meetings. Text channel on http://127.0.0.1:${textPort}. Type a line to simulate an utterance.`,
+);
 
 // Discord attends only when a workspace has its own bot token configured (via
 // the Task 6 channels manager UI) — the all-local invariant now flows through
@@ -2110,16 +2158,16 @@ const discordWorkspaceSwitcher = createDiscordWorkspaceSwitcher({ swarm, discord
 // switchDiscord (defined above) closes over discordWorkspaceSwitcher — safe
 // only from here on, now that it's assigned (see the TDZ note above).
 if (activeSession) switchDiscord(activeSession.workspace);
-else switchDiscord(bootWorkspaces.find((w) => w.default)?.name ?? bootWorkspaces[0]?.name ?? 'default');
+else switchDiscord(bootWorkspaces.find((w) => w.default)?.name ?? bootWorkspaces[0]?.name ?? "default");
 
 const rl = createInterface({ input: process.stdin });
-rl.on('line', (line) => {
+rl.on("line", (line) => {
   const text = line.trim();
   if (!text) return;
-  textChannel.broadcast({ type: 'utterance', text }); // stdin lines show up in UI transcripts too
+  textChannel.broadcast({ type: "utterance", text }); // stdin lines show up in UI transcripts too
   handleUserText(text);
 });
 
-process.on('SIGINT', () => {
+process.on("SIGINT", () => {
   void Promise.all([broker.stop(), textChannel.stop()]).then(() => process.exit(0));
 });

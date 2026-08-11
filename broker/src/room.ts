@@ -15,8 +15,8 @@ import {
   TrackKind,
   TrackPublishOptions,
   TrackSource,
-} from '@livekit/rtc-node';
-import { pcmBytesToFrames } from './pcm.ts';
+} from "@livekit/rtc-node";
+import { pcmBytesToFrames } from "./pcm.ts";
 
 export class LiveKitRoomBridge {
   private room: Room | null = null;
@@ -38,7 +38,7 @@ export class LiveKitRoomBridge {
             this.remoteAudioCb?.(bytes.slice(0));
           }
         } catch (err) {
-          console.error('[room] remote audio stream ended abnormally:', err);
+          console.error("[room] remote audio stream ended abnormally:", err);
           return;
         }
       })();
@@ -56,7 +56,7 @@ export class LiveKitRoomBridge {
     if (!this.room) return;
     if (!this.source) {
       this.source = new AudioSource(sampleRate, 1);
-      const track = LocalAudioTrack.createAudioTrack('broker-voice', this.source);
+      const track = LocalAudioTrack.createAudioTrack("broker-voice", this.source);
       await this.room.localParticipant?.publishTrack(
         track,
         new TrackPublishOptions({ source: TrackSource.SOURCE_MICROPHONE }),

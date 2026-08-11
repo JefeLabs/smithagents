@@ -9,17 +9,17 @@
  */
 
 /** Only these ever reach the network. No file:, no gopher:, no data:. */
-const ALLOWED_PROTOCOLS = new Set(['http:', 'https:']);
+const ALLOWED_PROTOCOLS = new Set(["http:", "https:"]);
 
 /** Hosts that are inside the machine or the private network, and so never a public feed. */
 function isPrivateHost(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
 
-  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.internal') || host.endsWith('.local')) {
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".internal") || host.endsWith(".local")) {
     return true;
   }
   // IPv6 loopback and unique-local / link-local ranges.
-  if (host === '::1' || host === '::' || /^f[cd][0-9a-f]{2}:/.test(host) || /^fe80:/.test(host)) return true;
+  if (host === "::1" || host === "::" || /^f[cd][0-9a-f]{2}:/.test(host) || /^fe80:/.test(host)) return true;
 
   const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
   if (!v4) return false;
@@ -38,10 +38,10 @@ export function urlRejectionReason(raw: string): string | null {
   try {
     url = new URL(raw);
   } catch {
-    return 'not a valid URL';
+    return "not a valid URL";
   }
   if (!ALLOWED_PROTOCOLS.has(url.protocol)) return `only http and https feeds are allowed (got ${url.protocol})`;
-  if (!url.hostname) return 'not a valid URL';
+  if (!url.hostname) return "not a valid URL";
   if (isPrivateHost(url.hostname)) return `${url.hostname} is a private or loopback address`;
   return null;
 }

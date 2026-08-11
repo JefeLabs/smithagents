@@ -6,23 +6,23 @@
  * Binary outcome: the only two states the top-level orchestrator cares about.
  * Everything else is internal to the swarm.
  */
-export type TaskOutcome = 'completed' | 'failed';
+export type TaskOutcome = "completed" | "failed";
 
 /**
  * Full lifecycle status for internal tracking and logging.
  */
 export type TaskStatus =
-  | 'queued'        // In .smith/queue/, waiting dispatch
-  | 'dispatched'    // Alpha tmux session launched
-  | 'running'       // Alpha session actively executing
-  | 'completed'     // Exit 0 — triggers verification pipeline
-  | 'failed'        // Exit 1 — immediate quarantine, no retries
-  | 'quarantined';  // Failed task shelved for human review
+  | "queued" // In .smith/queue/, waiting dispatch
+  | "dispatched" // Alpha tmux session launched
+  | "running" // Alpha session actively executing
+  | "completed" // Exit 0 — triggers verification pipeline
+  | "failed" // Exit 1 — immediate quarantine, no retries
+  | "quarantined"; // Failed task shelved for human review
 
 /**
  * Supported CLI agent types that can serve as the Alpha agent.
  */
-export type AgentType = 'agy' | 'claude' | 'codex' | 'opencode' | 'copilot';
+export type AgentType = "agy" | "claude" | "codex" | "opencode" | "copilot";
 
 /**
  * Execution runtime for task sessions.
@@ -32,7 +32,7 @@ export type AgentType = 'agy' | 'claude' | 'codex' | 'opencode' | 'copilot';
  *   'remote-tmux'   — Dispatched to a remote worker advertising tmux support
  *   'remote-docker' — Dispatched to a remote worker advertising docker support
  */
-export type RuntimeType = 'tmux' | 'docker' | 'remote' | 'remote-tmux' | 'remote-docker';
+export type RuntimeType = "tmux" | "docker" | "remote" | "remote-tmux" | "remote-docker";
 
 /**
  * Where the agent runs.
@@ -40,7 +40,7 @@ export type RuntimeType = 'tmux' | 'docker' | 'remote' | 'remote-tmux' | 'remote
  *   'docker' — In a Docker container on this machine (clone + isolate)
  *   'remote' — On a remote machine (SSH, cloud VM, etc.)
  */
-export type LocationType = 'local' | 'docker' | 'remote';
+export type LocationType = "local" | "docker" | "remote";
 
 // ---------------------------------------------------------------------------
 // Pull Request Configuration — per-task override for auto-PR creation
@@ -79,22 +79,22 @@ export interface TaskManifest {
    *  This name tracks the agent through: branch → session → container → worktree → logs → PR */
   agentName?: string;
   context: {
-    files: string[];           // Files relevant to this task
-    repository: string;        // Git remote URL
-    branch: string;            // Source branch to worktree from
-    workspace?: string;        // Workspace name (see workspaces.ts)
-    repo?: string;             // Repo name within the workspace
+    files: string[]; // Files relevant to this task
+    repository: string; // Git remote URL
+    branch: string; // Source branch to worktree from
+    workspace?: string; // Workspace name (see workspaces.ts)
+    repo?: string; // Repo name within the workspace
     /** Absolute path of the resolved repo — set SERVER-SIDE only (never trusted from clients). */
     repoPath?: string;
   };
-  agent: AgentType;            // Which CLI tool to use as Alpha
+  agent: AgentType; // Which CLI tool to use as Alpha
   /** Model the CLI should run, from the composed agent's engine. Resolved
    *  server-side; the driver spells the flag its tool understands. */
   model?: string;
-  runtime?: RuntimeType;       // Execution runtime (default 'tmux')
-  location?: LocationType;     // Where: local, docker, or remote
-  createdAt: string;           // ISO 8601
-  priority: 'critical' | 'high' | 'normal' | 'low';
+  runtime?: RuntimeType; // Execution runtime (default 'tmux')
+  location?: LocationType; // Where: local, docker, or remote
+  createdAt: string; // ISO 8601
+  priority: "critical" | "high" | "normal" | "low";
   metadata?: Record<string, unknown>;
   /** Composed-agent profile, resolved server-side — materialized into the
    *  tool's native config in the worktree (design §5). */
@@ -116,7 +116,7 @@ export interface TaskResult {
   startedAt: string;
   completedAt: string;
   durationMs: number;
-  logs?: string;              // Path to captured stdout/stderr log file
+  logs?: string; // Path to captured stdout/stderr log file
   /** Branch name created for this task */
   branch?: string;
   /** PR URL if auto-created */
@@ -127,16 +127,16 @@ export interface TaskResult {
  * Configuration for the orchestrator.
  */
 export interface OrchestratorConfig {
-  smithRoot: string;          // Path to .smith/ directory
-  queueDir: string;           // .smith/queue/
-  worktreeDir: string;        // .smith/worktrees/
-  logsDir: string;            // .smith/logs/
-  delegateBin: string;        // Path to smith-delegate script
-  tmuxPrefix: string;         // Prefix for tmux session names (default: 'task')
-  agentCommands: Record<AgentType, string>;  // CLI command per agent type
-  teardownTimeoutMs: number;  // Max time to wait for orphan cleanup
+  smithRoot: string; // Path to .smith/ directory
+  queueDir: string; // .smith/queue/
+  worktreeDir: string; // .smith/worktrees/
+  logsDir: string; // .smith/logs/
+  delegateBin: string; // Path to smith-delegate script
+  tmuxPrefix: string; // Prefix for tmux session names (default: 'task')
+  agentCommands: Record<AgentType, string>; // CLI command per agent type
+  teardownTimeoutMs: number; // Max time to wait for orphan cleanup
   defaultRuntime: RuntimeType; // Default runtime when manifest doesn't specify
-  docker: DockerConfig;       // Docker-specific configuration
+  docker: DockerConfig; // Docker-specific configuration
   /** Remote workers — machines that accept task dispatch over HTTPS */
   remoteWorkers?: RemoteWorkerEntry[];
 }
@@ -159,24 +159,24 @@ export interface RemoteWorkerEntry {
  * Configuration for Docker runtime mode.
  */
 export interface DockerConfig {
-  image: string;              // Docker image to use (default: 'smith-agent:latest')
-  network?: string;           // Docker network mode (e.g., 'host', 'bridge', custom)
-  cpuLimit?: string;          // CPU limit (e.g., '2.0' for 2 cores)
-  memoryLimit?: string;       // Memory limit (e.g., '4g' for 4GB)
-  shmSize?: string;           // /dev/shm size for Playwright/Chromium (default: '2g')
-  extraMounts?: string[];     // Additional volume mounts (e.g., SSH keys, git config)
-  extraEnv?: Record<string, string>;  // Additional environment variables
+  image: string; // Docker image to use (default: 'smith-agent:latest')
+  network?: string; // Docker network mode (e.g., 'host', 'bridge', custom)
+  cpuLimit?: string; // CPU limit (e.g., '2.0' for 2 cores)
+  memoryLimit?: string; // Memory limit (e.g., '4g' for 4GB)
+  shmSize?: string; // /dev/shm size for Playwright/Chromium (default: '2g')
+  extraMounts?: string[]; // Additional volume mounts (e.g., SSH keys, git config)
+  extraEnv?: Record<string, string>; // Additional environment variables
 }
 
 /**
  * Events emitted by the Dispatcher via EventEmitter.
  */
 export type DispatcherEvent =
-  | { type: 'task:dispatched'; taskId: string; sessionName: string }
-  | { type: 'task:completed'; taskId: string; result: TaskResult }
-  | { type: 'task:failed'; taskId: string; result: TaskResult }
-  | { type: 'task:quarantined'; taskId: string; reason: string }
-  | { type: 'session:orphan_cleanup'; sessionPattern: string; killed: number };
+  | { type: "task:dispatched"; taskId: string; sessionName: string }
+  | { type: "task:completed"; taskId: string; result: TaskResult }
+  | { type: "task:failed"; taskId: string; result: TaskResult }
+  | { type: "task:quarantined"; taskId: string; reason: string }
+  | { type: "session:orphan_cleanup"; sessionPattern: string; killed: number };
 
 /**
  * Quarantine entry for a failed task shelved for human review.

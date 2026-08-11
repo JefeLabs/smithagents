@@ -8,12 +8,18 @@
  * The Anthropic SDK is injected as a StreamFactory so tests script turns
  * without network. Production: `(p) => client.messages.stream(p)`.
  */
-import { SpeechChunker } from './chunker.ts';
-import { DEFAULT_IDENTITY, promptInfo, type IdentityPromptInfo } from './identity.ts';
+import { SpeechChunker } from "./chunker.ts";
+import { DEFAULT_IDENTITY, type IdentityPromptInfo, promptInfo } from "./identity.ts";
 
 export interface ToolExecutors {
   remember(input: { key: string; text: string; scope: string }): Promise<string>;
-  delegate(input: { agent: string; task: string; workspace?: string; repo?: string; ticketKey?: string }): Promise<string>;
+  delegate(input: {
+    agent: string;
+    task: string;
+    workspace?: string;
+    repo?: string;
+    ticketKey?: string;
+  }): Promise<string>;
   check_status(input: { agent: string }): Promise<string>;
   raise_hand(input: { agent: string; reason: string }): Promise<string>;
   lookup_ticket(input: { ticketKey: string; workspace: string }): Promise<string>;
@@ -36,7 +42,7 @@ export interface BrainTurn {
 }
 
 export interface BrainStreamLike {
-  on(event: 'text', cb: (delta: string) => void): void;
+  on(event: "text", cb: (delta: string) => void): void;
   finalMessage(): Promise<{
     content: Array<{ type: string; text?: string; id?: string; name?: string; input?: unknown }>;
     stop_reason: string | null;
@@ -54,140 +60,150 @@ export type StreamFactory = (params: {
 
 const TOOLS = [
   {
-    name: 'delegate',
+    name: "delegate",
     description:
-      'Hand real work to an agent. The agent runs a full coding CLI in a pinned tmux session and works asynchronously; you will be told when it finishes. Use for anything beyond conversation: writing code, running commands, research in the repo.',
+      "Hand real work to an agent. The agent runs a full coding CLI in a pinned tmux session and works asynchronously; you will be told when it finishes. Use for anything beyond conversation: writing code, running commands, research in the repo.",
     input_schema: {
-      type: 'object' as const,
+      type: "object" as const,
       properties: {
-        agent: { type: 'string' as const, description: 'Agent name or id from the roster' },
-        task: { type: 'string' as const, description: 'Complete, self-contained task description' },
-        repo: { type: 'string' as const, description: 'Repo name from the workspaces list. Omit for the default repo.' },
-        workspace: { type: 'string' as const, description: 'Workspace name. Omit for the default workspace.' },
+        agent: { type: "string" as const, description: "Agent name or id from the roster" },
+        task: { type: "string" as const, description: "Complete, self-contained task description" },
+        repo: {
+          type: "string" as const,
+          description: "Repo name from the workspaces list. Omit for the default repo.",
+        },
+        workspace: { type: "string" as const, description: "Workspace name. Omit for the default workspace." },
         ticketKey: {
-          type: 'string' as const,
+          type: "string" as const,
           description: 'Jira ticket key, only when the human explicitly names one (e.g. "PROJ-123"). Omit otherwise.',
         },
       },
-      required: ['agent', 'task'],
+      required: ["agent", "task"],
     },
   },
   {
-    name: 'check_status',
+    name: "check_status",
     description: "Read a busy agent's live terminal output to report what they are doing right now.",
     input_schema: {
-      type: 'object' as const,
+      type: "object" as const,
       properties: {
-        agent: { type: 'string' as const, description: 'Agent name or id from the roster' },
+        agent: { type: "string" as const, description: "Agent name or id from the roster" },
       },
-      required: ['agent'],
+      required: ["agent"],
     },
   },
   {
-    name: 'remember',
+    name: "remember",
     description:
       "Save something the crew should still know in future conversations: a preference the human states, a decision made, a fact about a workspace or teammate. Do NOT use it for chit-chat or for anything already in this conversation — memory is for what outlives it.",
     input_schema: {
-      type: 'object' as const,
+      type: "object" as const,
       properties: {
-        key: { type: 'string' as const, description: 'Short stable handle, e.g. "pr-style" or "base-branch". Reusing a key updates that memory.' },
-        text: { type: 'string' as const, description: 'The fact, in one sentence, written so it makes sense weeks later.' },
+        key: {
+          type: "string" as const,
+          description: 'Short stable handle, e.g. "pr-style" or "base-branch". Reusing a key updates that memory.',
+        },
+        text: {
+          type: "string" as const,
+          description: "The fact, in one sentence, written so it makes sense weeks later.",
+        },
         scope: {
-          type: 'string' as const,
-          enum: ['session', 'workspace', 'global'],
-          description: 'session = only this conversation; workspace = this repo group; global = always true of the crew.',
+          type: "string" as const,
+          enum: ["session", "workspace", "global"],
+          description:
+            "session = only this conversation; workspace = this repo group; global = always true of the crew.",
         },
       },
-      required: ['key', 'text', 'scope'],
+      required: ["key", "text", "scope"],
     },
   },
   {
-    name: 'raise_hand',
+    name: "raise_hand",
     description:
       "Raise a hand for an agent or squad leader who was NOT addressed but has something valuable to add. They do not speak — the human sees the hand in the roster and decides whether to call on them. Use instead of letting a non-addressed agent interrupt.",
     input_schema: {
-      type: 'object' as const,
+      type: "object" as const,
       properties: {
-        agent: { type: 'string' as const, description: 'Name of the agent or squad leader raising their hand' },
-        reason: { type: 'string' as const, description: 'One short line: what they want to add' },
+        agent: { type: "string" as const, description: "Name of the agent or squad leader raising their hand" },
+        reason: { type: "string" as const, description: "One short line: what they want to add" },
       },
-      required: ['agent', 'reason'],
+      required: ["agent", "reason"],
     },
   },
   {
-    name: 'lookup_ticket',
+    name: "lookup_ticket",
     description:
       "Look up a Jira ticket's summary and status to answer a question in conversation. Read-only — never comments or changes status.",
     input_schema: {
-      type: 'object' as const,
+      type: "object" as const,
       properties: {
-        ticketKey: { type: 'string' as const, description: 'Jira ticket key, e.g. "PROJ-123"' },
+        ticketKey: { type: "string" as const, description: 'Jira ticket key, e.g. "PROJ-123"' },
       },
-      required: ['ticketKey'],
+      required: ["ticketKey"],
     },
   },
   {
-    name: 'draft_agent',
+    name: "draft_agent",
     description:
       "Generate a complete draft teammate from the human's request (name, role, backstory, style). Does NOT create anything — pitch the draft aloud and ask for confirmation, then use confirm_agent. A new call replaces any unconfirmed draft.",
     input_schema: {
-      type: 'object' as const,
+      type: "object" as const,
       properties: {
         spec: {
-          type: 'string' as const,
+          type: "string" as const,
           description: "The human's words describing the teammate they want, e.g. 'an Architect agent, grumpy veteran'",
         },
       },
-      required: ['spec'],
+      required: ["spec"],
     },
   },
   {
-    name: 'confirm_agent',
+    name: "confirm_agent",
     description:
-      'Resolve the pending draft teammate after the human answered the pitch: accept=true persists them to the crew, accept=false discards the draft. Only call AFTER the human clearly answered.',
+      "Resolve the pending draft teammate after the human answered the pitch: accept=true persists them to the crew, accept=false discards the draft. Only call AFTER the human clearly answered.",
     input_schema: {
-      type: 'object' as const,
+      type: "object" as const,
       properties: {
-        accept: { type: 'boolean' as const, description: 'true = the human said yes; false = they declined' },
+        accept: { type: "boolean" as const, description: "true = the human said yes; false = they declined" },
       },
-      required: ['accept'],
+      required: ["accept"],
     },
   },
   {
-    name: 'track_topic',
+    name: "track_topic",
     description:
-      'Start following a subject the human names — a framework, a project, a company. An agent goes and finds where it publishes; the human ticks what to keep. Use when they say to track, follow, or keep an eye on something.',
+      "Start following a subject the human names — a framework, a project, a company. An agent goes and finds where it publishes; the human ticks what to keep. Use when they say to track, follow, or keep an eye on something.",
     input_schema: {
-      type: 'object' as const,
+      type: "object" as const,
       properties: {
-        name: { type: 'string' as const, description: 'The subject as the human said it, e.g. "Spring Boot"' },
+        name: { type: "string" as const, description: 'The subject as the human said it, e.g. "Spring Boot"' },
       },
-      required: ['name'],
+      required: ["name"],
     },
   },
   {
-    name: 'check_feeds',
+    name: "check_feeds",
     description:
       "Look deeper into what the crew has been reading — news, tech, sports, government notices, and release notes. Use when the conversation goes past what you already know from today's digest. Read-only.",
     input_schema: {
-      type: 'object' as const,
+      type: "object" as const,
       properties: {
-        query: { type: 'string' as const, description: 'Free text matched against titles and summaries' },
-        tag: { type: 'string' as const, description: 'Optional: news, tech, sports, gov, or release' },
-        sinceDays: { type: 'number' as const, description: 'How far back to look; default 7, max 30' },
+        query: { type: "string" as const, description: "Free text matched against titles and summaries" },
+        tag: { type: "string" as const, description: "Optional: news, tech, sports, gov, or release" },
+        sinceDays: { type: "number" as const, description: "How far back to look; default 7, max 30" },
       },
-      required: ['query'],
+      required: ["query"],
     },
   },
   {
-    name: 'search_docs',
-    description: 'Search Confluence for docs relevant to a question in conversation. Read-only.',
+    name: "search_docs",
+    description: "Search Confluence for docs relevant to a question in conversation. Read-only.",
     input_schema: {
-      type: 'object' as const,
+      type: "object" as const,
       properties: {
-        query: { type: 'string' as const, description: 'Search text' },
+        query: { type: "string" as const, description: "Search text" },
       },
-      required: ['query'],
+      required: ["query"],
     },
   },
 ];
@@ -238,7 +254,7 @@ const MAX_TOOL_ROUNDS = 4;
 /** A turn is: user(string) -> assistant(...) -> [user(tool_results) -> assistant(...)]*.
  * Only a `{role: 'user', content: string}` entry marks the start of a turn — tool_result
  * entries are also role 'user' but carry array content. */
-export type HistoryEntry = { role: 'user' | 'assistant'; content: string | unknown[] };
+export type HistoryEntry = { role: "user" | "assistant"; content: string | unknown[] };
 
 export class BrokerBrain {
   private history: HistoryEntry[] = [];
@@ -251,20 +267,20 @@ export class BrokerBrain {
     private readonly executors: ToolExecutors,
     opts?: { model?: string; maxHistory?: number; identity?: IdentityPromptInfo },
   ) {
-    this.model = opts?.model ?? 'claude-haiku-4-5';
+    this.model = opts?.model ?? "claude-haiku-4-5";
     this.maxHistory = opts?.maxHistory ?? 20;
     this.persona = buildPersona(opts?.identity ?? promptInfo(DEFAULT_IDENTITY));
   }
 
   async handleUtterance(text: string, turn: BrainTurn): Promise<void> {
     const chunker = new SpeechChunker(turn.onSpeech);
-    this.history.push({ role: 'user', content: text });
+    this.history.push({ role: "user", content: text });
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       const params: Parameters<StreamFactory>[0] = {
         model: this.model,
         max_tokens: 1024,
-        system: this.persona + turn.roster + (turn.digest ?? ''),
+        system: this.persona + turn.roster + (turn.digest ?? ""),
         messages: [...this.history],
         tools: TOOLS,
       };
@@ -272,27 +288,27 @@ export class BrokerBrain {
         // Last permitted round: keep tools in the request (required whenever history
         // contains tool blocks) but force a text-only reply so the turn always closes
         // with speech instead of leaving a dangling tool_use with no tool_result.
-        params.tool_choice = { type: 'none' };
+        params.tool_choice = { type: "none" };
       }
       const stream = this.streamFactory(params);
-      stream.on('text', (delta) => chunker.push(delta));
+      stream.on("text", (delta) => chunker.push(delta));
       const final = await stream.finalMessage();
       // A round boundary is a speech boundary: flush so text that ends without
       // trailing whitespace ("…pain points.") can't concatenate onto the next
       // round's speaker line ("Gabriel: …") inside one chunk.
       chunker.flush();
 
-      this.history.push({ role: 'assistant', content: final.content });
+      this.history.push({ role: "assistant", content: final.content });
 
-      if (final.stop_reason !== 'tool_use') break;
+      if (final.stop_reason !== "tool_use") break;
 
       const results: unknown[] = [];
       for (const block of final.content) {
-        if (block.type !== 'tool_use' || !block.id || !block.name) continue;
+        if (block.type !== "tool_use" || !block.id || !block.name) continue;
         const output = await this.execute(block.name, block.input);
-        results.push({ type: 'tool_result', tool_use_id: block.id, content: output });
+        results.push({ type: "tool_result", tool_use_id: block.id, content: output });
       }
-      this.history.push({ role: 'user', content: results });
+      this.history.push({ role: "user", content: results });
     }
 
     chunker.flush();
@@ -311,8 +327,8 @@ export class BrokerBrain {
 
   /** Deterministic session-birth context (workspace description + links) — no API call (spec §3). */
   seedContext(note: string): void {
-    this.history.push({ role: 'user', content: `[workspace context — not the human speaking] ${note}` });
-    this.history.push({ role: 'assistant', content: 'Noted.' });
+    this.history.push({ role: "user", content: `[workspace context — not the human speaking] ${note}` });
+    this.history.push({ role: "assistant", content: "Noted." });
   }
 
   /** Replace the conversation — switching sessions swaps brain memory wholesale. */
@@ -331,7 +347,10 @@ export class BrokerBrain {
   private trimHistory(): void {
     if (this.history.length <= this.maxHistory) return;
     let start = this.history.length - this.maxHistory;
-    while (start < this.history.length && !(this.history[start]!.role === 'user' && typeof this.history[start]!.content === 'string')) {
+    while (
+      start < this.history.length &&
+      !(this.history[start]!.role === "user" && typeof this.history[start]!.content === "string")
+    ) {
       start++;
     }
     this.history = this.history.slice(start);
@@ -339,18 +358,23 @@ export class BrokerBrain {
 
   private async execute(name: string, input: unknown): Promise<string> {
     try {
-      if (name === 'delegate')
-        return await this.executors.delegate(input as { agent: string; task: string; workspace?: string; repo?: string; ticketKey?: string });
-      if (name === 'check_status') return await this.executors.check_status(input as { agent: string });
-      if (name === 'raise_hand') return await this.executors.raise_hand(input as { agent: string; reason: string });
-      if (name === 'remember') return await this.executors.remember(input as { key: string; text: string; scope: string });
-      if (name === 'lookup_ticket') return await this.executors.lookup_ticket(input as { ticketKey: string; workspace: string });
-      if (name === 'search_docs') return await this.executors.search_docs(input as { query: string; workspace: string });
-      if (name === 'check_feeds')
+      if (name === "delegate")
+        return await this.executors.delegate(
+          input as { agent: string; task: string; workspace?: string; repo?: string; ticketKey?: string },
+        );
+      if (name === "check_status") return await this.executors.check_status(input as { agent: string });
+      if (name === "raise_hand") return await this.executors.raise_hand(input as { agent: string; reason: string });
+      if (name === "remember")
+        return await this.executors.remember(input as { key: string; text: string; scope: string });
+      if (name === "lookup_ticket")
+        return await this.executors.lookup_ticket(input as { ticketKey: string; workspace: string });
+      if (name === "search_docs")
+        return await this.executors.search_docs(input as { query: string; workspace: string });
+      if (name === "check_feeds")
         return await this.executors.check_feeds(input as { query: string; tag?: string; sinceDays?: number });
-      if (name === 'track_topic') return await this.executors.track_topic(input as { name: string });
-      if (name === 'draft_agent') return await this.executors.draft_agent(input as { spec: string });
-      if (name === 'confirm_agent') return await this.executors.confirm_agent(input as { accept: boolean });
+      if (name === "track_topic") return await this.executors.track_topic(input as { name: string });
+      if (name === "draft_agent") return await this.executors.draft_agent(input as { spec: string });
+      if (name === "confirm_agent") return await this.executors.confirm_agent(input as { accept: boolean });
       return `unknown tool: ${name}`;
     } catch (err) {
       return `tool ${name} failed: ${err instanceof Error ? err.message : String(err)}`;

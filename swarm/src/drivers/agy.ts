@@ -10,13 +10,13 @@
 // but it cannot host a WARM session, because we would have no honest way to
 // know a turn had finished. listSessionFiles returning [] makes the session
 // manager fail fast at launch instead of hanging until the readiness timeout.
-import { writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { modelFlag } from './model-flag.js';
-import type { AgentProfile, NormalizedMessage, ToolDriver } from './types.js';
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { modelFlag } from "./model-flag.js";
+import type { AgentProfile, NormalizedMessage, ToolDriver } from "./types.js";
 
 export class AgyDriver implements ToolDriver {
-  readonly id = 'agy';
+  readonly id = "agy";
   /** Warm sessions need persisted turns; agy has none locally. */
   readonly warmSessionsSupported = false;
 
@@ -46,10 +46,16 @@ export class AgyDriver implements ToolDriver {
 
   async materialize(agent: AgentProfile, worktreePath: string): Promise<string[]> {
     await writeFile(
-      join(worktreePath, 'AGENTS.md'),
-      [`# ${agent.name} — ${agent.role}`, '', agent.directives, '', `You are ${agent.name}. Stay within your role's domain.`, ''].join('\n'),
+      join(worktreePath, "AGENTS.md"),
+      [
+        `# ${agent.name} — ${agent.role}`,
+        "",
+        agent.directives,
+        "",
+        `You are ${agent.name}. Stay within your role's domain.`,
+        "",
+      ].join("\n"),
     );
-    return ['AGENTS.md'];
+    return ["AGENTS.md"];
   }
 }
-

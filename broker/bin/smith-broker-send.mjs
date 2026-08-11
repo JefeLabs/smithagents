@@ -14,11 +14,11 @@
 // taskId to smith-broker-check to poll for completion.
 // On timeout with no delegation: prints the brain's last reply to stderr,
 // exits 1 — the brain didn't delegate (declined, or asked a question).
-import { WebSocket } from 'ws';
+import { WebSocket } from "ws";
 
-const BROKER_URL = (process.env.SMITH_BROKER_URL ?? 'http://127.0.0.1:7790').replace(/\/$/, '');
-const BROKER_WS = `${BROKER_URL.replace(/^http/, 'ws')}/events`;
-const SOURCE = process.env.SMITH_BRIDGE_SOURCE ?? 'bridge';
+const BROKER_URL = (process.env.SMITH_BROKER_URL ?? "http://127.0.0.1:7790").replace(/\/$/, "");
+const BROKER_WS = `${BROKER_URL.replace(/^http/, "ws")}/events`;
+const SOURCE = process.env.SMITH_BRIDGE_SOURCE ?? "bridge";
 const TIMEOUT_MS = Number(process.env.SMITH_BROKER_SEND_TIMEOUT_MS ?? 45000);
 // A cloud broker runs with auth required; the bridge is a Bearer client.
 // Node's ws can set upgrade headers, so no query-param workaround is needed.
@@ -27,11 +27,11 @@ const authHeaders = TOKEN ? { authorization: `Bearer ${TOKEN}` } : undefined;
 
 const [prdPath, ...rest] = process.argv.slice(2);
 if (!prdPath) {
-  console.error('usage: smith-broker-send <prd-path> [instruction...]');
+  console.error("usage: smith-broker-send <prd-path> [instruction...]");
   process.exit(2);
 }
-const instruction = rest.join(' ');
-const text = `Edwin (via ${SOURCE}): delegate ${prdPath}${instruction ? ` — ${instruction}` : ''}`;
+const instruction = rest.join(" ");
+const text = `Edwin (via ${SOURCE}): delegate ${prdPath}${instruction ? ` — ${instruction}` : ""}`;
 
 const ws = new WebSocket(BROKER_WS, authHeaders ? { headers: authHeaders } : undefined);
 
@@ -39,30 +39,30 @@ const result = await new Promise((resolve, reject) => {
   let lastSpeech = null;
   const timer = setTimeout(() => resolve({ dispatched: null, reply: lastSpeech }), TIMEOUT_MS);
 
-  ws.on('error', (err) => {
+  ws.on("error", (err) => {
     clearTimeout(timer);
     reject(err);
   });
 
-  ws.on('message', (data) => {
+  ws.on("message", (data) => {
     let frame;
     try {
       frame = JSON.parse(String(data));
     } catch {
       return;
     }
-    if (frame.type === 'task-dispatched') {
+    if (frame.type === "task-dispatched") {
       clearTimeout(timer);
       resolve({ dispatched: frame, reply: null });
-    } else if (frame.type === 'utterance' || frame.type === 'speech') {
+    } else if (frame.type === "utterance" || frame.type === "speech") {
       lastSpeech = frame.text;
     }
   });
 
-  ws.on('open', () => {
+  ws.on("open", () => {
     fetch(`${BROKER_URL}/utterance`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', ...authHeaders },
+      method: "POST",
+      headers: { "content-type": "application/json", ...authHeaders },
       body: JSON.stringify({ text }),
     }).catch((err) => {
       clearTimeout(timer);
@@ -74,9 +74,11 @@ const result = await new Promise((resolve, reject) => {
 ws.close();
 
 if (result.dispatched) {
-  console.log(JSON.stringify({ taskId: result.dispatched.taskId, agent: result.dispatched.agent, task: result.dispatched.task }));
+  console.log(
+    JSON.stringify({ taskId: result.dispatched.taskId, agent: result.dispatched.agent, task: result.dispatched.task }),
+  );
   process.exit(0);
 } else {
-  console.error(result.reply ?? '(no reply from the broker within the timeout — is it running?)');
+  console.error(result.reply ?? "(no reply from the broker within the timeout — is it running?)");
   process.exit(1);
 }

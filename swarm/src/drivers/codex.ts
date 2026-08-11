@@ -11,12 +11,12 @@
 // content arrives as output_text parts. Codex writes no explicit stop reason,
 // so a turn is complete once an assistant message lands after the send —
 // which for a rollout file only happens when the turn is finalized.
-import { readdir, readFile, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { SessionParseError } from './errors.js';
-import { modelFlag } from './model-flag.js';
-import type { AgentProfile, CommandRunner, NormalizedMessage, ToolDriver } from './types.js';
+import { readdir, readFile, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { SessionParseError } from "./errors.js";
+import { modelFlag } from "./model-flag.js";
+import type { AgentProfile, CommandRunner, NormalizedMessage, ToolDriver } from "./types.js";
 
 interface CodexLine {
   timestamp?: string;
@@ -30,9 +30,9 @@ interface CodexLine {
 }
 
 export class CodexDriver implements ToolDriver {
-  readonly id = 'codex';
+  readonly id = "codex";
 
-  constructor(private readonly configDir: string = process.env.CODEX_HOME ?? join(homedir(), '.codex')) {}
+  constructor(private readonly configDir: string = process.env.CODEX_HOME ?? join(homedir(), ".codex")) {}
 
   interactiveCommand(baseCommand: string, model?: string): string {
     return `${baseCommand}${modelFlag(model)}`;
@@ -43,7 +43,7 @@ export class CodexDriver implements ToolDriver {
   }
 
   sessionDir(_cwd: string): string {
-    return join(this.configDir, 'sessions');
+    return join(this.configDir, "sessions");
   }
 
   /** Rollouts rooted at `cwd`, newest day first. */
@@ -62,7 +62,7 @@ export class CodexDriver implements ToolDriver {
       }
       for (const entry of entries) {
         if (depth < 3) await descend(join(dir, entry), depth + 1);
-        else if (entry.startsWith('rollout-') && entry.endsWith('.jsonl')) files.push(join(dir, entry));
+        else if (entry.startsWith("rollout-") && entry.endsWith(".jsonl")) files.push(join(dir, entry));
         if (files.length >= 40) return;
       }
     };
@@ -70,7 +70,7 @@ export class CodexDriver implements ToolDriver {
 
     const matching: string[] = [];
     for (const file of files) {
-      const head = (await readFile(file, 'utf8').catch(() => '')).split('\n', 1)[0] ?? '';
+      const head = (await readFile(file, "utf8").catch(() => "")).split("\n", 1)[0] ?? "";
       try {
         const meta = JSON.parse(head) as CodexLine;
         if (meta.payload?.cwd === cwd) matching.push(file);
@@ -83,60 +83,66 @@ export class CodexDriver implements ToolDriver {
 
   parseSessionFile(content: string): NormalizedMessage[] {
     const messages: NormalizedMessage[] = [];
-    for (const line of content.split('\n')) {
+    for (const line of content.split("\n")) {
       if (!line.trim()) continue;
       let parsed: CodexLine;
       try {
         parsed = JSON.parse(line) as CodexLine;
       } catch (err) {
-        throw new SessionParseError('codex', line, err);
+        throw new SessionParseError("codex", line, err);
       }
       const payload = parsed.payload;
-      if (parsed.type !== 'response_item' || payload?.type !== 'message') continue;
+      if (parsed.type !== "response_item" || payload?.type !== "message") continue;
       // 'developer' entries are harness scaffolding, not conversation.
-      if (payload.role !== 'user' && payload.role !== 'assistant') continue;
+      if (payload.role !== "user" && payload.role !== "assistant") continue;
       const text =
-        typeof payload.content === 'string'
+        typeof payload.content === "string"
           ? payload.content
           : (payload.content ?? [])
-              .filter((part) => typeof part.text === 'string')
+              .filter((part) => typeof part.text === "string")
               .map((part) => part.text as string)
-              .join('\n');
+              .join("\n");
       messages.push({
         role: payload.role,
         text,
         timestamp: parsed.timestamp,
         // Codex has no stop_reason; a persisted assistant message IS the end
         // of a turn, so mark it terminal for the shared completion check.
-        stopReason: payload.role === 'assistant' ? 'end_turn' : null,
+        stopReason: payload.role === "assistant" ? "end_turn" : null,
       });
     }
     return messages;
   }
 
   isTurnComplete(messages: NormalizedMessage[], sinceIso: string): boolean {
-    return messages.some((m) => m.role === 'assistant' && (m.timestamp ?? '') > sinceIso);
+    return messages.some((m) => m.role === "assistant" && (m.timestamp ?? "") > sinceIso);
   }
 
   async materialize(agent: AgentProfile, worktreePath: string): Promise<string[]> {
     await writeFile(
-      join(worktreePath, 'AGENTS.md'),
-      [`# ${agent.name} — ${agent.role}`, '', agent.directives, '', `You are ${agent.name}. Stay within your role's domain.`, ''].join('\n'),
+      join(worktreePath, "AGENTS.md"),
+      [
+        `# ${agent.name} — ${agent.role}`,
+        "",
+        agent.directives,
+        "",
+        `You are ${agent.name}. Stay within your role's domain.`,
+        "",
+      ].join("\n"),
     );
-    return ['AGENTS.md'];
+    return ["AGENTS.md"];
   }
 
   async verifyAuth(
     binary: string,
     run: CommandRunner,
     timeoutMs: number,
-  ): Promise<{ ok: boolean | 'unknown'; detail: string }> {
+  ): Promise<{ ok: boolean | "unknown"; detail: string }> {
     // `codex login status` -> exit 0 "Logged in using ChatGPT" when authed.
-    const res = await run([binary, 'login', 'status'], timeoutMs);
+    const res = await run([binary, "login", "status"], timeoutMs);
     const out = `${res.stdout}\n${res.stderr}`.trim();
-    if (res.code === 0) return { ok: true, detail: out.split('\n')[0] || 'logged in' };
-    if (/not logged in/i.test(out)) return { ok: false, detail: 'not logged in — run `codex login`' };
-    return { ok: 'unknown', detail: out.split('\n')[0] || 'login status unrecognized' };
+    if (res.code === 0) return { ok: true, detail: out.split("\n")[0] || "logged in" };
+    if (/not logged in/i.test(out)) return { ok: false, detail: "not logged in — run `codex login`" };
+    return { ok: "unknown", detail: out.split("\n")[0] || "login status unrecognized" };
   }
 }
-

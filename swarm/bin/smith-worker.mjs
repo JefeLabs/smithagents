@@ -1,2 +1,2 @@
 #!/usr/bin/env node
-import '../dist/worker-cli.js';
+import "../dist/worker-cli.js";

@@ -1,8 +1,8 @@
-import { test } from 'node:test';
-import assert from 'node:assert/strict';
-import { createDiscordTextLifecycle, type DiscordTextHub } from './discord-text-lifecycle.ts';
-import type { ChannelAdapter, ChannelUtterance } from './channels.ts';
-import type { DiscordAdapterOptions } from './discord-adapter.ts';
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import type { ChannelAdapter, ChannelUtterance } from "./channels.ts";
+import type { DiscordAdapterOptions } from "./discord-adapter.ts";
+import { createDiscordTextLifecycle, type DiscordTextHub } from "./discord-text-lifecycle.ts";
 
 function fakeHub() {
   const registered: ChannelAdapter[] = [];
@@ -20,7 +20,7 @@ function fakeHub() {
 function fakeCreateDiscordAdapter() {
   const stopCalls: number[] = [];
   let calls = 0;
-  const adapter: ChannelAdapter = { kind: 'discord', deliver: async () => {} };
+  const adapter: ChannelAdapter = { kind: "discord", deliver: async () => {} };
   const createDiscordAdapter = async () => {
     calls += 1;
     return {
@@ -33,24 +33,24 @@ function fakeCreateDiscordAdapter() {
   return { createDiscordAdapter, stopCalls, calls: () => calls };
 }
 
-test('bootDiscordText: empty textChannels returns null without starting a client', async () => {
+test("bootDiscordText: empty textChannels returns null without starting a client", async () => {
   const { hub } = fakeHub();
   const { createDiscordAdapter, calls } = fakeCreateDiscordAdapter();
   const lifecycle = createDiscordTextLifecycle({ hub, createDiscordAdapter });
-  const result = await lifecycle.bootDiscordText('tok', []);
+  const result = await lifecycle.bootDiscordText("tok", []);
   assert.equal(result, null);
   assert.equal(calls(), 0);
   assert.equal(lifecycle.activeDiscordText, null);
 });
 
-test('bootDiscordText registers the adapter with the hub and tracks it as active', async () => {
+test("bootDiscordText registers the adapter with the hub and tracks it as active", async () => {
   const { hub, registered } = fakeHub();
   const { createDiscordAdapter } = fakeCreateDiscordAdapter();
   const lifecycle = createDiscordTextLifecycle({ hub, createDiscordAdapter });
-  const result = await lifecycle.bootDiscordText('tok', ['chan-1']);
+  const result = await lifecycle.bootDiscordText("tok", ["chan-1"]);
   assert.notEqual(result, null);
   assert.equal(registered.length, 1);
-  assert.equal(registered[0]!.kind, 'discord');
+  assert.equal(registered[0]!.kind, "discord");
   assert.equal(lifecycle.activeDiscordText, result);
 });
 
@@ -59,22 +59,22 @@ test("bootDiscordText's onUtterance callback forwards to hub.onUtterance tagged 
   let capturedOnUtterance: ((u: ChannelUtterance) => void) | undefined;
   const createDiscordAdapter = async (opts: DiscordAdapterOptions) => {
     capturedOnUtterance = opts.onUtterance;
-    return { adapter: { kind: 'discord', deliver: async () => {} }, stop: async () => {} };
+    return { adapter: { kind: "discord", deliver: async () => {} }, stop: async () => {} };
   };
   const lifecycle = createDiscordTextLifecycle({ hub, createDiscordAdapter });
-  await lifecycle.bootDiscordText('tok', ['chan-1']);
-  capturedOnUtterance!({ text: 'hola', author: 'Edwin', channelRef: 'chan-1' });
-  assert.deepEqual(utterances, [{ kind: 'discord', u: { text: 'hola', author: 'Edwin', channelRef: 'chan-1' } }]);
+  await lifecycle.bootDiscordText("tok", ["chan-1"]);
+  capturedOnUtterance!({ text: "hola", author: "Edwin", channelRef: "chan-1" });
+  assert.deepEqual(utterances, [{ kind: "discord", u: { text: "hola", author: "Edwin", channelRef: "chan-1" } }]);
 });
 
-test('bootDiscordText then teardownDiscordText: stop() is called exactly once, activeDiscordText resets to null', async () => {
+test("bootDiscordText then teardownDiscordText: stop() is called exactly once, activeDiscordText resets to null", async () => {
   const { hub, unregistered } = fakeHub();
   const { createDiscordAdapter, stopCalls } = fakeCreateDiscordAdapter();
   const lifecycle = createDiscordTextLifecycle({ hub, createDiscordAdapter });
-  await lifecycle.bootDiscordText('tok', ['chan-1']);
+  await lifecycle.bootDiscordText("tok", ["chan-1"]);
   await lifecycle.teardownDiscordText();
   assert.equal(stopCalls.length, 1);
-  assert.deepEqual(unregistered, ['discord']);
+  assert.deepEqual(unregistered, ["discord"]);
   assert.equal(lifecycle.activeDiscordText, null);
 
   // Idempotent: a second teardown with nothing active is a no-op, not a second stop().
@@ -82,7 +82,7 @@ test('bootDiscordText then teardownDiscordText: stop() is called exactly once, a
   assert.equal(stopCalls.length, 1);
 });
 
-test('teardownDiscordText with nothing active is a no-op', async () => {
+test("teardownDiscordText with nothing active is a no-op", async () => {
   const { hub, unregistered } = fakeHub();
   const { createDiscordAdapter } = fakeCreateDiscordAdapter();
   const lifecycle = createDiscordTextLifecycle({ hub, createDiscordAdapter });
@@ -91,27 +91,33 @@ test('teardownDiscordText with nothing active is a no-op', async () => {
   assert.equal(lifecycle.activeDiscordText, null);
 });
 
-test('teardownDiscordText logs and still clears state when stop() rejects', async () => {
+test("teardownDiscordText logs and still clears state when stop() rejects", async () => {
   const { hub, unregistered } = fakeHub();
   const createDiscordAdapter = async () => ({
-    adapter: { kind: 'discord', deliver: async () => {} } as ChannelAdapter,
+    adapter: { kind: "discord", deliver: async () => {} } as ChannelAdapter,
     stop: async () => {
-      throw new Error('destroy failed');
+      throw new Error("destroy failed");
     },
   });
   const lifecycle = createDiscordTextLifecycle({ hub, createDiscordAdapter });
-  await lifecycle.bootDiscordText('tok', ['chan-1']);
+  await lifecycle.bootDiscordText("tok", ["chan-1"]);
   await assert.doesNotReject(() => lifecycle.teardownDiscordText());
-  assert.deepEqual(unregistered, ['discord']);
+  assert.deepEqual(unregistered, ["discord"]);
   assert.equal(lifecycle.activeDiscordText, null);
 });
 
-test('two independent lifecycles do not share state', async () => {
+test("two independent lifecycles do not share state", async () => {
   const a = fakeHub();
   const b = fakeHub();
-  const lifecycleA = createDiscordTextLifecycle({ hub: a.hub, createDiscordAdapter: fakeCreateDiscordAdapter().createDiscordAdapter });
-  const lifecycleB = createDiscordTextLifecycle({ hub: b.hub, createDiscordAdapter: fakeCreateDiscordAdapter().createDiscordAdapter });
-  await lifecycleA.bootDiscordText('tok', ['chan-1']);
+  const lifecycleA = createDiscordTextLifecycle({
+    hub: a.hub,
+    createDiscordAdapter: fakeCreateDiscordAdapter().createDiscordAdapter,
+  });
+  const lifecycleB = createDiscordTextLifecycle({
+    hub: b.hub,
+    createDiscordAdapter: fakeCreateDiscordAdapter().createDiscordAdapter,
+  });
+  await lifecycleA.bootDiscordText("tok", ["chan-1"]);
   assert.notEqual(lifecycleA.activeDiscordText, null);
   assert.equal(lifecycleB.activeDiscordText, null);
 });

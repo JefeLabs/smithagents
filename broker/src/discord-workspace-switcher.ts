@@ -33,7 +33,9 @@
  * token and is intentionally excluded from that shared interface (Task 4) —
  * so this is its own minimal structural type instead. */
 export interface DiscordWorkspaceSource {
-  getWorkspaceDiscordConfig(name: string): Promise<{ botToken: string; textChannels: string[]; voiceChannels: string[] } | null>;
+  getWorkspaceDiscordConfig(
+    name: string,
+  ): Promise<{ botToken: string; textChannels: string[]; voiceChannels: string[] } | null>;
 }
 
 /** The narrow slices of each lifecycle this switcher drives — not the full
@@ -71,7 +73,9 @@ export function createDiscordWorkspaceSwitcher(deps: DiscordWorkspaceSwitcherDep
     // voice boot, and vice versa.
     await deps.discordTextLifecycle
       .bootDiscordText(config.botToken, config.textChannels)
-      .catch((err: unknown) => console.error(`[discord] failed to start for workspace "${workspaceName}": ${String(err)}`));
+      .catch((err: unknown) =>
+        console.error(`[discord] failed to start for workspace "${workspaceName}": ${String(err)}`),
+      );
 
     // bootDiscordVoice, unlike bootDiscordText, has no internal empty-allowlist
     // guard — guarded here explicitly, mirroring the boot-time bridge code
@@ -79,7 +83,9 @@ export function createDiscordWorkspaceSwitcher(deps: DiscordWorkspaceSwitcherDep
     if (config.voiceChannels.length > 0) {
       await deps.discordVoiceLifecycle
         .bootDiscordVoice(config.botToken, config.voiceChannels)
-        .catch((err: unknown) => console.error(`[discord-voice] failed to start for workspace "${workspaceName}": ${String(err)}`));
+        .catch((err: unknown) =>
+          console.error(`[discord-voice] failed to start for workspace "${workspaceName}": ${String(err)}`),
+        );
     }
   }
 
@@ -95,9 +101,11 @@ export function createDiscordWorkspaceSwitcher(deps: DiscordWorkspaceSwitcherDep
   // behind it.
   let switchChain: Promise<void> = Promise.resolve();
   function switchDiscordForWorkspace(workspaceName: string): Promise<void> {
-    switchChain = switchChain.then(() => doSwitch(workspaceName)).catch((err: unknown) => {
-      console.error(`[discord] workspace switch failed for "${workspaceName}": ${String(err)}`);
-    });
+    switchChain = switchChain
+      .then(() => doSwitch(workspaceName))
+      .catch((err: unknown) => {
+        console.error(`[discord] workspace switch failed for "${workspaceName}": ${String(err)}`);
+      });
     return switchChain;
   }
 

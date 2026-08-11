@@ -5,21 +5,21 @@
  * transcript ({type:'utterance'|'speech', text}) to every connected client.
  * Loopback-only; CORS is wide open because the bind address is the gate.
  */
-import { createServer, type IncomingMessage, type Server } from 'node:http';
-import { WebSocketServer, WebSocket } from 'ws';
-import type { Blueprint } from './blueprints.ts';
-import type { Doc } from './documents.ts';
-import { AuthError, parseCookies, type BrokerAuth, type Identity } from './auth.ts';
+import { createServer, type IncomingMessage, type Server } from "node:http";
+import { WebSocket, WebSocketServer } from "ws";
+import { AuthError, type BrokerAuth, type Identity, parseCookies } from "./auth.ts";
+import type { Blueprint } from "./blueprints.ts";
+import type { Doc } from "./documents.ts";
 
 export interface RosterEntry {
   id: string;
   name: string;
   role: string;
   ring?: string;
-  status: 'idle' | 'busy' | 'in-meeting' | 'offline';
+  status: "idle" | "busy" | "in-meeting" | "offline";
   taskSummary?: string;
   /** Solo agent or a formed squad (rendered as one circle for the unit). */
-  kind: 'agent' | 'squad';
+  kind: "agent" | "squad";
   /** Per-agent Web Speech delivery for UIs that voice the transcript. */
   speech?: { voiceName?: string; lang?: string; pitch?: number; rate?: number };
   /** One-line reason when this agent/squad leader has a hand raised. */
@@ -33,17 +33,17 @@ export interface RosterEntry {
 }
 
 export type ChannelFrame =
-  | { type: 'utterance' | 'speech'; text: string }
+  | { type: "utterance" | "speech"; text: string }
   | {
-      type: 'roster';
+      type: "roster";
       agents: RosterEntry[];
       /** The broker's own identity (host tile) — never an entry in `agents`. */
       identity?: { name: string; role: string; ring?: string; listening?: boolean };
     }
   /** Hello-frame capabilities: audio=true means the broker streams TTS audio frames. */
-  | { type: 'config'; audio: boolean }
+  | { type: "config"; audio: boolean }
   /** One synthesized speech chunk (mp3), base64-encoded for the JSON channel. */
-  | { type: 'audio'; speaker?: string; mime: string; dataB64: string }
+  | { type: "audio"; speaker?: string; mime: string; dataB64: string }
   /**
    * Active session changed (or hello): full transcript replay + the session list +
    * workspaces. `session: null` is a valid, deliberate state — zero sessions exist yet
@@ -51,28 +51,33 @@ export type ChannelFrame =
    * yet"; UIs render an empty/creation state rather than treating it as still-loading.
    */
   | {
-      type: 'session';
-      session:
-        | { id: string; title: string; workspace: string; runtime: string; artifacts: string[] }
-        | null;
-      sessions: Array<{ id: string; title: string; workspace: string; updatedAt: string; active: boolean; runtime: string }>;
-      transcript: Array<{ role: 'user' | 'broker'; text: string }>;
+      type: "session";
+      session: { id: string; title: string; workspace: string; runtime: string; artifacts: string[] } | null;
+      sessions: Array<{
+        id: string;
+        title: string;
+        workspace: string;
+        updatedAt: string;
+        active: boolean;
+        runtime: string;
+      }>;
+      transcript: Array<{ role: "user" | "broker"; text: string }>;
       workspaces: string[];
     }
   /** A delegated task was just bound to an agent — the deterministic handle an external bridge (broker/bin) correlates against, since the brain's own spoken confirmation is free-form prose. */
-  | { type: 'task-dispatched'; taskId: string; agent: string; task: string }
+  | { type: "task-dispatched"; taskId: string; agent: string; task: string }
   /** A muted system line (e.g. "no STT key configured") — distinct from an agent's own `speech`, so UIs can render it de-emphasized instead of attributing it to a speaker. */
-  | { type: 'notice'; text: string }
+  | { type: "notice"; text: string }
   /** A work-board card changed (moved, delegated, or a delegated task completed/failed) — the board stage refetches. */
-  | { type: 'board-updated'; boardId: string }
+  | { type: "board-updated"; boardId: string }
   /** A capability (or one of its slices, or a card linked to it) changed — the story map stage refetches. */
-  | { type: 'capability-updated'; capabilityId: string }
+  | { type: "capability-updated"; capabilityId: string }
   /**
    * All documents, full-frame-on-change — the roster idiom, not a diff. Also
    * delivered to every fresh WS client the moment it connects, same as
    * `session` (see the hello-frame closure in main.ts).
    */
-  | { type: 'documents'; documents: Doc[] };
+  | { type: "documents"; documents: Doc[] };
 
 const CORS_BASE = {
   // PUT and DELETE aren't CORS-safelisted methods — a real browser/webview fetch
@@ -87,9 +92,9 @@ const CORS_BASE = {
   // with it (control-plane/src/api/work.ts:90 and :184). Omitting it here blocks every
   // browser write at preflight while `curl -X PATCH` succeeds, because curl sends no
   // preflight — so the route looks healthy from the terminal and is dead in the app.
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+  "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
   // 'authorization' is here so the bridge's Bearer header survives preflight.
-  'Access-Control-Allow-Headers': 'content-type, authorization',
+  "Access-Control-Allow-Headers": "content-type, authorization",
 };
 
 /**
@@ -108,9 +113,9 @@ const CORS_BASE = {
  */
 function corsFor(req: IncomingMessage): Record<string, string> {
   const origin = req.headers.origin;
-  if (!origin) return { ...CORS_BASE, 'Access-Control-Allow-Origin': '*' };
+  if (!origin) return { ...CORS_BASE, "Access-Control-Allow-Origin": "*" };
   if (!ALLOWED_ORIGINS.has(origin)) return { ...CORS_BASE };
-  return { ...CORS_BASE, 'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Credentials': 'true' };
+  return { ...CORS_BASE, "Access-Control-Allow-Origin": origin, "Access-Control-Allow-Credentials": "true" };
 }
 
 // Routes that touch credential-presence data need a real origin check, unlike the
@@ -122,7 +127,7 @@ function corsFor(req: IncomingMessage): Record<string, string> {
 // failed" with a CORS console error, and which of the two you happened to type decided
 // whether the app worked. This is not a widening of trust: an attacker cannot originate
 // from a loopback dev-server origin in the victim's browser without already controlling it.
-const ALLOWED_ORIGINS = new Set(['http://localhost:1420', 'http://127.0.0.1:1420']); // control-plane's Vite dev origin (see control-plane/vite.config.ts, tauri.conf.json devUrl)
+const ALLOWED_ORIGINS = new Set(["http://localhost:1420", "http://127.0.0.1:1420"]); // control-plane's Vite dev origin (see control-plane/vite.config.ts, tauri.conf.json devUrl)
 // TODO: the packaged (non-dev) Tauri app's webview origin is NOT verified against a
 // real built app in this environment. It's commonly `tauri://localhost` on macOS or
 // `http://tauri.localhost` on Windows, but guessing wrong here would silently lock the
@@ -141,12 +146,12 @@ function isAllowedOrigin(req: IncomingMessage): boolean {
 function credentialCors(req: IncomingMessage): Record<string, string> {
   const origin = req.headers.origin;
   const headers: Record<string, string> = {
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'content-type, authorization',
+    "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "content-type, authorization",
     // The /auth ceremony and session cookie both require credentialed CORS.
-    'Access-Control-Allow-Credentials': 'true',
+    "Access-Control-Allow-Credentials": "true",
   };
-  if (origin && ALLOWED_ORIGINS.has(origin)) headers['Access-Control-Allow-Origin'] = origin;
+  if (origin && ALLOWED_ORIGINS.has(origin)) headers["Access-Control-Allow-Origin"] = origin;
   return headers;
 }
 
@@ -156,16 +161,18 @@ function sessionCookie(token: string, webOrigin: string): string {
   // cookie must be SameSite=None (which mandates Secure). SameSite is computed
   // on host, not port, so even localhost:1420 → 127.0.0.1:7790 is cross-site —
   // dev pins the SPA to 127.0.0.1:1420 so Lax works there without HTTPS.
-  const sameSite = webOrigin.startsWith('https://') ? 'None; Secure' : 'Lax';
+  const sameSite = webOrigin.startsWith("https://") ? "None; Secure" : "Lax";
   return `smith_session=${token}; HttpOnly; Path=/; SameSite=${sameSite}; Max-Age=2592000`;
 }
 
 /** Read a request body to string (JSON routes). */
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve) => {
-    let body = '';
-    req.on('data', (c) => { body += c; });
-    req.on('end', () => resolve(body));
+    let body = "";
+    req.on("data", (c) => {
+      body += c;
+    });
+    req.on("end", () => resolve(body));
   });
 }
 
@@ -174,16 +181,16 @@ export function workUpdateFrames(
   method: string,
   pathname: string,
   payload: unknown,
-): Array<{ type: 'capability-updated'; capabilityId: string }> {
-  if (method === 'GET') return [];
+): Array<{ type: "capability-updated"; capabilityId: string }> {
+  if (method === "GET") return [];
   const capMatch = pathname.match(/^\/work\/capabilities(?:\/([^/]+))?/);
   if (capMatch) {
     const capabilityId = capMatch[1] ?? (payload as { id?: string })?.id;
-    return capabilityId ? [{ type: 'capability-updated', capabilityId }] : [];
+    return capabilityId ? [{ type: "capability-updated", capabilityId }] : [];
   }
   const ref = (payload as { capabilityRef?: { capabilityId?: string } })?.capabilityRef;
   if (/^\/work\/boards\/[^/]+\/cards\/[^/]+$/.test(pathname) && ref?.capabilityId) {
-    return [{ type: 'capability-updated', capabilityId: ref.capabilityId }];
+    return [{ type: "capability-updated", capabilityId: ref.capabilityId }];
   }
   return [];
 }
@@ -197,7 +204,7 @@ export class TextChannel {
     /** Frames sent to each client the moment it connects (e.g. roster snapshot). */
     private readonly helloFrames: () => ChannelFrame[] = () => [],
     /** Roster composition handler (POST /compose). Returns an error string or null. */
-    private readonly onCompose: (body: unknown) => string | null = () => 'composition not supported',
+    private readonly onCompose: (body: unknown) => string | null = () => "composition not supported",
     /** Work inspection/control for busy agents and squads. */
     private readonly work?: {
       activity(name: string): Promise<unknown>;
@@ -219,7 +226,11 @@ export class TextChannel {
      * unchanged: an error string or null, always mapped to 400/200.
      */
     private readonly sessions?: {
-      create(body: { workspace?: string; runtime?: string; prompt?: string }): Promise<{ error: string; status?: number } | null>;
+      create(body: {
+        workspace?: string;
+        runtime?: string;
+        prompt?: string;
+      }): Promise<{ error: string; status?: number } | null>;
       activate(id: string): string | null;
       /** DELETE /sessions/:id — synchronous like `activate`: an error string (unknown id) or null. */
       remove(id: string): string | null;
@@ -334,7 +345,11 @@ export class TextChannel {
      * string or null, mapped to 404/200.
      */
     private readonly documents?: {
-      create(body: { blueprintId?: string; workType?: string; text?: string }): Promise<{ doc?: Doc; error?: string; status?: number }>;
+      create(body: {
+        blueprintId?: string;
+        workType?: string;
+        text?: string;
+      }): Promise<{ doc?: Doc; error?: string; status?: number }>;
       patchSection(docId: string, sectionId: string, body: string): string | null;
       changeBlueprint(docId: string, blueprintId: string): string | null;
       rename(docId: string, title: string): string | null;
@@ -370,7 +385,7 @@ export class TextChannel {
 
   private clientSeq = 0;
   /** clientId → identity kind, for gating mic frames to humans. */
-  private readonly clientKinds = new Map<number, Identity['kind']>();
+  private readonly clientKinds = new Map<number, Identity["kind"]>();
 
   /**
    * The /auth/* ceremony surface. Only reached when `this.auth` is set.
@@ -378,58 +393,73 @@ export class TextChannel {
    */
   private async handleAuthRoute(
     req: IncomingMessage,
-    res: import('node:http').ServerResponse,
+    res: import("node:http").ServerResponse,
     pathname: string,
     identity: Identity | null,
   ): Promise<void> {
     const auth = this.auth!;
     const cors = credentialCors(req);
     const json = (status: number, body: unknown, extra: Record<string, string> = {}) =>
-      res.writeHead(status, { ...cors, 'content-type': 'application/json', ...extra }).end(JSON.stringify(body));
+      res.writeHead(status, { ...cors, "content-type": "application/json", ...extra }).end(JSON.stringify(body));
 
-    if (req.method !== 'POST') { json(405, { error: 'method not allowed' }); return; }
-    const parseBody = async <T>(): Promise<T> => JSON.parse((await readBody(req)) || '{}') as T;
+    if (req.method !== "POST") {
+      json(405, { error: "method not allowed" });
+      return;
+    }
+    const parseBody = async <T>(): Promise<T> => JSON.parse((await readBody(req)) || "{}") as T;
 
     try {
-      if (pathname === '/auth/invites') {
-        if (auth.required && (!identity || identity.kind !== 'human')) { json(401, { error: 'unauthorized' }); return; }
+      if (pathname === "/auth/invites") {
+        if (auth.required && (!identity || identity.kind !== "human")) {
+          json(401, { error: "unauthorized" });
+          return;
+        }
         json(201, auth.mintInvite());
         return;
       }
-      if (pathname === '/auth/register/options') {
+      if (pathname === "/auth/register/options") {
         const { code, name } = await parseBody<{ code?: string; name?: string }>();
-        if (!code || !name) { json(400, { error: 'code and name required' }); return; }
+        if (!code || !name) {
+          json(400, { error: "code and name required" });
+          return;
+        }
         json(200, await auth.beginRegistration(code, name));
         return;
       }
-      if (pathname === '/auth/register/verify') {
+      if (pathname === "/auth/register/verify") {
         const { code, response } = await parseBody<{ code?: string; response?: unknown }>();
-        if (!code) { json(400, { error: 'code required' }); return; }
+        if (!code) {
+          json(400, { error: "code required" });
+          return;
+        }
         const { userId, name, sessionToken } = await auth.finishRegistration(code, response);
-        json(201, { userId, name }, { 'set-cookie': sessionCookie(sessionToken, auth.webOrigin) });
+        json(201, { userId, name }, { "set-cookie": sessionCookie(sessionToken, auth.webOrigin) });
         return;
       }
-      if (pathname === '/auth/login/options') {
+      if (pathname === "/auth/login/options") {
         json(200, await auth.beginLogin());
         return;
       }
-      if (pathname === '/auth/login/verify') {
+      if (pathname === "/auth/login/verify") {
         const { response } = await parseBody<{ response?: unknown }>();
         const { userId, name, sessionToken } = await auth.finishLogin(response);
-        json(200, { userId, name }, { 'set-cookie': sessionCookie(sessionToken, auth.webOrigin) });
+        json(200, { userId, name }, { "set-cookie": sessionCookie(sessionToken, auth.webOrigin) });
         return;
       }
-      if (pathname === '/auth/logout') {
-        if (auth.required && !identity) { json(401, { error: 'unauthorized' }); return; }
+      if (pathname === "/auth/logout") {
+        if (auth.required && !identity) {
+          json(401, { error: "unauthorized" });
+          return;
+        }
         const token = parseCookies(req.headers.cookie).smith_session;
         if (token) auth.logout(token);
-        res.writeHead(204, { ...cors, 'set-cookie': 'smith_session=; HttpOnly; Path=/; Max-Age=0' }).end();
+        res.writeHead(204, { ...cors, "set-cookie": "smith_session=; HttpOnly; Path=/; Max-Age=0" }).end();
         return;
       }
-      json(404, { error: 'unknown auth route' });
+      json(404, { error: "unknown auth route" });
     } catch (err) {
       if (err instanceof AuthError) {
-        const status = err.code === 'invalid-code' ? 410 : err.code === 'verify-failed' ? 400 : 401;
+        const status = err.code === "invalid-code" ? 410 : err.code === "verify-failed" ? 400 : 401;
         json(status, { error: err.code });
         return;
       }
@@ -438,9 +468,9 @@ export class TextChannel {
   }
 
   /** Bind host:port (0 = ephemeral for tests); resolves the actual port. */
-  start(port: number, host = '127.0.0.1'): Promise<number> {
+  start(port: number, host = "127.0.0.1"): Promise<number> {
     const server = createServer((req, res) => {
-      if (req.method === 'OPTIONS') {
+      if (req.method === "OPTIONS") {
         res.writeHead(204, corsFor(req)).end();
         return;
       }
@@ -449,10 +479,16 @@ export class TextChannel {
       // Runs after preflight so browser writes are never blocked at OPTIONS.
       // In open mode (no auth configured) this whole block is inert.
       const auth = this.auth;
-      const pathname = new URL(req.url ?? '/', 'http://localhost').pathname;
+      const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
       const identity: Identity | null = auth?.resolveIdentity(req) ?? null;
       // Ceremony routes authenticate by pairing code / passkey, not a session.
-      const EXEMPT = new Set(['/auth/register/options', '/auth/register/verify', '/auth/login/options', '/auth/login/verify', '/auth/me']);
+      const EXEMPT = new Set([
+        "/auth/register/options",
+        "/auth/register/verify",
+        "/auth/login/options",
+        "/auth/login/verify",
+        "/auth/me",
+      ]);
 
       // CSRF: the session cookie is SameSite=None in cloud, so the browser
       // sends it on cross-site requests — the built-in CSRF protection is gone.
@@ -461,42 +497,50 @@ export class TextChannel {
       // (curl, the Bearer bridge); they carry no ambient cookie and so cannot
       // be a CSRF vector. Only enforced in required (cloud) mode — OPTIONS has
       // already returned above, so this only sees real methods.
-      if (auth?.required && req.method !== 'GET' && req.method !== 'HEAD') {
+      if (auth?.required && req.method !== "GET" && req.method !== "HEAD") {
         const origin = req.headers.origin;
         if (origin && !ALLOWED_ORIGINS.has(origin) && origin !== auth.webOrigin) {
-          res.writeHead(403, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: 'origin not allowed' }));
+          res
+            .writeHead(403, { ...corsFor(req), "content-type": "application/json" })
+            .end(JSON.stringify({ error: "origin not allowed" }));
           return;
         }
       }
 
-      if (pathname === '/auth/me') {
+      if (pathname === "/auth/me") {
         if (auth?.required && !identity) {
-          res.writeHead(401, { ...credentialCors(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: 'unauthorized' }));
+          res
+            .writeHead(401, { ...credentialCors(req), "content-type": "application/json" })
+            .end(JSON.stringify({ error: "unauthorized" }));
         } else {
-          const body = identity && identity.kind !== 'bridge' ? identity : { kind: 'human', local: true };
-          res.writeHead(200, { ...credentialCors(req), 'content-type': 'application/json' }).end(JSON.stringify(body));
+          const body = identity && identity.kind !== "bridge" ? identity : { kind: "human", local: true };
+          res.writeHead(200, { ...credentialCors(req), "content-type": "application/json" }).end(JSON.stringify(body));
         }
         return;
       }
 
-      if (auth && pathname.startsWith('/auth/')) {
+      if (auth && pathname.startsWith("/auth/")) {
         void this.handleAuthRoute(req, res, pathname, identity).catch((err: unknown) =>
-          res.writeHead(500, { ...credentialCors(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: String(err) })),
+          res
+            .writeHead(500, { ...credentialCors(req), "content-type": "application/json" })
+            .end(JSON.stringify({ error: String(err) })),
         );
         return;
       }
 
       if (auth?.required && !identity && !EXEMPT.has(pathname)) {
-        res.writeHead(401, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: 'unauthorized' }));
+        res
+          .writeHead(401, { ...corsFor(req), "content-type": "application/json" })
+          .end(JSON.stringify({ error: "unauthorized" }));
         return;
       }
 
-      if (req.method === 'POST' && req.url === '/utterance') {
-        let body = '';
-        req.on('data', (c) => {
+      if (req.method === "POST" && req.url === "/utterance") {
+        let body = "";
+        req.on("data", (c) => {
           body += c;
         });
-        req.on('end', () => {
+        req.on("end", () => {
           let parsed: { text?: unknown; target?: unknown } = {};
           try {
             parsed = JSON.parse(body) as typeof parsed;
@@ -504,8 +548,10 @@ export class TextChannel {
             /* handled by the validation below */
           }
           const text = parsed.text;
-          if (typeof text !== 'string' || !text.trim()) {
-            res.writeHead(400, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: 'body must be {"text": string}' }));
+          if (typeof text !== "string" || !text.trim()) {
+            res
+              .writeHead(400, { ...corsFor(req), "content-type": "application/json" })
+              .end(JSON.stringify({ error: 'body must be {"text": string}' }));
             return;
           }
           const utterance = text.trim();
@@ -516,86 +562,98 @@ export class TextChannel {
           if (parsed.target !== undefined && this.directed) {
             void this.directed.send(utterance, parsed.target).then(
               (r) => {
-                const status = 'error' in r ? r.status : 200;
+                const status = "error" in r ? r.status : 200;
                 res
-                  .writeHead(status, { ...corsFor(req), 'content-type': 'application/json' })
-                  .end(JSON.stringify('error' in r ? { error: r.error } : r));
+                  .writeHead(status, { ...corsFor(req), "content-type": "application/json" })
+                  .end(JSON.stringify("error" in r ? { error: r.error } : r));
               },
               (err: unknown) =>
                 res
-                  .writeHead(500, { ...corsFor(req), 'content-type': 'application/json' })
+                  .writeHead(500, { ...corsFor(req), "content-type": "application/json" })
                   .end(JSON.stringify({ error: String((err as Error).message ?? err) })),
             );
             return;
           }
-          this.broadcast({ type: 'utterance', text: utterance });
+          this.broadcast({ type: "utterance", text: utterance });
           this.onUtterance(utterance);
-          res.writeHead(202, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify({ ok: true }));
+          res.writeHead(202, { ...corsFor(req), "content-type": "application/json" }).end(JSON.stringify({ ok: true }));
         });
         return;
       }
-      if (req.method === 'POST' && req.url === '/compose') {
-        let body = '';
-        req.on('data', (c) => {
+      if (req.method === "POST" && req.url === "/compose") {
+        let body = "";
+        req.on("data", (c) => {
           body += c;
         });
-        req.on('end', () => {
+        req.on("end", () => {
           let parsed: unknown;
           try {
             parsed = JSON.parse(body);
           } catch {
             parsed = null;
           }
-          const error = parsed ? this.onCompose(parsed) : 'body must be JSON';
+          const error = parsed ? this.onCompose(parsed) : "body must be JSON";
           const status = error ? 400 : 200;
-          res.writeHead(status, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify(error ? { error } : { ok: true }));
+          res
+            .writeHead(status, { ...corsFor(req), "content-type": "application/json" })
+            .end(JSON.stringify(error ? { error } : { ok: true }));
         });
         return;
       }
-      if (req.method === 'POST' && req.url === '/reset' && this.onReset) {
+      if (req.method === "POST" && req.url === "/reset" && this.onReset) {
         // A full-install reset is a human action — never let a bridge trigger it.
-        if (auth?.required && identity?.kind === 'bridge') {
-          res.writeHead(403, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: 'reset is not permitted for bridge clients' }));
+        if (auth?.required && identity?.kind === "bridge") {
+          res
+            .writeHead(403, { ...corsFor(req), "content-type": "application/json" })
+            .end(JSON.stringify({ error: "reset is not permitted for bridge clients" }));
           return;
         }
-        let body = '';
-        req.on('data', (c) => {
+        let body = "";
+        req.on("data", (c) => {
           body += c;
         });
-        req.on('end', () => {
+        req.on("end", () => {
           let scope: Record<string, unknown> = {};
           try {
-            scope = JSON.parse(body || '{}') as Record<string, unknown>;
+            scope = JSON.parse(body || "{}") as Record<string, unknown>;
           } catch {
             /* empty body = default scope */
           }
           void this.onReset!(scope)
-            .then((report) => res.writeHead(200, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify(report)))
+            .then((report) =>
+              res.writeHead(200, { ...corsFor(req), "content-type": "application/json" }).end(JSON.stringify(report)),
+            )
             .catch((err: unknown) =>
-              res.writeHead(500, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: String(err) })),
+              res
+                .writeHead(500, { ...corsFor(req), "content-type": "application/json" })
+                .end(JSON.stringify({ error: String(err) })),
             );
         });
         return;
       }
-      if (req.method === 'GET' && this.tasks) {
-        const m = /^\/tasks\/([^/]+)$/.exec(new URL(req.url ?? '/', 'http://localhost').pathname);
+      if (req.method === "GET" && this.tasks) {
+        const m = /^\/tasks\/([^/]+)$/.exec(new URL(req.url ?? "/", "http://localhost").pathname);
         if (m) {
           const taskId = decodeURIComponent(m[1]!);
           void this.tasks.get(taskId).then(
             (t) =>
               t
-                ? res.writeHead(200, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify(t))
-                : res.writeHead(404, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: `task ${taskId} not found` })),
+                ? res.writeHead(200, { ...corsFor(req), "content-type": "application/json" }).end(JSON.stringify(t))
+                : res
+                    .writeHead(404, { ...corsFor(req), "content-type": "application/json" })
+                    .end(JSON.stringify({ error: `task ${taskId} not found` })),
             (err: unknown) =>
-              res.writeHead(500, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: String((err as Error).message ?? err) })),
+              res
+                .writeHead(500, { ...corsFor(req), "content-type": "application/json" })
+                .end(JSON.stringify({ error: String((err as Error).message ?? err) })),
           );
           return;
         }
       }
       if (this.creation) {
-        const url = new URL(req.url ?? '/', 'http://localhost');
+        const url = new URL(req.url ?? "/", "http://localhost");
         const json = (status: number, payload: unknown) =>
-          res.writeHead(status, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify(payload));
+          res.writeHead(status, { ...corsFor(req), "content-type": "application/json" }).end(JSON.stringify(payload));
         const fail = (err: unknown) => json(500, { error: String((err as Error).message ?? err) });
 
         // /me, workspace channels, and the connector registry (vendors list, CRUD,
@@ -606,15 +664,17 @@ export class TextChannel {
         // actual allowed origin (or omit the header) instead of '*', and they
         // refuse to do any work at all for a disallowed Origin.
         const credJson = (status: number, payload: unknown) =>
-          res.writeHead(status, { ...credentialCors(req), 'content-type': 'application/json' }).end(JSON.stringify(payload));
+          res
+            .writeHead(status, { ...credentialCors(req), "content-type": "application/json" })
+            .end(JSON.stringify(payload));
         const credFail = (err: unknown) => credJson(500, { error: String((err as Error).message ?? err) });
         const originBlocked = (): boolean => {
           if (isAllowedOrigin(req)) return false;
-          credJson(403, { error: 'origin not allowed' });
+          credJson(403, { error: "origin not allowed" });
           return true;
         };
 
-        if (req.method === 'GET' && url.pathname === '/agent-catalog') {
+        if (req.method === "GET" && url.pathname === "/agent-catalog") {
           void this.creation.catalog().then((c) => json(200, c), fail);
           return;
         }
@@ -622,27 +682,31 @@ export class TextChannel {
         // edit-mode previews. `no-cache` because a reroll or preset join can
         // replace bytes behind an unchanged filename.
         const avatarFileMatch = /^\/avatars\/([a-z0-9][a-z0-9-]{0,63}\.png)$/.exec(url.pathname);
-        if (req.method === 'GET' && avatarFileMatch) {
-          void this.creation.avatarFile(avatarFileMatch[1]!).then(
-            (buf) =>
-              buf
-                ? res.writeHead(200, { ...corsFor(req), 'content-type': 'image/png', 'cache-control': 'no-cache' }).end(buf)
-                : json(404, { error: 'avatar not found' }),
-            fail,
-          );
+        if (req.method === "GET" && avatarFileMatch) {
+          void this.creation
+            .avatarFile(avatarFileMatch[1]!)
+            .then(
+              (buf) =>
+                buf
+                  ? res
+                      .writeHead(200, { ...corsFor(req), "content-type": "image/png", "cache-control": "no-cache" })
+                      .end(buf)
+                  : json(404, { error: "avatar not found" }),
+              fail,
+            );
           return;
         }
-        if (req.method === 'POST' && url.pathname === '/avatars/generate') {
-          let body = '';
-          req.on('data', (c) => {
+        if (req.method === "POST" && url.pathname === "/avatars/generate") {
+          let body = "";
+          req.on("data", (c) => {
             body += c;
           });
-          req.on('end', () => {
+          req.on("end", () => {
             let parsed: Record<string, unknown> = {};
             try {
-              parsed = JSON.parse(body || '{}') as Record<string, unknown>;
+              parsed = JSON.parse(body || "{}") as Record<string, unknown>;
             } catch {
-              return json(400, { error: 'body must be JSON' });
+              return json(400, { error: "body must be JSON" });
             }
             void this.creation!.generateAvatar(parsed).then(
               (r) => json((r as { error?: string }).error ? 400 : 200, r),
@@ -651,42 +715,42 @@ export class TextChannel {
           });
           return;
         }
-        if (req.method === 'GET' && url.pathname === '/voices') {
+        if (req.method === "GET" && url.pathname === "/voices") {
           const query = Object.fromEntries(url.searchParams.entries());
           void this.creation.voices(query).then((v) => json(200, v), fail);
           return;
         }
-        if (req.method === 'POST' && url.pathname === '/voices/preview') {
-          let body = '';
-          req.on('data', (c) => {
+        if (req.method === "POST" && url.pathname === "/voices/preview") {
+          let body = "";
+          req.on("data", (c) => {
             body += c;
           });
-          req.on('end', () => {
+          req.on("end", () => {
             let parsed: { voiceId?: string; text?: string } = {};
             try {
-              parsed = JSON.parse(body || '{}') as typeof parsed;
+              parsed = JSON.parse(body || "{}") as typeof parsed;
             } catch {
               /* handled below */
             }
-            if (!parsed.voiceId) return json(400, { error: 'body must be {voiceId, text?}' });
-            void this.creation!.preview(parsed.voiceId, parsed.text?.trim() || 'Hola, mi gente. This is how I sound.').then(
-              (audio) => res.writeHead(200, { ...corsFor(req), 'content-type': 'audio/mpeg' }).end(audio),
-              fail,
-            );
+            if (!parsed.voiceId) return json(400, { error: "body must be {voiceId, text?}" });
+            void this.creation!.preview(
+              parsed.voiceId,
+              parsed.text?.trim() || "Hola, mi gente. This is how I sound.",
+            ).then((audio) => res.writeHead(200, { ...corsFor(req), "content-type": "audio/mpeg" }).end(audio), fail);
           });
           return;
         }
-        if (req.method === 'POST' && url.pathname === '/agents/generate') {
-          let body = '';
-          req.on('data', (c) => {
+        if (req.method === "POST" && url.pathname === "/agents/generate") {
+          let body = "";
+          req.on("data", (c) => {
             body += c;
           });
-          req.on('end', () => {
+          req.on("end", () => {
             let parsed: Record<string, unknown> = {};
             try {
-              parsed = JSON.parse(body || '{}') as Record<string, unknown>;
+              parsed = JSON.parse(body || "{}") as Record<string, unknown>;
             } catch {
-              return json(400, { error: 'body must be JSON' });
+              return json(400, { error: "body must be JSON" });
             }
             void this.creation!.generate(parsed).then((draft) => json(200, draft), fail);
           });
@@ -697,7 +761,7 @@ export class TextChannel {
         // per-agent `presence` and top-level `discord` availability ride along
         // for surface-aware UIs; existing consumers reading `agents` alone
         // (e.g. AddAgentModal) are unaffected.
-        if (req.method === 'GET' && url.pathname === '/agents') {
+        if (req.method === "GET" && url.pathname === "/agents") {
           void this.creation.records().then((agents) => {
             const presence = this.surfaces?.presence() ?? {};
             const withPresence = agents.map((a) => ({
@@ -713,41 +777,38 @@ export class TextChannel {
           return;
         }
         const joinMatch = /^\/agents\/([^/]+)\/surfaces\/([^/]+)\/join$/.exec(url.pathname);
-        if (req.method === 'POST' && joinMatch && this.surfaces) {
-          void this.surfaces.join(decodeURIComponent(joinMatch[1]!), decodeURIComponent(joinMatch[2]!)).then(
-            (r) => ('error' in r ? json(r.status, { error: r.error }) : json(200, { ok: true })),
-            fail,
-          );
+        if (req.method === "POST" && joinMatch && this.surfaces) {
+          void this.surfaces
+            .join(decodeURIComponent(joinMatch[1]!), decodeURIComponent(joinMatch[2]!))
+            .then((r) => ("error" in r ? json(r.status, { error: r.error }) : json(200, { ok: true })), fail);
           return;
         }
         const removalMatch = /^\/agents\/([^/]+)\/removal$/.exec(url.pathname);
-        if (req.method === 'GET' && removalMatch && this.removal) {
-          void this.removal.preview(decodeURIComponent(removalMatch[1]!)).then(
-            (r) => json('error' in r ? 404 : 200, r),
-            fail,
-          );
+        if (req.method === "GET" && removalMatch && this.removal) {
+          void this.removal
+            .preview(decodeURIComponent(removalMatch[1]!))
+            .then((r) => json("error" in r ? 404 : 200, r), fail);
           return;
         }
 
         const editMatch = /^\/agents\/([^/]+)$/.exec(url.pathname);
-        if (req.method === 'DELETE' && editMatch && this.removal) {
-          void this.removal.execute(decodeURIComponent(editMatch[1]!)).then(
-            (r) => json('error' in r ? 409 : 200, r),
-            fail,
-          );
+        if (req.method === "DELETE" && editMatch && this.removal) {
+          void this.removal
+            .execute(decodeURIComponent(editMatch[1]!))
+            .then((r) => json("error" in r ? 409 : 200, r), fail);
           return;
         }
-        if (req.method === 'PUT' && editMatch) {
-          let body = '';
-          req.on('data', (c) => {
+        if (req.method === "PUT" && editMatch) {
+          let body = "";
+          req.on("data", (c) => {
             body += c;
           });
-          req.on('end', () => {
+          req.on("end", () => {
             let parsed: Record<string, unknown> = {};
             try {
-              parsed = JSON.parse(body || '{}') as Record<string, unknown>;
+              parsed = JSON.parse(body || "{}") as Record<string, unknown>;
             } catch {
-              return json(400, { error: 'body must be JSON' });
+              return json(400, { error: "body must be JSON" });
             }
             void this.creation!.update(decodeURIComponent(editMatch[1]!), parsed).then(
               (r) => json(r.error ? 400 : 200, r),
@@ -756,55 +817,55 @@ export class TextChannel {
           });
           return;
         }
-        if (req.method === 'POST' && url.pathname === '/agents') {
-          let body = '';
-          req.on('data', (c) => {
+        if (req.method === "POST" && url.pathname === "/agents") {
+          let body = "";
+          req.on("data", (c) => {
             body += c;
           });
-          req.on('end', () => {
+          req.on("end", () => {
             let parsed: Record<string, unknown> = {};
             try {
-              parsed = JSON.parse(body || '{}') as Record<string, unknown>;
+              parsed = JSON.parse(body || "{}") as Record<string, unknown>;
             } catch {
-              return json(400, { error: 'body must be JSON' });
+              return json(400, { error: "body must be JSON" });
             }
             void this.creation!.create(parsed).then((r) => json(r.error ? 400 : 201, r), fail);
           });
           return;
         }
 
-        if (req.method === 'GET' && url.pathname === '/workspaces' && this.workspaces) {
+        if (req.method === "GET" && url.pathname === "/workspaces" && this.workspaces) {
           void this.workspaces.list().then((workspaces) => json(200, { workspaces }), fail);
           return;
         }
-        if (req.method === 'POST' && url.pathname === '/workspaces' && this.workspaces) {
-          let body = '';
-          req.on('data', (c) => {
+        if (req.method === "POST" && url.pathname === "/workspaces" && this.workspaces) {
+          let body = "";
+          req.on("data", (c) => {
             body += c;
           });
-          req.on('end', () => {
+          req.on("end", () => {
             let parsed: Record<string, unknown> = {};
             try {
-              parsed = JSON.parse(body || '{}') as Record<string, unknown>;
+              parsed = JSON.parse(body || "{}") as Record<string, unknown>;
             } catch {
-              return json(400, { error: 'body must be JSON' });
+              return json(400, { error: "body must be JSON" });
             }
             void this.workspaces!.save(parsed, true).then((r) => json(r.error ? 400 : 201, r), fail);
           });
           return;
         }
         const workspaceMatch = /^\/workspaces\/([^/]+)$/.exec(url.pathname);
-        if (req.method === 'PUT' && workspaceMatch && this.workspaces) {
-          let body = '';
-          req.on('data', (c) => {
+        if (req.method === "PUT" && workspaceMatch && this.workspaces) {
+          let body = "";
+          req.on("data", (c) => {
             body += c;
           });
-          req.on('end', () => {
+          req.on("end", () => {
             let parsed: Record<string, unknown> = {};
             try {
-              parsed = JSON.parse(body || '{}') as Record<string, unknown>;
+              parsed = JSON.parse(body || "{}") as Record<string, unknown>;
             } catch {
-              return json(400, { error: 'body must be JSON' });
+              return json(400, { error: "body must be JSON" });
             }
             void this.workspaces!.save({ ...parsed, name: decodeURIComponent(workspaceMatch[1]!) }, false).then(
               (r) => json(r.error ? 400 : 200, r),
@@ -813,37 +874,39 @@ export class TextChannel {
           });
           return;
         }
-        if (req.method === 'DELETE' && workspaceMatch && this.workspaces) {
-          void this.workspaces.remove(decodeURIComponent(workspaceMatch[1]!)).then(
-            (r) => json('error' in r ? 409 : 200, r),
-            fail,
-          );
+        if (req.method === "DELETE" && workspaceMatch && this.workspaces) {
+          void this.workspaces
+            .remove(decodeURIComponent(workspaceMatch[1]!))
+            .then((r) => json("error" in r ? 409 : 200, r), fail);
           return;
         }
-        if (req.method === 'GET' && url.pathname === '/me' && this.me) {
+        if (req.method === "GET" && url.pathname === "/me" && this.me) {
           if (originBlocked()) return;
           void this.me.get().then((me) => credJson(200, me), credFail);
           return;
         }
-        if (req.method === 'PUT' && url.pathname === '/me' && this.me) {
+        if (req.method === "PUT" && url.pathname === "/me" && this.me) {
           if (originBlocked()) return;
-          let body = '';
-          req.on('data', (c) => {
+          let body = "";
+          req.on("data", (c) => {
             body += c;
           });
-          req.on('end', () => {
+          req.on("end", () => {
             let parsed: Record<string, unknown> = {};
             try {
-              parsed = JSON.parse(body || '{}') as Record<string, unknown>;
+              parsed = JSON.parse(body || "{}") as Record<string, unknown>;
             } catch {
-              return credJson(400, { error: 'body must be JSON' });
+              return credJson(400, { error: "body must be JSON" });
             }
-            void this.me!.update(parsed).then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
+            void this.me!.update(parsed).then(
+              (r) => credJson((r as { error?: string }).error ? 400 : 200, r),
+              credFail,
+            );
           });
           return;
         }
         const wsAtlassianMatch = /^\/workspaces\/([^/]+)\/verify-atlassian$/.exec(url.pathname);
-        if (req.method === 'POST' && wsAtlassianMatch && this.workspaces) {
+        if (req.method === "POST" && wsAtlassianMatch && this.workspaces) {
           if (originBlocked()) return;
           void this.workspaces
             .verifyAtlassian(decodeURIComponent(wsAtlassianMatch[1]!))
@@ -851,7 +914,7 @@ export class TextChannel {
           return;
         }
         const repoGithubMatch = /^\/workspaces\/([^/]+)\/repos\/([^/]+)\/verify-github$/.exec(url.pathname);
-        if (req.method === 'POST' && repoGithubMatch && this.workspaces) {
+        if (req.method === "POST" && repoGithubMatch && this.workspaces) {
           if (originBlocked()) return;
           void this.workspaces
             .verifyGithubRepo(decodeURIComponent(repoGithubMatch[1]!), decodeURIComponent(repoGithubMatch[2]!))
@@ -859,23 +922,23 @@ export class TextChannel {
           return;
         }
         const wsChannelsMatch = /^\/workspaces\/([^/]+)\/channels$/.exec(url.pathname);
-        if (req.method === 'GET' && wsChannelsMatch && this.channels) {
+        if (req.method === "GET" && wsChannelsMatch && this.channels) {
           if (originBlocked()) return;
           void this.channels.get(decodeURIComponent(wsChannelsMatch[1]!)).then((r) => credJson(200, r), credFail);
           return;
         }
-        if (req.method === 'PUT' && wsChannelsMatch && this.channels) {
+        if (req.method === "PUT" && wsChannelsMatch && this.channels) {
           if (originBlocked()) return;
-          let body = '';
-          req.on('data', (c) => {
+          let body = "";
+          req.on("data", (c) => {
             body += c;
           });
-          req.on('end', () => {
+          req.on("end", () => {
             let parsed: Record<string, unknown> = {};
             try {
-              parsed = JSON.parse(body || '{}') as Record<string, unknown>;
+              parsed = JSON.parse(body || "{}") as Record<string, unknown>;
             } catch {
-              return credJson(400, { error: 'body must be JSON' });
+              return credJson(400, { error: "body must be JSON" });
             }
             void this.channels!.save(decodeURIComponent(wsChannelsMatch[1]!), parsed).then(
               (r) => credJson((r as { error?: string }).error ? 400 : 200, r),
@@ -885,84 +948,90 @@ export class TextChannel {
           return;
         }
         const verifyDiscordMatch = /^\/workspaces\/([^/]+)\/channels\/verify-discord$/.exec(url.pathname);
-        if (req.method === 'POST' && verifyDiscordMatch && this.channels) {
+        if (req.method === "POST" && verifyDiscordMatch && this.channels) {
           if (originBlocked()) return;
-          void this.channels.verifyDiscord(decodeURIComponent(verifyDiscordMatch[1]!)).then(
-            (r) => credJson((r as { error?: string }).error ? 400 : 200, r),
-            credFail,
-          );
+          void this.channels
+            .verifyDiscord(decodeURIComponent(verifyDiscordMatch[1]!))
+            .then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
           return;
         }
-        if (req.method === 'GET' && url.pathname === '/me/voice' && this.voice) {
+        if (req.method === "GET" && url.pathname === "/me/voice" && this.voice) {
           if (originBlocked()) return;
           void this.voice.get().then((v) => credJson(200, v), credFail);
           return;
         }
-        if (req.method === 'PUT' && url.pathname === '/me/voice' && this.voice) {
+        if (req.method === "PUT" && url.pathname === "/me/voice" && this.voice) {
           if (originBlocked()) return;
-          let body = '';
-          req.on('data', (c) => {
+          let body = "";
+          req.on("data", (c) => {
             body += c;
           });
-          req.on('end', () => {
+          req.on("end", () => {
             let parsed: Record<string, unknown> = {};
             try {
-              parsed = JSON.parse(body || '{}') as Record<string, unknown>;
+              parsed = JSON.parse(body || "{}") as Record<string, unknown>;
             } catch {
-              return credJson(400, { error: 'body must be JSON' });
+              return credJson(400, { error: "body must be JSON" });
             }
-            void this.voice!.save(parsed).then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
+            void this.voice!.save(parsed).then(
+              (r) => credJson((r as { error?: string }).error ? 400 : 200, r),
+              credFail,
+            );
           });
           return;
         }
-        if (req.method === 'GET' && url.pathname === '/connectors/vendors' && this.connectors) {
+        if (req.method === "GET" && url.pathname === "/connectors/vendors" && this.connectors) {
           if (originBlocked()) return;
           void this.connectors.vendors().then((r) => credJson(200, r), credFail);
           return;
         }
-        if (req.method === 'GET' && url.pathname === '/me/connectors' && this.connectors) {
+        if (req.method === "GET" && url.pathname === "/me/connectors" && this.connectors) {
           if (originBlocked()) return;
           void this.connectors.list().then((r) => credJson(200, r), credFail);
           return;
         }
-        if (req.method === 'POST' && url.pathname === '/me/connectors' && this.connectors) {
+        if (req.method === "POST" && url.pathname === "/me/connectors" && this.connectors) {
           if (originBlocked()) return;
-          let body = '';
-          req.on('data', (c) => {
+          let body = "";
+          req.on("data", (c) => {
             body += c;
           });
-          req.on('end', () => {
+          req.on("end", () => {
             let parsed: Record<string, unknown> = {};
             try {
-              parsed = JSON.parse(body || '{}') as Record<string, unknown>;
+              parsed = JSON.parse(body || "{}") as Record<string, unknown>;
             } catch {
-              return credJson(400, { error: 'body must be JSON' });
+              return credJson(400, { error: "body must be JSON" });
             }
-            void this.connectors!.add(parsed).then((r) => credJson((r as { error?: string }).error ? 400 : 201, r), credFail);
+            void this.connectors!.add(parsed).then(
+              (r) => credJson((r as { error?: string }).error ? 400 : 201, r),
+              credFail,
+            );
           });
           return;
         }
         const connectorIdMatch = /^\/me\/connectors\/([^/]+)$/.exec(url.pathname);
-        if (req.method === 'PUT' && connectorIdMatch && this.connectors) {
+        if (req.method === "PUT" && connectorIdMatch && this.connectors) {
           if (originBlocked()) return;
-          let body = '';
-          req.on('data', (c) => {
+          let body = "";
+          req.on("data", (c) => {
             body += c;
           });
-          req.on('end', () => {
+          req.on("end", () => {
             let parsed: Record<string, unknown> = {};
             try {
-              parsed = JSON.parse(body || '{}') as Record<string, unknown>;
+              parsed = JSON.parse(body || "{}") as Record<string, unknown>;
             } catch {
-              return credJson(400, { error: 'body must be JSON' });
+              return credJson(400, { error: "body must be JSON" });
             }
-            void this.connectors!
-              .update(decodeURIComponent(connectorIdMatch[1]!), parsed)
-              .then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
+            void this.connectors!.update(decodeURIComponent(connectorIdMatch[1]!), parsed).then(
+              (r) => credJson((r as { error?: string }).error ? 400 : 200, r),
+              credFail,
+            );
           });
           return;
         }
-        if (req.method === 'DELETE' && connectorIdMatch && this.connectors) {
+        if (req.method === "DELETE" && connectorIdMatch && this.connectors) {
           if (originBlocked()) return;
           void this.connectors
             .remove(decodeURIComponent(connectorIdMatch[1]!))
@@ -970,98 +1039,100 @@ export class TextChannel {
           return;
         }
         const connectorVerifyMatch = /^\/me\/connectors\/([^/]+)\/verify$/.exec(url.pathname);
-        if (req.method === 'POST' && connectorVerifyMatch && this.connectors) {
+        if (req.method === "POST" && connectorVerifyMatch && this.connectors) {
           if (originBlocked()) return;
-          let body = '';
-          req.on('data', (c) => {
+          let body = "";
+          req.on("data", (c) => {
             body += c;
           });
-          req.on('end', () => {
+          req.on("end", () => {
             let parsed: { extra?: Record<string, string> } = {};
             try {
               parsed = body ? (JSON.parse(body) as { extra?: Record<string, string> }) : {};
             } catch {
-              return credJson(400, { error: 'body must be JSON' });
+              return credJson(400, { error: "body must be JSON" });
             }
-            void this.connectors!
-              .verify(decodeURIComponent(connectorVerifyMatch[1]!), parsed.extra)
-              .then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
+            void this.connectors!.verify(decodeURIComponent(connectorVerifyMatch[1]!), parsed.extra).then(
+              (r) => credJson((r as { error?: string }).error ? 400 : 200, r),
+              credFail,
+            );
           });
           return;
         }
-        if (req.method === 'GET' && url.pathname === '/cli-tools' && this.cliTools) {
+        if (req.method === "GET" && url.pathname === "/cli-tools" && this.cliTools) {
           if (originBlocked()) return;
           void this.cliTools.list().then((r) => credJson(200, r), credFail);
           return;
         }
-        if (req.method === 'POST' && url.pathname === '/cli-tools/refresh' && this.cliTools) {
+        if (req.method === "POST" && url.pathname === "/cli-tools/refresh" && this.cliTools) {
           if (originBlocked()) return;
-          void this.cliTools
-            .refresh(url.searchParams.get('tool') ?? undefined)
-            .then((r) => credJson(200, r), credFail);
+          void this.cliTools.refresh(url.searchParams.get("tool") ?? undefined).then((r) => credJson(200, r), credFail);
           return;
         }
         const cliToolMatch = /^\/cli-tools\/([^/]+)$/.exec(url.pathname);
-        if (req.method === 'PUT' && cliToolMatch && this.cliTools) {
+        if (req.method === "PUT" && cliToolMatch && this.cliTools) {
           if (originBlocked()) return;
-          let body = '';
-          req.on('data', (c) => {
+          let body = "";
+          req.on("data", (c) => {
             body += c;
           });
-          req.on('end', () => {
+          req.on("end", () => {
             let parsed: { enabled?: unknown } = {};
             try {
-              parsed = JSON.parse(body || '{}') as { enabled?: unknown };
+              parsed = JSON.parse(body || "{}") as { enabled?: unknown };
             } catch {
-              return credJson(400, { error: 'body must be JSON' });
+              return credJson(400, { error: "body must be JSON" });
             }
-            if (typeof parsed.enabled !== 'boolean') return credJson(400, { error: 'body must be { enabled: boolean }' });
-            void this.cliTools!
-              .setEnabled(decodeURIComponent(cliToolMatch[1]!), parsed.enabled)
-              .then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
+            if (typeof parsed.enabled !== "boolean")
+              return credJson(400, { error: "body must be { enabled: boolean }" });
+            void this.cliTools!.setEnabled(decodeURIComponent(cliToolMatch[1]!), parsed.enabled).then(
+              (r) => credJson((r as { error?: string }).error ? 400 : 200, r),
+              credFail,
+            );
           });
           return;
         }
-        if (req.method === 'GET' && url.pathname === '/execution-modes' && this.execModes) {
+        if (req.method === "GET" && url.pathname === "/execution-modes" && this.execModes) {
           if (originBlocked()) return;
           void this.execModes.list().then((modes) => credJson(200, { modes }), credFail);
           return;
         }
-        if (req.method === 'GET' && url.pathname === '/containers' && this.containers) {
+        if (req.method === "GET" && url.pathname === "/containers" && this.containers) {
           if (originBlocked()) return;
           void this.containers.get().then((r) => credJson(200, r), credFail);
           return;
         }
-        if (req.method === 'PUT' && url.pathname === '/containers' && this.containers) {
+        if (req.method === "PUT" && url.pathname === "/containers" && this.containers) {
           if (originBlocked()) return;
-          let body = '';
-          req.on('data', (c) => {
+          let body = "";
+          req.on("data", (c) => {
             body += c;
           });
-          req.on('end', () => {
+          req.on("end", () => {
             let parsed: { docker?: { enabled?: unknown } } = {};
             try {
-              parsed = JSON.parse(body || '{}') as { docker?: { enabled?: unknown } };
+              parsed = JSON.parse(body || "{}") as { docker?: { enabled?: unknown } };
             } catch {
-              return credJson(400, { error: 'body must be JSON' });
+              return credJson(400, { error: "body must be JSON" });
             }
-            if (typeof parsed.docker?.enabled !== 'boolean') return credJson(400, { error: 'body must be { docker: { enabled: boolean } }' });
+            if (typeof parsed.docker?.enabled !== "boolean")
+              return credJson(400, { error: "body must be { docker: { enabled: boolean } }" });
             void this.containers!.set(parsed.docker.enabled).then((r) => credJson(200, r), credFail);
           });
           return;
         }
-        if (req.method === 'POST' && url.pathname === '/containers/verify' && this.containers) {
+        if (req.method === "POST" && url.pathname === "/containers/verify" && this.containers) {
           if (originBlocked()) return;
           void this.containers.verify().then((r) => credJson(200, r), credFail);
           return;
         }
-        if (req.method === 'GET' && url.pathname === '/api-keys' && this.apiKeys) {
+        if (req.method === "GET" && url.pathname === "/api-keys" && this.apiKeys) {
           if (originBlocked()) return;
           void this.apiKeys.list().then((r) => credJson(200, r), credFail);
           return;
         }
         const apiKeyVerifyMatch = /^\/api-keys\/([^/]+)\/verify$/.exec(url.pathname);
-        if (req.method === 'POST' && apiKeyVerifyMatch && this.apiKeys) {
+        if (req.method === "POST" && apiKeyVerifyMatch && this.apiKeys) {
           if (originBlocked()) return;
           void this.apiKeys
             .verify(decodeURIComponent(apiKeyVerifyMatch[1]!))
@@ -1069,26 +1140,27 @@ export class TextChannel {
           return;
         }
         const apiKeyMatch = /^\/api-keys\/([^/]+)$/.exec(url.pathname);
-        if (req.method === 'PUT' && apiKeyMatch && this.apiKeys) {
+        if (req.method === "PUT" && apiKeyMatch && this.apiKeys) {
           if (originBlocked()) return;
-          let body = '';
-          req.on('data', (c) => {
+          let body = "";
+          req.on("data", (c) => {
             body += c;
           });
-          req.on('end', () => {
+          req.on("end", () => {
             let parsed: { key?: string } = {};
             try {
-              parsed = JSON.parse(body || '{}') as { key?: string };
+              parsed = JSON.parse(body || "{}") as { key?: string };
             } catch {
-              return credJson(400, { error: 'body must be JSON' });
+              return credJson(400, { error: "body must be JSON" });
             }
-            void this.apiKeys!
-              .save(decodeURIComponent(apiKeyMatch[1]!), parsed.key ?? '')
-              .then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
+            void this.apiKeys!.save(decodeURIComponent(apiKeyMatch[1]!), parsed.key ?? "").then(
+              (r) => credJson((r as { error?: string }).error ? 400 : 200, r),
+              credFail,
+            );
           });
           return;
         }
-        if (req.method === 'DELETE' && apiKeyMatch && this.apiKeys) {
+        if (req.method === "DELETE" && apiKeyMatch && this.apiKeys) {
           if (originBlocked()) return;
           void this.apiKeys
             .remove(decodeURIComponent(apiKeyMatch[1]!))
@@ -1105,24 +1177,24 @@ export class TextChannel {
       // Feeds AND topics share this block's json/origin/body helpers, so the
       // guard admits either — with only one wired, the other's routes must still serve.
       if (this.feeds || this.topics) {
-        const feedUrl = new URL(req.url ?? '/', 'http://localhost');
+        const feedUrl = new URL(req.url ?? "/", "http://localhost");
         const feedJson = (status: number, payload: unknown) =>
-          res.writeHead(status, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify(payload));
+          res.writeHead(status, { ...corsFor(req), "content-type": "application/json" }).end(JSON.stringify(payload));
         const feedOriginBlocked = (): boolean => {
           if (isAllowedOrigin(req)) return false;
           res
-            .writeHead(403, { ...credentialCors(req), 'content-type': 'application/json' })
-            .end(JSON.stringify({ error: 'origin not allowed' }));
+            .writeHead(403, { ...credentialCors(req), "content-type": "application/json" })
+            .end(JSON.stringify({ error: "origin not allowed" }));
           return true;
         };
         const readBody = (cb: (body: Record<string, unknown>) => void) => {
-          let raw = '';
-          req.on('data', (c) => {
+          let raw = "";
+          req.on("data", (c) => {
             raw += c;
           });
-          req.on('end', () => {
+          req.on("end", () => {
             try {
-              cb(JSON.parse(raw || '{}') as Record<string, unknown>);
+              cb(JSON.parse(raw || "{}") as Record<string, unknown>);
             } catch {
               cb({});
             }
@@ -1130,22 +1202,22 @@ export class TextChannel {
         };
 
         // Read-only: no guard, like GET /blueprints.
-        if (this.feeds && req.method === 'GET' && feedUrl.pathname === '/feeds') {
+        if (this.feeds && req.method === "GET" && feedUrl.pathname === "/feeds") {
           void this.feeds.list().then((payload) => feedJson(200, payload));
           return;
         }
         // /feeds/weather is matched BEFORE the bare-id route so it is never swallowed by it.
-        if (this.feeds && req.method === 'PUT' && feedUrl.pathname === '/feeds/weather') {
+        if (this.feeds && req.method === "PUT" && feedUrl.pathname === "/feeds/weather") {
           if (feedOriginBlocked()) return;
           readBody((body) => {
-            void this.feeds!.weather({ location: String(body.location ?? '') }).then((p) => feedJson(200, p));
+            void this.feeds!.weather({ location: String(body.location ?? "") }).then((p) => feedJson(200, p));
           });
           return;
         }
-        if (this.feeds && req.method === 'POST' && feedUrl.pathname === '/feeds') {
+        if (this.feeds && req.method === "POST" && feedUrl.pathname === "/feeds") {
           if (feedOriginBlocked()) return;
           readBody((body) => {
-            void this.feeds!.add({ url: String(body.url ?? ''), tag: String(body.tag ?? 'news') }).then((p) =>
+            void this.feeds!.add({ url: String(body.url ?? ""), tag: String(body.tag ?? "news") }).then((p) =>
               feedJson(200, p),
             );
           });
@@ -1153,97 +1225,101 @@ export class TextChannel {
         }
         // Topics. Sub-routes are matched BEFORE the bare-id route, or it swallows them.
         if (this.topics) {
-          if (req.method === 'GET' && feedUrl.pathname === '/topics') {
+          if (req.method === "GET" && feedUrl.pathname === "/topics") {
             void this.topics.list().then((p) => feedJson(200, p));
             return;
           }
-          if (req.method === 'POST' && feedUrl.pathname === '/topics') {
+          if (req.method === "POST" && feedUrl.pathname === "/topics") {
             if (feedOriginBlocked()) return;
             readBody((body) => {
-              void this.topics!.track({ name: String(body.name ?? '') }).then((p) => feedJson(200, p));
+              void this.topics!.track({ name: String(body.name ?? "") }).then((p) => feedJson(200, p));
             });
             return;
           }
           const approveMatch = /^\/topics\/([^/]+)\/approve$/.exec(feedUrl.pathname);
-          if (req.method === 'POST' && approveMatch) {
+          if (req.method === "POST" && approveMatch) {
             if (feedOriginBlocked()) return;
             readBody((body) => {
               void this.topics!.approve(decodeURIComponent(approveMatch[1]!), {
                 keep: Array.isArray(body.keep) ? (body.keep as string[]) : [],
-                baseline: typeof body.baseline === 'string' ? body.baseline : undefined,
+                baseline: typeof body.baseline === "string" ? body.baseline : undefined,
               }).then((p) => feedJson(200, p));
             });
             return;
           }
           const rediscoverMatch = /^\/topics\/([^/]+)\/rediscover$/.exec(feedUrl.pathname);
-          if (req.method === 'POST' && rediscoverMatch) {
+          if (req.method === "POST" && rediscoverMatch) {
             if (feedOriginBlocked()) return;
             void this.topics.rediscover(decodeURIComponent(rediscoverMatch[1]!)).then((p) => feedJson(200, p));
             return;
           }
           const topicIdMatch = /^\/topics\/([^/]+)$/.exec(feedUrl.pathname);
-          if (req.method === 'DELETE' && topicIdMatch) {
+          if (req.method === "DELETE" && topicIdMatch) {
             if (feedOriginBlocked()) return;
             void this.topics.remove(decodeURIComponent(topicIdMatch[1]!)).then((p) => feedJson(200, p));
             return;
           }
         }
         const feedIdMatch = /^\/feeds\/([^/]+)$/.exec(feedUrl.pathname);
-        if (this.feeds && feedIdMatch && (req.method === 'PATCH' || req.method === 'DELETE')) {
+        if (this.feeds && feedIdMatch && (req.method === "PATCH" || req.method === "DELETE")) {
           if (feedOriginBlocked()) return;
           const id = decodeURIComponent(feedIdMatch[1]!);
-          if (req.method === 'DELETE') {
+          if (req.method === "DELETE") {
             void this.feeds.remove(id).then((p) => feedJson(200, p));
             return;
           }
           readBody((body) => {
             void this.feeds!.update(id, {
-              enabled: typeof body.enabled === 'boolean' ? body.enabled : undefined,
-              dismissed: typeof body.dismissed === 'boolean' ? body.dismissed : undefined,
+              enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
+              dismissed: typeof body.dismissed === "boolean" ? body.dismissed : undefined,
             }).then((p) => feedJson(200, p));
           });
           return;
         }
       }
-      const sessionDeleteMatch = /^\/sessions\/([^/]+)$/.exec(req.url ?? '');
-      if (req.method === 'DELETE' && sessionDeleteMatch && this.sessions) {
+      const sessionDeleteMatch = /^\/sessions\/([^/]+)$/.exec(req.url ?? "");
+      if (req.method === "DELETE" && sessionDeleteMatch && this.sessions) {
         if (!isAllowedOrigin(req)) {
-          res.writeHead(403, { ...credentialCors(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: 'origin not allowed' }));
+          res
+            .writeHead(403, { ...credentialCors(req), "content-type": "application/json" })
+            .end(JSON.stringify({ error: "origin not allowed" }));
           return;
         }
         const error = this.sessions.remove(decodeURIComponent(sessionDeleteMatch[1]!));
         res
-          .writeHead(error ? 404 : 200, { ...corsFor(req), 'content-type': 'application/json' })
+          .writeHead(error ? 404 : 200, { ...corsFor(req), "content-type": "application/json" })
           .end(JSON.stringify(error ? { error } : { ok: true }));
         return;
       }
-      const sessionMatch = /^\/sessions(?:\/([^/]+)\/activate)?$/.exec(req.url ?? '');
-      if (req.method === 'POST' && sessionMatch && this.sessions) {
+      const sessionMatch = /^\/sessions(?:\/([^/]+)\/activate)?$/.exec(req.url ?? "");
+      if (req.method === "POST" && sessionMatch && this.sessions) {
         // Creating/activating a session is a mutation — same origin guard as /work/delegate
         // and the credential-adjacent routes above. An absent Origin header still passes
         // (the smith-broker-send CLI bridge and same-process callers send no Origin); only a
         // present-and-disallowed origin is refused.
         const originBlocked = (): boolean => {
           if (isAllowedOrigin(req)) return false;
-          res.writeHead(403, { ...credentialCors(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: 'origin not allowed' }));
+          res
+            .writeHead(403, { ...credentialCors(req), "content-type": "application/json" })
+            .end(JSON.stringify({ error: "origin not allowed" }));
           return true;
         };
         if (originBlocked()) return;
-        let body = '';
-        req.on('data', (c) => {
+        let body = "";
+        req.on("data", (c) => {
           body += c;
         });
-        req.on('end', () => {
+        req.on("end", () => {
           let parsed: { workspace?: unknown; runtime?: unknown; prompt?: unknown } = {};
           try {
-            parsed = JSON.parse(body || '{}') as typeof parsed;
+            parsed = JSON.parse(body || "{}") as typeof parsed;
           } catch {
             /* empty body is fine */
           }
           if (sessionMatch[1]) {
             const error = this.sessions!.activate(decodeURIComponent(sessionMatch[1]));
             res
-              .writeHead(error ? 400 : 200, { ...corsFor(req), 'content-type': 'application/json' })
+              .writeHead(error ? 400 : 200, { ...corsFor(req), "content-type": "application/json" })
               .end(JSON.stringify(error ? { error } : { ok: true }));
             return;
           }
@@ -1252,17 +1328,19 @@ export class TextChannel {
           // half-created one. The handler decides the status (e.g. 409 for an
           // unavailable execution mode) via the optional `status` field.
           void this.sessions!.create({
-            workspace: typeof parsed.workspace === 'string' ? parsed.workspace : undefined,
-            runtime: typeof parsed.runtime === 'string' ? parsed.runtime : undefined,
-            prompt: typeof parsed.prompt === 'string' ? parsed.prompt : undefined,
+            workspace: typeof parsed.workspace === "string" ? parsed.workspace : undefined,
+            runtime: typeof parsed.runtime === "string" ? parsed.runtime : undefined,
+            prompt: typeof parsed.prompt === "string" ? parsed.prompt : undefined,
           }).then(
             (r) => {
               res
-                .writeHead(r ? (r.status ?? 400) : 200, { ...corsFor(req), 'content-type': 'application/json' })
+                .writeHead(r ? (r.status ?? 400) : 200, { ...corsFor(req), "content-type": "application/json" })
                 .end(JSON.stringify(r ? { error: r.error } : { ok: true }));
             },
             (err: unknown) =>
-              res.writeHead(500, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: String((err as Error).message ?? err) })),
+              res
+                .writeHead(500, { ...corsFor(req), "content-type": "application/json" })
+                .end(JSON.stringify({ error: String((err as Error).message ?? err) })),
           );
         });
         return;
@@ -1272,46 +1350,49 @@ export class TextChannel {
         // two mutating routes use the same originBlocked() guard POST
         // /sessions uses above — an absent Origin passes, a present-and-
         // disallowed one 403s.
-        const url = new URL(req.url ?? '/', 'http://localhost');
+        const url = new URL(req.url ?? "/", "http://localhost");
         const json = (status: number, payload: unknown) =>
-          res.writeHead(status, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify(payload));
+          res.writeHead(status, { ...corsFor(req), "content-type": "application/json" }).end(JSON.stringify(payload));
         const originBlocked = (): boolean => {
           if (isAllowedOrigin(req)) return false;
-          res.writeHead(403, { ...credentialCors(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: 'origin not allowed' }));
+          res
+            .writeHead(403, { ...credentialCors(req), "content-type": "application/json" })
+            .end(JSON.stringify({ error: "origin not allowed" }));
           return true;
         };
 
-        if (req.method === 'GET' && url.pathname === '/blueprints' && this.blueprints) {
+        if (req.method === "GET" && url.pathname === "/blueprints" && this.blueprints) {
           json(200, { blueprints: this.blueprints() });
           return;
         }
 
-        if (req.method === 'POST' && url.pathname === '/documents' && this.documents) {
+        if (req.method === "POST" && url.pathname === "/documents" && this.documents) {
           if (originBlocked()) return;
-          let body = '';
-          req.on('data', (c) => {
+          let body = "";
+          req.on("data", (c) => {
             body += c;
           });
-          req.on('end', () => {
+          req.on("end", () => {
             let parsed: { blueprintId?: unknown; workType?: unknown; text?: unknown } = {};
             try {
-              parsed = JSON.parse(body || '{}') as typeof parsed;
+              parsed = JSON.parse(body || "{}") as typeof parsed;
             } catch {
               /* empty body falls into the text guard below */
             }
             // Send IS the commit: the text names the document and enters the
             // conversation. Nothing to say means nothing to create.
-            const text = typeof parsed.text === 'string' ? parsed.text : '';
+            const text = typeof parsed.text === "string" ? parsed.text : "";
             if (!text.trim()) {
-              json(400, { error: 'text is required' });
+              json(400, { error: "text is required" });
               return;
             }
             void this.documents!.create({
-              blueprintId: typeof parsed.blueprintId === 'string' ? parsed.blueprintId : undefined,
-              workType: typeof parsed.workType === 'string' ? parsed.workType : undefined,
+              blueprintId: typeof parsed.blueprintId === "string" ? parsed.blueprintId : undefined,
+              workType: typeof parsed.workType === "string" ? parsed.workType : undefined,
               text,
             }).then(
-              (r) => (r.doc ? json(200, { doc: r.doc }) : json(r.status ?? 400, { error: r.error ?? 'invalid request' })),
+              (r) =>
+                r.doc ? json(200, { doc: r.doc }) : json(r.status ?? 400, { error: r.error ?? "invalid request" }),
               (err: unknown) => json(500, { error: String((err as Error).message ?? err) }),
             );
           });
@@ -1320,25 +1401,25 @@ export class TextChannel {
 
         // PATCH /documents/:id — re-cast an untouched document under another blueprint.
         const docMatch = /^\/documents\/([^/]+)$/.exec(url.pathname);
-        if (req.method === 'PATCH' && docMatch && this.documents) {
+        if (req.method === "PATCH" && docMatch && this.documents) {
           if (originBlocked()) return;
-          let body = '';
-          req.on('data', (c) => {
+          let body = "";
+          req.on("data", (c) => {
             body += c;
           });
-          req.on('end', () => {
+          req.on("end", () => {
             let parsed: { blueprintId?: unknown; title?: unknown } = {};
             try {
-              parsed = JSON.parse(body || '{}') as typeof parsed;
+              parsed = JSON.parse(body || "{}") as typeof parsed;
             } catch {
               /* falls into the guard below */
             }
-            const blueprintId = typeof parsed.blueprintId === 'string' ? parsed.blueprintId : '';
-            const title = typeof parsed.title === 'string' ? parsed.title : '';
+            const blueprintId = typeof parsed.blueprintId === "string" ? parsed.blueprintId : "";
+            const title = typeof parsed.title === "string" ? parsed.title : "";
             if (!blueprintId && !title) {
               res
-                .writeHead(400, { ...corsFor(req), 'content-type': 'application/json' })
-                .end(JSON.stringify({ error: 'blueprintId or title is required' }));
+                .writeHead(400, { ...corsFor(req), "content-type": "application/json" })
+                .end(JSON.stringify({ error: "blueprintId or title is required" }));
               return;
             }
             const docId = decodeURIComponent(docMatch[1]);
@@ -1346,23 +1427,23 @@ export class TextChannel {
               ? this.documents!.rename(docId, title)
               : this.documents!.changeBlueprint(docId, blueprintId);
             res
-              .writeHead(error ? 409 : 200, { ...corsFor(req), 'content-type': 'application/json' })
+              .writeHead(error ? 409 : 200, { ...corsFor(req), "content-type": "application/json" })
               .end(JSON.stringify(error ? { error } : { ok: true }));
           });
           return;
         }
 
         const docSectionMatch = /^\/documents\/([^/]+)\/sections\/([^/]+)$/.exec(url.pathname);
-        if (req.method === 'PATCH' && docSectionMatch && this.documents) {
+        if (req.method === "PATCH" && docSectionMatch && this.documents) {
           if (originBlocked()) return;
-          let body = '';
-          req.on('data', (c) => {
+          let body = "";
+          req.on("data", (c) => {
             body += c;
           });
-          req.on('end', () => {
-            let text = '';
+          req.on("end", () => {
+            let text = "";
             try {
-              text = String((JSON.parse(body || '{}') as { body?: unknown }).body ?? '');
+              text = String((JSON.parse(body || "{}") as { body?: unknown }).body ?? "");
             } catch {
               /* empty = clear the section, which is legal */
             }
@@ -1376,134 +1457,156 @@ export class TextChannel {
           return;
         }
       }
-      if (req.method === 'POST' && req.url === '/polish' && this.polish) {
+      if (req.method === "POST" && req.url === "/polish" && this.polish) {
         const json = (status: number, payload: unknown) =>
-          res.writeHead(status, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify(payload));
+          res.writeHead(status, { ...corsFor(req), "content-type": "application/json" }).end(JSON.stringify(payload));
         // Same origin guard the /documents mutating routes use — this rewrites the user's
         // draft on their behalf, which is exactly the class of write a browser CSRF from
         // a disallowed origin shouldn't be able to trigger.
         const originBlocked = (): boolean => {
           if (isAllowedOrigin(req)) return false;
-          res.writeHead(403, { ...credentialCors(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: 'origin not allowed' }));
+          res
+            .writeHead(403, { ...credentialCors(req), "content-type": "application/json" })
+            .end(JSON.stringify({ error: "origin not allowed" }));
           return true;
         };
         if (originBlocked()) return;
-        let body = '';
-        req.on('data', (c) => {
+        let body = "";
+        req.on("data", (c) => {
           body += c;
         });
-        req.on('end', () => {
-          let text = '';
+        req.on("end", () => {
+          let text = "";
           try {
-            text = String((JSON.parse(body || '{}') as { text?: unknown }).text ?? '');
+            text = String((JSON.parse(body || "{}") as { text?: unknown }).text ?? "");
           } catch {
             /* falls through to the empty-text 400 */
           }
           if (!text.trim()) {
-            json(400, { error: 'text is required' });
+            json(400, { error: "text is required" });
             return;
           }
           void this.polish!(text).then(
-            (polished) => (polished ? json(200, { text: polished }) : json(502, { error: 'polish unavailable' })),
-            () => json(502, { error: 'polish unavailable' }),
+            (polished) => (polished ? json(200, { text: polished }) : json(502, { error: "polish unavailable" })),
+            () => json(502, { error: "polish unavailable" }),
           );
         });
         return;
       }
-      const workMatch = /^\/activity\/([^/]+)(\/steer|\/cancel)?$/.exec(req.url ?? '');
+      const workMatch = /^\/activity\/([^/]+)(\/steer|\/cancel)?$/.exec(req.url ?? "");
       if (workMatch && this.work) {
         const name = decodeURIComponent(workMatch[1]!);
         const action = workMatch[2];
         const respond = (status: number, payload: unknown) =>
-          res.writeHead(status, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify(payload));
-        if (req.method === 'GET' && !action) {
+          res.writeHead(status, { ...corsFor(req), "content-type": "application/json" }).end(JSON.stringify(payload));
+        if (req.method === "GET" && !action) {
           this.work
             .activity(name)
             .then((a) => respond(200, a))
             .catch((err) => respond(502, { error: String(err) }));
           return;
         }
-        if (req.method === 'POST' && action) {
-          let body = '';
-          req.on('data', (c) => {
+        if (req.method === "POST" && action) {
+          let body = "";
+          req.on("data", (c) => {
             body += c;
           });
-          req.on('end', () => {
+          req.on("end", () => {
             const message = ((): string => {
               try {
-                return String((JSON.parse(body) as { message?: unknown }).message ?? '');
+                return String((JSON.parse(body) as { message?: unknown }).message ?? "");
               } catch {
-                return '';
+                return "";
               }
             })();
-            const run = action === '/steer' ? this.work!.steer(name, message) : this.work!.cancel(name);
-            run.then((error) => respond(error ? 409 : 200, error ? { error } : { ok: true })).catch((err) => respond(502, { error: String(err) }));
+            const run = action === "/steer" ? this.work!.steer(name, message) : this.work!.cancel(name);
+            run
+              .then((error) => respond(error ? 409 : 200, error ? { error } : { ok: true }))
+              .catch((err) => respond(502, { error: String(err) }));
           });
           return;
         }
       }
       if (this.workBoards) {
-        const url2 = new URL(req.url ?? '/', 'http://localhost');
-        if (req.method === 'POST' && url2.pathname === '/work/delegate') {
+        const url2 = new URL(req.url ?? "/", "http://localhost");
+        if (req.method === "POST" && url2.pathname === "/work/delegate") {
           // Dispatch binds a task to an agent — same origin guard as /me and /me/connectors;
           // the generic /work/* proxy below stays on the open CORS policy.
           const originBlocked = (): boolean => {
             if (isAllowedOrigin(req)) return false;
-            res.writeHead(403, { ...credentialCors(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: 'origin not allowed' }));
+            res
+              .writeHead(403, { ...credentialCors(req), "content-type": "application/json" })
+              .end(JSON.stringify({ error: "origin not allowed" }));
             return true;
           };
           if (originBlocked()) return;
-          let body = '';
-          req.on('data', (c) => {
+          let body = "";
+          req.on("data", (c) => {
             body += c;
           });
-          req.on('end', () => {
+          req.on("end", () => {
             let parsed: Record<string, unknown> = {};
             try {
-              parsed = JSON.parse(body || '{}') as Record<string, unknown>;
+              parsed = JSON.parse(body || "{}") as Record<string, unknown>;
             } catch {
-              return res.writeHead(400, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: 'body must be JSON' }));
+              return res
+                .writeHead(400, { ...corsFor(req), "content-type": "application/json" })
+                .end(JSON.stringify({ error: "body must be JSON" }));
             }
             void this.workBoards!.delegate(parsed).then(
-              (r) => res.writeHead('error' in r ? 409 : 200, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify(r)),
-              (err: unknown) => res.writeHead(500, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: String((err as Error).message ?? err) })),
+              (r) =>
+                res
+                  .writeHead("error" in r ? 409 : 200, { ...corsFor(req), "content-type": "application/json" })
+                  .end(JSON.stringify(r)),
+              (err: unknown) =>
+                res
+                  .writeHead(500, { ...corsFor(req), "content-type": "application/json" })
+                  .end(JSON.stringify({ error: String((err as Error).message ?? err) })),
             );
           });
           return;
         }
-        if (url2.pathname.startsWith('/work/')) {
+        if (url2.pathname.startsWith("/work/")) {
           // Reads stay on the open CORS policy (boards are not credential data), but a
           // mutation is a mutation: with 'Access-Control-Allow-Origin: *' any page the
           // operator visits could POST/PATCH/DELETE cards here and the write would land
           // even though the attacker can't read the reply. Same guard as /work/delegate.
-          const safeMethod = req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS';
+          const safeMethod = req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS";
           if (!safeMethod && !isAllowedOrigin(req)) {
             res
-              .writeHead(403, { ...credentialCors(req), 'content-type': 'application/json' })
-              .end(JSON.stringify({ error: 'origin not allowed' }));
+              .writeHead(403, { ...credentialCors(req), "content-type": "application/json" })
+              .end(JSON.stringify({ error: "origin not allowed" }));
             return;
           }
-          let body = '';
-          req.on('data', (c) => {
+          let body = "";
+          req.on("data", (c) => {
             body += c;
           });
-          req.on('end', () => {
+          req.on("end", () => {
             let parsed: unknown;
             if (body) {
               try {
                 parsed = JSON.parse(body);
               } catch {
-                return res.writeHead(400, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: 'body must be JSON' }));
+                return res
+                  .writeHead(400, { ...corsFor(req), "content-type": "application/json" })
+                  .end(JSON.stringify({ error: "body must be JSON" }));
               }
             }
-            void this.workBoards!.proxy(req.method ?? 'GET', url2.pathname, parsed).then(
+            void this.workBoards!.proxy(req.method ?? "GET", url2.pathname, parsed).then(
               (r) => {
-                res.writeHead(r.status, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify(r.payload));
+                res
+                  .writeHead(r.status, { ...corsFor(req), "content-type": "application/json" })
+                  .end(JSON.stringify(r.payload));
                 if (r.status < 400) {
-                  for (const frame of workUpdateFrames(req.method ?? 'GET', url2.pathname, r.payload)) this.broadcast(frame);
+                  for (const frame of workUpdateFrames(req.method ?? "GET", url2.pathname, r.payload))
+                    this.broadcast(frame);
                 }
               },
-              (err: unknown) => res.writeHead(500, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: String((err as Error).message ?? err) })),
+              (err: unknown) =>
+                res
+                  .writeHead(500, { ...corsFor(req), "content-type": "application/json" })
+                  .end(JSON.stringify({ error: String((err as Error).message ?? err) })),
             );
           });
           return;
@@ -1512,39 +1615,45 @@ export class TextChannel {
       res.writeHead(404, corsFor(req)).end();
     });
 
-    this.wss = new WebSocketServer({ server, path: '/events' });
-    this.wss.on('connection', (client, req) => {
+    this.wss = new WebSocketServer({ server, path: "/events" });
+    this.wss.on("connection", (client, req) => {
       // Authenticate the upgrade BEFORE any hello frame leaks roster/transcript.
       const identity = this.auth?.resolveIdentity(req) ?? null;
-      if (this.auth?.required && !identity) { client.close(4401, 'unauthorized'); return; }
-      const kind: Identity['kind'] = identity?.kind ?? 'human'; // open mode = local human
+      if (this.auth?.required && !identity) {
+        client.close(4401, "unauthorized");
+        return;
+      }
+      const kind: Identity["kind"] = identity?.kind ?? "human"; // open mode = local human
       const clientId = ++this.clientSeq;
       this.clientKinds.set(clientId, kind);
       for (const frame of this.helloFrames()) client.send(JSON.stringify(frame));
-      client.on('message', (data, isBinary) => {
+      client.on("message", (data, isBinary) => {
         if (!this.mic) return;
         // The mic is a human affordance — a bridge never opens an audio session.
-        if (this.clientKinds.get(clientId) !== 'human') return;
+        if (this.clientKinds.get(clientId) !== "human") return;
         if (isBinary) {
           this.mic.audio(clientId, new Uint8Array(data as Buffer));
           return;
         }
         try {
           const frame = JSON.parse(String(data)) as { type?: string };
-          if (frame.type === 'mic-start') this.mic.start(clientId);
-          if (frame.type === 'mic-stop') this.mic.stop(clientId);
+          if (frame.type === "mic-start") this.mic.start(clientId);
+          if (frame.type === "mic-stop") this.mic.stop(clientId);
         } catch {
           // not a control frame — ignore
         }
       });
-      client.on('close', () => { this.mic?.stop(clientId); this.clientKinds.delete(clientId); });
+      client.on("close", () => {
+        this.mic?.stop(clientId);
+        this.clientKinds.delete(clientId);
+      });
     });
     this.server = server;
     return new Promise((resolve, reject) => {
-      server.once('error', reject);
+      server.once("error", reject);
       server.listen(port, host, () => {
         const addr = server.address();
-        resolve(typeof addr === 'object' && addr ? addr.port : port);
+        resolve(typeof addr === "object" && addr ? addr.port : port);
       });
     });
   }

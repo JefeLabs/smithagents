@@ -11,19 +11,19 @@
 // leading the utterance, or introduced by a greeting.
 
 /** Greetings that mark the next word as a vocative, in both crew languages. */
-const VOCATIVES = ['hey', 'hi', 'hello', 'yo', 'ok', 'okay', 'hola', 'oye', 'oiga', 'mira'];
+const VOCATIVES = ["hey", "hi", "hello", "yo", "ok", "okay", "hola", "oye", "oiga", "mira"];
 
 /** Words that address the whole room rather than one teammate. */
-const EVERYONE = ['team', 'everyone', 'everybody', 'all of you', 'gente', 'equipo', 'crew'];
+const EVERYONE = ["team", "everyone", "everybody", "all of you", "gente", "equipo", "crew"];
 
 /** Lowercase, strip accents, collapse punctuation to spaces. */
 export function normalize(text: string): string {
   return text
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
     .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
     .trim();
 }
 
@@ -37,8 +37,8 @@ export function whoIsAddressed(text: string, names: string[]): string[] {
   const haystack = normalize(text);
   if (!haystack) return [];
 
-  const words = haystack.split(' ');
-  if (EVERYONE.some((w) => haystack.includes(w) && isVocativeAt(words, w.split(' ')[0] ?? w))) {
+  const words = haystack.split(" ");
+  if (EVERYONE.some((w) => haystack.includes(w) && isVocativeAt(words, w.split(" ")[0] ?? w))) {
     return [...names];
   }
 
@@ -54,13 +54,13 @@ export function whoIsAddressed(text: string, names: string[]): string[] {
  * directly after a greeting? Multi-word names are matched as a phrase.
  */
 function isVocativeAt(words: string[], needle: string): boolean {
-  const parts = needle.split(' ');
+  const parts = needle.split(" ");
   for (let i = 0; i <= words.length - parts.length; i++) {
     if (!parts.every((p, k) => words[i + k] === p)) continue;
     // Leading the utterance: "Manuel, can you take this?"
     if (i === 0) return true;
     // Introduced by a greeting: "hey Manuel", "ok Manuel".
-    if (VOCATIVES.includes(words[i - 1] ?? '')) return true;
+    if (VOCATIVES.includes(words[i - 1] ?? "")) return true;
   }
   return false;
 }

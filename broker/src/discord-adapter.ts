@@ -5,8 +5,8 @@
  * under its own username. Webhook posts carry webhookId — filtering them
  * on inbound is what prevents the crew from answering itself.
  */
-import { Client, GatewayIntentBits, type Message, type TextChannel } from 'discord.js';
-import type { ChannelAdapter, ChannelSpeechLine, ChannelUtterance } from './channels.ts';
+import { Client, GatewayIntentBits, type Message, type TextChannel } from "discord.js";
+import type { ChannelAdapter, ChannelSpeechLine, ChannelUtterance } from "./channels.ts";
 
 export interface DiscordWebhookLike {
   send(payload: { username: string; content: string }): Promise<unknown>;
@@ -23,7 +23,7 @@ export interface DiscordClientLike {
    * dispatch table), regardless of how this method itself is declared.
    * Implementations narrow the payload to `DiscordMessageLike` themselves.
    */
-  on(event: 'messageCreate', handler: (message: unknown) => void): void;
+  on(event: "messageCreate", handler: (message: unknown) => void): void;
   webhookFor(channelId: string): Promise<DiscordWebhookLike>;
 }
 
@@ -44,7 +44,7 @@ export interface DiscordAdapterOptions {
   clientFactory?: () => DiscordClientLike;
 }
 
-const WEBHOOK_NAME = 'smithagents crew';
+const WEBHOOK_NAME = "smithagents crew";
 
 function realClient(): DiscordClientLike {
   const client = new Client({
@@ -76,7 +76,7 @@ export async function createDiscordAdapter(
   const client = (opts.clientFactory ?? realClient)();
   const allowed = new Set(opts.allowlist);
 
-  client.on('messageCreate', (raw) => {
+  client.on("messageCreate", (raw) => {
     const message = raw as DiscordMessageLike;
     if (!allowed.has(message.channelId)) return;
     if (message.author.bot || message.webhookId) return;
@@ -85,7 +85,7 @@ export async function createDiscordAdapter(
     // for a bare @everyone/@here or any role the bot holds, waking the crew
     // on every broadcast in an allowlisted channel rather than a real mention.
     if (!botId || !message.mentions.has(botId, { ignoreEveryone: true, ignoreRoles: true })) return;
-    const text = message.content.replace(new RegExp(`<@!?${botId}>`, 'g'), '').trim();
+    const text = message.content.replace(new RegExp(`<@!?${botId}>`, "g"), "").trim();
     if (!text) return;
     opts.onUtterance({ text, author: message.author.username, channelRef: message.channelId });
   });
@@ -93,10 +93,10 @@ export async function createDiscordAdapter(
   await client.login(opts.token);
 
   const adapter: ChannelAdapter = {
-    kind: 'discord',
+    kind: "discord",
     deliver: async (line: ChannelSpeechLine, channelRef: string) => {
       const hook = await client.webhookFor(channelRef);
-      await hook.send({ username: line.name ?? 'crew', content: line.text });
+      await hook.send({ username: line.name ?? "crew", content: line.text });
     },
   };
   return { adapter, stop: () => client.destroy().then(() => undefined) };

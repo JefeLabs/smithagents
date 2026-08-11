@@ -38,9 +38,7 @@ export class VoiceRouter {
   resolve(voice: PersonaVoiceConfig): VoiceProvider {
     const chosen = this.providers.get(voice.provider) ?? this.providers.get(this.fallbackId);
     if (!chosen) {
-      throw new Error(
-        `No voice provider for '${voice.provider}' and no '${this.fallbackId}' fallback registered.`,
-      );
+      throw new Error(`No voice provider for '${voice.provider}' and no '${this.fallbackId}' fallback registered.`);
     }
     return chosen;
   }

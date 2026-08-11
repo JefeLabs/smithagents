@@ -9,10 +9,10 @@
 //   - Release a task from quarantine (manual retry)
 // ---------------------------------------------------------------------------
 
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
-import type { TaskResult } from './types.js';
+import type { TaskResult } from "./types.js";
 
 /**
  * A quarantine entry representing a failed task shelved for human review.
@@ -68,12 +68,8 @@ export class QuarantineManager {
     const taskLogDir = join(this.logsDir, result.taskId);
     await mkdir(taskLogDir, { recursive: true });
 
-    const quarantinePath = join(taskLogDir, 'quarantine.json');
-    await writeFile(
-      quarantinePath,
-      JSON.stringify(entry, null, 2),
-      'utf-8',
-    );
+    const quarantinePath = join(taskLogDir, "quarantine.json");
+    await writeFile(quarantinePath, JSON.stringify(entry, null, 2), "utf-8");
 
     return quarantinePath;
   }
@@ -94,14 +90,10 @@ export class QuarantineManager {
       for (const dirent of taskDirs) {
         if (!dirent.isDirectory()) continue;
 
-        const quarantinePath = join(
-          this.logsDir,
-          dirent.name,
-          'quarantine.json',
-        );
+        const quarantinePath = join(this.logsDir, dirent.name, "quarantine.json");
 
         try {
-          const raw = await readFile(quarantinePath, 'utf-8');
+          const raw = await readFile(quarantinePath, "utf-8");
           const entry: QuarantineEntry = JSON.parse(raw);
           entries.push(entry);
         } catch {
@@ -113,10 +105,7 @@ export class QuarantineManager {
     }
 
     // Sort by quarantine time, most recent first
-    entries.sort((a, b) =>
-      new Date(b.quarantinedAt).getTime() -
-      new Date(a.quarantinedAt).getTime(),
-    );
+    entries.sort((a, b) => new Date(b.quarantinedAt).getTime() - new Date(a.quarantinedAt).getTime());
 
     return entries;
   }
@@ -128,10 +117,10 @@ export class QuarantineManager {
    * @returns The QuarantineEntry or null if not quarantined
    */
   async get(taskId: string): Promise<QuarantineEntry | null> {
-    const quarantinePath = join(this.logsDir, taskId, 'quarantine.json');
+    const quarantinePath = join(this.logsDir, taskId, "quarantine.json");
 
     try {
-      const raw = await readFile(quarantinePath, 'utf-8');
+      const raw = await readFile(quarantinePath, "utf-8");
       return JSON.parse(raw) as QuarantineEntry;
     } catch {
       return null;
@@ -151,31 +140,23 @@ export class QuarantineManager {
    * @throws Error if the task is not quarantined
    */
   async release(taskId: string): Promise<void> {
-    const quarantinePath = join(this.logsDir, taskId, 'quarantine.json');
+    const quarantinePath = join(this.logsDir, taskId, "quarantine.json");
 
     let entry: QuarantineEntry;
     try {
-      const raw = await readFile(quarantinePath, 'utf-8');
+      const raw = await readFile(quarantinePath, "utf-8");
       entry = JSON.parse(raw) as QuarantineEntry;
     } catch {
-      throw new Error(
-        `Task "${taskId}" is not quarantined or quarantine file not found.`,
-      );
+      throw new Error(`Task "${taskId}" is not quarantined or quarantine file not found.`);
     }
 
     if (entry.releasedAt) {
-      throw new Error(
-        `Task "${taskId}" was already released at ${entry.releasedAt}.`,
-      );
+      throw new Error(`Task "${taskId}" was already released at ${entry.releasedAt}.`);
     }
 
     // Mark as released
     entry.releasedAt = new Date().toISOString();
 
-    await writeFile(
-      quarantinePath,
-      JSON.stringify(entry, null, 2),
-      'utf-8',
-    );
+    await writeFile(quarantinePath, JSON.stringify(entry, null, 2), "utf-8");
   }
 }

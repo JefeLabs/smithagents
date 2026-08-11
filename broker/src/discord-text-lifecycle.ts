@@ -14,8 +14,8 @@
  * Task 9 wires this into session-activation lifecycle; today main.ts still
  * boots it once at startup from env vars, same as before this extraction.
  */
-import type { ChannelAdapter, ChannelUtterance } from './channels.ts';
-import { createDiscordAdapter as realCreateDiscordAdapter } from './discord-adapter.ts';
+import type { ChannelAdapter, ChannelUtterance } from "./channels.ts";
+import { createDiscordAdapter as realCreateDiscordAdapter } from "./discord-adapter.ts";
 
 /** The narrow slice of AdapterHub this lifecycle needs — not the whole class,
  * so a test can hand in a minimal fake instead of constructing a real hub. */
@@ -51,19 +51,19 @@ export function createDiscordTextLifecycle(deps: DiscordTextLifecycleDeps): Disc
 
   async function bootDiscordText(token: string, textChannels: string[]): Promise<{ stop: () => Promise<void> } | null> {
     if (textChannels.length === 0) {
-      console.error('[discord] bot token present but no text channels configured — adapter not started.');
+      console.error("[discord] bot token present but no text channels configured — adapter not started.");
       return null;
     }
     const { adapter, stop } = await createAdapter({
       token,
       allowlist: textChannels,
-      onUtterance: (u) => deps.hub.onUtterance('discord', u),
+      onUtterance: (u) => deps.hub.onUtterance("discord", u),
     });
     deps.hub.register(adapter);
     console.log(`[discord] crew attending ${textChannels.length} channel(s)`);
     const active = {
       stop: async () => {
-        deps.hub.unregister('discord');
+        deps.hub.unregister("discord");
         await stop();
       },
     };

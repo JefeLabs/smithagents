@@ -7,19 +7,19 @@
 // type 'user' | 'assistant' with a `message` payload. The final assistant
 // message of a turn carries a terminal stop_reason — that, and only that, is
 // the turn-completion signal (never process exit, never screen state).
-import { execFile } from 'node:child_process';
-import { readdir, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { promisify } from 'node:util';
-import { SessionParseError } from './errors.js';
-import { modelFlag } from './model-flag.js';
-import type { AgentProfile, CommandRunner, NormalizedMessage, ToolDriver } from './types.js';
+import { execFile } from "node:child_process";
+import { readdir, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
+import { SessionParseError } from "./errors.js";
+import { modelFlag } from "./model-flag.js";
+import type { AgentProfile, CommandRunner, NormalizedMessage, ToolDriver } from "./types.js";
 
 /** True when `path` (relative to `cwd`) is already tracked by the repo's git index. Mirrors isGitRepo()'s "call git, interpret exit code" pattern in workspaces.ts. */
 async function isTracked(cwd: string, path: string): Promise<boolean> {
   try {
-    await promisify(execFile)('git', ['ls-files', '--error-unmatch', path], { cwd });
+    await promisify(execFile)("git", ["ls-files", "--error-unmatch", path], { cwd });
     return true;
   } catch {
     return false;
@@ -27,7 +27,7 @@ async function isTracked(cwd: string, path: string): Promise<boolean> {
 }
 
 /** stop_reason values that end a turn; 'tool_use' and null are mid-turn. */
-const TERMINAL_STOP_REASONS = new Set(['end_turn', 'stop_sequence', 'max_tokens', 'refusal']);
+const TERMINAL_STOP_REASONS = new Set(["end_turn", "stop_sequence", "max_tokens", "refusal"]);
 
 interface ClaudeLine {
   type?: string;
@@ -42,13 +42,13 @@ interface ClaudeLine {
 }
 
 export function encodeProjectDir(cwd: string): string {
-  return cwd.replace(/[^a-zA-Z0-9]/g, '-');
+  return cwd.replace(/[^a-zA-Z0-9]/g, "-");
 }
 
 export class ClaudeDriver implements ToolDriver {
-  readonly id = 'claude';
+  readonly id = "claude";
 
-  constructor(private readonly configDir: string = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')) {}
+  constructor(private readonly configDir: string = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude")) {}
 
   interactiveCommand(baseCommand: string, model?: string): string {
     return `${baseCommand}${modelFlag(model)}`;
@@ -59,14 +59,14 @@ export class ClaudeDriver implements ToolDriver {
   }
 
   sessionDir(cwd: string): string {
-    return join(this.configDir, 'projects', encodeProjectDir(cwd));
+    return join(this.configDir, "projects", encodeProjectDir(cwd));
   }
 
   async listSessionFiles(cwd: string): Promise<string[]> {
     const dir = this.sessionDir(cwd);
     try {
       const entries = await readdir(dir);
-      return entries.filter((f) => f.endsWith('.jsonl')).map((f) => join(dir, f));
+      return entries.filter((f) => f.endsWith(".jsonl")).map((f) => join(dir, f));
     } catch {
       return []; // tool hasn't created the project dir yet
     }
@@ -74,25 +74,25 @@ export class ClaudeDriver implements ToolDriver {
 
   parseSessionFile(content: string): NormalizedMessage[] {
     const messages: NormalizedMessage[] = [];
-    for (const line of content.split('\n')) {
+    for (const line of content.split("\n")) {
       if (!line.trim()) continue;
       let parsed: ClaudeLine;
       try {
         parsed = JSON.parse(line) as ClaudeLine;
       } catch (err) {
-        throw new SessionParseError('claude', line, err);
+        throw new SessionParseError("claude", line, err);
       }
-      if (parsed.type !== 'user' && parsed.type !== 'assistant') continue; // titles, modes, snapshots, …
+      if (parsed.type !== "user" && parsed.type !== "assistant") continue; // titles, modes, snapshots, …
       if (parsed.isSidechain) continue; // subagent transcripts are not the conversation
       const message = parsed.message;
-      if (!message || (message.role !== 'user' && message.role !== 'assistant')) continue;
+      if (!message || (message.role !== "user" && message.role !== "assistant")) continue;
       const text =
-        typeof message.content === 'string'
+        typeof message.content === "string"
           ? message.content
           : (message.content ?? [])
-              .filter((block) => block.type === 'text' && typeof block.text === 'string')
+              .filter((block) => block.type === "text" && typeof block.text === "string")
               .map((block) => block.text as string)
-              .join('\n');
+              .join("\n");
       messages.push({
         role: message.role,
         text,
@@ -107,10 +107,10 @@ export class ClaudeDriver implements ToolDriver {
   isTurnComplete(messages: NormalizedMessage[], sinceIso: string): boolean {
     return messages.some(
       (m) =>
-        m.role === 'assistant' &&
+        m.role === "assistant" &&
         m.stopReason != null &&
         TERMINAL_STOP_REASONS.has(m.stopReason) &&
-        (m.timestamp ?? '') > sinceIso,
+        (m.timestamp ?? "") > sinceIso,
     );
   }
 
@@ -124,17 +124,17 @@ export class ClaudeDriver implements ToolDriver {
     // fields (voice, persona.style) are deliberately not rendered.
     const lines = [
       `# ${agent.name} — ${agent.role}`,
-      '',
+      "",
       agent.directives,
-      '',
+      "",
       `You are ${agent.name}. Stay within your role's domain; when work belongs to another specialist, say so instead of doing it badly.`,
-      '',
+      "",
     ];
-    await writeFile(join(worktreePath, 'CLAUDE.md'), lines.join('\n'));
-    const written = ['CLAUDE.md'];
+    await writeFile(join(worktreePath, "CLAUDE.md"), lines.join("\n"));
+    const written = ["CLAUDE.md"];
 
     if (atlassian) {
-      const alreadyTracked = await isTracked(worktreePath, '.mcp.json');
+      const alreadyTracked = await isTracked(worktreePath, ".mcp.json");
       if (alreadyTracked) {
         // The repo has its own committed .mcp.json — never overwrite a tracked file
         // with injected config (it would get swept into the task's commit). Skip
@@ -150,25 +150,27 @@ export class ClaudeDriver implements ToolDriver {
       const mcpConfig = {
         mcpServers: {
           atlassian: {
-            command: 'uvx',
-            args: ['mcp-atlassian'],
+            command: "uvx",
+            args: ["mcp-atlassian"],
             env: {
               JIRA_URL: atlassian.siteUrl,
-              JIRA_USERNAME: '${SMITH_ATLASSIAN_EMAIL}',
-              JIRA_API_TOKEN: '${SMITH_ATLASSIAN_TOKEN}',
-              CONFLUENCE_URL: `${atlassian.siteUrl.replace(/\/$/, '')}/wiki`,
-              CONFLUENCE_USERNAME: '${SMITH_ATLASSIAN_EMAIL}',
-              CONFLUENCE_API_TOKEN: '${SMITH_ATLASSIAN_TOKEN}',
-              ...(atlassian.jiraProjectKeys?.length ? { JIRA_PROJECTS_FILTER: atlassian.jiraProjectKeys.join(',') } : {}),
+              JIRA_USERNAME: "${SMITH_ATLASSIAN_EMAIL}",
+              JIRA_API_TOKEN: "${SMITH_ATLASSIAN_TOKEN}",
+              CONFLUENCE_URL: `${atlassian.siteUrl.replace(/\/$/, "")}/wiki`,
+              CONFLUENCE_USERNAME: "${SMITH_ATLASSIAN_EMAIL}",
+              CONFLUENCE_API_TOKEN: "${SMITH_ATLASSIAN_TOKEN}",
+              ...(atlassian.jiraProjectKeys?.length
+                ? { JIRA_PROJECTS_FILTER: atlassian.jiraProjectKeys.join(",") }
+                : {}),
               ...(atlassian.confluenceSpaceKeys?.length
-                ? { CONFLUENCE_SPACES_FILTER: atlassian.confluenceSpaceKeys.join(',') }
+                ? { CONFLUENCE_SPACES_FILTER: atlassian.confluenceSpaceKeys.join(",") }
                 : {}),
             },
           },
         },
       };
-      await writeFile(join(worktreePath, '.mcp.json'), `${JSON.stringify(mcpConfig, null, 2)}\n`);
-      written.push('.mcp.json');
+      await writeFile(join(worktreePath, ".mcp.json"), `${JSON.stringify(mcpConfig, null, 2)}\n`);
+      written.push(".mcp.json");
     }
 
     return written;
@@ -178,19 +180,18 @@ export class ClaudeDriver implements ToolDriver {
     binary: string,
     run: CommandRunner,
     timeoutMs: number,
-  ): Promise<{ ok: boolean | 'unknown'; detail: string }> {
+  ): Promise<{ ok: boolean | "unknown"; detail: string }> {
     // `claude auth status` prints JSON: {"loggedIn":true,"authMethod":"claude.ai","email":…}.
-    const res = await run([binary, 'auth', 'status'], timeoutMs);
+    const res = await run([binary, "auth", "status"], timeoutMs);
     try {
       const parsed = JSON.parse(res.stdout.trim()) as { loggedIn?: boolean; email?: string };
       if (parsed.loggedIn === true) {
-        return { ok: true, detail: `logged in${parsed.email ? ` as ${parsed.email}` : ''}` };
+        return { ok: true, detail: `logged in${parsed.email ? ` as ${parsed.email}` : ""}` };
       }
-      if (parsed.loggedIn === false) return { ok: false, detail: 'not logged in — run `claude /login`' };
+      if (parsed.loggedIn === false) return { ok: false, detail: "not logged in — run `claude /login`" };
     } catch {
       /* not JSON — older CLI or unexpected output: not a confirmed negative */
     }
-    return { ok: 'unknown', detail: 'auth status unrecognized' };
+    return { ok: "unknown", detail: "auth status unrecognized" };
   }
 }
-

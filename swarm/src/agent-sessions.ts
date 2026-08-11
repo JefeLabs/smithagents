@@ -8,18 +8,18 @@
 //
 // Session death loses accumulated context. There is no silent respawn:
 // surfacing the death is the caller's signal to decide whether to rebuild.
-import { createHash } from 'node:crypto';
-import { execFile } from 'node:child_process';
-import { appendFile, mkdir, readFile, stat } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
-import { randomUUID } from 'node:crypto';
-import type { ComposedAgent } from './agents.js';
-import { getDriver } from './drivers/index.js';
-import { SessionStore, type SessionRecord } from './session-store.js';
-import { classifySession } from './session-reconcile.js';
-import { SessionDeadError, SessionNotFoundError, ToolLaunchError, TurnTimeoutError } from './drivers/errors.js';
-import type { NormalizedMessage, ToolDriver } from './drivers/types.js';
-import type { RuntimeAdapter } from './runtime.js';
+
+import { execFile } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
+import { appendFile, mkdir, readFile, stat } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import type { ComposedAgent } from "./agents.js";
+import { SessionDeadError, SessionNotFoundError, ToolLaunchError, TurnTimeoutError } from "./drivers/errors.js";
+import { getDriver } from "./drivers/index.js";
+import type { NormalizedMessage, ToolDriver } from "./drivers/types.js";
+import type { RuntimeAdapter } from "./runtime.js";
+import { classifySession } from "./session-reconcile.js";
+import type { SessionRecord, SessionStore } from "./session-store.js";
 
 export interface AgentSessionInfo {
   id: string;
@@ -30,7 +30,7 @@ export interface AgentSessionInfo {
   profileHash: string;
   cwd: string;
   branch: string;
-  status: 'starting' | 'ready' | 'busy' | 'dead';
+  status: "starting" | "ready" | "busy" | "dead";
   createdAt: string;
   lastTurnAt?: string;
   turns: number;
@@ -78,17 +78,22 @@ export class AgentSessionManager {
    * materialize the profile into the tool's native surfaces, launch the TUI,
    * and wait for the tool's session file to appear (the readiness probe).
    */
-  async create(agent: ComposedAgent, agentFileRaw: string, repoRoot: string, baseBranch: string): Promise<AgentSessionInfo> {
+  async create(
+    agent: ComposedAgent,
+    agentFileRaw: string,
+    repoRoot: string,
+    baseBranch: string,
+  ): Promise<AgentSessionInfo> {
     const driver = (this.config.resolveDriver ?? getDriver)(agent.engine.cli);
-    if (!driver) throw new ToolLaunchError(agent.engine.cli, 'no driver for this tool — task runs only');
+    if (!driver) throw new ToolLaunchError(agent.engine.cli, "no driver for this tool — task runs only");
     if (driver.warmSessionsSupported === false) {
       throw new ToolLaunchError(
         agent.engine.cli,
-        'this tool keeps conversations server-side and persists no local transcript, so turn completion cannot be observed — it supports task runs and steering, not warm sessions',
+        "this tool keeps conversations server-side and persists no local transcript, so turn completion cannot be observed — it supports task runs and steering, not warm sessions",
       );
     }
     const baseCommand = this.config.agentCommands[agent.engine.cli];
-    if (!baseCommand) throw new ToolLaunchError(agent.engine.cli, 'no configured command');
+    if (!baseCommand) throw new ToolLaunchError(agent.engine.cli, "no configured command");
 
     const gate = await this.config.toolGate?.(agent.engine.cli);
     if (gate) throw new ToolLaunchError(agent.engine.cli, `subscription-inactive: ${gate}`);
@@ -96,15 +101,15 @@ export class AgentSessionManager {
     const id = randomUUID();
     const branch = `smith/session-${id}`;
     const cwd = resolve(repoRoot, this.config.worktreeDir, `session-${id}`);
-    await this.git(['worktree', 'add', cwd, '-b', branch, '--', baseBranch], repoRoot);
+    await this.git(["worktree", "add", cwd, "-b", branch, "--", baseBranch], repoRoot);
 
     // Materialized profile files are plumbing for this session, not work
     // product — keep them out of any commits the agent makes.
     const materialized = await driver.materialize(agent, cwd);
     if (materialized.length > 0) {
-      const excludeFile = await this.git(['rev-parse', '--git-path', 'info/exclude'], cwd);
+      const excludeFile = await this.git(["rev-parse", "--git-path", "info/exclude"], cwd);
       await mkdir(dirname(resolve(cwd, excludeFile)), { recursive: true });
-      await appendFile(resolve(cwd, excludeFile), `${materialized.join('\n')}\n`);
+      await appendFile(resolve(cwd, excludeFile), `${materialized.join("\n")}\n`);
     }
 
     const state: SessionState = {
@@ -112,10 +117,10 @@ export class AgentSessionManager {
       agentId: agent.id,
       agentName: agent.name,
       tool: agent.engine.cli,
-      profileHash: createHash('sha256').update(agentFileRaw).digest('hex').slice(0, 16),
+      profileHash: createHash("sha256").update(agentFileRaw).digest("hex").slice(0, 16),
       cwd,
       branch,
-      status: 'starting',
+      status: "starting",
       createdAt: new Date().toISOString(),
       turns: 0,
       tmuxSession: `smith-warm-${id}`,
@@ -137,25 +142,25 @@ export class AgentSessionManager {
     const settleUntil = Date.now() + settleMs;
     for (;;) {
       if (!(await this.runtime.exists(state.tmuxSession))) {
-        state.status = 'dead';
-        throw new ToolLaunchError(agent.engine.cli, 'process exited at launch (binary missing or crashed)');
+        state.status = "dead";
+        throw new ToolLaunchError(agent.engine.cli, "process exited at launch (binary missing or crashed)");
       }
       const fresh = (await driver.listSessionFiles(cwd)).filter((f) => !state.preexisting.has(f));
       if (fresh.length > 0) {
         state.sessionFile = await this.newest(fresh);
-        state.status = 'ready';
+        state.status = "ready";
         await this.persist(state);
         return this.info(state);
       }
       if (Date.now() >= settleUntil) {
-        state.status = 'ready'; // alive; session file resolves on the first turn
+        state.status = "ready"; // alive; session file resolves on the first turn
         await this.persist(state);
         return this.info(state);
       }
       if (Date.now() > deadline) {
         await this.runtime.kill(state.tmuxSession).catch(() => {});
-        state.status = 'dead';
-        throw new ToolLaunchError(agent.engine.cli, 'did not become ready in time');
+        state.status = "dead";
+        throw new ToolLaunchError(agent.engine.cli, "did not become ready in time");
       }
       await this.sleep(this.config.pollIntervalMs ?? DEFAULTS.pollIntervalMs);
     }
@@ -172,7 +177,7 @@ export class AgentSessionManager {
 
     const before = await this.parse(state);
     const sinceIso = new Date(Date.now() - 1000).toISOString(); // tolerate clock skew vs file timestamps
-    state.status = 'busy';
+    state.status = "busy";
     try {
       // Bracketed paste keeps multi-line text as one input; Enter submits.
       await this.runtime.sendText(state.tmuxSession, text);
@@ -191,23 +196,23 @@ export class AgentSessionManager {
         if (state.driver.isTurnComplete(messages, sinceIso)) {
           state.turns += 1;
           state.lastTurnAt = new Date().toISOString();
-          state.status = 'ready';
+          state.status = "ready";
           await this.persist(state);
           return messages.slice(before.length);
         }
         if (!(await this.runtime.exists(state.tmuxSession))) {
-          state.status = 'dead';
+          state.status = "dead";
           throw new SessionDeadError(id);
         }
         if (Date.now() > deadline) {
           // Cancel path: interrupt the turn, leave the session alive.
-          await this.runtime.sendKeys(state.tmuxSession, 'C-c').catch(() => {});
-          state.status = 'ready';
+          await this.runtime.sendKeys(state.tmuxSession, "C-c").catch(() => {});
+          state.status = "ready";
           throw new TurnTimeoutError(id, timeout);
         }
       }
     } finally {
-      if (state.status === 'busy') state.status = 'ready';
+      if (state.status === "busy") state.status = "ready";
     }
   }
 
@@ -219,7 +224,7 @@ export class AgentSessionManager {
 
   async list(): Promise<AgentSessionInfo[]> {
     for (const state of this.sessions.values()) {
-      if (state.status !== 'dead' && !(await this.runtime.exists(state.tmuxSession))) state.status = 'dead';
+      if (state.status !== "dead" && !(await this.runtime.exists(state.tmuxSession))) state.status = "dead";
     }
     return [...this.sessions.values()].map((s) => this.info(s));
   }
@@ -227,10 +232,10 @@ export class AgentSessionManager {
   /** Interrupt, then kill after a grace period. The record stays (status dead). */
   async destroy(id: string): Promise<void> {
     const state = this.get(id);
-    await this.runtime.sendKeys(state.tmuxSession, 'C-c').catch(() => {});
+    await this.runtime.sendKeys(state.tmuxSession, "C-c").catch(() => {});
     await this.sleep(500);
     await this.runtime.kill(state.tmuxSession).catch(() => {});
-    state.status = 'dead';
+    state.status = "dead";
     await this.config.store?.delete(id);
   }
 
@@ -248,7 +253,9 @@ export class AgentSessionManager {
    * boot log, because silently adopting or killing sessions is the kind of
    * thing you want to see in plain text when something looks wrong.
    */
-  async reconcile(currentHashes: Map<string, string>): Promise<{ adopted: number; forgotten: number; killed: number; orphans: string[] }> {
+  async reconcile(
+    currentHashes: Map<string, string>,
+  ): Promise<{ adopted: number; forgotten: number; killed: number; orphans: string[] }> {
     const store = this.config.store;
     const summary = { adopted: 0, forgotten: 0, killed: 0, orphans: [] as string[] };
     if (!store) return summary;
@@ -264,7 +271,7 @@ export class AgentSessionManager {
         currentProfileHash: currentHashes.get(record.agentId) ?? null,
       });
 
-      if (verdict.action === 'adopt') {
+      if (verdict.action === "adopt") {
         const driver = (this.config.resolveDriver ?? getDriver)(record.tool);
         if (!driver) {
           // The tool that ran this session is no longer registered, so we
@@ -276,7 +283,7 @@ export class AgentSessionManager {
         }
         this.sessions.set(record.id, {
           ...record,
-          status: 'ready',
+          status: "ready",
           driver,
           // Every file present now predates our adoption; newness is only
           // meaningful relative to a launch we did not perform.
@@ -286,7 +293,7 @@ export class AgentSessionManager {
         continue;
       }
 
-      if (verdict.action === 'kill') {
+      if (verdict.action === "kill") {
         await this.runtime.kill(record.tmuxSession).catch(() => {});
         summary.killed += 1;
       } else {
@@ -298,7 +305,7 @@ export class AgentSessionManager {
     // Orphans: live warm sessions no record accounts for. Reported, never
     // killed — an unexplained live process is exactly the thing a human
     // should look at before anything destroys it.
-    for (const name of await this.runtime.listByPrefix('smith-warm-')) {
+    for (const name of await this.runtime.listByPrefix("smith-warm-")) {
       if (!claimed.has(name)) summary.orphans.push(name);
     }
     return summary;
@@ -331,8 +338,8 @@ export class AgentSessionManager {
   }
 
   private async assertAlive(state: SessionState): Promise<void> {
-    if (state.status === 'dead' || !(await this.runtime.exists(state.tmuxSession))) {
-      state.status = 'dead';
+    if (state.status === "dead" || !(await this.runtime.exists(state.tmuxSession))) {
+      state.status = "dead";
       throw new SessionDeadError(state.id);
     }
   }
@@ -341,14 +348,14 @@ export class AgentSessionManager {
     if (!state.sessionFile) return [];
     // Database-backed drivers read by handle; file drivers parse from disk.
     if (state.driver.readMessages) return state.driver.readMessages(state.sessionFile);
-    const content = await readFile(state.sessionFile, 'utf8').catch(() => '');
+    const content = await readFile(state.sessionFile, "utf8").catch(() => "");
     return state.driver.parseSessionFile(content);
   }
 
   private async newest(files: string[]): Promise<string> {
     // Database handles (db::<id>) come back newest-first from their query and
     // have no mtime to compare.
-    if (files.some((f) => f.startsWith('db::'))) return files[0]!;
+    if (files.some((f) => f.startsWith("db::"))) return files[0]!;
     const stats = await Promise.all(files.map(async (f) => ({ f, mtime: (await stat(f)).mtimeMs })));
     stats.sort((a, b) => b.mtime - a.mtime);
     return stats[0]!.f;
@@ -365,7 +372,7 @@ export class AgentSessionManager {
 
   private git(args: string[], cwd: string): Promise<string> {
     return new Promise((resolvePromise, reject) => {
-      execFile('git', args, { cwd }, (error, stdout, stderr) => {
+      execFile("git", args, { cwd }, (error, stdout, stderr) => {
         if (error) reject(new Error(`git ${args[0]} failed: ${stderr || error.message}`));
         else resolvePromise(stdout.trim());
       });

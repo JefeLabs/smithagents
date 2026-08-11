@@ -1,16 +1,16 @@
 /** Shared feed shapes. No logic lives here — see spec §3. */
 
-export type FeedTag = 'news' | 'tech' | 'sports' | 'gov' | 'release' | 'weather';
+export type FeedTag = "news" | "tech" | "sports" | "gov" | "release" | "weather";
 
 export interface FeedSource {
   id: string;
   label: string;
-  kind: 'rss' | 'weather' | 'x' | 'registry';
+  kind: "rss" | "weather" | "x" | "registry";
   /** RSS/Atom URL, X handle, registry coordinate, or "lat,lon". */
   locator: string;
   tag: FeedTag;
   /** Manual sources are the human's; derived ones are regenerated and carry `reason`. */
-  origin: 'manual' | 'derived';
+  origin: "manual" | "derived";
   /** Why this exists, shown in Settings: "from build.gradle", "you've mentioned RunPod 6×". */
   reason?: string;
   enabled: boolean;
@@ -31,7 +31,7 @@ export interface FeedItem {
   publishedAt: string;
   /** Trimmed to 400 chars at ingest: the store is not an archive. */
   summary: string;
-  release?: { name: string; version: string; bump: 'major' | 'minor' | 'patch'; security: boolean };
+  release?: { name: string; version: string; bump: "major" | "minor" | "patch"; security: boolean };
   /** Stamped when the crew mentions it — the only thing that stops a repeat (spec §5). */
   spokenAt?: string;
   /** Stamped when a card exists for it (spec §5b). */

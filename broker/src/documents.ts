@@ -4,8 +4,8 @@
  * Phase 1 is solo editing; participants/proposals exist in the shape now so
  * phases 2-3 never migrate stored files.
  */
-import { type Blueprint, instantiateSections } from './blueprints.ts';
-import { normalizeMarkdown } from './markdown-normalize.ts';
+import { type Blueprint, instantiateSections } from "./blueprints.ts";
+import { normalizeMarkdown } from "./markdown-normalize.ts";
 
 export interface DocSection {
   id: string;
@@ -19,7 +19,7 @@ export interface Proposal {
   agentId: string;
   newBody: string;
   rationale: string;
-  state: 'open' | 'accepted' | 'rejected' | 'stale';
+  state: "open" | "accepted" | "rejected" | "stale";
   createdAt: string;
 }
 
@@ -31,7 +31,7 @@ export interface Doc {
   sections: DocSection[];
   participants: string[];
   proposals: Proposal[];
-  status: 'drafting' | 'review' | 'final';
+  status: "drafting" | "review" | "final";
   createdAt: string;
   updatedAt: string;
 }
@@ -69,7 +69,7 @@ export class DocumentManager {
       sections,
       participants: [],
       proposals: [],
-      status: 'drafting',
+      status: "drafting",
       createdAt: this.now(),
       updatedAt: this.now(),
     };
@@ -98,7 +98,7 @@ export class DocumentManager {
   /** Rename a document. An all-whitespace title is refused — a page needs a name. */
   rename(docId: string, title: string): Doc | null {
     const doc = this.docs.get(docId);
-    const clean = title.replace(/\s+/g, ' ').trim();
+    const clean = title.replace(/\s+/g, " ").trim();
     if (!doc || !clean) return null;
     doc.title = clean;
     doc.updatedAt = this.now();
@@ -110,10 +110,10 @@ export class DocumentManager {
     const doc = this.docs.get(docId);
     if (!doc) return null;
     if (doc.sections.some((s) => s.body.trim())) return null;
-    const sections = instantiateSections(bp, workType ?? bp.workTypes[0] ?? '');
+    const sections = instantiateSections(bp, workType ?? bp.workTypes[0] ?? "");
     if (!sections) return null;
     doc.blueprintId = bp.id;
-    doc.workType = workType ?? bp.workTypes[0] ?? '';
+    doc.workType = workType ?? bp.workTypes[0] ?? "";
     doc.sections = sections;
     doc.updatedAt = this.now();
     this.store.save(doc);

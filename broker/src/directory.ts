@@ -5,9 +5,9 @@
  * the broker knows which agent it delegated for), meeting membership from the
  * broker's own LiveKit state.
  */
-import type { RegistryAgent, SwarmEvent } from './swarm-client.ts';
+import type { RegistryAgent, SwarmEvent } from "./swarm-client.ts";
 
-export type AgentStatus = 'idle' | 'busy' | 'in-meeting' | 'offline';
+export type AgentStatus = "idle" | "busy" | "in-meeting" | "offline";
 
 export interface AgentPresence {
   agent: RegistryAgent;
@@ -54,12 +54,12 @@ export class AgentDirectory {
   }
 
   onEvent(e: SwarmEvent): void {
-    if (e.type === 'task:dispatched') {
+    if (e.type === "task:dispatched") {
       const hit = this.entryByTask(e.taskId);
       if (hit) hit[1].dispatched = true;
       return;
     }
-    if (e.type === 'task:completed' || e.type === 'task:failed' || e.type === 'task:quarantined') {
+    if (e.type === "task:completed" || e.type === "task:failed" || e.type === "task:quarantined") {
       const hit = this.entryByTask(e.taskId);
       if (hit) this.placements.delete(hit[0]);
       else {
@@ -100,9 +100,9 @@ export class AgentDirectory {
   snapshot(): AgentPresence[] {
     return [...this.agents.values()].map((agent) => {
       const placement = this.placements.get(agent.id);
-      let status: AgentStatus = 'idle';
-      if (placement) status = 'busy';
-      else if (this.meetingIds.has(agent.id)) status = 'in-meeting';
+      let status: AgentStatus = "idle";
+      if (placement) status = "busy";
+      else if (this.meetingIds.has(agent.id)) status = "in-meeting";
       return {
         agent,
         status,
@@ -119,12 +119,12 @@ export class AgentDirectory {
       .filter((p) => !excludeIds.has(p.agent.id))
       .map((p) => {
         let base = `${p.agent.name} (${p.agent.role}) — ${p.status}`;
-        if (p.status === 'busy' && p.taskSummary) base += `: ${p.taskSummary}`;
+        if (p.status === "busy" && p.taskSummary) base += `: ${p.taskSummary}`;
         base += `\n  Persona: ${p.agent.directives}`;
         if (p.agent.persona?.style) base += `\n  Speaking style: ${p.agent.persona.style}`;
         return base;
       })
-      .join('\n');
+      .join("\n");
   }
 
   private entryByTask(taskId: string): [string, Placement] | undefined {

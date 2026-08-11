@@ -4,14 +4,14 @@
 // Workspace records are git-tracked and can never hold a live secret, so
 // this lives in its own untracked companion file, keyed by the same
 // workspace name (design §"Settled decisions").
-import { readFile, mkdir, open, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, open, readFile, rm } from "node:fs/promises";
+import { join } from "node:path";
 
 export interface WorkspaceChannels {
   discord?: {
-    botToken: string;              // secret
-    textChannels: string[];        // Discord channel IDs
-    voiceChannels: string[];       // Discord channel IDs
+    botToken: string; // secret
+    textChannels: string[]; // Discord channel IDs
+    voiceChannels: string[]; // Discord channel IDs
   };
 }
 
@@ -20,10 +20,10 @@ const SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
 /** One workspace's channel config, or null if it has none configured yet. */
 export async function loadChannelsFor(dir: string, workspaceName: string): Promise<WorkspaceChannels | null> {
   try {
-    const raw = await readFile(join(dir, `${workspaceName}.json`), 'utf8');
+    const raw = await readFile(join(dir, `${workspaceName}.json`), "utf8");
     return JSON.parse(raw) as WorkspaceChannels;
   } catch (err) {
-    if (err instanceof Error && 'code' in err && err.code === 'ENOENT') return null;
+    if (err instanceof Error && "code" in err && err.code === "ENOENT") return null;
     throw err;
   }
 }
@@ -35,7 +35,7 @@ export async function saveChannels(dir: string, workspaceName: string, channels:
   }
   await mkdir(dir, { recursive: true, mode: 0o700 });
   const filePath = join(dir, `${workspaceName}.json`);
-  const fh = await open(filePath, 'w', 0o600);
+  const fh = await open(filePath, "w", 0o600);
   try {
     await fh.writeFile(`${JSON.stringify(channels, null, 2)}\n`);
   } finally {

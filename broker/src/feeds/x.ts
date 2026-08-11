@@ -5,7 +5,7 @@
  * Every outcome is a value, never an exception: no key, over budget, or rate
  * limited all come back as `skipped` with a reason the Settings screen shows.
  */
-import type { FeedItem, FeedSource, FeedState } from './types.ts';
+import type { FeedItem, FeedSource, FeedState } from "./types.ts";
 
 export function monthKey(at: string): string {
   return at.slice(0, 7); // YYYY-MM — a calendar month, matching how the bill arrives
@@ -37,7 +37,7 @@ export async function fetchX(
   const key = monthKey(deps.now());
   const used = state.xUsage[key] ?? 0;
 
-  if (!deps.token) return { items: [], usage: used, skipped: 'no API key configured' };
+  if (!deps.token) return { items: [], usage: used, skipped: "no API key configured" };
   if (used >= deps.cap) return { items: [], usage: used, skipped: `monthly budget reached (${used}/${deps.cap})` };
 
   try {
