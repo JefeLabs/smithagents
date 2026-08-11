@@ -74,8 +74,7 @@ export type ChannelFrame =
    */
   | { type: 'documents'; documents: Doc[] };
 
-const CORS = {
-  'Access-Control-Allow-Origin': '*',
+const CORS_BASE = {
   // PUT and DELETE aren't CORS-safelisted methods — a real browser/webview fetch
   // preflights them first and blocks the actual request if the method isn't listed
   // here. This file has always routed PUT (/me, /workspaces/:name, /agents/:id) and
@@ -92,6 +91,27 @@ const CORS = {
   // 'authorization' is here so the bridge's Bearer header survives preflight.
   'Access-Control-Allow-Headers': 'content-type, authorization',
 };
+
+/**
+ * CORS headers for a response — request-aware, because a WILDCARD IS ILLEGAL
+ * once the caller sends credentials. The control plane routes everything
+ * through `brokerFetch`, which sets `credentials: "include"`, so a `*` here
+ * makes the browser DISCARD the response before the app ever sees it. That is
+ * what broke the boards view (2026-08-11): the request succeeded with 200 and
+ * the response was thrown away.
+ *
+ * A KNOWN origin gets itself echoed plus allow-credentials. An unknown origin
+ * gets no allow-origin at all — echoing an arbitrary origin WITH credentials
+ * would let any site read this broker. No Origin at all (curl, the
+ * smith-broker-send bridge, same-process callers) keeps the open wildcard,
+ * which costs nothing because those callers send no cookies.
+ */
+function corsFor(req: IncomingMessage): Record<string, string> {
+  const origin = req.headers.origin;
+  if (!origin) return { ...CORS_BASE, 'Access-Control-Allow-Origin': '*' };
+  if (!ALLOWED_ORIGINS.has(origin)) return { ...CORS_BASE };
+  return { ...CORS_BASE, 'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Credentials': 'true' };
+}
 
 // Routes that touch credential-presence data need a real origin check, unlike the
 // rest of this file's intentionally-open CORS (loopback bind is the gate there).
@@ -421,7 +441,7 @@ export class TextChannel {
   start(port: number, host = '127.0.0.1'): Promise<number> {
     const server = createServer((req, res) => {
       if (req.method === 'OPTIONS') {
-        res.writeHead(204, CORS).end();
+        res.writeHead(204, corsFor(req)).end();
         return;
       }
 
@@ -444,7 +464,7 @@ export class TextChannel {
       if (auth?.required && req.method !== 'GET' && req.method !== 'HEAD') {
         const origin = req.headers.origin;
         if (origin && !ALLOWED_ORIGINS.has(origin) && origin !== auth.webOrigin) {
-          res.writeHead(403, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify({ error: 'origin not allowed' }));
+          res.writeHead(403, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: 'origin not allowed' }));
           return;
         }
       }
@@ -467,7 +487,7 @@ export class TextChannel {
       }
 
       if (auth?.required && !identity && !EXEMPT.has(pathname)) {
-        res.writeHead(401, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify({ error: 'unauthorized' }));
+        res.writeHead(401, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: 'unauthorized' }));
         return;
       }
 
@@ -485,7 +505,7 @@ export class TextChannel {
           }
           const text = parsed.text;
           if (typeof text !== 'string' || !text.trim()) {
-            res.writeHead(400, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify({ error: 'body must be {"text": string}' }));
+            res.writeHead(400, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: 'body must be {"text": string}' }));
             return;
           }
           const utterance = text.trim();
@@ -498,19 +518,19 @@ export class TextChannel {
               (r) => {
                 const status = 'error' in r ? r.status : 200;
                 res
-                  .writeHead(status, { ...CORS, 'content-type': 'application/json' })
+                  .writeHead(status, { ...corsFor(req), 'content-type': 'application/json' })
                   .end(JSON.stringify('error' in r ? { error: r.error } : r));
               },
               (err: unknown) =>
                 res
-                  .writeHead(500, { ...CORS, 'content-type': 'application/json' })
+                  .writeHead(500, { ...corsFor(req), 'content-type': 'application/json' })
                   .end(JSON.stringify({ error: String((err as Error).message ?? err) })),
             );
             return;
           }
           this.broadcast({ type: 'utterance', text: utterance });
           this.onUtterance(utterance);
-          res.writeHead(202, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify({ ok: true }));
+          res.writeHead(202, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify({ ok: true }));
         });
         return;
       }
@@ -528,14 +548,14 @@ export class TextChannel {
           }
           const error = parsed ? this.onCompose(parsed) : 'body must be JSON';
           const status = error ? 400 : 200;
-          res.writeHead(status, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify(error ? { error } : { ok: true }));
+          res.writeHead(status, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify(error ? { error } : { ok: true }));
         });
         return;
       }
       if (req.method === 'POST' && req.url === '/reset' && this.onReset) {
         // A full-install reset is a human action — never let a bridge trigger it.
         if (auth?.required && identity?.kind === 'bridge') {
-          res.writeHead(403, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify({ error: 'reset is not permitted for bridge clients' }));
+          res.writeHead(403, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: 'reset is not permitted for bridge clients' }));
           return;
         }
         let body = '';
@@ -550,9 +570,9 @@ export class TextChannel {
             /* empty body = default scope */
           }
           void this.onReset!(scope)
-            .then((report) => res.writeHead(200, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify(report)))
+            .then((report) => res.writeHead(200, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify(report)))
             .catch((err: unknown) =>
-              res.writeHead(500, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify({ error: String(err) })),
+              res.writeHead(500, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: String(err) })),
             );
         });
         return;
@@ -564,10 +584,10 @@ export class TextChannel {
           void this.tasks.get(taskId).then(
             (t) =>
               t
-                ? res.writeHead(200, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify(t))
-                : res.writeHead(404, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify({ error: `task ${taskId} not found` })),
+                ? res.writeHead(200, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify(t))
+                : res.writeHead(404, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: `task ${taskId} not found` })),
             (err: unknown) =>
-              res.writeHead(500, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify({ error: String((err as Error).message ?? err) })),
+              res.writeHead(500, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: String((err as Error).message ?? err) })),
           );
           return;
         }
@@ -575,7 +595,7 @@ export class TextChannel {
       if (this.creation) {
         const url = new URL(req.url ?? '/', 'http://localhost');
         const json = (status: number, payload: unknown) =>
-          res.writeHead(status, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify(payload));
+          res.writeHead(status, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify(payload));
         const fail = (err: unknown) => json(500, { error: String((err as Error).message ?? err) });
 
         // /me, workspace channels, and the connector registry (vendors list, CRUD,
@@ -606,7 +626,7 @@ export class TextChannel {
           void this.creation.avatarFile(avatarFileMatch[1]!).then(
             (buf) =>
               buf
-                ? res.writeHead(200, { ...CORS, 'content-type': 'image/png', 'cache-control': 'no-cache' }).end(buf)
+                ? res.writeHead(200, { ...corsFor(req), 'content-type': 'image/png', 'cache-control': 'no-cache' }).end(buf)
                 : json(404, { error: 'avatar not found' }),
             fail,
           );
@@ -650,7 +670,7 @@ export class TextChannel {
             }
             if (!parsed.voiceId) return json(400, { error: 'body must be {voiceId, text?}' });
             void this.creation!.preview(parsed.voiceId, parsed.text?.trim() || 'Hola, mi gente. This is how I sound.').then(
-              (audio) => res.writeHead(200, { ...CORS, 'content-type': 'audio/mpeg' }).end(audio),
+              (audio) => res.writeHead(200, { ...corsFor(req), 'content-type': 'audio/mpeg' }).end(audio),
               fail,
             );
           });
@@ -1087,7 +1107,7 @@ export class TextChannel {
       if (this.feeds || this.topics) {
         const feedUrl = new URL(req.url ?? '/', 'http://localhost');
         const feedJson = (status: number, payload: unknown) =>
-          res.writeHead(status, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify(payload));
+          res.writeHead(status, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify(payload));
         const feedOriginBlocked = (): boolean => {
           if (isAllowedOrigin(req)) return false;
           res
@@ -1193,7 +1213,7 @@ export class TextChannel {
         }
         const error = this.sessions.remove(decodeURIComponent(sessionDeleteMatch[1]!));
         res
-          .writeHead(error ? 404 : 200, { ...CORS, 'content-type': 'application/json' })
+          .writeHead(error ? 404 : 200, { ...corsFor(req), 'content-type': 'application/json' })
           .end(JSON.stringify(error ? { error } : { ok: true }));
         return;
       }
@@ -1223,7 +1243,7 @@ export class TextChannel {
           if (sessionMatch[1]) {
             const error = this.sessions!.activate(decodeURIComponent(sessionMatch[1]));
             res
-              .writeHead(error ? 400 : 200, { ...CORS, 'content-type': 'application/json' })
+              .writeHead(error ? 400 : 200, { ...corsFor(req), 'content-type': 'application/json' })
               .end(JSON.stringify(error ? { error } : { ok: true }));
             return;
           }
@@ -1238,11 +1258,11 @@ export class TextChannel {
           }).then(
             (r) => {
               res
-                .writeHead(r ? (r.status ?? 400) : 200, { ...CORS, 'content-type': 'application/json' })
+                .writeHead(r ? (r.status ?? 400) : 200, { ...corsFor(req), 'content-type': 'application/json' })
                 .end(JSON.stringify(r ? { error: r.error } : { ok: true }));
             },
             (err: unknown) =>
-              res.writeHead(500, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify({ error: String((err as Error).message ?? err) })),
+              res.writeHead(500, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: String((err as Error).message ?? err) })),
           );
         });
         return;
@@ -1254,7 +1274,7 @@ export class TextChannel {
         // disallowed one 403s.
         const url = new URL(req.url ?? '/', 'http://localhost');
         const json = (status: number, payload: unknown) =>
-          res.writeHead(status, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify(payload));
+          res.writeHead(status, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify(payload));
         const originBlocked = (): boolean => {
           if (isAllowedOrigin(req)) return false;
           res.writeHead(403, { ...credentialCors(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: 'origin not allowed' }));
@@ -1317,7 +1337,7 @@ export class TextChannel {
             const title = typeof parsed.title === 'string' ? parsed.title : '';
             if (!blueprintId && !title) {
               res
-                .writeHead(400, { ...CORS, 'content-type': 'application/json' })
+                .writeHead(400, { ...corsFor(req), 'content-type': 'application/json' })
                 .end(JSON.stringify({ error: 'blueprintId or title is required' }));
               return;
             }
@@ -1326,7 +1346,7 @@ export class TextChannel {
               ? this.documents!.rename(docId, title)
               : this.documents!.changeBlueprint(docId, blueprintId);
             res
-              .writeHead(error ? 409 : 200, { ...CORS, 'content-type': 'application/json' })
+              .writeHead(error ? 409 : 200, { ...corsFor(req), 'content-type': 'application/json' })
               .end(JSON.stringify(error ? { error } : { ok: true }));
           });
           return;
@@ -1358,7 +1378,7 @@ export class TextChannel {
       }
       if (req.method === 'POST' && req.url === '/polish' && this.polish) {
         const json = (status: number, payload: unknown) =>
-          res.writeHead(status, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify(payload));
+          res.writeHead(status, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify(payload));
         // Same origin guard the /documents mutating routes use — this rewrites the user's
         // draft on their behalf, which is exactly the class of write a browser CSRF from
         // a disallowed origin shouldn't be able to trigger.
@@ -1395,7 +1415,7 @@ export class TextChannel {
         const name = decodeURIComponent(workMatch[1]!);
         const action = workMatch[2];
         const respond = (status: number, payload: unknown) =>
-          res.writeHead(status, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify(payload));
+          res.writeHead(status, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify(payload));
         if (req.method === 'GET' && !action) {
           this.work
             .activity(name)
@@ -1442,11 +1462,11 @@ export class TextChannel {
             try {
               parsed = JSON.parse(body || '{}') as Record<string, unknown>;
             } catch {
-              return res.writeHead(400, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify({ error: 'body must be JSON' }));
+              return res.writeHead(400, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: 'body must be JSON' }));
             }
             void this.workBoards!.delegate(parsed).then(
-              (r) => res.writeHead('error' in r ? 409 : 200, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify(r)),
-              (err: unknown) => res.writeHead(500, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify({ error: String((err as Error).message ?? err) })),
+              (r) => res.writeHead('error' in r ? 409 : 200, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify(r)),
+              (err: unknown) => res.writeHead(500, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: String((err as Error).message ?? err) })),
             );
           });
           return;
@@ -1473,23 +1493,23 @@ export class TextChannel {
               try {
                 parsed = JSON.parse(body);
               } catch {
-                return res.writeHead(400, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify({ error: 'body must be JSON' }));
+                return res.writeHead(400, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: 'body must be JSON' }));
               }
             }
             void this.workBoards!.proxy(req.method ?? 'GET', url2.pathname, parsed).then(
               (r) => {
-                res.writeHead(r.status, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify(r.payload));
+                res.writeHead(r.status, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify(r.payload));
                 if (r.status < 400) {
                   for (const frame of workUpdateFrames(req.method ?? 'GET', url2.pathname, r.payload)) this.broadcast(frame);
                 }
               },
-              (err: unknown) => res.writeHead(500, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify({ error: String((err as Error).message ?? err) })),
+              (err: unknown) => res.writeHead(500, { ...corsFor(req), 'content-type': 'application/json' }).end(JSON.stringify({ error: String((err as Error).message ?? err) })),
             );
           });
           return;
         }
       }
-      res.writeHead(404, CORS).end();
+      res.writeHead(404, corsFor(req)).end();
     });
 
     this.wss = new WebSocketServer({ server, path: '/events' });
