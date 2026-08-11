@@ -63,6 +63,7 @@ import { loadIdentity, promptInfo } from "./identity.ts";
 import { LocalMemory, type MemoryEntry } from "./memory.ts";
 import { MicSessionGate } from "./mic-gate.ts";
 import { draftToAgentBody, type PersonaDraft, PersonaGenerator } from "./persona-generator.ts";
+import { docSeedsInWorkspace } from "./pins.ts";
 import { polishText } from "./polish.ts";
 import { createRemovalService } from "./removal.ts";
 import { LiveKitRoomBridge } from "./room.ts";
@@ -719,7 +720,7 @@ function startSession(
   // dashboards-as-documents, pin model v2) — a new session opens with them
   // already on its shelf.
   for (const doc of documentManager.list()) {
-    if (doc.pins?.includes(workspace)) sessionManager.addArtifact(s.id, doc.id);
+    if (docSeedsInWorkspace(doc.pins, workspace, groupRecords)) sessionManager.addArtifact(s.id, doc.id);
   }
   switchDiscord(workspace);
   textChannel.broadcast(sessionFrame());
