@@ -149,3 +149,83 @@ test("patchSection stores normalized markdown, whatever spelling arrived", () =>
   assert.equal(m.get(doc.id)?.sections.find((s) => s.id === "overview")?.body, stored);
   assert.match(stored ?? "", /_em_/); // the canonical spelling, not the input's
 });
+
+test("proposals: add → accept applies the body through the normalize path and marks accepted", () => {
+  const { m } = manager();
+  const doc = m.create(BP, "feature", "T");
+  assert.ok(doc);
+  const withP = m.addProposal(doc.id, {
+    sectionId: "overview",
+    agentId: "osvaldo",
+    newBody: "*tighter* words",
+    rationale: "shorter",
+  });
+  assert.ok(withP);
+  const p = withP.proposals[0];
+  assert.equal(p.id, "p1");
+  assert.equal(p.state, "open");
+  assert.equal(p.agentId, "osvaldo");
+  const accepted = m.acceptProposal(doc.id, p.id);
+  assert.ok(accepted);
+  assert.equal(accepted.proposals[0].state, "accepted");
+  assert.match(accepted.sections.find((s) => s.id === "overview")?.body ?? "", /_tighter_/); // normalized
+});
+
+test("proposals: reject marks rejected and leaves the section alone; non-open decisions are refused", () => {
+  const { m } = manager();
+  const doc = m.create(BP, "feature", "T");
+  assert.ok(doc);
+  const withP = m.addProposal(doc.id, { sectionId: "overview", agentId: "b", newBody: "x", rationale: "r" });
+  assert.ok(withP);
+  const pid = withP.proposals[0].id;
+  const rejected = m.rejectProposal(doc.id, pid);
+  assert.equal(rejected?.proposals[0].state, "rejected");
+  assert.equal(rejected?.sections.find((s) => s.id === "overview")?.body, "");
+  assert.equal(m.acceptProposal(doc.id, pid), null); // already decided
+  assert.equal(m.rejectProposal(doc.id, pid), null);
+});
+
+test("proposals: a human patchSection stales every OPEN proposal on that section only", () => {
+  const { m } = manager();
+  const doc = m.create(BP, "bugfix", "T");
+  assert.ok(doc);
+  m.addProposal(doc.id, { sectionId: "overview", agentId: "a", newBody: "one", rationale: "r" });
+  m.addProposal(doc.id, { sectionId: "repro", agentId: "a", newBody: "two", rationale: "r" });
+  const d2 = m.addProposal(doc.id, { sectionId: "overview", agentId: "b", newBody: "three", rationale: "r" });
+  assert.ok(d2);
+  m.rejectProposal(doc.id, d2.proposals[2].id);
+  m.patchSection(doc.id, "overview", "the human wrote this");
+  const states = m.get(doc.id)?.proposals.map((p) => [p.sectionId, p.state]);
+  assert.deepEqual(states, [
+    ["overview", "stale"],
+    ["repro", "open"],
+    ["overview", "rejected"], // decided proposals never restate
+  ]);
+});
+
+test("proposals: accepting does NOT stale sibling proposals; unknown ids return null", () => {
+  const { m } = manager();
+  const doc = m.create(BP, "feature", "T");
+  assert.ok(doc);
+  const a = m.addProposal(doc.id, { sectionId: "overview", agentId: "a", newBody: "one", rationale: "r" });
+  m.addProposal(doc.id, { sectionId: "overview", agentId: "b", newBody: "two", rationale: "r" });
+  assert.ok(a);
+  const after = m.acceptProposal(doc.id, a.proposals[0].id);
+  // acceptProposal applies via the private path — sibling OPEN proposals survive
+  // for the human to consider; only a direct human edit stales them.
+  assert.equal(after?.proposals[1].state, "open");
+  assert.equal(m.addProposal("nope", { sectionId: "overview", agentId: "a", newBody: "x", rationale: "r" }), null);
+  assert.equal(m.addProposal(doc.id, { sectionId: "ghost", agentId: "a", newBody: "x", rationale: "r" }), null);
+  assert.equal(m.acceptProposal(doc.id, "p9"), null);
+});
+
+test("proposals: seq continues across restarts from stored ids", () => {
+  const { m } = manager();
+  const doc = m.create(BP, "feature", "T");
+  assert.ok(doc);
+  const withP = m.addProposal(doc.id, { sectionId: "overview", agentId: "a", newBody: "x", rationale: "r" });
+  assert.ok(withP);
+  const { m: m2 } = manager([structuredClone(m.get(doc.id) as Doc)]);
+  const again = m2.addProposal(doc.id, { sectionId: "overview", agentId: "a", newBody: "y", rationale: "r" });
+  assert.equal(again?.proposals[1].id, "p2");
+});
