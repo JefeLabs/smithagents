@@ -47,14 +47,10 @@
   min-height: 0;
   overflow-y: auto;
 }
-/* The canvas/doc stages ONLY ever render with the dock present, so they always
-   reserve its width on the right (the sidebar main already reserves the 72px
-   agent rail separately). Plan 3b's full-screen mode drops this. */
-.stage.document-stage,
-.stage.diagram-stage,
-.stage.map-stage {
-  padding-right: var(--chat-dock-w);
-}
+/* Dock-width reservations live in base.css (unlayered) — a layered rule here
+   cannot outrank base.css's `padding: 14px` shorthand. Page-like stages
+   (document, docked dashboards) reserve; the zoomable canvases (diagram, map)
+   deliberately do not. */
 
 /* ---- center: dashboards. A mid-screen column pinned to the bottom-centre; the
    priority-card layout above it is Plan 4. Kept minimal so dashboards is usable
@@ -67,13 +63,7 @@ body[data-focus] .artifact-shelf {
 body[data-focus] .chat-dock:not(.chat-dock--full) {
   display: none;
 }
-body[data-focus] .stage.document-stage,
-body[data-focus] .stage.diagram-stage,
-body[data-focus] .stage.map-stage {
-  padding-right: 0; /* the canvas reclaims the dock's reserved width (Plan 3b note above) */
-}
-/* The docked-dashboards width reservation lives in base.css (unlayered) — a
-   layered rule here cannot outrank base.css's `padding: 14px` shorthand. */
+/* Focus-mode padding resets also live in base.css, same cascade reason. */
 
 .chat-dock--center {
   position: fixed;

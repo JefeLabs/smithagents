@@ -129,15 +129,19 @@ body {
   gap: 10px;
 }
 
-/* A displayed dashboard shares the row with the right dock (spec v4), so it
-   reserves the dock's width. This lives HERE, not chatdock.css: that file is
+/* The dock is a hard boundary for PAGE-like stages — the document and a
+   displayed dashboard reserve its width (spec v4/v5). The zoomable canvases
+   (diagram, story map) deliberately keep full-bleed freedom: pan/zoom makes
+   underlap harmless there. These live HERE, not chatdock.css: that file is
    imported into layer(legacy), and no layered declaration can outrank the
    unlayered `padding: 14px` shorthand above — a chatdock.css version of this
    rule is silently dead. Focus view drops the dock, so the right side falls
    back to the shorthand's 14px. */
+.stage.document-stage,
 .stage.dashboards-stage--docked {
   padding-right: var(--chat-dock-w);
 }
+body[data-focus] .stage.document-stage,
 body[data-focus] .stage.dashboards-stage--docked {
   padding-right: 14px;
 }

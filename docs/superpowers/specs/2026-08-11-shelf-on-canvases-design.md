@@ -133,6 +133,12 @@ change requests or a whole new ask without covering the board:
   shelf tiles reserve 176px left padding (`:has(.artifact-shelf)`,
   unlayered in base.css beside the shorthand it outranks — see the
   cascade-layer note in that file). Home stays overlay-style on purpose.
+- **v5:** the dock is likewise a hard boundary for PAGE-like stages —
+  the document view and a docked dashboard reserve `--chat-dock-w` on
+  the right (unlayered, base.css). The zoomable canvases (diagram,
+  story map) deliberately keep full-bleed freedom: pan/zoom makes
+  underlap harmless there. The dead layered reservations in
+  chatdock.css were removed.
 
 ### Testing
 
