@@ -20,7 +20,7 @@ import {
   loadBoards,
   localDayStamp,
   msUntilNextMidnight,
-  normalizePersonalBoard,
+  normalizeBoard,
   patchCard,
   removeCard,
   resolveExit,
@@ -46,7 +46,7 @@ test("templates: seven typed column sets, ids unique and slug-shaped", () => {
   );
   assert.deepEqual(
     BOARD_TEMPLATES.deliver.map((c) => c.name),
-    ["Ready", "In progress", "Review", "Verify", "Merged"],
+    ["Queue", "Ready", "In progress", "Review", "Verify", "Merged"],
   );
   assert.deepEqual(
     BOARD_TEMPLATES.release.map((c) => c.name),
@@ -54,11 +54,11 @@ test("templates: seven typed column sets, ids unique and slug-shaped", () => {
   );
   assert.deepEqual(
     BOARD_TEMPLATES.reactive.map((c) => c.name),
-    ["Triage", "Diagnose", "Fix", "Verify", "Closed"],
+    ["Queue", "Triage", "Diagnose", "Fix", "Verify", "Closed"],
   );
   assert.deepEqual(
     BOARD_TEMPLATES.maintenance.map((c) => c.name),
-    ["Triage", "Queued", "Doing", "Done", "Won't do"],
+    ["Queue", "Triage", "Doing", "Done", "Won't do"],
   );
   assert.equal(Object.keys(BOARD_TEMPLATES).length, 7);
   for (const cols of Object.values(BOARD_TEMPLATES)) {
@@ -67,8 +67,8 @@ test("templates: seven typed column sets, ids unique and slug-shaped", () => {
   }
 });
 
-test("type order puts personal first and WORKSPACE_BOARD_TYPES excludes it", () => {
-  assert.deepEqual(BOARD_TYPE_ORDER, ["personal", "ideation", "plan", "deliver", "release", "reactive", "maintenance"]);
+test("type order puts personal first, release last, and WORKSPACE_BOARD_TYPES excludes personal", () => {
+  assert.deepEqual(BOARD_TYPE_ORDER, ["personal", "ideation", "plan", "deliver", "reactive", "maintenance", "release"]);
   assert.equal(WORKSPACE_BOARD_TYPES.includes("personal" as BoardType), false);
   assert.equal(WORKSPACE_BOARD_TYPES.length, 6);
 });
@@ -87,7 +87,7 @@ test("createBoard derives id from workspace+type, seeds the label, copies column
 test("createBoard: personal is workspace-less with a fixed id; mismatches throw", () => {
   const p = createBoard("personal");
   assert.equal(p.id, "personal");
-  assert.equal(p.name, "Active To-dos");
+  assert.equal(p.name, "Action Planner");
   assert.equal(p.workspaceId, undefined);
   assert.throws(() => createBoard("personal", "acme"), /workspace/i);
   assert.throws(() => createBoard("deliver"), /workspace/i);
@@ -280,7 +280,7 @@ test("save/load round-trip; malformed files land in errors without sinking the r
   await assert.rejects(saveBoard(dir, { ...b, id: "../evil" }), /id/i);
 });
 
-test("normalizePersonalBoard migrates a pre-rename personal board and is idempotent", () => {
+test("normalizeBoard migrates a pre-rename personal board and is idempotent", () => {
   const legacy: WorkBoard = {
     id: "personal",
     name: "Personal",
@@ -293,26 +293,88 @@ test("normalizePersonalBoard migrates a pre-rename personal board and is idempot
     ],
     cards: [],
   };
-  normalizePersonalBoard(legacy);
-  assert.equal(legacy.name, "Active To-dos");
+  normalizeBoard(legacy);
+  assert.equal(legacy.name, "Action Planner");
   assert.deepEqual(
     legacy.columns.map((c) => c.id),
     ["queue", "todo", "doing", "done", "not-doing"],
   );
-  normalizePersonalBoard(legacy);
+  normalizeBoard(legacy);
   assert.equal(legacy.columns.filter((c) => c.id === "queue").length, 1);
 });
 
-test("normalizePersonalBoard keeps a custom name and never touches workspace boards", () => {
-  const renamed = { ...createBoard("personal"), name: "Edwin's list" };
-  assert.equal(normalizePersonalBoard(renamed).name, "Edwin's list");
-  const ws = createBoard("deliver", "acme");
-  const before = ws.columns.map((c) => c.id);
-  normalizePersonalBoard(ws);
+test("normalizeBoard renames old default labels across types, keeps custom names", () => {
+  const active = { ...createBoard("personal"), name: "Active To-dos" };
+  assert.equal(normalizeBoard(active).name, "Action Planner");
+  const reactive = { ...createBoard("reactive", "acme"), name: "Reactive" };
+  assert.equal(normalizeBoard(reactive).name, "React");
+  const maintenance = { ...createBoard("maintenance", "acme"), name: "Maintenance" };
+  assert.equal(normalizeBoard(maintenance).name, "Maintain");
+  const ideation = { ...createBoard("ideation", "acme"), name: "Ideation" };
+  assert.equal(normalizeBoard(ideation).name, "Ideate");
+  const custom = { ...createBoard("personal"), name: "Edwin's list" };
+  assert.equal(normalizeBoard(custom).name, "Edwin's list");
+});
+
+test("normalizeBoard prepends queue on deliver and reactive, once", () => {
+  const deliver: WorkBoard = {
+    id: "acme-deliver",
+    name: "Deliver",
+    type: "deliver",
+    workspaceId: "acme",
+    columns: [
+      { id: "ready", name: "Ready" },
+      { id: "in-progress", name: "In progress" },
+    ],
+    cards: [],
+  };
+  normalizeBoard(deliver);
   assert.deepEqual(
-    ws.columns.map((c) => c.id),
-    before,
+    deliver.columns.map((c) => c.id),
+    ["queue", "ready", "in-progress"],
   );
+  normalizeBoard(deliver);
+  assert.equal(deliver.columns.filter((c) => c.id === "queue").length, 1);
+});
+
+test("normalizeBoard moves maintenance's queued to the front as Queue, cards riding along", () => {
+  const maintenance: WorkBoard = {
+    id: "acme-maintenance",
+    name: "Maintenance",
+    type: "maintenance",
+    workspaceId: "acme",
+    columns: [
+      { id: "triage", name: "Triage" },
+      { id: "queued", name: "Queued" },
+      { id: "doing", name: "Doing" },
+    ],
+    cards: [
+      { id: "c1", title: "waiting", columnId: "queued", order: 0, createdAt: "t", updatedAt: "t" },
+      { id: "c2", title: "fresh", columnId: "triage", order: 0, createdAt: "t", updatedAt: "t" },
+    ],
+  };
+  normalizeBoard(maintenance);
+  assert.deepEqual(
+    maintenance.columns.map((c) => c.id),
+    ["queue", "triage", "doing"],
+  );
+  assert.equal(maintenance.columns[0].name, "Queue");
+  assert.equal(maintenance.cards.find((c) => c.id === "c1")?.columnId, "queue");
+  assert.equal(maintenance.cards.find((c) => c.id === "c2")?.columnId, "triage");
+  normalizeBoard(maintenance);
+  assert.equal(maintenance.columns.filter((c) => c.id === "queue").length, 1);
+});
+
+test("normalizeBoard leaves plan and release untouched", () => {
+  for (const type of ["plan", "release"] as const) {
+    const b = createBoard(type, "acme");
+    const before = b.columns.map((c) => c.id);
+    normalizeBoard(b);
+    assert.deepEqual(
+      b.columns.map((c) => c.id),
+      before,
+    );
+  }
 });
 
 test("loadBoards migrates a legacy personal file in memory only", async () => {
@@ -328,7 +390,7 @@ test("loadBoards migrates a legacy personal file in memory only", async () => {
     }),
   );
   const { boards } = await loadBoards(dir);
-  assert.equal(boards[0].name, "Active To-dos");
+  assert.equal(boards[0].name, "Action Planner");
   assert.equal(boards[0].columns[0].id, "queue");
   // In-memory only: the file still says Personal until the next mutation saves.
   assert.match(await readFile(join(dir, "personal.json"), "utf8"), /"Personal"/);
@@ -516,7 +578,7 @@ test("escalation: maintenance and reactive triage each exit to the personal queu
   const reactive = createBoard("reactive", "acme");
   assert.deepEqual(
     exitsFor(maintenance, "triage").map((e) => e.label),
-    ["Escalate to Active To-dos"],
+    ["Escalate to Action Planner"],
   );
   assert.equal(resolveExit(reactive, "triage", "personal")?.toColumn, "queue");
   assert.deepEqual(exitsFor(maintenance, "doing"), []);

@@ -66,27 +66,27 @@ const BOARD_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 export type BoardType = "personal" | "ideation" | "plan" | "deliver" | "release" | "reactive" | "maintenance";
 
-/** Tab order. personal is always first; the other six are the workspace types. */
+/** Tab order. personal is always first, release always last; the other five follow the work's lifecycle. */
 export const BOARD_TYPE_ORDER: BoardType[] = [
   "personal",
   "ideation",
   "plan",
   "deliver",
-  "release",
   "reactive",
   "maintenance",
+  "release",
 ];
 
 export const WORKSPACE_BOARD_TYPES: BoardType[] = BOARD_TYPE_ORDER.filter((t) => t !== "personal");
 
 export const BOARD_TYPE_LABELS: Record<BoardType, string> = {
-  personal: "Active To-dos",
-  ideation: "Ideation",
+  personal: "Action Planner",
+  ideation: "Ideate",
   plan: "Plan",
   deliver: "Deliver",
   release: "Release",
-  reactive: "Reactive",
-  maintenance: "Maintenance",
+  reactive: "React",
+  maintenance: "Maintain",
 };
 
 // Boards that own an outcome get a terminal column (Killed / Won't do / Not
@@ -113,6 +113,7 @@ export const BOARD_TEMPLATES: Record<BoardType, WorkColumn[]> = {
     { id: "ready", name: "Ready" },
   ],
   deliver: [
+    { id: "queue", name: "Queue" },
     { id: "ready", name: "Ready" },
     { id: "in-progress", name: "In progress" },
     { id: "review", name: "Review" },
@@ -127,6 +128,7 @@ export const BOARD_TEMPLATES: Record<BoardType, WorkColumn[]> = {
     { id: "rollback", name: "Rollback" },
   ],
   reactive: [
+    { id: "queue", name: "Queue" },
     { id: "triage", name: "Triage" },
     { id: "diagnose", name: "Diagnose" },
     { id: "fix", name: "Fix" },
@@ -134,8 +136,8 @@ export const BOARD_TEMPLATES: Record<BoardType, WorkColumn[]> = {
     { id: "closed", name: "Closed" },
   ],
   maintenance: [
+    { id: "queue", name: "Queue" },
     { id: "triage", name: "Triage" },
-    { id: "queued", name: "Queued" },
     { id: "doing", name: "Doing" },
     { id: "done", name: "Done" },
     { id: "wont-do", name: "Won't do" },
@@ -204,10 +206,10 @@ export const BOARD_ROUTES: Record<BoardType, RouteExit[]> = {
   reactive: [
     { from: "triage", toType: "maintenance", toColumn: "triage", label: "To maintenance" },
     { from: "triage", toType: "ideation", toColumn: "intake", label: "To ideation" },
-    { from: "triage", toType: "personal", toColumn: "queue", label: "Escalate to Active To-dos" },
+    { from: "triage", toType: "personal", toColumn: "queue", label: "Escalate to Action Planner" },
   ],
   ideation: [],
-  maintenance: [{ from: "triage", toType: "personal", toColumn: "queue", label: "Escalate to Active To-dos" }],
+  maintenance: [{ from: "triage", toType: "personal", toColumn: "queue", label: "Escalate to Action Planner" }],
   personal: [],
 };
 
@@ -297,16 +299,41 @@ function assertBoard(file: string, v: unknown): WorkBoard {
   return o;
 }
 
+/** Default names boards used to seed with — a board still wearing one follows the label when it changes. */
+const LEGACY_DEFAULT_NAMES: Partial<Record<BoardType, string[]>> = {
+  personal: ["Personal", "Active To-dos"],
+  ideation: ["Ideation"],
+  reactive: ["Reactive"],
+  maintenance: ["Maintenance"],
+};
+
+/** The boards whose leftmost lane is the Queue intake. */
+const QUEUE_TYPES: BoardType[] = ["personal", "deliver", "reactive", "maintenance"];
+
 /**
- * Reshape a personal board persisted before the Active To-dos rename: the
- * default name follows the new label and the queue intake column is
- * prepended. A custom rename is preserved. In-memory only — the file is
- * rewritten the next time any mutation saves the board.
+ * Reshape a board persisted under an earlier template: default names follow
+ * the current labels (a custom rename is preserved), the queue intake lane is
+ * prepended where the type carries one, and maintenance's old `queued` column
+ * becomes that lane — moved to the front with its cards' columnIds rewritten,
+ * so nothing strands. In-memory only — the file is rewritten the next time
+ * any mutation saves the board.
  */
-export function normalizePersonalBoard(board: WorkBoard): WorkBoard {
-  if (board.type !== "personal") return board;
-  if (board.name === "Personal") board.name = "Active To-dos";
-  if (!board.columns.some((c) => c.id === "queue")) board.columns.unshift({ id: "queue", name: "Queue" });
+export function normalizeBoard(board: WorkBoard): WorkBoard {
+  if (LEGACY_DEFAULT_NAMES[board.type]?.includes(board.name)) board.name = BOARD_TYPE_LABELS[board.type];
+  if (QUEUE_TYPES.includes(board.type) && !board.columns.some((c) => c.id === "queue")) {
+    const queued = board.type === "maintenance" ? board.columns.findIndex((c) => c.id === "queued") : -1;
+    if (queued >= 0) {
+      const [column] = board.columns.splice(queued, 1);
+      column.id = "queue";
+      column.name = "Queue";
+      board.columns.unshift(column);
+      for (const card of board.cards) {
+        if (card.columnId === "queued") card.columnId = "queue";
+      }
+    } else {
+      board.columns.unshift({ id: "queue", name: "Queue" });
+    }
+  }
   return board;
 }
 
@@ -359,7 +386,7 @@ export async function loadBoards(
   const errors: Array<{ file: string; error: string }> = [];
   for (const file of entries.filter((f) => f.endsWith(".json"))) {
     try {
-      boards.push(normalizePersonalBoard(assertBoard(file, JSON.parse(await readFile(join(dir, file), "utf8")))));
+      boards.push(normalizeBoard(assertBoard(file, JSON.parse(await readFile(join(dir, file), "utf8")))));
     } catch (err) {
       errors.push({ file, error: String((err as Error).message) });
     }
@@ -388,13 +415,13 @@ function renumber(board: WorkBoard, columnId: string): void {
 }
 
 /**
- * Quick-adds land where the user works, not where the system routes: the
- * personal board's leftmost column is the Queue intake (sweep + escalations
- * only), so fresh cards default to Todo there and to the leftmost column
- * everywhere else.
+ * Quick-adds land where the user works, not where the system routes: Queue is
+ * the system's intake lane (sweep, escalations, imports), so fresh cards
+ * default to the first column that ISN'T it — Todo on the planner, Ready on
+ * Deliver, Triage on React/Maintain.
  */
 export function defaultColumnFor(board: WorkBoard): string {
-  return board.type === "personal" ? "todo" : board.columns[0]?.id;
+  return (board.columns.find((c) => c.id !== "queue") ?? board.columns[0])?.id;
 }
 
 export function addCard(board: WorkBoard, input: { title: string; notes?: string; columnId?: string }): WorkCard {
