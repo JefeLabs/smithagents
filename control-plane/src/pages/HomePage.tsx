@@ -324,7 +324,7 @@ export function HomePage() {
               // (spec: dock-sends-edit-artifact); the aimed section rides
               // along when it matches the doc on screen, and one send spends
               // the aim.
-              const docId = /^\/(?:doc|diagram)\/([^/]+)$/.exec(pathname)?.[1];
+              const docId = /^\/(?:doc|diagram|dashboard)\/([^/]+)$/.exec(pathname)?.[1];
               if (!docId) return api.postUtterance(text, target);
               const sectionId = docTarget?.docId === docId ? docTarget.sectionId : undefined;
               clearDocTarget();

@@ -468,6 +468,57 @@ describe("HomePage — creating a session lands in its conversation", () => {
     expect(useUiStore.getState().docTarget).toBeNull(); // one send spends the aim
   });
 
+  it("a send from /dashboard carries the viewed doc — dashboards are editable artifacts too", async () => {
+    const calls: Array<{ url: string; body?: unknown }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+        if (url.endsWith("/agents"))
+          return new Response(JSON.stringify({ agents: [], voice: { stt: false, tts: true } }));
+        if (url.endsWith("/workspaces")) return new Response(JSON.stringify({ workspaces: [] }));
+        if (url.endsWith("/cli-tools")) return new Response(JSON.stringify({ tools: [] }));
+        if (url.endsWith("/blueprints"))
+          return new Response(
+            JSON.stringify({
+              blueprints: [{ id: "dashboard", name: "Dashboard", family: "dashboard", workTypes: [], sections: [] }],
+            }),
+          );
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }),
+    );
+    renderApp((client) => {
+      client.setQueryData(qk.documents, [
+        {
+          id: "d9",
+          title: "delivery health",
+          blueprintId: "dashboard",
+          workType: "insight",
+          sections: [
+            { id: "question", heading: "Question", body: "how are we doing?" },
+            { id: "spec", heading: "Spec", body: "not json yet" },
+          ],
+          participants: [],
+          status: "drafting",
+          createdAt: "t",
+          updatedAt: "t",
+        },
+      ]);
+    }, "/dashboard/d9");
+    await screen.findByRole("region", { name: "Dashboard" });
+    act(() => FakeSocket.last?.open());
+    await userEvent.type(screen.getByRole("textbox", { name: "Type a request" }), "make the summary one sentence");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => {
+      const sent = calls.find((c) => c.url.endsWith("/utterance"));
+      expect(sent?.body).toMatchObject({
+        text: "make the summary one sentence",
+        doc: { docId: "d9" },
+      });
+    });
+  });
+
   it("focus mode stamps body[data-focus]; Esc exits", async () => {
     renderApp();
     await userEvent.click(await screen.findByRole("row", { name: "Focus" }));
