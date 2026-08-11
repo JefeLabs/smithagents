@@ -9,6 +9,7 @@ import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { Blueprint } from './blueprints.ts';
 import type { Doc } from './documents.ts';
+import { AuthError, type BrokerAuth, type Identity } from './auth.ts';
 
 export interface RosterEntry {
   id: string;
@@ -294,12 +295,14 @@ export class TextChannel {
       changeBlueprint(docId: string, blueprintId: string): string | null;
       rename(docId: string, title: string): string | null;
     },
+    /** Connection identity (passkey humans + bridge bearer). Absent = open mode. */
+    private readonly auth?: BrokerAuth,
   ) {}
 
   private clientSeq = 0;
 
-  /** Bind 127.0.0.1:port (0 = ephemeral for tests); resolves the actual port. */
-  start(port: number): Promise<number> {
+  /** Bind host:port (0 = ephemeral for tests); resolves the actual port. */
+  start(port: number, host = '127.0.0.1'): Promise<number> {
     const server = createServer((req, res) => {
       if (req.method === 'OPTIONS') {
         res.writeHead(204, CORS).end();
@@ -1206,7 +1209,7 @@ export class TextChannel {
     this.server = server;
     return new Promise((resolve, reject) => {
       server.once('error', reject);
-      server.listen(port, '127.0.0.1', () => {
+      server.listen(port, host, () => {
         const addr = server.address();
         resolve(typeof addr === 'object' && addr ? addr.port : port);
       });

@@ -279,7 +279,11 @@ export class BrokerAuth {
     return { kind: 'bridge' };
   }
 
-  /** Cookie session first, then bearer/query bridge token. */
+  /**
+   * Cookie session first, then bearer bridge token. Deliberately NO query
+   * param: tokens in URLs end up in logs, and every non-browser client can
+   * set headers while browsers authenticate the WS upgrade via the cookie.
+   */
   resolveIdentity(req: IncomingMessage): Identity | null {
     const cookies = parseCookies(req.headers.cookie);
     if (cookies.smith_session) {
@@ -288,9 +292,7 @@ export class BrokerAuth {
     }
     const header = req.headers.authorization;
     const bearer = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : undefined;
-    if (bearer) return this.bridgeIdentity(bearer);
-    const query = new URL(req.url ?? '/', 'http://localhost').searchParams.get('token') ?? undefined;
-    return this.bridgeIdentity(query);
+    return this.bridgeIdentity(bearer);
   }
 
   listUsers(): Array<{ userId: string; name: string; createdAt: string; credentials: number }> {

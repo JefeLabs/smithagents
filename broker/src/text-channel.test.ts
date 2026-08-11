@@ -78,6 +78,7 @@ function channelWith(opts: {
   polish?: ConstructorParameters<typeof TextChannel>[21];
   blueprints?: ConstructorParameters<typeof TextChannel>[22];
   documents?: ConstructorParameters<typeof TextChannel>[23];
+  auth?: ConstructorParameters<typeof TextChannel>[24];
 }): TextChannel {
   return new TextChannel(
     () => {},
@@ -104,6 +105,7 @@ function channelWith(opts: {
     opts.polish,
     opts.blueprints,
     opts.documents,
+    opts.auth,
   );
 }
 

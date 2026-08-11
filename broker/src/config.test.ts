@@ -41,3 +41,22 @@ test('gemini config: key and model override are read', () => {
   assert.equal(c.geminiApiKey, 'g-key');
   assert.equal(c.geminiImageModel, 'imagen-4');
 });
+
+test('auth config defaults: open mode, loopback, localhost rpId', () => {
+  const c = loadBrokerConfig({ ...FULL });
+  assert.equal(c.host, '127.0.0.1');
+  assert.equal(c.auth.required, false);
+  assert.equal(c.auth.rpId, 'localhost');
+  assert.equal(c.auth.webOrigin, 'http://localhost:1420');
+  assert.equal(c.auth.file, '.smith/auth.json');
+});
+
+test('SMITH_BROKER_AUTH=required flips the gate; env overrides flow through', () => {
+  const c = loadBrokerConfig({ ...FULL, SMITH_BROKER_AUTH: 'required', SMITH_BROKER_RPID: 'skoolscout.example.com', SMITH_BROKER_WEB_ORIGIN: 'https://skoolscout.example.com', SMITH_BROKER_TOKEN: 'bt', SMITH_BROKER_AUTH_FILE: '/data/auth.json', BROKER_HOST: '0.0.0.0' });
+  assert.deepEqual(c.auth, { required: true, rpId: 'skoolscout.example.com', webOrigin: 'https://skoolscout.example.com', bridgeToken: 'bt', file: '/data/auth.json' });
+  assert.equal(c.host, '0.0.0.0');
+});
+
+test('non-loopback bind without auth refuses to load', () => {
+  assert.throws(() => loadBrokerConfig({ ...FULL, BROKER_HOST: '0.0.0.0' }), /BROKER_HOST|SMITH_BROKER_AUTH/);
+});

@@ -98,7 +98,7 @@ test('sessions are hashed at rest and survive reload; logout kills them', async 
   assert.equal(reloaded.sessionIdentity(sessionToken), null);
 });
 
-test('resolveIdentity: cookie session, bearer bridge, query bridge, garbage', async () => {
+test('resolveIdentity: cookie session, bearer bridge, query rejected, garbage', async () => {
   const { auth } = await freshAuth({ bridgeToken: 'bridge-secret' });
   const { code } = auth.mintInvite();
   await auth.beginRegistration(code, 'edwin');
@@ -107,7 +107,8 @@ test('resolveIdentity: cookie session, bearer bridge, query bridge, garbage', as
   const req = (headers: Record<string, string>, url = '/x') => ({ headers, url } as import('node:http').IncomingMessage);
   assert.equal(auth.resolveIdentity(req({ cookie: `smith_session=${sessionToken}` }))?.kind, 'human');
   assert.deepEqual(auth.resolveIdentity(req({ authorization: 'Bearer bridge-secret' })), { kind: 'bridge' });
-  assert.deepEqual(auth.resolveIdentity(req({}, '/events?token=bridge-secret')), { kind: 'bridge' });
+  // Tokens in URLs leak into logs — the query path is deliberately dead.
+  assert.equal(auth.resolveIdentity(req({}, '/events?token=bridge-secret')), null);
   assert.equal(auth.resolveIdentity(req({ authorization: 'Bearer wrong' })), null);
   assert.equal(auth.resolveIdentity(req({})), null);
 });
