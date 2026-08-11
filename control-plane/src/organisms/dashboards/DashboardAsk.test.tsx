@@ -36,9 +36,14 @@ describe("DashboardAsk", () => {
     expect(onSubmit).toHaveBeenCalledWith(DASH_SUGGESTIONS[2]);
   });
 
-  it("a saved card submits its title", () => {
-    const { onSubmit } = renderAsk();
+  it("a saved card opens its DOCUMENT by id, never re-submits", () => {
+    const onOpenSaved = vi.fn();
+    const { onSubmit } = renderAsk({
+      saved: [{ id: "doc-9", title: "kill-rate watch", meta: "acme · updated today" }],
+      onOpenSaved,
+    });
     fireEvent.click(screen.getByText("kill-rate watch"));
-    expect(onSubmit).toHaveBeenCalledWith("kill-rate watch");
+    expect(onOpenSaved).toHaveBeenCalledExactlyOnceWith("doc-9");
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 });

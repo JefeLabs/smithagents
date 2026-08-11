@@ -4,11 +4,13 @@ interface DashboardAskProps {
   scope: string;
   saved: SavedDashboard[];
   onScope: (scope: string) => void;
-  /** Compose from a suggestion or a saved dashboard — free-typed asks go through the shared center dock (spec v3). */
+  /** Compose from a suggestion — free-typed asks go through the shared center dock (spec v3). */
   onSubmit: (query: string) => void;
+  /** Open a saved (pinned) dashboard's DOCUMENT — saved cards are docs now, not re-asks. */
+  onOpenSaved?: (docId: string) => void;
 }
 
-export function DashboardAsk({ scope, saved, onScope, onSubmit }: DashboardAskProps) {
+export function DashboardAsk({ scope, saved, onScope, onSubmit, onOpenSaved }: DashboardAskProps) {
   return (
     <div className="dash-ask">
       <div className="dash-ask__inner">
@@ -47,7 +49,12 @@ export function DashboardAsk({ scope, saved, onScope, onSubmit }: DashboardAskPr
         <div className="dash-ask__label">SAVED</div>
         <div className="dash-ask__saved">
           {saved.map((d) => (
-            <button key={d.id} type="button" className="dash-saved-card" onClick={() => onSubmit(d.title)}>
+            <button
+              key={d.id}
+              type="button"
+              className="dash-saved-card"
+              onClick={() => (onOpenSaved ? onOpenSaved(d.id) : onSubmit(d.title))}
+            >
               <span className="dash-saved-card__title">{d.title}</span>
               <span className="dash-saved-card__meta">{d.meta}</span>
             </button>

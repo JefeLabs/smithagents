@@ -10,6 +10,7 @@ import { lazy, Suspense } from "react";
 import * as api from "./api/broker";
 import type { BlueprintT, DocT, RosterAgent } from "./api/types";
 import { agentSeeds } from "./data/agents";
+import { composeSpec, specToFence } from "./lib/dashboardSpec";
 import { openDocByFamily } from "./lib/pickKind";
 import { ArtifactShelf, shelfDocsFor } from "./molecules/ArtifactShelf";
 import { PinButton } from "./molecules/PinButton";
@@ -78,8 +79,37 @@ function MapRoute() {
 }
 
 function DashboardsRoute() {
+  const navigate = useNavigate();
   const shelf = useShelf();
-  return <DashboardsStage shelf={shelf} />;
+  const { data: docs = NO_DOCS } = useDocuments();
+  const { data: blueprints = NO_BLUEPRINTS } = useBlueprints();
+  // SAVED = dashboard docs pinned somewhere (spec 2026-08-11). A composed but
+  // never-pinned dashboard lives on in its session's shelf, not here.
+  const dashboardIds = new Set(blueprints.filter((b) => b.family === "dashboard").map((b) => b.id));
+  const savedDocs = docs
+    .filter((d) => dashboardIds.has(d.blueprintId) && (d.pins?.length ?? 0) > 0)
+    .map((d) => ({
+      id: d.id,
+      title: d.title,
+      meta: `${d.pins?.join(", ")} · updated ${new Date(d.updatedAt).toLocaleDateString()}`,
+    }));
+  return (
+    <DashboardsStage
+      shelf={shelf}
+      savedDocs={savedDocs}
+      onOpenSaved={(docId) => void navigate({ to: "/dashboard/$docId", params: { docId } })}
+      onPresent={async (question, scope) => {
+        // Birth on compose: the walk's product IS a document. The mock spec is
+        // composed client-side for now; "make it real" swaps this for the
+        // agent's spec without moving the doc machinery.
+        const { doc } = await api.postDocument("dashboard", question);
+        if (!doc) return; // broker down — stay on the ask screen
+        await api.patchDocSection(doc.id, "question", `${question}\n\nscope: ${scope}`);
+        await api.patchDocSection(doc.id, "spec", specToFence(composeSpec(question, scope)));
+        void navigate({ to: "/dashboard/$docId", params: { docId: doc.id } });
+      }}
+    />
+  );
 }
 
 function DocRoute() {

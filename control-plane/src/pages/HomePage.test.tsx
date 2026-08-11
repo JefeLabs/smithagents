@@ -417,14 +417,11 @@ describe("HomePage — creating a session lands in its conversation", () => {
     expect(document.body.getAttribute("data-dock")).toBe("dock");
   });
 
-  it("dashboards docks the chat right while a board displays, center otherwise", async () => {
+  it("dashboards with no thread keeps the center dock — presented dashboards are doc canvases now", async () => {
     renderApp(undefined, "/dashboards");
     const dock = await screen.findByRole("region", { name: "Chat" });
     expect(dock.className).toContain("chat-dock--center");
-    act(() => useUiStore.getState().setDashBoardShowing(true));
-    await waitFor(() => expect(screen.getByRole("region", { name: "Chat" }).className).toContain("chat-dock--dock"));
-    act(() => useUiStore.getState().setDashBoardShowing(false));
-    await waitFor(() => expect(screen.getByRole("region", { name: "Chat" }).className).toContain("chat-dock--center"));
+    expect(document.body.getAttribute("data-dock")).toBe("center");
   });
 
   it("a send from /doc carries the viewed doc and the aimed section, then spends the aim", async () => {

@@ -1,41 +1,36 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
-import {
-  DASH_SAVED,
-  DASH_STEPS,
-  DASH_SUGGESTIONS,
-  type SavedDashboard,
-  savedMeta,
-  scopeHint,
-} from "../data/dashboards";
-import { useUiStore } from "../stores/uiStore";
+import { DASH_STEPS, DASH_SUGGESTIONS, type SavedDashboard, scopeHint } from "../data/dashboards";
 import { DashboardAsk } from "./dashboards/DashboardAsk";
-import { DashboardBoard } from "./dashboards/DashboardBoard";
 import { DashboardComposing } from "./dashboards/DashboardComposing";
 
-type DashView = "ask" | "composing" | "board";
+type DashView = "ask" | "composing";
 const STEP_MS = 620;
 
+interface DashboardsStageProps {
+  shelf?: ReactNode;
+  /**
+   * The compose walk finished — a dashboard was PRESENTED, so it becomes a
+   * document (spec 2026-08-11): the route creates it and navigates to its
+   * canvas. The stage never shows a board of its own anymore.
+   */
+  onPresent?: (question: string, scope: string) => void;
+  /** Pinned dashboard docs, listed under SAVED — the route derives them. */
+  savedDocs?: SavedDashboard[];
+  /** Open a saved (pinned) dashboard's document. */
+  onOpenSaved?: (docId: string) => void;
+}
+
 /**
- * The dashboards mock — spec 2026-08-10-dashboards-mock-design.md. Entirely
- * client-side: the state machine below is the whole "backend", and
- * data/dashboards.ts is the whole "payload". Router-free like every organism.
+ * The dashboards LAUNCHER — ask + compose walk. A composed dashboard is a
+ * document (`/dashboard/$docId`); this stage hands off via `onPresent` the
+ * moment the walk completes. Router-free like every organism.
  */
-export function DashboardsStage({ shelf }: { shelf?: ReactNode } = {}) {
+export function DashboardsStage({ shelf, onPresent, savedDocs, onOpenSaved }: DashboardsStageProps = {}) {
   const [view, setView] = useState<DashView>("ask");
   const [query, setQuery] = useState("");
   const [scope, setScope] = useState("all workspaces");
   const [step, setStep] = useState(0);
-  const [saved, setSaved] = useState<SavedDashboard[]>(DASH_SAVED);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
-  const savedSeq = useRef(0);
-  const setDashBoardShowing = useUiStore((s) => s.setDashBoardShowing);
-
-  // The shell docks the chat right while a board displays (spec v4) — mirror
-  // the view machine's one shell-relevant fact; unmounting clears it.
-  useEffect(() => {
-    setDashBoardShowing(view === "board");
-    return () => setDashBoardShowing(false);
-  }, [view, setDashBoardShowing]);
 
   const stop = useCallback(() => {
     if (timer.current !== null) {
@@ -56,53 +51,33 @@ export function DashboardsStage({ shelf }: { shelf?: ReactNode } = {}) {
     [stop],
   );
 
-  // The interval only counts; the view flip lives here so the tick stays pure.
+  // The interval only counts; the handoff lives here so the tick stays pure.
   useEffect(() => {
     if (view === "composing" && step >= DASH_STEPS.length) {
       stop();
-      setView("board");
+      setView("ask");
+      onPresent?.(query || DASH_SUGGESTIONS[0], scope);
     }
-  }, [view, step, stop]);
+  }, [view, step, stop, onPresent, query, scope]);
 
   return (
-    <section
-      className={`stage dashboards-stage${view === "board" ? " dashboards-stage--docked" : ""}`}
-      aria-label="Dashboards"
-    >
+    <section className="stage dashboards-stage" aria-label="Dashboards">
       {shelf}
       <header className="dashboards-stage__bar">
         <div className="dashboards-stage__title">dashboards</div>
         <span className="dashboards-stage__badge">AGENT COMPOSED</span>
         <div className="spacer" />
-        {view === "board" && (
-          <div className="dashboards-stage__actions">
-            <button
-              type="button"
-              className="dash-btn"
-              onClick={() => {
-                stop();
-                setQuery("");
-                setStep(0);
-                setView("ask");
-              }}
-            >
-              new question
-            </button>
-            <button
-              type="button"
-              className="dash-btn dash-btn--primary"
-              onClick={() =>
-                setSaved((s) => [...s, { id: `saved-${savedSeq.current++}`, title: query, meta: savedMeta(scope) }])
-              }
-            >
-              save dashboard
-            </button>
-          </div>
-        )}
       </header>
-      {view === "ask" && <DashboardAsk scope={scope} saved={saved} onScope={setScope} onSubmit={submit} />}
+      {view === "ask" && (
+        <DashboardAsk
+          scope={scope}
+          saved={savedDocs ?? []}
+          onScope={setScope}
+          onSubmit={submit}
+          onOpenSaved={onOpenSaved}
+        />
+      )}
       {view === "composing" && <DashboardComposing query={query} scopeHint={scopeHint(scope)} step={step} />}
-      {view === "board" && <DashboardBoard query={query} scopeHint={scopeHint(scope)} onFollowup={submit} />}
     </section>
   );
 }

@@ -1,7 +1,6 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DASH_SUGGESTIONS } from "../data/dashboards";
-import { useUiStore } from "../stores/uiStore";
 import { DashboardsStage } from "./DashboardsStage";
 
 const STEP_MS = 620;
@@ -12,46 +11,41 @@ describe("DashboardsStage", () => {
     vi.useRealTimers();
   });
 
-  it("a suggestion walks the steps and lands on the board", () => {
+  it("a suggestion walks the steps, then hands off via onPresent and returns to ask", () => {
     vi.useFakeTimers();
-    render(<DashboardsStage />);
+    const onPresent = vi.fn();
+    render(<DashboardsStage onPresent={onPresent} />);
     fireEvent.click(screen.getByText(DASH_SUGGESTIONS[1]));
     expect(screen.getByText("reading 24 workspaces in jefelabs")).toBeTruthy();
+    expect(onPresent).not.toHaveBeenCalled();
     act(() => vi.advanceTimersByTime(STEP_MS * 4));
-    expect(screen.getByText("save dashboard")).toBeTruthy();
-    // The banner echoes the submitted query.
-    expect(screen.getByText(DASH_SUGGESTIONS[1])).toBeTruthy();
-  });
-
-  it("new question returns to ask; save appends a JUST SAVED card first", () => {
-    // The free-typed draft path is gone (spec v3: the shared center dock is
-    // the one chat box) — a suggestion drives the same compose walk.
-    vi.useFakeTimers();
-    render(<DashboardsStage />);
-    fireEvent.click(screen.getByText(DASH_SUGGESTIONS[1]));
-    act(() => vi.advanceTimersByTime(STEP_MS * 4));
-    fireEvent.click(screen.getByText("save dashboard"));
-    fireEvent.click(screen.getByText("new question"));
-    // Back on ask, with the saved card appended (scope was untouched → ALL).
+    // The walk's product is a DOCUMENT — the route creates and navigates; the
+    // stage itself never shows a board, it just resets for the next ask.
+    expect(onPresent).toHaveBeenCalledExactlyOnceWith(DASH_SUGGESTIONS[1], "all workspaces");
     expect(screen.getByText("what do you want to know?")).toBeTruthy();
-    // The question shows twice now: the suggestion chip and the saved card.
-    expect(screen.getAllByText(DASH_SUGGESTIONS[1]).length).toBeGreaterThanOrEqual(2);
-    expect(screen.getByText("ALL · JUST SAVED")).toBeTruthy();
   });
 
-  it("a follow-up from the board re-runs the compose walk", () => {
+  it("onPresent carries the picked scope", () => {
     vi.useFakeTimers();
-    render(<DashboardsStage />);
+    const onPresent = vi.fn();
+    render(<DashboardsStage onPresent={onPresent} />);
+    fireEvent.click(screen.getByRole("radio", { name: "release" }));
     fireEvent.click(screen.getByText(DASH_SUGGESTIONS[0]));
     act(() => vi.advanceTimersByTime(STEP_MS * 4));
-    fireEvent.click(screen.getByRole("button", { name: "compare to last quarter" }));
-    expect(screen.getByText("reading 24 workspaces in jefelabs")).toBeTruthy();
-    // Two ticks in, it is still composing — the restart began from step 0.
+    expect(onPresent).toHaveBeenCalledExactlyOnceWith(DASH_SUGGESTIONS[0], "release");
+  });
+
+  it("presents exactly once — the completed walk's timer is stopped, not left ticking", () => {
+    vi.useFakeTimers();
+    const onPresent = vi.fn();
+    render(<DashboardsStage onPresent={onPresent} />);
+    fireEvent.click(screen.getByText(DASH_SUGGESTIONS[0]));
     act(() => vi.advanceTimersByTime(STEP_MS * 2));
-    expect(screen.queryByText("save dashboard")).toBeNull();
-    act(() => vi.advanceTimersByTime(STEP_MS * 2));
-    expect(screen.getAllByText("compare to last quarter")[0]).toBeTruthy();
-    expect(screen.getByText("save dashboard")).toBeTruthy();
+    // Still composing — nothing presented yet.
+    expect(onPresent).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(STEP_MS * 10));
+    expect(onPresent).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("unmounting mid-compose leaks no timer", () => {
@@ -67,19 +61,15 @@ describe("DashboardsStage", () => {
     expect(screen.getByRole("complementary", { name: "session documents" })).toBeTruthy();
   });
 
-  it("board view stamps the docked modifier and mirrors dashBoardShowing; leaving clears both", () => {
-    vi.useFakeTimers();
-    const { unmount } = render(<DashboardsStage />);
-    const stage = screen.getByRole("region", { name: "Dashboards" });
-    expect(stage.className).not.toContain("dashboards-stage--docked");
-    expect(useUiStore.getState().dashBoardShowing).toBe(false);
-    fireEvent.click(screen.getByText(DASH_SUGGESTIONS[0]));
-    act(() => vi.advanceTimersByTime(STEP_MS * 4));
-    expect(stage.className).toContain("dashboards-stage--docked");
-    expect(useUiStore.getState().dashBoardShowing).toBe(true);
-    fireEvent.click(screen.getByText("new question"));
-    expect(useUiStore.getState().dashBoardShowing).toBe(false);
-    unmount();
-    expect(useUiStore.getState().dashBoardShowing).toBe(false);
+  it("SAVED lists the pinned docs and opens one by id", () => {
+    const onOpenSaved = vi.fn();
+    render(
+      <DashboardsStage
+        savedDocs={[{ id: "d7", title: "weekly delivery health", meta: "acme · updated today" }]}
+        onOpenSaved={onOpenSaved}
+      />,
+    );
+    fireEvent.click(screen.getByText("weekly delivery health"));
+    expect(onOpenSaved).toHaveBeenCalledExactlyOnceWith("d7");
   });
 });

@@ -33,9 +33,6 @@ interface UiState {
   focusMode: boolean;
   toggleFocus: () => void;
   exitFocus: () => void;
-  /** Mirrored by the dashboards stage: true while a composed board displays — the shell docks the chat right (spec v4). */
-  dashBoardShowing: boolean;
-  setDashBoardShowing: (showing: boolean) => void;
   /** The aimed section for the next dock send — an instruction about a specific part of the page. */
   docTarget: { docId: string; sectionId: string; heading: string } | null;
   setDocTarget: (target: { docId: string; sectionId: string; heading: string }) => void;
@@ -95,7 +92,6 @@ const initial = {
   removing: null,
   voiceNotice: null,
   focusMode: false,
-  dashBoardShowing: false,
   docTarget: null,
   viewedWorkspaces: new Set<string>(),
 } satisfies Partial<UiState>;
@@ -112,7 +108,6 @@ export const useUiStore = create<UiState>((set) => ({
   resetGrid: () => set({ gridParams: GRID_DEFAULTS }),
   toggleFocus: () => set((s) => ({ focusMode: !s.focusMode })),
   exitFocus: () => set({ focusMode: false }),
-  setDashBoardShowing: (dashBoardShowing) => set({ dashBoardShowing }),
   setDocTarget: (docTarget) => set({ docTarget }),
   clearDocTarget: () => set({ docTarget: null }),
   toggleSessions: () => set((s) => ({ sessionsOpen: !s.sessionsOpen })),

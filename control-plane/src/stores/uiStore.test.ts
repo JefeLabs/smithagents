@@ -45,14 +45,6 @@ describe("uiStore", () => {
     expect(useUiStore.getState().focusMode).toBe(false);
   });
 
-  it("dashBoardShowing flips on and off", () => {
-    expect(useUiStore.getState().dashBoardShowing).toBe(false);
-    useUiStore.getState().setDashBoardShowing(true);
-    expect(useUiStore.getState().dashBoardShowing).toBe(true);
-    useUiStore.getState().setDashBoardShowing(false);
-    expect(useUiStore.getState().dashBoardShowing).toBe(false);
-  });
-
   it("docTarget sets and clears", () => {
     expect(useUiStore.getState().docTarget).toBeNull();
     useUiStore.getState().setDocTarget({ docId: "d1", sectionId: "approach", heading: "Approach" });
