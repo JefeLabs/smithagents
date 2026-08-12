@@ -876,3 +876,32 @@
   border-color: color-mix(in srgb, var(--accent) 55%, transparent);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
 }
+
+/* The workspace/group's OWN shelf begins below this divider (Edwin,
+   2026-08-12: context items "should be denoted") — a quiet rule with the
+   context's name, then tiles carrying an accent edge on their tag. */
+.artifact-shelf__divider {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 148px;
+  flex-shrink: 0;
+  margin: 6px 0 2px;
+  font-family: ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.artifact-shelf__divider::before,
+.artifact-shelf__divider::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--pill-br);
+}
+.artifact-shelf__card--context .artifact-shelf__tag {
+  color: color-mix(in srgb, var(--accent) 75%, var(--text));
+}
+.artifact-shelf__card--context {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--pill-br));
+}

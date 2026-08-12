@@ -14,7 +14,7 @@ import { ALL_WORKSPACES } from "../lib/board-aggregate";
 import { isKindSurface, kindForPath, layoutForPath } from "../lib/composerLayout";
 import { makePickKind, openDocByFamily } from "../lib/pickKind";
 import { AlertMenu } from "../molecules/AlertMenu";
-import { ArtifactShelf, contextShelfDocs } from "../molecules/ArtifactShelf";
+import { ArtifactShelf, splitShelfDocs } from "../molecules/ArtifactShelf";
 import { ConfirmSheet } from "../molecules/ConfirmSheet";
 import { DateRangeSelect } from "../molecules/DateRangeSelect";
 import { OperatorAvatar } from "../molecules/OperatorAvatar";
@@ -192,13 +192,14 @@ export function HomePage() {
   // remains. The URL stays the variant's source of truth everywhere else.
   const dockVariant = pathname === "/dashboards" && messages.length > 0 ? "dock" : layoutForPath(pathname);
   // workspace/group → session → artifacts, with pins as the parent-level
-  // override (Edwin, 2026-08-12): the home shelf shows the context's docs too.
+  // override (Edwin, 2026-08-12): the home shelf splits the same two ways.
   const activeLens = useUiStore((s) => s.activeLens);
-  const shelfDocs = contextShelfDocs(
+  const shelfSplit = splitShelfDocs(
     session,
     docs,
     activeLens ? `group:${activeLens.group}` : (session?.workspace ?? null),
   );
+  const shelfContextLabel = activeLens ? activeLens.group : (session?.workspace ?? undefined);
 
   // Focus collapses chrome via CSS alone — a body-level stamp so every
   // surface's selectors see it without prop-drilling through HeroUI wrappers.
@@ -387,7 +388,9 @@ export function HomePage() {
             shelf={
               dockVariant === "full" ? (
                 <ArtifactShelf
-                  docs={shelfDocs}
+                  docs={shelfSplit.sessionDocs}
+                  contextDocs={shelfSplit.contextDocs}
+                  contextLabel={shelfContextLabel}
                   onOpen={(docId) => openDocByFamily(navigate, blueprints, docs, docId)}
                 />
               ) : undefined

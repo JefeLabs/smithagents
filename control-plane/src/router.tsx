@@ -14,7 +14,7 @@ import { savedMeta } from "./data/dashboards";
 import { composeSpec, specToFence } from "./lib/dashboardSpec";
 import { withRange } from "./lib/dateRange";
 import { openDocByFamily } from "./lib/pickKind";
-import { ArtifactShelf, contextShelfDocs } from "./molecules/ArtifactShelf";
+import { ArtifactShelf, splitShelfDocs } from "./molecules/ArtifactShelf";
 import { PinButton } from "./molecules/PinButton";
 import { BoardStage } from "./organisms/BoardStage";
 import { DashboardsStage } from "./organisms/DashboardsStage";
@@ -74,9 +74,13 @@ function useShelf() {
   const sliceSpotlight = useUiStore((s) => s.sliceSpotlight);
   const activeLens = useUiStore((s) => s.activeLens);
   const pinTarget = activeLens ? `group:${activeLens.group}` : (session?.workspace ?? null);
+  const contextLabel = activeLens ? activeLens.group : (session?.workspace ?? undefined);
+  const { sessionDocs, contextDocs } = splitShelfDocs(session, docs, pinTarget);
   return (
     <ArtifactShelf
-      docs={contextShelfDocs(session, docs, pinTarget)}
+      docs={sessionDocs}
+      contextDocs={contextDocs}
+      contextLabel={contextLabel}
       onOpen={(id) => openDocByFamily(navigate, blueprints, docs, id)}
       spotlight={sliceSpotlight}
     />

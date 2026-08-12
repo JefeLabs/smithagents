@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DocT } from "../api/types";
-import { ArtifactShelf, contextShelfDocs, isSpotlit, shelfDocsFor } from "./ArtifactShelf";
+import { ArtifactShelf, isSpotlit, shelfDocsFor, splitShelfDocs } from "./ArtifactShelf";
 
 const DOC = (id: string, title: string): DocT => ({
   id,
@@ -69,24 +69,55 @@ describe("ArtifactShelf", () => {
     expect(isSpotlit({ title: "  " }, { name: "payments", paths: [] })).toBe(false);
   });
 
-  it("contextShelfDocs: session artifacts first, then the context's pinned docs, deduped (workspace→session→artifacts, pins override up)", () => {
+  it("splitShelfDocs: session artifacts in order; context pins separate and deduped (workspace→session→artifacts)", () => {
     const pinned = { ...DOC("d9", "team charter"), pins: ["acme"] };
     const both = { ...DOC("d1", "in session AND pinned"), pins: ["acme"] };
     const other = { ...DOC("d7", "someone else's"), pins: ["globex"] };
     const docs = [both, DOC("d2", "session only"), pinned, other];
-    const out = contextShelfDocs({ artifacts: ["d1", "d2"] }, docs, "acme");
-    expect(out.map((d) => d.id)).toEqual(["d1", "d2", "d9"]); // session order, pin appended once, globex's absent
+    const out = splitShelfDocs({ artifacts: ["d1", "d2"] }, docs, "acme");
+    expect(out.sessionDocs.map((d) => d.id)).toEqual(["d1", "d2"]);
+    expect(out.contextDocs.map((d) => d.id)).toEqual(["d9"]); // pin already in session not repeated; globex's absent
   });
 
-  it("contextShelfDocs: a group lens target surfaces the group's OWN pins only", () => {
+  it("splitShelfDocs: a group lens target surfaces the group's OWN pins only", () => {
     const groupPinned = { ...DOC("d3", "group doc"), pins: ["group:core"] };
     const memberPinned = { ...DOC("d4", "member workspace doc"), pins: ["acme"] };
-    const out = contextShelfDocs({ artifacts: [] }, [groupPinned, memberPinned], "group:core");
-    expect(out.map((d) => d.id)).toEqual(["d3"]); // never a member's pins — no upward adoption
+    const out = splitShelfDocs({ artifacts: [] }, [groupPinned, memberPinned], "group:core");
+    expect(out.contextDocs.map((d) => d.id)).toEqual(["d3"]); // never a member's pins — no upward adoption
   });
 
-  it("contextShelfDocs: no target (no session, no lens) is just the session view", () => {
-    expect(contextShelfDocs(null, [{ ...DOC("d9", "x"), pins: ["acme"] }], null)).toEqual([]);
+  it("splitShelfDocs: no target (no session, no lens) has no context shelf", () => {
+    const out = splitShelfDocs(null, [{ ...DOC("d9", "x"), pins: ["acme"] }], null);
+    expect(out.sessionDocs).toEqual([]);
+    expect(out.contextDocs).toEqual([]);
+  });
+
+  it("the context shelf renders under a DENOTED divider naming the workspace/group", () => {
+    render(
+      <ArtifactShelf
+        docs={[DOC("d1", "session doc")]}
+        contextDocs={[{ ...DOC("d9", "workspace doc"), pins: ["acme"] }]}
+        contextLabel="acme"
+        onOpen={vi.fn()}
+      />,
+    );
+    const divider = screen.getByRole("separator", { name: "acme shelf" });
+    expect(divider.textContent).toBe("acme");
+    const cards = document.querySelectorAll(".artifact-shelf__card");
+    expect(cards[0]?.className).not.toContain("--context");
+    expect(cards[1]?.className).toContain("artifact-shelf__card--context");
+  });
+
+  it("a shelf with ONLY context docs still renders (empty session, pinned workspace)", () => {
+    render(
+      <ArtifactShelf
+        docs={[]}
+        contextDocs={[{ ...DOC("d9", "workspace doc"), pins: ["acme"] }]}
+        contextLabel="acme"
+        onOpen={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("workspace doc")).toBeTruthy();
   });
 
   it("shelfDocsFor keeps the session's own artifact order and drops unknown ids", () => {
