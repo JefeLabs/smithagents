@@ -110,6 +110,8 @@ export interface GroupT {
   workspaces: string[];
   groups: string[];
   color?: string;
+  /** Opt-in sprint definition (date-range spec 2026-08-12). */
+  sprint?: { anchor: string; lengthDays: number };
   expansion: string[];
 }
 
@@ -234,6 +236,8 @@ export interface WorkspaceRecord {
   links?: string[];
   /** Optional identity colour; the UI falls back to a hash of `name`. */
   color?: string;
+  /** Opt-in sprint definition (date-range spec 2026-08-12). */
+  sprint?: { anchor: string; lengthDays: number };
 }
 
 /** The operator's own profile — connector credentials read back redacted, never the secret itself. */

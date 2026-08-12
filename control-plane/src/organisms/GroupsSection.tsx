@@ -7,11 +7,21 @@ interface GroupFormValues {
   name: string;
   description: string;
   color: string;
+  sprintAnchor: string;
+  sprintLength: string;
   workspaces: string[];
   groups: string[];
 }
 
-const BLANK: GroupFormValues = { name: "", description: "", color: "", workspaces: [], groups: [] };
+const BLANK: GroupFormValues = {
+  name: "",
+  description: "",
+  color: "",
+  sprintAnchor: "",
+  sprintLength: "",
+  workspaces: [],
+  groups: [],
+};
 
 interface GroupsSectionProps {
   groups: GroupT[];
@@ -19,7 +29,14 @@ interface GroupsSectionProps {
   workspaces: string[];
   /** Resolves { error } (e.g. "group would contain itself") rather than throwing. */
   onSave: (
-    body: { name: string; description?: string; color?: string; workspaces: string[]; groups: string[] },
+    body: {
+      name: string;
+      description?: string;
+      color?: string;
+      workspaces: string[];
+      groups: string[];
+      sprint?: { anchor: string; lengthDays: number };
+    },
     isNew: boolean,
   ) => Promise<{ error?: string }>;
   onDelete: (name: string) => Promise<{ error?: string }>;
@@ -51,6 +68,8 @@ export function GroupsSection({ groups, workspaces, onSave, onDelete }: GroupsSe
       name: g.name,
       description: g.description ?? "",
       color: g.color ?? "",
+      sprintAnchor: g.sprint?.anchor ?? "",
+      sprintLength: g.sprint ? String(g.sprint.lengthDays) : "",
       workspaces: g.workspaces,
       groups: g.groups,
     });
@@ -59,11 +78,17 @@ export function GroupsSection({ groups, workspaces, onSave, onDelete }: GroupsSe
 
   const submit = handleSubmit(async (v) => {
     setError(null);
+    // Half-filled sprint (anchor XOR length) is not a sprint — opt-in means
+    // both or absent, mirroring the workspace form's block rule.
+    const anchor = v.sprintAnchor.trim();
+    const lengthDays = Number.parseInt(v.sprintLength, 10);
+    const sprint = anchor && Number.isInteger(lengthDays) && lengthDays > 0 ? { anchor, lengthDays } : undefined;
     const r = await onSave(
       {
         name: v.name.trim(),
         description: v.description.trim() || undefined,
         color: v.color.trim() || undefined,
+        sprint,
         // RHF yields false (not []) when every checkbox of a group is unchecked.
         workspaces: Array.isArray(v.workspaces) ? v.workspaces : [],
         groups: Array.isArray(v.groups) ? v.groups : [],
@@ -138,6 +163,16 @@ export function GroupsSection({ groups, workspaces, onSave, onDelete }: GroupsSe
             Color
             <input type="text" aria-label="Color" placeholder="#7aa2ff" {...register("color")} />
           </label>
+          <div className="groups-section__sprint">
+            <label className="groups-section__field">
+              Sprint anchor
+              <input type="date" aria-label="Sprint anchor" {...register("sprintAnchor")} />
+            </label>
+            <label className="groups-section__field">
+              Sprint length (days)
+              <input type="number" min={1} aria-label="Sprint length (days)" {...register("sprintLength")} />
+            </label>
+          </div>
           <fieldset className="groups-section__members">
             <legend>Member workspaces</legend>
             {workspaces.map((ws) => (

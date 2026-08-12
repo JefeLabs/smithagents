@@ -559,7 +559,14 @@ export async function unpinDoc(docId: string, target: string, base: string = BRO
  * the refreshed session frame (which carries `groups`) follows on the socket.
  */
 export async function saveGroup(
-  body: { name: string; description?: string; workspaces: string[]; groups: string[]; color?: string },
+  body: {
+    name: string;
+    description?: string;
+    workspaces: string[];
+    groups: string[];
+    color?: string;
+    sprint?: { anchor: string; lengthDays: number };
+  },
   isNew: boolean,
   base: string = BROKER_BASE,
 ): Promise<{ error?: string }> {

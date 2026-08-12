@@ -48,6 +48,9 @@ interface WorkspaceFormValues {
   linksText: string;
   /** "" means no colour picked. */
   color: string;
+  /** Opt-in sprint (date-range spec 2026-08-12); both blank = none. */
+  sprintAnchor: string;
+  sprintLength: string;
   default: boolean;
   atlassian: {
     siteUrl: string;
@@ -87,6 +90,8 @@ function blankForm(noWorkspacesYet: boolean): WorkspaceFormValues {
     description: "",
     linksText: "",
     color: "",
+    sprintAnchor: "",
+    sprintLength: "",
     default: noWorkspacesYet,
     atlassian: noAtlassian(),
     repos: [emptyRepo()],
@@ -100,6 +105,8 @@ function toForm(ws: WorkspaceRecord): WorkspaceFormValues {
     description: ws.description ?? "",
     linksText: (ws.links ?? []).join("\n"),
     color: ws.color ?? "",
+    sprintAnchor: ws.sprint?.anchor ?? "",
+    sprintLength: ws.sprint ? String(ws.sprint.lengthDays) : "",
     default: ws.default,
     atlassian: {
       siteUrl: ws.atlassian?.siteUrl ?? "",
@@ -145,6 +152,13 @@ function toRecord(v: WorkspaceFormValues): WorkspaceRecord {
       .split("\n")
       .map((l) => l.trim())
       .filter(Boolean),
+    // Anchor XOR length is not a sprint — the same half-filled-block rule as
+    // atlassian/github below. PUT clears an existing sprint via explicit null.
+    sprint: ((): WorkspaceRecord["sprint"] => {
+      const anchor = v.sprintAnchor.trim();
+      const lengthDays = Number.parseInt(v.sprintLength, 10);
+      return anchor && Number.isInteger(lengthDays) && lengthDays > 0 ? { anchor, lengthDays } : undefined;
+    })(),
     atlassian: v.atlassian.siteUrl.trim()
       ? {
           siteUrl: v.atlassian.siteUrl,
@@ -421,6 +435,16 @@ export function WorkspaceManagerModal({
             rows={3}
           />
           <FormColorSwatch control={control} name="color" label="Colour" />
+          <div className="workspace-manager__sprint">
+            <FormTextField
+              control={control}
+              name="sprintAnchor"
+              label="Sprint anchor"
+              hint="a date any sprint started — leave both blank for no sprints"
+              placeholder="2026-08-03"
+            />
+            <FormTextField control={control} name="sprintLength" label="Sprint length (days)" placeholder="14" />
+          </div>
           <FormCheckbox
             control={control}
             name="default"

@@ -73,6 +73,40 @@ describe("GroupsSection", () => {
     expect(onSave.mock.calls[0][0].name).toBe("frontend");
   });
 
+  it("sprint fields ride the save when both are filled; half-filled saves as absent (opt-in)", async () => {
+    const onSave = vi.fn().mockResolvedValue({});
+    render(<GroupsSection groups={[]} workspaces={["acme"]} onSave={onSave} onDelete={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: /new group/i }));
+    await userEvent.type(screen.getByRole("textbox", { name: "Group name" }), "frontend");
+    await userEvent.type(screen.getByLabelText("Sprint anchor"), "2026-08-03");
+    await userEvent.type(screen.getByLabelText("Sprint length (days)"), "14");
+    await userEvent.click(screen.getByRole("button", { name: "save group" }));
+    await waitFor(() => expect(onSave.mock.calls[0][0].sprint).toEqual({ anchor: "2026-08-03", lengthDays: 14 }));
+    onSave.mockClear();
+    cleanup();
+    render(<GroupsSection groups={[]} workspaces={["acme"]} onSave={onSave} onDelete={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: /new group/i }));
+    await userEvent.type(screen.getByRole("textbox", { name: "Group name" }), "halfway");
+    await userEvent.type(screen.getByLabelText("Sprint length (days)"), "14"); // anchor left blank
+    await userEvent.click(screen.getByRole("button", { name: "save group" }));
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    expect(onSave.mock.calls[0][0].sprint).toBeUndefined();
+  });
+
+  it("editing a group with a sprint shows its values", async () => {
+    render(
+      <GroupsSection
+        groups={[{ ...g("frontend"), sprint: { anchor: "2026-08-03", lengthDays: 14 } }]}
+        workspaces={[]}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Edit frontend" }));
+    expect((screen.getByLabelText("Sprint anchor") as HTMLInputElement).value).toBe("2026-08-03");
+    expect((screen.getByLabelText("Sprint length (days)") as HTMLInputElement).value).toBe("14");
+  });
+
   it("delete calls onDelete with the group name", async () => {
     const onDelete = vi.fn().mockResolvedValue({});
     render(<GroupsSection groups={[g("frontend")]} workspaces={[]} onSave={vi.fn()} onDelete={onDelete} />);
