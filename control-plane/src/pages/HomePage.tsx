@@ -148,13 +148,32 @@ export function HomePage() {
   // to an IDENTICAL scope (a group of one workspace) still acknowledges.
   useEffect(() => {
     if (contextEpoch === 0) return;
+    // A context move is a RELOAD of scope (Edwin): re-pull the records the
+    // window's resolution depends on, not just re-render what's cached.
+    void qc.invalidateQueries({ queryKey: qk.workspaceRecords });
     document.body.setAttribute("data-context-switching", "");
     const t = setTimeout(() => document.body.removeAttribute("data-context-switching"), 450);
     return () => {
       clearTimeout(t);
       document.body.removeAttribute("data-context-switching");
     };
-  }, [contextEpoch]);
+  }, [contextEpoch, qc]);
+
+  // Workspace saves must refresh the records cache: the date-range control
+  // and the context bounds read sprint configs from it, and a save that
+  // does not invalidate leaves them resolving YESTERDAY'S config (live-hit:
+  // a sprint added in the manager showed "All time" until reload).
+  const saveWorkspaceAndRefresh = useCallback(
+    async (ws: Parameters<typeof api.saveWorkspace>[0], isNew: boolean) => {
+      const result = await api.saveWorkspace(ws, isNew);
+      if (!result.error) {
+        void qc.invalidateQueries({ queryKey: qk.workspaceRecords });
+        void qc.invalidateQueries({ queryKey: qk.workspaces });
+      }
+      return result;
+    },
+    [qc],
+  );
 
   // Both the engine badges and the voice gate read `GET /agents`; one
   // invalidation refreshes them together. `/cli-tools` is the other half of
@@ -458,7 +477,7 @@ export function HomePage() {
             open={workspacesOpen}
             onClose={() => setWorkspacesOpen(false)}
             list={api.getWorkspaceRecords}
-            save={api.saveWorkspace}
+            save={saveWorkspaceAndRefresh}
             remove={api.removeWorkspace}
             verifyAtlassian={api.verifyWorkspaceAtlassian}
             verifyRepoGithub={api.verifyRepoGithub}
@@ -470,7 +489,7 @@ export function HomePage() {
           <NewWorkspaceModal
             open={newWorkspaceOpen}
             onClose={() => setNewWorkspaceOpen(false)}
-            save={api.saveWorkspace}
+            save={saveWorkspaceAndRefresh}
             listMyConnectors={api.getMyConnectors}
             activeWorkspace={session?.workspace}
             pickFolder={hasNativeFolderPicker() ? pickFolder : undefined}

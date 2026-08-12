@@ -60,11 +60,29 @@ export function resolveDateRange(range: DateRange, now: Date, sprint?: SprintCon
     case "sprint": {
       if (!sprint) return null;
       const anchor = localDate(sprint.anchor);
-      const length = sprint.lengthDays * DAY_MS;
-      // floor() handles a future anchor too (negative k) — the grid extends both ways.
-      const k = Math.floor((now.getTime() - anchor.getTime()) / length);
-      const from = new Date(anchor.getTime() + k * length);
-      return { from, to: new Date(from.getTime() + length - 1) };
+      // k from ms is approximate across DST; the WINDOW is then built with
+      // CALENDAR-day arithmetic so a January anchor tiles cleanly into August
+      // (raw ms drifted the boundary an hour across the DST change —
+      // live-observed as "Aug 3 – Aug 17" on a 14-day sprint).
+      let k = Math.floor((now.getTime() - anchor.getTime()) / (sprint.lengthDays * DAY_MS));
+      const windowAt = (i: number) => {
+        const from = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() + i * sprint.lengthDays);
+        const to = new Date(
+          anchor.getFullYear(),
+          anchor.getMonth(),
+          anchor.getDate() + (i + 1) * sprint.lengthDays,
+          0,
+          0,
+          0,
+          -1,
+        );
+        return { from, to };
+      };
+      // The ms estimate can be off by one window right at a boundary — settle it.
+      let w = windowAt(k);
+      if (now.getTime() > w.to.getTime()) w = windowAt(++k);
+      else if (now.getTime() < w.from.getTime()) w = windowAt(--k);
+      return w;
     }
     case "custom":
       return { from: localDate(range.from), to: endOfDay(localDate(range.to)) };

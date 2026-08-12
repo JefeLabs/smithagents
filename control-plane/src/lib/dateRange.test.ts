@@ -73,6 +73,14 @@ describe("resolveDateRange: sprint (opt-in)", () => {
     const b = resolveDateRange({ kind: "sprint" }, NOW, { anchor: "2026-08-31", lengthDays: 14 });
     expect(b?.from.getDate()).toBe(3); // Aug 31 minus 2×14 = Aug 3
   });
+  it("a January anchor tiles cleanly across the DST change — whole days, no hour drift", () => {
+    const b = resolveDateRange({ kind: "sprint" }, NOW, { anchor: "2026-01-05", lengthDays: 14 });
+    expect(b?.from.getMonth()).toBe(7);
+    expect(b?.from.getDate()).toBe(3); // Jan 5 + 15×14 = Aug 3
+    expect(b?.from.getHours()).toBe(0); // local midnight, not 01:00
+    expect(b?.to.getDate()).toBe(16); // NOT the 17th
+  });
+
   it("without config resolves to null — All time, never an approximation", () => {
     expect(resolveDateRange({ kind: "sprint" }, NOW)).toBeNull();
   });
