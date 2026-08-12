@@ -3,9 +3,17 @@ import { Plus, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useFieldArray, useForm } from "react-hook-form";
 import type { ConnectorInstanceRecord, GroupT, WorkspaceRecord } from "../api/types";
-import { anchorToWeekday, WEEKDAYS, weekdayToAnchor } from "../lib/dateRange";
+import { anchorToWeekday, weekdayToAnchor } from "../lib/dateRange";
 import { ConfirmSheet } from "../molecules/ConfirmSheet";
-import { FormCheckbox, FormColorSwatch, FormSelect, FormTextField, ModalShell } from "../molecules/form";
+import {
+  ContextIdentityFields,
+  FormCheckbox,
+  FormSelect,
+  FormTextField,
+  ModalShell,
+  SprintFilterFields,
+  sprintFromForm,
+} from "../molecules/form";
 import { useUiStore } from "../stores/uiStore";
 import { GroupsSection } from "./GroupsSection";
 
@@ -357,13 +365,10 @@ export function WorkspaceManagerModal({
 
   const submit = handleSubmit(async (values) => {
     setError(null);
-    // Sprint Filter ON requires both fields (Edwin, 2026-08-12) — refuse
-    // rather than silently saving without the sprint.
-    if (
-      values.sprintEnabled &&
-      (!Number.isInteger(Number.parseInt(values.sprintWeekday, 10)) || !(Number.parseInt(values.sprintLength, 10) > 0))
-    ) {
-      setError("Sprint Filter needs a start day and a length in days");
+    // The SHARED submit rule (sprintFromForm): refuse a half-configured sprint.
+    const sprintCheck = sprintFromForm(values);
+    if ("error" in sprintCheck) {
+      setError(sprintCheck.error);
       return;
     }
     const isNew = selected === null;
@@ -464,19 +469,13 @@ export function WorkspaceManagerModal({
 
         <div className="workspace-manager__form">
           <div className="workspace-manager__tabpane" hidden={tab !== "general"}>
-            <FormTextField
+            {/* SHARED context identity — the same component the group editor renders. */}
+            <ContextIdentityFields
               control={control}
-              name="name"
-              label="Workspace name"
-              placeholder="acme-web"
-              rules={{ validate: filled }}
-              isDisabled={selected !== null}
-            />
-            <FormTextField
-              control={control}
-              name="description"
-              label="Description"
-              placeholder="Marketing site + storefront"
+              nameLabel="Workspace name"
+              namePlaceholder="acme-web"
+              nameDisabled={selected !== null}
+              descriptionPlaceholder="Marketing site + storefront"
             />
             <FormTextField
               control={control}
@@ -487,7 +486,6 @@ export function WorkspaceManagerModal({
               multiline
               rows={3}
             />
-            <FormColorSwatch control={control} name="color" label="Colour" />
             <FormCheckbox
               control={control}
               name="default"
@@ -495,19 +493,8 @@ export function WorkspaceManagerModal({
             />
           </div>
           <div className="workspace-manager__sprint workspace-manager__tabpane" hidden={tab !== "sprint"}>
-            <FormCheckbox control={control} name="sprintEnabled" label="Sprint Filter" />
-            {watch("sprintEnabled") && (
-              <>
-                <FormSelect
-                  control={control}
-                  name="sprintWeekday"
-                  label="Sprint starts on"
-                  placeholder="pick a day…"
-                  options={WEEKDAYS.map((w) => ({ id: String(w.iso), label: w.label }))}
-                />
-                <FormTextField control={control} name="sprintLength" label="Sprint length (days)" placeholder="14" />
-              </>
-            )}
+            {/* SHARED Sprint Filter — same component as the group editor. */}
+            <SprintFilterFields control={control} />
           </div>
 
           <div className="workspace-manager__atlassian workspace-manager__tabpane" hidden={tab !== "integrations"}>

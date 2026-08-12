@@ -4,8 +4,14 @@ import { Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { type FieldPath, useFieldArray, useForm, useWatch } from "react-hook-form";
 import type { ConnectorInstanceRecord, WorkspaceRecord } from "../api/types";
-import { WEEKDAYS, weekdayToAnchor } from "../lib/dateRange";
-import { FormCheckbox, FormColorSwatch, FormSelect, FormTextField, ModalShell } from "../molecules/form";
+import {
+  FormColorSwatch,
+  FormSelect,
+  FormTextField,
+  ModalShell,
+  SprintFilterFields,
+  sprintFromForm,
+} from "../molecules/form";
 
 interface DraftRepo {
   /** Both modes converge on `path`; only the source of the value differs (design §4). */
@@ -121,7 +127,6 @@ export function NewWorkspaceModal({
   // Only the repo `mode` needs watching for render: it swaps the path placeholder and
   // the Browse button. Everything else is uncontrolled and read at submit.
   const repoModes = watch("repos");
-  const watchSprintEnabled = watch("sprintEnabled");
 
   // Watched values, not formState.errors: errors only exist after a validation run,
   // so gating on them would leave `next` enabled on a pristine form — exactly the
@@ -163,12 +168,10 @@ export function NewWorkspaceModal({
 
   const submit = handleSubmit(async (values) => {
     setError(null);
-    // Sprint Filter ON requires both fields (Edwin, 2026-08-12).
-    if (
-      values.sprintEnabled &&
-      (!Number.isInteger(Number.parseInt(values.sprintWeekday, 10)) || !(Number.parseInt(values.sprintLength, 10) > 0))
-    ) {
-      setError("Sprint Filter needs a start day and a length in days");
+    // The SHARED submit rule (sprintFromForm): refuse a half-configured sprint.
+    const sprintCheck = sprintFromForm(values);
+    if ("error" in sprintCheck) {
+      setError(sprintCheck.error);
       return;
     }
     const record: WorkspaceRecord = {
@@ -180,12 +183,7 @@ export function NewWorkspaceModal({
         .split("\n")
         .map((l) => l.trim())
         .filter(Boolean),
-      sprint: values.sprintEnabled
-        ? {
-            anchor: weekdayToAnchor(Number.parseInt(values.sprintWeekday, 10)),
-            lengthDays: Number.parseInt(values.sprintLength, 10),
-          }
-        : undefined,
+      sprint: sprintCheck.sprint,
       repos: values.repos.map((r) => ({
         name: r.name.trim(),
         path: r.path.trim(),
@@ -255,19 +253,8 @@ export function NewWorkspaceModal({
           multiline
           rows={3}
         />
-        <FormCheckbox control={control} name="sprintEnabled" label="Sprint Filter" />
-        {watchSprintEnabled && (
-          <>
-            <FormSelect
-              control={control}
-              name="sprintWeekday"
-              label="Sprint starts on"
-              placeholder="pick a day…"
-              options={WEEKDAYS.map((w) => ({ id: String(w.iso), label: w.label }))}
-            />
-            <FormTextField control={control} name="sprintLength" label="Sprint length (days)" placeholder="14" />
-          </>
-        )}
+        {/* SHARED Sprint Filter — the same component the manager and group editor render. */}
+        <SprintFilterFields control={control} />
       </div>
 
       <div ref={colourRef} hidden={step !== 1}>

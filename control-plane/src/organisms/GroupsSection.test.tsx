@@ -97,8 +97,10 @@ describe("GroupsSection", () => {
     await userEvent.click(screen.getByRole("button", { name: /new group/i }));
     await userEvent.type(screen.getByRole("textbox", { name: "Group name" }), "frontend");
     await userEvent.click(screen.getByLabelText("Sprint Filter"));
-    await userEvent.selectOptions(screen.getByLabelText("Sprint starts on"), "1");
-    await userEvent.type(screen.getByLabelText("Sprint length (days)"), "14");
+    // Shared FormSelect (react-aria), not a native select: open, pick Monday.
+    await userEvent.click(screen.getByRole("button", { name: /sprint starts on/i }));
+    await userEvent.click(await screen.findByRole("option", { name: "Monday" }));
+    await userEvent.type(screen.getByRole("textbox", { name: "Sprint length (days)" }), "14");
     await userEvent.click(screen.getByRole("button", { name: "save group" }));
     await waitFor(() => expect(onSave).toHaveBeenCalled());
     const sprint = onSave.mock.calls[0][0].sprint;
@@ -137,8 +139,9 @@ describe("GroupsSection", () => {
     );
     await userEvent.click(screen.getByRole("button", { name: "Edit frontend" }));
     expect((screen.getByLabelText("Sprint Filter") as HTMLInputElement).checked).toBe(true);
-    expect((screen.getByLabelText("Sprint starts on") as HTMLSelectElement).value).toBe("1"); // Aug 3 2026 = Monday
-    expect((screen.getByLabelText("Sprint length (days)") as HTMLInputElement).value).toBe("14");
+    // The shared FormSelect trigger shows the recovered weekday (Aug 3 2026 = Monday).
+    expect(screen.getByRole("button", { name: /sprint starts on/i }).textContent).toContain("Monday");
+    expect((screen.getByRole("textbox", { name: "Sprint length (days)" }) as HTMLInputElement).value).toBe("14");
   });
 
   it("member-groups picker offers everything EXCEPT cycle-makers (self and its ancestors)", async () => {

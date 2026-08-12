@@ -2,7 +2,8 @@ import { Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import type { GroupT } from "../api/types";
-import { anchorToWeekday, WEEKDAYS, weekdayToAnchor } from "../lib/dateRange";
+import { anchorToWeekday } from "../lib/dateRange";
+import { ContextIdentityFields, SprintFilterFields, sprintFromForm } from "../molecules/form";
 
 interface GroupFormValues {
   name: string;
@@ -77,8 +78,7 @@ export function GroupsSection({ groups, workspaces, onSave, onDelete, autoStart,
   const [selected, setSelected] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { register, handleSubmit, reset, watch } = useForm<GroupFormValues>({ defaultValues: BLANK });
-  const sprintEnabled = watch("sprintEnabled");
+  const { register, handleSubmit, reset, control } = useForm<GroupFormValues>({ defaultValues: BLANK });
 
   const startNew = () => {
     setSelected(null);
@@ -121,18 +121,14 @@ export function GroupsSection({ groups, workspaces, onSave, onDelete, autoStart,
 
   const submit = handleSubmit(async (v) => {
     setError(null);
-    // Sprint Filter ON requires BOTH fields (Edwin, 2026-08-12) — refuse the
-    // save rather than silently dropping a half-configured sprint.
-    let sprint: { anchor: string; lengthDays: number } | undefined;
-    if (v.sprintEnabled) {
-      const weekday = Number.parseInt(v.sprintWeekday, 10);
-      const lengthDays = Number.parseInt(v.sprintLength, 10);
-      if (!Number.isInteger(weekday) || !Number.isInteger(lengthDays) || lengthDays <= 0) {
-        setError("Sprint Filter needs a start day and a length in days");
-        return;
-      }
-      sprint = { anchor: weekdayToAnchor(weekday), lengthDays };
+    // The SHARED submit rule (sprintFromForm): ON requires both fields —
+    // refuse the save rather than silently dropping a half-configured sprint.
+    const sprintResult = sprintFromForm(v);
+    if ("error" in sprintResult) {
+      setError(sprintResult.error);
+      return;
     }
+    const sprint = sprintResult.sprint;
     const r = await onSave(
       {
         name: v.name.trim(),
@@ -201,43 +197,16 @@ export function GroupsSection({ groups, workspaces, onSave, onDelete, autoStart,
       </div>
       {formOpen && (
         <form className="groups-section__form" onSubmit={submit}>
-          <label className="groups-section__field">
-            Group name
-            <input type="text" aria-label="Group name" disabled={selected !== null} {...register("name")} />
-          </label>
-          <label className="groups-section__field">
-            Description
-            <input type="text" aria-label="Description" {...register("description")} />
-          </label>
-          <label className="groups-section__field">
-            Color
-            <input type="text" aria-label="Color" placeholder="#7aa2ff" {...register("color")} />
-          </label>
-          <div className="groups-section__sprint">
-            <label className="groups-section__member">
-              <input type="checkbox" aria-label="Sprint Filter" {...register("sprintEnabled")} />
-              Sprint Filter
-            </label>
-            {sprintEnabled && (
-              <>
-                <label className="groups-section__field">
-                  Sprint starts on
-                  <select aria-label="Sprint starts on" {...register("sprintWeekday")}>
-                    <option value="">pick a day…</option>
-                    {WEEKDAYS.map((w) => (
-                      <option key={w.iso} value={String(w.iso)}>
-                        {w.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="groups-section__field">
-                  Sprint length (days)
-                  <input type="number" min={1} aria-label="Sprint length (days)" {...register("sprintLength")} />
-                </label>
-              </>
-            )}
-          </div>
+          {/* The SHARED context panes — identical components to the workspace
+              editor; only the members fork below is group-specific. */}
+          <ContextIdentityFields
+            control={control}
+            nameLabel="Group name"
+            namePlaceholder="frontend"
+            nameDisabled={selected !== null}
+            descriptionPlaceholder="What this grouping represents"
+          />
+          <SprintFilterFields control={control} />
           <fieldset className="groups-section__members">
             <legend>Member workspaces</legend>
             {workspaces.map((ws) => (
