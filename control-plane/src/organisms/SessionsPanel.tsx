@@ -2,12 +2,15 @@ import { Sheet } from "@heroui-pro/react";
 import { FileText, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { SessionSummary } from "../api/types";
+import { inDateRange, type RangeBounds } from "../lib/dateRange";
 import { ConfirmSheet } from "../molecules/ConfirmSheet";
 import { MODE_LABELS } from "./NewSessionScreen";
 
 interface SessionsPanelProps {
   open: boolean;
   sessions: SessionSummary[];
+  /** The context window's WHEN (date-range spec 2026-08-12); null/absent = All time. */
+  rangeBounds?: RangeBounds | null;
   workspaces: string[];
   onClose: () => void;
   onActivate: (id: string) => void;
@@ -29,6 +32,7 @@ interface SessionsPanelProps {
 export function SessionsPanel({
   open,
   sessions,
+  rangeBounds,
   workspaces,
   onClose,
   onActivate,
@@ -49,7 +53,11 @@ export function SessionsPanel({
   useEffect(() => {
     if (wsFilter && !workspaces.includes(wsFilter)) setWsFilter(null);
   }, [wsFilter, workspaces]);
-  const visible = wsFilter ? sessions.filter((s) => s.workspace === wsFilter) : sessions;
+  const wsVisible = wsFilter ? sessions.filter((s) => s.workspace === wsFilter) : sessions;
+  // The context window (date-range spec 2026-08-12): sessions not active in
+  // the picked range leave the list — except the ACTIVE one; never hide the
+  // ground you stand on.
+  const visible = rangeBounds ? wsVisible.filter((s) => s.active || inDateRange(s.updatedAt, rangeBounds)) : wsVisible;
   return (
     <Sheet
       isOpen={open}

@@ -6,6 +6,7 @@ import { BROKER_BASE } from "../api/broker";
 import type { BlueprintT, ChatMessage, DocT, GroupT, RosterAgent, SessionSummary } from "../api/types";
 import { type AgentSeed, agentSeeds } from "../data/agents";
 import { usePushToTalk } from "../hooks/usePushToTalk";
+import { useRangeBounds } from "../hooks/useRangeBounds";
 import { useSpokenReplies } from "../hooks/useSpokenReplies";
 import { useTheme } from "../hooks/useTheme";
 import { useVoiceStatus } from "../hooks/useVoiceStatus";
@@ -139,6 +140,7 @@ export function HomePage() {
     end: () => micControl("mic-stop"),
   });
   const engineWarnings = useEngineWarnings();
+  const rangeBounds = useRangeBounds();
 
   // Both the engine badges and the voice gate read `GET /agents`; one
   // invalidation refreshes them together. `/cli-tools` is the other half of
@@ -409,6 +411,7 @@ export function HomePage() {
           <SessionsPanel
             open={sessionsOpen}
             sessions={sessions}
+            rangeBounds={rangeBounds}
             workspaces={workspaces}
             activeWorkspace={session?.workspace}
             onClose={closeSessions}

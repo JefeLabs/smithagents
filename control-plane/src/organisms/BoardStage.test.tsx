@@ -106,6 +106,36 @@ describe("BoardStage", () => {
     expect(screen.getByText("PROJ-1")).toBeTruthy();
   });
 
+  it("the context window hides cards not touched in range; All time shows everything", async () => {
+    // c1 stamped inside a fixed custom window, c2 outside it, c3 undated
+    // (undated cards can't be judged, so they stay visible — never hide silently).
+    stubFetch({
+      boards: {
+        boards: [
+          {
+            ...BOARD,
+            cards: [
+              { id: "c1", title: "Write the spec", columnId: "todo", order: 0, updatedAt: "2026-08-10T12:00:00Z" },
+              { id: "c2", title: "Fix login", columnId: "doing", order: 0, updatedAt: "2026-01-05T12:00:00Z" },
+              { id: "c3", title: "Ship avatars", columnId: "done", order: 0 },
+            ],
+          },
+        ],
+        errors: [],
+      },
+    });
+    const { client } = renderBoardStage();
+    seedSessionFrame(client, { workspace: "acme" });
+    await screen.findByText("Write the spec");
+    expect(screen.getByText("Fix login")).toBeTruthy();
+    act(() => useUiStore.getState().setDateRange({ kind: "custom", from: "2026-08-01", to: "2026-08-12" }));
+    await waitFor(() => expect(screen.queryByText("Fix login")).toBeNull());
+    expect(screen.getByText("Write the spec")).toBeTruthy();
+    expect(screen.getByText("Ship avatars")).toBeTruthy();
+    act(() => useUiStore.getState().setDateRange(null));
+    await waitFor(() => expect(screen.getByText("Fix login")).toBeTruthy());
+  });
+
   it("shows the delegated card's agent badge from the roster", async () => {
     stubFetch();
     renderWithProviders(<BoardStage roster={ROSTER} />);

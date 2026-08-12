@@ -97,6 +97,48 @@ describe("SessionsPanel", () => {
     expect(onCreate).toHaveBeenCalledWith(undefined);
   });
 
+  it("the context window hides out-of-range sessions but NEVER the active one", async () => {
+    render(
+      <SessionsPanel
+        {...props({
+          rangeBounds: { from: new Date(2026, 7, 1), to: new Date(2026, 7, 12, 23, 59, 59) },
+          sessions: [
+            {
+              id: "s1",
+              title: "fresh",
+              workspace: "acme",
+              updatedAt: "2026-08-10T00:00:00Z",
+              active: false,
+              runtime: "local-in-process",
+              artifacts: [],
+            },
+            {
+              id: "s2",
+              title: "ancient",
+              workspace: "acme",
+              updatedAt: "2026-01-01T00:00:00Z",
+              active: false,
+              runtime: "local-in-process",
+              artifacts: [],
+            },
+            {
+              id: "s3",
+              title: "old but active",
+              workspace: "acme",
+              updatedAt: "2026-01-02T00:00:00Z",
+              active: true,
+              runtime: "local-in-process",
+              artifacts: [],
+            },
+          ],
+        })}
+      />,
+    );
+    expect(await screen.findByText("fresh")).toBeTruthy();
+    expect(screen.queryByText("ancient")).toBeNull();
+    expect(screen.getByText("old but active")).toBeTruthy();
+  });
+
   it("clicking an inactive session activates it and closes; the active session is not re-activated", async () => {
     const onActivate = vi.fn();
     const onClose = vi.fn();

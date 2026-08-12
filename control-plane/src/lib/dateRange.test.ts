@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { inDateRange, rangeLabel, resolveDateRange, sprintConfigFor } from "./dateRange";
+import { inDateRange, rangeLabel, resolveDateRange, sprintConfigFor, withRange } from "./dateRange";
 
 // Wednesday, mid-quarter, mid-month — nothing about NOW is an edge unless a test makes it one.
 const NOW = new Date(2026, 7, 12, 15, 30); // Aug 12 2026, local
@@ -98,6 +98,13 @@ describe("rangeLabel", () => {
     expect(rangeLabel({ kind: "month" })).toBe("Current Month");
     expect(rangeLabel({ kind: "quarter" })).toBe("Current Quarter");
     expect(rangeLabel({ kind: "custom", from: "2026-08-01", to: "2026-08-12" })).toContain("2026-08-01");
+  });
+});
+
+describe("withRange", () => {
+  it("suffixes the scope with the range label; All time leaves it alone", () => {
+    expect(withRange("core", { kind: "week" })).toBe("core · Current Week");
+    expect(withRange("core", null)).toBe("core");
   });
 });
 

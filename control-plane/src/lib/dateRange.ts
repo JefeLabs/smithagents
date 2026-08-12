@@ -94,6 +94,11 @@ export function rangeLabel(range: DateRange | null): string {
   }
 }
 
+/** The dashboard scope line's WHEN suffix: "core · Current Week"; unchanged when All time. */
+export function withRange(scope: string, range: DateRange | null): string {
+  return range ? `${scope} · ${rangeLabel(range)}` : scope;
+}
+
 /**
  * Which sprint config governs the current context: the group lens's group
  * first, then the active session's workspace — "look at many, act in one".

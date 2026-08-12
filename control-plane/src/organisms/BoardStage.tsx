@@ -4,6 +4,7 @@ import { Download, Plus, SquareKanban } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { RosterAgent, WorkspaceRecord } from "../api/types";
 import type { BoardsResult } from "../api/work";
+import { useRangeBounds } from "../hooks/useRangeBounds";
 import {
   ALL_WORKSPACES,
   addableTypes,
@@ -12,6 +13,7 @@ import {
   collectCards,
   tabsFor,
 } from "../lib/board-aggregate";
+import { inDateRange } from "../lib/dateRange";
 import { workspaceColor } from "../lib/workspace-color";
 import { BoardColumn } from "../molecules/BoardColumn";
 import { BoardTabs } from "../molecules/BoardTabs";
@@ -33,6 +35,9 @@ export interface WorkColumn {
 export interface WorkCardT {
   id: string;
   title: string;
+  /** Swarm cards always stamp these; optional here because a hand-written board file might not. */
+  createdAt?: string;
+  updatedAt?: string;
   notes?: string;
   columnId: string;
   order: number;
@@ -172,6 +177,7 @@ export function BoardStage({ roster }: BoardStageProps) {
 
   const { data: session } = useSession();
   const viewed = useUiStore((s) => s.viewedWorkspaces);
+  const rangeBounds = useRangeBounds();
   // Derived, not stored: the session frame is authoritative for the active
   // workspace, and `viewed` only needs to hold state once the user diverges
   // from it — an untouched (empty) selection means "no explicit view yet", so
@@ -209,6 +215,15 @@ export function BoardStage({ roster }: BoardStageProps) {
   const tabs = tabsFor(boards, scope);
   const tab = tabs.find((t) => t.key === activeKey) ?? tabs[0] ?? null;
   const tabBoards = tab ? boards.filter((b) => tab.boardIds.includes(b.id)) : [];
+  // The context window (date-range spec 2026-08-12): cards not touched in the
+  // picked range leave the VIEW — the swarm store is untouched, counts shrink
+  // to the window. All time (null bounds) is a no-op identity.
+  const windowedBoards = rangeBounds
+    ? tabBoards.map((b) => ({
+        ...b,
+        cards: b.cards.filter((c) => !c.updatedAt || inDateRange(c.updatedAt, rangeBounds)),
+      }))
+    : tabBoards;
   const columns = tabBoards[0]?.columns ?? [];
   // Cards go to the board they came from, never the tab — in aggregate scope a
   // tab spans several boards.
@@ -392,7 +407,7 @@ export function BoardStage({ roster }: BoardStageProps) {
               <BoardColumn
                 key={col.id}
                 col={col}
-                clusters={clusterByWorkspace(collectCards(tabBoards, col.id), tab.clustered)}
+                clusters={clusterByWorkspace(collectCards(windowedBoards, col.id), tab.clustered)}
                 colorFor={colorFor}
                 agentFor={agentFor}
                 onOpenCard={(boardId, cardId) => setOpen({ boardId, cardId })}

@@ -12,6 +12,7 @@ import type { BlueprintT, DocT, GroupT, RosterAgent } from "./api/types";
 import { agentSeeds } from "./data/agents";
 import { savedMeta } from "./data/dashboards";
 import { composeSpec, specToFence } from "./lib/dashboardSpec";
+import { withRange } from "./lib/dateRange";
 import { openDocByFamily } from "./lib/pickKind";
 import { ArtifactShelf, shelfDocsFor } from "./molecules/ArtifactShelf";
 import { PinButton } from "./molecules/PinButton";
@@ -106,7 +107,11 @@ function DashboardsRoute() {
         // agent's spec without moving the doc machinery.
         const { doc } = await api.postDocument("dashboard", question);
         if (!doc) return; // broker down — stay on the ask screen
-        await api.patchDocSection(doc.id, "question", `${question}\n\nscope: ${scope}`);
+        await api.patchDocSection(
+          doc.id,
+          "question",
+          `${question}\n\nscope: ${withRange(scope, useUiStore.getState().dateRange)}`,
+        );
         await api.patchDocSection(doc.id, "spec", specToFence(composeSpec(question, scope)));
         void navigate({ to: "/dashboard/$docId", params: { docId: doc.id } });
       }}
