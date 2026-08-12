@@ -3786,9 +3786,15 @@ button.logo {
   align-items: center;
   gap: 8px;
 }
-/* NO trigger overrides on purpose (Edwin: "same look and feel"): the control
-   inherits the identical HeroUI secondary trigger the workspace selector
-   renders — one variant, two matched pills, nothing to drift. */
+/* ONE shared override for BOTH navbar droplists (Edwin: same look and feel,
+   "some variant of blue and not gray"): the app's blue pill family over the
+   variant's grey fill. Everything else — radius, type, padding, chevron —
+   stays the variant's, so the pair still cannot drift apart. */
+.workspace-selector .select__trigger,
+.date-range__select .select__trigger {
+  background: var(--pill);
+  border: 1px solid var(--pill-br);
+}
 .date-range__value {
   white-space: nowrap;
 }
