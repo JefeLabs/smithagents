@@ -75,6 +75,7 @@ import {
   loadGroupsFromDir,
   removeGroupFile,
   saveGroup,
+  validSprint,
   type WorkspaceGroup,
   wouldCycle,
 } from "./groups.js";
@@ -1585,6 +1586,9 @@ export class OrchestratorServer {
       if (initProblem) return reply.status(400).send({ error: initProblem });
       const problem = await workspaceProblems(b);
       if (problem) return reply.status(400).send({ error: problem });
+      if (b.sprint !== undefined && !validSprint(b.sprint)) {
+        return reply.status(400).send({ error: "sprint needs an anchor date and a positive integer lengthDays" });
+      }
       const { name: submittedName, repos: submittedRepos } = b;
       // Unreachable — workspaceProblems already rejects a blank name or empty
       // repos. The guard is what carries that guarantee into the type system.
@@ -1620,6 +1624,7 @@ export class OrchestratorServer {
         atlassian: b.atlassian,
         links: sanitizeLinks(b.links),
         color: b.color?.trim() || undefined,
+        sprint: b.sprint,
       };
       try {
         if (ws.default)
@@ -1657,7 +1662,12 @@ export class OrchestratorServer {
         atlassian: b.atlassian !== undefined ? b.atlassian : existing.atlassian,
         links: b.links !== undefined ? sanitizeLinks(b.links) : existing.links,
         color: b.color !== undefined ? b.color.trim() || undefined : existing.color,
+        // Opt-in sprint: undefined keeps, explicit null clears, a value validates below.
+        sprint: b.sprint !== undefined ? (b.sprint ?? undefined) : existing.sprint,
       };
+      if (merged.sprint !== undefined && !validSprint(merged.sprint)) {
+        return reply.status(400).send({ error: "sprint needs an anchor date and a positive integer lengthDays" });
+      }
       if (merged.default && merged.archived) {
         return reply
           .status(409)
@@ -1744,6 +1754,7 @@ export class OrchestratorServer {
           atlassian: w.atlassian,
           links: w.links,
           color: w.color,
+          sprint: w.sprint,
         })),
       };
     });
@@ -1782,6 +1793,7 @@ export class OrchestratorServer {
         workspaces: candidate.workspaces,
         groups: candidate.groups,
         color: candidate.color?.trim() || undefined,
+        sprint: candidate.sprint,
       };
       // Membership refs are NOT validated for existence — a dangling ref is
       // stale data that expandGroup skips (delete never cascades). Cycles are
@@ -1812,6 +1824,7 @@ export class OrchestratorServer {
         workspaces: b.workspaces ?? existing.workspaces,
         groups: b.groups ?? existing.groups,
         color: b.color !== undefined ? b.color.trim() || undefined : existing.color,
+        sprint: b.sprint !== undefined ? (b.sprint ?? undefined) : existing.sprint,
       };
       try {
         assertGroup("request", merged);

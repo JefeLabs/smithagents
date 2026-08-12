@@ -14,6 +14,27 @@ describe("assertGroup", () => {
   it("accepts empty member arrays (a group may be built up gradually)", () => {
     assert.deepEqual(assertGroup("f.json", { name: "a", workspaces: [], groups: [] }).name, "a");
   });
+  it("accepts a valid opt-in sprint config and rejects malformed ones", () => {
+    const ok = assertGroup("f.json", {
+      name: "a",
+      workspaces: [],
+      groups: [],
+      sprint: { anchor: "2026-08-03", lengthDays: 14 },
+    });
+    assert.equal(ok.sprint?.lengthDays, 14);
+    assert.throws(() =>
+      assertGroup("f.json", { name: "a", workspaces: [], groups: [], sprint: { anchor: "2026-08-03", lengthDays: 0 } }),
+    );
+    assert.throws(() =>
+      assertGroup("f.json", {
+        name: "a",
+        workspaces: [],
+        groups: [],
+        sprint: { anchor: "not-a-date", lengthDays: 14 },
+      }),
+    );
+  });
+
   it("rejects a missing name or non-array members", () => {
     assert.throws(() => assertGroup("f.json", { workspaces: [], groups: [] }));
     assert.throws(() => assertGroup("f.json", { name: "a", workspaces: "x", groups: [] }));

@@ -38,6 +38,8 @@ export interface Workspace {
   links?: string[];
   /** Optional identity colour; the UI falls back to a hash of `name`. */
   color?: string;
+  /** Opt-in sprint definition (date-range spec 2026-08-12) — absent means this workspace has no sprints. */
+  sprint?: { anchor: string; lengthDays: number };
 }
 
 function assertWorkspace(file: string, v: unknown): Workspace {

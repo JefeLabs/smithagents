@@ -12,6 +12,23 @@ export interface WorkspaceGroup {
   groups: string[];
   /** Optional identity colour; the UI falls back to a hash of `name`. */
   color?: string;
+  /** Opt-in sprint definition (date-range spec 2026-08-12) — absent means this context has no sprints. */
+  sprint?: { anchor: string; lengthDays: number };
+}
+
+/** Shared with workspaces.ts's assert: an opt-in sprint block, valid or absent — never half-checked. */
+export function validSprint(v: unknown): boolean {
+  if (v === undefined) return true;
+  const s = v as { anchor?: unknown; lengthDays?: unknown };
+  return (
+    typeof s === "object" &&
+    s !== null &&
+    typeof s.anchor === "string" &&
+    !Number.isNaN(new Date(s.anchor).getTime()) &&
+    typeof s.lengthDays === "number" &&
+    Number.isInteger(s.lengthDays) &&
+    s.lengthDays > 0
+  );
 }
 
 export function assertGroup(file: string, v: unknown): WorkspaceGroup {
@@ -23,8 +40,10 @@ export function assertGroup(file: string, v: unknown): WorkspaceGroup {
     Array.isArray(o.workspaces) &&
     o.workspaces.every((w) => typeof w === "string") &&
     Array.isArray(o.groups) &&
-    o.groups.every((n) => typeof n === "string");
-  if (!ok) throw new Error(`Invalid group file ${file}: requires name, workspaces[], groups[]`);
+    o.groups.every((n) => typeof n === "string") &&
+    validSprint(o.sprint);
+  if (!ok)
+    throw new Error(`Invalid group file ${file}: requires name, workspaces[], groups[] (and a valid sprint if given)`);
   return o as WorkspaceGroup;
 }
 
