@@ -5,11 +5,12 @@
    Task 6 appends the .chat-dock--full/--dock/--center variant rules; this starts
    with the composer's compact kind picker (the docked variant's control). */
 
-/* The kind row as a select (docked composer): a toolbar control, not a form
-   field — it must not add height or field chrome to the composer's row. Mirrors
-   the target selector's trigger treatment. */
+/* The kind row as a select (docked composer). A LIGHT border (Edwin,
+   2026-08-12) so the picker reads as a control against the flush composer —
+   still no background fill, so it stays quieter than a form field. */
 .composer__kind-select .select__trigger {
-  border: none;
+  border: 1px solid var(--pill-br);
+  border-radius: 8px;
   background: transparent;
   font-size: 11px;
   padding: 2px 8px;
