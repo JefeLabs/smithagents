@@ -19,7 +19,7 @@
 /* The docked chat's width; the canvas/doc stages reserve exactly this on the
    right so their content clears it. One constant, two consumers, always in step. */
 :root {
-  --chat-dock-w: min(32vw, 400px);
+  --chat-dock-w: min(32vw, 320px);
 }
 
 /* ---- full: the home centerpiece. The section also carries `.stage`, so it
