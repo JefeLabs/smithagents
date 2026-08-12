@@ -3786,17 +3786,9 @@ button.logo {
   align-items: center;
   gap: 8px;
 }
-.date-range__select .select__trigger {
-  font-size: 12px;
-  padding: 6px 12px;
-  gap: 6px;
-  /* Reads as a droplist beside the workspace pill (Edwin, 2026-08-12) — same
-     chrome family: bordered pill on the frame ground. */
-  border: 1px solid var(--pill-br);
-  border-radius: 999px;
-  background: var(--pill);
-  color: var(--text);
-}
+/* NO trigger overrides on purpose (Edwin: "same look and feel"): the control
+   inherits the identical HeroUI secondary trigger the workspace selector
+   renders — one variant, two matched pills, nothing to drift. */
 .date-range__value {
   white-space: nowrap;
 }
