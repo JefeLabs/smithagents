@@ -1051,7 +1051,7 @@ export function MapStage({ shelf }: { shelf?: ReactNode } = {}) {
                 </ControlButton>
               </Controls>
               {/* bottom-left, beside the zoom cluster — bottom-right lives under the docked chat */}
-              <MiniMap pannable zoomable position="bottom-left" />
+              <MiniMap pannable zoomable position="bottom-left" style={{ height: 140 }} />
               <SlicePanel
                 slices={[...cap.slices].sort((a, b) => a.order - b.order)}
                 invalidIds={invalidSliceIds}
