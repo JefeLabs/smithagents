@@ -1,7 +1,7 @@
 # Date Range context control — Design
 
 **Date:** 2026-08-12
-**Status:** Approved by Edwin (calendar-anchored periods incl. Current Sprint; OPT-IN sprint config on workspace AND group; boards + sessions + dashboards consume)
+**Status:** SHIPPED (main @ 409ba0b + form-landing fixes — lib, swarm sprint config, manager forms, navbar select, three consumers; live-smoked)
 
 ## Problem
 
