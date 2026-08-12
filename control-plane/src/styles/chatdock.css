@@ -66,6 +66,15 @@
   min-height: 0;
   overflow-y: auto;
   padding: 0 14px;
+  /* Bottom-anchored like every chat: a short thread sits against the composer,
+     not stranded at the top of the column. margin-top:auto on the transcript
+     (not justify-content:flex-end, which breaks scroll-clipping at the top
+     once the thread outgrows the column) does the pinning. */
+  display: flex;
+  flex-direction: column;
+}
+.chat-dock--dock .chat-dock__log .transcript {
+  margin-top: auto;
 }
 /* The docked composer is part of the panel frame, not a floating card: full
    panel width, square corners, only a top rule separating it from the log. */
