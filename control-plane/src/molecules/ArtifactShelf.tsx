@@ -1,4 +1,5 @@
 import type { DocT } from "../api/types";
+import { inDateRange, type RangeBounds } from "../lib/dateRange";
 
 interface ArtifactShelfProps {
   /** The SESSION's shelf — the artifacts this conversation owns. */
@@ -47,16 +48,25 @@ export function shelfDocsFor(session: { artifacts?: string[] } | null | undefine
  * pinned to the current pin target the session doesn't already carry — bare
  * workspace name, or "group:<name>" under a lens (the group's OWN pins only,
  * never members' — the no-upward rule).
+ *
+ * `rangeBounds` applies the context window's WHEN to both shelves (Edwin,
+ * 2026-08-12): docs not touched inside the picked range leave the shelf. An
+ * unparseable/missing updatedAt stays visible — never hide silently.
  */
 export function splitShelfDocs(
   session: { artifacts?: string[] } | null | undefined,
   docs: DocT[],
   pinTarget: string | null,
+  rangeBounds?: RangeBounds | null,
 ): { sessionDocs: DocT[]; contextDocs: DocT[] } {
-  const sessionDocs = shelfDocsFor(session, docs);
+  const inWindow = (d: DocT) => !rangeBounds || inDateRange(d.updatedAt, rangeBounds);
+  const sessionDocs = shelfDocsFor(session, docs).filter(inWindow);
   if (!pinTarget) return { sessionDocs, contextDocs: [] };
   const seen = new Set(sessionDocs.map((d) => d.id));
-  return { sessionDocs, contextDocs: docs.filter((d) => !seen.has(d.id) && d.pins?.includes(pinTarget)) };
+  return {
+    sessionDocs,
+    contextDocs: docs.filter((d) => !seen.has(d.id) && d.pins?.includes(pinTarget) && inWindow(d)),
+  };
 }
 
 /**

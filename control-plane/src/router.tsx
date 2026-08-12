@@ -11,6 +11,7 @@ import * as api from "./api/broker";
 import type { BlueprintT, DocT, GroupT, RosterAgent } from "./api/types";
 import { agentSeeds } from "./data/agents";
 import { savedMeta } from "./data/dashboards";
+import { useRangeBounds } from "./hooks/useRangeBounds";
 import { composeSpec, specToFence } from "./lib/dashboardSpec";
 import { withRange } from "./lib/dateRange";
 import { openDocByFamily } from "./lib/pickKind";
@@ -75,7 +76,9 @@ function useShelf() {
   const activeLens = useUiStore((s) => s.activeLens);
   const pinTarget = activeLens ? `group:${activeLens.group}` : (session?.workspace ?? null);
   const contextLabel = activeLens ? activeLens.group : (session?.workspace ?? undefined);
-  const { sessionDocs, contextDocs } = splitShelfDocs(session, docs, pinTarget);
+  // The context window's WHEN scopes the shelf too (Edwin, 2026-08-12).
+  const rangeBounds = useRangeBounds();
+  const { sessionDocs, contextDocs } = splitShelfDocs(session, docs, pinTarget, rangeBounds);
   return (
     <ArtifactShelf
       docs={sessionDocs}

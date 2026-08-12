@@ -217,6 +217,7 @@ export function HomePage() {
     session,
     docs,
     activeLens ? `group:${activeLens.group}` : (session?.workspace ?? null),
+    rangeBounds,
   );
   const shelfContextLabel = activeLens ? activeLens.group : (session?.workspace ?? undefined);
 

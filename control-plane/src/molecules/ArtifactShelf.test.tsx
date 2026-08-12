@@ -92,6 +92,26 @@ describe("ArtifactShelf", () => {
     expect(out.contextDocs).toEqual([]);
   });
 
+  it("splitShelfDocs: the date range scopes BOTH shelves; unparseable dates stay — never hide silently", () => {
+    const bounds = { from: new Date(2026, 7, 1), to: new Date(2026, 7, 16, 23, 59, 59) };
+    const docs = [
+      { ...DOC("d1", "fresh"), updatedAt: "2026-08-10T00:00:00Z" },
+      { ...DOC("d2", "stale"), updatedAt: "2026-01-01T00:00:00Z" },
+      { ...DOC("d3", "undatable") }, // updatedAt "t" — unparseable, must survive
+      { ...DOC("d4", "fresh pin"), updatedAt: "2026-08-05T00:00:00Z", pins: ["acme"] },
+      { ...DOC("d5", "stale pin"), updatedAt: "2026-01-02T00:00:00Z", pins: ["acme"] },
+    ];
+    const out = splitShelfDocs({ artifacts: ["d1", "d2", "d3"] }, docs, "acme", bounds);
+    expect(out.sessionDocs.map((d) => d.id)).toEqual(["d1", "d3"]);
+    expect(out.contextDocs.map((d) => d.id)).toEqual(["d4"]);
+  });
+
+  it("splitShelfDocs: null bounds leave the shelves unscoped", () => {
+    const docs = [{ ...DOC("d1", "old"), updatedAt: "2020-01-01T00:00:00Z" }];
+    const out = splitShelfDocs({ artifacts: ["d1"] }, docs, null, null);
+    expect(out.sessionDocs.map((d) => d.id)).toEqual(["d1"]);
+  });
+
   it("the context shelf renders under a DENOTED divider naming the workspace/group", () => {
     render(
       <ArtifactShelf
