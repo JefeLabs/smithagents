@@ -3828,3 +3828,36 @@ button.logo {
   font-size: 12px;
   padding: 5px 8px;
 }
+
+/* ---- manager tabs — the workspace/group editor grouped by concern ---- */
+.manager-tabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--pill-br);
+}
+.manager-tabs__tab {
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.manager-tabs__tab:hover {
+  color: var(--text);
+}
+.manager-tabs__tab.is-active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.workspace-manager__tabpane {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.workspace-manager__tabpane[hidden] {
+  display: none;
+}

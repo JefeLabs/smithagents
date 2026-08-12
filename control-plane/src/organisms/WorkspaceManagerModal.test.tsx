@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceRecord } from "../api/types";
 import { WORKSPACE_PALETTE } from "../lib/workspace-color";
+import { useUiStore } from "../stores/uiStore";
 import { WorkspaceManagerModal } from "./WorkspaceManagerModal";
 
 const CONNECTORS = [
@@ -38,6 +39,41 @@ async function openSelect(triggerName: RegExp, expectOptionName: string) {
   });
 }
 
+/** The editor is tabbed now (Edwin, 2026-08-12) — open the pane a field lives in. */
+const openTab = (name: RegExp) => userEvent.click(screen.getByRole("tab", { name }));
+
+describe("WorkspaceManagerModal — tabs", () => {
+  afterEach(() => cleanup());
+
+  it("groups configs under five tabs, General first; the group-form intent lands on Groups", async () => {
+    useUiStore.getState().openGroupForm();
+    render(
+      <WorkspaceManagerModal
+        open
+        onClose={() => {}}
+        list={vi.fn(async () => [])}
+        save={vi.fn()}
+        remove={vi.fn()}
+        verifyAtlassian={vi.fn()}
+        verifyRepoGithub={vi.fn()}
+        groups={[]}
+        saveGroup={vi.fn()}
+        deleteGroup={vi.fn()}
+      />,
+    );
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([
+      "General",
+      "Sprint",
+      "Integrations",
+      "Repos",
+      "Groups",
+    ]);
+    // The intent landed: Groups tab selected, its create form already open.
+    expect(screen.getByRole("tab", { name: "Groups", selected: true })).toBeTruthy();
+    expect(await screen.findByRole("textbox", { name: "Group name" })).toBeTruthy();
+  });
+});
+
 describe("WorkspaceManagerModal — connector pickers", () => {
   afterEach(() => {
     cleanup();
@@ -56,6 +92,7 @@ describe("WorkspaceManagerModal — connector pickers", () => {
         listMyConnectors={vi.fn(async () => CONNECTORS)}
       />,
     );
+    await openTab(/integrations/i);
     await openSelect(/atlassian connector/i, "personal");
     const options = screen.getAllByRole("option").map((o) => o.textContent);
     expect(options).toContain("personal");
@@ -75,6 +112,7 @@ describe("WorkspaceManagerModal — connector pickers", () => {
         listMyConnectors={vi.fn(async () => CONNECTORS)}
       />,
     );
+    await openTab(/repos/i);
     await openSelect(/github connector/i, "acme-corp");
     const options = screen.getAllByRole("option").map((o) => o.textContent);
     expect(options).toEqual(expect.arrayContaining(["acme-corp", "personal"]));
@@ -96,6 +134,7 @@ describe("WorkspaceManagerModal — connector pickers", () => {
       />,
     );
     await userEvent.type(screen.getByPlaceholderText("acme-web"), "web");
+    await openTab(/repos/i);
     await userEvent.type(screen.getByPlaceholderText("web"), "web");
     await userEvent.type(screen.getByPlaceholderText(/Users\/me\/code/i), "/tmp/web");
     await userEvent.type(screen.getByPlaceholderText("GitHub owner"), "acme");
@@ -136,6 +175,7 @@ describe("WorkspaceManagerModal — connector pickers", () => {
     expect(create.disabled).toBe(true);
     await userEvent.type(screen.getByPlaceholderText("acme-web"), "web");
     expect(create.disabled).toBe(true); // repo name + path still blank
+    await openTab(/repos/i);
     await userEvent.type(screen.getByPlaceholderText("web"), "web");
     expect(create.disabled).toBe(true); // path still blank
     await userEvent.type(screen.getByPlaceholderText(/Users\/me\/code/i), "/tmp/web");
@@ -202,6 +242,7 @@ describe("WorkspaceManagerModal — connector pickers", () => {
       />,
     );
     await userEvent.type(screen.getByPlaceholderText("acme-web"), "web");
+    await openTab(/repos/i);
     await userEvent.type(screen.getByPlaceholderText("web"), "web");
     await userEvent.type(screen.getByPlaceholderText(/Users\/me\/code/i), "/tmp/web");
     await userEvent.type(screen.getByPlaceholderText("GitHub owner"), "acme");

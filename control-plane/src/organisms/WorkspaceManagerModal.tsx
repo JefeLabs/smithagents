@@ -232,9 +232,18 @@ export function WorkspaceManagerModal({
   deleteGroup,
 }: WorkspaceManagerModalProps) {
   const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([]);
+  // The editor grew past one page (Edwin, 2026-08-12): related configs group
+  // under tabs. All form fields STAY MOUNTED (hidden, wizard-style) so RHF
+  // state and validation span tabs.
+  const [tab, setTab] = useState<"general" | "sprint" | "integrations" | "repos" | "groups">("general");
   // One field per selector (house rule): the "New group…" landing intent.
   const groupFormIntent = useUiStore((s) => s.groupFormIntent);
   const clearGroupFormIntent = useUiStore((s) => s.clearGroupFormIntent);
+
+  // "New group…" lands ON the Groups tab, form already open.
+  useEffect(() => {
+    if (groupFormIntent) setTab("groups");
+  }, [groupFormIntent]);
   const [connectors, setConnectors] = useState<ConnectorInstanceRecord[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   /** Workspace name being edited; null means the form is building a new one. */
@@ -320,6 +329,7 @@ export function WorkspaceManagerModal({
     reset(padKeys(blankForm(active.length === 0)));
     setError(null);
     setTestResult(null);
+    setTab("general"); // a fresh workspace starts at the beginning
   };
 
   const selectWorkspace = (ws: WorkspaceRecord) => {
@@ -402,7 +412,29 @@ export function WorkspaceManagerModal({
       isKeyboardDismissDisabled={removing !== null}
     >
       {loadError && <p className="wizard__error">{loadError}</p>}
-      <div className="workspace-manager__body">
+      <div className="manager-tabs" role="tablist" aria-label="Workspace settings">
+        {(
+          [
+            ["general", "General"],
+            ["sprint", "Sprint"],
+            ["integrations", "Integrations"],
+            ["repos", "Repos"],
+            ["groups", "Groups"],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={tab === id}
+            className={`manager-tabs__tab${tab === id ? " is-active" : ""}`}
+            onClick={() => setTab(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="workspace-manager__body" hidden={tab === "groups"}>
         {/* left column unchanged — it is a list of buttons, not form fields */}
         <div className="workspace-manager__list">
           <button type="button" className="settings-btn settings-btn--primary settings-btn--wide" onClick={startNew}>
@@ -431,31 +463,38 @@ export function WorkspaceManagerModal({
         </div>
 
         <div className="workspace-manager__form">
-          <FormTextField
-            control={control}
-            name="name"
-            label="Workspace name"
-            placeholder="acme-web"
-            rules={{ validate: filled }}
-            isDisabled={selected !== null}
-          />
-          <FormTextField
-            control={control}
-            name="description"
-            label="Description"
-            placeholder="Marketing site + storefront"
-          />
-          <FormTextField
-            control={control}
-            name="linksText"
-            label="Links"
-            hint="one per line — docs, dashboards, tickets"
-            placeholder="https://github.com/acme/web"
-            multiline
-            rows={3}
-          />
-          <FormColorSwatch control={control} name="color" label="Colour" />
-          <div className="workspace-manager__sprint">
+          <div className="workspace-manager__tabpane" hidden={tab !== "general"}>
+            <FormTextField
+              control={control}
+              name="name"
+              label="Workspace name"
+              placeholder="acme-web"
+              rules={{ validate: filled }}
+              isDisabled={selected !== null}
+            />
+            <FormTextField
+              control={control}
+              name="description"
+              label="Description"
+              placeholder="Marketing site + storefront"
+            />
+            <FormTextField
+              control={control}
+              name="linksText"
+              label="Links"
+              hint="one per line — docs, dashboards, tickets"
+              placeholder="https://github.com/acme/web"
+              multiline
+              rows={3}
+            />
+            <FormColorSwatch control={control} name="color" label="Colour" />
+            <FormCheckbox
+              control={control}
+              name="default"
+              label="Default workspace — used when a delegation names none"
+            />
+          </div>
+          <div className="workspace-manager__sprint workspace-manager__tabpane" hidden={tab !== "sprint"}>
             <FormCheckbox control={control} name="sprintEnabled" label="Sprint Filter" />
             {watch("sprintEnabled") && (
               <>
@@ -470,13 +509,8 @@ export function WorkspaceManagerModal({
               </>
             )}
           </div>
-          <FormCheckbox
-            control={control}
-            name="default"
-            label="Default workspace — used when a delegation names none"
-          />
 
-          <div className="workspace-manager__atlassian">
+          <div className="workspace-manager__atlassian workspace-manager__tabpane" hidden={tab !== "integrations"}>
             <span className="wizard__hint">Atlassian (Jira / Confluence)</span>
             <FormTextField
               control={control}
@@ -517,7 +551,7 @@ export function WorkspaceManagerModal({
             )}
           </div>
 
-          <div className="workspace-manager__repos">
+          <div className="workspace-manager__repos workspace-manager__tabpane" hidden={tab !== "repos"}>
             <span className="wizard__hint">Repos</span>
             {fields.map((field, i) => (
               <div key={field.id} className="repo-row flex flex-wrap items-center gap-2">
@@ -609,7 +643,7 @@ export function WorkspaceManagerModal({
         onConfirm={() => void confirmRemoval()}
         onCancel={() => setRemoving(null)}
       />
-      {groups && saveGroup && deleteGroup && (
+      {tab === "groups" && groups && saveGroup && deleteGroup && (
         <GroupsSection
           groups={groups}
           workspaces={active.map((w) => w.name)}
