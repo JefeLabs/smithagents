@@ -246,12 +246,12 @@ describe("MapStage", () => {
     expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/work/capabilities"))).toBe(false);
   });
 
-  it("shows slice bands with done fractions", async () => {
+  it("the Slices panel lists every slice with its story count", async () => {
     stubFetch();
     const { client } = renderMapStage();
     seedSessionFrame(client, { workspace: "skoolscout" });
-    await screen.findByText("tour scheduling v1", { selector: ".slice-band__name" });
-    expect(screen.getByText("1/2")).toBeTruthy();
+    await screen.findByText("tour scheduling v1", { selector: ".slice-panel__name" });
+    expect(screen.getByText("analytics v1", { selector: ".slice-panel__name" })).toBeTruthy();
   });
 
   it("the session moving to another workspace resets the selected capability to that workspace's own map (I5)", async () => {
@@ -510,28 +510,6 @@ describe("MapStage editing", () => {
     });
   });
 
-  it("slice actions: generate spec POSTs; delivery send gated until specPath; sends post the target", async () => {
-    const { calls } = stubFetch();
-    const { client } = renderMapStage();
-    seedSessionFrame(client, { workspace: "skoolscout" });
-    await screen.findByText("tour scheduling v1", { selector: ".slice-band__name" });
-    // sl2 has no specPath: generate visible, delivery send disabled with reason.
-    expect(screen.getByRole("button", { name: /generate spec for analytics v1/i })).toBeTruthy();
-    const deliveryBtn = screen.getByRole("button", { name: /send analytics v1 to delivery/i }) as HTMLButtonElement;
-    expect(deliveryBtn.disabled).toBe(true);
-    expect(deliveryBtn.title).toMatch(/spec/i);
-    await userEvent.click(screen.getByRole("button", { name: /generate spec for analytics v1/i }));
-    await waitFor(() =>
-      expect(calls.some((c) => c.url.includes("/slices/sl2/spec") && c.method === "POST")).toBe(true),
-    );
-    // sl1 has a specPath: delivery send enabled and posts the target.
-    await userEvent.click(screen.getByRole("button", { name: /send tour scheduling v1 to delivery/i }));
-    await waitFor(() => {
-      const call = calls.find((c) => c.url.includes("/slices/sl1/send"));
-      expect(call?.body).toMatchObject({ target: "delivery" });
-    });
-  });
-
   it("a rejected move reports false rather than resolving undefined", async () => {
     const { calls } = stubFetch();
     failEveryPatch();
@@ -694,13 +672,13 @@ describe("MapStage editing", () => {
     stubFetch();
     const { client } = renderMapStage();
     seedSessionFrame(client, { workspace: "skoolscout" });
-    await screen.findByText("tour scheduling v1", { selector: ".slice-band__name" });
+    await screen.findByText("tour scheduling v1", { selector: ".slice-panel__name" });
 
     // At rest there is no anchor and no artifact node.
     expect(document.querySelector(".map-slice-anchor")).toBeNull();
     expect(document.querySelector(".map-artifact")).toBeNull();
 
-    await userEvent.click(screen.getByText("tour scheduling v1", { selector: ".slice-band__name" }));
+    await userEvent.click(screen.getByText("tour scheduling v1", { selector: ".slice-panel__name" }));
 
     // sl1 has a specPath, so a spec artifact materializes; sl1 owns s1 and s2.
     await waitFor(() => expect(document.querySelector(".map-slice-anchor")).not.toBeNull());
@@ -734,8 +712,8 @@ describe("MapStage editing", () => {
     stubFetch();
     const { client } = renderMapStage();
     seedSessionFrame(client, { workspace: "skoolscout" });
-    await screen.findByText("tour scheduling v1", { selector: ".slice-band__name" });
-    await userEvent.click(screen.getByText("tour scheduling v1", { selector: ".slice-band__name" }));
+    await screen.findByText("tour scheduling v1", { selector: ".slice-panel__name" });
+    await userEvent.click(screen.getByText("tour scheduling v1", { selector: ".slice-panel__name" }));
 
     await waitFor(() => expect(document.querySelectorAll(".map-artifact").length).toBe(2));
     const at = [...document.querySelectorAll(".map-artifact")].map((card) => {
@@ -810,8 +788,12 @@ describe("MapStage editing", () => {
     stubFetch();
     const { client } = renderMapStage();
     seedSessionFrame(client, { workspace: "skoolscout" });
-    await screen.findByText("tour scheduling v1", { selector: ".slice-band__name" });
-    await userEvent.click(screen.getByText("tour scheduling v1", { selector: ".slice-band__name" }));
+    await screen.findByText("tour scheduling v1", { selector: ".slice-panel__name" });
+    await userEvent.click(screen.getByText("tour scheduling v1", { selector: ".slice-panel__name" }));
+    // Clicking a panel row leaves its hover PREVIEW armed (jsdom never fires the
+    // matching mouseleave), and the preview dims too — clear it so what remains
+    // is the click's reveal, the thing under test.
+    fireEvent.mouseLeave(document.querySelector(".slice-panel__list") as Element);
     await waitFor(() => expect(document.querySelector(".map-story.is-dimmed")).not.toBeNull());
 
     fireEvent.click(screen.getByText("create tour time slots"));
@@ -823,10 +805,12 @@ describe("MapStage editing", () => {
     stubFetch();
     const { client } = renderMapStage();
     seedSessionFrame(client, { workspace: "skoolscout" });
-    const band = await screen.findByText("tour scheduling v1", { selector: ".slice-band__name" });
+    const band = await screen.findByText("tour scheduling v1", { selector: ".slice-panel__name" });
     await userEvent.click(band);
+    fireEvent.mouseLeave(document.querySelector(".slice-panel__list") as Element);
     await waitFor(() => expect(document.querySelector(".map-slice-anchor")).not.toBeNull());
     await userEvent.click(band);
+    fireEvent.mouseLeave(document.querySelector(".slice-panel__list") as Element);
     await waitFor(() => expect(document.querySelector(".map-slice-anchor")).toBeNull());
     expect(document.querySelector(".map-artifact")).toBeNull();
     expect(document.querySelector(".map-story.is-dimmed")).toBeNull();

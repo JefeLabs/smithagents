@@ -193,37 +193,3 @@ export async function patchCapability(
   const payload = (await res?.json().catch(() => null)) as { error?: string } | null;
   throw new Error(payload?.error ?? "Update failed");
 }
-
-/**
- * POST /work/capabilities/:id/slices/:sliceId/spec — generates the slice's
- * spec doc. The plan's Step 1 table says PUT; the real client
- * (MapStage.tsx's `generateSpec`) and the real server route
- * (swarm/src/server.ts:2372) both say POST. Real code wins — ported as POST.
- */
-export async function generateSpec(id: string, sliceId: string, base: string = BROKER_BASE): Promise<void> {
-  const res = (await brokerFetch(
-    `/work/capabilities/${encodeURIComponent(id)}/slices/${encodeURIComponent(sliceId)}/spec`,
-    base,
-    { method: "POST" },
-  )
-    .then((r) => r.json())
-    .catch(() => ({ error: "unreachable" }))) as { error?: string };
-  if (res.error) throw new Error(res.error);
-}
-
-/** POST /work/capabilities/:id/slices/:sliceId/send — dispatches a slice's card onto the capabilities or delivery board. */
-export async function sendSlice(
-  id: string,
-  sliceId: string,
-  target: "capabilities" | "delivery",
-  base: string = BROKER_BASE,
-): Promise<void> {
-  const res = (await brokerFetch(
-    `/work/capabilities/${encodeURIComponent(id)}/slices/${encodeURIComponent(sliceId)}/send`,
-    base,
-    { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ target }) },
-  )
-    .then((r) => r.json())
-    .catch(() => ({ error: "unreachable" }))) as { error?: string };
-  if (res.error) throw new Error(res.error);
-}

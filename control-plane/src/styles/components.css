@@ -3321,44 +3321,6 @@ button.logo {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.map-stage__slices {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.slice-band {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border: 1px solid var(--pill-br);
-  border-radius: 10px;
-  font-size: 12px;
-}
-/* The band's name is a button — it reveals the slice's chain on the canvas — but it
-   must not READ as one next to the real actions in the same row, so it inherits
-   everything and keeps only the cursor. */
-.slice-band__select {
-  padding: 0;
-  border: none;
-  background: none;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-}
-.slice-band__select[aria-pressed="true"] .slice-band__name {
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-.slice-band__fraction {
-  font-size: 10px;
-  color: var(--text-dim);
-}
-.slice-band__path {
-  font-size: 10px;
-  color: var(--text-dim);
-}
-
 /* ── New-session screen — calm, centered composer, not a modal (spec §3) ── */
 .new-session-screen {
   flex: 1;

@@ -103,20 +103,3 @@ export function usePatchCapability() {
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.capabilities }),
   });
 }
-
-export function useGenerateSpec() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, sliceId }: { id: string; sliceId: string }) => api.generateSpec(id, sliceId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: qk.capabilities }),
-  });
-}
-
-export function useSendSlice() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, sliceId, target }: { id: string; sliceId: string; target: "capabilities" | "delivery" }) =>
-      api.sendSlice(id, sliceId, target),
-    onSuccess: () => qc.invalidateQueries({ queryKey: qk.capabilities }),
-  });
-}

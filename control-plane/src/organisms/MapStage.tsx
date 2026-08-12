@@ -14,17 +14,10 @@ import {
 import "@xyflow/react/dist/style.css";
 import { Map as MapIcon } from "lucide-react";
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useForm } from "react-hook-form";
-import type { CapActivityT, CapabilityT, CapSliceT, CapStoryT } from "../api/types";
+import type { CapActivityT, CapabilityT, CapStoryT } from "../api/types";
 import { ALL_WORKSPACES } from "../lib/board-aggregate";
 import { useSession } from "../queries/pushed";
-import {
-  useCapabilities,
-  useCreateCapability,
-  useGenerateSpec,
-  usePatchCapability,
-  useSendSlice,
-} from "../queries/work";
+import { useCapabilities, useCreateCapability, usePatchCapability } from "../queries/work";
 import { useUiStore } from "../stores/uiStore";
 import { artifactNodesFor, buildEdges } from "./map/edges";
 import {
@@ -80,18 +73,12 @@ export async function fireNodeDragStop(nodeId: string, position: { x: number; y:
 }
 
 /**
- * The one composer that is still a text box — the slice band's plan path, and nothing else.
- *
- * All FOUR levels of the map are blank cards now: capability, activity, step and story
- * each end their row or column with one, holding their own text and handing back the
- * trimmed value through `onCommit`. `capName` was the last of those to go, and
- * `sliceName` followed it: a slice named into existence has no stories, so it owns
- * nothing and is invalid the moment it exists. Slices are made from a selection now.
+ * No composer text boxes remain at this level: all FOUR levels of the map are
+ * blank cards (capability, activity, step and story each end their row or
+ * column with one), and slices are made from a selection. The old bottom
+ * slice-band strip (plan path + send buttons) was removed 2026-08-12 at
+ * Edwin's request — the Slices panel is the one slice control now.
  */
-interface MapComposerValues {
-  planTexts: Record<string, string>;
-}
-
 /**
  * The story-map stage — where stories are BORN. Activities → steps → story
  * stacks, with slices carved below. Cards and spec docs are downstream
@@ -105,8 +92,6 @@ export function MapStage({ shelf }: { shelf?: ReactNode } = {}) {
 
   const createCapMutation = useCreateCapability();
   const patchCapMutation = usePatchCapability();
-  const generateSpecMutation = useGenerateSpec();
-  const sendSliceMutation = useSendSlice();
 
   const { data: session } = useSession();
   const viewed = useUiStore((s) => s.viewedWorkspaces);
@@ -131,11 +116,6 @@ export function MapStage({ shelf }: { shelf?: ReactNode } = {}) {
   const [panMode, setPanMode] = useState(false);
 
   // Each remaining composer is a write-once text box: type, press Enter, it clears.
-  // planTexts is keyed by slice id and registered as the bands render, which is why
-  // this is one form rather than a `Record<string, string>` state.
-  const { register, getValues, setValue } = useForm<MapComposerValues>({
-    defaultValues: { planTexts: {} },
-  });
 
   const displayError = error ?? loadError;
 
@@ -456,10 +436,6 @@ export function MapStage({ shelf }: { shelf?: ReactNode } = {}) {
 
   const storiesFor = (stepId: string) =>
     (cap?.stories ?? []).filter((s) => s.stepId === stepId).sort((a, b) => a.order - b.order);
-  const doneFraction = (slice: CapSliceT) => {
-    const stories = (cap?.stories ?? []).filter((s) => slice.storyIds.includes(s.id));
-    return `${stories.filter((s) => s.done).length}/${stories.length}`;
-  };
   const sliceFor = (storyId: string) => cap?.slices.find((s) => s.storyIds.includes(storyId))?.id ?? "backlog";
 
   // The three creates take their text as an argument now. Each level's trailing
@@ -518,30 +494,6 @@ export function MapStage({ shelf }: { shelf?: ReactNode } = {}) {
       target?.storyIds.push(storyId);
     }
     void patchCap({ slices });
-  };
-  const generateSpec = async (slice: CapSliceT) => {
-    if (!cap) return;
-    try {
-      await generateSpecMutation.mutateAsync({ id: cap.id, sliceId: slice.id });
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "unreachable");
-    }
-  };
-  const setPlanPath = (slice: CapSliceT) => {
-    const value = (getValues(`planTexts.${slice.id}`) ?? "").trim();
-    if (!cap || !value) return;
-    void patchCap({ slices: cap.slices.map((s) => (s.id === slice.id ? { ...s, planPath: value } : s)) });
-    setValue(`planTexts.${slice.id}`, "");
-  };
-  const sendSlice = async (slice: CapSliceT, target: "capabilities" | "delivery") => {
-    if (!cap) return;
-    try {
-      await sendSliceMutation.mutateAsync({ id: cap.id, sliceId: slice.id, target });
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "unreachable");
-    }
   };
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
 
@@ -1078,76 +1030,6 @@ export function MapStage({ shelf }: { shelf?: ReactNode } = {}) {
                 }
               />
             </ReactFlow>
-          </div>
-          <div className="map-stage__slices">
-            {[...cap.slices]
-              .sort((a, b) => a.order - b.order)
-              .map((slice) => (
-                <div key={slice.id} className="slice-band">
-                  {/* The band is the map's one selection control, and .slice-band__name
-                      stays on the INNER span: three older tests find this band by that
-                      selector, so the click target wraps the name rather than becoming
-                      it. Selecting the same slice twice clears it — that toggle lives in
-                      useMapSelection, not here. */}
-                  <button
-                    type="button"
-                    className="slice-band__select"
-                    aria-pressed={revealed === slice.id}
-                    onClick={() => select({ kind: "slice", id: slice.id })}
-                  >
-                    <span className="slice-band__name">{slice.name}</span>
-                  </button>
-                  <span className="slice-band__fraction">{doneFraction(slice)}</span>
-                  {slice.specPath ? (
-                    <span className="slice-band__path" title={slice.specPath}>
-                      spec ✓
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      aria-label={`Generate spec for ${slice.name}`}
-                      onClick={() => void generateSpec(slice)}
-                    >
-                      generate spec
-                    </button>
-                  )}
-                  {slice.planPath ? (
-                    <span className="slice-band__path" title={slice.planPath}>
-                      plan ✓
-                    </span>
-                  ) : (
-                    <input
-                      placeholder="plan path…"
-                      {...register(`planTexts.${slice.id}`)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") setPlanPath(slice);
-                      }}
-                    />
-                  )}
-                  <button
-                    type="button"
-                    disabled={Boolean(slice.capCardRef)}
-                    title={slice.capCardRef ? "Already on the capabilities board" : undefined}
-                    onClick={() => void sendSlice(slice, "capabilities")}
-                  >
-                    Send {slice.name} to capabilities
-                  </button>
-                  <button
-                    type="button"
-                    disabled={Boolean(slice.deliveryCardRef) || !slice.specPath}
-                    title={
-                      slice.deliveryCardRef
-                        ? "Already on the delivery board"
-                        : !slice.specPath
-                          ? "Generate the spec first"
-                          : undefined
-                    }
-                    onClick={() => void sendSlice(slice, "delivery")}
-                  >
-                    Send {slice.name} to delivery
-                  </button>
-                </div>
-              ))}
           </div>
         </>
       )}
