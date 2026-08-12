@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { inDateRange, rangeLabel, resolveDateRange, sprintConfigFor, withRange } from "./dateRange";
+import { formatBounds, inDateRange, rangeLabel, resolveDateRange, sprintConfigFor, withRange } from "./dateRange";
 
 // Wednesday, mid-quarter, mid-month — nothing about NOW is an edge unless a test makes it one.
 const NOW = new Date(2026, 7, 12, 15, 30); // Aug 12 2026, local
@@ -98,6 +98,15 @@ describe("rangeLabel", () => {
     expect(rangeLabel({ kind: "month" })).toBe("Current Month");
     expect(rangeLabel({ kind: "quarter" })).toBe("Current Quarter");
     expect(rangeLabel({ kind: "custom", from: "2026-08-01", to: "2026-08-12" })).toContain("2026-08-01");
+  });
+});
+
+describe("formatBounds", () => {
+  it("renders short inline dates, adding the year only when it differs", () => {
+    const b = resolveDateRange({ kind: "week" }, NOW);
+    expect(formatBounds(b!, NOW)).toMatch(/Aug 10 – Aug 16/);
+    const wrap = resolveDateRange({ kind: "week" }, new Date(2025, 11, 31));
+    expect(formatBounds(wrap!, new Date(2025, 11, 31))).toMatch(/Dec 29 – Jan 4, 2026/);
   });
 });
 

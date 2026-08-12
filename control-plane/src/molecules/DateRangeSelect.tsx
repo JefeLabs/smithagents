@@ -1,7 +1,7 @@
 import { Label, ListBox, Select } from "@heroui/react";
 import { useState } from "react";
 import type { GroupT } from "../api/types";
-import { type DateRange, rangeLabel, sprintConfigFor } from "../lib/dateRange";
+import { type DateRange, formatBounds, rangeLabel, resolveDateRange, sprintConfigFor } from "../lib/dateRange";
 import { useWorkspaceRecords } from "../queries/http";
 import { useGroups, useSession } from "../queries/pushed";
 import { useUiStore } from "../stores/uiStore";
@@ -51,6 +51,18 @@ export function DateRangeSelect() {
 
   const value = effective === null ? ALL_TIME : effective.kind === "custom" ? CUSTOM : effective.kind;
 
+  // The trigger presents the RESOLVED dates inline (Edwin, 2026-08-12): the
+  // period name plus its concrete window — custom shows only the dates, since
+  // its name IS the dates.
+  const bounds = effective ? resolveDateRange(effective, new Date(), sprint) : null;
+  const triggerText = !effective
+    ? "All time"
+    : !bounds
+      ? rangeLabel(effective)
+      : effective.kind === "custom"
+        ? formatBounds(bounds, new Date())
+        : `${rangeLabel(effective)} · ${formatBounds(bounds, new Date())}`;
+
   const pick = (key: string) => {
     if (key === ALL_TIME) {
       setCustomOpen(false);
@@ -84,7 +96,7 @@ export function DateRangeSelect() {
             labelledby to the Label); the VALUE is this span's text — a custom
             range reads as its dates, not "custom". */}
         <Select.Trigger>
-          <span className="date-range__value">{rangeLabel(effective)}</span>
+          <span className="date-range__value">{triggerText}</span>
           <Select.Indicator />
         </Select.Trigger>
         <Select.Popover>

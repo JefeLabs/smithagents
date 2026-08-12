@@ -94,6 +94,17 @@ export function rangeLabel(range: DateRange | null): string {
   }
 }
 
+/** Short inline dates for the picker's trigger: "Aug 10 – Aug 16" (years only when they differ from now's). */
+export function formatBounds(bounds: RangeBounds, now: Date): string {
+  const fmt = (d: Date) =>
+    d.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      ...(d.getFullYear() !== now.getFullYear() ? { year: "numeric" } : {}),
+    });
+  return `${fmt(bounds.from)} – ${fmt(bounds.to)}`;
+}
+
 /** The dashboard scope line's WHEN suffix: "core · Current Week"; unchanged when All time. */
 export function withRange(scope: string, range: DateRange | null): string {
   return range ? `${scope} · ${rangeLabel(range)}` : scope;
