@@ -140,6 +140,12 @@ export function Composer({
     }
   };
 
+  const sendButton = (
+    <PromptInput.Send className="send" aria-label="Send" isDisabled={disabled || draft.trim() === ""}>
+      <ArrowUp strokeWidth={2} />
+    </PromptInput.Send>
+  );
+
   return (
     <PromptInput value={draft} onValueChange={setDraft} onSubmit={submit} isDisabled={disabled} layout="stacked">
       <PromptInput.Shell className="composer composer--stacked">
@@ -162,28 +168,33 @@ export function Composer({
         {onPickKind &&
           (kindControl === "select" ? (
             // The docked composer has no room for five buttons, so the kind row
-            // becomes a compact picker — same navigation, one control wide.
-            <Select
-              className="composer__kind-select"
-              aria-label="Artifact kind"
-              value={activeKind}
-              onChange={(key) => onPickKind(String(key) as ArtifactKind)}
-            >
-              <Select.Trigger>
-                <Select.Value />
-                <Select.Indicator />
-              </Select.Trigger>
-              <Select.Popover>
-                <ListBox>
-                  {ARTIFACT_KINDS.map((k) => (
-                    <ListBox.Item key={k.kind} id={k.kind} textValue={k.label}>
-                      {k.label}
-                      <ListBox.ItemIndicator />
-                    </ListBox.Item>
-                  ))}
-                </ListBox>
-              </Select.Popover>
-            </Select>
+            // becomes a compact picker — same navigation, one control wide. Send
+            // rides the SAME row, right-aligned (Edwin, 2026-08-12), instead of
+            // stranding on its own line in the narrow dock.
+            <div className="composer__kind-row">
+              <Select
+                className="composer__kind-select"
+                aria-label="Artifact kind"
+                value={activeKind}
+                onChange={(key) => onPickKind(String(key) as ArtifactKind)}
+              >
+                <Select.Trigger>
+                  <Select.Value />
+                  <Select.Indicator />
+                </Select.Trigger>
+                <Select.Popover>
+                  <ListBox>
+                    {ARTIFACT_KINDS.map((k) => (
+                      <ListBox.Item key={k.kind} id={k.kind} textValue={k.label}>
+                        {k.label}
+                        <ListBox.ItemIndicator />
+                      </ListBox.Item>
+                    ))}
+                  </ListBox>
+                </Select.Popover>
+              </Select>
+              {sendButton}
+            </div>
           ) : (
             // The middle row of the composer: input above, controls below. Buttons
             // sit flush with the composer's own background until the box is hovered
@@ -364,9 +375,7 @@ export function Composer({
                 {soundOn ? <Volume2 strokeWidth={1.7} /> : <VolumeX strokeWidth={1.7} />}
               </PromptInput.Action>
             )}
-            <PromptInput.Send className="send" aria-label="Send" isDisabled={disabled || draft.trim() === ""}>
-              <ArrowUp strokeWidth={2} />
-            </PromptInput.Send>
+            {kindControl !== "select" && sendButton}
           </PromptInput.ToolbarEnd>
         </PromptInput.Toolbar>
       </PromptInput.Shell>

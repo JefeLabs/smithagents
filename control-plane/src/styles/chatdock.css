@@ -109,3 +109,15 @@ body[data-focus] .chat-dock:not(.chat-dock--full) {
   min-height: 0;
   overflow-y: auto;
 }
+
+/* Kind select + send on ONE row in the docked composer: picker stretches,
+   send holds the right edge — no more stranded arrow line. */
+.composer__kind-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.composer__kind-row .composer__kind-select {
+  flex: 1;
+  min-width: 0;
+}
