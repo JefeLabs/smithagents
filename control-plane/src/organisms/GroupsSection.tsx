@@ -1,5 +1,5 @@
 import { Plus, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import type { GroupT } from "../api/types";
 
@@ -64,13 +64,19 @@ export function GroupsSection({ groups, workspaces, onSave, onDelete, autoStart,
     setFormOpen(true);
   };
 
+  const sectionRef = useRef<HTMLElement>(null);
+
   // Mount-only on purpose: the intent is a one-shot command, not a mode — it
-  // must not re-open the form after the user cancels.
+  // must not re-open the form after the user cancels. The scroll matters as
+  // much as the open: the section sits below the workspace form, and a form
+  // that opened off-screen reads as "the wizard has no pickers" (Edwin,
+  // 2026-08-12). scrollIntoView is optional-chained for jsdom.
   // biome-ignore lint/correctness/useExhaustiveDependencies: one-shot mount intent
   useEffect(() => {
     if (autoStart) {
       startNew();
       onAutoStarted?.();
+      sectionRef.current?.scrollIntoView?.({ block: "start", behavior: "smooth" });
     }
   }, []);
 
@@ -127,7 +133,7 @@ export function GroupsSection({ groups, workspaces, onSave, onDelete, autoStart,
   };
 
   return (
-    <section className="groups-section" aria-label="Workspace groups">
+    <section ref={sectionRef} className="groups-section" aria-label="Workspace groups">
       <div className="groups-section__bar">
         <h3 className="groups-section__title">groups</h3>
         <button type="button" className="settings-btn settings-btn--primary" onClick={startNew}>
