@@ -66,12 +66,20 @@
   min-height: 0;
   overflow-y: auto;
   padding: 0 14px;
+  /* Scroll without chrome (house style — shelf and base transcript already
+     do this): the fat default bar was riding the panel's right edge and
+     stealing the history's right margin. Both forms: scrollbar-width is
+     no-op in the Tauri WKWebView, which only honors the -webkit- selector. */
+  scrollbar-width: none;
   /* Bottom-anchored like every chat: a short thread sits against the composer,
      not stranded at the top of the column. margin-top:auto on the transcript
      (not justify-content:flex-end, which breaks scroll-clipping at the top
      once the thread outgrows the column) does the pinning. */
   display: flex;
   flex-direction: column;
+}
+.chat-dock--dock .chat-dock__log::-webkit-scrollbar {
+  display: none;
 }
 .chat-dock--dock .chat-dock__log .transcript {
   margin-top: auto;
