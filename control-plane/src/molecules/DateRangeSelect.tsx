@@ -1,7 +1,14 @@
 import { Label, ListBox, Select } from "@heroui/react";
 import { useState } from "react";
 import type { GroupT } from "../api/types";
-import { type DateRange, formatBounds, rangeLabel, resolveDateRange, sprintConfigFor } from "../lib/dateRange";
+import {
+  type DateRange,
+  effectiveRange,
+  formatBounds,
+  rangeLabel,
+  resolveDateRange,
+  sprintConfigFor,
+} from "../lib/dateRange";
 import { useWorkspaceRecords } from "../queries/http";
 import { useGroups, useSession } from "../queries/pushed";
 import { useUiStore } from "../stores/uiStore";
@@ -10,14 +17,17 @@ const NO_GROUPS: GroupT[] = [];
 
 // Sentinel-keyed commands/values (workspace selector precedent): option ids
 // never collide with data.
-const ALL_TIME = "__all-time__";
 const CUSTOM = "__custom__";
 
+// No "All time" (Edwin, 2026-08-12): the app is always windowed. Sprint leads
+// when configured; the rolling windows are the plain-calendar fallbacks.
 const PERIODS: Array<{ id: string; range: DateRange }> = [
-  { id: "week", range: { kind: "week" } },
   { id: "sprint", range: { kind: "sprint" } },
+  { id: "week", range: { kind: "week" } },
   { id: "month", range: { kind: "month" } },
   { id: "quarter", range: { kind: "quarter" } },
+  { id: "days-14", range: { kind: "days", days: 14 } },
+  { id: "days-30", range: { kind: "days", days: 30 } },
 ];
 
 /**
@@ -29,13 +39,13 @@ const PERIODS: Array<{ id: string; range: DateRange }> = [
 export function DateRangeSelect() {
   const { data: session } = useSession();
   const { data: groups = NO_GROUPS } = useGroups();
-  // Deferred like every workspace-record probe (HomePage holds them until a
-  // surface needs them): the records fetch only once the menu first opens —
-  // that is the moment "is there a sprint config?" starts mattering.
   const [opened, setOpened] = useState(false);
-  const { data: workspaceRecords = [] } = useWorkspaceRecords(opened);
   const activeLens = useUiStore((s) => s.activeLens);
   const dateRange = useUiStore((s) => s.dateRange);
+  // The records probe runs at boot whenever sprint is the stored OR defaulted
+  // choice — the trigger's very first label depends on whether a config
+  // resolves. Otherwise it still defers to the first menu open.
+  const { data: workspaceRecords = [] } = useWorkspaceRecords(opened || !dateRange || dateRange.kind === "sprint");
   const setDateRange = useUiStore((s) => s.setDateRange);
   const [customOpen, setCustomOpen] = useState(false);
   const [from, setFrom] = useState("");
@@ -45,30 +55,25 @@ export function DateRangeSelect() {
   const workspace = workspaceRecords.find((w) => w.name === session?.workspace);
   const sprint = sprintConfigFor(lensGroup, workspace);
 
-  // A picked sprint whose config left (workspace switch) DISPLAYS as All time
-  // without writing the store — the choice comes back if the config does.
-  const effective = dateRange?.kind === "sprint" && !sprint ? null : dateRange;
+  // Sprint-if-configured, last-14 otherwise (and a picked sprint whose config
+  // left degrades the same way) — without writing the store, so the choice
+  // comes back if the config does.
+  const effective = effectiveRange(dateRange, sprint);
 
-  const value = effective === null ? ALL_TIME : effective.kind === "custom" ? CUSTOM : effective.kind;
+  const value =
+    effective.kind === "custom" ? CUSTOM : effective.kind === "days" ? `days-${effective.days}` : effective.kind;
 
   // The trigger presents the RESOLVED dates inline (Edwin, 2026-08-12): the
   // period name plus its concrete window — custom shows only the dates, since
   // its name IS the dates.
-  const bounds = effective ? resolveDateRange(effective, new Date(), sprint) : null;
-  const triggerText = !effective
-    ? "All time"
-    : !bounds
-      ? rangeLabel(effective)
-      : effective.kind === "custom"
-        ? formatBounds(bounds, new Date())
-        : `${rangeLabel(effective)} · ${formatBounds(bounds, new Date())}`;
+  const bounds = resolveDateRange(effective, new Date(), sprint);
+  const triggerText = !bounds
+    ? rangeLabel(effective)
+    : effective.kind === "custom"
+      ? formatBounds(bounds, new Date())
+      : `${rangeLabel(effective)} · ${formatBounds(bounds, new Date())}`;
 
   const pick = (key: string) => {
-    if (key === ALL_TIME) {
-      setCustomOpen(false);
-      setDateRange(null);
-      return;
-    }
     if (key === CUSTOM) {
       setCustomOpen(true); // applied by the popover's Apply, not the pick
       return;
@@ -101,10 +106,6 @@ export function DateRangeSelect() {
         </Select.Trigger>
         <Select.Popover>
           <ListBox>
-            <ListBox.Item id={ALL_TIME} textValue="All time">
-              All time
-              <ListBox.ItemIndicator />
-            </ListBox.Item>
             {PERIODS.filter((p) => p.id !== "sprint" || sprint).map((p) => (
               <ListBox.Item key={p.id} id={p.id} textValue={rangeLabel(p.range)}>
                 {rangeLabel(p.range)}

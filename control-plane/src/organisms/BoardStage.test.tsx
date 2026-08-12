@@ -106,8 +106,8 @@ describe("BoardStage", () => {
     expect(screen.getByText("PROJ-1")).toBeTruthy();
   });
 
-  it("the context window hides cards not touched in range; All time shows everything", async () => {
-    // c1 stamped inside a fixed custom window, c2 outside it, c3 undated
+  it("the context window hides cards not touched in range; a wide window shows everything", async () => {
+    // c1 stamped inside the narrow window, c2 outside it, c3 undated
     // (undated cards can't be judged, so they stay visible — never hide silently).
     stubFetch({
       boards: {
@@ -126,14 +126,15 @@ describe("BoardStage", () => {
     });
     const { client } = renderBoardStage();
     seedSessionFrame(client, { workspace: "acme" });
+    // Wide window first: the DEFAULT (last 14 days, no sprint config here)
+    // would already hide the January card on load.
+    act(() => useUiStore.getState().setDateRange({ kind: "custom", from: "2026-01-01", to: "2026-12-31" }));
     await screen.findByText("Write the spec");
     expect(screen.getByText("Fix login")).toBeTruthy();
     act(() => useUiStore.getState().setDateRange({ kind: "custom", from: "2026-08-01", to: "2026-08-12" }));
     await waitFor(() => expect(screen.queryByText("Fix login")).toBeNull());
     expect(screen.getByText("Write the spec")).toBeTruthy();
     expect(screen.getByText("Ship avatars")).toBeTruthy();
-    act(() => useUiStore.getState().setDateRange(null));
-    await waitFor(() => expect(screen.getByText("Fix login")).toBeTruthy());
   });
 
   it("shows the delegated card's agent badge from the roster", async () => {

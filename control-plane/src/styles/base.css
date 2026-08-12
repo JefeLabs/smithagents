@@ -163,12 +163,14 @@ body[data-focus] .stage.diagram-stage {
 .stage.document-stage:has(.artifact-shelf),
 .stage.diagram-stage:has(.artifact-shelf),
 .stage.map-stage:has(.artifact-shelf),
-.stage.dashboards-stage:has(.artifact-shelf) {
+.stage.dashboards-stage:has(.artifact-shelf),
+.stage.chat-dock--full:has(.artifact-shelf) {
   padding-left: 176px;
 }
 body[data-focus] .stage.document-stage:has(.artifact-shelf),
 body[data-focus] .stage.map-stage:has(.artifact-shelf),
-body[data-focus] .stage.dashboards-stage:has(.artifact-shelf) {
+body[data-focus] .stage.dashboards-stage:has(.artifact-shelf),
+body[data-focus] .stage.chat-dock--full:has(.artifact-shelf) {
   padding-left: 14px;
 }
 /* diagram-stage is not in the 14px shorthand list above — its default is 0. */

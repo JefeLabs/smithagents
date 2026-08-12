@@ -31,16 +31,25 @@ function renderControl(opts: { workspaceSprint?: boolean; groupSprint?: boolean;
 }
 
 describe("DateRangeSelect", () => {
-  it("defaults to All time and offers the calendar periods; sprint absent without config (opt-in)", async () => {
+  it("defaults to Last 14 days without a sprint config; no All time; rolling windows offered", async () => {
     renderControl();
     const trigger = await screen.findByRole("button", { name: "Date range" });
-    expect(trigger.textContent).toContain("All time");
+    expect(trigger.textContent).toContain("Last 14 days");
     await userEvent.click(trigger);
+    expect(screen.queryByRole("option", { name: "All time" })).toBeNull();
     expect(screen.getByRole("option", { name: "Current Week" })).toBeTruthy();
     expect(screen.getByRole("option", { name: "Current Month" })).toBeTruthy();
     expect(screen.getByRole("option", { name: "Current Quarter" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Last 14 days" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Last 30 days" })).toBeTruthy();
     expect(screen.getByRole("option", { name: /custom range/i })).toBeTruthy();
     expect(screen.queryByRole("option", { name: "Current Sprint" })).toBeNull();
+  });
+
+  it("defaults to Current Sprint when the workspace carries a config", async () => {
+    renderControl({ workspaceSprint: true });
+    const trigger = await screen.findByRole("button", { name: "Date range" });
+    await waitFor(() => expect(trigger.textContent).toContain("Current Sprint"));
   });
 
   it("offers Current Sprint when the workspace carries a config, and picking it sets the store", async () => {

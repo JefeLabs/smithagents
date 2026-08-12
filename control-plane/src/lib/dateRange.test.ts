@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   anchorToWeekday,
+  effectiveRange,
   formatBounds,
   inDateRange,
   rangeLabel,
@@ -97,13 +98,36 @@ describe("resolveDateRange: custom", () => {
 });
 
 describe("inDateRange", () => {
-  it("null bounds (All time) admits everything", () => {
+  it("null bounds admits everything; so does an unparseable date — never hide silently", () => {
     expect(inDateRange("2001-01-01T00:00:00Z", null)).toBe(true);
+    const b = resolveDateRange({ kind: "week" }, NOW);
+    expect(inDateRange("t", b)).toBe(true); // seeded placeholders and bad clocks stay visible
   });
   it("bounds admit inside, reject outside", () => {
     const b = resolveDateRange({ kind: "week" }, NOW);
     expect(inDateRange(new Date(2026, 7, 11).toISOString(), b)).toBe(true);
     expect(inDateRange(new Date(2026, 7, 3).toISOString(), b)).toBe(false);
+  });
+});
+
+describe("days (rolling) and effectiveRange", () => {
+  it("last 14 days spans midnight 13 days back through the end of today", () => {
+    const b = resolveDateRange({ kind: "days", days: 14 }, NOW);
+    expect(b?.from.getDate()).toBe(30); // Jul 30 (Aug 12 - 13)
+    expect(b?.from.getMonth()).toBe(6);
+    expect(b?.to.getDate()).toBe(12);
+    expect(b?.to.getHours()).toBe(23);
+  });
+  it("effectiveRange: sprint when configured, last 14 otherwise — for both null and degraded sprint", () => {
+    const sprint = { anchor: "2026-08-03", lengthDays: 14 };
+    expect(effectiveRange(null, sprint)).toEqual({ kind: "sprint" });
+    expect(effectiveRange(null, undefined)).toEqual({ kind: "days", days: 14 });
+    expect(effectiveRange({ kind: "sprint" }, undefined)).toEqual({ kind: "days", days: 14 });
+    expect(effectiveRange({ kind: "week" }, undefined)).toEqual({ kind: "week" });
+  });
+  it("labels the rolling windows", () => {
+    expect(rangeLabel({ kind: "days", days: 14 })).toBe("Last 14 days");
+    expect(rangeLabel({ kind: "days", days: 30 })).toBe("Last 30 days");
   });
 });
 

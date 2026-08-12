@@ -10,6 +10,7 @@ export type DateRange =
   | { kind: "sprint" }
   | { kind: "month" }
   | { kind: "quarter" }
+  | { kind: "days"; days: number } // rolling: the last N days, today included
   | { kind: "custom"; from: string; to: string };
 
 export interface SprintConfig {
@@ -84,15 +85,37 @@ export function resolveDateRange(range: DateRange, now: Date, sprint?: SprintCon
       else if (now.getTime() < w.from.getTime()) w = windowAt(--k);
       return w;
     }
+    case "days":
+      return {
+        from: new Date(now.getFullYear(), now.getMonth(), now.getDate() - (range.days - 1)),
+        to: endOfDay(now),
+      };
     case "custom":
       return { from: localDate(range.from), to: endOfDay(localDate(range.to)) };
   }
 }
 
-/** The one membership rule. `null` bounds = All time — everything belongs. */
+/**
+ * The app is ALWAYS windowed (Edwin, 2026-08-12: no "All time" in the list):
+ * the default is Current Sprint where a config resolves, otherwise the last
+ * 14 days — and a picked sprint whose config left degrades the same way.
+ */
+export function effectiveRange(range: DateRange | null, sprint?: SprintConfig): DateRange {
+  if (!range) return sprint ? { kind: "sprint" } : { kind: "days", days: 14 };
+  if (range.kind === "sprint" && !sprint) return { kind: "days", days: 14 };
+  return range;
+}
+
+/**
+ * The one membership rule. `null` bounds admits everything, and so does an
+ * UNPARSEABLE date — an item whose time can't be judged must never silently
+ * vanish (the app is always windowed now; this guard is what keeps a bad
+ * timestamp from disappearing a session or card).
+ */
 export function inDateRange(updatedAt: string, bounds: RangeBounds | null): boolean {
   if (!bounds) return true;
   const t = new Date(updatedAt).getTime();
+  if (Number.isNaN(t)) return true;
   return t >= bounds.from.getTime() && t <= bounds.to.getTime();
 }
 
@@ -107,6 +130,8 @@ export function rangeLabel(range: DateRange | null): string {
       return "Current Month";
     case "quarter":
       return "Current Quarter";
+    case "days":
+      return `Last ${range.days} days`;
     case "custom":
       return `${range.from} – ${range.to}`;
   }

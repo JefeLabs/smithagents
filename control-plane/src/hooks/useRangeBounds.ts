@@ -1,4 +1,4 @@
-import { type RangeBounds, resolveDateRange, sprintConfigFor } from "../lib/dateRange";
+import { effectiveRange, type RangeBounds, resolveDateRange, sprintConfigFor } from "../lib/dateRange";
 import { useWorkspaceRecords } from "../queries/http";
 import { useGroups, useSession } from "../queries/pushed";
 import { useUiStore } from "../stores/uiStore";
@@ -15,9 +15,11 @@ export function useRangeBounds(): RangeBounds | null {
   const activeLens = useUiStore((s) => s.activeLens);
   const { data: session } = useSession();
   const { data: groups = [] } = useGroups();
-  const { data: workspaceRecords = [] } = useWorkspaceRecords(dateRange?.kind === "sprint");
-  if (!dateRange) return null;
+  // The default is sprint-when-configured, so the records probe runs whenever
+  // sprint is the stored OR defaulted choice (null store = default).
+  const { data: workspaceRecords = [] } = useWorkspaceRecords(!dateRange || dateRange.kind === "sprint");
   const lensGroup = activeLens ? groups.find((g) => g.name === activeLens.group) : undefined;
   const workspace = workspaceRecords.find((w) => w.name === session?.workspace);
-  return resolveDateRange(dateRange, new Date(), sprintConfigFor(lensGroup, workspace));
+  const sprint = sprintConfigFor(lensGroup, workspace);
+  return resolveDateRange(effectiveRange(dateRange, sprint), new Date(), sprint);
 }
