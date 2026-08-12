@@ -14,7 +14,7 @@ import { savedMeta } from "./data/dashboards";
 import { composeSpec, specToFence } from "./lib/dashboardSpec";
 import { withRange } from "./lib/dateRange";
 import { openDocByFamily } from "./lib/pickKind";
-import { ArtifactShelf, shelfDocsFor } from "./molecules/ArtifactShelf";
+import { ArtifactShelf, contextShelfDocs } from "./molecules/ArtifactShelf";
 import { PinButton } from "./molecules/PinButton";
 import { BoardStage } from "./organisms/BoardStage";
 import { DashboardsStage } from "./organisms/DashboardsStage";
@@ -62,16 +62,21 @@ function BoardRoute() {
   return <BoardStage roster={rosterFrame?.agents ?? NO_ROSTER} />;
 }
 
-/** The shelf every kind canvas renders — the active session's docs, opened by family. */
+/**
+ * The shelf every kind canvas renders: the active session's docs PLUS the
+ * current context's pins — the workspace you're in, or the lens group's own.
+ */
 function useShelf() {
   const navigate = useNavigate();
   const { data: docs = NO_DOCS } = useDocuments();
   const { data: blueprints = NO_BLUEPRINTS } = useBlueprints();
   const { data: session = null } = useSession();
   const sliceSpotlight = useUiStore((s) => s.sliceSpotlight);
+  const activeLens = useUiStore((s) => s.activeLens);
+  const pinTarget = activeLens ? `group:${activeLens.group}` : (session?.workspace ?? null);
   return (
     <ArtifactShelf
-      docs={shelfDocsFor(session, docs)}
+      docs={contextShelfDocs(session, docs, pinTarget)}
       onOpen={(id) => openDocByFamily(navigate, blueprints, docs, id)}
       spotlight={sliceSpotlight}
     />

@@ -78,8 +78,8 @@ describe("uiStore", () => {
     expect(at()).toBe(start + 4);
   });
 
-  it("dateRange sets and clears back to All time (null)", () => {
-    expect(useUiStore.getState().dateRange).toBeNull();
+  it("dateRange DEFAULTS to Current Sprint; sets and clears back to All time (null)", () => {
+    expect(useUiStore.getState().dateRange).toEqual({ kind: "sprint" });
     useUiStore.getState().setDateRange({ kind: "week" });
     expect(useUiStore.getState().dateRange).toEqual({ kind: "week" });
     useUiStore.getState().setDateRange(null);

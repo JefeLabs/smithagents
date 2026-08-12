@@ -14,7 +14,7 @@ import { ALL_WORKSPACES } from "../lib/board-aggregate";
 import { isKindSurface, kindForPath, layoutForPath } from "../lib/composerLayout";
 import { makePickKind, openDocByFamily } from "../lib/pickKind";
 import { AlertMenu } from "../molecules/AlertMenu";
-import { ArtifactShelf, shelfDocsFor } from "../molecules/ArtifactShelf";
+import { ArtifactShelf, contextShelfDocs } from "../molecules/ArtifactShelf";
 import { ConfirmSheet } from "../molecules/ConfirmSheet";
 import { DateRangeSelect } from "../molecules/DateRangeSelect";
 import { OperatorAvatar } from "../molecules/OperatorAvatar";
@@ -191,7 +191,14 @@ export function HomePage() {
   // ordinary doc canvases now (/dashboard/$docId), so no board-view override
   // remains. The URL stays the variant's source of truth everywhere else.
   const dockVariant = pathname === "/dashboards" && messages.length > 0 ? "dock" : layoutForPath(pathname);
-  const shelfDocs = shelfDocsFor(session, docs);
+  // workspace/group → session → artifacts, with pins as the parent-level
+  // override (Edwin, 2026-08-12): the home shelf shows the context's docs too.
+  const activeLens = useUiStore((s) => s.activeLens);
+  const shelfDocs = contextShelfDocs(
+    session,
+    docs,
+    activeLens ? `group:${activeLens.group}` : (session?.workspace ?? null),
+  );
 
   // Focus collapses chrome via CSS alone — a body-level stamp so every
   // surface's selectors see it without prop-drilling through HeroUI wrappers.

@@ -205,15 +205,20 @@ describe("HomePage — the zero-session composer", () => {
     // covering the home surface where VoiceStage's "Voice" region used to be.
     await screen.findByRole("region", { name: "Chat" });
     // The handshake has not finished, so the composer is off screen and neither
-    // probe has any reason to run yet.
+    // probe has any reason to run yet — EXCEPT /workspaces, which the default
+    // Current Sprint range now reads at boot for sprint configs (each boot
+    // observer refetches once at staleTime 0). The execution-modes probe is
+    // still held, which is what this test protects.
     expect(callsTo("/execution-modes")).toBe(0);
-    expect(callsTo("/workspaces")).toBe(0);
+    const bootWorkspaceReads = callsTo("/workspaces");
+    expect(bootWorkspaceReads).toBeGreaterThanOrEqual(1);
 
     act(() => FakeSocket.last?.open());
     await screen.findByRole("heading", { name: /start a session/i });
 
     await waitFor(() => expect(callsTo("/execution-modes")).toBe(1));
-    expect(callsTo("/workspaces")).toBe(1);
+    // The composer adds exactly its one re-read on top of the boot reads.
+    expect(callsTo("/workspaces")).toBe(bootWorkspaceReads + 1);
   });
 
   it("re-reads the probes every time the composer reopens, not only the first time", async () => {
@@ -243,7 +248,9 @@ describe("HomePage — the zero-session composer", () => {
     await screen.findByRole("heading", { name: /start a session/i });
 
     await waitFor(() => expect(callsTo("/execution-modes")).toBe(2));
-    expect(callsTo("/workspaces")).toBe(2);
+    // One composer re-read per open, on top of however many boot reads the
+    // default Current Sprint range made (asserted precisely above).
+    expect(callsTo("/workspaces")).toBeGreaterThanOrEqual(3);
   });
 
   it("leaves the stage alone while the broker has not answered yet", async () => {

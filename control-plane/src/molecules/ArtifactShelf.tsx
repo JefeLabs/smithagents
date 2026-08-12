@@ -33,6 +33,25 @@ export function shelfDocsFor(session: { artifacts?: string[] } | null | undefine
 }
 
 /**
+ * The CONTEXT'S shelf (Edwin, 2026-08-12: "each workspace/group should own
+ * their own sessions"): the session's artifacts plus every doc pinned to the
+ * current pin target — bare workspace name, or "group:<name>" under a lens
+ * (the group's OWN pins only, never members' — the no-upward rule). Pins used
+ * to surface only by seeding NEW sessions, so pinning a doc to the workspace
+ * you were already in changed nothing visible.
+ */
+export function contextShelfDocs(
+  session: { artifacts?: string[] } | null | undefined,
+  docs: DocT[],
+  pinTarget: string | null,
+): DocT[] {
+  const own = shelfDocsFor(session, docs);
+  if (!pinTarget) return own;
+  const seen = new Set(own.map((d) => d.id));
+  return [...own, ...docs.filter((d) => !seen.has(d.id) && d.pins?.includes(pinTarget))];
+}
+
+/**
  * Stage-manager shelf: the active session's documents as portrait page tiles,
  * stacked at the top-left of the chat. Clicking one brings it to center stage
  * (spec 2026-08-10, artifacts pivot). Offsets, rules and the hover fan are all

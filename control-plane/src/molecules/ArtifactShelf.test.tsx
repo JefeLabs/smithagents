@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DocT } from "../api/types";
-import { ArtifactShelf, isSpotlit, shelfDocsFor } from "./ArtifactShelf";
+import { ArtifactShelf, contextShelfDocs, isSpotlit, shelfDocsFor } from "./ArtifactShelf";
 
 const DOC = (id: string, title: string): DocT => ({
   id,
@@ -67,6 +67,26 @@ describe("ArtifactShelf", () => {
     expect(isSpotlit({ title: "unrelated" }, { name: "payments", paths: ["docs/specs/auth-flow.md"] })).toBe(false);
     expect(isSpotlit({ title: "anything" }, null)).toBe(false);
     expect(isSpotlit({ title: "  " }, { name: "payments", paths: [] })).toBe(false);
+  });
+
+  it("contextShelfDocs: session artifacts first, then the context's pinned docs, deduped (workspace→session→artifacts, pins override up)", () => {
+    const pinned = { ...DOC("d9", "team charter"), pins: ["acme"] };
+    const both = { ...DOC("d1", "in session AND pinned"), pins: ["acme"] };
+    const other = { ...DOC("d7", "someone else's"), pins: ["globex"] };
+    const docs = [both, DOC("d2", "session only"), pinned, other];
+    const out = contextShelfDocs({ artifacts: ["d1", "d2"] }, docs, "acme");
+    expect(out.map((d) => d.id)).toEqual(["d1", "d2", "d9"]); // session order, pin appended once, globex's absent
+  });
+
+  it("contextShelfDocs: a group lens target surfaces the group's OWN pins only", () => {
+    const groupPinned = { ...DOC("d3", "group doc"), pins: ["group:core"] };
+    const memberPinned = { ...DOC("d4", "member workspace doc"), pins: ["acme"] };
+    const out = contextShelfDocs({ artifacts: [] }, [groupPinned, memberPinned], "group:core");
+    expect(out.map((d) => d.id)).toEqual(["d3"]); // never a member's pins — no upward adoption
+  });
+
+  it("contextShelfDocs: no target (no session, no lens) is just the session view", () => {
+    expect(contextShelfDocs(null, [{ ...DOC("d9", "x"), pins: ["acme"] }], null)).toEqual([]);
   });
 
   it("shelfDocsFor keeps the session's own artifact order and drops unknown ids", () => {

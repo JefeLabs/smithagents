@@ -129,7 +129,11 @@ const initial = {
   voiceNotice: null,
   focusMode: false,
   activeLens: null,
-  dateRange: null,
+  // Current Sprint by default (Edwin, 2026-08-12) — everywhere a sprint config
+  // resolves, the app opens narrowed to it; without one this DEGRADES to
+  // All time (resolveDateRange returns null bounds), so unconfigured
+  // contexts look exactly as before.
+  dateRange: { kind: "sprint" },
   contextEpoch: 0,
   sliceSpotlight: null,
   docTarget: null,
