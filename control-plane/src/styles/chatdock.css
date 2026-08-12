@@ -46,7 +46,9 @@
   flex-direction: column;
   min-height: 0;
   gap: 10px;
-  padding: 14px;
+  /* Sides and bottom stay ON THE LOG, not the panel: the composer runs edge to
+     edge at the panel's foot (Edwin, 2026-08-12). */
+  padding: 14px 0 0 0;
   border-left: 1px solid var(--rail-br);
   background: color-mix(in srgb, var(--ground-2) 92%, var(--text) 3%);
 }
@@ -54,6 +56,19 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  padding: 0 14px;
+}
+/* The docked composer is part of the panel frame, not a floating card: full
+   panel width, square corners, only a top rule separating it from the log. */
+.chat-dock--dock .composer-dock {
+  width: 100%;
+}
+.chat-dock--dock .composer.composer--stacked {
+  width: 100%;
+  border-radius: 0;
+  border-left: none;
+  border-right: none;
+  border-bottom: none;
 }
 /* Dock-width reservations live in base.css (unlayered) — a layered rule here
    cannot outrank base.css's `padding: 14px` shorthand. Page-like stages
