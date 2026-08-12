@@ -3,6 +3,7 @@ import { Plus, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useFieldArray, useForm } from "react-hook-form";
 import type { ConnectorInstanceRecord, GroupT, WorkspaceRecord } from "../api/types";
+import { anchorToWeekday, WEEKDAYS, weekdayToAnchor } from "../lib/dateRange";
 import { ConfirmSheet } from "../molecules/ConfirmSheet";
 import { FormCheckbox, FormColorSwatch, FormSelect, FormTextField, ModalShell } from "../molecules/form";
 import { useUiStore } from "../stores/uiStore";
@@ -49,8 +50,9 @@ interface WorkspaceFormValues {
   linksText: string;
   /** "" means no colour picked. */
   color: string;
-  /** Opt-in sprint (date-range spec 2026-08-12); both blank = none. */
-  sprintAnchor: string;
+  /** The Sprint Filter toggle (date-range spec 2026-08-12) — ON requires a start day and a length. */
+  sprintEnabled: boolean;
+  sprintWeekday: string; // "" | "1".."7" (ISO Mon..Sun)
   sprintLength: string;
   default: boolean;
   atlassian: {
@@ -91,7 +93,8 @@ function blankForm(noWorkspacesYet: boolean): WorkspaceFormValues {
     description: "",
     linksText: "",
     color: "",
-    sprintAnchor: "",
+    sprintEnabled: false,
+    sprintWeekday: "",
     sprintLength: "",
     default: noWorkspacesYet,
     atlassian: noAtlassian(),
@@ -106,7 +109,8 @@ function toForm(ws: WorkspaceRecord): WorkspaceFormValues {
     description: ws.description ?? "",
     linksText: (ws.links ?? []).join("\n"),
     color: ws.color ?? "",
-    sprintAnchor: ws.sprint?.anchor ?? "",
+    sprintEnabled: Boolean(ws.sprint),
+    sprintWeekday: ws.sprint ? String(anchorToWeekday(ws.sprint.anchor)) : "",
     sprintLength: ws.sprint ? String(ws.sprint.lengthDays) : "",
     default: ws.default,
     atlassian: {
@@ -153,12 +157,15 @@ function toRecord(v: WorkspaceFormValues): WorkspaceRecord {
       .split("\n")
       .map((l) => l.trim())
       .filter(Boolean),
-    // Anchor XOR length is not a sprint — the same half-filled-block rule as
-    // atlassian/github below. PUT clears an existing sprint via explicit null.
+    // Toggle OFF (or half-filled, which submit refuses before reaching here)
+    // saves as absent — the same block rule as atlassian/github below.
     sprint: ((): WorkspaceRecord["sprint"] => {
-      const anchor = v.sprintAnchor.trim();
+      if (!v.sprintEnabled) return undefined;
+      const weekday = Number.parseInt(v.sprintWeekday, 10);
       const lengthDays = Number.parseInt(v.sprintLength, 10);
-      return anchor && Number.isInteger(lengthDays) && lengthDays > 0 ? { anchor, lengthDays } : undefined;
+      return Number.isInteger(weekday) && Number.isInteger(lengthDays) && lengthDays > 0
+        ? { anchor: weekdayToAnchor(weekday), lengthDays }
+        : undefined;
     })(),
     atlassian: v.atlassian.siteUrl.trim()
       ? {
@@ -340,6 +347,15 @@ export function WorkspaceManagerModal({
 
   const submit = handleSubmit(async (values) => {
     setError(null);
+    // Sprint Filter ON requires both fields (Edwin, 2026-08-12) — refuse
+    // rather than silently saving without the sprint.
+    if (
+      values.sprintEnabled &&
+      (!Number.isInteger(Number.parseInt(values.sprintWeekday, 10)) || !(Number.parseInt(values.sprintLength, 10) > 0))
+    ) {
+      setError("Sprint Filter needs a start day and a length in days");
+      return;
+    }
     const isNew = selected === null;
     const result = await save(toRecord(values), isNew).catch((err: unknown): { error?: string } => ({
       error: String(err),
@@ -440,14 +456,19 @@ export function WorkspaceManagerModal({
           />
           <FormColorSwatch control={control} name="color" label="Colour" />
           <div className="workspace-manager__sprint">
-            <FormTextField
-              control={control}
-              name="sprintAnchor"
-              label="Sprint anchor"
-              hint="a date any sprint started — leave both blank for no sprints"
-              placeholder="2026-08-03"
-            />
-            <FormTextField control={control} name="sprintLength" label="Sprint length (days)" placeholder="14" />
+            <FormCheckbox control={control} name="sprintEnabled" label="Sprint Filter" />
+            {watch("sprintEnabled") && (
+              <>
+                <FormSelect
+                  control={control}
+                  name="sprintWeekday"
+                  label="Sprint starts on"
+                  placeholder="pick a day…"
+                  options={WEEKDAYS.map((w) => ({ id: String(w.iso), label: w.label }))}
+                />
+                <FormTextField control={control} name="sprintLength" label="Sprint length (days)" placeholder="14" />
+              </>
+            )}
           </div>
           <FormCheckbox
             control={control}

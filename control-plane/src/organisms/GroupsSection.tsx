@@ -2,12 +2,15 @@ import { Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import type { GroupT } from "../api/types";
+import { anchorToWeekday, WEEKDAYS, weekdayToAnchor } from "../lib/dateRange";
 
 interface GroupFormValues {
   name: string;
   description: string;
   color: string;
-  sprintAnchor: string;
+  /** The Sprint Filter toggle — when ON, a start day and a length are REQUIRED. */
+  sprintEnabled: boolean;
+  sprintWeekday: string; // "" | "1".."7" (ISO Mon..Sun)
   sprintLength: string;
   workspaces: string[];
   groups: string[];
@@ -17,11 +20,30 @@ const BLANK: GroupFormValues = {
   name: "",
   description: "",
   color: "",
-  sprintAnchor: "",
+  sprintEnabled: false,
+  sprintWeekday: "",
   sprintLength: "",
   workspaces: [],
   groups: [],
 };
+
+/**
+ * Would adding `candidate` as a member of `self` close a loop? True when
+ * `self` is already reachable from the candidate through member groups — the
+ * picker simply doesn't offer those (Edwin, 2026-08-12: offer "any group or
+ * workspace that it is not in"), instead of letting the server 400.
+ */
+export function wouldCycleWith(candidate: string, self: string, groups: GroupT[]): boolean {
+  const byName = new Map(groups.map((g) => [g.name, g]));
+  const visited = new Set<string>();
+  const reaches = (n: string): boolean => {
+    if (n === self) return true;
+    if (visited.has(n)) return false;
+    visited.add(n);
+    return (byName.get(n)?.groups ?? []).some(reaches);
+  };
+  return reaches(candidate);
+}
 
 interface GroupsSectionProps {
   groups: GroupT[];
@@ -55,7 +77,8 @@ export function GroupsSection({ groups, workspaces, onSave, onDelete, autoStart,
   const [selected, setSelected] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { register, handleSubmit, reset } = useForm<GroupFormValues>({ defaultValues: BLANK });
+  const { register, handleSubmit, reset, watch } = useForm<GroupFormValues>({ defaultValues: BLANK });
+  const sprintEnabled = watch("sprintEnabled");
 
   const startNew = () => {
     setSelected(null);
@@ -87,7 +110,8 @@ export function GroupsSection({ groups, workspaces, onSave, onDelete, autoStart,
       name: g.name,
       description: g.description ?? "",
       color: g.color ?? "",
-      sprintAnchor: g.sprint?.anchor ?? "",
+      sprintEnabled: Boolean(g.sprint),
+      sprintWeekday: g.sprint ? String(anchorToWeekday(g.sprint.anchor)) : "",
       sprintLength: g.sprint ? String(g.sprint.lengthDays) : "",
       workspaces: g.workspaces,
       groups: g.groups,
@@ -97,11 +121,18 @@ export function GroupsSection({ groups, workspaces, onSave, onDelete, autoStart,
 
   const submit = handleSubmit(async (v) => {
     setError(null);
-    // Half-filled sprint (anchor XOR length) is not a sprint — opt-in means
-    // both or absent, mirroring the workspace form's block rule.
-    const anchor = v.sprintAnchor.trim();
-    const lengthDays = Number.parseInt(v.sprintLength, 10);
-    const sprint = anchor && Number.isInteger(lengthDays) && lengthDays > 0 ? { anchor, lengthDays } : undefined;
+    // Sprint Filter ON requires BOTH fields (Edwin, 2026-08-12) — refuse the
+    // save rather than silently dropping a half-configured sprint.
+    let sprint: { anchor: string; lengthDays: number } | undefined;
+    if (v.sprintEnabled) {
+      const weekday = Number.parseInt(v.sprintWeekday, 10);
+      const lengthDays = Number.parseInt(v.sprintLength, 10);
+      if (!Number.isInteger(weekday) || !Number.isInteger(lengthDays) || lengthDays <= 0) {
+        setError("Sprint Filter needs a start day and a length in days");
+        return;
+      }
+      sprint = { anchor: weekdayToAnchor(weekday), lengthDays };
+    }
     const r = await onSave(
       {
         name: v.name.trim(),
@@ -183,14 +214,29 @@ export function GroupsSection({ groups, workspaces, onSave, onDelete, autoStart,
             <input type="text" aria-label="Color" placeholder="#7aa2ff" {...register("color")} />
           </label>
           <div className="groups-section__sprint">
-            <label className="groups-section__field">
-              Sprint anchor
-              <input type="date" aria-label="Sprint anchor" {...register("sprintAnchor")} />
+            <label className="groups-section__member">
+              <input type="checkbox" aria-label="Sprint Filter" {...register("sprintEnabled")} />
+              Sprint Filter
             </label>
-            <label className="groups-section__field">
-              Sprint length (days)
-              <input type="number" min={1} aria-label="Sprint length (days)" {...register("sprintLength")} />
-            </label>
+            {sprintEnabled && (
+              <>
+                <label className="groups-section__field">
+                  Sprint starts on
+                  <select aria-label="Sprint starts on" {...register("sprintWeekday")}>
+                    <option value="">pick a day…</option>
+                    {WEEKDAYS.map((w) => (
+                      <option key={w.iso} value={String(w.iso)}>
+                        {w.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="groups-section__field">
+                  Sprint length (days)
+                  <input type="number" min={1} aria-label="Sprint length (days)" {...register("sprintLength")} />
+                </label>
+              </>
+            )}
           </div>
           <fieldset className="groups-section__members">
             <legend>Member workspaces</legend>
@@ -204,7 +250,7 @@ export function GroupsSection({ groups, workspaces, onSave, onDelete, autoStart,
           <fieldset className="groups-section__members">
             <legend>Member groups</legend>
             {groups
-              .filter((g) => g.name !== selected)
+              .filter((g) => (selected ? !wouldCycleWith(g.name, selected, groups) : true))
               .map((g) => (
                 <label key={g.name} className="groups-section__member">
                   <input type="checkbox" value={g.name} {...register("groups")} />

@@ -2,7 +2,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GroupT } from "../api/types";
-import { GroupsSection } from "./GroupsSection";
+import { GroupsSection, wouldCycleWith } from "./GroupsSection";
 
 const g = (name: string, workspaces: string[] = [], groups: string[] = []): GroupT => ({
   name,
@@ -73,40 +73,6 @@ describe("GroupsSection", () => {
     expect(onSave.mock.calls[0][0].name).toBe("frontend");
   });
 
-  it("sprint fields ride the save when both are filled; half-filled saves as absent (opt-in)", async () => {
-    const onSave = vi.fn().mockResolvedValue({});
-    render(<GroupsSection groups={[]} workspaces={["acme"]} onSave={onSave} onDelete={vi.fn()} />);
-    await userEvent.click(screen.getByRole("button", { name: /new group/i }));
-    await userEvent.type(screen.getByRole("textbox", { name: "Group name" }), "frontend");
-    await userEvent.type(screen.getByLabelText("Sprint anchor"), "2026-08-03");
-    await userEvent.type(screen.getByLabelText("Sprint length (days)"), "14");
-    await userEvent.click(screen.getByRole("button", { name: "save group" }));
-    await waitFor(() => expect(onSave.mock.calls[0][0].sprint).toEqual({ anchor: "2026-08-03", lengthDays: 14 }));
-    onSave.mockClear();
-    cleanup();
-    render(<GroupsSection groups={[]} workspaces={["acme"]} onSave={onSave} onDelete={vi.fn()} />);
-    await userEvent.click(screen.getByRole("button", { name: /new group/i }));
-    await userEvent.type(screen.getByRole("textbox", { name: "Group name" }), "halfway");
-    await userEvent.type(screen.getByLabelText("Sprint length (days)"), "14"); // anchor left blank
-    await userEvent.click(screen.getByRole("button", { name: "save group" }));
-    await waitFor(() => expect(onSave).toHaveBeenCalled());
-    expect(onSave.mock.calls[0][0].sprint).toBeUndefined();
-  });
-
-  it("editing a group with a sprint shows its values", async () => {
-    render(
-      <GroupsSection
-        groups={[{ ...g("frontend"), sprint: { anchor: "2026-08-03", lengthDays: 14 } }]}
-        workspaces={[]}
-        onSave={vi.fn()}
-        onDelete={vi.fn()}
-      />,
-    );
-    await userEvent.click(screen.getByRole("button", { name: "Edit frontend" }));
-    expect((screen.getByLabelText("Sprint anchor") as HTMLInputElement).value).toBe("2026-08-03");
-    expect((screen.getByLabelText("Sprint length (days)") as HTMLInputElement).value).toBe("14");
-  });
-
   it("autoStart opens the create form on mount — member pickers in view (Edwin, 2026-08-12)", async () => {
     const onAutoStarted = vi.fn();
     render(
@@ -123,6 +89,81 @@ describe("GroupsSection", () => {
     expect(screen.getByRole("checkbox", { name: "acme" })).toBeTruthy();
     expect(screen.getByRole("checkbox", { name: "core" })).toBeTruthy();
     expect(onAutoStarted).toHaveBeenCalled();
+  });
+
+  it("Sprint Filter ON + day + length saves a derived weekday anchor; OFF saves no sprint", async () => {
+    const onSave = vi.fn().mockResolvedValue({});
+    render(<GroupsSection groups={[]} workspaces={["acme"]} onSave={onSave} onDelete={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: /new group/i }));
+    await userEvent.type(screen.getByRole("textbox", { name: "Group name" }), "frontend");
+    await userEvent.click(screen.getByLabelText("Sprint Filter"));
+    await userEvent.selectOptions(screen.getByLabelText("Sprint starts on"), "1");
+    await userEvent.type(screen.getByLabelText("Sprint length (days)"), "14");
+    await userEvent.click(screen.getByRole("button", { name: "save group" }));
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    const sprint = onSave.mock.calls[0][0].sprint;
+    expect(sprint.lengthDays).toBe(14);
+    expect(new Date(`${sprint.anchor}T12:00:00`).getDay()).toBe(1); // a Monday
+    onSave.mockClear();
+    cleanup();
+    render(<GroupsSection groups={[]} workspaces={["acme"]} onSave={onSave} onDelete={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: /new group/i }));
+    await userEvent.type(screen.getByRole("textbox", { name: "Group name" }), "plain");
+    await userEvent.click(screen.getByRole("button", { name: "save group" }));
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    expect(onSave.mock.calls[0][0].sprint).toBeUndefined();
+  });
+
+  it("Sprint Filter ON with a missing day REFUSES the save with an inline error", async () => {
+    const onSave = vi.fn().mockResolvedValue({});
+    render(<GroupsSection groups={[]} workspaces={[]} onSave={onSave} onDelete={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: /new group/i }));
+    await userEvent.type(screen.getByRole("textbox", { name: "Group name" }), "frontend");
+    await userEvent.click(screen.getByLabelText("Sprint Filter"));
+    await userEvent.type(screen.getByLabelText("Sprint length (days)"), "14");
+    await userEvent.click(screen.getByRole("button", { name: "save group" }));
+    expect(await screen.findByText(/needs a start day/i)).toBeTruthy();
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("editing a group with a sprint shows the toggle ON with its day and length", async () => {
+    render(
+      <GroupsSection
+        groups={[{ ...g("frontend"), sprint: { anchor: "2026-08-03", lengthDays: 14 } }]}
+        workspaces={[]}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Edit frontend" }));
+    expect((screen.getByLabelText("Sprint Filter") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText("Sprint starts on") as HTMLSelectElement).value).toBe("1"); // Aug 3 2026 = Monday
+    expect((screen.getByLabelText("Sprint length (days)") as HTMLInputElement).value).toBe("14");
+  });
+
+  it("member-groups picker offers everything EXCEPT cycle-makers (self and its ancestors)", async () => {
+    const parent = g("parent", [], ["frontend"]);
+    const grandparent = g("grand", [], ["parent"]);
+    render(
+      <GroupsSection
+        groups={[g("frontend"), parent, grandparent, g("core")]}
+        workspaces={["acme"]}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Edit frontend" }));
+    expect(screen.queryByRole("checkbox", { name: "frontend" })).toBeNull(); // self
+    expect(screen.queryByRole("checkbox", { name: "parent" })).toBeNull(); // contains frontend
+    expect(screen.queryByRole("checkbox", { name: "grand" })).toBeNull(); // contains it transitively
+    expect(screen.getByRole("checkbox", { name: "core" })).toBeTruthy(); // legal add
+  });
+
+  it("wouldCycleWith walks membership transitively", () => {
+    const groups = [g("a", [], ["b"]), g("b", [], ["c"]), g("c"), g("x")];
+    expect(wouldCycleWith("a", "c", groups)).toBe(true); // a reaches c
+    expect(wouldCycleWith("x", "c", groups)).toBe(false);
+    expect(wouldCycleWith("c", "c", groups)).toBe(true); // self
   });
 
   it("delete calls onDelete with the group name", async () => {

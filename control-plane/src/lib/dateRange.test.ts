@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { formatBounds, inDateRange, rangeLabel, resolveDateRange, sprintConfigFor, withRange } from "./dateRange";
+import {
+  anchorToWeekday,
+  formatBounds,
+  inDateRange,
+  rangeLabel,
+  resolveDateRange,
+  sprintConfigFor,
+  weekdayToAnchor,
+  withRange,
+} from "./dateRange";
 
 // Wednesday, mid-quarter, mid-month — nothing about NOW is an edge unless a test makes it one.
 const NOW = new Date(2026, 7, 12, 15, 30); // Aug 12 2026, local
@@ -114,6 +123,22 @@ describe("withRange", () => {
   it("suffixes the scope with the range label; All time leaves it alone", () => {
     expect(withRange("core", { kind: "week" })).toBe("core · Current Week");
     expect(withRange("core", null)).toBe("core");
+  });
+});
+
+describe("weekday anchors", () => {
+  it("weekdayToAnchor lands on the asked weekday, first of 2026", () => {
+    expect(weekdayToAnchor(4)).toBe("2026-01-01"); // Jan 1 2026 IS a Thursday
+    expect(anchorToWeekday(weekdayToAnchor(1))).toBe(1);
+    expect(anchorToWeekday(weekdayToAnchor(7))).toBe(7);
+    expect(weekdayToAnchor(1)).toBe("2026-01-05"); // first Monday
+  });
+  it("round-trips every weekday", () => {
+    for (let d = 1; d <= 7; d++) expect(anchorToWeekday(weekdayToAnchor(d))).toBe(d);
+  });
+  it("a derived anchor resolves a sprint window starting on that weekday", () => {
+    const b = resolveDateRange({ kind: "sprint" }, NOW, { anchor: weekdayToAnchor(1), lengthDays: 7 });
+    expect(b?.from.getDay()).toBe(1); // Monday
   });
 });
 

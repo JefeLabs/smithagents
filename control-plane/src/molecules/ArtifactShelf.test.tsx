@@ -101,8 +101,8 @@ describe("ArtifactShelf", () => {
         onOpen={vi.fn()}
       />,
     );
-    const divider = screen.getByRole("separator", { name: "acme shelf" });
-    expect(divider.textContent).toBe("acme");
+    const divider = document.querySelector('[data-context-shelf="acme"]');
+    expect(divider?.textContent).toBe("acme");
     const cards = document.querySelectorAll(".artifact-shelf__card");
     expect(cards[0]?.className).not.toContain("--context");
     expect(cards[1]?.className).toContain("artifact-shelf__card--context");

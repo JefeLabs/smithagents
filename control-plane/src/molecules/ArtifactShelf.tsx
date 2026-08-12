@@ -94,8 +94,10 @@ export function ArtifactShelf({ docs, onOpen, spotlight, contextDocs = [], conte
       {docs.map((d) => tile(d, false))}
       {contextDocs.length > 0 && (
         <>
-          {/* The workspace/group's OWN shelf begins here — denoted, not merged. */}
-          <div className="artifact-shelf__divider" role="separator" aria-label={`${contextLabel ?? "context"} shelf`}>
+          {/* The workspace/group's OWN shelf begins here — denoted, not merged.
+              Plain text, no ARIA separator role: a static rule with a name is
+              presentation, not an interactive widget. */}
+          <div className="artifact-shelf__divider" data-context-shelf={contextLabel ?? "context"}>
             <span>{contextLabel ?? "context"}</span>
           </div>
           {contextDocs.map((d) => tile(d, true))}

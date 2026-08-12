@@ -94,6 +94,39 @@ export function rangeLabel(range: DateRange | null): string {
   }
 }
 
+/** Mon(1)..Sun(7), ISO order — the wizard's "sprint starts on" choices. */
+export const WEEKDAYS = [
+  { iso: 1, label: "Monday" },
+  { iso: 2, label: "Tuesday" },
+  { iso: 3, label: "Wednesday" },
+  { iso: 4, label: "Thursday" },
+  { iso: 5, label: "Friday" },
+  { iso: 6, label: "Saturday" },
+  { iso: 7, label: "Sunday" },
+] as const;
+
+/**
+ * The wizard collects a WEEKDAY, the schema stores an ANCHOR date: derive one
+ * from the other. The anchor is the first such weekday of 2026 — a fixed,
+ * documented convention that pins multi-week sprints' phase. (A weekday alone
+ * cannot say WHICH Monday a 14-day sprint starts on; this convention decides.)
+ */
+export function weekdayToAnchor(isoWeekday: number): string {
+  const jan1 = new Date(2026, 0, 1); // a Thursday (ISO 4)
+  const jan1Iso = jan1.getDay() === 0 ? 7 : jan1.getDay();
+  const offset = (isoWeekday - jan1Iso + 7) % 7;
+  const d = new Date(2026, 0, 1 + offset);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** The stored anchor's weekday, for pre-filling the wizard when editing. */
+export function anchorToWeekday(anchor: string): number {
+  const [y, m, d] = anchor.split("-").map(Number);
+  const day = new Date(y, (m ?? 1) - 1, d ?? 1).getDay();
+  return day === 0 ? 7 : day;
+}
+
 /** Short inline dates for the picker's trigger: "Aug 10 – Aug 16" (years only when they differ from now's). */
 export function formatBounds(bounds: RangeBounds, now: Date): string {
   const fmt = (d: Date) =>
