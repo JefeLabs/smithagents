@@ -6,6 +6,7 @@
 import { create } from "zustand";
 import type { AgentSeed } from "../data/agents";
 import { GRID_DEFAULTS, type GridParams } from "../hooks/useDotGrid";
+import type { DateRange } from "../lib/dateRange";
 import { registerStoreReset } from "./reset";
 
 /** Agent slated for removal; `outcome` stays unset until a preview succeeds. */
@@ -53,6 +54,12 @@ interface UiState {
    */
   sliceSpotlight: { name: string; paths: string[] } | null;
   setSliceSpotlight: (spotlight: { name: string; paths: string[] } | null) => void;
+  /**
+   * The WHEN half of the context window (date-range spec 2026-08-12): null =
+   * All time. View state like the lens — never dispatch state, gone on reload.
+   */
+  dateRange: DateRange | null;
+  setDateRange: (range: DateRange | null) => void;
   /** The aimed section for the next dock send — an instruction about a specific part of the page. */
   docTarget: { docId: string; sectionId: string; heading: string } | null;
   setDocTarget: (target: { docId: string; sectionId: string; heading: string }) => void;
@@ -114,6 +121,7 @@ const initial = {
   voiceNotice: null,
   focusMode: false,
   activeLens: null,
+  dateRange: null,
   sliceSpotlight: null,
   docTarget: null,
   viewedWorkspaces: new Set<string>(),
@@ -135,6 +143,7 @@ export const useUiStore = create<UiState>((set) => ({
   // An empty viewedWorkspaces means "no explicit selection" — the stages fall
   // back to the active session's workspace, exactly the pre-lens default.
   clearLens: () => set({ activeLens: null, viewedWorkspaces: new Set<string>() }),
+  setDateRange: (dateRange) => set({ dateRange }),
   setSliceSpotlight: (sliceSpotlight) => set({ sliceSpotlight }),
   setDocTarget: (docTarget) => set({ docTarget }),
   clearDocTarget: () => set({ docTarget: null }),

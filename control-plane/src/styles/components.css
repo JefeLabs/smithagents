@@ -3778,3 +3778,49 @@ button.logo {
   display: flex;
   gap: 8px;
 }
+
+/* ---- date range (navbar) — the WHEN half of the context window ---- */
+.date-range {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.date-range__select .select__trigger {
+  font-size: 12px;
+  padding: 6px 10px;
+  gap: 6px;
+}
+.date-range__value {
+  white-space: nowrap;
+}
+.date-range__custom {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 6;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--ground-2);
+  border: 1px solid var(--pill-br);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.25);
+}
+.date-range__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-2);
+}
+.date-range__field input {
+  background: var(--ground);
+  border: 1px solid var(--pill-br);
+  border-radius: 7px;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 8px;
+}

@@ -65,6 +65,14 @@ describe("uiStore", () => {
     expect(useUiStore.getState().workspacesOpen).toBe(true);
   });
 
+  it("dateRange sets and clears back to All time (null)", () => {
+    expect(useUiStore.getState().dateRange).toBeNull();
+    useUiStore.getState().setDateRange({ kind: "week" });
+    expect(useUiStore.getState().dateRange).toEqual({ kind: "week" });
+    useUiStore.getState().setDateRange(null);
+    expect(useUiStore.getState().dateRange).toBeNull();
+  });
+
   it("sliceSpotlight sets and clears", () => {
     expect(useUiStore.getState().sliceSpotlight).toBeNull();
     useUiStore.getState().setSliceSpotlight({ name: "school visits", paths: ["docs/x.md"] });

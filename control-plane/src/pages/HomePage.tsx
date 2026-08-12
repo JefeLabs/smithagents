@@ -15,6 +15,7 @@ import { makePickKind, openDocByFamily } from "../lib/pickKind";
 import { AlertMenu } from "../molecules/AlertMenu";
 import { ArtifactShelf, shelfDocsFor } from "../molecules/ArtifactShelf";
 import { ConfirmSheet } from "../molecules/ConfirmSheet";
+import { DateRangeSelect } from "../molecules/DateRangeSelect";
 import { OperatorAvatar } from "../molecules/OperatorAvatar";
 import { WorkspaceSelector } from "../molecules/WorkspaceSelector";
 import { AddAgentModal } from "../organisms/AddAgentModal";
@@ -255,7 +256,12 @@ export function HomePage() {
       topBar={
         <Navbar
           onHome={() => void navigate({ to: "/" })}
-          workspaceSlot={<WorkspaceSelector />}
+          workspaceSlot={
+            <>
+              <WorkspaceSelector />
+              <DateRangeSelect />
+            </>
+          }
           alertSlot={<AlertMenu onNavigate={(t) => void navigate({ to: t })} />}
           avatarSlot={<OperatorAvatar />}
         />
