@@ -1,11 +1,35 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 import type { ChatMessage, RosterAgent, Target } from "../api/types";
 import type { ArtifactKind } from "../lib/artifactKinds";
 import type { ComposerVariant } from "../lib/composerLayout";
 import { Composer } from "../molecules/Composer";
 import { MicHero } from "../molecules/MicHero";
 import { Transcript } from "../molecules/Transcript";
+
+/**
+ * The dock/center scroller. The LOG owns the scrollbar (the transcript is
+ * unbounded inside it since 2026-08-12), so HeroUI's stick-to-bottom — which
+ * scrolls the ChatConversation element itself — no longer reaches; without
+ * this a new message renders below the fold and the thread looks frozen.
+ */
+function DockLog({ messages }: { messages: ChatMessage[] }) {
+  const logRef = useRef<HTMLDivElement>(null);
+  // Keyed on length, not the array: frames replay the whole transcript with
+  // fresh identities, and re-pinning on every replay would fight a user who
+  // scrolled up to read.
+  const count = messages.length;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: count-keyed pin — the effect deliberately re-runs per NEW MESSAGE, not per frame replay (same pattern as MapStage's workspace-keyed reset)
+  useEffect(() => {
+    const el = logRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [count]);
+  return (
+    <div className="chat-dock__log" ref={logRef}>
+      <Transcript messages={messages} />
+    </div>
+  );
+}
 
 export interface ChatDockProps {
   /** How the dock is positioned; `hidden` never mounts (the shell renders nothing). */
@@ -145,9 +169,7 @@ export function ChatDock({
   // dock + center: a scrolling transcript over the composer, no hero, no shelf.
   return (
     <section className={`chat-dock chat-dock--${variant}`} aria-label="Chat">
-      <div className="chat-dock__log">
-        <Transcript messages={messages} />
-      </div>
+      <DockLog messages={messages} />
       {voiceNotice && (
         <p className="transcript__notice" role="status">
           {voiceNotice}
