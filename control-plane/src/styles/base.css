@@ -214,11 +214,28 @@ body[data-focus] .stage.diagram-stage:has(.artifact-shelf) {
   opacity: 0.35;
 }
 
+/* The slices list docks LEFT of the chat: /map deliberately keeps canvas
+   freedom under the dock, but this floating panel is chrome, not canvas — it
+   was landing underneath the docked chat. Lives HERE because react-flow's own
+   stylesheet sets an unlayered `margin: 15px` shorthand on .react-flow__panel,
+   which beats any layer(legacy) rule on the same property (the stage-padding
+   lesson); unlayered vs unlayered, specificity decides and this wins. Focus
+   view drops the dock, so the default margin returns. */
+body[data-dock="dock"] .slice-panel {
+  margin-right: calc(var(--chat-dock-w) + 12px);
+}
+body[data-focus] .slice-panel {
+  margin-right: 15px; /* react-flow's own panel margin */
+}
+
 .react-flow .react-flow__minimap {
   background: var(--pill);
   border: 1px solid var(--pill-br);
   border-radius: 10px;
   overflow: hidden;
+  /* Sits bottom-left next to the zoom/pan cluster (~26px wide + 15px panel
+     margin); without this the two panels overlap in the same corner. */
+  margin-left: 56px;
 }
 /* The mask is the dimmed area OUTSIDE the current viewport rectangle, so it
    wants to read as "not here" against the panel rather than as a highlight. */
