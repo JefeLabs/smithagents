@@ -131,6 +131,35 @@ describe("stage routing", () => {
     expect(router.state.location.pathname).toBe("/dashboards");
   });
 
+  it("the SAVED dashboards list obeys the context window; unparseable dates stay", async () => {
+    const dashDoc = (id: string, title: string, updatedAt: string) => ({
+      id,
+      title,
+      blueprintId: "dashboard",
+      workType: "feature",
+      sections: [],
+      participants: [],
+      status: "drafting",
+      createdAt: updatedAt,
+      updatedAt,
+      pins: ["acme"],
+    });
+    await renderAt("/dashboards", (client) => {
+      client.setQueryData(qk.blueprints, [
+        { id: "dashboard", name: "Dashboard", family: "dashboard", workTypes: ["feature"] },
+      ]);
+      client.setQueryData(qk.documents, [
+        // Default window = last 14 days (no sprint config seeded).
+        dashDoc("d-new", "fresh dashboard", new Date().toISOString()),
+        dashDoc("d-old", "ancient dashboard", "2020-01-01T00:00:00Z"),
+        dashDoc("d-odd", "undatable dashboard", "t"),
+      ]);
+    });
+    expect(await screen.findByRole("button", { name: /fresh dashboard/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /ancient dashboard/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /undatable dashboard/i })).toBeTruthy();
+  });
+
   it("the composer Documents kind creates a document and opens it", async () => {
     const posts: string[] = [];
     vi.stubGlobal(

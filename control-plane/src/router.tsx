@@ -13,7 +13,7 @@ import { agentSeeds } from "./data/agents";
 import { savedMeta } from "./data/dashboards";
 import { useRangeBounds } from "./hooks/useRangeBounds";
 import { composeSpec, specToFence } from "./lib/dashboardSpec";
-import { withRange } from "./lib/dateRange";
+import { formatBounds, inDateRange, withRange } from "./lib/dateRange";
 import { openDocByFamily } from "./lib/pickKind";
 import { ArtifactShelf, splitShelfDocs } from "./molecules/ArtifactShelf";
 import { PinButton } from "./molecules/PinButton";
@@ -102,10 +102,18 @@ function DashboardsRoute() {
   const { data: blueprints = NO_BLUEPRINTS } = useBlueprints();
   const { data: groups = NO_GROUPS } = useGroups();
   // SAVED = dashboard docs pinned somewhere (spec 2026-08-11). A composed but
-  // never-pinned dashboard lives on in its session's shelf, not here.
+  // never-pinned dashboard lives on in its session's shelf, not here. The
+  // context window's WHEN scopes the list too (Edwin, 2026-08-12) —
+  // unparseable dates stay, never hide silently.
+  const rangeBounds = useRangeBounds();
   const dashboardIds = new Set(blueprints.filter((b) => b.family === "dashboard").map((b) => b.id));
   const savedDocs = docs
-    .filter((d) => dashboardIds.has(d.blueprintId) && (d.pins?.length ?? 0) > 0)
+    .filter(
+      (d) =>
+        dashboardIds.has(d.blueprintId) &&
+        (d.pins?.length ?? 0) > 0 &&
+        (!rangeBounds || inDateRange(d.updatedAt, rangeBounds)),
+    )
     .map((d) => ({ id: d.id, title: d.title, meta: savedMeta(d.pins, d.updatedAt) }));
   return (
     <DashboardsStage
@@ -119,11 +127,16 @@ function DashboardsRoute() {
         // agent's spec without moving the doc machinery.
         const { doc } = await api.postDocument("dashboard", question);
         if (!doc) return; // broker down — stay on the ask screen
-        await api.patchDocSection(
-          doc.id,
-          "question",
-          `${question}\n\nscope: ${withRange(scope, useUiStore.getState().dateRange)}`,
-        );
+        // The app is always windowed now: an explicit pick stamps its period
+        // name; the DEFAULT (null store) stamps the resolved dates instead of
+        // silently recording no window at all.
+        const picked = useUiStore.getState().dateRange;
+        const scoped = picked
+          ? withRange(scope, picked)
+          : rangeBounds
+            ? `${scope} · ${formatBounds(rangeBounds, new Date())}`
+            : scope;
+        await api.patchDocSection(doc.id, "question", `${question}\n\nscope: ${scoped}`);
         await api.patchDocSection(doc.id, "spec", specToFence(composeSpec(question, scope)));
         void navigate({ to: "/dashboard/$docId", params: { docId: doc.id } });
       }}
