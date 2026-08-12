@@ -15,6 +15,14 @@
   font-size: 11px;
   padding: 2px 8px;
   gap: 4px;
+  /* HeroUI leaves the trigger's cross axis at `normal`, so the value span
+     stretches and top-anchors its text while the chevron centers — center
+     both from here. */
+  align-items: center;
+}
+.composer__kind-select .select__value {
+  display: flex;
+  align-items: center;
 }
 
 /* The docked chat's width; the canvas/doc stages reserve exactly this on the
