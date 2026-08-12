@@ -50,7 +50,7 @@ test("templates: seven typed column sets, ids unique and slug-shaped", () => {
   );
   assert.deepEqual(
     BOARD_TEMPLATES.release.map((c) => c.name),
-    ["Cut", "Regression", "Sign-off", "Ship", "Rollback"],
+    ["Queue", "Cut", "Regression", "Sign-off", "Ship", "Rollback"],
   );
   assert.deepEqual(
     BOARD_TEMPLATES.reactive.map((c) => c.name),
@@ -365,13 +365,24 @@ test("normalizeBoard moves maintenance's queued to the front as Queue, cards rid
   assert.equal(maintenance.columns.filter((c) => c.id === "queue").length, 1);
 });
 
-test("normalizeBoard leaves release untouched and prepends queue on a legacy plan board", () => {
+test("normalizeBoard prepends queue on legacy release and plan boards; fresh release ships with it", () => {
   const release = createBoard("release", "acme");
-  const before = release.columns.map((c) => c.id);
-  normalizeBoard(release);
+  assert.equal(release.columns[0]?.id, "queue"); // new template: queue leftmost
+  const legacyRelease: WorkBoard = {
+    id: "acme-release",
+    name: "Release",
+    type: "release",
+    workspaceId: "acme",
+    columns: [
+      { id: "cut", name: "Cut" },
+      { id: "ship", name: "Ship" },
+    ],
+    cards: [],
+  };
+  normalizeBoard(legacyRelease);
   assert.deepEqual(
-    release.columns.map((c) => c.id),
-    before,
+    legacyRelease.columns.map((c) => c.id),
+    ["queue", "cut", "ship"],
   );
   const legacyPlan: WorkBoard = {
     id: "acme-plan",
