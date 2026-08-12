@@ -1,5 +1,5 @@
 import { Plus, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import type { GroupT } from "../api/types";
 
@@ -40,6 +40,9 @@ interface GroupsSectionProps {
     isNew: boolean,
   ) => Promise<{ error?: string }>;
   onDelete: (name: string) => Promise<{ error?: string }>;
+  /** Open the CREATE form on mount — the "New group…" command's landing (Edwin, 2026-08-12). */
+  autoStart?: boolean;
+  onAutoStarted?: () => void;
 }
 
 /**
@@ -48,7 +51,7 @@ interface GroupsSectionProps {
  * self-membership is prevented here (the picker omits the edited group);
  * transitive cycles are the swarm's call and surface as the inline error.
  */
-export function GroupsSection({ groups, workspaces, onSave, onDelete }: GroupsSectionProps) {
+export function GroupsSection({ groups, workspaces, onSave, onDelete, autoStart, onAutoStarted }: GroupsSectionProps) {
   const [selected, setSelected] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -60,6 +63,16 @@ export function GroupsSection({ groups, workspaces, onSave, onDelete }: GroupsSe
     reset(BLANK);
     setFormOpen(true);
   };
+
+  // Mount-only on purpose: the intent is a one-shot command, not a mode — it
+  // must not re-open the form after the user cancels.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: one-shot mount intent
+  useEffect(() => {
+    if (autoStart) {
+      startNew();
+      onAutoStarted?.();
+    }
+  }, []);
 
   const startEdit = (g: GroupT) => {
     setSelected(g.name);

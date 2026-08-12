@@ -5,6 +5,7 @@ import { useFieldArray, useForm } from "react-hook-form";
 import type { ConnectorInstanceRecord, GroupT, WorkspaceRecord } from "../api/types";
 import { ConfirmSheet } from "../molecules/ConfirmSheet";
 import { FormCheckbox, FormColorSwatch, FormSelect, FormTextField, ModalShell } from "../molecules/form";
+import { useUiStore } from "../stores/uiStore";
 import { GroupsSection } from "./GroupsSection";
 
 interface WorkspaceManagerModalProps {
@@ -224,6 +225,9 @@ export function WorkspaceManagerModal({
   deleteGroup,
 }: WorkspaceManagerModalProps) {
   const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([]);
+  // One field per selector (house rule): the "New group…" landing intent.
+  const groupFormIntent = useUiStore((s) => s.groupFormIntent);
+  const clearGroupFormIntent = useUiStore((s) => s.clearGroupFormIntent);
   const [connectors, setConnectors] = useState<ConnectorInstanceRecord[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   /** Workspace name being edited; null means the form is building a new one. */
@@ -590,6 +594,8 @@ export function WorkspaceManagerModal({
           workspaces={active.map((w) => w.name)}
           onSave={saveGroup}
           onDelete={deleteGroup}
+          autoStart={groupFormIntent}
+          onAutoStarted={clearGroupFormIntent}
         />
       )}
     </ModalShell>

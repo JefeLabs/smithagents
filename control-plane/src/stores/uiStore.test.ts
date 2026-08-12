@@ -55,6 +55,16 @@ describe("uiStore", () => {
     expect((useUiStore.getState().viewedWorkspaces as ReadonlySet<string>).size).toBe(0);
   });
 
+  it("openGroupForm opens the manager WITH the group-form intent; consuming clears only the intent", () => {
+    expect(useUiStore.getState().groupFormIntent).toBe(false);
+    useUiStore.getState().openGroupForm();
+    expect(useUiStore.getState().workspacesOpen).toBe(true);
+    expect(useUiStore.getState().groupFormIntent).toBe(true);
+    useUiStore.getState().clearGroupFormIntent();
+    expect(useUiStore.getState().groupFormIntent).toBe(false);
+    expect(useUiStore.getState().workspacesOpen).toBe(true);
+  });
+
   it("sliceSpotlight sets and clears", () => {
     expect(useUiStore.getState().sliceSpotlight).toBeNull();
     useUiStore.getState().setSliceSpotlight({ name: "school visits", paths: ["docs/x.md"] });

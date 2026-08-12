@@ -107,6 +107,24 @@ describe("GroupsSection", () => {
     expect((screen.getByLabelText("Sprint length (days)") as HTMLInputElement).value).toBe("14");
   });
 
+  it("autoStart opens the create form on mount — member pickers in view (Edwin, 2026-08-12)", async () => {
+    const onAutoStarted = vi.fn();
+    render(
+      <GroupsSection
+        groups={[g("core")]}
+        workspaces={["acme"]}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+        autoStart
+        onAutoStarted={onAutoStarted}
+      />,
+    );
+    expect(await screen.findByRole("textbox", { name: "Group name" })).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: "acme" })).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: "core" })).toBeTruthy();
+    expect(onAutoStarted).toHaveBeenCalled();
+  });
+
   it("delete calls onDelete with the group name", async () => {
     const onDelete = vi.fn().mockResolvedValue({});
     render(<GroupsSection groups={[g("frontend")]} workspaces={[]} onSave={vi.fn()} onDelete={onDelete} />);

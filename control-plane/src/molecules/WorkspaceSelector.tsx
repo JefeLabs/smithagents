@@ -39,7 +39,7 @@ export function WorkspaceSelector() {
   const { data: groups = NO_GROUPS } = useGroups();
   const openComposer = useUiStore((s) => s.openComposer);
   const setNewWorkspaceOpen = useUiStore((s) => s.setNewWorkspaceOpen);
-  const setWorkspacesOpen = useUiStore((s) => s.setWorkspacesOpen);
+  const openGroupForm = useUiStore((s) => s.openGroupForm);
   const activeLens = useUiStore((s) => s.activeLens);
   const setLens = useUiStore((s) => s.setLens);
   const clearLens = useUiStore((s) => s.clearLens);
@@ -52,7 +52,7 @@ export function WorkspaceSelector() {
       return; // never falls through to session activation
     }
     if (name === NEW_GROUP) {
-      setWorkspacesOpen(true); // groups are managed in the workspace manager
+      openGroupForm(); // the manager opens ON the group form, pickers in view
       return;
     }
     if (name.startsWith(GROUP_PREFIX)) {

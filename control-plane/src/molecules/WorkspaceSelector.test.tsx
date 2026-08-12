@@ -195,12 +195,12 @@ describe("WorkspaceSelector", () => {
     expect(activate).toHaveBeenCalledWith("s7");
   });
 
-  it("offers New group…, opening the workspace manager", async () => {
-    const setWorkspacesOpen = vi.fn();
-    renderWithSession({ workspace: "acme" }, { workspaces: ["acme"], setWorkspacesOpen });
+  it("offers New group…, opening the manager WITH the group form intent", async () => {
+    renderWithSession({ workspace: "acme" }, { workspaces: ["acme"] });
     await userEvent.click(await screen.findByRole("button", { name: /acme/ }));
     await userEvent.click(await screen.findByRole("option", { name: /new group/i }));
-    expect(setWorkspacesOpen).toHaveBeenCalledWith(true);
+    expect(useUiStore.getState().workspacesOpen).toBe(true);
+    expect(useUiStore.getState().groupFormIntent).toBe(true);
     expect(useUiStore.getState().composer).toBeNull();
   });
 

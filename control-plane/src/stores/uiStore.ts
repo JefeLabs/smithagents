@@ -26,6 +26,10 @@ interface UiState {
   composer: { locked?: string } | null;
   settingsOpen: boolean;
   workspacesOpen: boolean;
+  /** "New group…" was picked: the manager opens WITH the group form started (Edwin, 2026-08-12). */
+  groupFormIntent: boolean;
+  openGroupForm: () => void;
+  clearGroupFormIntent: () => void;
   newWorkspaceOpen: boolean;
   removing: RemovalTarget | null;
   voiceNotice: string | null;
@@ -104,6 +108,7 @@ const initial = {
   composer: null,
   settingsOpen: false,
   workspacesOpen: false,
+  groupFormIntent: false,
   newWorkspaceOpen: false,
   removing: null,
   voiceNotice: null,
@@ -139,6 +144,8 @@ export const useUiStore = create<UiState>((set) => ({
   closeComposer: () => set({ composer: null }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   setWorkspacesOpen: (workspacesOpen) => set({ workspacesOpen }),
+  openGroupForm: () => set({ workspacesOpen: true, groupFormIntent: true }),
+  clearGroupFormIntent: () => set({ groupFormIntent: false }),
   setNewWorkspaceOpen: (newWorkspaceOpen) => set({ newWorkspaceOpen }),
   setRemoving: (next) => set((s) => ({ removing: typeof next === "function" ? next(s.removing) : next })),
   setVoiceNotice: (voiceNotice) => set({ voiceNotice }),
