@@ -75,6 +75,13 @@
 }
 .chat-dock--dock .chat-dock__log .transcript {
   margin-top: auto;
+  /* The base .transcript is still the voice-stage's compact widget (560px,
+     max-height 220, its own scrollbar). In the dock it IS the log: full
+     width, no cap, no inner scroller — the log column scrolls. Without this
+     the thread lived in a 220px band whose top clipped the first bubble. */
+  width: 100%;
+  max-height: none;
+  overflow-y: visible;
 }
 /* The docked composer is part of the panel frame, not a floating card: full
    panel width, square corners, only a top rule separating it from the log. */
