@@ -1,7 +1,7 @@
 # Date Range context control — Design
 
 **Date:** 2026-08-12
-**Status:** Approved by Edwin (calendar-anchored periods incl. Current Sprint; sprint config on workspace AND group; boards + sessions + dashboards consume)
+**Status:** Approved by Edwin (calendar-anchored periods incl. Current Sprint; OPT-IN sprint config on workspace AND group; boards + sessions + dashboards consume)
 
 ## Problem
 
@@ -69,6 +69,6 @@ export function rangeLabel(range: DateRange | null): string;
 
 ## Testing
 
-- **dateRange lib (vitest):** week/month/quarter bounds around edges (year wrap, quarter borders); sprint windows for k = 0, anchors in the future, exact boundary instants; custom inclusivity; `inDateRange(null)` always true; `rangeLabel` fallback text.
+- **dateRange lib (vitest):** week/month/quarter bounds around edges (year wrap, quarter borders); sprint windows for k = 0, anchors in the future, exact boundary instants; custom inclusivity; `inDateRange(null)` always true; `rangeLabel` covers every kind.
 - **swarm (node:test):** sprint field round-trips on workspace and group asserts/CRUD.
 - **control-plane:** DateRangeSelect renders menu + custom popover + sentinel; Current Sprint absent without config, present with one; sprint pick degrades to All time when the config leaves; uiStore set/reset; BoardStage hides an out-of-window card and keeps counts honest; SessionsPanel keeps the active session; DashboardsStage scope line carries the label.
