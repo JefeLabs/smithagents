@@ -340,3 +340,25 @@ body[data-focus] .slice-panel {
   inset: 0;
   background: var(--background);
 }
+
+/* Context-switch pulse (Edwin, 2026-08-12): while the body carries the stamp,
+   every scoped surface dips and desaturates for a beat, then eases back —
+   the visible "new scope loading" acknowledgment. Unlayered so no stage's own
+   opacity/filter rules can quietly outrank it. */
+body[data-context-switching] .board-stage__columns,
+body[data-context-switching] .artifact-shelf,
+body[data-context-switching] .chat-dock__log,
+body[data-context-switching] .sessions-panel,
+body[data-context-switching] .stage.dashboards-stage {
+  opacity: 0.35;
+  filter: saturate(0.6);
+}
+.board-stage__columns,
+.artifact-shelf,
+.chat-dock__log,
+.sessions-panel,
+.stage.dashboards-stage {
+  transition:
+    opacity 0.28s ease,
+    filter 0.28s ease;
+}

@@ -43,6 +43,7 @@ export function WorkspaceSelector() {
   const activeLens = useUiStore((s) => s.activeLens);
   const setLens = useUiStore((s) => s.setLens);
   const clearLens = useUiStore((s) => s.clearLens);
+  const bumpContext = useUiStore((s) => s.bumpContext);
 
   const current = session?.workspace ?? null;
 
@@ -62,8 +63,10 @@ export function WorkspaceSelector() {
     }
     // A workspace pick always drops the lens — you are navigating somewhere
     // specific now. Guarded so a manual Board multi-select survives ordinary
-    // workspace switching when no lens is on.
+    // workspace switching when no lens is on; the bare bump keeps the switch
+    // VISIBLE either way (clearLens bumps on its own).
     if (activeLens) clearLens();
+    else bumpContext();
     // No guard for "already selected" is needed here: <Select> is controlled
     // (`value={...}`), and react-stately's useControlledState only fires
     // onChange when the value actually changes (verified against its source —

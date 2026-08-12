@@ -519,6 +519,21 @@ describe("HomePage — creating a session lands in its conversation", () => {
     });
   });
 
+  it("a context move stamps body[data-context-switching] for a beat, then clears", async () => {
+    vi.useFakeTimers();
+    try {
+      renderApp();
+      await act(async () => {});
+      expect(document.body.hasAttribute("data-context-switching")).toBe(false);
+      act(() => useUiStore.getState().setDateRange({ kind: "week" }));
+      expect(document.body.hasAttribute("data-context-switching")).toBe(true);
+      act(() => vi.advanceTimersByTime(500));
+      expect(document.body.hasAttribute("data-context-switching")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("focus mode stamps body[data-focus]; Esc exits", async () => {
     renderApp();
     await userEvent.click(await screen.findByRole("row", { name: "Focus" }));

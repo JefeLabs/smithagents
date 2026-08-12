@@ -65,6 +65,19 @@ describe("uiStore", () => {
     expect(useUiStore.getState().workspacesOpen).toBe(true);
   });
 
+  it("every context move bumps the epoch — lens set/clear, date range, bare bump", () => {
+    const at = () => useUiStore.getState().contextEpoch;
+    const start = at();
+    useUiStore.getState().setLens("core", ["jefelabs"]);
+    expect(at()).toBe(start + 1);
+    useUiStore.getState().clearLens();
+    expect(at()).toBe(start + 2);
+    useUiStore.getState().setDateRange({ kind: "week" });
+    expect(at()).toBe(start + 3);
+    useUiStore.getState().bumpContext();
+    expect(at()).toBe(start + 4);
+  });
+
   it("dateRange sets and clears back to All time (null)", () => {
     expect(useUiStore.getState().dateRange).toBeNull();
     useUiStore.getState().setDateRange({ kind: "week" });

@@ -141,6 +141,20 @@ export function HomePage() {
   });
   const engineWarnings = useEngineWarnings();
   const rangeBounds = useRangeBounds();
+  const contextEpoch = useUiStore((s) => s.contextEpoch);
+
+  // The context-switch pulse: stamp the body for a beat so every scoped
+  // surface (boards, sessions, shelf, chat log) visibly re-settles — a switch
+  // to an IDENTICAL scope (a group of one workspace) still acknowledges.
+  useEffect(() => {
+    if (contextEpoch === 0) return;
+    document.body.setAttribute("data-context-switching", "");
+    const t = setTimeout(() => document.body.removeAttribute("data-context-switching"), 450);
+    return () => {
+      clearTimeout(t);
+      document.body.removeAttribute("data-context-switching");
+    };
+  }, [contextEpoch]);
 
   // Both the engine badges and the voice gate read `GET /agents`; one
   // invalidation refreshes them together. `/cli-tools` is the other half of

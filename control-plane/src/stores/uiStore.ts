@@ -60,6 +60,14 @@ interface UiState {
    */
   dateRange: DateRange | null;
   setDateRange: (range: DateRange | null) => void;
+  /**
+   * Bumps whenever the context window moves (lens, workspace pick, date
+   * range) — the shell watches it to pulse the affected surfaces, so a switch
+   * that resolves to identical data still visibly ACKNOWLEDGES (Edwin,
+   * 2026-08-12: "I don't see any loading of new scope").
+   */
+  contextEpoch: number;
+  bumpContext: () => void;
   /** The aimed section for the next dock send — an instruction about a specific part of the page. */
   docTarget: { docId: string; sectionId: string; heading: string } | null;
   setDocTarget: (target: { docId: string; sectionId: string; heading: string }) => void;
@@ -122,6 +130,7 @@ const initial = {
   focusMode: false,
   activeLens: null,
   dateRange: null,
+  contextEpoch: 0,
   sliceSpotlight: null,
   docTarget: null,
   viewedWorkspaces: new Set<string>(),
@@ -139,11 +148,14 @@ export const useUiStore = create<UiState>((set) => ({
   resetGrid: () => set({ gridParams: GRID_DEFAULTS }),
   toggleFocus: () => set((s) => ({ focusMode: !s.focusMode })),
   exitFocus: () => set({ focusMode: false }),
-  setLens: (group, expansion) => set({ activeLens: { group }, viewedWorkspaces: new Set(expansion) }),
+  bumpContext: () => set((s) => ({ contextEpoch: s.contextEpoch + 1 })),
+  setLens: (group, expansion) =>
+    set((s) => ({ activeLens: { group }, viewedWorkspaces: new Set(expansion), contextEpoch: s.contextEpoch + 1 })),
   // An empty viewedWorkspaces means "no explicit selection" — the stages fall
   // back to the active session's workspace, exactly the pre-lens default.
-  clearLens: () => set({ activeLens: null, viewedWorkspaces: new Set<string>() }),
-  setDateRange: (dateRange) => set({ dateRange }),
+  clearLens: () =>
+    set((s) => ({ activeLens: null, viewedWorkspaces: new Set<string>(), contextEpoch: s.contextEpoch + 1 })),
+  setDateRange: (dateRange) => set((s) => ({ dateRange, contextEpoch: s.contextEpoch + 1 })),
   setSliceSpotlight: (sliceSpotlight) => set({ sliceSpotlight }),
   setDocTarget: (docTarget) => set({ docTarget }),
   clearDocTarget: () => set({ docTarget: null }),
