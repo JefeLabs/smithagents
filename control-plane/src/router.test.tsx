@@ -257,7 +257,10 @@ describe("stage routing", () => {
     });
     await userEvent.click(screen.getByRole("row", { name: /^sessions$/i }));
     const panel = await screen.findByRole("dialog");
-    expect(within(panel).getByText("acme")).toBeTruthy();
+    // getAllByText: the panel now hosts the workspace droplist too (context
+    // pair, 2026-08-12), so "acme" may appear in both the header anchor and
+    // the selector's value.
+    expect(within(panel).getAllByText("acme").length).toBeGreaterThan(0);
   });
 
   it("an artifact chip opens its document", async () => {

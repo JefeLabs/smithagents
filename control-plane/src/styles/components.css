@@ -2145,26 +2145,30 @@ button.logo {
   background: color-mix(in srgb, #d9534f 12%, transparent);
 }
 
-/* --- sessions panel: workspace filter chips + manage entry --- */
-.sessions-panel__filter {
+/* --- sessions panel: context droplists + manage entry --- */
+/* The navbar pair re-hosted at the top of the panel: stacked full-width so
+   the resolved date range ("Current Sprint · Aug 3 – Aug 16") has a line of
+   its own. The pill chrome rides the components' own classes. */
+.sessions-panel__context {
   display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 10px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--pill-br);
 }
-.ws-chip {
-  padding: 3px 9px;
-  border-radius: 999px;
-  border: 1px solid var(--pill-br);
-  background: transparent;
-  color: var(--text-dim);
-  font: inherit;
-  font-size: 10.5px;
-  cursor: pointer;
+.sessions-panel__context .workspace-selector,
+.sessions-panel__context .date-range__select {
+  width: 100%;
 }
-.ws-chip--on {
-  color: var(--accent);
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+.sessions-panel__context .select__trigger {
+  width: 100%;
+  justify-content: space-between;
+}
+.sessions-panel__context .date-range__value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .session-row--manage {
   justify-content: flex-start;

@@ -455,6 +455,26 @@ export function HomePage() {
             open={sessionsOpen}
             sessions={sessions}
             rangeBounds={rangeBounds}
+            // The context window's WHERE: the lens's member workspaces, else
+            // the active session's workspace. Manual Board multi-selects are a
+            // stage concern and don't leak in here.
+            contextWorkspaces={
+              activeLens
+                ? viewedWorkspaces !== ALL_WORKSPACES && viewedWorkspaces.size > 0
+                  ? [...viewedWorkspaces]
+                  : null
+                : session?.workspace
+                  ? [session.workspace]
+                  : null
+            }
+            // Second live instances of the navbar pair — both are controlled
+            // off shared state, so panel and navbar move together.
+            contextSlot={
+              <>
+                <WorkspaceSelector />
+                <DateRangeSelect />
+              </>
+            }
             workspaces={workspaces}
             activeWorkspace={session?.workspace}
             onClose={closeSessions}

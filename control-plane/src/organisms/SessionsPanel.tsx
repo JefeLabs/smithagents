@@ -1,6 +1,6 @@
 import { Sheet } from "@heroui-pro/react";
 import { FileText, Plus, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { type ReactNode, useState } from "react";
 import type { SessionSummary } from "../api/types";
 import { inDateRange, type RangeBounds } from "../lib/dateRange";
 import { ConfirmSheet } from "../molecules/ConfirmSheet";
@@ -11,6 +11,20 @@ interface SessionsPanelProps {
   sessions: SessionSummary[];
   /** The context window's WHEN (date-range spec 2026-08-12); null/absent = All time. */
   rangeBounds?: RangeBounds | null;
+  /**
+   * The context window's WHERE: workspace names the current workspace/group
+   * selection expands to (Edwin, 2026-08-12: "current workspace/group and
+   * date should affect what shows"). Sessions outside it leave the list —
+   * except the ACTIVE one. null/absent = unscoped.
+   */
+  contextWorkspaces?: readonly string[] | null;
+  /**
+   * The navbar's context pair (workspace/group + date range droplists),
+   * re-hosted at the top of the panel so the scope is visible AND switchable
+   * where it takes effect. A slot, not an import: the panel stays free of
+   * query providers for tests.
+   */
+  contextSlot?: ReactNode;
   workspaces: string[];
   onClose: () => void;
   onActivate: (id: string) => void;
@@ -33,6 +47,8 @@ export function SessionsPanel({
   open,
   sessions,
   rangeBounds,
+  contextWorkspaces,
+  contextSlot,
   workspaces,
   onClose,
   onActivate,
@@ -42,35 +58,43 @@ export function SessionsPanel({
   activeWorkspace,
   onDelete,
 }: SessionsPanelProps) {
-  const [wsFilter, setWsFilter] = useState<string | null>(null);
   // The session awaiting confirmation. Holds the title too, so the dialog can
   // keep naming it even if the list re-renders underneath.
   const [doomed, setDoomed] = useState<{ id: string; title: string; error?: string; busy?: boolean } | null>(null);
-  // The panel stays mounted across close/reopen, so a filter left pointed at a
-  // workspace that just got archived/removed would silently keep scoping the
-  // list (and if it was the last non-"all" chip, the whole row disappears
-  // with no way to clear it) — drop back to "all" the moment that happens.
-  useEffect(() => {
-    if (wsFilter && !workspaces.includes(wsFilter)) setWsFilter(null);
-  }, [wsFilter, workspaces]);
-  const wsVisible = wsFilter ? sessions.filter((s) => s.workspace === wsFilter) : sessions;
-  // The context window (date-range spec 2026-08-12): sessions not active in
-  // the picked range leave the list — except the ACTIVE one; never hide the
-  // ground you stand on.
+  // The context window scopes BOTH axes (Edwin, 2026-08-12): WHERE — only the
+  // current workspace/group's sessions; WHEN — only sessions active in the
+  // picked range. The ACTIVE session always stays; never hide the ground you
+  // stand on. Reaching another context's sessions is what the droplists at
+  // the top of the panel are for.
+  const wsVisible = contextWorkspaces
+    ? sessions.filter((s) => s.active || contextWorkspaces.includes(s.workspace))
+    : sessions;
   const visible = rangeBounds ? wsVisible.filter((s) => s.active || inDateRange(s.updatedAt, rangeBounds)) : wsVisible;
+  // New-session rows follow the same scope — creating a session in a
+  // workspace you are not looking at belongs behind a context switch.
+  const creatable = contextWorkspaces ? workspaces.filter((ws) => contextWorkspaces.includes(ws)) : workspaces;
   return (
     <Sheet
       isOpen={open}
       placement="left"
       onOpenChange={(next) => {
-        if (!next) onClose();
+        // The context droplists portal their popovers to <body>, OUTSIDE the
+        // Sheet's DOM — so react-aria reads a click on an option as an
+        // outside interaction and asks to dismiss the whole panel
+        // (smoke-caught 2026-08-12). While any listbox is up, the user is
+        // mid-pick, not leaving: swallow the dismissal. Plain outside clicks
+        // (no popover open) still close the panel as before.
+        if (!next) {
+          if (document.querySelector('[role="listbox"]')) return;
+          onClose();
+        }
       }}
     >
       {/* transparent: the panel used to float with no scrim at all — a dimmed backdrop
           would be a bigger visual jump than this migration is asking for. isOpen/onOpenChange
           still get real click-outside + Escape dismissal from Sheet, just without the dim. */}
       <Sheet.Backdrop variant="transparent">
-        <Sheet.Content className="w-[230px]">
+        <Sheet.Content className="w-[260px]">
           <Sheet.Dialog>
             <Sheet.CloseTrigger aria-label="Close sessions" />
             <Sheet.Header>
@@ -78,20 +102,7 @@ export function SessionsPanel({
               {activeWorkspace && <span className="sessions-panel__ws">{activeWorkspace}</span>}
             </Sheet.Header>
             <Sheet.Body>
-              {workspaces.length > 1 && (
-                <div className="sessions-panel__filter">
-                  {[null, ...workspaces].map((ws) => (
-                    <button
-                      key={ws ?? "all"}
-                      type="button"
-                      className={`ws-chip${wsFilter === ws ? " ws-chip--on" : ""}`}
-                      onClick={() => setWsFilter(ws)}
-                    >
-                      {ws ?? "all"}
-                    </button>
-                  ))}
-                </div>
-              )}
+              {contextSlot && <div className="sessions-panel__context">{contextSlot}</div>}
               <div className="sessions-panel__list">
                 {visible.map((s) => (
                   // A row is a container, not a button: its artifacts are their own
@@ -127,7 +138,7 @@ export function SessionsPanel({
                     {(s.artifacts ?? []).length > 0 && (
                       // Their own full-width wrapping row under the title — a session
                       // with several documents flows onto extra lines instead of
-                      // overflowing the 230px panel and overlapping the title.
+                      // overflowing the 260px panel and overlapping the title.
                       <div className="session-row__artifacts">
                         {(s.artifacts ?? []).map((docId) => (
                           <button
@@ -149,7 +160,7 @@ export function SessionsPanel({
                 ))}
               </div>
               <footer>
-                {(workspaces.length > 0 ? workspaces : [undefined]).map((ws) => (
+                {(creatable.length > 0 ? creatable : [undefined]).map((ws) => (
                   <button
                     key={ws ?? "default"}
                     type="button"

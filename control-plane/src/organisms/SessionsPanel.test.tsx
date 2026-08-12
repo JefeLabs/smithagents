@@ -39,7 +39,7 @@ function props(overrides: Record<string, unknown> = {}) {
 }
 
 // Its own lean defaults, not `props()`'s: the shared fixture's "acme" workspace shows up
-// in a session row AND a filter chip, which would make `getByText("acme")` ambiguous for
+// in a session row's meta, which would make `getByText("acme")` ambiguous for
 // a test that's only asserting on the header anchor.
 function renderPanel(overrides: Record<string, unknown> = {}) {
   return render(
@@ -155,15 +155,35 @@ describe("SessionsPanel", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("the workspace filter narrows the visible sessions without touching onCreate's per-row workspace", async () => {
-    render(<SessionsPanel {...props()} />);
+  it("contextWorkspaces scopes the list to the current workspace/group — but NEVER hides the active session", () => {
+    // s1 (acme) is active, s2 (widgets) is not; scoping to acme drops s2,
+    // scoping to widgets keeps BOTH (s1 rides its active status).
+    const { unmount } = render(<SessionsPanel {...props({ contextWorkspaces: ["acme"] })} />);
+    expect(screen.getByText("Fix the flaky test")).toBeDefined();
+    expect(screen.queryByText("Draft the README")).toBeNull();
+    unmount();
+
+    render(<SessionsPanel {...props({ contextWorkspaces: ["widgets"] })} />);
     expect(screen.getByText("Fix the flaky test")).toBeDefined();
     expect(screen.getByText("Draft the README")).toBeDefined();
+  });
 
-    await userEvent.click(screen.getByRole("button", { name: "widgets" }));
+  it("new-session rows follow the context scope", () => {
+    render(<SessionsPanel {...props({ contextWorkspaces: ["widgets"] })} />);
+    expect(screen.getByRole("button", { name: /new session · widgets/i })).toBeDefined();
+    expect(screen.queryByRole("button", { name: /new session · acme/i })).toBeNull();
+  });
 
-    expect(screen.queryByText("Fix the flaky test")).toBeNull();
-    expect(screen.getByText("Draft the README")).toBeDefined();
+  it("a context scope matching no workspace still offers the bare new-session row", async () => {
+    const onCreate = vi.fn();
+    render(<SessionsPanel {...props({ contextWorkspaces: ["ghost"], onCreate })} />);
+    await userEvent.click(screen.getByRole("button", { name: /^new session$/i }));
+    expect(onCreate).toHaveBeenCalledWith(undefined);
+  });
+
+  it("renders the caller's context droplists at the top of the panel", () => {
+    render(<SessionsPanel {...props({ contextSlot: <span data-testid="ctx-slot">the pair</span> })} />);
+    expect(screen.getByTestId("ctx-slot")).toBeDefined();
   });
 
   it("onManage fires and closes the panel", async () => {
