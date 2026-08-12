@@ -41,10 +41,12 @@
   align-items: center;
   gap: 12px;
   padding: 0 16px;
-  background: var(--pill);
+  /* Solid --ground, same as both rails (Edwin, 2026-08-12): the bar, the
+     tool sidebar and the agent rail read as ONE frame around the stage. The
+     old translucent --pill + blur is gone — nothing shows through an opaque
+     bar, so the backdrop-filter was only costing compositing. */
+  background: var(--ground);
   border-bottom: 1px solid var(--rail-br);
-  backdrop-filter: blur(16px) saturate(1.3);
-  -webkit-backdrop-filter: blur(16px) saturate(1.3);
 }
 .sm-navbar .logo {
   margin-bottom: 0; /* the rail's logo had bottom margin for the tool stack below it; the bar has none */
@@ -234,8 +236,11 @@
 /* .rail--left retired: the left rail is the HeroUI Sidebar now (see ToolRail.tsx). */
 .rail--right {
   right: 0;
+  /* Explicitly the frame color rather than transparent-over-canvas: the same
+     --ground the navbar and left sidebar paint, stated so it cannot drift when
+     something scrolls or renders beneath the fixed rail. */
+  background: var(--ground);
   border-left: 1px solid var(--rail-br);
-  background: linear-gradient(270deg, rgba(0, 0, 0, 0.18), transparent);
 }
 .spacer {
   flex: 1;
