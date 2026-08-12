@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DocT } from "../api/types";
-import { ArtifactShelf, shelfDocsFor } from "./ArtifactShelf";
+import { ArtifactShelf, isSpotlit, shelfDocsFor } from "./ArtifactShelf";
 
 const DOC = (id: string, title: string): DocT => ({
   id,
@@ -45,6 +45,28 @@ describe("ArtifactShelf", () => {
     render(<ArtifactShelf docs={docs} onOpen={vi.fn()} />);
     expect(screen.getByRole("button", { name: /pinned one/i }).className).toContain("artifact-shelf__card--pinned");
     expect(screen.getByRole("button", { name: /plain one/i }).className).not.toContain("artifact-shelf__card--pinned");
+  });
+
+  it("a revealed slice spotlights the tiles that look associated (Edwin, 2026-08-12)", () => {
+    render(
+      <ArtifactShelf
+        docs={[DOC("d1", "school visits spec"), DOC("d2", "unrelated notes")]}
+        onOpen={vi.fn()}
+        spotlight={{ name: "school visits", paths: [] }}
+      />,
+    );
+    const cards = document.querySelectorAll(".artifact-shelf__card");
+    expect(cards[0]?.className).toContain("artifact-shelf__card--spotlit");
+    expect(cards[1]?.className).not.toContain("artifact-shelf__card--spotlit");
+  });
+
+  it("isSpotlit: name containment either way, or the title inside an artifact path; never without a spotlight", () => {
+    expect(isSpotlit({ title: "school visits spec" }, { name: "school visits", paths: [] })).toBe(true);
+    expect(isSpotlit({ title: "tours" }, { name: "school tours plan", paths: [] })).toBe(true);
+    expect(isSpotlit({ title: "auth-flow" }, { name: "payments", paths: ["docs/specs/auth-flow.md"] })).toBe(true);
+    expect(isSpotlit({ title: "unrelated" }, { name: "payments", paths: ["docs/specs/auth-flow.md"] })).toBe(false);
+    expect(isSpotlit({ title: "anything" }, null)).toBe(false);
+    expect(isSpotlit({ title: "  " }, { name: "payments", paths: [] })).toBe(false);
   });
 
   it("shelfDocsFor keeps the session's own artifact order and drops unknown ids", () => {

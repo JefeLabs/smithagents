@@ -668,62 +668,26 @@ describe("MapStage editing", () => {
     await waitFor(() => expect(screen.getByText(/update failed/i)).toBeTruthy());
   });
 
-  it("clicking a slice band reveals its chain and dims the rest", async () => {
+  it("opening a slice LIGHTS its stories and dims the rest — no artifact row renders", async () => {
     stubFetch();
     const { client } = renderMapStage();
     seedSessionFrame(client, { workspace: "skoolscout" });
     await screen.findByText("tour scheduling v1", { selector: ".slice-panel__name" });
 
-    // At rest there is no anchor and no artifact node.
+    await userEvent.click(screen.getByText("tour scheduling v1", { selector: ".slice-panel__name" }));
+    fireEvent.mouseLeave(document.querySelector(".slice-panel__list") as Element);
+
+    // sl1 owns s1 and s2 — they light; s3 belongs to no slice, so it dims.
+    await waitFor(() => {
+      const s1 = screen.getByText("create tour time slots").closest(".map-story");
+      expect(s1?.classList.contains("is-lit")).toBe(true);
+    });
+    const s3 = screen.getByText("view tour analytics").closest(".map-story");
+    expect(s3?.classList.contains("is-dimmed")).toBe(true);
+    expect(s3?.classList.contains("is-lit")).toBe(false);
+    // The old spec/card reference row never materializes (removed 2026-08-12).
     expect(document.querySelector(".map-slice-anchor")).toBeNull();
     expect(document.querySelector(".map-artifact")).toBeNull();
-
-    await userEvent.click(screen.getByText("tour scheduling v1", { selector: ".slice-panel__name" }));
-
-    // sl1 has a specPath, so a spec artifact materializes; sl1 owns s1 and s2.
-    await waitFor(() => expect(document.querySelector(".map-slice-anchor")).not.toBeNull());
-    expect(document.querySelector(".map-artifact--spec")).not.toBeNull();
-    // s3 belongs to no slice, so it dims.
-    await waitFor(() => {
-      const s3 = screen.getByText("view tour analytics").closest(".map-story");
-      expect(s3?.classList.contains("is-dimmed")).toBe(true);
-    });
-    // …and s1, which the slice owns, does not.
-    expect(screen.getByText("create tour time slots").closest(".map-story")?.classList.contains("is-dimmed")).toBe(
-      false,
-    );
-    // s2 IS THE ONE THAT DISCRIMINATES, and the other two cannot. s1 is the fixture's
-    // only done:true story and is also in-slice, so against s1 and s3 alone "dim what
-    // the slice does not own" and "dim what is not done" agree exactly — swap the
-    // filter for `!story.done` and this test still passes. That is not a far-fetched
-    // mutation: `done` is read three lines away to build the anchor's fraction. s2 is
-    // owned by sl1 and done:false, so it is dimmed by the wrong rule and lit by the
-    // right one.
-    expect(screen.getByText("edit tour time slots").closest(".map-story")?.classList.contains("is-dimmed")).toBe(false);
-  });
-
-  it("lays the artifacts out as a ROW — same y, different x", async () => {
-    // The numbers belong to layout.test.ts, which owns artifactRowX/artifactRowY as
-    // pure functions. What only this test can see is whether MapStage actually PASSES
-    // THE INDEX through: emit `artifactRowX(0, rowX)` for every artifact and every
-    // other assertion in this file still passes while all four cards stack on the
-    // exact same point. jsdom lays nothing out, but xyflow writes each node's position
-    // into an inline transform, and that needs no stylesheet to read.
-    stubFetch();
-    const { client } = renderMapStage();
-    seedSessionFrame(client, { workspace: "skoolscout" });
-    await screen.findByText("tour scheduling v1", { selector: ".slice-panel__name" });
-    await userEvent.click(screen.getByText("tour scheduling v1", { selector: ".slice-panel__name" }));
-
-    await waitFor(() => expect(document.querySelectorAll(".map-artifact").length).toBe(2));
-    const at = [...document.querySelectorAll(".map-artifact")].map((card) => {
-      const node = card.closest(".react-flow__node") as HTMLElement | null;
-      const match = /translate\((-?[\d.]+)px,\s*(-?[\d.]+)px\)/.exec(node?.style.transform ?? "");
-      if (!match) throw new Error(`no transform on artifact node: ${node?.style.transform}`);
-      return { x: Number(match[1]), y: Number(match[2]) };
-    });
-    expect(at[0].y).toBe(at[1].y);
-    expect(at[1].x).toBeGreaterThan(at[0].x);
   });
 
   it("clicking a story title reveals its chain as a stack, and does not dim the map", async () => {
@@ -801,18 +765,30 @@ describe("MapStage editing", () => {
     expect(document.querySelector(".map-story.is-dimmed")).toBeNull();
   });
 
-  it("clicking the same slice band again clears the reveal", async () => {
+  it("a reveal publishes the shelf spotlight; clearing it clears the store", async () => {
     stubFetch();
     const { client } = renderMapStage();
     seedSessionFrame(client, { workspace: "skoolscout" });
-    const band = await screen.findByText("tour scheduling v1", { selector: ".slice-panel__name" });
-    await userEvent.click(band);
+    const row = await screen.findByText("tour scheduling v1", { selector: ".slice-panel__name" });
+    await userEvent.click(row);
+    await waitFor(() => expect(useUiStore.getState().sliceSpotlight?.name).toBe("tour scheduling v1"));
+    // sl1 carries a specPath — it rides along for path-based matching.
+    expect(useUiStore.getState().sliceSpotlight?.paths.length).toBeGreaterThan(0);
+    await userEvent.click(row);
+    await waitFor(() => expect(useUiStore.getState().sliceSpotlight).toBeNull());
+  });
+
+  it("clicking the same slice again clears the reveal", async () => {
+    stubFetch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    const row = await screen.findByText("tour scheduling v1", { selector: ".slice-panel__name" });
+    await userEvent.click(row);
     fireEvent.mouseLeave(document.querySelector(".slice-panel__list") as Element);
-    await waitFor(() => expect(document.querySelector(".map-slice-anchor")).not.toBeNull());
-    await userEvent.click(band);
+    await waitFor(() => expect(document.querySelector(".map-story.is-lit")).not.toBeNull());
+    await userEvent.click(row);
     fireEvent.mouseLeave(document.querySelector(".slice-panel__list") as Element);
-    await waitFor(() => expect(document.querySelector(".map-slice-anchor")).toBeNull());
-    expect(document.querySelector(".map-artifact")).toBeNull();
+    await waitFor(() => expect(document.querySelector(".map-story.is-lit")).toBeNull());
     expect(document.querySelector(".map-story.is-dimmed")).toBeNull();
   });
   /**

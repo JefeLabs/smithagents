@@ -55,6 +55,14 @@ describe("uiStore", () => {
     expect((useUiStore.getState().viewedWorkspaces as ReadonlySet<string>).size).toBe(0);
   });
 
+  it("sliceSpotlight sets and clears", () => {
+    expect(useUiStore.getState().sliceSpotlight).toBeNull();
+    useUiStore.getState().setSliceSpotlight({ name: "school visits", paths: ["docs/x.md"] });
+    expect(useUiStore.getState().sliceSpotlight?.name).toBe("school visits");
+    useUiStore.getState().setSliceSpotlight(null);
+    expect(useUiStore.getState().sliceSpotlight).toBeNull();
+  });
+
   it("docTarget sets and clears", () => {
     expect(useUiStore.getState().docTarget).toBeNull();
     useUiStore.getState().setDocTarget({ docId: "d1", sectionId: "approach", heading: "Approach" });

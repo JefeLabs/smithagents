@@ -101,6 +101,8 @@ export interface StoryNodeData {
   onReveal: () => void;
   selected: boolean;
   dimmed: boolean;
+  /** True while an open slice owns this story — the reveal's positive half. */
+  lit?: boolean;
 }
 
 /**
@@ -129,10 +131,10 @@ export interface StoryNodeData {
  */
 export function StoryNode({ data }: { data: StoryNodeData | BlankNodeData }) {
   if (data.blank) return <BlankCard className="map-story" placeholder="Add a story…" onCommit={data.onCommit} />;
-  const { story, sliceOptions, sliceValue, onSliceChange, onRemove, onReveal, selected, dimmed } = data;
+  const { story, sliceOptions, sliceValue, onSliceChange, onRemove, onReveal, selected, dimmed, lit } = data;
   return (
     <div
-      className={`map-story${story.done ? " is-done" : ""}${dimmed ? " is-dimmed" : ""}${
+      className={`map-story${story.done ? " is-done" : ""}${dimmed ? " is-dimmed" : ""}${lit ? " is-lit" : ""}${
         selected ? " is-selected" : ""
       }`}
       title={story.verifiedBy}

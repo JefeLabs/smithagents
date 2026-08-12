@@ -3235,6 +3235,12 @@ button.logo {
   color: inherit;
   font: inherit;
 }
+/* The reveal's positive half: stories the open slice OWNS light up while the
+   rest dim — same accent language as a selected card, softer weight. */
+.map-story.is-lit {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
 .map-activity__name.is-dimmed,
 .map-step__name.is-dimmed,
 .map-story.is-dimmed,

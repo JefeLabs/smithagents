@@ -19,12 +19,9 @@ import { ALL_WORKSPACES } from "../lib/board-aggregate";
 import { useSession } from "../queries/pushed";
 import { useCapabilities, useCreateCapability, usePatchCapability } from "../queries/work";
 import { useUiStore } from "../stores/uiStore";
-import { artifactNodesFor, buildEdges } from "./map/edges";
+import { artifactNodesFor } from "./map/edges";
 import {
   activityAt,
-  artifactRowStartX,
-  artifactRowX,
-  artifactRowY,
   CAPABILITY_CARD_MIN_W,
   capabilityCardsThatFit,
   cellAt,
@@ -236,7 +233,6 @@ export function MapStage({ shelf }: { shelf?: ReactNode } = {}) {
   // EVERY edge the model could draw, computed once per capability. Revealing filters
   // this set rather than rebuilding it — clicking a band must not recompute the
   // graph, which is why `buildEdges` stamps each edge with its `sliceId`.
-  const allEdges = useMemo(() => (cap ? buildEdges(cap) : []), [cap]);
 
   const revealed = selection?.kind === "slice" ? selection.id : null;
   // Resolved against the model rather than trusted from the selection, which is what
@@ -245,7 +241,21 @@ export function MapStage({ shelf }: { shelf?: ReactNode } = {}) {
   // that is no longer on screen.
   const revealedSlice = cap?.slices.find((s) => s.id === revealed) ?? null;
 
-  const edges = useMemo(() => allEdges.filter((e) => e.sliceId === revealed), [allEdges, revealed]);
+  // Publish the reveal for the shelf: tiles that look associated with the open
+  // slice light up beside the canvas (Edwin, 2026-08-12). Cleared on
+  // un-reveal AND on unmount — a spotlight must never outlive the map.
+  useEffect(() => {
+    const set = useUiStore.getState().setSliceSpotlight;
+    set(
+      revealedSlice
+        ? {
+            name: revealedSlice.name,
+            paths: [revealedSlice.specPath, revealedSlice.planPath].filter((p): p is string => Boolean(p)),
+          }
+        : null,
+    );
+    return () => set(null);
+  }, [revealedSlice]);
 
   // The story reveal, resolved the same way and for the same reason: a selection that
   // no longer names a record in `cap` simply misses, and the reveal collapses.
@@ -523,7 +533,7 @@ export function MapStage({ shelf }: { shelf?: ReactNode } = {}) {
    * reaches here today (they are appended after `decorate`, not laid out by
    * `layoutMap`), and that is precisely why the mistake would survive review.
    */
-  const decorateNode = (n: MapNode, dimmedIds: Set<string>): Node => {
+  const decorateNode = (n: MapNode, dimmedIds: Set<string>, litIds: Set<string>): Node => {
     {
       const dimmed = dimmedIds.has(n.id);
       if (n.data.blank) {
@@ -547,6 +557,7 @@ export function MapStage({ shelf }: { shelf?: ReactNode } = {}) {
           data: {
             story,
             dimmed,
+            lit: litIds.has(n.id),
             selected: story.id === revealedStoryId,
             sliceOptions: [...(cap?.slices ?? [])].sort((a, b) => a.order - b.order),
             sliceValue: sliceFor(story.id),
@@ -590,8 +601,12 @@ export function MapStage({ shelf }: { shelf?: ReactNode } = {}) {
    * objects are thrown away and remade on every model change, reveal and hover. React Flow
    * reports selection gestures; it does not store the selection across a re-seed.
    */
-  const decorate = (base: MapNode[], dimmedIds: Set<string>, selectedIds: Set<string>): Node[] =>
-    base.map((n) => ({ ...decorateNode(n, dimmedIds), selected: selectedIds.has(n.id) }));
+  const decorate = (
+    base: MapNode[],
+    dimmedIds: Set<string>,
+    selectedIds: Set<string>,
+    litIds: Set<string> = new Set(),
+  ): Node[] => base.map((n) => ({ ...decorateNode(n, dimmedIds, litIds), selected: selectedIds.has(n.id) }));
 
   // Positions are derived, never stored — but xyflow needs local node state for a
   // node to follow the cursor mid-drag, so the model is re-seeded into it whenever
@@ -691,56 +706,17 @@ export function MapStage({ shelf }: { shelf?: ReactNode } = {}) {
       return;
     }
 
-    // Dim every story the revealed slice does not own. `decorate` is the same bridge
-    // the plain path uses — revealing only changes which ids land in the dimmed set.
-    // Blank story slots match this filter too and it costs nothing: `decorate` handles
-    // blanks first and never gives them a `dimmed` field to read.
+    // The reveal is the STORIES now (Edwin, 2026-08-12): members light up, the
+    // rest dim, and no artifact row renders under the map — the spec/plan/card
+    // references live on the cards and boards themselves. `decorate` is the
+    // same bridge the plain path uses — revealing only changes which ids land
+    // in the dimmed and lit sets.
     const inSlice = new Set(revealedSlice.storyIds);
-    // Unioned rather than replaced: a hover while a band is open should not LIGHT a story
+    // Unioned rather than replaced: a hover while a slice is open should not LIGHT a story
     // the open slice does not own. Dim is the safe direction to combine in.
+    const litIds = new Set(base.filter((n) => n.type === "story" && inSlice.has(n.id)).map((n) => n.id));
     const dimmedIds = new Set(base.filter((n) => n.type === "story" && !inSlice.has(n.id)).map((n) => n.id));
-    const decorated = decorate(base, new Set([...dimmedIds, ...hoverDimmed]), selectedIdSet);
-
-    // One y for the whole row, computed once: it depends on the deepest story stack,
-    // which is a property of the model and not of any single artifact.
-    const rowY = artifactRowY(cap);
-    const rowX = artifactRowStartX(cap, revealedSlice);
-    const done = revealedSlice.storyIds.filter((id) => cap.stories.find((s) => s.id === id)?.done).length;
-
-    // Typed MapNode rather than left to xyflow's Node, whose `type` is any string:
-    // this is the only thing that holds the two new union members to a level that
-    // `nodeTypes` actually registers. A typo here would otherwise render nothing and
-    // report nothing, the same silence a wrong node id buys.
-    const ephemeral: MapNode[] = [
-      {
-        // sliceNodeId, NOT a re-derived `slice:${id}`. `buildEdges` names this node as
-        // its source through the same helper, and an edge whose endpoint does not
-        // exist is silent — xyflow draws nothing and logs nothing about the id.
-        id: sliceNodeId(revealedSlice.id),
-        type: "slice",
-        // THE ANCHOR LEADS THE ROW, at slot 0, with the artifacts following from slot 1.
-        // It used to sit off to the left at SLICE_RAIL_X, and since every edge on the
-        // canvas originates here, that one position set the length of all of them —
-        // moving the artifacts below the map shortened them but could not fix it.
-        position: { x: artifactRowX(0, rowX), y: rowY },
-        data: { name: revealedSlice.name, fraction: `${done}/${revealedSlice.storyIds.length}` },
-        draggable: false,
-        selectable: false,
-      },
-      // `a.id` is already minted by `artifactNodeId` inside `artifactNodesFor` — it is
-      // not rebuilt here, for the same reason.
-      ...artifactNodesFor(revealedSlice).map((a, i) => ({
-        id: a.id,
-        type: "artifact" as const,
-        // `i + 1`: slot 0 is the anchor's.
-        position: { x: artifactRowX(i + 1, rowX), y: rowY },
-        data: { kind: a.kind, label: a.label },
-        draggable: false,
-        selectable: false,
-      })),
-    ];
-
-    setNodes([...decorated, ...ephemeral]);
+    setNodes(decorate(base, new Set([...dimmedIds, ...hoverDimmed]), selectedIdSet, litIds));
     // `hoverDimmed` is listed for the same reason `revealedSlice` is: it is a plain value
     // this effect reads, and leaving it out would show the previous hover's dimming.
   }, [cap, revealedSlice, revealedStory, revealedStoryId, storySlice, select, setNodes, hoverDimmed, selectedIdSet]);
@@ -947,7 +923,6 @@ export function MapStage({ shelf }: { shelf?: ReactNode } = {}) {
           <div className="map-stage__canvas">
             <ReactFlow
               nodes={nodes}
-              edges={edges}
               // No cast any more. `nodeTypes.tsx` adapts the pure cards to xyflow —
               // handles for the edges to land on, and the data narrowing done per
               // level — so what arrives here is already a NodeTypes.

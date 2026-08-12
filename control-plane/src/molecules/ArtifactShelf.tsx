@@ -3,6 +3,25 @@ import type { DocT } from "../api/types";
 interface ArtifactShelfProps {
   docs: DocT[];
   onOpen: (docId: string) => void;
+  /** The revealed slice on /map — tiles that look associated light up. */
+  spotlight?: { name: string; paths: string[] } | null;
+}
+
+/**
+ * Does a shelf doc look associated with the revealed slice? Best-effort by
+ * construction — slices carry repo file paths (specPath/planPath) while shelf
+ * tiles are broker documents, and no stored reference joins them yet — so this
+ * matches on names: containment either way between the doc title and the slice
+ * name, or the doc title appearing inside one of the slice's artifact paths.
+ * When slices grow real doc refs, this is the one function to replace.
+ */
+export function isSpotlit(doc: { title: string }, spotlight: { name: string; paths: string[] } | null | undefined) {
+  if (!spotlight) return false;
+  const title = doc.title.trim().toLowerCase();
+  const name = spotlight.name.trim().toLowerCase();
+  if (!title || !name) return false;
+  if (title.includes(name) || name.includes(title)) return true;
+  return spotlight.paths.some((p) => p.toLowerCase().includes(title));
 }
 
 /**
@@ -19,7 +38,7 @@ export function shelfDocsFor(session: { artifacts?: string[] } | null | undefine
  * (spec 2026-08-10, artifacts pivot). Offsets, rules and the hover fan are all
  * CSS — nothing inline.
  */
-export function ArtifactShelf({ docs, onOpen }: ArtifactShelfProps) {
+export function ArtifactShelf({ docs, onOpen, spotlight }: ArtifactShelfProps) {
   if (docs.length === 0) return null;
   return (
     // Every document renders — past the viewport the shelf scrolls (CSS
@@ -29,7 +48,9 @@ export function ArtifactShelf({ docs, onOpen }: ArtifactShelfProps) {
         <button
           key={d.id}
           type="button"
-          className={`artifact-shelf__card${d.pins?.length ? " artifact-shelf__card--pinned" : ""}`}
+          className={`artifact-shelf__card${d.pins?.length ? " artifact-shelf__card--pinned" : ""}${
+            isSpotlit(d, spotlight) ? " artifact-shelf__card--spotlit" : ""
+          }`}
           onClick={() => onOpen(d.id)}
         >
           <span className="artifact-shelf__tag">

@@ -67,10 +67,12 @@ function useShelf() {
   const { data: docs = NO_DOCS } = useDocuments();
   const { data: blueprints = NO_BLUEPRINTS } = useBlueprints();
   const { data: session = null } = useSession();
+  const sliceSpotlight = useUiStore((s) => s.sliceSpotlight);
   return (
     <ArtifactShelf
       docs={shelfDocsFor(session, docs)}
       onOpen={(id) => openDocByFamily(navigate, blueprints, docs, id)}
+      spotlight={sliceSpotlight}
     />
   );
 }

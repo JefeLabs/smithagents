@@ -42,6 +42,13 @@ interface UiState {
   activeLens: { group: string } | null;
   setLens: (group: string, expansion: string[]) => void;
   clearLens: () => void;
+  /**
+   * The revealed slice on /map, published for the shelf: tiles whose doc looks
+   * associated (name/path match) light up with the slice (Edwin, 2026-08-12).
+   * View state — set on reveal, cleared on un-reveal and when the map unmounts.
+   */
+  sliceSpotlight: { name: string; paths: string[] } | null;
+  setSliceSpotlight: (spotlight: { name: string; paths: string[] } | null) => void;
   /** The aimed section for the next dock send — an instruction about a specific part of the page. */
   docTarget: { docId: string; sectionId: string; heading: string } | null;
   setDocTarget: (target: { docId: string; sectionId: string; heading: string }) => void;
@@ -102,6 +109,7 @@ const initial = {
   voiceNotice: null,
   focusMode: false,
   activeLens: null,
+  sliceSpotlight: null,
   docTarget: null,
   viewedWorkspaces: new Set<string>(),
 } satisfies Partial<UiState>;
@@ -122,6 +130,7 @@ export const useUiStore = create<UiState>((set) => ({
   // An empty viewedWorkspaces means "no explicit selection" — the stages fall
   // back to the active session's workspace, exactly the pre-lens default.
   clearLens: () => set({ activeLens: null, viewedWorkspaces: new Set<string>() }),
+  setSliceSpotlight: (sliceSpotlight) => set({ sliceSpotlight }),
   setDocTarget: (docTarget) => set({ docTarget }),
   clearDocTarget: () => set({ docTarget: null }),
   toggleSessions: () => set((s) => ({ sessionsOpen: !s.sessionsOpen })),
