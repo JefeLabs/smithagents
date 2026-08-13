@@ -31,7 +31,7 @@ import { createDiscordVoiceLifecycle } from "./discord-voice-lifecycle.ts";
 import { createDiscordWorkspaceSwitcher } from "./discord-workspace-switcher.ts";
 import { runDocEditTurn } from "./doc-edit.ts";
 import { type Doc, DocumentManager } from "./documents.ts";
-import { type AskFactory, ElectionScheduler, runElection } from "./election.ts";
+import { type AskFactory, ElectionScheduler, makeClaimAsk, runElection } from "./election.ts";
 import { EXEC_TO_RUNTIME, isExecutionMode } from "./execution-modes.ts";
 import { approve, repoKey } from "./feeds/approve.ts";
 import { latestFromAtom } from "./feeds/atom-release.ts";
@@ -2203,15 +2203,24 @@ broker = new Broker(
  * `claude-haiku-4-5` matches BrokerBrain's default: an election is a small
  * judgement call, the same weight class as a brain turn.
  */
-const askForClaim: AskFactory = async ({ system, prompt }) => {
-  const message = await anthropic.messages.create({
-    model: "claude-haiku-4-5",
-    max_tokens: 200,
-    system,
-    messages: [{ role: "user", content: prompt }],
-  });
-  return message.content.map((block) => ("text" in block ? block.text : "")).join("");
-};
+// Swarm-first since the elections-via-api-runtime spec (2026-08-13): a member
+// who exists in the swarm registry as an api-kind agent answers as their
+// REGISTRY persona through a one-shot turn; a clean "not an api agent" falls
+// back to this broker-side ask, byte-identical to the shipped behavior. Any
+// other swarm failure propagates so runElection records a decline carrying
+// the typed reason — never a second paid ask.
+const askForClaim: AskFactory = makeClaimAsk({
+  swarmOneShot: (agentId, message) => swarm.apiAgentOneShot(agentId, message),
+  brokerAsk: async ({ system, prompt }) => {
+    const message = await anthropic.messages.create({
+      model: "claude-haiku-4-5",
+      max_tokens: 200,
+      system,
+      messages: [{ role: "user", content: prompt }],
+    });
+    return message.content.map((block) => ("text" in block ? block.text : "")).join("");
+  },
+});
 
 const elections = new ElectionScheduler({
   run: async (groupId) => {

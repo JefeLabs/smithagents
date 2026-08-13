@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type AskFactory, type Candidate, parseClaim, runElection } from "./election.ts";
+import { type AskFactory, type Candidate, makeClaimAsk, parseClaim, runElection } from "./election.ts";
 
 const cand = (id: string, role: string, squadRole?: string): Candidate => ({
   id,
@@ -13,7 +13,7 @@ const cand = (id: string, role: string, squadRole?: string): Candidate => ({
 /** Scripts one reply per agent id, keyed off the directives it was seeded with. */
 function scripted(replies: Record<string, string>): AskFactory & { seen: string[] } {
   const seen: string[] = [];
-  const ask = async ({ system, prompt }: { system: string; prompt: string }) => {
+  const ask = async ({ system, prompt }: { agentId: string; system: string; prompt: string }) => {
     seen.push(system);
     const who = Object.keys(replies).find((id) => system.includes(id));
     if (!who) throw new Error(`no script for system: ${system}`);
@@ -118,4 +118,49 @@ test("parseClaim keeps the raw text as the reason when it cannot parse, for debu
   assert.equal(claim.willing, false);
   assert.equal(claim.confidence, 0);
   assert.match(claim.reason, /absolutely not/);
+});
+
+test("makeClaimAsk: a swarm reply wins and the broker is never asked", async () => {
+  const brokerCalls: string[] = [];
+  const ask = makeClaimAsk({
+    swarmOneShot: async (agentId) => ({ reply: `{"willing": true, "confidence": 0.8, "reason": "${agentId} says yes"}` }),
+    brokerAsk: async ({ system }) => {
+      brokerCalls.push(system);
+      return "never";
+    },
+  });
+  const raw = await ask({ agentId: "sage", system: "persona", prompt: "lead?" });
+  assert.match(raw, /sage says yes/);
+  assert.equal(brokerCalls.length, 0);
+});
+
+test("makeClaimAsk: notApiAgent falls back to the broker ask with the member's own persona", async () => {
+  const ask = makeClaimAsk({
+    swarmOneShot: async () => ({ notApiAgent: true }),
+    brokerAsk: async ({ system, prompt }) => `broker(${system})[${prompt.slice(0, 4)}]`,
+  });
+  assert.equal(await ask({ agentId: "osvaldo", system: "builder persona", prompt: "lead?" }), "broker(builder persona)[lead]");
+});
+
+test("makeClaimAsk: any other swarm failure propagates — no second paid ask, and runElection records the reason", async () => {
+  const brokerCalls: string[] = [];
+  const ask = makeClaimAsk({
+    swarmOneShot: async () => {
+      throw new Error("Anthropic refused the turn over credits or rate limits — top up the account, then retry");
+    },
+    brokerAsk: async () => {
+      brokerCalls.push("asked");
+      return "never";
+    },
+  });
+  await assert.rejects(() => ask({ agentId: "sage", system: "s", prompt: "p" }), /top up the account/);
+  assert.equal(brokerCalls.length, 0);
+  // Through runElection, that failure becomes a decline carrying the reason.
+  const result = await runElection(ask, { name: "g" }, [
+    { id: "sage", name: "Sage", role: "Advisor", directives: "d" },
+    { id: "ana", name: "Ana", role: "Product Manager", directives: "d" },
+  ]);
+  assert.ok(result.claims.every((c) => !c.willing && /top up|unreachable/.test(c.reason)));
+  assert.equal(result.method, "rank"); // the ladder still floors a leader
+  assert.equal(result.leader, "ana");
 });

@@ -385,3 +385,24 @@ test("getMyVoice/saveMyVoice: GET and PUT /me/voice pass through", async () => {
   assert.deepEqual(await client.getMyVoice(), { stt: null, tts: null, hideInactive: false });
   assert.deepEqual(await client.saveMyVoice({ stt: null, tts: null }), { stt: null, tts: null, hideInactive: false });
 });
+
+test("apiAgentOneShot: reply on 200, notApiAgent on 404, typed throw otherwise", async () => {
+  const { calls, fetch } = fakeFetch({ "/api-agents/sage/turn": { reply: "I should lead." } });
+  const c = new SwarmClient({ baseUrl: "http://x", token: "tok", fetchImpl: fetch });
+  const ok = await c.apiAgentOneShot("sage", "lead?");
+  assert.deepEqual(ok, { reply: "I should lead." });
+  const sent = JSON.parse(String(calls[0]!.init!.body));
+  assert.deepEqual(sent, { message: "lead?", oneshot: true });
+  assert.equal((calls[0]!.init!.headers as Record<string, string>).authorization, "Bearer tok");
+
+  // fakeFetch 404s unknown paths — the clean fall-back signal, never a throw.
+  assert.deepEqual(await c.apiAgentOneShot("ghost", "lead?"), { notApiAgent: true });
+
+  // A 502 with the swarm's typed message throws it verbatim.
+  const failing = (async () =>
+    new Response(JSON.stringify({ error: "top up the account, then retry", kind: "billing" }), {
+      status: 502,
+    })) as unknown as typeof fetch;
+  const c2 = new SwarmClient({ baseUrl: "http://x", fetchImpl: failing });
+  await assert.rejects(() => c2.apiAgentOneShot("sage", "lead?"), /top up the account/);
+});

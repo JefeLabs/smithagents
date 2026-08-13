@@ -224,6 +224,30 @@ export class SwarmClient {
     return { taskId: r.taskId as string, agentName: (r.agentName as string | null) ?? null };
   }
 
+  /**
+   * One-shot api-agent turn (elections-via-api-runtime spec 2026-08-13).
+   * A clean 404 means "not an api-kind registry agent" — the caller's cue to
+   * fall back; any OTHER failure (billing/auth 502s included) throws with the
+   * swarm's typed message so it lands in the claim's recorded reason instead
+   * of triggering a second paid ask. Bounded at 10s: an election must not
+   * hang on one silent member.
+   */
+  async apiAgentOneShot(agentId: string, message: string): Promise<{ reply: string } | { notApiAgent: true }> {
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (this.token) headers.authorization = `Bearer ${this.token}`;
+    const res = await this.fetchImpl(`${this.baseUrl}/api-agents/${encodeURIComponent(agentId)}/turn`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ message, oneshot: true }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (res.status === 404) return { notApiAgent: true };
+    const parsed = (await res.json().catch(() => ({}))) as { reply?: string; error?: string };
+    if (!res.ok) throw new Error(parsed.error ?? `swarm turn failed (${res.status})`);
+    if (typeof parsed.reply !== "string") throw new Error("swarm turn returned no reply");
+    return { reply: parsed.reply };
+  }
+
   async getOutput(taskIdOrName: string): Promise<{ taskId: string; output: string }> {
     const r = await this.http("GET", `/tasks/${encodeURIComponent(taskIdOrName)}/output`);
     return { taskId: r.taskId as string, output: r.output as string };

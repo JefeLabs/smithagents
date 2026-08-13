@@ -12,8 +12,32 @@
  */
 import { type Claim, pickLeader, type Rankable } from "./leadership.ts";
 
-/** One short, non-streaming model call. Injected so tests script it without network. */
-export type AskFactory = (params: { system: string; prompt: string }) => Promise<string>;
+/**
+ * One short, non-streaming model call. Injected so tests script it without
+ * network. `agentId` names WHO is being asked (elections-via-api-runtime
+ * spec 2026-08-13) — a swarm-first resolver routes registry agents to their
+ * own api engine and everyone else to the broker's client.
+ */
+export type AskFactory = (params: { agentId: string; system: string; prompt: string }) => Promise<string>;
+
+/**
+ * The swarm-first claim resolver. A registry api-kind agent answers as its
+ * REGISTRY persona through a one-shot swarm turn; a clean "not an api agent"
+ * falls back to the broker's own ask (today's behavior, byte-identical). Any
+ * OTHER swarm failure propagates — runElection records it as a decline whose
+ * reason carries the typed message, and it must NOT double-ask through a
+ * second paid path.
+ */
+export function makeClaimAsk(deps: {
+  swarmOneShot(agentId: string, message: string): Promise<{ reply: string } | { notApiAgent: true }>;
+  brokerAsk(params: { system: string; prompt: string }): Promise<string>;
+}): AskFactory {
+  return async ({ agentId, system, prompt }) => {
+    const viaSwarm = await deps.swarmOneShot(agentId, prompt);
+    if ("reply" in viaSwarm) return viaSwarm.reply;
+    return deps.brokerAsk({ system, prompt });
+  };
+}
 
 export interface Candidate {
   id: string;
@@ -87,7 +111,7 @@ export async function runElection(
   const claims = await Promise.all(
     members.map(async (member): Promise<Claim> => {
       try {
-        const raw = await ask({ system: member.directives, prompt });
+        const raw = await ask({ agentId: member.id, system: member.directives, prompt });
         return parseClaim(member.id, raw);
       } catch (err) {
         return { agent: member.id, willing: false, confidence: 0, reason: `unreachable: ${String(err)}` };
