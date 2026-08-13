@@ -29,6 +29,7 @@ interface JobRole {
 }
 
 interface EngineOption {
+  /** Option identity — a real CLI name, or "api:<provider>" for api-kind entries. */
   cli: string;
   label: string;
   models: string[];
@@ -38,6 +39,9 @@ interface EngineOption {
   active?: boolean;
   /** Human reason when inactive ("not logged in — run `codex login`"). */
   statusDetail?: string;
+  /** api-runtime spec 2026-08-13: present on provider-API entries; the submit forks on it. */
+  kind?: "api";
+  provider?: string;
 }
 
 interface LanguageOption {
@@ -67,7 +71,7 @@ interface StoredAgent {
   language?: string;
   stereotype?: string;
   jobRole?: string;
-  engine?: { cli?: string; model?: string };
+  engine?: { kind?: "cli" | "api"; cli?: string; provider?: string; model?: string };
   voice?: { voiceId?: string };
   reactions?: Record<string, string[]>;
   quickAnswers?: Record<string, string>;
@@ -281,7 +285,11 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
           setError(`Could not load ${editingId} — it may have been removed.`);
           return;
         }
-        const eng = catalog.engines.find((x) => x.cli === a.engine?.cli) ?? null;
+        // An api-kind agent has no cli — recover its catalog entry by provider.
+        const eng =
+          a.engine?.kind === "api"
+            ? (catalog.engines.find((x) => x.kind === "api" && x.provider === a.engine?.provider) ?? null)
+            : (catalog.engines.find((x) => x.cli === a.engine?.cli) ?? null);
         reset({
           name: a.name ?? "",
           role: a.role ?? "",
@@ -459,7 +467,13 @@ export function AddAgentModal({ open, onClose, onCreated, editingId }: AddAgentM
         directives: editing
           ? (generatedDirectives ?? jobRole?.directives)
           : (generatedDirectives ?? jobRole?.directives ?? stereotype?.directives),
-        engine: engine ? { cli: engine.cli, model: v.model } : undefined,
+        // An api-kind entry submits the api engine shape; the pseudo "api:…"
+        // id never reaches the server (api-runtime spec 2026-08-13).
+        engine: engine
+          ? engine.kind === "api"
+            ? { kind: "api", provider: engine.provider, model: v.model }
+            : { cli: engine.cli, model: v.model }
+          : undefined,
         voice: v.voiceId ? { voiceId: v.voiceId } : undefined,
         reactions: Object.fromEntries(Object.entries(withoutBlanks(v.reactions)).map(([k, val]) => [k, [val]])),
         quickAnswers: withoutBlanks(v.quickAnswers),

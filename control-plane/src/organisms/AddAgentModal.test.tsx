@@ -367,6 +367,62 @@ describe("AddAgentModal chooser", () => {
     expect(cliSelect.value).toBe("claude");
   });
 
+  it("an active api engine entry submits the api engine shape, never a cli (api-runtime spec 2026-08-13)", async () => {
+    const { posted } = stubFetch({
+      catalog: {
+        ...CATALOG,
+        engines: [
+          { cli: "claude", label: "Claude Code", models: ["claude-opus"], warmSessions: true },
+          {
+            cli: "api:anthropic",
+            label: "API — Anthropic",
+            models: ["claude-sonnet-5"],
+            warmSessions: false,
+            kind: "api",
+            provider: "anthropic",
+            active: true,
+          },
+        ],
+      },
+    });
+    render(<AddAgentModal open onClose={vi.fn()} />);
+    await userEvent.click(await screen.findByText(/create custom/i));
+    await userEvent.selectOptions(await screen.findByLabelText(/^cli$/i), "api:anthropic");
+    await userEvent.click(screen.getByRole("button", { name: /next/i }));
+    await userEvent.type(screen.getByLabelText(/^name$/i), "Sage");
+    await userEvent.click(screen.getByRole("button", { name: /next/i }));
+    await userEvent.click(screen.getByRole("button", { name: /next/i }));
+    await userEvent.click(screen.getByRole("button", { name: /next/i }));
+    await userEvent.click(screen.getByRole("button", { name: /create agent/i }));
+    await waitFor(() => expect(posted.length).toBe(1));
+    expect(posted[0].engine).toEqual({ kind: "api", provider: "anthropic", model: "claude-sonnet-5" });
+  });
+
+  it("an inactive api entry is grayed out with its statusDetail, like an unavailable CLI", async () => {
+    stubFetch({
+      catalog: {
+        ...CATALOG,
+        engines: [
+          { cli: "claude", label: "Claude Code", models: ["claude-opus"], warmSessions: true },
+          {
+            cli: "api:anthropic",
+            label: "API — Anthropic",
+            models: ["claude-sonnet-5"],
+            warmSessions: false,
+            kind: "api",
+            provider: "anthropic",
+            active: false,
+            statusDetail: "No anthropic API key stored — add one in Settings → API Keys",
+          },
+        ],
+      },
+    });
+    render(<AddAgentModal open onClose={vi.fn()} />);
+    await userEvent.click(await screen.findByText(/create custom/i));
+    const option = (await screen.findByRole("option", { name: /API — Anthropic/ })) as HTMLOptionElement;
+    expect(option.disabled).toBe(true);
+  });
+
   it("Next gates per STEP, not per form: Setup advances with the name still blank, Persona does not", async () => {
     // The wizard's gate is deliberately NOT formState.isValid. A whole-form check would
     // see step 1's empty `name` while the user is on step 0 and disable the only control
