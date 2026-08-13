@@ -1,7 +1,14 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup } from "@testing-library/react";
+import { cleanup, configure } from "@testing-library/react";
 import { afterEach, beforeEach, vi } from "vitest";
 import { resetAllStores } from "../stores/reset";
+
+// Stabilization pass (2026-08-13): findBy*/waitFor default to a 1s deadline,
+// and under full-suite load a lazy Suspense chunk (DocStage, DashboardsStage)
+// can take longer than that just to import — the "Unable to find region
+// Document" flake class. A PASSING query still resolves the moment it
+// matches; only genuinely-failing waits pay the longer deadline.
+configure({ asyncUtilTimeout: 5_000 });
 
 /**
  * This jsdom environment runs on an opaque origin, so it exposes no
