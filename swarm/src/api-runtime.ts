@@ -75,6 +75,20 @@ export class ApiRuntime {
     return { sessionId: id, reply };
   }
 
+  /**
+   * One turn, no memory (elections spec 2026-08-13): the persona answers a
+   * single message and NOTHING is written to disk. Built for blind,
+   * stateless asks — an election claim is evidence on the group, not a
+   * conversation with the agent.
+   */
+  async runOneShot(agent: ComposedAgent, message: string): Promise<string> {
+    return this.provider.complete({
+      model: agent.engine.model,
+      system: buildSystemPrompt(agent),
+      messages: [{ role: "user", text: message }],
+    });
+  }
+
   async load(agentId: string, sessionId: string): Promise<ApiSession> {
     const raw = await readFile(this.sessionPath(agentId, sessionId), "utf8");
     return JSON.parse(raw) as ApiSession;

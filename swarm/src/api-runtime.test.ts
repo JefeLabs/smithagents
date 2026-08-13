@@ -112,3 +112,17 @@ test("MockProvider rejects with typed errors the routes can map", async () => {
     (err: unknown) => err instanceof ApiProviderError && err.kind === "auth",
   );
 });
+
+test("runOneShot answers from the persona and writes NOTHING to disk", async () => {
+  const { runtime, provider, dir } = await freshRuntime(["I should lead."]);
+  const reply = await runtime.runOneShot(AGENT, "Should you lead?");
+  assert.equal(reply, "I should lead.");
+  assert.equal(provider.calls[0].model, "claude-sonnet-5");
+  assert.match(provider.calls[0].system, /Sage, Research advisor/);
+  assert.deepEqual(provider.calls[0].messages, [{ role: "user", text: "Should you lead?" }]);
+  // No agent dir, no session file — a one-shot leaves no residue.
+  const entries = await readdir(dir).catch(() => []);
+  assert.deepEqual(entries, []);
+  // And sessions still list empty afterward.
+  assert.deepEqual(await runtime.listSessions(AGENT.id), []);
+});

@@ -1190,11 +1190,15 @@ export class OrchestratorServer {
       return agent?.engine.kind === "api" ? agent : null;
     };
     this.app.post<{ Params: { id: string } }>("/api-agents/:id/turn", async (req, reply) => {
-      const b = (req.body ?? {}) as { sessionId?: string; message?: string };
+      const b = (req.body ?? {}) as { sessionId?: string; message?: string; oneshot?: boolean };
       if (!b.message?.trim()) return reply.status(400).send({ error: "Missing required field: message" });
       const agent = await findApiAgent(req.params.id);
       if (!agent) return reply.status(404).send({ error: `No api-kind agent: ${req.params.id}` });
       try {
+        if (b.oneshot === true) {
+          // Election-grade (elections spec 2026-08-13): answer once, keep nothing.
+          return { reply: await apiRuntime.runOneShot(agent, b.message.trim()) };
+        }
         return await apiRuntime.runTurn(agent, b.sessionId?.trim() || null, b.message.trim());
       } catch (err) {
         if (err instanceof ApiProviderError) {
