@@ -53,6 +53,16 @@ export async function applyTerminalEffects(
         errors.push(`route: no ${effect.toType} board for ${board.workspaceId ?? "personal"}`);
         continue;
       }
+      if (dest.id === board.id) {
+        // A same-type effect resolves `dest` from allBoards, which — unlike
+        // `board` itself — may be a freshly-loaded copy sharing the same id.
+        // Pushing onto that copy would be silently lost: it's never `board`
+        // (so the changed-loop's byId skip hides it) and it's never in
+        // `changed` under any id the caller would think to save. Refuse it
+        // outright, same as the no-destination case above.
+        errors.push(`route: ${board.id} cannot route to itself`);
+        continue;
+      }
       if (!dest.columns.some((c) => c.id === effect.toColumn)) {
         errors.push(`route: ${dest.id} has no column ${effect.toColumn}`);
         continue;

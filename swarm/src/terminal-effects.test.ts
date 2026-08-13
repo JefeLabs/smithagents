@@ -97,6 +97,21 @@ test("a route effect with no matching board is an error entry, never a throw", a
   assert.match(res.errors[0], /no release board/i);
 });
 
+test("a route effect targeting the board's own type is refused, never a silent card loss", async () => {
+  const plan = createBoard("plan", "acme");
+  plan.terminal = {
+    columnId: plan.columns[plan.columns.length - 1].id,
+    effects: [{ kind: "route", toType: "plan", toColumn: "queue" }],
+  };
+  const card = addCard(plan, { title: "t" });
+  const before = plan.cards.length;
+  const res = await applyTerminalEffects(plan, card, [plan], deps());
+  assert.equal(res.changed.length, 0);
+  assert.equal(res.errors.length, 1);
+  assert.match(res.errors[0], /cannot route to itself/);
+  assert.equal(plan.cards.length, before); // original board's cards unchanged
+});
+
 test("shouldFireTerminal: only a columnId patch that LANDS on the terminal column fires", () => {
   const board = createBoard("ideation", "acme");
   const terminal = board.columns[board.columns.length - 1].id;
