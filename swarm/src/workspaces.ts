@@ -40,10 +40,34 @@ export interface Workspace {
   color?: string;
   /** Opt-in sprint definition (date-range spec 2026-08-12) — absent means this workspace has no sprints. */
   sprint?: { anchor: string; lengthDays: number };
+  /**
+   * ONE CONTEXT ENTITY (spec 2026-08-13, Edwin: "a group is a workspace made
+   * up of many workspaces" / "there is a group attribute for workspace"):
+   * PRESENT (even empty) = this context contains other contexts — it IS a
+   * group; absent = a plain workspace. Presence is the kind, so an empty
+   * group stays a group. Groupish records carry `repos: []`; mixed
+   * containment is invalid.
+   */
+  members?: string[];
 }
 
-function assertWorkspace(file: string, v: unknown): Workspace {
+/** The group attribute, applied: a context with `members` (even []) is a group. */
+export function isGroupRecord(w: Workspace): boolean {
+  return w.members !== undefined;
+}
+
+function assertContext(file: string, v: unknown): Workspace {
   const o = v as Partial<Workspace>;
+  if (o && Array.isArray(o.members)) {
+    const ok =
+      typeof o.name === "string" &&
+      o.members.every((m) => typeof m === "string") &&
+      (o.repos === undefined || (Array.isArray(o.repos) && o.repos.length === 0));
+    if (!ok) {
+      throw new Error(`Invalid group file ${file}: requires name, members[] of names, and NO repos (one or the other)`);
+    }
+    return { ...o, repos: [] } as Workspace;
+  }
   const ok =
     o &&
     typeof o.name === "string" &&
@@ -56,20 +80,32 @@ function assertWorkspace(file: string, v: unknown): Workspace {
   return o as Workspace;
 }
 
-/** Load every *.json in `dir` as a Workspace. Throws (naming the file) on malformed input. */
-export async function loadWorkspacesFromDir(dir: string): Promise<Workspace[]> {
+/**
+ * Every context record in `dir` — plain workspaces AND groupish ones. The
+ * store's raw read; collision checks and the group views build on it.
+ */
+export async function loadAllContextsFromDir(dir: string): Promise<Workspace[]> {
   let entries: string[];
   try {
     entries = await readdir(dir);
   } catch {
     return [];
   }
-  const workspaces: Workspace[] = [];
+  const contexts: Workspace[] = [];
   for (const file of entries.filter((f) => f.endsWith(".json"))) {
     const raw = await readFile(join(dir, file), "utf8");
-    workspaces.push(assertWorkspace(file, JSON.parse(raw)));
+    contexts.push(assertContext(file, JSON.parse(raw)));
   }
-  return workspaces;
+  return contexts;
+}
+
+/**
+ * PLAIN workspaces only — what every work path (dispatch, boards, sessions,
+ * repo resolution) consumes. Groupish records can host none of that, so the
+ * filter lives at the loader and no call site needs auditing twice.
+ */
+export async function loadWorkspacesFromDir(dir: string): Promise<Workspace[]> {
+  return (await loadAllContextsFromDir(dir)).filter((w) => !isGroupRecord(w));
 }
 
 /** Workspaces visible to the roster, catalog, and delegation. */

@@ -1,9 +1,12 @@
-// Workspace groups — nested, named sets of workspaces and other groups.
-// One JSON file per group under .smith/groups/, mirroring workspaces.ts.
-// Spec: docs/superpowers/specs/2026-08-11-workspace-groups-design.md
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+// Workspace groups — VIEWS over the one context store (spec 2026-08-13,
+// one-context-entity): a group is a workspace record whose `members` field is
+// present. This module keeps the GroupT wire shape (name + split
+// workspaces[]/groups[] + expansion) byte-compatible for the broker and the
+// control plane while the storage is .smith/workspaces/ alone.
+// Prior art: docs/superpowers/specs/2026-08-11-workspace-groups-design.md
+import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { Workspace } from "./workspaces.js";
+import { isGroupRecord, loadAllContextsFromDir, type Workspace } from "./workspaces.js";
 
 export interface WorkspaceGroup {
   name: string;
@@ -47,39 +50,99 @@ export function assertGroup(file: string, v: unknown): WorkspaceGroup {
   return o as WorkspaceGroup;
 }
 
-/** Load every *.json in `dir` as a WorkspaceGroup. Throws (naming the file) on malformed input. */
-export async function loadGroupsFromDir(dir: string): Promise<WorkspaceGroup[]> {
-  let entries: string[];
-  try {
-    entries = await readdir(dir);
-  } catch {
-    return [];
-  }
-  const groups: WorkspaceGroup[] = [];
-  for (const file of entries.filter((f) => f.endsWith(".json"))) {
-    groups.push(assertGroup(file, JSON.parse(await readFile(join(dir, file), "utf8"))));
-  }
-  return groups;
+/**
+ * The GroupT views over the one store: each groupish record's members split
+ * into `workspaces`/`groups` by looking at what each MEMBER'S record is —
+ * kind is derived, never stored twice. A dangling member name lists under
+ * `workspaces` (visible beats vanished; expansion skips it anyway).
+ */
+export function groupViewsFrom(all: Workspace[]): WorkspaceGroup[] {
+  const groupish = new Set(all.filter(isGroupRecord).map((w) => w.name));
+  return all.filter(isGroupRecord).map((w) => ({
+    name: w.name,
+    description: w.description,
+    workspaces: (w.members ?? []).filter((m) => !groupish.has(m)),
+    groups: (w.members ?? []).filter((m) => groupish.has(m)),
+    color: w.color,
+    sprint: w.sprint,
+  }));
 }
 
-/** Write one group to `dir`. Mirror of workspaces.saveWorkspace. */
+/** Group views from the ONE context store — `dir` is .smith/workspaces now. */
+export async function loadGroupsFromDir(dir: string): Promise<WorkspaceGroup[]> {
+  return groupViewsFrom(await loadAllContextsFromDir(dir));
+}
+
+/**
+ * Write one group into the ONE store: a workspace record whose `members` is
+ * the union of the view's workspaces + groups (order preserved). Groupish
+ * records carry only the context-identity fields, so a wholesale rewrite
+ * loses nothing.
+ */
 export async function saveGroup(dir: string, group: WorkspaceGroup): Promise<void> {
   if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(group.name)) {
     throw new Error(`Invalid group name "${group.name}": use lowercase letters, digits and dashes`);
   }
+  const record: Workspace = {
+    name: group.name,
+    description: group.description,
+    repos: [],
+    color: group.color,
+    sprint: group.sprint,
+    members: [...group.workspaces, ...group.groups],
+  };
   await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, `${group.name}.json`), `${JSON.stringify(group, null, 2)}\n`);
+  await writeFile(join(dir, `${group.name}.json`), `${JSON.stringify(record, null, 2)}\n`);
 }
 
+/** Delete a GROUP record. Refuses plain workspaces — those belong to the workspace routes. */
 export async function removeGroupFile(dir: string, name: string): Promise<void> {
+  let raw: string;
   try {
-    await rm(join(dir, `${name}.json`));
+    raw = await readFile(join(dir, `${name}.json`), "utf8");
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       throw new Error(`Group "${name}" not found`);
     }
     throw error;
   }
+  const record = JSON.parse(raw) as Workspace;
+  if (!isGroupRecord(record)) {
+    throw new Error(`"${name}" is a workspace, not a group`);
+  }
+  await rm(join(dir, `${name}.json`));
+}
+
+/**
+ * ONE-WAY boot migration (spec 2026-08-13): every legacy .smith/groups/*.json
+ * becomes a `members` record in the one store; a name collision with an
+ * existing context renames the migrated group `<name>-group`; the legacy dir
+ * is retired as `<dir>.migrated`. Returns human-readable log lines — the
+ * caller prints them, because a silent migration is a mystery later.
+ */
+export async function migrateGroupsDir(groupsDir: string, workspacesDir: string): Promise<string[]> {
+  let entries: string[];
+  try {
+    entries = await readdir(groupsDir);
+  } catch {
+    return []; // nothing to migrate — the common case forever after
+  }
+  const log: string[] = [];
+  const taken = new Set((await loadAllContextsFromDir(workspacesDir)).map((w) => w.name));
+  for (const file of entries.filter((f) => f.endsWith(".json"))) {
+    const legacy = assertGroup(file, JSON.parse(await readFile(join(groupsDir, file), "utf8")));
+    let name = legacy.name;
+    if (taken.has(name)) {
+      name = `${name}-group`;
+      log.push(`[groups-migration] "${legacy.name}" collides with an existing context — renamed to "${name}"`);
+    }
+    await saveGroup(workspacesDir, { ...legacy, name });
+    taken.add(name);
+    log.push(`[groups-migration] ${file} → workspaces/${name}.json (members: ${legacy.workspaces.length + legacy.groups.length})`);
+  }
+  await rename(groupsDir, `${groupsDir}.migrated`);
+  log.push(`[groups-migration] retired ${groupsDir} → ${groupsDir}.migrated`);
+  return log;
 }
 
 /**

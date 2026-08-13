@@ -76,6 +76,7 @@ import {
   assertGroup,
   expandGroup,
   loadGroupsFromDir,
+  migrateGroupsDir,
   removeGroupFile,
   saveGroup,
   validSprint,
@@ -167,6 +168,8 @@ import {
   defaultViolation,
   initGitRepo,
   isGitRepo,
+  isGroupRecord,
+  loadAllContextsFromDir,
   loadWorkspacesFromDir,
   normalizeRepoBranch,
   removeWorkspaceFile,
@@ -328,9 +331,9 @@ export class OrchestratorServer {
     this.workspaces = await loadWorkspacesFromDir(resolve(process.cwd(), ".smith/workspaces"));
   }
 
-  /** Reread `.smith/groups/*.json` — boot and after every /groups mutation. */
+  /** Group VIEWS over the one context store (spec 2026-08-13) — boot and after every /groups mutation. */
   private async reloadGroups(): Promise<void> {
-    this.groups = await loadGroupsFromDir(resolve(process.cwd(), ".smith/groups"));
+    this.groups = await loadGroupsFromDir(resolve(process.cwd(), ".smith/workspaces"));
   }
 
   /**
@@ -387,6 +390,15 @@ export class OrchestratorServer {
     setSquadRoster(await loadSquadsFromDir(resolve(process.cwd(), ".smith/squads")));
 
     await this.reconcileSessions();
+
+    // ONE-WAY legacy migration (spec 2026-08-13, one-context-entity): fold
+    // .smith/groups/*.json into the one store before anything reads it.
+    for (const line of await migrateGroupsDir(
+      resolve(process.cwd(), ".smith/groups"),
+      resolve(process.cwd(), ".smith/workspaces"),
+    )) {
+      this.app.log.info(line);
+    }
 
     await this.reloadWorkspaces();
     await this.reloadGroups();
@@ -1687,12 +1699,16 @@ export class OrchestratorServer {
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/^-|-$/g, "");
       const all = await loadWorkspacesFromDir(dir);
-      const collider = all.find((w) => w.name === name);
+      // Collision across the ONE namespace (spec 2026-08-13): groupish
+      // contexts hold names too.
+      const collider = (await loadAllContextsFromDir(dir)).find((w) => w.name === name);
       if (collider) {
         return reply.status(409).send({
-          error: collider.archived
-            ? `The name "${name}" belongs to an archived workspace — pick another`
-            : `Workspace "${name}" already exists`,
+          error: isGroupRecord(collider)
+            ? `"${name}" is already a group — one namespace for all contexts`
+            : collider.archived
+              ? `The name "${name}" belongs to an archived workspace — pick another`
+              : `Workspace "${name}" already exists`,
         });
       }
       const ws: Workspace = {
@@ -1855,7 +1871,7 @@ export class OrchestratorServer {
     }));
 
     this.app.post("/groups", async (req, reply) => {
-      const dir = resolve(process.cwd(), ".smith/groups");
+      const dir = resolve(process.cwd(), ".smith/workspaces");
       let candidate: WorkspaceGroup;
       try {
         candidate = assertGroup("request", req.body);
@@ -1869,8 +1885,15 @@ export class OrchestratorServer {
         .replace(/^-|-$/g, "");
       if (!name) return reply.status(400).send({ error: "Invalid group name" });
       const all = await loadGroupsFromDir(dir);
-      if (all.some((g) => g.name === name)) {
-        return reply.status(409).send({ error: `Group "${name}" already exists` });
+      // ONE NAMESPACE (spec 2026-08-13): a context name is unique across
+      // kinds — a group may not shadow a workspace or vice versa.
+      const collider = (await loadAllContextsFromDir(dir)).find((c) => c.name === name);
+      if (collider) {
+        return reply.status(409).send({
+          error: isGroupRecord(collider)
+            ? `Group "${name}" already exists`
+            : `"${name}" is already a workspace — one namespace for all contexts`,
+        });
       }
       const group: WorkspaceGroup = {
         name,
@@ -1896,7 +1919,7 @@ export class OrchestratorServer {
     });
 
     this.app.put<{ Params: { name: string } }>("/groups/:name", async (req, reply) => {
-      const dir = resolve(process.cwd(), ".smith/groups");
+      const dir = resolve(process.cwd(), ".smith/workspaces");
       const b = req.body as Partial<WorkspaceGroup>;
       const all = await loadGroupsFromDir(dir);
       const existing = all.find((g) => g.name === req.params.name);
@@ -1925,7 +1948,7 @@ export class OrchestratorServer {
     });
 
     this.app.delete<{ Params: { name: string } }>("/groups/:name", async (req, reply) => {
-      const dir = resolve(process.cwd(), ".smith/groups");
+      const dir = resolve(process.cwd(), ".smith/workspaces");
       const all = await loadGroupsFromDir(dir);
       const existing = all.find((g) => g.name === req.params.name);
       if (!existing) return reply.status(404).send({ error: `Unknown group: ${req.params.name}` });
