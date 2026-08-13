@@ -2009,6 +2009,8 @@ async function fetchSource(source: FeedSource): Promise<{ ok: boolean; error?: s
       const items = jiraItemsFrom(issues, source.id, new Date().toISOString());
       const keyById = new Map(items.map((it, i) => [it.id, issues[i].key]));
       const fresh = feedStore.addItems(items);
+      // sequential awaits are load-bearing: each call's board fetch must see
+      // the cards the previous call posted (intra-poll dedup) — do not Promise.all this.
       for (const item of fresh) {
         const itemKey = keyById.get(item.id);
         if (itemKey) await cardContextItem(source, [{ title: item.title, summary: item.summary, itemKey }]);
@@ -2051,6 +2053,8 @@ async function fetchSource(source: FeedSource): Promise<{ ok: boolean; error?: s
           summary: w.notes.slice(0, 400),
         })),
       );
+      // sequential awaits are load-bearing: each call's board fetch must see
+      // the cards the previous call posted (intra-poll dedup) — do not Promise.all this.
       for (const item of fresh)
         await cardContextItem(source, [{ title: item.title, summary: item.summary, itemKey: item.title }]);
       return { ok: true };
@@ -2197,7 +2201,10 @@ const ensureTopicRows = async (): Promise<void> => {
   try {
     const workspaces = await swarm.listWorkspaces();
     const ws = workspaces.find((w) => w.name === defaultWorkspaceName);
-    if (!ws) return;
+    if (!ws) {
+      console.warn(`[feeds] topic-row seeding skipped: workspace ${defaultWorkspaceName} not found`);
+      return;
+    }
     let sources: ContextSourceWire[] = (ws.sources as ContextSourceWire[] | undefined) ?? [];
     const known = new Set(sources.map((s) => s.id));
     for (const topic of topicStore.all()) {
@@ -2226,7 +2233,6 @@ const ensureTopicRows = async (): Promise<void> => {
     console.warn(`[feeds] topic boot ensure failed: ${String(err)}`);
   }
 };
-void ensureTopicRows();
 
 // Where a discovery agent writes its bundle (topics spec §3.1).
 const topicsDir = process.env.BROKER_TOPICS_DIR ?? ".smith/topics";
@@ -2427,6 +2433,9 @@ workspaceRecords = bootWorkspaces;
 // the GROUPS tier vanished and pins showed their groups as "(gone)").
 groupRecords = await swarm.listGroups().catch(() => []);
 defaultWorkspaceName = bootWorkspaces.find((w) => w.default)?.name ?? workspaceNames[0] ?? "default";
+// Waits for the real default workspace, not the "default" boot placeholder —
+// calling this any earlier races defaultWorkspaceName's assignment above.
+void ensureTopicRows();
 const activeSession = sessionManager.init(); // Session | null — zero sessions is legal (spec §4b)
 if (activeSession) brain.loadHistory(activeSession.brainHistory);
 const textPort = await textChannel.start(config.textPort, config.host);
