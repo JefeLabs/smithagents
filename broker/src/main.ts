@@ -1993,6 +1993,12 @@ async function fetchSource(source: FeedSource): Promise<{ ok: boolean; error?: s
       if (!source.connectorId || !source.locator || !source.query) {
         return { ok: false, error: "jira source missing connector/site/query" };
       }
+      // Checked again here, not only at add time: source.locator becomes the
+      // swarm's siteUrl, fetched there with the connector's Basic-auth
+      // credentials attached — a link-local/private locator would exfiltrate
+      // that auth header (SSRF).
+      const rejection = urlRejectionReason(source.locator);
+      if (rejection) return { ok: false, error: rejection };
       const res = await swarm.work("POST", "/atlassian/search", {
         connectorId: source.connectorId,
         siteUrl: source.locator,
@@ -2016,7 +2022,13 @@ async function fetchSource(source: FeedSource): Promise<{ ok: boolean; error?: s
       if (rejection) return { ok: false, error: rejection };
       const res = await fetch(source.locator);
       if (!res.ok) return { ok: false, error: `http ${res.status}` };
-      const raw = await res.text();
+      const len = Number(res.headers.get("content-length") ?? 0);
+      if (len > 1_000_000) return { ok: false, error: "response too large" };
+      // A chunked response with no content-length still gets read in full by
+      // text() — the guard above can't catch it, so slice immediately rather
+      // than after analyzeBrief's later 6000-char cap, keeping the
+      // intermediate buffer bounded regardless of how the response arrived.
+      const raw = (await res.text()).slice(0, 50_000);
       const message = await anthropic.messages.create({
         model: "claude-haiku-4-5",
         max_tokens: 700,
