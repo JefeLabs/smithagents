@@ -180,12 +180,14 @@ describe("WorkspaceSelector", () => {
     expect(group.textContent).toContain("group");
     const workspace = await screen.findByRole("option", { name: "labs" });
     expect(workspace.textContent).toBe("labs");
-    // The member reveal rides a hover Tooltip. react-aria's hover detection
-    // does not fire under jsdom's synthetic pointers (same class of jsdom
-    // blindness as react-flow node children), so the hover path is verified by
-    // live smoke; here we pin that members stay unrendered until hover.
+    // The visual member reveal rides a hover Tooltip. react-aria's hover
+    // detection does not fire under jsdom's synthetic pointers (same class of
+    // jsdom blindness as react-flow node children), so the hover path is
+    // verified by live smoke; here we pin that no tooltip opens without it.
     expect(screen.queryByRole("tooltip")).toBeNull();
-    expect(group.textContent).not.toContain("inner");
+    // Screen readers get the members via the option's Description slot — direct
+    // members with nested groups called out, never the flattened expansion.
+    expect(group).toHaveAccessibleDescription("Group containing labs, inner (group)");
   });
 
   it("picking a workspace clears an active lens and activates as always", async () => {

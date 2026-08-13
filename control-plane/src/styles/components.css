@@ -3870,8 +3870,12 @@ button.logo {
   padding: 1px 7px;
 }
 /* The trigger's value slot clones the selected item's children — same reason
-   select.css hides the item indicator there. The pill shows just the name. */
-.workspace-selector .select__value .workspace-selector__grouptag {
+   select.css hides the item indicator there. The pill shows just the name.
+   The member-summary clone is also cut: aria-hidden already keeps it out of
+   the trigger's accessible name, but display:none removes the stray node
+   outright rather than leaving an sr-only 1px absolute in the pill. */
+.workspace-selector .select__value .workspace-selector__grouptag,
+.workspace-selector .select__value [data-slot="description"] {
   display: none;
 }
 /* The hover reveal: direct members, child groups marked with their own tag. */

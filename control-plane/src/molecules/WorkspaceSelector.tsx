@@ -1,4 +1,4 @@
-import { Label, ListBox, Select, Separator, Tooltip } from "@heroui/react";
+import { Description, Label, ListBox, Select, Separator, Tooltip } from "@heroui/react";
 import * as api from "../api/broker";
 import type { GroupT } from "../api/types";
 import { useGroups, useSession, useSessions, useWorkspaces } from "../queries/pushed";
@@ -17,6 +17,15 @@ const NEW_CONTEXT = "__new-workspace__";
 // Group options are keyed disjointly from workspace names for the same reason:
 // a workspace and a group may share a name without shadowing each other.
 const GROUP_PREFIX = "__group__:";
+
+// Spoken counterpart of the hover reveal: direct members, nested groups called
+// out by name. Reaches screen readers via the option's Description slot —
+// react-aria wires aria-describedby and takes the option's NAME from the Label
+// slot alone — while the visual layer stays the aria-hidden chip + tooltip.
+function describeGroup(g: GroupT): string {
+  const members = [...g.workspaces, ...g.groups.map((n) => `${n} (group)`)];
+  return members.length > 0 ? `Group containing ${members.join(", ")}` : "Empty group";
+}
 
 /**
  * The app's one workspace control.
@@ -101,6 +110,15 @@ export function WorkspaceSelector() {
               {groups.map((g) => (
                 <ListBox.Item key={GROUP_PREFIX + g.name} id={GROUP_PREFIX + g.name} textValue={g.name}>
                   {g.name}
+                  {/* aria-hidden + sr-only is deliberate: react-aria wires this
+                      slot into the option's aria-describedby, and the accname
+                      spec INCLUDES hidden elements that describedby references
+                      directly — while aria-hidden keeps the text out of the
+                      option's NAME (name-from-content), which HeroUI's Label
+                      slot does not take over for listbox options. */}
+                  <Description aria-hidden="true" className="sr-only">
+                    {describeGroup(g)}
+                  </Description>
                   {/* Containment cue (Edwin 2026-08-13): a "group" tag, with the
                       member list on hover. aria-hidden keeps the tag out of the
                       option's accessible name; the tooltip content portals to
