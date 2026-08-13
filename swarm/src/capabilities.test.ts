@@ -479,3 +479,54 @@ test("repointSliceCardRef: retargets whichever ref holds the card, leaves the si
   assert.equal(repointSliceCardRef(cap, "c1", "acme-deliver"), false, "already there — no write, no updatedAt bump");
   assert.equal(repointSliceCardRef(cap, "ghost-card", "acme-plan"), false);
 });
+
+test("patchCapability stamps NEW and content-changed stories/slices; untouched ones carry their stamp forward", () => {
+  const cap = createCapability("jefelabs", "c");
+  cap.activities = [{ id: "a1", name: "a", order: 0, steps: [{ id: "st1", name: "s", order: 0 }] }];
+  cap.stories = [
+    { id: "s1", stepId: "st1", order: 0, text: "one", done: false, updatedAt: "2026-01-01T00:00:00.000Z" },
+    { id: "s2", stepId: "st1", order: 1, text: "two", done: false, updatedAt: "2026-01-01T00:00:00.000Z" },
+  ];
+  cap.slices = [{ id: "sl1", name: "old slice", order: 0, storyIds: ["s1"], updatedAt: "2026-01-01T00:00:00.000Z" }];
+  const patched = patchCapability(cap, {
+    stories: [
+      // s1 re-worded (touch), s2 only re-ordered (NOT a touch), s3 new (touch).
+      { id: "s1", stepId: "st1", order: 1, text: "one reworded", done: false },
+      { id: "s2", stepId: "st1", order: 0, text: "two", done: false },
+      { id: "s3", stepId: "st1", order: 2, text: "three", done: false },
+    ],
+    slices: [
+      { id: "sl1", name: "old slice", order: 5, storyIds: ["s1"] }, // order-only move — not a touch
+      { id: "sl2", name: "new slice", order: 1, storyIds: ["s3"] },
+    ],
+  });
+  const story = (id: string) => patched.stories.find((s) => s.id === id);
+  assert.notEqual(story("s1")?.updatedAt, "2026-01-01T00:00:00.000Z");
+  assert.equal(story("s2")?.updatedAt, "2026-01-01T00:00:00.000Z"); // carried forward despite no round-trip
+  assert.ok(story("s3")?.updatedAt);
+  assert.equal(patched.slices[0].updatedAt, "2026-01-01T00:00:00.000Z");
+  assert.ok(patched.slices[1].updatedAt);
+  assert.notEqual(patched.slices[1].updatedAt, "2026-01-01T00:00:00.000Z");
+});
+
+test("applyStoryToggles stamps only stories whose state changed, and their containing slices", () => {
+  const cap = createCapability("jefelabs", "c");
+  cap.activities = [{ id: "a1", name: "a", order: 0, steps: [{ id: "st1", name: "s", order: 0 }] }];
+  cap.stories = [
+    { id: "s1", stepId: "st1", order: 0, text: "one", done: false, updatedAt: "2026-01-01T00:00:00.000Z" },
+    { id: "s2", stepId: "st1", order: 1, text: "two", done: true, updatedAt: "2026-01-01T00:00:00.000Z" },
+  ];
+  cap.slices = [
+    { id: "sl1", name: "hit", order: 0, storyIds: ["s1"], updatedAt: "2026-01-01T00:00:00.000Z" },
+    { id: "sl2", name: "missed", order: 1, storyIds: ["s2"], updatedAt: "2026-01-01T00:00:00.000Z" },
+  ];
+  cap.slices[0].storyIds = ["s1", "s2"];
+  applyStoryToggles(cap, "sl1", [
+    { id: "s1", text: "one", done: true }, // real change
+    { id: "s2", text: "two", done: true }, // no-op resend
+  ]);
+  assert.notEqual(cap.stories[0].updatedAt, "2026-01-01T00:00:00.000Z");
+  assert.equal(cap.stories[1].updatedAt, "2026-01-01T00:00:00.000Z");
+  assert.notEqual(cap.slices[0].updatedAt, "2026-01-01T00:00:00.000Z"); // contains s1
+  assert.equal(cap.slices[1].updatedAt, "2026-01-01T00:00:00.000Z"); // contains only the untouched s2
+});

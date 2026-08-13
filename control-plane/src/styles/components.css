@@ -3566,6 +3566,15 @@ button.logo {
   max-height: 60%;
   overflow-y: auto;
 }
+/* Out of the date window, revealed by the show-hidden toggle — present but
+   plainly not of this window (canvas story cards get the same treatment via
+   .is-outside-window on the node wrapper). */
+.slice-panel__list li[data-outside] > button {
+  opacity: 0.5;
+}
+.react-flow .is-outside-window {
+  opacity: 0.45;
+}
 /* Collapsed, the panel is one header row — min-width drops so it stops covering
    the canvas it floats over. */
 .slice-panel:has([data-open="false"]) {

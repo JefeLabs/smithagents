@@ -2780,6 +2780,9 @@ export class OrchestratorServer {
           const card = sendSliceToBoard(cap, slice, board);
           await saveBoard(this.workDir(), board);
           slice[refKey] = { boardId: board.id, cardId: card.id };
+          // Linking is slice activity — this write bypasses patchCapability's
+          // diff stamps, so stamp here (date-range spec 2026-08-12).
+          slice.updatedAt = new Date().toISOString();
           cap.updatedAt = new Date().toISOString();
           await saveCapability(capsDir(), cap);
           return reply.status(201).send(card);

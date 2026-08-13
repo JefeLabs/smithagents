@@ -1131,3 +1131,24 @@ describe("MapStage editing", () => {
     expect(screen.getByRole("complementary", { name: "session documents" })).toBeTruthy();
   });
 });
+
+describe("mapItemInWindow (date-range spec 2026-08-12)", () => {
+  const bounds = { from: new Date(2026, 7, 1), to: new Date(2026, 7, 16, 23, 59, 59) };
+
+  it("hides dated items outside the window, keeps ones inside", async () => {
+    const { mapItemInWindow } = await import("./MapStage");
+    expect(mapItemInWindow({ id: "s1", updatedAt: "2026-08-10T00:00:00Z" }, null, bounds)).toBe(true);
+    expect(mapItemInWindow({ id: "s2", updatedAt: "2026-01-01T00:00:00Z" }, null, bounds)).toBe(false);
+  });
+
+  it("undated items always show — never hide silently", async () => {
+    const { mapItemInWindow } = await import("./MapStage");
+    expect(mapItemInWindow({ id: "s3" }, null, bounds)).toBe(true);
+  });
+
+  it("the revealed item never hides, and null bounds window nothing", async () => {
+    const { mapItemInWindow } = await import("./MapStage");
+    expect(mapItemInWindow({ id: "s4", updatedAt: "2026-01-01T00:00:00Z" }, "s4", bounds)).toBe(true);
+    expect(mapItemInWindow({ id: "s5", updatedAt: "2026-01-01T00:00:00Z" }, null, null)).toBe(true);
+  });
+});

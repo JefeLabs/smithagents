@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { effectiveRange, type RangeBounds, resolveDateRange, sprintConfigFor } from "../lib/dateRange";
 import { useWorkspaceRecords } from "../queries/http";
 import { useGroups, useSession } from "../queries/pushed";
@@ -21,5 +22,12 @@ export function useRangeBounds(): RangeBounds | null {
   const lensGroup = activeLens ? groups.find((g) => g.name === activeLens.group) : undefined;
   const workspace = workspaceRecords.find((w) => w.name === session?.workspace);
   const sprint = sprintConfigFor(lensGroup, workspace);
-  return resolveDateRange(effectiveRange(dateRange, sprint), new Date(), sprint);
+  const bounds = resolveDateRange(effectiveRange(dateRange, sprint), new Date(), sprint);
+  // IDENTITY-STABLE across renders: resolveDateRange builds fresh Date objects
+  // every call, and a consumer keying an effect on the result would loop on
+  // the new reference (MapStage's node builder). The timestamps are the value;
+  // memo on them. Windows are day-granular, so they only move at a boundary.
+  const key = bounds ? `${bounds.from.getTime()}:${bounds.to.getTime()}` : "";
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `key` IS `bounds`, flattened to primitives on purpose — listing `bounds` would defeat the memo
+  return useMemo(() => bounds, [key]);
 }

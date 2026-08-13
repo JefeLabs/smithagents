@@ -25,6 +25,13 @@ export interface CapStory {
   done: boolean;
   /** How it was proven — e.g. 'manual 2026-08-07' or a test file path. */
   verifiedBy?: string;
+  /**
+   * When the story was last TOUCHED — created, re-worded, moved to another
+   * step, or toggled (date-range spec 2026-08-12: the map windows stories on
+   * this). Optional: stories from before dating carry none and the control
+   * plane must always show them.
+   */
+  updatedAt?: string;
 }
 
 export interface CapActivity {
@@ -44,6 +51,13 @@ export interface CapSlice {
   planPath?: string;
   capCardRef?: { boardId: string; cardId: string };
   deliveryCardRef?: { boardId: string; cardId: string };
+  /**
+   * When the slice was last TOUCHED — created, renamed, re-membered, linked,
+   * or had a story toggled (date-range spec 2026-08-12: the map's slice
+   * listing windows on this). Optional: slices from before dating carry none
+   * and the control plane must always show them.
+   */
+  updatedAt?: string;
 }
 
 export interface Capability {
@@ -214,10 +228,43 @@ export function patchCapability(
   // Guarded on `undefined`, not on truthiness: order 0 is the first slot and the most
   // common value a reorder writes, and `if (patch.order)` would silently drop it.
   if (patch.order !== undefined) cap.order = patch.order;
+  // Activity stamps (date-range spec 2026-08-12): the map windows stories and
+  // slices on WHEN they were last touched. A NEW or content-changed item
+  // stamps now; an untouched one carries its old stamp forward — clients send
+  // whole arrays without reliably round-tripping updatedAt, so recomputing
+  // here is the only way the stamp survives a patch. A pure `order` move is
+  // layout, not activity, and does not count as touch.
+  const now = new Date().toISOString();
+  const prevStories = new Map(cap.stories.map((s) => [s.id, s]));
+  for (const s of stories) {
+    const old = prevStories.get(s.id);
+    const untouched =
+      old !== undefined &&
+      old.text === s.text &&
+      old.done === s.done &&
+      old.stepId === s.stepId &&
+      (old.verifiedBy ?? undefined) === (s.verifiedBy ?? undefined);
+    s.updatedAt = untouched ? old.updatedAt : now;
+  }
+  const prevSlices = new Map(cap.slices.map((s) => [s.id, s]));
+  const refKey = (r?: { boardId: string; cardId: string }) => (r ? `${r.boardId}/${r.cardId}` : "");
+  for (const s of slices) {
+    const old = prevSlices.get(s.id);
+    const untouched =
+      old !== undefined &&
+      old.name === s.name &&
+      old.specPath === s.specPath &&
+      old.planPath === s.planPath &&
+      old.storyIds.length === s.storyIds.length &&
+      old.storyIds.every((id, i) => id === s.storyIds[i]) &&
+      refKey(old.capCardRef) === refKey(s.capCardRef) &&
+      refKey(old.deliveryCardRef) === refKey(s.deliveryCardRef);
+    s.updatedAt = untouched ? old.updatedAt : now;
+  }
   cap.activities = activities;
   cap.stories = stories;
   cap.slices = slices;
-  cap.updatedAt = new Date().toISOString();
+  cap.updatedAt = now;
   return cap;
 }
 
@@ -244,16 +291,31 @@ export function applyStoryToggles(
     );
   }
   const seen = new Set<string>();
+  const touched = new Set<string>();
+  const now = new Date().toISOString();
   for (const sent of incoming) {
     if (seen.has(sent.id)) throw new Error(`Duplicate story id ${sent.id} — toggle-only, each story appears once`);
     seen.add(sent.id);
     const story = canonical.find((s) => s.id === sent.id);
     if (!story) throw new Error(`Unknown or missing story ${sent.id} — cards are toggle-only`);
     if (sent.text !== story.text) throw new Error(`Story ${sent.id} text changed — toggle-only; edit text in the map`);
+    // Activity stamps ride real changes only — a no-op resync must not make
+    // every story and slice look freshly touched (date-range spec 2026-08-12).
+    if (story.done !== sent.done || (story.verifiedBy ?? undefined) !== (sent.verifiedBy ?? undefined)) {
+      story.updatedAt = now;
+      touched.add(story.id);
+    }
     story.done = sent.done;
     story.verifiedBy = sent.verifiedBy ?? undefined;
   }
-  cap.updatedAt = new Date().toISOString();
+  if (touched.size > 0) {
+    // Toggling a story is progress ON ITS SLICES — they surface in the map's
+    // windowed slice listing the same way the story does on the canvas.
+    for (const slice of cap.slices) {
+      if (slice.storyIds.some((id) => touched.has(id))) slice.updatedAt = now;
+    }
+  }
+  cap.updatedAt = now;
   return canonical.map((s) => ({ ...s }));
 }
 

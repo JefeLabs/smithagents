@@ -15,7 +15,9 @@ import "@xyflow/react/dist/style.css";
 import { Map as MapIcon } from "lucide-react";
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CapActivityT, CapabilityT, CapStoryT } from "../api/types";
+import { useRangeBounds } from "../hooks/useRangeBounds";
 import { ALL_WORKSPACES } from "../lib/board-aggregate";
+import { inDateRange, type RangeBounds } from "../lib/dateRange";
 import { useSession } from "../queries/pushed";
 import { useCapabilities, useCreateCapability, usePatchCapability } from "../queries/work";
 import { useUiStore } from "../stores/uiStore";
@@ -38,6 +40,21 @@ import { nodeTypes } from "./map/nodeTypes";
 import { SliceComposer, SlicePanel } from "./map/SlicePanel";
 import { blockedBy, slicesWithoutExclusiveStory, storiesLost } from "./map/slices";
 import { useMapSelection } from "./map/useMapSelection";
+
+/**
+ * The context window's rule for map items (Edwin, 2026-08-12: "only story and
+ * slices are affected by date range"): dated items outside the window hide,
+ * undated ones (from before stamping existed) always show, and `keepId` — the
+ * revealed story or slice — never hides; you don't window away the ground you
+ * stand on. Structure (capability, activities, steps) is never windowed.
+ */
+export function mapItemInWindow(
+  item: { id: string; updatedAt?: string },
+  keepId: string | null,
+  bounds: RangeBounds | null,
+): boolean {
+  return !bounds || !item.updatedAt || item.id === keepId || inDateRange(item.updatedAt, bounds);
+}
 
 // Test seam: jsdom cannot synthesize xyflow pointer drags any more than it could
 // the pointer sequences of the library this replaced, so the drop handler is
@@ -111,6 +128,11 @@ export function MapStage({ shelf }: { shelf?: ReactNode } = {}) {
   // Pan mode: left-drag pans instead of lassoing — toggled from the zoom
   // controls cluster, where the hand tool lives in every canvas app.
   const [panMode, setPanMode] = useState(false);
+  // The context window (date-range spec 2026-08-12): stories and slices
+  // outside it hide; the toggle below reveals them, marked, instead — Edwin:
+  // "a toggle to display the hidden stories".
+  const rangeBounds = useRangeBounds();
+  const [showHidden, setShowHidden] = useState(false);
 
   // Each remaining composer is a write-once text box: type, press Enter, it clears.
 
@@ -644,7 +666,20 @@ export function MapStage({ shelf }: { shelf?: ReactNode } = {}) {
       setNodes([]);
       return;
     }
-    const base = layoutMap(cap).nodes;
+    // The context window: out-of-window stories leave the canvas (their step
+    // stacks close up) unless the toggle shows them — then they render with a
+    // marker class instead. Story node ids are raw story ids (storyNodeId is
+    // identity), so the set indexes both models and nodes.
+    const outsideStoryIds = new Set(
+      cap.stories.filter((s) => !mapItemInWindow(s, revealedStoryId, rangeBounds)).map((s) => s.id),
+    );
+    const viewCap =
+      outsideStoryIds.size === 0 || showHidden
+        ? cap
+        : { ...cap, stories: cap.stories.filter((s) => !outsideStoryIds.has(s.id)) };
+    const base = layoutMap(viewCap).nodes.map((n) =>
+      showHidden && n.type === "story" && outsideStoryIds.has(n.id) ? { ...n, className: "is-outside-window" } : n,
+    );
 
     if (revealedStory) {
       // A STORY'S OWN CHAIN, stacked beside it. NOTHING IS DIMMED here, and that is the
@@ -719,7 +754,21 @@ export function MapStage({ shelf }: { shelf?: ReactNode } = {}) {
     setNodes(decorate(base, new Set([...dimmedIds, ...hoverDimmed]), selectedIdSet, litIds));
     // `hoverDimmed` is listed for the same reason `revealedSlice` is: it is a plain value
     // this effect reads, and leaving it out would show the previous hover's dimming.
-  }, [cap, revealedSlice, revealedStory, revealedStoryId, storySlice, select, setNodes, hoverDimmed, selectedIdSet]);
+    // `rangeBounds` is identity-stable (useRangeBounds memoizes on its
+    // timestamps), so listing it re-runs this only when the window moves.
+  }, [
+    cap,
+    revealedSlice,
+    revealedStory,
+    revealedStoryId,
+    storySlice,
+    select,
+    setNodes,
+    hoverDimmed,
+    selectedIdSet,
+    rangeBounds,
+    showHidden,
+  ]);
 
   /**
    * Moves an activity to `index`, renumbering `order` densely.
@@ -813,6 +862,20 @@ export function MapStage({ shelf }: { shelf?: ReactNode } = {}) {
       nodeDragStopHandler = null;
     };
   });
+
+  // The windowed slice listing (Edwin, 2026-08-12: dates affect stories and
+  // slices, with a toggle for the hidden). Derived per render from canonical
+  // cap.slices — every WRITE path still composes from cap, so windowing the
+  // view can never drop a slice from the model.
+  const sortedSlices = [...(cap?.slices ?? [])].sort((a, b) => a.order - b.order);
+  const outsideSliceIds = new Set(
+    sortedSlices.filter((s) => !mapItemInWindow(s, revealed, rangeBounds)).map((s) => s.id),
+  );
+  const listedSlices = showHidden ? sortedSlices : sortedSlices.filter((s) => !outsideSliceIds.has(s.id));
+  const hiddenStoryCount = cap
+    ? cap.stories.filter((s) => !mapItemInWindow(s, revealedStoryId, rangeBounds)).length
+    : 0;
+  const hiddenCount = hiddenStoryCount + outsideSliceIds.size;
 
   return (
     <section className="stage map-stage" aria-label="Story map">
@@ -976,11 +1039,28 @@ export function MapStage({ shelf }: { shelf?: ReactNode } = {}) {
                 >
                   ✋
                 </ControlButton>
+                {/* Rendered whenever the window hides anything OR while showing —
+                    a toggle that vanishes while ON has no way to be turned off. */}
+                {(hiddenCount > 0 || showHidden) && (
+                  <ControlButton
+                    onClick={() => setShowHidden((v) => !v)}
+                    aria-pressed={showHidden}
+                    aria-label="Show items outside the date range"
+                    title={
+                      showHidden
+                        ? "hide stories and slices outside the date range"
+                        : `show ${hiddenCount} outside the date range`
+                    }
+                  >
+                    ◔
+                  </ControlButton>
+                )}
               </Controls>
               {/* bottom-left, beside the zoom cluster — bottom-right lives under the docked chat */}
               <MiniMap pannable zoomable position="bottom-left" style={{ height: 140 }} />
               <SlicePanel
-                slices={[...cap.slices].sort((a, b) => a.order - b.order)}
+                slices={listedSlices}
+                outsideIds={outsideSliceIds}
                 invalidIds={invalidSliceIds}
                 activeSliceId={revealed}
                 onHover={setHoveredSliceId}

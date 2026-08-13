@@ -4,6 +4,12 @@ import type { CapSliceT } from "../../api/types";
 
 interface Props {
   slices: CapSliceT[];
+  /**
+   * Ids outside the context window's date range. Rows carrying one only appear
+   * while MapStage's show-hidden toggle is on — they render dimmed so "shown
+   * but out of range" stays legible (date-range spec 2026-08-12).
+   */
+  outsideIds?: Set<string>;
   /** Ids of slices owning no exclusive story — grandfathered, marked, not hidden. */
   invalidIds: Set<string>;
   activeSliceId: string | null;
@@ -25,7 +31,7 @@ interface Props {
  * Clicking still opens the band beneath the map. Only one band is open at a time,
  * so a shared story simply appears in whichever slice you opened.
  */
-export function SlicePanel({ slices, invalidIds, activeSliceId, onHover, onOpen, footer }: Props) {
+export function SlicePanel({ slices, outsideIds, invalidIds, activeSliceId, onHover, onOpen, footer }: Props) {
   const [open, setOpen] = useState(true);
 
   // Collapsing UNMOUNTS the list, and an unmounted element fires no onMouseLeave.
@@ -71,6 +77,7 @@ export function SlicePanel({ slices, invalidIds, activeSliceId, onHover, onOpen,
               <li
                 key={slice.id}
                 data-invalid={invalidIds.has(slice.id) ? "true" : undefined}
+                data-outside={outsideIds?.has(slice.id) ? "true" : undefined}
                 className={slice.id === activeSliceId ? "is-open" : undefined}
               >
                 <button

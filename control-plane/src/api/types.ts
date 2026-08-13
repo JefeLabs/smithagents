@@ -301,6 +301,8 @@ export interface CapStoryT {
   text: string;
   done: boolean;
   verifiedBy?: string;
+  /** Last touch (swarm-stamped). Absent on stories from before dating — those always render. */
+  updatedAt?: string;
 }
 export interface CapActivityT {
   id: string;
@@ -317,6 +319,8 @@ export interface CapSliceT {
   planPath?: string;
   capCardRef?: { boardId: string; cardId: string };
   deliveryCardRef?: { boardId: string; cardId: string };
+  /** Last touch (swarm-stamped). Absent on slices from before dating — those always render. */
+  updatedAt?: string;
 }
 export interface CapabilityT {
   id: string;
