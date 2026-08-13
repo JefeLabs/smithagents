@@ -2638,6 +2638,41 @@ button.logo {
   padding: 10px;
   background: rgba(255, 255, 255, 0.02);
 }
+.board-column__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+/* Config gear: hover-revealed like .session-row__delete — opacity not display,
+   so no reflow and keyboard users reveal it with :focus-visible. */
+.board-column__config {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.board-column:hover .board-column__config,
+.board-column__config:focus-visible {
+  opacity: 1;
+}
+.board-column__config:hover {
+  color: var(--text);
+  border-color: var(--pill-br);
+  background: rgba(255, 255, 255, 0.04);
+}
+@media (prefers-reduced-motion: reduce) {
+  .board-column__config {
+    transition: none;
+  }
+}
 /* Queue is the system's intake lane, not a working column — it reads grayed
    back so the eye starts at the first working lane. Neutral mixes track every
    theme's own text tokens (sand included), so no per-theme branches. */

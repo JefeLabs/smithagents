@@ -209,6 +209,9 @@ export function BoardStage({ roster }: BoardStageProps) {
   const [addingBoard, setAddingBoard] = useState(false);
   const [cardTitle, setCardTitle] = useState("");
   const [open, setOpen] = useState<{ boardId: string; cardId: string } | null>(null);
+  const [configOpen, setConfigOpen] = useState<{ boardId: string; column: "queue" | "terminal" } | null>(null);
+  // Sheets mount in Tasks 14/15; nothing reads this yet. Remove this line then.
+  void configOpen;
   // Same endpoint and envelope the hand-rolled fetch here used, but on the
   // shared key — so this stage and the map issue one request between them
   // rather than one each, and a workspace edit invalidates both.
@@ -261,6 +264,7 @@ export function BoardStage({ roster }: BoardStageProps) {
     setAddingCard(false);
     setCardTitle("");
     setOpen(null);
+    setConfigOpen(null);
   }, [scope, tab?.key]);
 
   // Lifted from BoardTabs: the add-board menu unmounts whenever `addable` is
@@ -362,6 +366,18 @@ export function BoardStage({ roster }: BoardStageProps) {
     }
   };
 
+  // Config gear is per-board, so aggregate tabs (several boards in one tab)
+  // hide it entirely rather than guess which board a gear click means.
+  const configBoard = tab && tab.boardIds.length === 1 ? (boardOf(tab.boardIds[0]) ?? null) : null;
+  const intakeId = configBoard
+    ? configBoard.columns.some((c) => c.id === "queue")
+      ? "queue"
+      : configBoard.columns[0]?.id
+    : undefined;
+  const terminalId = configBoard
+    ? (configBoard.terminal?.columnId ?? configBoard.columns[configBoard.columns.length - 1]?.id)
+    : undefined;
+
   return (
     <section className="stage board-stage" aria-label="Work boards">
       <BoardTabs
@@ -417,6 +433,13 @@ export function BoardStage({ roster }: BoardStageProps) {
                 colorFor={colorFor}
                 agentFor={agentFor}
                 onOpenCard={(boardId, cardId) => setOpen({ boardId, cardId })}
+                onConfigure={
+                  configBoard && col.id === intakeId
+                    ? () => setConfigOpen({ boardId: configBoard.id, column: "queue" })
+                    : configBoard && col.id === terminalId
+                      ? () => setConfigOpen({ boardId: configBoard.id, column: "terminal" })
+                      : undefined
+                }
               />
             ))}
           </div>

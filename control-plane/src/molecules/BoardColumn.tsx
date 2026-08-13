@@ -1,6 +1,7 @@
 import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { Settings } from "lucide-react";
 import type { RosterAgent } from "../api/types";
 import type { AggCard, Cluster } from "../lib/board-aggregate";
 import type { WorkColumn } from "../organisms/BoardStage";
@@ -44,12 +45,14 @@ export function BoardColumn({
   colorFor,
   agentFor,
   onOpenCard,
+  onConfigure,
 }: {
   col: WorkColumn;
   clusters: Cluster[];
   colorFor: (workspaceId?: string) => string | undefined;
   agentFor: (id?: string) => RosterAgent | undefined;
   onOpenCard: (boardId: string, cardId: string) => void;
+  onConfigure?: () => void;
 }) {
   const droppable = useDroppable({ id: `column:${col.id}` });
   const flat = clusters.flatMap((g) => g.cards);
@@ -58,7 +61,19 @@ export function BoardColumn({
       ref={droppable.setNodeRef}
       className={`board-column${col.id === "queue" ? " board-column--queue" : ""}${droppable.isOver ? " is-over" : ""}`}
     >
-      <h3 className="board-column__name">{col.name}</h3>
+      <div className="board-column__head">
+        <h3 className="board-column__name">{col.name}</h3>
+        {onConfigure && (
+          <button
+            type="button"
+            className="board-column__config"
+            aria-label={`Configure ${col.name} column`}
+            onClick={onConfigure}
+          >
+            <Settings size={12} strokeWidth={2} />
+          </button>
+        )}
+      </div>
       <SortableContext items={flat.map((c) => c.id)} strategy={verticalListSortingStrategy}>
         <div className="board-column__cards">
           {clusters.map((g) => (
