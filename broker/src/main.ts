@@ -37,6 +37,7 @@ import { approve, repoKey } from "./feeds/approve.ts";
 import { latestFromAtom } from "./feeds/atom-release.ts";
 import { parseBundle } from "./feeds/bundle.ts";
 import { cardForRelease } from "./feeds/cards.ts";
+import { fromContextSources } from "./feeds/context-sources.ts";
 import { deriveSources } from "./feeds/derive.ts";
 import { buildDigest } from "./feeds/digest.ts";
 import { startDiscovery } from "./feeds/discovery.ts";
@@ -2052,6 +2053,28 @@ const feedsIo = {
 };
 const feedStore = new FeedStore(feedsIo);
 const topicStore = new TopicStore(feedsIo);
+
+/**
+ * Context sources (spec 2026-08-13 queue-sources) live on the workspace
+ * record in swarm; this mirrors the pollable ones into the feeds store on
+ * the same hourly tick deriveFromManifests uses, so a jira/http source added
+ * in the workspace wizard becomes fetchable here within the hour. releases/
+ * topic presets produce no row — their executors already exist.
+ */
+const syncContextSources = async (): Promise<void> => {
+  try {
+    const workspaces = await swarm.listWorkspaces();
+    const rows = fromContextSources(workspaces, feedStore.sources());
+    for (const row of rows) feedStore.putSource(row);
+    // remove ctx: rows whose context source vanished
+    const live = new Set(rows.map((r) => r.id));
+    for (const s of feedStore.sources()) if (s.id.startsWith("ctx:") && !live.has(s.id)) feedStore.removeSource(s.id);
+  } catch (err) {
+    console.warn(`[feeds] context-source sync failed: ${String(err)}`);
+  }
+};
+void syncContextSources();
+setInterval(() => void syncContextSources(), DERIVE_TICK_MS).unref();
 
 // Where a discovery agent writes its bundle (topics spec §3.1).
 const topicsDir = process.env.BROKER_TOPICS_DIR ?? ".smith/topics";

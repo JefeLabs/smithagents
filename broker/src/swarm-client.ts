@@ -4,6 +4,7 @@
  * (swarm/src/server.ts routes). If swarm's API changes, this file changes.
  */
 import WebSocket from "ws";
+import type { ContextSourceWire } from "./feeds/context-sources.ts";
 
 export interface SpeechProfile {
   voiceName?: string;
@@ -98,6 +99,8 @@ export interface WorkspaceBody {
   default?: boolean;
   links?: string[];
   atlassian?: { siteUrl: string; jiraProjectKeys?: string[]; confluenceSpaceKeys?: string[]; connectorId?: string };
+  // sources ride through untouched — dropping them here would wipe context sources on every workspace save
+  sources?: unknown[];
 }
 
 export interface SwarmWorkspace extends WorkspaceBody {
@@ -384,9 +387,11 @@ export class SwarmClient {
     return { activeTasks: r.activeTasks as number };
   }
 
-  async listWorkspaces(): Promise<SwarmWorkspace[]> {
+  // sources come back read-only here (Task 1's projection) — writing them back
+  // through WorkspaceBody.sources is the swarm's job, never the broker's.
+  async listWorkspaces(): Promise<Array<SwarmWorkspace & { sources?: ContextSourceWire[] }>> {
     const r = await this.http("GET", "/workspaces");
-    return (r.workspaces as SwarmWorkspace[]) ?? [];
+    return (r.workspaces as Array<SwarmWorkspace & { sources?: ContextSourceWire[] }>) ?? [];
   }
 
   // Workspace groups (spec 2026-08-11-workspace-groups). The swarm's GET
