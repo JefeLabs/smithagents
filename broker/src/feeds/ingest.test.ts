@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CADENCE_MS, dueSources, isDisabled, recordOutcome } from "./ingest.ts";
+import { CADENCE_MS, cadenceMs, dueSources, isDisabled, recordOutcome } from "./ingest.ts";
 import type { FeedSource, FeedState } from "./types.ts";
 
 const NOW = Date.parse("2026-08-11T12:00:00Z");
@@ -64,4 +64,47 @@ test("a disabled source stops being due — silent decay is not allowed to keep 
   let state = EMPTY;
   for (let i = 0; i < 5; i++) state = recordOutcome(state, "s1", { ok: false, at: "2026-08-11T12:00:00Z", error: "x" });
   assert.deepEqual(dueSources([rss], state, NOW + 86_400_000), []);
+});
+
+test("cadenceMs prefers the source's own cadence and falls back to the kind default", () => {
+  const base: FeedSource = {
+    id: "s",
+    label: "s",
+    kind: "rss",
+    locator: "https://x/f.xml",
+    tag: "tech",
+    origin: "manual",
+    enabled: true,
+  };
+  assert.equal(cadenceMs(base), 20 * 60_000);
+  assert.equal(cadenceMs({ ...base, cadence: "hourly" }), 3_600_000);
+  assert.equal(cadenceMs({ ...base, cadence: "6h" }), 21_600_000);
+  assert.equal(cadenceMs({ ...base, cadence: "nightly" }), 86_400_000);
+  assert.equal(cadenceMs({ ...base, kind: "jira", cadence: "nightly" }), 86_400_000);
+});
+
+test("a nightly source fetched two hours ago is not due; a stale one is", () => {
+  const src: FeedSource = {
+    id: "n",
+    label: "n",
+    kind: "http",
+    locator: "https://x",
+    tag: "tech",
+    origin: "derived",
+    enabled: true,
+    cadence: "nightly",
+  };
+  const fresh = {
+    ...EMPTY,
+    sources: { n: { lastFetchedAt: new Date(NOW - 2 * 3_600_000).toISOString(), consecutiveFailures: 0 } },
+  };
+  assert.deepEqual(dueSources([src], fresh, NOW), []);
+  const stale = {
+    ...EMPTY,
+    sources: { n: { lastFetchedAt: new Date(NOW - 26 * 3_600_000).toISOString(), consecutiveFailures: 0 } },
+  };
+  assert.deepEqual(
+    dueSources([src], stale, NOW).map((s) => s.id),
+    ["n"],
+  );
 });

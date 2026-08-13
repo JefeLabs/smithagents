@@ -11,7 +11,20 @@ export const CADENCE_MS: Record<FeedSource["kind"], number> = {
   weather: 30 * 60_000,
   x: 30 * 60_000,
   registry: 60 * 60_000,
+  jira: 60 * 60_000,
+  http: 60 * 60_000,
 };
+
+const CADENCE_OVERRIDE_MS: Record<NonNullable<FeedSource["cadence"]>, number> = {
+  hourly: 3_600_000,
+  "6h": 21_600_000,
+  nightly: 86_400_000,
+};
+
+/** The one cadence input (spec deviation note: no cron exists — cadence IS this seam). */
+export function cadenceMs(source: FeedSource): number {
+  return source.cadence ? CADENCE_OVERRIDE_MS[source.cadence] : CADENCE_MS[source.kind];
+}
 
 /** Five consecutive failures disables a source: silent decay is the failure nobody notices. */
 const MAX_FAILURES = 5;
@@ -26,8 +39,8 @@ export function dueSources(sources: FeedSource[], state: FeedState, now: number)
     const last = state.sources[source.id]?.lastFetchedAt;
     if (!last) return true;
     // ±10% jitter so a restart does not fire every adapter at the same instant.
-    const jitter = CADENCE_MS[source.kind] * 0.1;
-    return now - Date.parse(last) >= CADENCE_MS[source.kind] - jitter;
+    const jitter = cadenceMs(source) * 0.1;
+    return now - Date.parse(last) >= cadenceMs(source) - jitter;
   });
 }
 

@@ -5,7 +5,7 @@ export type FeedTag = "news" | "tech" | "sports" | "gov" | "release" | "weather"
 export interface FeedSource {
   id: string;
   label: string;
-  kind: "rss" | "weather" | "x" | "registry";
+  kind: "rss" | "weather" | "x" | "registry" | "jira" | "http";
   /** RSS/Atom URL, X handle, registry coordinate, or "lat,lon". */
   locator: string;
   tag: FeedTag;
@@ -20,6 +20,14 @@ export interface FeedSource {
   workspace?: string;
   /** The topic this source belongs to. Absent on manifest-derived sources. */
   topicId?: string;
+  /** Context-source polling (spec 2026-08-13 queue-sources): the workspace-record
+      source this row mirrors. Absent on manual/manifest/topic rows. */
+  contextId?: string;
+  /** Per-source cadence override; absent = the kind's CADENCE_MS default. */
+  cadence?: "hourly" | "6h" | "nightly";
+  connectorId?: string;
+  query?: string;
+  analyzePrompt?: string;
 }
 
 export interface FeedItem {
