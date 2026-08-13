@@ -1,6 +1,6 @@
 # One Context Entity + Unified Wizard Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 >
 > **CLAIMED by the main session (d43af92a), 2026-08-13 — inline execution.**
 
@@ -22,27 +22,27 @@
 
 **Interfaces:** `Workspace.members?: string[]`; `isGroupRecord(w) = w.members !== undefined`; `plainWorkspaces(all)`; `groupViews(all): GroupT-shaped[]` (split members by member kind, `expansion` precomputed, cycle-safe); `migrateGroupsDir(groupsDir, workspacesDir): Promise<string[]>` (returns log lines).
 
-- [ ] `Workspace.members` + validation (strings; groupish ⇒ repos []); `plainWorkspaces`/`isGroupRecord` helpers.
-- [ ] Expansion + write-time cycle guard over the one store (port `expandGroup` semantics; visited-set safe).
-- [ ] `groupViews`: GroupT wire shape byte-compatible (name/description/workspaces/groups/color/sprint/expansion; dangling members under `workspaces`).
-- [ ] Boot migration in server startup: convert `.smith/groups/*.json`, collision-rename `<name>-group`, rename dir `.smith/groups.migrated`, log each conversion.
-- [ ] Routes: GET /workspaces filters to plain; GET /groups serves `groupViews`; POST/PUT /groups map `{workspaces,groups}` → members with cycle + one-namespace 409; DELETE /groups groupish-only; POST/PUT /workspaces 409 on any context name + refuse groupish targets.
-- [ ] Call-site audit: every internal `loadWorkspaces` consumer (dispatch workspace resolution, ensureWorkspaceBoards, default workspace, board/doc seeding paths) goes through `plainWorkspaces`. List each touched site in the commit message.
-- [ ] Tests per spec §Testing (migration, kind-by-presence, view parity on nested fixtures, 409s, cycles, plain filter).
-- [ ] Swarm suite green; commit `feat(swarm): one context entity — a workspace with members IS a group`.
+- [x] `Workspace.members` + validation (strings; groupish ⇒ repos []); `plainWorkspaces`/`isGroupRecord` helpers.
+- [x] Expansion + write-time cycle guard over the one store (port `expandGroup` semantics; visited-set safe).
+- [x] `groupViews`: GroupT wire shape byte-compatible (name/description/workspaces/groups/color/sprint/expansion; dangling members under `workspaces`).
+- [x] Boot migration in server startup: convert `.smith/groups/*.json`, collision-rename `<name>-group`, rename dir `.smith/groups.migrated`, log each conversion.
+- [x] Routes: GET /workspaces filters to plain; GET /groups serves `groupViews`; POST/PUT /groups map `{workspaces,groups}` → members with cycle + one-namespace 409; DELETE /groups groupish-only; POST/PUT /workspaces 409 on any context name + refuse groupish targets.
+- [x] Call-site audit: every internal `loadWorkspaces` consumer (dispatch workspace resolution, ensureWorkspaceBoards, default workspace, board/doc seeding paths) goes through `plainWorkspaces`. List each touched site in the commit message.
+- [x] Tests per spec §Testing (migration, kind-by-presence, view parity on nested fixtures, 409s, cycles, plain filter).
+- [x] Swarm suite green; commit `feat(swarm): one context entity — a workspace with members IS a group`.
 
 ### Task 2: Unified wizard (control plane)
 
 **Files:** Rename `src/organisms/NewWorkspaceModal.tsx` → `NewContextModal.tsx` (+ test file); Modify `src/molecules/WorkspaceSelector.tsx`, `src/pages/HomePage.tsx`; Tests `NewContextModal.test.tsx`, `WorkspaceSelector.test.tsx`.
 
-- [ ] `NewContextModal` per spec Part 2: `contains` radio on Details (default repos), mode-following name label + third-step title, links repos-only, members checkboxes step (needs `workspaces: string[]` + `groups: GroupT[]` props), submit fork (`saveGroup` prop), repo rules `validate(value, formValues)` auto-pass in members mode, button label per mode, title "New workspace or group".
-- [ ] `WorkspaceSelector`: one command "New workspace or group…" (`NEW_CONTEXT` sentinel) → `setNewWorkspaceOpen(true)`; `NEW_GROUP` command removed.
-- [ ] HomePage: pass `workspaces`, `groups`, `saveGroup={api.saveGroup}` to the renamed modal.
-- [ ] Tests: existing wizard tests pass under the rename (repos default); new members-mode tests per spec; selector's single-command test replaces the New group… one.
-- [ ] CP suite green + biome; commit `feat(cp): one-command context wizard — containment decides workspace vs group`.
+- [x] `NewContextModal` per spec Part 2: `contains` radio on Details (default repos), mode-following name label + third-step title, links repos-only, members checkboxes step (needs `workspaces: string[]` + `groups: GroupT[]` props), submit fork (`saveGroup` prop), repo rules `validate(value, formValues)` auto-pass in members mode, button label per mode, title "New workspace or group".
+- [x] `WorkspaceSelector`: one command "New workspace or group…" (`NEW_CONTEXT` sentinel) → `setNewWorkspaceOpen(true)`; `NEW_GROUP` command removed.
+- [x] HomePage: pass `workspaces`, `groups`, `saveGroup={api.saveGroup}` to the renamed modal.
+- [x] Tests: existing wizard tests pass under the rename (repos default); new members-mode tests per spec; selector's single-command test replaces the New group… one.
+- [x] CP suite green + biome; commit `feat(cp): one-command context wizard — containment decides workspace vs group`.
 
 ### Task 3: Verify and ship
 
-- [ ] Swarm + CP + broker suites green.
-- [ ] Restart swarm (migration runs — verify `core` converted, dir retired) + broker; reload tab. Live: `core` lens + its sprint resolution still work; wizard-create a group (appears in droplist), collision 409 shows in the wizard, delete the test group.
-- [ ] Push (ecruz165); memory update (supersede "entities stay separate" rulings); tick checkboxes.
+- [x] Swarm + CP + broker suites green.
+- [x] Restart swarm (migration runs — verify `core` converted, dir retired) + broker; reload tab. Live: `core` lens + its sprint resolution still work; wizard-create a group (appears in droplist), collision 409 shows in the wizard, delete the test group.
+- [x] Push (ecruz165); memory update (supersede "entities stay separate" rulings); tick checkboxes.
