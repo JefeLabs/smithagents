@@ -33,6 +33,7 @@ import { runDocEditTurn } from "./doc-edit.ts";
 import { type Doc, DocumentManager } from "./documents.ts";
 import { type AskFactory, ElectionScheduler, makeClaimAsk, runElection } from "./election.ts";
 import { EXEC_TO_RUNTIME, isExecutionMode } from "./execution-modes.ts";
+import { analyzeBrief, workItemsFrom } from "./feeds/analyze.ts";
 import { approve, repoKey } from "./feeds/approve.ts";
 import { latestFromAtom } from "./feeds/atom-release.ts";
 import { parseBundle } from "./feeds/bundle.ts";
@@ -1960,6 +1961,40 @@ async function fetchSource(source: FeedSource): Promise<{ ok: boolean; error?: s
       const issues = (res.payload as { issues?: Array<{ key: string; summary: string; url: string }> }).issues ?? [];
       // TODO(task-11): card fresh items — bindings land with cardForSource
       feedStore.addItems(jiraItemsFrom(issues, source.id, new Date().toISOString()));
+      return { ok: true };
+    }
+    if (source.kind === "http") {
+      // Checked again here, not only at add time: a source written before this
+      // guard existed — or edited on disk — must not get a free pass (SSRF).
+      const rejection = urlRejectionReason(source.locator);
+      if (rejection) return { ok: false, error: rejection };
+      const res = await fetch(source.locator);
+      if (!res.ok) return { ok: false, error: `http ${res.status}` };
+      const raw = await res.text();
+      const message = await anthropic.messages.create({
+        model: "claude-haiku-4-5",
+        max_tokens: 700,
+        messages: [{ role: "user", content: analyzeBrief(source, raw) }],
+      });
+      const found = workItemsFrom(message.content.map((b) => ("text" in b ? b.text : "")).join(""));
+      const stamp = new Date().toISOString();
+      // Analyze items are stamped per run, so addItems can't dedup them across
+      // polls the way rss/jira items do — cross-poll dedup for analyze sources
+      // is the CARD-side sourceRef check (Task 11) with itemKey = title (a
+      // stable-enough key for judged items; an identical title on a bound
+      // board means it's already tracked).
+      const fresh = feedStore.addItems(
+        found.map((w, i) => ({
+          id: `${source.id}-${stamp}-${i}`,
+          sourceId: source.id,
+          tag: "tech" as const,
+          title: w.title,
+          publishedAt: stamp,
+          summary: w.notes.slice(0, 400),
+        })),
+      );
+      // TODO(task-11): card fresh items — bindings land with cardForSource
+      void fresh;
       return { ok: true };
     }
     // x sources are polled by their own path; nothing to do here yet.
