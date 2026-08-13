@@ -275,7 +275,7 @@ export function NewContextModal({
   const isLastStep = step === STEPS.length - 1;
 
   return (
-    <ModalShell open={open} onClose={onClose} title="New workspace or group">
+    <ModalShell open={open} onClose={onClose} title="New workspace">
       <Stepper currentStep={step}>
         {STEPS.map((s, i) => (
           <Stepper.Step key={s.title}>

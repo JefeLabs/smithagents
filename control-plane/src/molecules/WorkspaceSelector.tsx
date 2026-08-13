@@ -8,7 +8,7 @@ const NO_SESSIONS: never[] = [];
 const NO_WORKSPACES: never[] = [];
 const NO_GROUPS: GroupT[] = [];
 
-// "New workspace or group…" is a COMMAND in the list, not a workspace. It is
+// "New workspace…" is a COMMAND in the list, not a workspace. It is
 // sentinel-keyed rather than matched on its rendered label so a workspace
 // literally named that can never shadow it — the same class of bug the colour
 // picker's transparent sentinel avoids. ONE command since the one-context
@@ -114,8 +114,8 @@ export function WorkspaceSelector() {
             </ListBox.Item>
           ))}
           <Separator />
-          <ListBox.Item id={NEW_CONTEXT} textValue="New workspace or group…">
-            New workspace or group…
+          <ListBox.Item id={NEW_CONTEXT} textValue="New workspace…">
+            New workspace…
           </ListBox.Item>
         </ListBox>
       </Select.Popover>

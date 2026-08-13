@@ -199,7 +199,7 @@ describe("WorkspaceSelector", () => {
     renderWithSession({ workspace: "acme" }, { workspaces: ["acme"] });
     await userEvent.click(await screen.findByRole("button", { name: /acme/ }));
     expect(screen.queryByRole("option", { name: /new group/i })).toBeNull();
-    await userEvent.click(await screen.findByRole("option", { name: "New workspace or group…" }));
+    await userEvent.click(await screen.findByRole("option", { name: "New workspace…" }));
     expect(useUiStore.getState().newWorkspaceOpen).toBe(true);
     expect(useUiStore.getState().workspacesOpen).toBe(false);
     expect(useUiStore.getState().composer).toBeNull();
