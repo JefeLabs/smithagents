@@ -189,3 +189,15 @@ test("releaseTargetBoards: security → bound reactive, else bound maintenance; 
     ["maintenance"],
   );
 });
+
+test("releaseTargetBoards: an explicit unbind (queue present, releases absent) yields no boards; a never-configured board still falls back", () => {
+  const plain = { release: { name: "x", version: "1", bump: "patch", security: false } } as unknown as FeedItem;
+  const explicitlyUnbound = BOUND.map((b) => (b.type === "maintenance" ? { ...b, queue: { sourceIds: [] } } : b));
+  assert.deepEqual(releaseTargetBoards(explicitlyUnbound, plain, "acme"), []);
+
+  const neverConfigured = BOUND.map((b) => (b.type === "maintenance" ? { ...b, queue: undefined } : b));
+  assert.deepEqual(
+    releaseTargetBoards(neverConfigured, plain, "acme").map((b) => b.id),
+    ["acme-maintenance"],
+  );
+});

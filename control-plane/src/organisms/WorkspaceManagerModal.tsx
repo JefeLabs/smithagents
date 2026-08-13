@@ -157,7 +157,8 @@ function toRecord(v: WorkspaceFormValues, existing?: WorkspaceRecord): Workspace
     name: v.name,
     description: v.description,
     default: v.default,
-    // not edited here — the queue gear owns sources; dropping this line wipes them on every save
+    // not edited here — carried so the record stays whole client-side; the server PUT also
+    // preserves omitted sources, this is belt-and-braces
     sources: existing?.sources,
     // PUT reads an absent colour as "keep the existing one", so unpicking
     // has to travel as an empty string to actually clear it. Both routes

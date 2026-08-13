@@ -41,13 +41,17 @@ export function intakeColumnIdOf(board: BoundBoard): string | undefined {
   return (board.columns.find((c) => c.id === "queue") ?? board.columns[0])?.id;
 }
 
-/** Release targeting: bindings first, legacy boardTypeFor as the unbound
-    fallback — migrated installs behave byte-for-byte (regression-tested). */
+/** Release targeting: bindings first, legacy boardTypeFor as the fallback for
+    boards that predate binding config entirely (fresh workspaces before their
+    seeding restart) — migrated installs behave byte-for-byte (regression-tested).
+    A board with a `queue` block that omits "releases" was explicitly unbound by
+    the user and must NOT fall back — `queue === undefined` is what marks "never
+    configured" rather than "configured to exclude releases". */
 export function releaseTargetBoards(boards: BoundBoard[], item: FeedItem, workspace: string): BoundBoard[] {
   const wanted = boardTypeFor(item);
   const bound = boardsBoundTo(boards, workspace, "releases").filter((b) => b.type === wanted);
   if (bound.length > 0) return bound;
-  const legacy = boards.find((b) => b.type === wanted && b.workspaceId === workspace);
+  const legacy = boards.find((b) => b.type === wanted && b.workspaceId === workspace && b.queue === undefined);
   return legacy ? [legacy] : [];
 }
 

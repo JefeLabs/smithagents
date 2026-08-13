@@ -116,7 +116,12 @@ export function TerminalEffectsSheet({ board, open, onClose }: TerminalEffectsSh
     <ModalShell open={open} onClose={onClose} title={`${board.name} · completion effects`}>
       <label>
         Terminal column
-        <select aria-label="Terminal column" value={columnId} onChange={(e) => void patchColumn(e.target.value)}>
+        <select
+          aria-label="Terminal column"
+          value={columnId}
+          onChange={(e) => void patchColumn(e.target.value)}
+          disabled={update.isPending}
+        >
           {board.columns.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
@@ -137,6 +142,7 @@ export function TerminalEffectsSheet({ board, open, onClose }: TerminalEffectsSh
                 type="button"
                 className="card-sheet__story-remove"
                 aria-label={`Remove ${effect.kind} to ${target}`}
+                disabled={update.isPending}
                 onClick={() => removeEffect(i)}
               >
                 <X size={10} strokeWidth={2} />
