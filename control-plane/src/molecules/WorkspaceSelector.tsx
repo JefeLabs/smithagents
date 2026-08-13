@@ -8,12 +8,12 @@ const NO_SESSIONS: never[] = [];
 const NO_WORKSPACES: never[] = [];
 const NO_GROUPS: GroupT[] = [];
 
-// "New workspace…" is a COMMAND in the list, not a workspace. It is sentinel-keyed
-// rather than matched on its rendered label so a workspace literally named "New
-// workspace" can never shadow it — the same class of bug the colour picker's
-// transparent sentinel avoids.
-const NEW_WORKSPACE = "__new-workspace__";
-const NEW_GROUP = "__new-group__";
+// "New workspace or group…" is a COMMAND in the list, not a workspace. It is
+// sentinel-keyed rather than matched on its rendered label so a workspace
+// literally named that can never shadow it — the same class of bug the colour
+// picker's transparent sentinel avoids. ONE command since the one-context
+// spec (2026-08-13): containment inside the wizard decides what gets made.
+const NEW_CONTEXT = "__new-workspace__";
 // Group options are keyed disjointly from workspace names for the same reason:
 // a workspace and a group may share a name without shadowing each other.
 const GROUP_PREFIX = "__group__:";
@@ -39,7 +39,6 @@ export function WorkspaceSelector() {
   const { data: groups = NO_GROUPS } = useGroups();
   const openComposer = useUiStore((s) => s.openComposer);
   const setNewWorkspaceOpen = useUiStore((s) => s.setNewWorkspaceOpen);
-  const openGroupForm = useUiStore((s) => s.openGroupForm);
   const activeLens = useUiStore((s) => s.activeLens);
   const setLens = useUiStore((s) => s.setLens);
   const clearLens = useUiStore((s) => s.clearLens);
@@ -48,13 +47,9 @@ export function WorkspaceSelector() {
   const current = session?.workspace ?? null;
 
   const select = (name: string) => {
-    if (name === NEW_WORKSPACE) {
-      setNewWorkspaceOpen(true);
+    if (name === NEW_CONTEXT) {
+      setNewWorkspaceOpen(true); // the unified wizard — containment decides the entity
       return; // never falls through to session activation
-    }
-    if (name === NEW_GROUP) {
-      openGroupForm(); // the manager opens ON the group form, pickers in view
-      return;
     }
     if (name.startsWith(GROUP_PREFIX)) {
       const group = groups.find((g) => g.name === name.slice(GROUP_PREFIX.length));
@@ -119,11 +114,8 @@ export function WorkspaceSelector() {
             </ListBox.Item>
           ))}
           <Separator />
-          <ListBox.Item id={NEW_WORKSPACE} textValue="New workspace…">
-            New workspace…
-          </ListBox.Item>
-          <ListBox.Item id={NEW_GROUP} textValue="New group…">
-            New group…
+          <ListBox.Item id={NEW_CONTEXT} textValue="New workspace or group…">
+            New workspace or group…
           </ListBox.Item>
         </ListBox>
       </Select.Popover>

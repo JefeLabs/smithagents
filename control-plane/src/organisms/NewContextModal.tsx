@@ -23,7 +23,10 @@ interface DraftRepo {
   connectorId: string;
 }
 
-interface NewWorkspaceFormValues {
+interface NewContextFormValues {
+  /** The group attribute made concrete (spec 2026-08-13): what this context
+      CONTAINS decides what it is — repos make a workspace, members make a group. */
+  contains: "repos" | "members";
   name: string;
   description: string;
   linksText: string;
@@ -33,11 +36,14 @@ interface NewWorkspaceFormValues {
   sprintWeekday: string; // "" | "1".."7" (ISO Mon..Sun)
   sprintLength: string;
   repos: DraftRepo[];
+  memberWorkspaces: string[];
+  memberGroups: string[];
 }
 
 const emptyRepo = (): DraftRepo => ({ mode: "existing", name: "", path: "", owner: "", repo: "", connectorId: "" });
 
-const blankForm = (): NewWorkspaceFormValues => ({
+const blankForm = (): NewContextFormValues => ({
+  contains: "repos",
   name: "",
   description: "",
   linksText: "",
@@ -46,10 +52,22 @@ const blankForm = (): NewWorkspaceFormValues => ({
   sprintWeekday: "",
   sprintLength: "",
   repos: [emptyRepo()],
+  memberWorkspaces: [],
+  memberGroups: [],
 });
 
 /** Non-blank after trimming — every gate in this form is that same check. */
 const filled = (v: string) => v.trim().length > 0;
+
+/**
+ * Repo-row rules auto-pass in members mode (spec 2026-08-13's validation
+ * trap): the hidden, empty repo fields would otherwise pin `isValid` false
+ * forever and a group could never be created. RHF hands validate() the whole
+ * form's values, which is what makes the rule mode-aware without re-registering.
+ */
+const repoFieldRule = {
+  validate: (v: unknown, all: NewContextFormValues) => all.contains === "members" || filled(String(v ?? "")),
+};
 
 /**
  * The wizard's three steps and the fields each one gates on.
@@ -66,10 +84,10 @@ const STEPS = [
 ] as const satisfies ReadonlyArray<{
   title: string;
   description: string;
-  gates: ReadonlyArray<FieldPath<NewWorkspaceFormValues>>;
+  gates: ReadonlyArray<FieldPath<NewContextFormValues>>;
 }>;
 
-interface NewWorkspaceModalProps {
+interface NewContextModalProps {
   open: boolean;
   onClose: () => void;
   /** POST /workspaces via the broker proxy — same function WorkspaceManagerModal uses. */
@@ -81,34 +99,54 @@ interface NewWorkspaceModalProps {
   pickFolder?: () => Promise<string | null>;
   /** Called with the created (server-slugged) workspace name — the caller creates + activates the first session. */
   onCreated: (name: string) => void;
+  /** Member pickers for the group half of the fork. */
+  workspaces: string[];
+  groups: Array<{ name: string }>;
+  /** POST /groups via the broker proxy — the same function the manager passes. */
+  saveGroup: (
+    body: {
+      name: string;
+      description?: string;
+      color?: string;
+      workspaces: string[];
+      groups: string[];
+      sprint?: { anchor: string; lengthDays: number };
+    },
+    isNew: boolean,
+  ) => Promise<{ error?: string }>;
 }
 
-export function NewWorkspaceModal({
+export function NewContextModal({
   open,
   onClose,
   save,
   listMyConnectors,
   pickFolder,
   onCreated,
-}: NewWorkspaceModalProps) {
+  workspaces,
+  groups,
+  saveGroup,
+}: NewContextModalProps) {
   const [connectors, setConnectors] = useState<ConnectorInstanceRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState(0);
   const detailsRef = useRef<HTMLDivElement>(null);
   const colourRef = useRef<HTMLDivElement>(null);
   const reposRef = useRef<HTMLDivElement>(null);
+  const membersRef = useRef<HTMLDivElement>(null);
 
   // mode: "onChange" because the create button gates on isValid; under the default
   // onSubmit mode isValid would stay false until a submit that can never happen.
   const {
     control,
     handleSubmit,
+    register,
     reset,
     setValue,
     watch,
     trigger,
     formState: { isValid, isSubmitting },
-  } = useForm<NewWorkspaceFormValues>({ mode: "onChange", defaultValues: blankForm() });
+  } = useForm<NewContextFormValues>({ mode: "onChange", defaultValues: blankForm() });
   const { fields, append, remove } = useFieldArray({ control, name: "repos" });
 
   // HomePage keeps this modal mounted and toggles `open`, so useForm's per-mount
@@ -127,6 +165,10 @@ export function NewWorkspaceModal({
   // Only the repo `mode` needs watching for render: it swaps the path placeholder and
   // the Browse button. Everything else is uncontrolled and read at submit.
   const repoModes = watch("repos");
+  // The containment fork (spec 2026-08-13): what this contains decides what
+  // it IS — "workspace that add child workspace or other groups is a group".
+  const contains = watch("contains");
+  const isGroup = contains === "members";
 
   // Watched values, not formState.errors: errors only exist after a validation run,
   // so gating on them would leave `next` enabled on a pristine form — exactly the
@@ -153,12 +195,12 @@ export function NewWorkspaceModal({
   // could have caught it by construction. This also announces the new step to
   // screen readers, which the stepper alone does not do.
   useEffect(() => {
-    const stepEls = [detailsRef.current, colourRef.current, reposRef.current];
+    const stepEls = [detailsRef.current, colourRef.current, isGroup ? membersRef.current : reposRef.current];
     const first = stepEls[step]?.querySelector<HTMLElement>(
       'input:not([disabled]), textarea, [role="listbox"], button:not([disabled])',
     );
     first?.focus();
-  }, [step]);
+  }, [step, isGroup]);
 
   const browse = async (index: number) => {
     if (!pickFolder) return;
@@ -172,6 +214,29 @@ export function NewWorkspaceModal({
     const sprintCheck = sprintFromForm(values);
     if ("error" in sprintCheck) {
       setError(sprintCheck.error);
+      return;
+    }
+    if (values.contains === "members") {
+      // The group half of the fork: same body the manager's form posts. A
+      // created group needs no onCreated — the groups frame lands on the
+      // socket and the droplist shows it.
+      const r = await saveGroup(
+        {
+          name: values.name.trim(),
+          description: values.description.trim() || undefined,
+          color: values.color || undefined,
+          sprint: sprintCheck.sprint,
+          // RHF yields false (not []) when every checkbox is unchecked.
+          workspaces: Array.isArray(values.memberWorkspaces) ? values.memberWorkspaces : [],
+          groups: Array.isArray(values.memberGroups) ? values.memberGroups : [],
+        },
+        true,
+      ).catch((err: unknown) => ({ error: String(err) }));
+      if (r.error) {
+        setError(r.error);
+        return;
+      }
+      onClose();
       return;
     }
     const record: WorkspaceRecord = {
@@ -207,14 +272,14 @@ export function NewWorkspaceModal({
   const isLastStep = step === STEPS.length - 1;
 
   return (
-    <ModalShell open={open} onClose={onClose} title="New workspace">
+    <ModalShell open={open} onClose={onClose} title="New workspace or group">
       <Stepper currentStep={step}>
-        {STEPS.map((s) => (
+        {STEPS.map((s, i) => (
           <Stepper.Step key={s.title}>
             <Stepper.Indicator />
             <Stepper.Content>
-              <Stepper.Title>{s.title}</Stepper.Title>
-              <Stepper.Description>{s.description}</Stepper.Description>
+              <Stepper.Title>{i === 2 && isGroup ? "Members" : s.title}</Stepper.Title>
+              <Stepper.Description>{i === 2 && isGroup ? "Workspaces & groups" : s.description}</Stepper.Description>
             </Stepper.Content>
             <Stepper.Separator />
           </Stepper.Step>
@@ -232,11 +297,28 @@ export function NewWorkspaceModal({
           `useForm`, per-field on `useController`, or in a future RHF major. The `back`
           test asserts the value survives; it doesn't distinguish which mechanism did it. */}
       <div ref={detailsRef} hidden={step !== 0}>
+        {/* What does this contain? The answer IS the entity (Edwin: "workspace
+            that add child workspace or other groups is a group"). */}
+        <RadioButtonGroup
+          aria-label="What this contains"
+          value={contains}
+          onChange={(value) => setValue("contains", value as NewContextFormValues["contains"])}
+          orientation="horizontal"
+        >
+          <RadioButtonGroup.Item value="repos">
+            <RadioButtonGroup.ItemContent>Repositories</RadioButtonGroup.ItemContent>
+            <RadioButtonGroup.Indicator />
+          </RadioButtonGroup.Item>
+          <RadioButtonGroup.Item value="members">
+            <RadioButtonGroup.ItemContent>Workspaces &amp; groups</RadioButtonGroup.ItemContent>
+            <RadioButtonGroup.Indicator />
+          </RadioButtonGroup.Item>
+        </RadioButtonGroup>
         <FormTextField
           control={control}
           name="name"
-          label="Workspace name"
-          placeholder="acme"
+          label={isGroup ? "Group name" : "Workspace name"}
+          placeholder={isGroup ? "frontend" : "acme"}
           rules={{ validate: filled }}
         />
         <FormTextField
@@ -245,14 +327,17 @@ export function NewWorkspaceModal({
           label="Description"
           placeholder="Marketing site + storefront"
         />
-        <FormTextField
-          control={control}
-          name="linksText"
-          label="Links"
-          hint="one per line — docs, dashboards, tickets"
-          multiline
-          rows={3}
-        />
+        {/* Groups carry no links field — hidden beats silently dropping typed input. */}
+        <div hidden={isGroup}>
+          <FormTextField
+            control={control}
+            name="linksText"
+            label="Links"
+            hint="one per line — docs, dashboards, tickets"
+            multiline
+            rows={3}
+          />
+        </div>
         {/* SHARED Sprint Filter — the same component the manager and group editor render. */}
         <SprintFilterFields control={control} />
       </div>
@@ -261,7 +346,7 @@ export function NewWorkspaceModal({
         <FormColorSwatch control={control} name="color" label="Colour" />
       </div>
 
-      <div ref={reposRef} hidden={step !== 2}>
+      <div ref={reposRef} hidden={step !== 2 || isGroup}>
         <p className="wizard__hint">Repos — every repo needs a GitHub connector before create enables.</p>
         {githubConnectors.length === 0 && (
           <p className="wizard__hint">No GitHub connectors yet — add one in Settings → Integrations first.</p>
@@ -295,7 +380,7 @@ export function NewWorkspaceModal({
               label="Repo name"
               labelHidden
               placeholder="web"
-              rules={{ validate: filled }}
+              rules={repoFieldRule}
             />
             <FormTextField
               control={control}
@@ -303,7 +388,7 @@ export function NewWorkspaceModal({
               labelHidden
               label="Path"
               placeholder={repoModes[i]?.mode === "new" ? "/Users/me/code/new-project" : "/Users/me/code/acme-web"}
-              rules={{ validate: filled }}
+              rules={repoFieldRule}
             />
             {repoModes[i]?.mode === "new" && pickFolder && (
               <Button variant="secondary" onPress={() => void browse(i)}>
@@ -316,7 +401,7 @@ export function NewWorkspaceModal({
               label="GitHub owner"
               labelHidden
               placeholder="GitHub owner"
-              rules={{ validate: filled }}
+              rules={repoFieldRule}
             />
             <FormTextField
               control={control}
@@ -324,7 +409,7 @@ export function NewWorkspaceModal({
               label="GitHub repo"
               labelHidden
               placeholder="GitHub repo"
-              rules={{ validate: filled }}
+              rules={repoFieldRule}
             />
             <FormSelect
               control={control}
@@ -333,7 +418,7 @@ export function NewWorkspaceModal({
               label="GitHub connector"
               placeholder="pick a connector…"
               options={githubConnectors.map((c) => ({ id: c.id, label: c.label }))}
-              rules={{ required: true }}
+              rules={{ validate: (v, all) => all.contains === "members" || Boolean(v) }}
             />
             <Button
               isIconOnly
@@ -351,6 +436,33 @@ export function NewWorkspaceModal({
         </Button>
       </div>
 
+      {/* The members pane — the containment that MAKES this a group. All
+          contexts are offered: a new context can't be its own ancestor, so
+          no cycle filter applies on create. Empty selection is legal, same
+          as the manager's group form. */}
+      <div ref={membersRef} hidden={step !== 2 || !isGroup}>
+        <fieldset className="groups-section__members">
+          <legend>Member workspaces</legend>
+          {workspaces.map((ws) => (
+            <label key={ws} className="groups-section__member">
+              <input type="checkbox" value={ws} {...register("memberWorkspaces")} />
+              {ws}
+            </label>
+          ))}
+          {workspaces.length === 0 && <p className="wizard__hint">No workspaces yet.</p>}
+        </fieldset>
+        <fieldset className="groups-section__members">
+          <legend>Member groups</legend>
+          {groups.map((g) => (
+            <label key={g.name} className="groups-section__member">
+              <input type="checkbox" value={g.name} {...register("memberGroups")} />
+              {g.name}
+            </label>
+          ))}
+          {groups.length === 0 && <p className="wizard__hint">No groups yet.</p>}
+        </fieldset>
+      </div>
+
       {error && <p className="wizard__error">{error}</p>}
 
       {/* One footer for all three steps. `create workspace` renders only on the
@@ -365,7 +477,7 @@ export function NewWorkspaceModal({
         </Button>
         {isLastStep ? (
           <Button variant="primary" onPress={() => void submit()} isDisabled={isSubmitting || !isValid}>
-            {isSubmitting ? "creating…" : "create workspace"}
+            {isSubmitting ? "creating…" : isGroup ? "create group" : "create workspace"}
           </Button>
         ) : (
           <Button variant="primary" onPress={() => void goNext()} isDisabled={!canLeaveStep}>

@@ -26,8 +26,8 @@ import { ChatDock } from "../organisms/ChatDock";
 import { DotGridCanvas } from "../organisms/DotGridCanvas";
 import { DotGridTuner } from "../organisms/DotGridTuner";
 import { Navbar } from "../organisms/Navbar";
+import { NewContextModal } from "../organisms/NewContextModal";
 import { NewSessionScreen } from "../organisms/NewSessionScreen";
-import { NewWorkspaceModal } from "../organisms/NewWorkspaceModal";
 import { SessionsPanel } from "../organisms/SessionsPanel";
 import { SettingsPanel } from "../organisms/SettingsPanel";
 import { ToolRail } from "../organisms/ToolRail";
@@ -517,10 +517,13 @@ export function HomePage() {
             saveGroup={api.saveGroup}
             deleteGroup={api.deleteGroup}
           />
-          <NewWorkspaceModal
+          <NewContextModal
             open={newWorkspaceOpen}
             onClose={() => setNewWorkspaceOpen(false)}
             save={saveWorkspaceAndRefresh}
+            saveGroup={api.saveGroup}
+            workspaces={workspaces}
+            groups={groups}
             listMyConnectors={api.getMyConnectors}
             activeWorkspace={session?.workspace}
             pickFolder={hasNativeFolderPicker() ? pickFolder : undefined}

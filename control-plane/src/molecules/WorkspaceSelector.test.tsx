@@ -195,12 +195,13 @@ describe("WorkspaceSelector", () => {
     expect(activate).toHaveBeenCalledWith("s7");
   });
 
-  it("offers New group…, opening the manager WITH the group form intent", async () => {
+  it("offers ONE creation command — the unified wizard (one-context spec 2026-08-13)", async () => {
     renderWithSession({ workspace: "acme" }, { workspaces: ["acme"] });
     await userEvent.click(await screen.findByRole("button", { name: /acme/ }));
-    await userEvent.click(await screen.findByRole("option", { name: /new group/i }));
-    expect(useUiStore.getState().workspacesOpen).toBe(true);
-    expect(useUiStore.getState().groupFormIntent).toBe(true);
+    expect(screen.queryByRole("option", { name: /new group/i })).toBeNull();
+    await userEvent.click(await screen.findByRole("option", { name: "New workspace or group…" }));
+    expect(useUiStore.getState().newWorkspaceOpen).toBe(true);
+    expect(useUiStore.getState().workspacesOpen).toBe(false);
     expect(useUiStore.getState().composer).toBeNull();
   });
 

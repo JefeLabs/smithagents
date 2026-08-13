@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceRecord } from "../api/types";
 import { WORKSPACE_PALETTE } from "../lib/workspace-color";
-import { NewWorkspaceModal } from "./NewWorkspaceModal";
+import { NewContextModal } from "./NewContextModal";
 
 const CONNECTORS = [
   { id: "gh-1", vendorId: "github", label: "personal", fields: {} },
@@ -16,6 +16,9 @@ function props(overrides: Record<string, unknown> = {}) {
     open: true,
     onClose: vi.fn(),
     save: vi.fn(async () => ({ name: "acme" })),
+    saveGroup: vi.fn(async () => ({})),
+    workspaces: ["acme", "widgets"],
+    groups: [{ name: "core" }],
     listMyConnectors: vi.fn(async () => CONNECTORS),
     onCreated: vi.fn(),
     ...overrides,
@@ -23,7 +26,7 @@ function props(overrides: Record<string, unknown> = {}) {
 }
 
 function renderModal(overrides: Record<string, unknown> = {}) {
-  return render(<NewWorkspaceModal {...props(overrides)} />);
+  return render(<NewContextModal {...props(overrides)} />);
 }
 
 /** Advances the wizard by pressing "next" n times. Each press gates on the
@@ -53,7 +56,7 @@ async function fillOneValidRepo() {
   await fillRepoRow();
 }
 
-describe("NewWorkspaceModal", () => {
+describe("NewContextModal", () => {
   afterEach(() => {
     cleanup();
   });
@@ -278,7 +281,10 @@ describe("NewWorkspaceModal", () => {
     await userEvent.type(screen.getByLabelText("Workspace name"), "acme");
     await userEvent.click(screen.getByRole("button", { name: "next" }));
     await userEvent.click(screen.getByRole("button", { name: "back" }));
-    expect(document.activeElement).toBe(screen.getByLabelText("Workspace name"));
+    // The step's FIRST control is now the containment radio (one-context
+    // spec 2026-08-13) — the invariant is "focus enters the step", not
+    // "focus lands on the name".
+    expect(document.activeElement).toBe(screen.getByRole("radio", { name: "Repositories" }));
   });
 
   // The submit button exists only on the last step; a stepper that let Enter
@@ -286,5 +292,57 @@ describe("NewWorkspaceModal", () => {
   it("does not offer create until the final step", async () => {
     renderModal();
     expect(screen.queryByRole("button", { name: /create workspace/i })).toBeNull();
+  });
+});
+
+describe("NewContextModal — the members fork (one-context spec 2026-08-13)", () => {
+  it("switching containment to members swaps step 3, hides links, and relabels", async () => {
+    renderModal();
+    await userEvent.click(screen.getByRole("radio", { name: /workspaces & groups/i }));
+    expect(screen.getByLabelText("Group name")).toBeInTheDocument();
+    expect(screen.getByLabelText("Links")).not.toBeVisible();
+    await userEvent.type(screen.getByLabelText("Group name"), "platform");
+    await goToStep(2);
+    expect(screen.getByText("Member workspaces")).toBeVisible();
+    expect(screen.getByLabelText("Repo name")).not.toBeVisible();
+    expect(screen.getByRole("button", { name: "create group" })).toBeInTheDocument();
+  });
+
+  it("a group submit posts through saveGroup — never save/onCreated — and create enables despite empty repo rows", async () => {
+    const saveGroup = vi.fn(async () => ({}));
+    const save = vi.fn(async () => ({ name: "x" }));
+    const onCreated = vi.fn();
+    const onClose = vi.fn();
+    renderModal({ saveGroup, save, onCreated, onClose });
+    await userEvent.click(screen.getByRole("radio", { name: /workspaces & groups/i }));
+    await userEvent.type(screen.getByLabelText("Group name"), "platform");
+    await goToStep(2);
+    await userEvent.click(screen.getByRole("checkbox", { name: "acme" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "core" }));
+    const create = screen.getByRole("button", { name: "create group" }) as HTMLButtonElement;
+    await waitFor(() => expect(create.disabled).toBe(false)); // empty repo rows must not gate
+    await userEvent.click(create);
+    await waitFor(() => expect(saveGroup).toHaveBeenCalledTimes(1));
+    expect(saveGroup.mock.calls[0][0]).toMatchObject({
+      name: "platform",
+      workspaces: ["acme"],
+      groups: ["core"],
+    });
+    expect(saveGroup.mock.calls[0][1]).toBe(true);
+    expect(save).not.toHaveBeenCalled();
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("the sprint half-config refusal fires in group mode too", async () => {
+    const saveGroup = vi.fn(async () => ({}));
+    renderModal({ saveGroup });
+    await userEvent.click(screen.getByRole("radio", { name: /workspaces & groups/i }));
+    await userEvent.type(screen.getByLabelText("Group name"), "platform");
+    await userEvent.click(screen.getByRole("checkbox", { name: "Sprint Filter" }));
+    await goToStep(2);
+    await userEvent.click(screen.getByRole("button", { name: "create group" }));
+    expect(await screen.findByText(/Sprint Filter needs a start day/)).toBeInTheDocument();
+    expect(saveGroup).not.toHaveBeenCalled();
   });
 });
