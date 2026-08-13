@@ -165,24 +165,27 @@ describe("WorkspaceSelector", () => {
     expect(activate).not.toHaveBeenCalled();
   });
 
-  it("group options denote containment with a workspace count; plain workspaces get none", async () => {
+  it("group options denote containment with a 'group' tag whose hover reveals the members", async () => {
     renderWithSession(
       { workspace: "acme" },
       {
         workspaces: ["acme", "labs"],
-        // Direct members: 1 workspace + 1 group. Expansion: 3 workspaces. A "3"
-        // in the option proves the count is the TRANSITIVE workspace list, not
-        // a count of direct members (which would render 2).
         groups: [{ name: "frontend", workspaces: ["labs"], groups: ["inner"], expansion: ["labs", "web", "api"] }],
       },
     );
     await userEvent.click(await screen.findByRole("button", { name: /acme/ }));
-    // Exact-name match still resolving proves the count is aria-hidden — were it
-    // in the accessible name, this option would be named "frontend 3".
+    // Exact-name match still resolving proves the tag is aria-hidden — were it
+    // in the accessible name, this option would be named "frontend group".
     const group = await screen.findByRole("option", { name: "frontend" });
-    expect(group.textContent).toContain("3");
+    expect(group.textContent).toContain("group");
     const workspace = await screen.findByRole("option", { name: "labs" });
     expect(workspace.textContent).toBe("labs");
+    // The member reveal rides a hover Tooltip. react-aria's hover detection
+    // does not fire under jsdom's synthetic pointers (same class of jsdom
+    // blindness as react-flow node children), so the hover path is verified by
+    // live smoke; here we pin that members stay unrendered until hover.
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    expect(group.textContent).not.toContain("inner");
   });
 
   it("picking a workspace clears an active lens and activates as always", async () => {

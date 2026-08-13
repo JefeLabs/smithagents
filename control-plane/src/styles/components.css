@@ -3847,21 +3847,52 @@ button.logo {
   background: var(--pill);
   border: 1px solid var(--pill-br);
 }
-/* Group options carry a right-aligned workspace count — the containment cue.
-   End margin clears the selected-item checkmark, which HeroUI absolutely
-   positions at the item's end edge rather than in the flex flow. */
-.workspace-selector__count {
+/* Group options carry a "group" tag — the containment cue; hovering it reveals
+   the member list in a tooltip. End margin clears the selected-item checkmark,
+   which HeroUI absolutely positions at the item's end edge rather than in the
+   flex flow. */
+.workspace-selector__grouptag {
   flex: 0 0 auto;
+  display: inline-flex;
   margin-left: auto;
   margin-right: 18px;
-  color: var(--text-dim);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
+}
+.workspace-selector__chip {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  line-height: 1.5;
+  color: var(--text-2);
+  background: var(--pill);
+  border: 1px solid var(--pill-br);
+  border-radius: 999px;
+  padding: 1px 7px;
 }
 /* The trigger's value slot clones the selected item's children — same reason
    select.css hides the item indicator there. The pill shows just the name. */
-.workspace-selector .select__value .workspace-selector__count {
+.workspace-selector .select__value .workspace-selector__grouptag {
   display: none;
+}
+/* The hover reveal: direct members, child groups marked with their own tag. */
+.workspace-selector__members {
+  list-style: none;
+  margin: 0;
+  padding: 2px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.workspace-selector__members li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.workspace-selector__member-kind {
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
 }
 .date-range__value {
   white-space: nowrap;

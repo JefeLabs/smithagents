@@ -1,4 +1,4 @@
-import { Label, ListBox, Select, Separator } from "@heroui/react";
+import { Label, ListBox, Select, Separator, Tooltip } from "@heroui/react";
 import * as api from "../api/broker";
 import type { GroupT } from "../api/types";
 import { useGroups, useSession, useSessions, useWorkspaces } from "../queries/pushed";
@@ -101,12 +101,34 @@ export function WorkspaceSelector() {
               {groups.map((g) => (
                 <ListBox.Item key={GROUP_PREFIX + g.name} id={GROUP_PREFIX + g.name} textValue={g.name}>
                   {g.name}
-                  {/* Containment cue: how many workspaces live under this entry.
-                      `expansion` so nested groups count through (swarm-computed,
-                      never re-walked here). aria-hidden keeps the option's
-                      accessible name the bare group name. */}
-                  <span className="workspace-selector__count" aria-hidden="true">
-                    {g.expansion.length}
+                  {/* Containment cue (Edwin 2026-08-13): a "group" tag, with the
+                      member list on hover. aria-hidden keeps the tag out of the
+                      option's accessible name; the tooltip content portals to
+                      <body>, so it escapes both this wrapper's aria-hidden and
+                      the popover's overflow clipping. */}
+                  <span className="workspace-selector__grouptag" aria-hidden="true">
+                    <Tooltip delay={250}>
+                      {/* tabIndex -1: the trigger renders role="button" tabindex="0" by
+                          default — focusable content inside an aria-hidden wrapper is an
+                          axe violation, and hover alone opens the reveal. */}
+                      <Tooltip.Trigger className="workspace-selector__grouptag-trigger" tabIndex={-1}>
+                        <span className="workspace-selector__chip">group</span>
+                      </Tooltip.Trigger>
+                      <Tooltip.Content placement="right" showArrow>
+                        <Tooltip.Arrow />
+                        <ul className="workspace-selector__members">
+                          {g.workspaces.map((w) => (
+                            <li key={w}>{w}</li>
+                          ))}
+                          {g.groups.map((n) => (
+                            <li key={n}>
+                              {n}
+                              <span className="workspace-selector__member-kind">group</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </Tooltip.Content>
+                    </Tooltip>
                   </span>
                   <ListBox.ItemIndicator />
                 </ListBox.Item>
