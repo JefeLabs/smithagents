@@ -3945,6 +3945,8 @@ button.logo {
 .modal__container .modal__dialog {
   margin-top: 8vh;
   margin-bottom: 6vh;
+  /* Top is anchored, but the horizontal axis stays centered (Edwin, 2026-08-13). */
+  margin-inline: auto;
 }
 /* Placeholders read as ghosts, not as entered text (Edwin, 2026-08-13). */
 .modal__dialog input::placeholder,
