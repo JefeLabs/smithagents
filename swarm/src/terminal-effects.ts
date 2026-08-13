@@ -2,7 +2,12 @@
 // ENTERS a board's terminal column. Pure per the swarm test law — the route
 // handler injects createIssue/newId/now. Effects NEVER throw out of here: the
 // move that triggered them must always succeed.
-import { findRouteDestination, hasSourceRef, type WorkBoard, type WorkCard } from "./work-items.js";
+import { findRouteDestination, hasSourceRef, terminalColumnId, type WorkBoard, type WorkCard } from "./work-items.js";
+
+/** The trigger: a patch that moves the card INTO the terminal column. */
+export function shouldFireTerminal(board: WorkBoard, movedTo: string | undefined): boolean {
+  return movedTo !== undefined && movedTo === terminalColumnId(board);
+}
 
 export interface EffectDeps {
   createIssue(

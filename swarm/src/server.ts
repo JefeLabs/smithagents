@@ -98,7 +98,7 @@ import {
   type TaskManifest,
   type TaskResult,
 } from "./index.js";
-import { importIssues, searchIssues, transitionIssue } from "./jira-sync.js";
+import { createIssue, importIssues, searchIssues, transitionIssue } from "./jira-sync.js";
 import { agentUsage, isBusy } from "./lifecycle.js";
 import { MeetingOrchestrator } from "./meetings.js";
 import {
@@ -129,6 +129,7 @@ import {
   SquadPool,
   setSquadRoster,
 } from "./squads.js";
+import { applyTerminalEffects, shouldFireTerminal } from "./terminal-effects.js";
 import type { RemoteWorkerEntry } from "./types.js";
 import {
   type ConnectorInstance,
@@ -2682,6 +2683,44 @@ export class OrchestratorServer {
           } catch (err) {
             card.jira.lastPushError = String((err as Error).message);
           }
+        }
+
+        // Terminal side-effects (spec 2026-08-13 queue-sources): fire when the
+        // patch lands the card on the board's terminal column, beside the jira
+        // push-on-move precedent above — same rule, effects never fail the
+        // move. Sibling boards a route effect changes are saved here; the own
+        // board is saved by the existing persistence below.
+        if (shouldFireTerminal(board, movedTo)) {
+          const ws = this.workspaces.find((w) => w.name === board.workspaceId);
+          const { boards: allBoards } = await loadBoards(this.workDir());
+          const { changed, errors } = await applyTerminalEffects(board, card, allBoards, {
+            createIssue: async (connectorId, projectKey, summary, description) => {
+              const users = await loadUsersFromDir(resolve(process.cwd(), ".smith/users"));
+              const resolved = resolveAtlassianConnector(connectorId, resolveCurrentUser(users), {
+                name: "projectKey",
+                value: projectKey,
+              });
+              if ("error" in resolved) throw new Error(resolved.error);
+              const siteUrl = ws?.atlassian?.siteUrl;
+              if (!siteUrl) {
+                throw new Error(`Workspace "${board.workspaceId}" has no Jira/Confluence site configured`);
+              }
+              return createIssue(
+                siteUrl,
+                resolved.instance.fields.email ?? "",
+                resolved.instance.fields.apiToken ?? "",
+                projectKey,
+                summary,
+                description,
+              );
+            },
+            newId: () => randomUUID(),
+            now: () => new Date().toISOString(),
+          });
+          for (const b of changed) {
+            if (b.id !== board.id) await saveBoard(this.workDir(), b);
+          }
+          for (const e of errors) this.app.log.warn(`[terminal-effects] ${e}`);
         }
 
         // Only now — patchCard applied cleanly — do the capability/sibling

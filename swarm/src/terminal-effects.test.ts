@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { applyTerminalEffects } from "./terminal-effects.js";
+import { applyTerminalEffects, shouldFireTerminal } from "./terminal-effects.js";
 import { addCard, createBoard } from "./work-items.js";
 
 function deps(overrides: Partial<Parameters<typeof applyTerminalEffects>[3]> = {}) {
@@ -95,4 +95,14 @@ test("a route effect with no matching board is an error entry, never a throw", a
   const res = await applyTerminalEffects(plan, card, [plan], deps());
   assert.equal(res.errors.length, 1);
   assert.match(res.errors[0], /no release board/i);
+});
+
+test("shouldFireTerminal: only a columnId patch that LANDS on the terminal column fires", () => {
+  const board = createBoard("ideation", "acme");
+  const terminal = board.columns[board.columns.length - 1].id;
+  assert.equal(shouldFireTerminal(board, terminal), true);
+  assert.equal(shouldFireTerminal(board, board.columns[0].id), false);
+  assert.equal(shouldFireTerminal(board, undefined), false); // title-only patch
+  board.terminal = { columnId: board.columns[0].id, effects: [] };
+  assert.equal(shouldFireTerminal(board, board.columns[0].id), true);
 });
