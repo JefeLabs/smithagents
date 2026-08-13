@@ -530,3 +530,48 @@ test("applyStoryToggles stamps only stories whose state changed, and their conta
   assert.notEqual(cap.slices[0].updatedAt, "2026-01-01T00:00:00.000Z"); // contains s1
   assert.equal(cap.slices[1].updatedAt, "2026-01-01T00:00:00.000Z"); // contains only the untouched s2
 });
+
+test("patchCapability rejects fractional and negative story points; a points change is a touch", () => {
+  const cap = createCapability("jefelabs", "c");
+  cap.activities = [{ id: "a1", name: "a", order: 0, steps: [{ id: "st1", name: "s", order: 0 }] }];
+  cap.stories = [
+    { id: "s1", stepId: "st1", order: 0, text: "one", done: false, updatedAt: "2026-01-01T00:00:00.000Z" },
+    { id: "s2", stepId: "st1", order: 1, text: "two", done: false, updatedAt: "2026-01-01T00:00:00.000Z" },
+  ];
+  assert.throws(
+    () => patchCapability(cap, { stories: [{ id: "s1", stepId: "st1", order: 0, text: "one", done: false, points: 1.5 }] }),
+    /whole number/,
+  );
+  assert.throws(
+    () => patchCapability(cap, { stories: [{ id: "s1", stepId: "st1", order: 0, text: "one", done: false, points: -1 }] }),
+    /whole number/,
+  );
+  const patched = patchCapability(cap, {
+    stories: [
+      { id: "s1", stepId: "st1", order: 0, text: "one", done: false, points: 3 },
+      { id: "s2", stepId: "st1", order: 1, text: "two", done: false },
+    ],
+  });
+  assert.equal(patched.stories[0].points, 3);
+  assert.notEqual(patched.stories[0].updatedAt, "2026-01-01T00:00:00.000Z"); // estimated = touched
+  assert.equal(patched.stories[1].updatedAt, "2026-01-01T00:00:00.000Z"); // untouched carries forward
+});
+
+test("sendSliceToBoard and resyncLinkedCards copy story points onto the card rows", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "caps-points-"));
+  const cap = createCapability("jefelabs", "c");
+  cap.activities = [{ id: "a1", name: "a", order: 0, steps: [{ id: "st1", name: "s", order: 0 }] }];
+  cap.stories = [{ id: "s1", stepId: "st1", order: 0, text: "one", done: false, points: 5 }];
+  cap.slices = [{ id: "sl1", name: "v1", order: 0, storyIds: ["s1"] }];
+  const board = { id: "b1", name: "plan", type: "plan" as const, workspaceId: "jefelabs", columns: [{ id: "queue", name: "Queue" }, { id: "spec", name: "Spec" }], cards: [] };
+  const card = sendSliceToBoard(cap, cap.slices[0], board);
+  assert.equal(card.stories?.[0].points, 5);
+  // Re-estimate, then resync: the linked card's copy follows the map.
+  cap.stories[0].points = 8;
+  cap.slices[0].capCardRef = { boardId: "b1", cardId: card.id };
+  await import("node:fs/promises").then((fs) => fs.mkdir(join(dir, "work"), { recursive: true }));
+  await writeFile(join(dir, "work", "b1.json"), JSON.stringify(board));
+  await resyncLinkedCards(join(dir, "work"), cap);
+  const saved = JSON.parse(await import("node:fs/promises").then((fs) => fs.readFile(join(dir, "work", "b1.json"), "utf8")));
+  assert.equal(saved.cards[0].stories[0].points, 8);
+});

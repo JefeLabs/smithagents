@@ -39,8 +39,9 @@ export interface WorkCard {
   updatedAt: string;
   jira?: { key: string; url: string; lastPushError?: string };
   delegation?: { agentId: string; taskId: string; state: "working" | "completed" | "failed"; prUrl?: string };
-  /** Acceptance-criteria checklist — authored by hand in v1, replaced wholesale on PATCH. Never a column. */
-  stories?: Array<{ id: string; text: string; done: boolean; verifiedBy?: string }>;
+  /** Acceptance-criteria checklist — authored by hand in v1, replaced wholesale on PATCH. Never a column.
+      `points` (real-dashboards spec 2026-08-13): whole ≥ 0; mirrored from the map on linked cards. */
+  stories?: Array<{ id: string; text: string; done: boolean; points?: number; verifiedBy?: string }>;
   /** Set when this card tracks a capability slice — its checklist becomes a toggle-only view of the capability's stories. */
   capabilityRef?: { capabilityId: string; sliceId: string };
   /** Appended each time this card is routed to another board. Never rewritten. */

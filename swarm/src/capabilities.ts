@@ -26,10 +26,16 @@ export interface CapStory {
   /** How it was proven — e.g. 'manual 2026-08-07' or a test file path. */
   verifiedBy?: string;
   /**
+   * Point estimate (real-dashboards spec 2026-08-13): whole number ≥ 0,
+   * map-authored — linked cards mirror it read-only. Absent = unestimated;
+   * dashboards render "—" and sum it as 0.
+   */
+  points?: number;
+  /**
    * When the story was last TOUCHED — created, re-worded, moved to another
-   * step, or toggled (date-range spec 2026-08-12: the map windows stories on
-   * this). Optional: stories from before dating carry none and the control
-   * plane must always show them.
+   * step, re-estimated, or toggled (date-range spec 2026-08-12: the map
+   * windows stories on this). Optional: stories from before dating carry
+   * none and the control plane must always show them.
    */
   updatedAt?: string;
 }
@@ -203,6 +209,11 @@ export function patchCapability(
   const stepIds = new Set(activities.flatMap((a) => a.steps.map((s) => s.id)));
   for (const s of stories) {
     if (!stepIds.has(s.stepId)) throw new Error(`Story "${s.text}" references unknown step ${s.stepId}`);
+    // Free small integer, enforced here so a bad estimate can never persist —
+    // absent is fine (unestimated), fractional or negative is not.
+    if (s.points !== undefined && (!Number.isInteger(s.points) || s.points < 0)) {
+      throw new Error("Story points must be a whole number ≥ 0");
+    }
   }
   const storyIds = new Set(stories.map((s) => s.id));
   for (const slice of slices) {
@@ -243,6 +254,7 @@ export function patchCapability(
       old.text === s.text &&
       old.done === s.done &&
       old.stepId === s.stepId &&
+      (old.points ?? undefined) === (s.points ?? undefined) &&
       (old.verifiedBy ?? undefined) === (s.verifiedBy ?? undefined);
     s.updatedAt = untouched ? old.updatedAt : now;
   }
@@ -358,6 +370,7 @@ export function sendSliceToBoard(cap: Capability, slice: CapSlice, board: WorkBo
     id: s.id,
     text: s.text,
     done: s.done,
+    points: s.points,
     verifiedBy: s.verifiedBy,
   }));
   card.capabilityRef = { capabilityId: cap.id, sliceId: slice.id };
@@ -393,7 +406,13 @@ export async function resyncLinkedCards(workDir: string, cap: Capability): Promi
     for (const ref of refs) {
       const found = findCardByRef(boards, ref);
       if (found) {
-        found.card.stories = stories.map((s) => ({ id: s.id, text: s.text, done: s.done, verifiedBy: s.verifiedBy }));
+        found.card.stories = stories.map((s) => ({
+          id: s.id,
+          text: s.text,
+          done: s.done,
+          points: s.points,
+          verifiedBy: s.verifiedBy,
+        }));
         dirty.add(found.board);
       }
     }
