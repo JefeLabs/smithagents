@@ -32,6 +32,8 @@ import {
   saveAndVerifyKey,
   verifyStoredKey,
 } from "./api-keys.js";
+import { AnthropicProvider, ApiProviderError } from "./api-provider.js";
+import { ApiRuntime } from "./api-runtime.js";
 import { lookupTicket, searchDocs } from "./atlassian-client.js";
 import { readAvatar, stageAvatar } from "./avatars.js";
 import {
@@ -1173,6 +1175,51 @@ export class OrchestratorServer {
         reactionLevels: REACTION_LEVELS,
         presets: PRESET_AGENTS,
       };
+    });
+
+    // ── Api-kind agent turns (api-runtime spec 2026-08-13) ─────────────
+    // The seam later phases (elections, crew sends, discovery) will call.
+    // Wired to nothing yet; the broker learns nothing this round.
+    const apiRuntime = new ApiRuntime(
+      resolve(process.cwd(), ".smith/api-sessions"),
+      new AnthropicProvider(resolve(process.cwd(), ".smith/api-keys.json")),
+    );
+    const findApiAgent = async (id: string) => {
+      const agents = await loadAgents(resolve(process.cwd(), ".smith/agents"));
+      const agent = agents.find((a) => a.id === id && !a.archived);
+      return agent?.engine.kind === "api" ? agent : null;
+    };
+    this.app.post<{ Params: { id: string } }>("/api-agents/:id/turn", async (req, reply) => {
+      const b = (req.body ?? {}) as { sessionId?: string; message?: string };
+      if (!b.message?.trim()) return reply.status(400).send({ error: "Missing required field: message" });
+      const agent = await findApiAgent(req.params.id);
+      if (!agent) return reply.status(404).send({ error: `No api-kind agent: ${req.params.id}` });
+      try {
+        return await apiRuntime.runTurn(agent, b.sessionId?.trim() || null, b.message.trim());
+      } catch (err) {
+        if (err instanceof ApiProviderError) {
+          // Typed and fix-naming (auth → verify the key, billing → top up);
+          // 502 because the swarm is fine — the provider isn't.
+          return reply.status(502).send({ error: err.message, kind: err.kind });
+        }
+        const msg = String((err as Error).message);
+        if (/ENOENT|Invalid session id/.test(msg)) {
+          return reply.status(404).send({ error: `Unknown session: ${b.sessionId}` });
+        }
+        return reply.status(500).send({ error: msg });
+      }
+    });
+    this.app.get<{ Params: { id: string } }>("/api-agents/:id/sessions", async (req, reply) => {
+      const agent = await findApiAgent(req.params.id);
+      if (!agent) return reply.status(404).send({ error: `No api-kind agent: ${req.params.id}` });
+      return { sessions: await apiRuntime.listSessions(agent.id) };
+    });
+    this.app.delete<{ Params: { id: string; sid: string } }>("/api-agents/:id/sessions/:sid", async (req, reply) => {
+      const agent = await findApiAgent(req.params.id);
+      if (!agent) return reply.status(404).send({ error: `No api-kind agent: ${req.params.id}` });
+      const gone = await apiRuntime.deleteSession(agent.id, req.params.sid).catch(() => false);
+      if (!gone) return reply.status(404).send({ error: `Unknown session: ${req.params.sid}` });
+      return reply.status(204).send();
     });
 
     // Portrait bytes. Live agents' art first, committed preset art second —
