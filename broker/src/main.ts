@@ -43,6 +43,7 @@ import { buildDigest } from "./feeds/digest.ts";
 import { startDiscovery } from "./feeds/discovery.ts";
 import { dueSources, recordOutcome } from "./feeds/ingest.ts";
 import { ownerRole } from "./feeds/interests.ts";
+import { jiraItemsFrom } from "./feeds/jira-poll.ts";
 import { readManifests } from "./feeds/manifests.ts";
 import { diffBundle } from "./feeds/rediscover.ts";
 import { parseFeed, youtubeFeedUrl } from "./feeds/rss.ts";
@@ -1944,6 +1945,21 @@ async function fetchSource(source: FeedSource): Promise<{ ok: boolean; error?: s
         },
       ]);
       if (fresh && source.workspace) void makeCard(fresh, source.workspace, from);
+      return { ok: true };
+    }
+    if (source.kind === "jira") {
+      if (!source.connectorId || !source.locator || !source.query) {
+        return { ok: false, error: "jira source missing connector/site/query" };
+      }
+      const res = await swarm.work("POST", "/atlassian/search", {
+        connectorId: source.connectorId,
+        siteUrl: source.locator,
+        jql: source.query,
+      });
+      if (res.status >= 400) return { ok: false, error: `search ${res.status}` };
+      const issues = (res.payload as { issues?: Array<{ key: string; summary: string; url: string }> }).issues ?? [];
+      // TODO(task-11): card fresh items — bindings land with cardForSource
+      feedStore.addItems(jiraItemsFrom(issues, source.id, new Date().toISOString()));
       return { ok: true };
     }
     // x sources are polled by their own path; nothing to do here yet.
