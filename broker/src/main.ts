@@ -37,8 +37,8 @@ import { analyzeBrief, workItemsFrom } from "./feeds/analyze.ts";
 import { approve, repoKey } from "./feeds/approve.ts";
 import { latestFromAtom } from "./feeds/atom-release.ts";
 import { parseBundle } from "./feeds/bundle.ts";
-import { cardForRelease } from "./feeds/cards.ts";
-import { fromContextSources } from "./feeds/context-sources.ts";
+import { type BoundBoard, cardForRelease, cardForSource } from "./feeds/cards.ts";
+import { type ContextSourceWire, fromContextSources } from "./feeds/context-sources.ts";
 import { deriveSources } from "./feeds/derive.ts";
 import { buildDigest } from "./feeds/digest.ts";
 import { startDiscovery } from "./feeds/discovery.ts";
@@ -1670,6 +1670,23 @@ const FEEDS_TICK_MS = 60_000;
 /** Manifests are re-read this often; a dependency added today is watched today. */
 const DERIVE_TICK_MS = 60 * 60_000;
 
+/** GET /work/boards already returns full board records (columns, queue,
+    cards with sourceRef) — this just plucks the fields binding-driven
+    carding needs, shared by the release path and cardContextItem below. */
+async function fetchBoundBoards(): Promise<BoundBoard[]> {
+  const { payload } = await workBoards.proxy("GET", "/work/boards");
+  return ((payload as { boards?: Array<Partial<BoundBoard> & { id: string; type: string }> }).boards ?? []).map(
+    (b) => ({
+      id: b.id,
+      type: b.type,
+      workspaceId: b.workspaceId,
+      columns: b.columns ?? [],
+      queue: b.queue,
+      cards: b.cards ?? [],
+    }),
+  );
+}
+
 /**
  * A qualifying release becomes a Triage card (spec §5b) — this is how the
  * maintenance and reactive boards get filled. Failure is logged, never thrown:
@@ -1678,12 +1695,7 @@ const DERIVE_TICK_MS = 60 * 60_000;
 async function makeCard(item: FeedItem, workspace: string, currentVersion: string): Promise<void> {
   const result = await cardForRelease(
     {
-      boards: async () => {
-        const { payload } = await workBoards.proxy("GET", "/work/boards");
-        return ((payload as { boards?: Array<{ id: string; type: string; workspaceId?: string }> }).boards ?? []).map(
-          (b) => ({ id: b.id, type: b.type, workspaceId: b.workspaceId }),
-        );
-      },
+      boards: fetchBoundBoards,
       addCard: async (boardId, card) => {
         const { status } = await workBoards.proxy("POST", `/work/boards/${boardId}/cards`, card);
         if (status >= 400) throw new Error(`board rejected the card (${status})`);
@@ -1713,6 +1725,35 @@ async function makeCard(item: FeedItem, workspace: string, currentVersion: strin
     console.log(`[feeds] carded ${item.title} → ${workspace}`);
   } else {
     console.error(`[feeds] no card for ${item.title}: ${result.reason}`);
+  }
+}
+
+/**
+ * A context source's fresh item becomes a card on every board bound to it
+ * (spec 2026-08-13 queue-sources §binding-driven carding) — replaces the old
+ * hardcoded boardTypeFor targeting for jira/http sources. Failure is logged,
+ * never thrown: a poll that can't card is still a successful poll.
+ */
+async function cardContextItem(
+  source: { id: string; workspace?: string; contextId?: string },
+  items: Array<{ title: string; summary: string; itemKey: string }>,
+): Promise<void> {
+  try {
+    const boards = await fetchBoundBoards();
+    const result = await cardForSource(
+      {
+        addCard: async (boardId, card) => {
+          const { status } = await workBoards.proxy("POST", `/work/boards/${boardId}/cards`, card);
+          if (status >= 400) throw new Error(`board rejected the card (${status})`);
+        },
+      },
+      boards,
+      source,
+      items,
+    );
+    if (result.carded) console.log(`[feeds] carded ${result.carded} item(s) from ${source.id}`);
+  } catch (err) {
+    console.error(`[feeds] no card for ${source.id}: ${String((err as Error).message ?? err)}`);
   }
 }
 
@@ -1959,8 +2000,13 @@ async function fetchSource(source: FeedSource): Promise<{ ok: boolean; error?: s
       });
       if (res.status >= 400) return { ok: false, error: `search ${res.status}` };
       const issues = (res.payload as { issues?: Array<{ key: string; summary: string; url: string }> }).issues ?? [];
-      // TODO(task-11): card fresh items — bindings land with cardForSource
-      feedStore.addItems(jiraItemsFrom(issues, source.id, new Date().toISOString()));
+      const items = jiraItemsFrom(issues, source.id, new Date().toISOString());
+      const keyById = new Map(items.map((it, i) => [it.id, issues[i].key]));
+      const fresh = feedStore.addItems(items);
+      for (const item of fresh) {
+        const itemKey = keyById.get(item.id);
+        if (itemKey) await cardContextItem(source, [{ title: item.title, summary: item.summary, itemKey }]);
+      }
       return { ok: true };
     }
     if (source.kind === "http") {
@@ -1993,8 +2039,8 @@ async function fetchSource(source: FeedSource): Promise<{ ok: boolean; error?: s
           summary: w.notes.slice(0, 400),
         })),
       );
-      // TODO(task-11): card fresh items — bindings land with cardForSource
-      void fresh;
+      for (const item of fresh)
+        await cardContextItem(source, [{ title: item.title, summary: item.summary, itemKey: item.title }]);
       return { ok: true };
     }
     // x sources are polled by their own path; nothing to do here yet.
@@ -2126,6 +2172,49 @@ const syncContextSources = async (): Promise<void> => {
 };
 void syncContextSources();
 setInterval(() => void syncContextSources(), DERIVE_TICK_MS).unref();
+
+/**
+ * Boot-only migration: an active topic predates context sources and has no
+ * row on the default workspace, so nothing exists for a board to bind to.
+ * Seed one (preset "topic", no polling — its discovery machinery already
+ * exists, see fromContextSources) so Queue Sources/Terminal Effects can
+ * target it. Idempotent by source id; a failed PUT warns and the next topic
+ * still gets its chance.
+ */
+const ensureTopicRows = async (): Promise<void> => {
+  try {
+    const workspaces = await swarm.listWorkspaces();
+    const ws = workspaces.find((w) => w.name === defaultWorkspaceName);
+    if (!ws) return;
+    let sources: ContextSourceWire[] = (ws.sources as ContextSourceWire[] | undefined) ?? [];
+    const known = new Set(sources.map((s) => s.id));
+    for (const topic of topicStore.all()) {
+      if (topic.status !== "active") continue;
+      const id = `topic-${topic.id}`;
+      if (known.has(id)) continue;
+      const row: ContextSourceWire = {
+        id,
+        name: topic.name,
+        preset: "topic",
+        origin: { query: topic.name },
+        cadence: "nightly",
+        transform: { mode: "analyze" },
+        enabled: true,
+      };
+      try {
+        sources = [...sources, row];
+        await swarm.updateWorkspace(defaultWorkspaceName, { sources });
+        known.add(id);
+        console.log(`[feeds] seeded topic source ${id} onto ${defaultWorkspaceName}`);
+      } catch (err) {
+        console.warn(`[feeds] failed to seed topic source ${id}: ${String(err)}`);
+      }
+    }
+  } catch (err) {
+    console.warn(`[feeds] topic boot ensure failed: ${String(err)}`);
+  }
+};
+void ensureTopicRows();
 
 // Where a discovery agent writes its bundle (topics spec §3.1).
 const topicsDir = process.env.BROKER_TOPICS_DIR ?? ".smith/topics";
