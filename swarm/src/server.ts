@@ -120,6 +120,7 @@ import { WorkerPool } from "./remote-runtime.js";
 import type { ConnectedWorker, RegisteredMessage, WorkerMessage, WorkerRegisterMessage } from "./remote-types.js";
 import { isEncrypted } from "./secretbox.js";
 import { SessionStore } from "./session-store.js";
+import { seedSourceMigration } from "./source-migration.js";
 import {
   loadSquadsFromDir,
   SQUAD_ROSTER,
@@ -408,6 +409,25 @@ export class OrchestratorServer {
       this.app.log.info(
         `Workspaces: ${this.workspaces.map((w) => `${w.name}(${w.repos.map((r) => r.name).join(",")})`).join(" ")}`,
       );
+    }
+
+    // ONE-WAY boot seeding (spec 2026-08-13 queue-sources Part 4): existing
+    // repo/Jira pipelines become visible source rows + queue bindings.
+    // Idempotent — a second boot against the seeded state writes nothing.
+    {
+      const migration = seedSourceMigration(
+        await loadAllContextsFromDir(resolve(process.cwd(), ".smith/workspaces")),
+        (await loadBoards(this.workDir())).boards,
+      );
+      for (const ws of migration.workspaceWrites) {
+        await saveWorkspace(resolve(process.cwd(), ".smith/workspaces"), ws);
+        this.app.log.info(`[source-migration] seeded sources on ${ws.name}`);
+      }
+      for (const b of migration.boardWrites) {
+        await saveBoard(this.workDir(), b);
+        this.app.log.info(`[source-migration] bound queue on ${b.id}`);
+      }
+      if (migration.workspaceWrites.length > 0) await this.reloadWorkspaces();
     }
 
     try {
