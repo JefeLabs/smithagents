@@ -132,7 +132,18 @@ export function NewSessionScreen({ lockedWorkspace, forced, onSend, onCancel }: 
   };
 
   return (
-    <section className="new-session-screen" aria-label="New session">
+    // Click-outside dismisses (Edwin, 2026-08-13): the section IS the backdrop
+    // around the card, so a pointerdown landing on it directly — never one
+    // that started inside the card — is the same "I'm done here" gesture
+    // Escape already handles. pointerdown, not click: a text-selection drag
+    // that ends outside the card must not close the screen.
+    <section
+      className="new-session-screen"
+      aria-label="New session"
+      onPointerDown={(e) => {
+        if (!forced && e.target === e.currentTarget) onCancel();
+      }}
+    >
       <div className="new-session-screen__card">
         {!forced && (
           <button

@@ -215,3 +215,17 @@ describe("NewSessionScreen", () => {
     expect(screen.getByText("https://acme.dev/docs")).toBeInTheDocument();
   });
 });
+
+describe("click-outside dismissal (Edwin, 2026-08-13)", () => {
+  it("a pointerdown on the backdrop cancels; one inside the card does not", () => {
+    const onCancel = vi.fn();
+    renderScreen({ onCancel }, { modes: ALL_MODES });
+    const section = screen.getByRole("region", { name: "New session" });
+    // Inside the card first — no dismissal.
+    fireEvent.pointerDown(screen.getByRole("heading", { name: /start a session/i }));
+    expect(onCancel).not.toHaveBeenCalled();
+    // Directly on the backdrop section — dismissed.
+    fireEvent.pointerDown(section);
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+});
