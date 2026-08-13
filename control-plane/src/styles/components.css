@@ -3913,3 +3913,22 @@ button.logo {
 .workspace-manager__tabpane[hidden] {
   display: none;
 }
+
+/* --- unified context wizard: the containment row (spec 2026-08-13) --- */
+.nc-contains {
+  margin: 10px 0 14px;
+}
+.nc-contains__label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+/* The pills state through their selected outline; the floating indicator dot
+   overlapped the label text (Edwin's screenshot). */
+.nc-contains .radio-button-group__indicator {
+  display: none;
+}
+.nc-contains .radio-button-group__item {
+  padding: 8px 14px;
+}

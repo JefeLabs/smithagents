@@ -298,22 +298,28 @@ export function NewContextModal({
           test asserts the value survives; it doesn't distinguish which mechanism did it. */}
       <div ref={detailsRef} hidden={step !== 0}>
         {/* What does this contain? The answer IS the entity (Edwin: "workspace
-            that add child workspace or other groups is a group"). */}
-        <RadioButtonGroup
-          aria-label="What this contains"
-          value={contains}
-          onChange={(value) => setValue("contains", value as NewContextFormValues["contains"])}
-          orientation="horizontal"
-        >
-          <RadioButtonGroup.Item value="repos">
-            <RadioButtonGroup.ItemContent>Repositories</RadioButtonGroup.ItemContent>
-            <RadioButtonGroup.Indicator />
-          </RadioButtonGroup.Item>
-          <RadioButtonGroup.Item value="members">
-            <RadioButtonGroup.ItemContent>Workspaces &amp; groups</RadioButtonGroup.ItemContent>
-            <RadioButtonGroup.Indicator />
-          </RadioButtonGroup.Item>
-        </RadioButtonGroup>
+            that add child workspace or other groups is a group"). The pills
+            carry NO indicator dot — the selected outline is the state, and
+            the dot rendered floating over the label text (Edwin's screenshot,
+            2026-08-13). */}
+        <div className="nc-contains">
+          <span className="nc-contains__label" id="nc-contains-label">
+            What does this contain?
+          </span>
+          <RadioButtonGroup
+            aria-labelledby="nc-contains-label"
+            value={contains}
+            onChange={(value) => setValue("contains", value as NewContextFormValues["contains"])}
+            orientation="horizontal"
+          >
+            <RadioButtonGroup.Item value="repos">
+              <RadioButtonGroup.ItemContent>Repositories</RadioButtonGroup.ItemContent>
+            </RadioButtonGroup.Item>
+            <RadioButtonGroup.Item value="members">
+              <RadioButtonGroup.ItemContent>Workspaces &amp; groups</RadioButtonGroup.ItemContent>
+            </RadioButtonGroup.Item>
+          </RadioButtonGroup>
+        </div>
         <FormTextField
           control={control}
           name="name"
