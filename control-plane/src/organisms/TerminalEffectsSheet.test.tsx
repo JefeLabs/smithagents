@@ -1,6 +1,7 @@
 import { cleanup, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { BOARD_ROUTES_UI } from "../lib/board-aggregate";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { TerminalEffectsSheet } from "./TerminalEffectsSheet";
 
@@ -68,5 +69,39 @@ describe("TerminalEffectsSheet", () => {
     await userEvent.click(await screen.findByRole("button", { name: /remove route to plan/i }));
     const patch = calls.find((c) => c.method === "PATCH");
     expect((patch?.body as { terminal: { effects: unknown[] } } | undefined)?.terminal?.effects).toHaveLength(0);
+  });
+
+  it("route-effect add excludes the board's own type from To-type, and omits columnId when unset", async () => {
+    const { calls } = stubFetch({});
+    renderWithProviders(<TerminalEffectsSheet board={BOARD as never} open onClose={() => {}} />);
+    await userEvent.selectOptions(await screen.findByLabelText(/effect kind/i), "route");
+
+    // Derived from the route table itself, not hardcoded — this tracks
+    // BOARD_ROUTES_UI as it evolves rather than pinning today's board list.
+    // "ideation" IS a real route target (plan/reactive route into it), so
+    // subtracting it here — rather than it simply never appearing in the
+    // union — is what actually exercises the self-route exclusion below.
+    const allTargets = new Set(Object.values(BOARD_ROUTES_UI).flatMap((exits) => exits.map((e) => e.toType)));
+    const expected = [...allTargets].filter((t) => t !== BOARD.type);
+
+    const toTypeSelect = screen.getByLabelText(/to type/i) as HTMLSelectElement;
+    const optionValues = [...toTypeSelect.options].map((o) => o.value);
+    expect(new Set(optionValues)).toEqual(new Set(expected));
+    // Pins the ruling explicitly: a board must never offer itself as a route target.
+    expect(optionValues).not.toContain("ideation");
+
+    await userEvent.selectOptions(toTypeSelect, "deliver");
+    await userEvent.type(screen.getByLabelText(/to column/i), "ready");
+    await userEvent.click(screen.getByRole("button", { name: /add effect/i }));
+
+    const patch = calls.find((c) => c.method === "PATCH");
+    const body = patch?.body as { terminal: { columnId?: string; effects: unknown[] } };
+    // The BOARD fixture's terminal has effects but no columnId — an
+    // effects-only write must not stamp today's default column in.
+    expect(body.terminal).not.toHaveProperty("columnId");
+    expect(body.terminal.effects).toEqual([
+      ...BOARD.terminal.effects,
+      { kind: "route", toType: "deliver", toColumn: "ready" },
+    ]);
   });
 });
