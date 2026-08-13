@@ -2348,6 +2348,26 @@ export class OrchestratorServer {
       },
     );
 
+    // Credential-holding search endpoint: the broker polls Jira context
+    // sources through this rather than holding Atlassian credentials itself.
+    this.app.post<{ Body: { connectorId?: string; siteUrl?: string; jql?: string } }>(
+      "/atlassian/search",
+      async (req, reply) => {
+        const users = await loadUsersFromDir(resolve(process.cwd(), ".smith/users"));
+        const user = resolveCurrentUser(users);
+        const adapter = (id: string) => {
+          const resolved = resolveAtlassianConnector(id, user, { name: "jql", value: req.body?.jql });
+          if ("error" in resolved) return resolved;
+          return {
+            email: resolved.instance.fields.email ?? "",
+            apiToken: resolved.instance.fields.apiToken ?? "",
+          };
+        };
+        const { status, payload } = await runJiraSearch(adapter, req.body ?? {}, searchIssues);
+        return reply.code(status).send(payload);
+      },
+    );
+
     this.app.get("/squads", async () => {
       const all = SQUAD_ROSTER.map((s) => {
         const isActive = this.squadPool.isActive(s.id) || this.activeSquads.has(s.id);
@@ -3355,6 +3375,29 @@ export function resolveAtlassianConnector(
   // Hand the validated value back so callers use the checked one rather than
   // re-asserting the original could-be-undefined body field.
   return { ...resolved, field: requiredField.value };
+}
+
+// Jira REST v3. /rest/api/3/search is deprecated in favor of /search/jql
+// (token pagination) — if search breaks, migrate BOTH this and
+// jira-sync.ts's searchIssues together.
+/** Handler-core for POST /atlassian/search — exported for tests (no route-boot
+    harness exists; see server.test.ts header). The broker polls jira context
+    sources through this rather than holding Atlassian credentials itself. */
+export async function runJiraSearch(
+  resolve: (connectorId: string) => { email: string; apiToken: string } | { error: string },
+  body: { connectorId?: string; siteUrl?: string; jql?: string },
+  search: typeof searchIssues,
+): Promise<{ status: number; payload: unknown }> {
+  if (!body.connectorId || !body.siteUrl || !body.jql)
+    return { status: 400, payload: { error: "connectorId, siteUrl, jql required" } };
+  const creds = resolve(body.connectorId);
+  if ("error" in creds) return { status: 400, payload: { error: creds.error } };
+  try {
+    const issues = await search(body.siteUrl, creds.email, creds.apiToken, body.jql);
+    return { status: 200, payload: { issues } };
+  } catch (err) {
+    return { status: 502, payload: { error: String((err as Error).message ?? err) } };
+  }
 }
 
 /**

@@ -8,6 +8,9 @@ import { addCard, type WorkBoard } from "./work-items.js";
 
 const auth = (email: string, apiToken: string) => `Basic ${Buffer.from(`${email}:${apiToken}`).toString("base64")}`;
 
+// Jira REST v3. /rest/api/3/search is deprecated in favor of /search/jql
+// (token pagination) — if search breaks, migrate BOTH this and
+// runJiraSearch's core in server.ts together.
 export async function searchIssues(
   siteUrl: string,
   email: string,
@@ -29,6 +32,40 @@ export async function searchIssues(
     summary: i.fields?.summary ?? i.key,
     url: `${base}/browse/${i.key}`,
   }));
+}
+
+/** Create one issue. Description is wrapped in the minimal ADF paragraph the
+    v3 API requires — callers pass plain text. Throws with the status on any
+    non-2xx, mirroring transitionIssue's failure style. */
+export async function createIssue(
+  siteUrl: string,
+  email: string,
+  apiToken: string,
+  projectKey: string,
+  summary: string,
+  description: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ key: string; url: string }> {
+  const base = siteUrl.replace(/\/$/, "");
+  const res = await fetchImpl(`${base}/rest/api/3/issue`, {
+    method: "POST",
+    headers: { authorization: auth(email, apiToken), "content-type": "application/json" },
+    body: JSON.stringify({
+      fields: {
+        project: { key: projectKey },
+        summary,
+        issuetype: { name: "Task" },
+        description: {
+          type: "doc",
+          version: 1,
+          content: [{ type: "paragraph", content: [{ type: "text", text: description || summary }] }],
+        },
+      },
+    }),
+  });
+  if (!res.ok) throw new Error(`jira create failed (${res.status})`);
+  const body = (await res.json()) as { key: string };
+  return { key: body.key, url: `${base}/browse/${body.key}` };
 }
 
 /** Merge issues into the board: unseen keys become leftmost-column cards, known keys refresh title only. Never moves a card. */

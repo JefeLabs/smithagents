@@ -24,6 +24,7 @@ import {
   resolveConnector,
   resolveTaskRuntime,
   resolveVoiceKeys,
+  runJiraSearch,
   workspaceProblems,
 } from "./server.js";
 import type { ConnectorInstance, User } from "./users.js";
@@ -66,6 +67,30 @@ test("redactConnector: secret fields become has<Field> booleans, non-secret fiel
   // Secret field: boolean presence flag, never the raw token.
   assert.equal((redacted.fields as Record<string, unknown>).hasApiToken, true);
   assert.equal(JSON.stringify(redacted).includes("super-secret-token"), false);
+});
+
+test("runJiraSearch resolves the connector then searches; a resolve error is a 400", async () => {
+  const ok = await runJiraSearch(
+    () => ({ email: "e@x.com", apiToken: "tok" }),
+    { connectorId: "atl-1", siteUrl: "https://acme.atlassian.net", jql: "project = PROJ" },
+    async () => [{ key: "PROJ-1", summary: "s", url: "u" }],
+  );
+  assert.equal(ok.status, 200);
+  assert.deepEqual(ok.payload, { issues: [{ key: "PROJ-1", summary: "s", url: "u" }] });
+
+  const bad = await runJiraSearch(
+    () => ({ error: "no such connector" }),
+    { connectorId: "x", siteUrl: "https://a", jql: "j" },
+    async () => [],
+  );
+  assert.equal(bad.status, 400);
+
+  const missing = await runJiraSearch(
+    () => ({ email: "e", apiToken: "t" }),
+    { jql: "j" },
+    async () => [],
+  );
+  assert.equal(missing.status, 400);
 });
 
 test("buildConnectorFields: POST /me/connectors — an unknown/extra field key is dropped, only registry-declared keys persist", () => {

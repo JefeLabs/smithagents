@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { importIssues, searchIssues, transitionIssue } from "./jira-sync.js";
+import { createIssue, importIssues, searchIssues, transitionIssue } from "./jira-sync.js";
 import { addCard, createBoard } from "./work-items.js";
 
 const fetchStub = (
@@ -86,5 +86,40 @@ test("transitionIssue: finds the transition by target status name (case-insensit
   await assert.rejects(
     transitionIssue("https://a.net", "e", "t", "PROJ-1", "Blocked", f),
     /no transition to "Blocked"/i,
+  );
+});
+
+test("createIssue POSTs the v3 issue shape and returns key + browse url", async () => {
+  let captured: { url: string; init: RequestInit } | null = null;
+  const fetchImpl = fetchStub([
+    {
+      match: /\/rest\/api\/3\/issue$/,
+      body: { key: "PROJ-7" },
+      capture: (url, init) => {
+        captured = { url, init };
+      },
+    },
+  ]);
+  const res = await createIssue(
+    "https://acme.atlassian.net",
+    "e@x.com",
+    "tok",
+    "PROJ",
+    "Fix login",
+    "Details here",
+    fetchImpl,
+  );
+  assert.deepEqual(res, { key: "PROJ-7", url: "https://acme.atlassian.net/browse/PROJ-7" });
+  const sent = JSON.parse(String(captured!.init.body));
+  assert.equal(sent.fields.project.key, "PROJ");
+  assert.equal(sent.fields.summary, "Fix login");
+  assert.equal(sent.fields.issuetype.name, "Task");
+});
+
+test("createIssue throws on a non-2xx response with the status in the message", async () => {
+  const fetchImpl = fetchStub([{ match: /issue$/, status: 403, body: { errorMessages: ["nope"] } }]);
+  await assert.rejects(
+    () => createIssue("https://acme.atlassian.net", "e@x.com", "tok", "PROJ", "t", "d", fetchImpl),
+    /403/,
   );
 });
