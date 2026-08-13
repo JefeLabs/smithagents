@@ -24,6 +24,7 @@ import { useBoards, useCreateBoard, useCreateCard, useImportJira, useMoveCard } 
 import { useUiStore } from "../stores/uiStore";
 import { CardSheet } from "./CardSheet";
 import { QueueSourcesSheet } from "./QueueSourcesSheet";
+import { TerminalEffectsSheet } from "./TerminalEffectsSheet";
 
 /** Stable empty while the records query is pending — `colorFor` runs per card. */
 const NO_WORKSPACES: WorkspaceRecord[] = [];
@@ -457,6 +458,13 @@ export function BoardStage({ roster }: BoardStageProps) {
       )}
       {configOpen?.column === "queue" && boardOf(configOpen.boardId) && (
         <QueueSourcesSheet board={boardOf(configOpen.boardId) as WorkBoardT} open onClose={() => setConfigOpen(null)} />
+      )}
+      {configOpen?.column === "terminal" && boardOf(configOpen.boardId) && (
+        <TerminalEffectsSheet
+          board={boardOf(configOpen.boardId) as WorkBoardT}
+          open
+          onClose={() => setConfigOpen(null)}
+        />
       )}
     </section>
   );
