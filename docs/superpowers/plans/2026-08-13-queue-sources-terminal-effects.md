@@ -1,5 +1,7 @@
 # Queue Sources + Terminal Side-Effects Implementation Plan
 
+> **CLAIMED:** 2026-08-13 by session 93b80eca (Edwin's interactive session) — executing via subagent-driven development on branch `queue-sources-terminal-effects` (worktree). Do not execute this plan from another session.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Boards' edge columns become configurable — the Queue binds to pollable "context sources" (Jira, releases, topics, observability, custom) owned by the workspace record, and the terminal column fires side-effects (publish to Jira, route a copy onward) when a card lands there, with a hover gear on each edge column opening the config sheet.
