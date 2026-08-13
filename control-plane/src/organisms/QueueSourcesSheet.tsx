@@ -159,6 +159,7 @@ export function QueueSourcesSheet({ board, open, onClose }: QueueSourcesSheetPro
                 <input
                   type="checkbox"
                   checked={boundIds.includes(s.id)}
+                  disabled={updateBoard.isPending}
                   onChange={(e) => void toggle(s, e.target.checked)}
                 />{" "}
                 {s.name} <span className="q-sheet__preset">{s.preset}</span>
@@ -238,10 +239,10 @@ export function QueueSourcesSheet({ board, open, onClose }: QueueSourcesSheetPro
               <span className="q-sheet__arrivals-head">Cards also arrive from</span>
               {/* v1 renders the static route table only — a board's OWN inbound terminal
                   effects (another board's routed exit) are not cross-referenced here yet. */}
+              {/* Undecorated <p>s inherit q-sheet__arrivals's font-size/color —
+                  wizard__hint would pin its own 11px over that. */}
               {arrivals.map((line) => (
-                <p key={line} className="wizard__hint">
-                  {line}
-                </p>
+                <p key={line}>{line}</p>
               ))}
             </div>
           )}
