@@ -1,7 +1,7 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { WorkspaceRecord } from "../api/types";
+import type { ContextSourceT, WorkspaceRecord } from "../api/types";
 import { WORKSPACE_PALETTE } from "../lib/workspace-color";
 import { useUiStore } from "../stores/uiStore";
 import { WorkspaceManagerModal } from "./WorkspaceManagerModal";
@@ -225,6 +225,51 @@ describe("WorkspaceManagerModal — connector pickers", () => {
         false,
       ),
     );
+  });
+
+  it("saving a workspace from the manager preserves sources it does not edit", async () => {
+    // toRecord is a closed allowlist (see its own doc comment) — without a
+    // `sources` passthrough line, every save from this modal wipes context
+    // sources. Copied from "editing saves links" above, with a `sources`
+    // fixture and its deep-equal assertion added.
+    const save = vi.fn(async () => ({}));
+    const sources: ContextSourceT[] = [
+      {
+        id: "src-1",
+        name: "Jira triage",
+        preset: "jira",
+        origin: { connectorId: "conn-a", query: "project = ACME" },
+        cadence: "hourly",
+        transform: { mode: "map" },
+        enabled: true,
+      },
+    ];
+    const existing = {
+      name: "acme",
+      default: true,
+      repos: [],
+      links: ["https://github.com/acme/web"],
+      sources,
+    };
+    render(
+      <WorkspaceManagerModal
+        open
+        onClose={() => {}}
+        list={vi.fn(async () => [existing])}
+        save={save}
+        remove={vi.fn()}
+        verifyAtlassian={vi.fn()}
+        verifyRepoGithub={vi.fn()}
+        listMyConnectors={vi.fn(async () => CONNECTORS)}
+      />,
+    );
+    await userEvent.click(await screen.findByText("acme"));
+    const linksField = (await screen.findByLabelText(/links/i)) as HTMLTextAreaElement;
+    await userEvent.type(linksField, "\nhttps://acme.atlassian.net");
+    await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const saved = save.mock.calls[0]?.[0] as WorkspaceRecord;
+    expect(saved.sources).toEqual(existing.sources);
   });
 
   it("editing owner/repo after picking a connector does not wipe the picked connectorId", async () => {

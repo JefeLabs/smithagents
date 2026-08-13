@@ -13,7 +13,7 @@
  * `getBoards`/`getCapabilities` already threw in the original — unchanged.
  */
 
-import type { CapabilityT } from "../api/types";
+import type { CapabilityT, TerminalEffectT } from "../api/types";
 import type { WorkBoardT } from "../organisms/BoardStage";
 import { BROKER_BASE } from "./broker";
 import { brokerFetch } from "./origin";
@@ -91,6 +91,23 @@ export async function patchCard(
     base,
     { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) },
   ).catch(() => null);
+  if (res?.ok) return;
+  const payload = (await res?.json().catch(() => null)) as { error?: string } | null;
+  throw new Error(payload?.error ?? "Update failed");
+}
+
+/** PATCH /work/boards/:id — edge-column config only. First board-patch client:
+    name/columns/jira stay unexposed here until a UI needs them. */
+export async function patchBoard(
+  boardId: string,
+  body: { queue?: { sourceIds: string[] }; terminal?: { columnId?: string; effects: TerminalEffectT[] } },
+  base: string = BROKER_BASE,
+): Promise<void> {
+  const res = await brokerFetch(`/work/boards/${encodeURIComponent(boardId)}`, base, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  }).catch(() => null);
   if (res?.ok) return;
   const payload = (await res?.json().catch(() => null)) as { error?: string } | null;
   throw new Error(payload?.error ?? "Update failed");

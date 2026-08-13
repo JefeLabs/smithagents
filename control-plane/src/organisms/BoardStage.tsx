@@ -2,7 +2,7 @@ import { DndContext, type DragEndEvent, PointerSensor, pointerWithin, useSensor,
 import { useQueryClient } from "@tanstack/react-query";
 import { Download, Plus, SquareKanban } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { RosterAgent, WorkspaceRecord } from "../api/types";
+import type { RosterAgent, TerminalEffectT, WorkspaceRecord } from "../api/types";
 import type { BoardsResult } from "../api/work";
 import { useRangeBounds } from "../hooks/useRangeBounds";
 import {
@@ -48,6 +48,8 @@ export interface WorkCardT {
   capabilityRef?: { capabilityId: string; sliceId: string };
   flag?: { kind: "blocked" | "at-risk" | "waiting"; reason?: string; since: string };
   routedFrom?: Array<{ boardId: string; boardType: string; columnId: string; at: string }>;
+  /** Set when this card was carded from a bound queue source. */
+  sourceRef?: { sourceId: string; itemKey: string };
 }
 export interface WorkBoardT {
   id: string;
@@ -58,6 +60,10 @@ export interface WorkBoardT {
   jira?: { connectorId: string; siteUrl: string; projectKey: string; jql?: string };
   /** Present on a workspace's standing boards; absent on personal boards. */
   workspaceId?: string;
+  /** Bound queue sources card their items into this board's intake lane. */
+  queue?: { sourceIds: string[] };
+  /** Side effects fired when a card enters the terminal column. */
+  terminal?: { columnId?: string; effects: TerminalEffectT[] };
 }
 
 interface BoardStageProps {

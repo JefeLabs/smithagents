@@ -224,6 +224,24 @@ export interface ConnectorInstanceRecord {
   fields: Record<string, string | boolean>;
 }
 
+/** A pollable external origin owned by a workspace (spec 2026-08-13
+    queue-sources) — mirrors swarm's ContextSource (workspaces.ts) field-for-field. */
+export interface ContextSourceT {
+  id: string;
+  name: string;
+  preset: "jira" | "releases" | "topic" | "observability" | "support" | "custom";
+  origin: { connectorId?: string; url?: string; query?: string };
+  cadence: "hourly" | "6h" | "nightly";
+  transform: { mode: "map" } | { mode: "analyze"; prompt?: string };
+  enabled: boolean;
+}
+
+/** Terminal side-effect config (spec 2026-08-13 queue-sources) — mirrors
+    swarm's TerminalEffect (work-items.ts) field-for-field. */
+export type TerminalEffectT =
+  | { kind: "publish-jira"; connectorId: string; projectKey: string }
+  | { kind: "route"; toType: string; toColumn: string };
+
 /** Full workspace record, as the manager UI reads and writes it. */
 export interface WorkspaceRecord {
   name: string;
@@ -244,6 +262,8 @@ export interface WorkspaceRecord {
   color?: string;
   /** Opt-in sprint definition (date-range spec 2026-08-12). */
   sprint?: { anchor: string; lengthDays: number };
+  /** Pollable external origins owned by this workspace (spec 2026-08-13 queue-sources) — absent means none configured. */
+  sources?: ContextSourceT[];
 }
 
 /** The operator's own profile — connector credentials read back redacted, never the secret itself. */

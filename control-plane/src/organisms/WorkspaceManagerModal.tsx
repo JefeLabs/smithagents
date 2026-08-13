@@ -152,11 +152,13 @@ function toForm(ws: WorkspaceRecord): WorkspaceFormValues {
  * omitting it is safe: `PUT /workspaces/:name` falls back to `existing.archived`
  * (`swarm/src/server.ts:1476`), and this modal only ever lists un-archived workspaces.
  */
-function toRecord(v: WorkspaceFormValues): WorkspaceRecord {
+function toRecord(v: WorkspaceFormValues, existing?: WorkspaceRecord): WorkspaceRecord {
   return {
     name: v.name,
     description: v.description,
     default: v.default,
+    // not edited here — the queue gear owns sources; dropping this line wipes them on every save
+    sources: existing?.sources,
     // PUT reads an absent colour as "keep the existing one", so unpicking
     // has to travel as an empty string to actually clear it. Both routes
     // collapse "" to undefined before saving; the convention is untouched.
@@ -372,7 +374,8 @@ export function WorkspaceManagerModal({
       return;
     }
     const isNew = selected === null;
-    const result = await save(toRecord(values), isNew).catch((err: unknown): { error?: string } => ({
+    const existing = selected ? workspaces.find((w) => w.name === selected) : undefined;
+    const result = await save(toRecord(values, existing), isNew).catch((err: unknown): { error?: string } => ({
       error: String(err),
     }));
     if (result.error) {

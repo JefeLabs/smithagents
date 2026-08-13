@@ -70,6 +70,16 @@ export function useMoveCard() {
   });
 }
 
+/** Wraps the whole-board edge-config PATCH (queue bindings, terminal effects). */
+export function useUpdateBoard() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ boardId, body }: { boardId: string; body: Parameters<typeof api.patchBoard>[1] }) =>
+      api.patchBoard(boardId, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.boards }),
+  });
+}
+
 export function useImportJira() {
   const qc = useQueryClient();
   return useMutation({
