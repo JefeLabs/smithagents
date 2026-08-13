@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import {
   type ApiKeysFile,
+  apiKeyEngineGate,
   buildApiKeyListings,
   deleteKey,
   emptyApiKeysFile,
@@ -189,4 +190,23 @@ test("getCredential: still serves a key whose last probe was unconfirmed", async
   const p = join(dir, "api-keys.json");
   await saveAndVerifyKey(p, "google", "sk-live-9876", downFetch(), NOW); // stores verified:'unknown'
   assert.deepEqual(await getCredential(p, "google"), { key: "sk-live-9876" });
+});
+
+test("apiKeyEngineGate: verified key opens the door; everything else names the fix", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "keys-gate-"));
+  const path = join(dir, "api-keys.json");
+  // Unknown provider — regardless of file state.
+  assert.match((await apiKeyEngineGate(path, "openai")) ?? "", /Unknown api provider/);
+  assert.match((await apiKeyEngineGate(path, undefined)) ?? "", /Unknown api provider/);
+  // No key stored.
+  assert.match((await apiKeyEngineGate(path, "anthropic")) ?? "", /No anthropic API key/);
+  // Stored but failed verification.
+  await saveApiKeysFile(path, { version: 1, providers: { anthropic: entry({ verified: false }) } });
+  assert.match((await apiKeyEngineGate(path, "anthropic")) ?? "", /isn't verified/);
+  // Unknown-verified is still shut — only an affirmative probe opens it.
+  await saveApiKeysFile(path, { version: 1, providers: { anthropic: entry({ verified: "unknown" }) } });
+  assert.match((await apiKeyEngineGate(path, "anthropic")) ?? "", /isn't verified/);
+  // Verified.
+  await saveApiKeysFile(path, { version: 1, providers: { anthropic: entry() } });
+  assert.equal(await apiKeyEngineGate(path, "anthropic"), null);
 });

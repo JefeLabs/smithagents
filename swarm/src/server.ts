@@ -24,6 +24,7 @@ import { AgentSessionManager } from "./agent-sessions.js";
 import { type ComposedAgent, findAgent, loadAgents, saveAgent } from "./agents.js";
 import {
   type ApiKeyOpResult,
+  apiKeyEngineGate,
   buildApiKeyListings,
   deleteKey,
   getCredential,
@@ -102,6 +103,7 @@ import {
   ENGINES,
   findEngine,
   findJobRole,
+  API_ENGINE,
   findLanguage,
   findStereotype,
   JOB_ROLES,
@@ -1151,14 +1153,21 @@ export class OrchestratorServer {
       // Annotate, don't filter (spec): the wizard grays out inactive engines
       // with the reason instead of hiding them.
       const cliFile = await loadCliToolsFile(resolve(process.cwd(), ".smith/cli-tools.json"));
+      // The api-kind entry rides the same annotate-don't-filter contract:
+      // its "availability" is the provider key's verified state, not a CLI's
+      // (api-runtime spec 2026-08-13).
+      const apiGate = await apiKeyEngineGate(resolve(process.cwd(), ".smith/api-keys.json"), API_ENGINE.provider);
       return {
         stereotypes: STEREOTYPES,
         jobRoles: JOB_ROLES,
-        engines: ENGINES.map((e) => ({
-          ...e,
-          active: isActive(cliFile.tools[e.cli]),
-          statusDetail: inactiveDetail(cliFile.tools[e.cli]) || undefined,
-        })),
+        engines: [
+          ...ENGINES.map((e) => ({
+            ...e,
+            active: isActive(cliFile.tools[e.cli]),
+            statusDetail: inactiveDetail(cliFile.tools[e.cli]) || undefined,
+          })),
+          { ...API_ENGINE, active: apiGate === null, statusDetail: apiGate ?? undefined },
+        ],
         languages: LANGUAGES,
         quickQuestions: QUICK_QUESTIONS,
         reactionLevels: REACTION_LEVELS,
@@ -1193,12 +1202,23 @@ export class OrchestratorServer {
       const job = jobRoleId ? findJobRole(jobRoleId) : undefined;
       if (jobRoleId && !job) return reply.status(400).send({ error: `Unknown job role: ${jobRoleId}` });
 
-      if (b.engine?.cli && !findEngine(b.engine.cli)) {
-        return reply.status(400).send({ error: `Unknown CLI: ${b.engine.cli}` });
+      if (b.engine?.kind === "api") {
+        // The api-kind door (api-runtime spec 2026-08-13): subscription-first
+        // means a provider key is only ever consumed deliberately — creation
+        // requires one, stored AND verified. The CLI gate is not consulted.
+        const gate = await apiKeyEngineGate(resolve(process.cwd(), ".smith/api-keys.json"), b.engine.provider);
+        if (gate) return reply.status(400).send({ error: gate });
+      } else {
+        if (b.engine?.cli && !findEngine(b.engine.cli)) {
+          return reply.status(400).send({ error: `Unknown CLI: ${b.engine.cli}` });
+        }
+        const requestedCli = b.engine?.cli ?? "claude"; // must gate the default too
+        const cliGate = gateReason(
+          await loadCliToolsFile(resolve(process.cwd(), ".smith/cli-tools.json")),
+          requestedCli,
+        );
+        if (cliGate) return reply.status(400).send({ error: `${requestedCli} is not available: ${cliGate}` });
       }
-      const requestedCli = b.engine?.cli ?? "claude"; // must gate the default too
-      const cliGate = gateReason(await loadCliToolsFile(resolve(process.cwd(), ".smith/cli-tools.json")), requestedCli);
-      if (cliGate) return reply.status(400).send({ error: `${requestedCli} is not available: ${cliGate}` });
       if (b.language && !findLanguage(b.language)) {
         return reply.status(400).send({ error: `Unknown language: ${b.language}` });
       }
@@ -1244,10 +1264,17 @@ export class OrchestratorServer {
         role: b.role?.trim() || job?.label || seed?.label || "Specialist",
         // Job role says WHAT they own; the stereotype colors HOW they say it.
         directives: b.directives?.trim() || job?.directives || seed?.directives || "You are a specialist on this team.",
-        engine: {
-          cli: b.engine?.cli ?? "claude",
-          model: b.engine?.model ?? findEngine(b.engine?.cli ?? "claude")?.models[0] ?? "claude-sonnet",
-        },
+        engine:
+          b.engine?.kind === "api"
+            ? {
+                kind: "api",
+                provider: b.engine.provider,
+                model: b.engine.model ?? API_ENGINE.models[0],
+              }
+            : {
+                cli: b.engine?.cli ?? "claude",
+                model: b.engine?.model ?? findEngine(b.engine?.cli ?? "claude")?.models[0] ?? "claude-sonnet",
+              },
         persona: { style: b.persona?.style?.trim() || seed?.style || "" },
         stereotype: b.stereotype,
         // Kept so the edit wizard can restore the dropdown; `role` alone is a
@@ -1313,15 +1340,22 @@ export class OrchestratorServer {
       if (b.stereotype && !findStereotype(b.stereotype)) {
         return reply.status(400).send({ error: `Unknown stereotype: ${b.stereotype}` });
       }
-      if (b.engine?.cli && !findEngine(b.engine.cli)) {
-        return reply.status(400).send({ error: `Unknown CLI: ${b.engine.cli}` });
-      }
-      if (b.engine?.cli && b.engine.cli !== existing.engine.cli) {
-        const cliGate = gateReason(
-          await loadCliToolsFile(resolve(process.cwd(), ".smith/cli-tools.json")),
-          b.engine.cli,
-        );
-        if (cliGate) return reply.status(400).send({ error: `${b.engine.cli} is not available: ${cliGate}` });
+      if (b.engine?.kind === "api") {
+        // Same door as creation (api-runtime spec 2026-08-13): switching an
+        // agent to the api kind is exactly as deliberate as creating one.
+        const gate = await apiKeyEngineGate(resolve(process.cwd(), ".smith/api-keys.json"), b.engine.provider);
+        if (gate) return reply.status(400).send({ error: gate });
+      } else {
+        if (b.engine?.cli && !findEngine(b.engine.cli)) {
+          return reply.status(400).send({ error: `Unknown CLI: ${b.engine.cli}` });
+        }
+        if (b.engine?.cli && b.engine.cli !== existing.engine.cli) {
+          const cliGate = gateReason(
+            await loadCliToolsFile(resolve(process.cwd(), ".smith/cli-tools.json")),
+            b.engine.cli,
+          );
+          if (cliGate) return reply.status(400).send({ error: `${b.engine.cli} is not available: ${cliGate}` });
+        }
       }
       if (b.language && !findLanguage(b.language)) {
         return reply.status(400).send({ error: `Unknown language: ${b.language}` });
@@ -3059,10 +3093,15 @@ export function buildAgentUpdate(
     name: b.name?.trim() || existing.name,
     role: b.role?.trim() || existing.role,
     directives: b.directives?.trim() || existing.directives,
-    engine: {
-      cli: b.engine?.cli ?? existing.engine.cli,
-      model: nextModel || existing.engine.model,
-    },
+    // A kind switch replaces the engine wholesale — a merged half-cli
+    // half-api engine would satisfy neither validator. No kind sent = the
+    // existing engine with at most a model/cli tweak (api-runtime spec).
+    engine:
+      b.engine?.kind === "api"
+        ? { kind: "api", provider: b.engine.provider, model: nextModel || existing.engine.model }
+        : b.engine?.kind === "cli" || b.engine?.cli
+          ? { cli: b.engine.cli ?? existing.engine.cli, model: nextModel || existing.engine.model }
+          : { ...existing.engine, model: nextModel || existing.engine.model },
     persona: b.persona?.style !== undefined ? { style: b.persona.style.trim() } : existing.persona,
     stereotype: b.stereotype ?? existing.stereotype,
     jobRole: b.jobRole ?? existing.jobRole,

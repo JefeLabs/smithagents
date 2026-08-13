@@ -185,6 +185,20 @@ export async function deleteKey(path: string, providerId: string): Promise<ApiKe
  *  Same block-only-confirmed-negatives rule as everywhere else: a key
  *  whose last probe came back verified:false is withheld, but 'unknown'
  *  is still served. */
+/**
+ * The api-engine creation gate (api-runtime spec 2026-08-13): an api-kind
+ * agent may only exist against a provider whose key is stored AND verified —
+ * subscription-first means keys are consumed deliberately, never assumed.
+ * Returns the human-readable refusal, or null when the door is open.
+ */
+export async function apiKeyEngineGate(path: string, provider: string | undefined): Promise<string | null> {
+  if (provider !== "anthropic") return `Unknown api provider: ${provider ?? "(none)"}`;
+  const entry = (await loadApiKeysFile(path)).providers[provider];
+  if (!entry) return `No ${provider} API key stored — add one in Settings → API Keys`;
+  if (entry.verified !== true) return `The ${provider} API key isn't verified — verify it in Settings → API Keys`;
+  return null;
+}
+
 export async function getCredential(
   path: string,
   providerId: string,

@@ -136,3 +136,48 @@ test("buildAgentUpdate: omitting channels from the body preserves the existing v
   assert.equal(updated.name, "Aurelio the Second"); // sanity: the merge did apply the body
   assert.deepEqual(reloaded.channels, { tauri: "autojoin" });
 });
+
+test("api-kind agent files load; a kind:api file without a provider is rejected", async () => {
+  const dir = await seedDir({
+    "sage.json": {
+      id: "sage",
+      name: "Sage",
+      role: "Research advisor",
+      directives: "Think, don't type.",
+      engine: { kind: "api", provider: "anthropic", model: "claude-sonnet-5" },
+    },
+  });
+  const agents = await loadAgents(dir);
+  assert.equal(agents[0].engine.kind, "api");
+  const bad = await seedDir({
+    "broken.json": {
+      id: "b",
+      name: "B",
+      role: "r",
+      directives: "d",
+      engine: { kind: "api", model: "claude-sonnet-5" },
+    },
+  });
+  await assert.rejects(() => loadAgents(bad), /provider/);
+});
+
+test("buildAgentUpdate: a kind switch replaces the engine wholesale, never merges halves", () => {
+  const existing: ComposedAgent = {
+    id: "sage",
+    name: "Sage",
+    role: "r",
+    directives: "d",
+    engine: { cli: "claude", model: "claude-opus" },
+  };
+  const toApi = buildAgentUpdate(existing, {
+    engine: { kind: "api", provider: "anthropic", model: "claude-sonnet-5" },
+  });
+  assert.deepEqual(toApi.engine, { kind: "api", provider: "anthropic", model: "claude-sonnet-5" });
+  assert.equal("cli" in toApi.engine, false); // no cli residue on an api engine
+  const backToCli = buildAgentUpdate(toApi, { engine: { kind: "cli", cli: "codex", model: "gpt-5" } });
+  assert.deepEqual(backToCli.engine, { cli: "codex", model: "gpt-5" });
+  // A model-only tweak keeps the existing engine's kind and identity.
+  const tweaked = buildAgentUpdate(toApi, { engine: { model: "claude-opus-5" } } as never);
+  assert.equal(tweaked.engine.kind, "api");
+  assert.equal(tweaked.engine.model, "claude-opus-5");
+});

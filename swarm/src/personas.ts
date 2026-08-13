@@ -251,12 +251,30 @@ export const JOB_ROLES: JobRole[] = [
  * conversations server-side, so it does task work and steering only.
  */
 export interface EngineOption {
+  /** Option identity in the wizard — a real CLI name, or "api:<provider>" for api-kind entries. */
   cli: string;
   label: string;
   models: string[];
   warmSessions: boolean;
   note?: string;
+  /** api-runtime spec 2026-08-13: present on provider-API entries; absent = a CLI. */
+  kind?: "api";
+  provider?: string;
 }
+
+/**
+ * The one api-kind engine v1 offers (api-runtime spec 2026-08-13). REAL
+ * Anthropic model ids — unlike CLI alias ids, these reach the Messages API
+ * verbatim. The catalog gates `active` on the stored key being verified.
+ */
+export const API_ENGINE: EngineOption = {
+  cli: "api:anthropic",
+  label: "API — Anthropic",
+  models: ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"],
+  warmSessions: false,
+  kind: "api",
+  provider: "anthropic",
+};
 
 export const ENGINES: EngineOption[] = [
   {

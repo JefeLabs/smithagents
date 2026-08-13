@@ -5,8 +5,18 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Gender, Reactions } from "./personas.js";
 
+/**
+ * Two execution kinds (api-runtime spec 2026-08-13): `cli` — the hands,
+ * tmux/Docker sessions on subscription CLIs; `api` — the thinkers, turns run
+ * through a provider API. Absent `kind` = "cli", so every agent file written
+ * before kinds existed stays valid untouched.
+ */
 export interface AgentEngine {
-  cli: "agy" | "claude" | "codex" | "opencode" | "copilot";
+  kind?: "cli" | "api";
+  /** Required when kind is "cli" (or absent). */
+  cli?: "agy" | "claude" | "codex" | "opencode" | "copilot";
+  /** Required when kind is "api". */
+  provider?: "anthropic";
   model: string;
 }
 
@@ -55,17 +65,23 @@ export interface ComposedAgent {
 function assertAgent(file: string, v: unknown): ComposedAgent {
   const o = v as Record<string, unknown>;
   const engine = o.engine as Record<string, unknown> | undefined;
-  const ok =
+  const base =
     o &&
     typeof o.id === "string" &&
     typeof o.name === "string" &&
     typeof o.role === "string" &&
     typeof o.directives === "string" &&
     engine &&
-    typeof engine.cli === "string" &&
     typeof engine.model === "string";
-  if (!ok) {
-    throw new Error(`Invalid composed-agent file ${file}: requires id, name, role, directives, engine{cli,model}`);
+  // The kind fork (api-runtime spec 2026-08-13): api needs a provider, cli
+  // (and every pre-kind file, where `kind` is absent) needs a cli.
+  const kindOk =
+    engine &&
+    (engine.kind === "api" ? typeof engine.provider === "string" : typeof engine.cli === "string");
+  if (!base || !kindOk) {
+    throw new Error(
+      `Invalid composed-agent file ${file}: requires id, name, role, directives, engine{cli,model} or engine{kind:"api",provider,model}`,
+    );
   }
   return o as unknown as ComposedAgent;
 }
