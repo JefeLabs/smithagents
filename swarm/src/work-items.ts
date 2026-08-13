@@ -47,7 +47,14 @@ export interface WorkCard {
   /** Appended each time this card is routed to another board. Never rewritten. */
   routedFrom?: Array<{ boardId: string; boardType: BoardType; columnId: string; at: string }>;
   flag?: CardFlag;
+  /** Set when this card was carded from a bound queue source — the dedup key hasSourceRef checks. */
+  sourceRef?: { sourceId: string; itemKey: string };
 }
+
+/** Terminal side-effect config (spec 2026-08-13 queue-sources). */
+export type TerminalEffect =
+  | { kind: "publish-jira"; connectorId: string; projectKey: string }
+  | { kind: "route"; toType: BoardType; toColumn: string };
 
 export interface WorkBoard {
   id: string;
@@ -57,6 +64,10 @@ export interface WorkBoard {
   columns: WorkColumn[];
   cards: WorkCard[];
   jira?: { connectorId: string; siteUrl: string; projectKey: string; jql?: string };
+  /** Bound queue sources card their items into this board's intake lane (see intakeColumnId). */
+  queue?: { sourceIds: string[] };
+  /** Side effects fired when a card enters the terminal column (see terminalColumnId). */
+  terminal?: { columnId?: string; effects: TerminalEffect[] };
   /** Present on every workspace board; absent only on the single personal board. */
   workspaceId?: string;
   /** Local YYYY-MM-DD of the last midnight sweep. Personal board only. */
@@ -287,6 +298,23 @@ export function findCardByRef(
   return undefined;
 }
 
+/** The column whose entry fires terminal effects. Explicit beats positional:
+    Release ends in Rollback, and rollbacks must not publish. */
+export function terminalColumnId(board: WorkBoard): string | undefined {
+  return board.terminal?.columnId ?? board.columns[board.columns.length - 1]?.id;
+}
+
+/** Where bound sources card into: the queue lane when the board has one,
+    else the first column (Ideate has no queue lane). */
+export function intakeColumnId(board: WorkBoard): string | undefined {
+  return (board.columns.find((c) => c.id === "queue") ?? board.columns[0])?.id;
+}
+
+/** Source-item dedup: has this board already carded this item? */
+export function hasSourceRef(board: WorkBoard, ref: { sourceId: string; itemKey: string }): boolean {
+  return board.cards.some((c) => c.sourceRef?.sourceId === ref.sourceId && c.sourceRef.itemKey === ref.itemKey);
+}
+
 function assertBoard(file: string, v: unknown): WorkBoard {
   const o = v as WorkBoard;
   const ok =
@@ -427,7 +455,10 @@ export function defaultColumnFor(board: WorkBoard): string {
   return (board.columns.find((c) => c.id !== "queue") ?? board.columns[0])?.id;
 }
 
-export function addCard(board: WorkBoard, input: { title: string; notes?: string; columnId?: string }): WorkCard {
+export function addCard(
+  board: WorkBoard,
+  input: { title: string; notes?: string; columnId?: string; sourceRef?: { sourceId: string; itemKey: string } },
+): WorkCard {
   const title = input.title?.trim();
   if (!title) throw new Error("Card title is required");
   const columnId = input.columnId ?? defaultColumnFor(board);
@@ -441,6 +472,7 @@ export function addCard(board: WorkBoard, input: { title: string; notes?: string
     order: board.cards.filter((c) => c.columnId === columnId).length,
     createdAt: now,
     updatedAt: now,
+    sourceRef: input.sourceRef,
   };
   board.cards.push(card);
   return card;

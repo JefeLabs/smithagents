@@ -2535,7 +2535,7 @@ export class OrchestratorServer {
     this.app.patch<{ Params: { id: string } }>("/work/boards/:id", async (req, reply) => {
       const board = await boardOr404(req.params.id, reply);
       if (!board) return;
-      const b = req.body as Partial<Pick<WorkBoard, "name" | "columns" | "jira">>;
+      const b = req.body as Partial<Pick<WorkBoard, "name" | "columns" | "jira" | "queue" | "terminal">>;
       if (b.name?.trim()) board.name = b.name.trim();
       if (b.columns) {
         if (!Array.isArray(b.columns) || b.columns.some((c) => !c?.id || !c?.name)) {
@@ -2548,6 +2548,11 @@ export class OrchestratorServer {
         board.columns = b.columns;
       }
       if (b.jira !== undefined) board.jira = b.jira ?? undefined;
+      if (b.terminal?.columnId && !board.columns.some((c) => c.id === b.terminal?.columnId)) {
+        return reply.code(400).send({ error: "terminal.columnId names no column" });
+      }
+      if (b.queue !== undefined) board.queue = b.queue ?? undefined;
+      if (b.terminal !== undefined) board.terminal = b.terminal ?? undefined;
       await saveBoard(this.workDir(), board);
       return board;
     });
@@ -2563,7 +2568,15 @@ export class OrchestratorServer {
       const board = await boardOr404(req.params.id, reply);
       if (!board) return;
       try {
-        const card = addCard(board, req.body as { title: string; notes?: string; columnId?: string });
+        const card = addCard(
+          board,
+          req.body as {
+            title: string;
+            notes?: string;
+            columnId?: string;
+            sourceRef?: { sourceId: string; itemKey: string };
+          },
+        );
         await saveBoard(this.workDir(), board);
         return reply.status(201).send(card);
       } catch (err) {

@@ -17,6 +17,8 @@ import {
   exitsFor,
   findCardByRef,
   findRouteDestination,
+  hasSourceRef,
+  intakeColumnId,
   loadBoards,
   localDayStamp,
   msUntilNextMidnight,
@@ -27,6 +29,7 @@ import {
   routeCard,
   saveBoard,
   sweepPersonalBoard,
+  terminalColumnId,
   WORKSPACE_BOARD_TYPES,
   type WorkBoard,
 } from "./work-items.js";
@@ -666,4 +669,38 @@ test("findCardByRef: follows a routed card to its new board, and reports gone on
   removeCard(deliver, card.id);
   assert.equal(findCardByRef(boards, { boardId: plan.id, cardId: card.id }), undefined);
   assert.equal(findCardByRef(boards, { cardId: "never-existed" }), undefined);
+});
+
+test("terminalColumnId is the explicit terminal.columnId, else the last column — Release's Rollback trap", () => {
+  const board = createBoard("release", "acme"); // columns end in rollback
+  assert.equal(terminalColumnId(board), board.columns[board.columns.length - 1].id);
+  board.terminal = { columnId: "ship", effects: [] };
+  assert.equal(terminalColumnId(board), "ship");
+});
+
+test("intakeColumnId prefers the queue column and falls back to the first column", () => {
+  const maintain = createBoard("maintenance", "acme");
+  assert.equal(intakeColumnId(maintain), "queue");
+  const plan = createBoard("plan", "acme");
+  assert.equal(intakeColumnId(plan), "queue"); // plan's template already ships a queue column
+  const ideation = createBoard("ideation", "acme");
+  assert.equal(intakeColumnId(ideation), ideation.columns[0].id);
+});
+
+test("a board with queue/terminal blocks and a card with sourceRef round-trips through save/load", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "work-"));
+  const board = createBoard("plan", "acme");
+  board.queue = { sourceIds: ["jira-plan"] };
+  board.terminal = { columnId: "ready", effects: [{ kind: "publish-jira", connectorId: "atl-1", projectKey: "PROJ" }] };
+  const card = addCard(board, { title: "t", sourceRef: { sourceId: "jira-plan", itemKey: "PROJ-1" } });
+  await saveBoard(dir, board);
+  const { boards } = await loadBoards(dir);
+  assert.deepEqual(boards[0].queue, board.queue);
+  assert.deepEqual(boards[0].terminal, board.terminal);
+  assert.deepEqual(boards[0].cards.find((c) => c.id === card.id)?.sourceRef, {
+    sourceId: "jira-plan",
+    itemKey: "PROJ-1",
+  });
+  assert.equal(hasSourceRef(boards[0], { sourceId: "jira-plan", itemKey: "PROJ-1" }), true);
+  assert.equal(hasSourceRef(boards[0], { sourceId: "jira-plan", itemKey: "PROJ-2" }), false);
 });
