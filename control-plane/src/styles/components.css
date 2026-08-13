@@ -3847,6 +3847,22 @@ button.logo {
   background: var(--pill);
   border: 1px solid var(--pill-br);
 }
+/* Group options carry a right-aligned workspace count — the containment cue.
+   End margin clears the selected-item checkmark, which HeroUI absolutely
+   positions at the item's end edge rather than in the flex flow. */
+.workspace-selector__count {
+  flex: 0 0 auto;
+  margin-left: auto;
+  margin-right: 18px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+/* The trigger's value slot clones the selected item's children — same reason
+   select.css hides the item indicator there. The pill shows just the name. */
+.workspace-selector .select__value .workspace-selector__count {
+  display: none;
+}
 .date-range__value {
   white-space: nowrap;
 }

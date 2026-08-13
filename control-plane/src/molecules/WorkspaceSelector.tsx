@@ -101,6 +101,13 @@ export function WorkspaceSelector() {
               {groups.map((g) => (
                 <ListBox.Item key={GROUP_PREFIX + g.name} id={GROUP_PREFIX + g.name} textValue={g.name}>
                   {g.name}
+                  {/* Containment cue: how many workspaces live under this entry.
+                      `expansion` so nested groups count through (swarm-computed,
+                      never re-walked here). aria-hidden keeps the option's
+                      accessible name the bare group name. */}
+                  <span className="workspace-selector__count" aria-hidden="true">
+                    {g.expansion.length}
+                  </span>
                   <ListBox.ItemIndicator />
                 </ListBox.Item>
               ))}

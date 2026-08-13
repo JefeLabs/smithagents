@@ -165,6 +165,26 @@ describe("WorkspaceSelector", () => {
     expect(activate).not.toHaveBeenCalled();
   });
 
+  it("group options denote containment with a workspace count; plain workspaces get none", async () => {
+    renderWithSession(
+      { workspace: "acme" },
+      {
+        workspaces: ["acme", "labs"],
+        // Direct members: 1 workspace + 1 group. Expansion: 3 workspaces. A "3"
+        // in the option proves the count is the TRANSITIVE workspace list, not
+        // a count of direct members (which would render 2).
+        groups: [{ name: "frontend", workspaces: ["labs"], groups: ["inner"], expansion: ["labs", "web", "api"] }],
+      },
+    );
+    await userEvent.click(await screen.findByRole("button", { name: /acme/ }));
+    // Exact-name match still resolving proves the count is aria-hidden — were it
+    // in the accessible name, this option would be named "frontend 3".
+    const group = await screen.findByRole("option", { name: "frontend" });
+    expect(group.textContent).toContain("3");
+    const workspace = await screen.findByRole("option", { name: "labs" });
+    expect(workspace.textContent).toBe("labs");
+  });
+
   it("picking a workspace clears an active lens and activates as always", async () => {
     const activate = vi.fn();
     renderWithSession(
