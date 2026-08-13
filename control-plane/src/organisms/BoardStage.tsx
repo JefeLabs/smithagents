@@ -23,6 +23,7 @@ import { useSession } from "../queries/pushed";
 import { useBoards, useCreateBoard, useCreateCard, useImportJira, useMoveCard } from "../queries/work";
 import { useUiStore } from "../stores/uiStore";
 import { CardSheet } from "./CardSheet";
+import { QueueSourcesSheet } from "./QueueSourcesSheet";
 
 /** Stable empty while the records query is pending — `colorFor` runs per card. */
 const NO_WORKSPACES: WorkspaceRecord[] = [];
@@ -210,8 +211,6 @@ export function BoardStage({ roster }: BoardStageProps) {
   const [cardTitle, setCardTitle] = useState("");
   const [open, setOpen] = useState<{ boardId: string; cardId: string } | null>(null);
   const [configOpen, setConfigOpen] = useState<{ boardId: string; column: "queue" | "terminal" } | null>(null);
-  // Sheets mount in Tasks 14/15; nothing reads this yet. Remove this line then.
-  void configOpen;
   // Same endpoint and envelope the hand-rolled fetch here used, but on the
   // shared key — so this stage and the map issue one request between them
   // rather than one each, and a workspace edit invalidates both.
@@ -455,6 +454,9 @@ export function BoardStage({ roster }: BoardStageProps) {
           onClose={() => setOpen(null)}
           onChanged={() => void qc.invalidateQueries({ queryKey: qk.boards })}
         />
+      )}
+      {configOpen?.column === "queue" && boardOf(configOpen.boardId) && (
+        <QueueSourcesSheet board={boardOf(configOpen.boardId) as WorkBoardT} open onClose={() => setConfigOpen(null)} />
       )}
     </section>
   );
