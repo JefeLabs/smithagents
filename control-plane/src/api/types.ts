@@ -307,6 +307,8 @@ export interface CapStoryT {
   text: string;
   done: boolean;
   verifiedBy?: string;
+  /** Point estimate (whole ≥ 0), map-authored; linked cards mirror it. Absent = unestimated. */
+  points?: number;
   /** Last touch (swarm-stamped). Absent on stories from before dating — those always render. */
   updatedAt?: string;
 }

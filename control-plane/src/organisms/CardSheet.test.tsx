@@ -110,6 +110,27 @@ describe("CardSheet stories", () => {
     expect(stories[1]).toMatchObject({ id: "st-beta", done: false });
     expect(stories[1]?.verifiedBy).toBeUndefined();
   });
+
+  it("points: hand-written rows edit and save; the head sums with unset as 0", async () => {
+    render(<CardSheet {...props} card={WITH_STORIES} />);
+    await userEvent.type(screen.getByLabelText("Points for user can log in"), "3");
+    expect(screen.getByText("3 pts")).toBeTruthy(); // st-beta unset -> counts 0
+    const stories = (await savedStories()) as Array<{ id: string; points?: number }>;
+    expect(stories[0]?.points).toBe(3);
+    expect(stories[1]?.points).toBeUndefined();
+  });
+
+  it("points: a capability-linked card shows read-only mirrors, no inputs", () => {
+    const linked = {
+      ...WITH_STORIES,
+      capabilityRef: { capabilityId: "cap1", sliceId: "sl1" },
+      stories: [{ id: "st-alpha", text: "user can log in", done: false, points: 5 }],
+    } as WorkCardT;
+    render(<CardSheet {...props} card={linked} />);
+    expect(screen.getByText("5")).toBeTruthy();
+    expect(screen.getByText("5 pts")).toBeTruthy();
+    expect(screen.queryByLabelText(/points for/i)).toBeNull();
+  });
 });
 
 describe("CardSheet flags", () => {

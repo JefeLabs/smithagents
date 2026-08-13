@@ -153,7 +153,14 @@ export function CardSheet({ board, card, roster, workspaces, onClose, onChanged 
         <textarea rows={3} {...register("notes")} />
       </label>
       <div className="card-sheet__stories">
-        <span className="card-sheet__stories-head">Stories</span>
+        <span className="card-sheet__stories-head">
+          Stories
+          {/* The card's size at a glance (real-dashboards spec 2026-08-13):
+              unestimated rows sum as 0, exactly how dashboards count them. */}
+          {stories.length > 0 && (
+            <span className="card-sheet__points-sum">{stories.reduce((n, s) => n + (s.points ?? 0), 0)} pts</span>
+          )}
+        </span>
         {linked && <span className="wizard__hint">Stories are managed in the map — toggle only.</span>}
         {/* `s.id` is useFieldArray's own row key, not the story's id — the real ids
             ride in the form values and reach the server untouched via getValues(). */}
@@ -177,6 +184,29 @@ export function CardSheet({ board, card, roster, workspaces, onClose, onChanged 
               }
             />
             <span className={s.done ? "is-done" : ""}>{s.text}</span>
+            {/* Linked rows mirror the map's estimate read-only; hand-written
+                rows own theirs. Blank = unestimated (undefined), never 0. */}
+            {linked ? (
+              <span className="card-sheet__points" title="point estimate (set in the map)">
+                {s.points ?? "—"}
+              </span>
+            ) : (
+              <input
+                className="card-sheet__points-input"
+                type="number"
+                min={0}
+                step={1}
+                aria-label={`Points for ${s.text}`}
+                value={s.points ?? ""}
+                onChange={(e) => {
+                  const parsed = Number.parseInt(e.target.value, 10);
+                  update(i, {
+                    ...getValues(`stories.${i}`),
+                    points: Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined,
+                  });
+                }}
+              />
+            )}
             {!linked && (
               <button
                 type="button"

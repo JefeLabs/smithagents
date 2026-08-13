@@ -43,7 +43,7 @@ export interface WorkCardT {
   order: number;
   jira?: { key: string; url: string; lastPushError?: string };
   delegation?: { agentId: string; taskId: string; state: "working" | "completed" | "failed"; prUrl?: string };
-  stories?: Array<{ id: string; text: string; done: boolean; verifiedBy?: string }>;
+  stories?: Array<{ id: string; text: string; done: boolean; points?: number; verifiedBy?: string }>;
   /** Present when this card tracks a capability slice — its checklist becomes toggle-only. */
   capabilityRef?: { capabilityId: string; sliceId: string };
   flag?: { kind: "blocked" | "at-risk" | "waiting"; reason?: string; since: string };

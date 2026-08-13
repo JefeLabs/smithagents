@@ -495,6 +495,25 @@ describe("MapStage editing", () => {
     });
   });
 
+  it("the points badge commits an estimate via wholesale PATCH; blank clears it", async () => {
+    const { calls } = stubFetch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
+    await screen.findByText("create tour time slots");
+    // Open the badge's inline editor and estimate the first story.
+    // ByLabelText, not ByRole: react-flow's node wrapper keeps its children
+    // out of jsdom's role tree (the slice test's getAllByLabelText dodges the
+    // same way).
+    await userEvent.click(screen.getAllByLabelText(/points for/i)[0]);
+    const input = screen.getByLabelText(/points for create tour time slots/i);
+    await userEvent.type(input, "5{Enter}");
+    await waitFor(() => {
+      const call = calls.find((c) => c.method === "PATCH" && c.url.includes("/work/capabilities/school-feature-set"));
+      const est = (call?.body as { stories?: Array<{ id: string; points?: number }> })?.stories?.[0];
+      expect(est?.points).toBe(5);
+    });
+  });
+
   it("assigning a story to a slice keeps storyIds disjoint", async () => {
     const { calls } = stubFetch();
     const { client } = renderMapStage();

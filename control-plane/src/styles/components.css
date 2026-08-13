@@ -3137,6 +3137,45 @@ button.logo {
   min-width: 0;
   flex: 1;
 }
+/* Point estimate badge + its inline editor (real-dashboards spec 2026-08-13). */
+.map-story__points {
+  min-width: 20px;
+  padding: 1px 4px;
+  border-radius: 6px;
+  border: 1px solid var(--pill-br);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 9.5px;
+  cursor: pointer;
+}
+.map-story__points-input {
+  width: 34px;
+  padding: 1px 3px;
+  border-radius: 6px;
+  border: 1px solid var(--accent);
+  background: var(--pill);
+  color: inherit;
+  font: inherit;
+  font-size: 9.5px;
+}
+/* Card sheet: per-row points + the head's sum. */
+.card-sheet__points {
+  margin-left: auto;
+  color: var(--text-dim);
+  font-size: 10.5px;
+}
+.card-sheet__points-input {
+  margin-left: auto;
+  width: 44px;
+  font-size: 10.5px;
+}
+.card-sheet__points-sum {
+  margin-left: 8px;
+  color: var(--text-dim);
+  font-size: 10.5px;
+  font-weight: normal;
+}
 /* TAIL ELLIPSIS ON THE SECOND LINE, which single-line `text-overflow` cannot do.
    -webkit-box + line-clamp is the only mechanism that ellipsises at the end of the
    LAST VISIBLE line; it is unprefixed nowhere, and prefixed everywhere that matters.

@@ -99,10 +99,67 @@ export interface StoryNodeData {
   onSliceChange: (sliceId: string) => void;
   onRemove: () => void;
   onReveal: () => void;
+  /** Commit a point estimate (real-dashboards spec 2026-08-13); undefined clears it. */
+  onSetPoints: (points: number | undefined) => void;
   selected: boolean;
   dimmed: boolean;
   /** True while an open slice owns this story — the reveal's positive half. */
   lit?: boolean;
+}
+
+/**
+ * The points badge with its inline editor — its own component because the
+ * edit state is per-story and StoryNode is otherwise stateless. Free small
+ * integer (Edwin, 2026-08-13): the input only nudges, the swarm enforces.
+ */
+function PointsBadge({ story, onSetPoints }: { story: CapStoryT; onSetPoints: (p: number | undefined) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        className="nodrag map-story__points"
+        aria-label={`Points for ${story.text}`}
+        title="point estimate"
+        onClick={() => {
+          setDraft(story.points === undefined ? "" : String(story.points));
+          setEditing(true);
+        }}
+      >
+        {story.points ?? "—"}
+      </button>
+    );
+  }
+  return (
+    <input
+      className="nodrag map-story__points-input"
+      type="number"
+      min={0}
+      step={1}
+      aria-label={`Points for ${story.text}`}
+      value={draft}
+      // The badge that opened this input has left the DOM — same reasoning as
+      // the slice composer's name field.
+      // biome-ignore lint/a11y/noAutofocus: focus would otherwise land on body mid-gesture
+      autoFocus
+      onChange={(e) => setDraft(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") {
+          setEditing(false);
+          return;
+        }
+        if (e.key !== "Enter") return;
+        const trimmed = draft.trim();
+        const parsed = Number.parseInt(trimmed, 10);
+        // Blank clears; anything non-numeric or negative just closes without
+        // writing — the swarm would refuse it anyway, no point round-tripping.
+        onSetPoints(trimmed === "" ? undefined : Number.isInteger(parsed) && parsed >= 0 ? parsed : story.points);
+        setEditing(false);
+      }}
+      onBlur={() => setEditing(false)}
+    />
+  );
 }
 
 /**
@@ -131,7 +188,8 @@ export interface StoryNodeData {
  */
 export function StoryNode({ data }: { data: StoryNodeData | BlankNodeData }) {
   if (data.blank) return <BlankCard className="map-story" placeholder="Add a story…" onCommit={data.onCommit} />;
-  const { story, sliceOptions, sliceValue, onSliceChange, onRemove, onReveal, selected, dimmed, lit } = data;
+  const { story, sliceOptions, sliceValue, onSliceChange, onRemove, onReveal, onSetPoints, selected, dimmed, lit } =
+    data;
   return (
     <div
       className={`map-story${story.done ? " is-done" : ""}${dimmed ? " is-dimmed" : ""}${lit ? " is-lit" : ""}${
@@ -177,6 +235,7 @@ export function StoryNode({ data }: { data: StoryNodeData | BlankNodeData }) {
             </option>
           ))}
         </select>
+        <PointsBadge story={story} onSetPoints={onSetPoints} />
         <button className="nodrag" type="button" aria-label={`Remove story: ${story.text}`} onClick={onRemove}>
           <X size={10} strokeWidth={2} />
         </button>

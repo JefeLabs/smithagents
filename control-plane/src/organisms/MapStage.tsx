@@ -506,6 +506,12 @@ export function MapStage({ shelf }: { shelf?: ReactNode } = {}) {
       slices: cap.slices.map((s) => ({ ...s, storyIds: s.storyIds.filter((id) => id !== story.id) })),
     });
   };
+  // Wholesale like every story write; a cleared badge sends points: undefined
+  // and JSON drops the key — unestimated, not zero.
+  const setPoints = (story: CapStoryT, points: number | undefined) => {
+    if (!cap) return;
+    void patchCap({ stories: cap.stories.map((s) => (s.id === story.id ? { ...s, points } : s)) });
+  };
   const removeStep = (act: CapActivityT, stepId: string) => {
     if (!cap) return;
     void patchCap({
@@ -586,6 +592,7 @@ export function MapStage({ shelf }: { shelf?: ReactNode } = {}) {
             onSliceChange: (sliceId: string) => assignSlice(story.id, sliceId),
             onRemove: () => removeStory(story),
             onReveal: () => select({ kind: "story", id: story.id }),
+            onSetPoints: (points: number | undefined) => setPoints(story, points),
           },
         } as Node;
       }
