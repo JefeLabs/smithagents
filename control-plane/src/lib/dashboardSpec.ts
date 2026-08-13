@@ -10,7 +10,17 @@ import { DASH_ANSWER, DASH_KPIS, DASH_ROWS } from "../data/dashboards";
 export interface DashSpec {
   summary: string;
   kpis: Array<{ label: string; value: string; delta?: string; tone?: "ok" | "watch" | "high" }>;
-  charts: Array<{ kind: "line" | "bars"; title: string; series?: string[] }>;
+  /**
+   * `data` (real-dashboards spec 2026-08-13): actual values to draw. Present →
+   * the chart renders them; absent → the decorative fixtures (the ask-screen
+   * mock's look) stand in.
+   */
+  charts: Array<{
+    kind: "line" | "bars";
+    title: string;
+    series?: string[];
+    data?: { labels: string[]; series: Array<{ name: string; values: number[] }> };
+  }>;
   table?: { title: string; columns: string[]; rows: string[][] };
   /**
    * Prose answer cards (spec 2026-08-11-workspace-groups §7) — chat-written
@@ -26,6 +36,25 @@ export function parseDashSpec(body: string): DashSpec | null {
     const parsed = JSON.parse(raw) as DashSpec;
     if (typeof parsed.summary !== "string" || !Array.isArray(parsed.kpis) || !Array.isArray(parsed.charts)) {
       return null;
+    }
+    // chart `data` is optional but validated when present — a malformed block
+    // fails the WHOLE parse, all-or-nothing like `texts` below.
+    for (const c of parsed.charts) {
+      if (c && typeof c === "object" && "data" in c && c.data !== undefined) {
+        const ok =
+          c.data &&
+          Array.isArray(c.data.labels) &&
+          c.data.labels.every((l) => typeof l === "string") &&
+          Array.isArray(c.data.series) &&
+          c.data.series.every(
+            (s) =>
+              s &&
+              typeof s.name === "string" &&
+              Array.isArray(s.values) &&
+              s.values.every((v) => typeof v === "number"),
+          );
+        if (!ok) return null;
+      }
     }
     // texts are optional but validated when present — a malformed entry fails
     // the WHOLE parse, all-or-nothing like every other field.
@@ -66,4 +95,20 @@ export function composeSpec(_question: string, _scope: string): DashSpec {
 
 export function specToFence(spec: DashSpec): string {
   return `\`\`\`json\n${JSON.stringify(spec, null, 2)}\n\`\`\``;
+}
+
+/**
+ * The dashboard's WHERE, recovered from its question section. The composer
+ * writes `scope: <name> · <range>` on its own line (router.tsx onPresent);
+ * the LAST such line wins so a re-scoped ask supersedes an old one. Returns
+ * the bare name — "all workspaces" (or nothing parseable) is null, meaning
+ * unscoped. The range half is deliberately ignored: the WHEN is always the
+ * CURRENT context window, never the one the doc was born under.
+ */
+export function parseScopeName(question: string): string | null {
+  const matches = [...question.matchAll(/^scope:\s*(.+?)\s*$/gim)];
+  const raw = matches.at(-1)?.[1];
+  if (!raw) return null;
+  const name = raw.split("·")[0].trim();
+  return name === "" || name.toLowerCase() === "all workspaces" ? null : name;
 }

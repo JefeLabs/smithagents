@@ -17,7 +17,6 @@ const CHART_W = 640;
 const CHART_H = 190;
 /** One shared ceiling for both series — one axis, never two. */
 const CHART_MAX = 50;
-const N = DASH_WEEKS.length - 1; // 11 gaps between 12 points
 
 interface DashboardBoardProps {
   query: string;
@@ -27,15 +26,25 @@ interface DashboardBoardProps {
   spec?: DashSpec;
 }
 
-const ChartHitBand = ({ i, w, onHover }: { i: number; w: string; onHover: (idx: number) => void }) => (
+const ChartHitBand = ({
+  i,
+  w,
+  gaps,
+  onHover,
+}: {
+  i: number;
+  w: string;
+  gaps: number;
+  onHover: (idx: number) => void;
+}) => (
   <>
     {/* biome-ignore lint/a11y/noStaticElementInteractions: hover hit-band for tooltip; values readable without hover in axis/table/legend */}
     <rect
       key={w}
       className="dash-chart__hit"
-      x={((i - 0.5) * CHART_W) / N}
+      x={((i - 0.5) * CHART_W) / gaps}
       y="0"
-      width={CHART_W / N}
+      width={CHART_W / gaps}
       height={CHART_H}
       onMouseEnter={() => onHover(i)}
     />
@@ -44,14 +53,32 @@ const ChartHitBand = ({ i, w, onHover }: { i: number; w: string; onHover: (idx: 
 
 export function DashboardBoard({ query, scopeHint, onFollowup, spec }: DashboardBoardProps) {
   const [hover, setHover] = useState<number | null>(null);
-  const maxStage = Math.max(...DASH_STAGE_BARS.map((s) => s.value));
   // Spec-or-fixture selection: a doc-backed dashboard renders its own words
-  // and numbers; the series visuals stay decorative fixtures either way.
+  // and numbers. Charts carrying `data` (real-dashboards spec 2026-08-13)
+  // draw REAL series; without it the decorative fixtures stand in — the
+  // ask-screen mock renders exactly as before.
   const answer = spec?.summary ?? DASH_ANSWER;
   const kpis: Array<{ label: string; value: string; delta?: string; tone?: string; bar?: number }> =
     spec?.kpis ?? DASH_KPIS;
-  const lineTitle = spec?.charts.find((c) => c.kind === "line")?.title ?? "throughput vs. intake";
-  const barsTitle = spec?.charts.find((c) => c.kind === "bars")?.title ?? "where work is sitting";
+  const lineChart = spec?.charts.find((c) => c.kind === "line");
+  const barsChart = spec?.charts.find((c) => c.kind === "bars");
+  const lineTitle = lineChart?.title ?? "throughput vs. intake";
+  const barsTitle = barsChart?.title ?? "where work is sitting";
+  const weeks = lineChart?.data?.labels ?? DASH_WEEKS;
+  const seriesA = lineChart?.data?.series[0];
+  const seriesB = lineChart?.data?.series[1];
+  const lineA = seriesA?.values ?? DASH_SHIPPED;
+  const lineB = lineChart?.data ? (seriesB?.values ?? null) : DASH_INTAKE;
+  // One shared ceiling for whatever is drawn — one axis, never two. Min 1 so
+  // an all-zero window still draws a flat line instead of dividing by zero.
+  const lineMax = lineChart?.data ? Math.max(1, ...lineA, ...(lineB ?? [])) : CHART_MAX;
+  const gaps = Math.max(1, weeks.length - 1);
+  const stageBars = barsChart?.data
+    ? barsChart.data.labels.map((label, i) => ({ label, value: barsChart.data?.series[0]?.values[i] ?? 0 }))
+    : DASH_STAGE_BARS;
+  const maxStage = Math.max(1, ...stageBars.map((s) => s.value));
+  const legendA = seriesA?.name ?? "shipped";
+  const legendB = lineChart?.data ? (seriesB?.name ?? null) : "intake";
   return (
     <div className="dash-board">
       <div className="dash-board__banner">
@@ -61,8 +88,14 @@ export function DashboardBoard({ query, scopeHint, onFollowup, spec }: Dashboard
           <div className="dash-board__answer">{answer}</div>
           <div className="dash-board__meta">
             <span>{scopeHint}</span>
-            <span>12 WEEKS</span>
-            <span>UPDATED 2 MIN AGO</span>
+            {/* The mock's flavor copy stays mock-only — a real dashboard's
+                window is already in its scope hint. */}
+            {!spec && (
+              <>
+                <span>12 WEEKS</span>
+                <span>UPDATED 2 MIN AGO</span>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -89,8 +122,12 @@ export function DashboardBoard({ query, scopeHint, onFollowup, spec }: Dashboard
           <div className="dash-panel__head">
             <span>{lineTitle}</span>
             <span className="dash-panel__legend">
-              <i className="dash-legend__swatch dash-legend__swatch--line" /> shipped
-              <i className="dash-legend__swatch dash-legend__swatch--ref" /> intake
+              <i className="dash-legend__swatch dash-legend__swatch--line" /> {legendA}
+              {legendB && (
+                <>
+                  <i className="dash-legend__swatch dash-legend__swatch--ref" /> {legendB}
+                </>
+              )}
             </span>
           </div>
           {/* biome-ignore lint/a11y/noStaticElementInteractions: hover-only tooltip enrichment — every value is also in the axis, legend and table; nothing is click- or keyboard-gated */}
@@ -99,7 +136,7 @@ export function DashboardBoard({ query, scopeHint, onFollowup, spec }: Dashboard
               viewBox={`0 0 ${CHART_W} ${CHART_H}`}
               preserveAspectRatio="none"
               role="img"
-              aria-label="Shipped and intake per week over 12 weeks"
+              aria-label={`${legendA}${legendB ? ` and ${legendB}` : ""} per ${lineChart?.data ? "day" : "week"}`}
             >
               <defs>
                 <linearGradient id="dash-fill-a" x1="0" y1="0" x2="0" y2="1">
@@ -109,40 +146,39 @@ export function DashboardBoard({ query, scopeHint, onFollowup, spec }: Dashboard
               </defs>
               <path d="M0 40H640M0 90H640M0 140H640M0 175H640" className="dash-chart__grid" />
               <path
-                d={seriesPath(DASH_SHIPPED, { w: CHART_W, h: CHART_H, max: CHART_MAX, close: true })}
+                d={seriesPath(lineA, { w: CHART_W, h: CHART_H, max: lineMax, close: true })}
                 fill="url(#dash-fill-a)"
               />
-              <path
-                d={seriesPath(DASH_SHIPPED, { w: CHART_W, h: CHART_H, max: CHART_MAX })}
-                className="dash-chart__line"
-              />
-              <path
-                d={seriesPath(DASH_INTAKE, { w: CHART_W, h: CHART_H, max: CHART_MAX })}
-                className="dash-chart__ref"
-              />
+              <path d={seriesPath(lineA, { w: CHART_W, h: CHART_H, max: lineMax })} className="dash-chart__line" />
+              {lineB && (
+                <path d={seriesPath(lineB, { w: CHART_W, h: CHART_H, max: lineMax })} className="dash-chart__ref" />
+              )}
               {hover !== null && (
                 <line
                   className="dash-chart__cross"
-                  x1={(hover * CHART_W) / N}
-                  x2={(hover * CHART_W) / N}
+                  x1={(hover * CHART_W) / gaps}
+                  x2={(hover * CHART_W) / gaps}
                   y1="0"
                   y2={CHART_H}
                 />
               )}
-              {DASH_WEEKS.map((w, i) => (
-                <ChartHitBand key={w} i={i} w={w} onHover={setHover} />
+              {weeks.map((w, i) => (
+                <ChartHitBand key={w} i={i} w={w} gaps={gaps} onHover={setHover} />
               ))}
             </svg>
             {hover !== null && (
-              <div className="dash-chart__tip" style={{ left: `${(hover / N) * 100}%` }}>
-                <strong>{DASH_WEEKS[hover]}</strong> shipped {DASH_SHIPPED[hover]} · intake {DASH_INTAKE[hover]}
+              <div className="dash-chart__tip" style={{ left: `${(hover / gaps) * 100}%` }}>
+                <strong>{weeks[hover]}</strong> {legendA} {lineA[hover] ?? 0}
+                {legendB && lineB ? ` · ${legendB} ${lineB[hover] ?? 0}` : ""}
               </div>
             )}
           </div>
           <div className="dash-chart__weeks">
-            {DASH_WEEKS.filter((_, i) => i % 2 === 0).map((w) => (
-              <span key={w}>{w}</span>
-            ))}
+            {weeks
+              .filter((_, i) => i % 2 === 0)
+              .map((w) => (
+                <span key={w}>{w}</span>
+              ))}
           </div>
         </section>
 
@@ -152,7 +188,7 @@ export function DashboardBoard({ query, scopeHint, onFollowup, spec }: Dashboard
           </div>
           <div className="dash-panel__sub">CARDS BY STAGE</div>
           <div className="dash-stagebars">
-            {DASH_STAGE_BARS.map((s) => (
+            {stageBars.map((s) => (
               <div key={s.label} className="dash-stagebars__col">
                 <span className="dash-stagebars__num">{s.value}</span>
                 <div

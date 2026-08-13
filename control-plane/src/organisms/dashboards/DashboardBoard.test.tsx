@@ -81,4 +81,34 @@ describe("DashboardBoard", () => {
     render(<DashboardBoard query="q" scopeHint="SCOPE · ALL" onFollowup={() => {}} spec={composeSpec("q", "all")} />);
     expect(document.querySelector(".dash-text-card")).toBeNull();
   });
+
+  it("charts with data render REAL series — bars values, day labels, legend name", () => {
+    const spec = {
+      ...composeSpec("q", "all"),
+      charts: [
+        {
+          kind: "line" as const,
+          title: "activity over the window",
+          data: { labels: ["8/1", "8/2", "8/3"], series: [{ name: "touched", values: [0, 2, 1] }] },
+        },
+        {
+          kind: "bars" as const,
+          title: "where work is sitting",
+          data: { labels: ["IDEATE", "PLAN"], series: [{ name: "cards", values: [4, 7] }] },
+        },
+      ],
+    };
+    render(<DashboardBoard query="q" scopeHint="core · Aug 3 – Aug 16" onFollowup={() => {}} spec={spec} />);
+    // Bars carry the provided values and labels, not the fixtures.
+    expect(screen.getByText("IDEATE")).toBeInTheDocument();
+    expect(screen.getByText("7")).toBeInTheDocument();
+    expect(screen.queryByText("KILLED")).toBeNull(); // fixture stage is gone
+    // The line axis shows the provided day labels (every other one).
+    expect(screen.getByText("8/1")).toBeInTheDocument();
+    expect(screen.getByText("8/3")).toBeInTheDocument();
+    // Single-series data drops the fixture "intake" legend.
+    expect(screen.queryByText("intake")).toBeNull();
+    // The mock flavor meta never renders on a spec-backed board.
+    expect(screen.queryByText("UPDATED 2 MIN AGO")).toBeNull();
+  });
 });
