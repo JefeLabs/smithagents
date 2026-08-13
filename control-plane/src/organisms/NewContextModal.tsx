@@ -199,7 +199,10 @@ export function NewContextModal({
     const first = stepEls[step]?.querySelector<HTMLElement>(
       'input:not([disabled]), textarea, [role="listbox"], button:not([disabled])',
     );
-    first?.focus();
+    // preventScroll: the modal is TOP-ANCHORED now (Edwin, 2026-08-13) and
+    // the first control is always near the step's top — an autoscroll here
+    // just ate the anchor margin and yanked the dialog to the viewport edge.
+    first?.focus({ preventScroll: true });
   }, [step, isGroup]);
 
   const browse = async (index: number) => {
@@ -373,11 +376,9 @@ export function NewContextModal({
             >
               <RadioButtonGroup.Item value="existing">
                 <RadioButtonGroup.ItemContent>Existing repo</RadioButtonGroup.ItemContent>
-                <RadioButtonGroup.Indicator />
               </RadioButtonGroup.Item>
               <RadioButtonGroup.Item value="new">
                 <RadioButtonGroup.ItemContent>New folder</RadioButtonGroup.ItemContent>
-                <RadioButtonGroup.Indicator />
               </RadioButtonGroup.Item>
             </RadioButtonGroup>
             <FormTextField

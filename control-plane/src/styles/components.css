@@ -2494,22 +2494,22 @@ button.logo {
   border: 1px solid var(--pill-br);
   border-radius: 12px;
 }
-.nw-repo-row .seg {
+/* The FLEX ITEMS are HeroUI .textfield wrappers now, not bare inputs. The old
+   `.nw-repo-row input { flex: 1 1 110px }` rule survived the wrapper migration
+   and its flex-BASIS became the input's HEIGHT inside the columnar wrapper —
+   Edwin's giant-boxes screenshot (2026-08-13). Size the wrappers; let HeroUI
+   style the fields. */
+.nw-repo-row > .textfield {
+  flex: 1 1 150px;
+  min-width: 0;
+}
+.nw-repo-row .radio-button-group {
   flex: 1 1 100%;
 }
-.nw-repo-row input,
-.nw-repo-row select {
-  flex: 1 1 110px;
-  min-width: 0;
-  background: var(--bg-2, transparent);
-  border: 1px solid var(--pill-br);
-  border-radius: 8px;
-  padding: 6px 8px;
-  color: var(--text);
-  font-size: 12px;
-}
-.nw-repo-row input:nth-of-type(2) {
-  flex: 2 1 220px;
+/* Same treatment as .nc-contains: the selected outline is the state; the
+   indicator dot floated over the pill label. */
+.nw-repo-row .radio-button-group__indicator {
+  display: none;
 }
 .swatch-row {
   display: flex;
@@ -3931,4 +3931,24 @@ button.logo {
 }
 .nc-contains .radio-button-group__item {
   padding: 8px 14px;
+}
+
+/* Modals anchor to a consistent TOP offset — vertically centered dialogs jump
+   every time a step or tab changes height (Edwin, 2026-08-13). The centering
+   lives on .modal__container (align-items) plus the dialog's auto margins,
+   so both are overridden; height changes now grow DOWNWARD only. */
+.modal__container {
+  align-items: flex-start;
+  /* Focus-driven autoscroll respects this — nothing may scroll the anchor away. */
+  scroll-padding-top: 8vh;
+}
+.modal__container .modal__dialog {
+  margin-top: 8vh;
+  margin-bottom: 6vh;
+}
+/* Placeholders read as ghosts, not as entered text (Edwin, 2026-08-13). */
+.modal__dialog input::placeholder,
+.modal__dialog textarea::placeholder {
+  color: var(--text-dim);
+  opacity: 0.5;
 }
