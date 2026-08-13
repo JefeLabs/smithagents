@@ -175,6 +175,7 @@ import {
   removeWorkspaceFile,
   resolveRepo,
   saveWorkspace,
+  validSources,
   type Workspace,
   type WorkspaceRepo,
 } from "./workspaces.js";
@@ -1686,6 +1687,7 @@ export class OrchestratorServer {
       if (b.sprint !== undefined && !validSprint(b.sprint)) {
         return reply.status(400).send({ error: "sprint needs an anchor date and a positive integer lengthDays" });
       }
+      if (!validSources(b.sources)) return reply.status(400).send({ error: "invalid sources" });
       const { name: submittedName, repos: submittedRepos } = b;
       // Unreachable — workspaceProblems already rejects a blank name or empty
       // repos. The guard is what carries that guarantee into the type system.
@@ -1726,6 +1728,7 @@ export class OrchestratorServer {
         links: sanitizeLinks(b.links),
         color: b.color?.trim() || undefined,
         sprint: b.sprint,
+        sources: b.sources,
       };
       try {
         if (ws.default)
@@ -1765,10 +1768,12 @@ export class OrchestratorServer {
         color: b.color !== undefined ? b.color.trim() || undefined : existing.color,
         // Opt-in sprint: undefined keeps, explicit null clears, a value validates below.
         sprint: b.sprint !== undefined ? (b.sprint ?? undefined) : existing.sprint,
+        sources: b.sources ?? existing.sources,
       };
       if (merged.sprint !== undefined && !validSprint(merged.sprint)) {
         return reply.status(400).send({ error: "sprint needs an anchor date and a positive integer lengthDays" });
       }
+      if (!validSources(merged.sources)) return reply.status(400).send({ error: "invalid sources" });
       if (merged.default && merged.archived) {
         return reply
           .status(409)
@@ -1856,6 +1861,7 @@ export class OrchestratorServer {
           links: w.links,
           color: w.color,
           sprint: w.sprint,
+          sources: w.sources,
         })),
       };
     });

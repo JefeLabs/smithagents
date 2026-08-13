@@ -19,6 +19,44 @@ export interface WorkspaceRepo {
   github?: { owner: string; repo: string; connectorId?: string };
 }
 
+/** A pollable external origin owned by this context (spec 2026-08-13
+    queue-sources): the BROKER polls it, the queue bindings on boards decide
+    where its findings card. `preset` is UI sugar — executors read origin/transform. */
+export interface ContextSource {
+  id: string;
+  name: string;
+  preset: "jira" | "releases" | "topic" | "observability" | "support" | "custom";
+  origin: { connectorId?: string; url?: string; query?: string };
+  cadence: "hourly" | "6h" | "nightly";
+  transform: { mode: "map" } | { mode: "analyze"; prompt?: string };
+  enabled: boolean;
+}
+
+const SOURCE_PRESETS = new Set(["jira", "releases", "topic", "observability", "support", "custom"]);
+const SOURCE_CADENCES = new Set(["hourly", "6h", "nightly"]);
+
+/** Absent or a valid array — never half-checked, same contract as validSprint. */
+export function validSources(v: unknown): boolean {
+  if (v === undefined) return true;
+  if (!Array.isArray(v)) return false;
+  return v.every((s) => {
+    const o = s as Partial<ContextSource>;
+    return (
+      o !== null &&
+      typeof o === "object" &&
+      typeof o.id === "string" &&
+      o.id.length > 0 &&
+      typeof o.name === "string" &&
+      SOURCE_PRESETS.has(o.preset as string) &&
+      typeof o.origin === "object" &&
+      o.origin !== null &&
+      SOURCE_CADENCES.has(o.cadence as string) &&
+      (o.transform?.mode === "map" || o.transform?.mode === "analyze") &&
+      typeof o.enabled === "boolean"
+    );
+  });
+}
+
 export interface Workspace {
   name: string;
   description?: string;
@@ -40,6 +78,8 @@ export interface Workspace {
   color?: string;
   /** Opt-in sprint definition (date-range spec 2026-08-12) — absent means this workspace has no sprints. */
   sprint?: { anchor: string; lengthDays: number };
+  /** Pollable external origins owned by this context (spec 2026-08-13 queue-sources) — absent means none configured. */
+  sources?: ContextSource[];
   /**
    * ONE CONTEXT ENTITY (spec 2026-08-13, Edwin: "a group is a workspace made
    * up of many workspaces" / "there is a group attribute for workspace"):

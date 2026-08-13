@@ -15,6 +15,7 @@ import {
   removeWorkspaceFile,
   resolveRepo,
   saveWorkspace,
+  validSources,
 } from "./workspaces.js";
 
 const execFileAsync = promisify(execFile);
@@ -154,4 +155,59 @@ test("initGitRepo: turns a plain directory into a git repository", async () => {
   assert.equal(await isGitRepo(dir), false);
   await initGitRepo(dir);
   assert.equal(await isGitRepo(dir), true);
+});
+
+test("a workspace record with sources round-trips through save and load untouched", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "ws-"));
+  const ws: Workspace = {
+    name: "acme",
+    repos: [{ name: "app", path: "/tmp/app" }],
+    sources: [
+      {
+        id: "jira-plan",
+        name: "PROJ tickets",
+        preset: "jira",
+        origin: { connectorId: "atl-1", url: "https://acme.atlassian.net", query: "project = PROJ" },
+        cadence: "nightly",
+        transform: { mode: "map" },
+        enabled: true,
+      },
+    ],
+  };
+  await saveWorkspace(dir, ws);
+  const [loaded] = await loadWorkspacesFromDir(dir);
+  assert.deepEqual(loaded.sources, ws.sources);
+});
+
+test("validSources accepts absent, rejects rows missing id/name/preset/cadence/transform/enabled", () => {
+  assert.equal(validSources(undefined), true);
+  assert.equal(validSources([]), true);
+  assert.equal(
+    validSources([
+      {
+        id: "s1",
+        name: "n",
+        preset: "custom",
+        origin: {},
+        cadence: "6h",
+        transform: { mode: "analyze" },
+        enabled: true,
+      },
+    ]),
+    true,
+  );
+  assert.equal(validSources([{ id: "s1" }]), false);
+  assert.equal(
+    validSources([
+      { id: "s1", name: "n", preset: "nope", origin: {}, cadence: "6h", transform: { mode: "map" }, enabled: true },
+    ]),
+    false,
+  );
+  assert.equal(
+    validSources([
+      { id: "s1", name: "n", preset: "jira", origin: {}, cadence: "weekly", transform: { mode: "map" }, enabled: true },
+    ]),
+    false,
+  );
+  assert.equal(validSources("x"), false);
 });
