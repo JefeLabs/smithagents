@@ -190,12 +190,29 @@ describe("HomePage — the zero-session composer", () => {
     c.setQueryData(qk.workspaces, ["acme"]);
   };
 
-  it("forces the composer open when the broker confirms zero sessions", async () => {
+  it("zero sessions land on the WELCOME hero, not a forced composer (Edwin, 2026-08-13)", async () => {
     renderApp(knownZero);
     await appMounted();
     act(() => FakeSocket.last?.open());
 
+    // The mic hero is the zero-state — the broker lazily creates a session on
+    // the first utterance, so the mic really is live from here.
+    expect(await screen.findByRole("heading", { name: /the mic is yours/i })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /start a session/i })).toBeNull();
+  });
+
+  it("the rail's New session still opens the composer explicitly — and it can be dismissed back to the hero", async () => {
+    renderApp(knownZero);
+    await appMounted();
+    act(() => FakeSocket.last?.open());
+    await screen.findByRole("heading", { name: /the mic is yours/i });
+
+    await userEvent.click(screen.getByRole("row", { name: /new session/i }));
     expect(await screen.findByRole("heading", { name: /start a session/i })).toBeInTheDocument();
+    // No longer `forced`: with the hero behind it, Escape is a real exit.
+    await userEvent.keyboard("{Escape}");
+    expect(await screen.findByRole("heading", { name: /the mic is yours/i })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /start a session/i })).toBeNull();
   });
 
   it("holds the execution-mode and workspace-record probes until the composer is on screen", async () => {
@@ -214,8 +231,14 @@ describe("HomePage — the zero-session composer", () => {
     expect(bootWorkspaceReads).toBeGreaterThanOrEqual(1);
 
     act(() => FakeSocket.last?.open());
-    await screen.findByRole("heading", { name: /start a session/i });
+    // Zero sessions no longer auto-opens the composer (Edwin, 2026-08-13:
+    // the hero is the zero-state) — the probes stay held until an EXPLICIT
+    // open from the rail.
+    await screen.findByRole("heading", { name: /the mic is yours/i });
+    expect(callsTo("/execution-modes")).toBe(0);
 
+    await userEvent.click(screen.getByRole("row", { name: /new session/i }));
+    await screen.findByRole("heading", { name: /start a session/i });
     await waitFor(() => expect(callsTo("/execution-modes")).toBe(1));
     // The composer adds exactly its one re-read on top of the boot reads.
     expect(callsTo("/workspaces")).toBe(bootWorkspaceReads + 1);

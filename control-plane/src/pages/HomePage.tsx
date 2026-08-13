@@ -78,7 +78,7 @@ export function HomePage() {
   const micControl = useSocketStore((s) => s.micControl);
   const micAudio = useSocketStore((s) => s.micAudio);
 
-  const { data: session = null, status: sessionStatus } = useSession();
+  const { data: session = null } = useSession();
   const { data: sessions = NO_SESSIONS } = useSessions();
   const { data: workspaces = NO_WORKSPACES } = useWorkspaces();
   const { data: groups = NO_GROUPS } = useGroups();
@@ -188,8 +188,13 @@ export function HomePage() {
   // must not: the session query stays `pending` until the first frame lands, and on every fresh
   // connect there is a beat where `connected` is already true. Reading `status` rather than
   // `data === null` is what keeps the composer from flashing open on each load.
-  const knownZeroSessions = sessionStatus === "success" && session === null;
-  const composerVisible = composer !== null || (connected && knownZeroSessions);
+  // The composer screen opens on EXPLICIT intent only (Edwin, 2026-08-13:
+  // "when no chat messages in session … I see the welcome screen stating the
+  // mic is mine"). Zero sessions is no longer a forced detour — the ChatDock's
+  // hero is the zero-state, and it is fully live there: the broker lazily
+  // creates a session in the default workspace on the first utterance
+  // (main.ts handleUserText, spec §4b).
+  const composerVisible = composer !== null;
 
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -353,7 +358,6 @@ export function HomePage() {
         composerVisible ? (
           <NewSessionScreen
             lockedWorkspace={composer?.locked}
-            forced={knownZeroSessions}
             onSend={async (ws, mode, prompt) => {
               const r = await api.postSession(BROKER_BASE, ws, mode, prompt);
               if (r.error) {
