@@ -8,6 +8,12 @@ export interface ChatMessage {
   id: number;
   role: "user" | "broker" | "notice";
   text: string;
+  /**
+   * When it was said (broker-stamped). Live frames arrive without it — an
+   * undated message always renders; the next session-frame replay backfills
+   * it from the stored transcript.
+   */
+  at?: string;
 }
 
 export interface SpeechProfile {
@@ -93,7 +99,7 @@ export interface SessionFrame {
     artifacts: string[];
   } | null;
   sessions: SessionSummary[];
-  transcript: Array<{ role: "user" | "broker"; text: string }>;
+  transcript: Array<{ role: "user" | "broker"; text: string; at?: string }>;
   workspaces: string[];
   /** Absent on an older broker; the socket store normalizes to []. */
   groups?: GroupT[];

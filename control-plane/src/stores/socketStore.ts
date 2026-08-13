@@ -135,7 +135,7 @@ export const useSocketStore = create<SocketState>((set) => ({
             nextId = 0; // the frame replays the whole transcript, so ids restart with it
             qc.setQueryData<ChatMessage[]>(
               qk.transcript,
-              frame.transcript.map((t) => ({ id: nextId++, role: t.role, text: t.text })),
+              frame.transcript.map((t) => ({ id: nextId++, role: t.role, text: t.text, at: t.at })),
             );
             return;
           case "roster":

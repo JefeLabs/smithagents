@@ -675,7 +675,10 @@ function sessionFrame() {
       ? { id: s.id, title: s.title, workspace: s.workspace, runtime: s.runtime, artifacts: s.artifacts ?? [] }
       : null,
     sessions: sessionManager.list(),
-    transcript: (s?.transcript ?? []).map((t) => ({ role: t.role, text: t.text })),
+    // `at` rides along so the control plane can window the visible history by
+    // the context date range (Edwin, 2026-08-12). Entries from before stamping
+    // existed have none and always render there.
+    transcript: (s?.transcript ?? []).map((t) => ({ role: t.role, text: t.text, at: t.at })),
     workspaces: workspaceNames,
     groups: groupRecords,
   };

@@ -12,6 +12,7 @@ import { useTheme } from "../hooks/useTheme";
 import { useVoiceStatus } from "../hooks/useVoiceStatus";
 import { ALL_WORKSPACES } from "../lib/board-aggregate";
 import { isKindSurface, kindForPath, layoutForPath } from "../lib/composerLayout";
+import { inDateRange } from "../lib/dateRange";
 import { makePickKind, openDocByFamily } from "../lib/pickKind";
 import { AlertMenu } from "../molecules/AlertMenu";
 import { ArtifactShelf, splitShelfDocs } from "../molecules/ArtifactShelf";
@@ -196,6 +197,11 @@ export function HomePage() {
   // ---- the one persistent ChatDock, wired once and repositioned by route ----
   // These are the props VoiceStage/DocRoute used to wire each for themselves.
   const { data: messages = NO_MESSAGES } = useTranscript();
+  // The context window trims the VISIBLE history (Edwin, 2026-08-12): messages
+  // said outside the picked range leave the transcript view. Undated messages
+  // (live frames, pre-stamping entries) always show. The RAW list keeps
+  // feeding the audio hooks — windowing what gets spoken would be wrong.
+  const windowedMessages = rangeBounds ? messages.filter((m) => !m.at || inDateRange(m.at, rangeBounds)) : messages;
   const { data: docs = NO_DOCS } = useDocuments();
   const { data: blueprints = NO_BLUEPRINTS } = useBlueprints();
   const { voice } = useVoiceStatus();
@@ -209,7 +215,7 @@ export function HomePage() {
   // burying it under the ask screen's center box. Presented dashboards are
   // ordinary doc canvases now (/dashboard/$docId), so no board-view override
   // remains. The URL stays the variant's source of truth everywhere else.
-  const dockVariant = pathname === "/dashboards" && messages.length > 0 ? "dock" : layoutForPath(pathname);
+  const dockVariant = pathname === "/dashboards" && windowedMessages.length > 0 ? "dock" : layoutForPath(pathname);
   // workspace/group → session → artifacts, with pins as the parent-level
   // override (Edwin, 2026-08-12): the home shelf splits the same two ways.
   const activeLens = useUiStore((s) => s.activeLens);
@@ -378,7 +384,7 @@ export function HomePage() {
         dockVariant !== "hidden" && !composerVisible ? (
           <ChatDock
             variant={dockVariant}
-            messages={messages}
+            messages={windowedMessages}
             onSend={(text, target) => {
               // On a doc canvas the send IS an instruction about the page
               // (spec: dock-sends-edit-artifact); the aimed section rides

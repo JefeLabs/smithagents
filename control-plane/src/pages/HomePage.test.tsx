@@ -431,6 +431,21 @@ describe("HomePage — creating a session lands in its conversation", () => {
     expect(document.body.getAttribute("data-dock")).toBe("center");
   });
 
+  it("the context window trims the visible chat history; undated messages always show", async () => {
+    renderApp((client) => {
+      client.setQueryData(qk.transcript, [
+        // Default window = last 14 days (no sprint config seeded).
+        { id: 1, role: "user", text: "ancient question", at: "2020-01-01T00:00:00Z" },
+        { id: 2, role: "broker", text: "fresh answer", at: new Date().toISOString() },
+        { id: 3, role: "user", text: "undatable line", at: "t" },
+      ]);
+    });
+    await screen.findByRole("region", { name: "Chat" });
+    expect(await screen.findByText("fresh answer")).toBeTruthy();
+    expect(screen.getByText("undatable line")).toBeTruthy();
+    expect(screen.queryByText("ancient question")).toBeNull();
+  });
+
   it("a send from /doc carries the viewed doc and the aimed section, then spends the aim", async () => {
     const calls: Array<{ url: string; body?: unknown }> = [];
     vi.stubGlobal(
