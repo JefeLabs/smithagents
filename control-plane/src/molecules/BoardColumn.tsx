@@ -27,12 +27,22 @@ function SortableCard({
   card,
   agent,
   tint,
+  holder,
+  provenance,
+  onGrab,
+  intent,
+  age,
   onOpen,
   action,
 }: {
   card: AggCard;
   agent?: RosterAgent;
   tint?: string;
+  holder?: { name: string; state: "plate" | "today" };
+  provenance?: string;
+  onGrab?: () => void;
+  intent?: string;
+  age?: string;
   onOpen: () => void;
   action?: CardFaceAction;
 }) {
@@ -50,6 +60,11 @@ function SortableCard({
         card={card}
         agent={agent}
         tint={tint}
+        holder={holder}
+        provenance={provenance}
+        onGrab={onGrab}
+        intent={intent}
+        age={age}
         onOpen={onOpen}
         className={sortable.isDragging ? "is-dragging" : undefined}
       />
@@ -81,6 +96,11 @@ export function BoardColumn({
   clusters,
   colorFor,
   agentFor,
+  holderFor,
+  provenanceFor,
+  onGrabFor,
+  intentFor,
+  ageFor,
   onOpenCard,
   onConfigure,
   droppable: isDroppable = true,
@@ -90,6 +110,16 @@ export function BoardColumn({
   clusters: Cluster[];
   colorFor: (workspaceId?: string) => string | undefined;
   agentFor: (id?: string) => RosterAgent | undefined;
+  /** Who holds a card's current step — resolved per card, rendered on team boards only. */
+  holderFor?: (card: AggCard) => { name: string; state: "plate" | "today" } | undefined;
+  /** The workflow-axis badge ("Deliver · review") — resolved per card, Agenda only. */
+  provenanceFor?: (card: AggCard) => string | undefined;
+  /** The Grab control's handler — resolved per card, shared-queue lane only. */
+  onGrabFor?: (card: AggCard) => (() => void) | undefined;
+  /** The holder's latest stated intent — resolved per card. */
+  intentFor?: (card: AggCard) => string | undefined;
+  /** How long a card has sat on the holder's plate, pre-formatted — resolved per card. */
+  ageFor?: (card: AggCard) => string | undefined;
   onOpenCard: (boardId: string, cardId: string) => void;
   onConfigure?: () => void;
   /** False for the synthetic shared-queue lane — it is a derived pool, not a move target. */
@@ -148,6 +178,11 @@ export function BoardColumn({
                     card={card}
                     agent={agentFor(card.delegation?.agentId)}
                     tint={g.label !== null ? colorFor(card.workspaceId) : undefined}
+                    holder={holderFor?.(card)}
+                    provenance={provenanceFor?.(card)}
+                    onGrab={onGrabFor?.(card)}
+                    intent={intentFor?.(card)}
+                    age={ageFor?.(card)}
                     onOpen={() => onOpenCard(card.boardId, card.id)}
                     action={override?.kind === "action" ? override : undefined}
                   />

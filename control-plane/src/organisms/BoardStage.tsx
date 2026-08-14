@@ -9,6 +9,7 @@ import {
   type AggCard,
   ALL_WORKSPACES,
   addableTypes,
+  BOARD_TYPE_LABELS_UI,
   type BoardTypeT,
   clusterByWorkspace,
   collectAgendaCards,
@@ -18,6 +19,7 @@ import {
 } from "../lib/board-aggregate";
 import { inDateRange } from "../lib/dateRange";
 import { workspaceColor } from "../lib/workspace-color";
+import { flagAge } from "../molecules/BoardCard";
 import { BoardColumn } from "../molecules/BoardColumn";
 import { BoardTabs } from "../molecules/BoardTabs";
 import { useMe, useWorkspaceRecords } from "../queries/http";
@@ -343,6 +345,31 @@ export function BoardStage({ roster }: BoardStageProps) {
     return workspaceColor(ws ?? { name: workspaceId });
   };
   const agentFor = (id?: string) => (id ? roster.find((a) => a.id === id) : undefined);
+  // Rendered on team boards only — on Agenda every card in Plate/Today is
+  // definitionally the viewer's own, so naming the holder would be inert noise.
+  const holderFor = (card: AggCard) => {
+    if (isAgendaTab || !card.agenda) return undefined;
+    const by = card.agenda.by;
+    return { name: me && me.id === by ? me.name : by, state: card.agenda.state };
+  };
+  // The workflow axis a card carries onto Agenda from its home board — never
+  // shown for personal todos, which have no board type to name.
+  const provenanceFor = (card: AggCard) => {
+    if (!isAgendaTab) return undefined;
+    const home = boardOf(card.boardId);
+    if (!home || home.type === "personal") return undefined;
+    return `${BOARD_TYPE_LABELS_UI[home.type]} · ${card.columnId}`;
+  };
+  // A committed step reads as a sentence, not a title — shown wherever the
+  // held card appears (Agenda's own Today lane and the team board alike).
+  const intentFor = (card: AggCard) => {
+    if (card.agenda?.state !== "today" || !card.intents?.length) return undefined;
+    const last = card.intents[card.intents.length - 1];
+    return last.kind === "start" ? last.text : undefined;
+  };
+  // grabbedAt, never `since` — the morning sweep re-stamps `since` on every
+  // card it reverts, which would make yesterday's plate look freshly grabbed.
+  const ageFor = (card: AggCard) => (card.agenda?.state === "plate" ? flagAge(card.agenda.grabbedAt) : undefined);
   // Both looked up here, and both guarded at the render site. A refetch can
   // drop the open card out from under the sheet — an agent deletes it, or a
   // route moves it to another board — and CardSheet reads `card.title`
@@ -562,6 +589,19 @@ export function BoardStage({ roster }: BoardStageProps) {
           <div className="board-stage__columns">
             {columns.map((col) => {
               const isSharedQueue = isAgendaTab && col.id === "shared-queue";
+              // Defined only for the shared-queue lane. In today's wiring every
+              // card there is already replaced wholesale by CardAction below
+              // (its own Grab button), so this never actually renders — kept
+              // for BoardCard's contract and to survive if that override is
+              // ever relaxed.
+              const onGrabFor = isSharedQueue
+                ? (card: AggCard) => () =>
+                    void cardAgendaMutation.mutateAsync({
+                      boardId: card.boardId,
+                      cardId: card.id,
+                      agenda: { action: "grab" },
+                    })
+                : undefined;
               // boards, not windowedBoards: Agenda is range-invariant, same
               // reasoning as its workspace-invariance (tabsFor's comment on
               // `personal`). A held team card's `updatedAt` is never
@@ -680,6 +720,11 @@ export function BoardStage({ roster }: BoardStageProps) {
                   clusters={clusters}
                   colorFor={colorFor}
                   agentFor={agentFor}
+                  holderFor={holderFor}
+                  provenanceFor={provenanceFor}
+                  onGrabFor={onGrabFor}
+                  intentFor={intentFor}
+                  ageFor={ageFor}
                   onOpenCard={(boardId, cardId) => setOpen({ boardId, cardId })}
                   droppable={!isSharedQueue}
                   cardOverride={cardOverride}

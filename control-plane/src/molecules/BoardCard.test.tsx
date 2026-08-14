@@ -1,5 +1,5 @@
-import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkCardT } from "../organisms/BoardStage";
 import { BoardCard, flagAge } from "./BoardCard";
 
@@ -52,5 +52,58 @@ describe("BoardCard", () => {
     const el = screen.getByRole("button");
     expect(el.style.getPropertyValue("--card-tint")).toBe("#5fd0b0");
     expect(el.className).toContain("is-at-risk");
+  });
+
+  it("renders the holder chip with their step state", () => {
+    render(
+      <BoardCard
+        card={card({ title: "auth", columnId: "review" })}
+        holder={{ name: "Edwin", state: "today" }}
+        onOpen={() => {}}
+      />,
+    );
+    expect(screen.getByText("Edwin · today")).toBeDefined();
+  });
+
+  it("renders no holder chrome when nobody holds it", () => {
+    const { container } = render(<BoardCard card={card({ title: "auth", columnId: "review" })} onOpen={() => {}} />);
+    expect(container.querySelector(".board-card__holder")).toBeNull();
+  });
+
+  it("shows Grab only when onGrab is given", () => {
+    const onGrab = vi.fn();
+    const { rerender } = render(
+      <BoardCard card={card({ title: "auth", columnId: "review" })} onGrab={onGrab} onOpen={() => {}} />,
+    );
+    // Exact match, not /grab/i: the outer card is itself a <button>, and its
+    // accessible name is computed from all descendant text — "auth Grab" —
+    // which a substring/regex matcher would also catch, finding two buttons.
+    fireEvent.click(screen.getByRole("button", { name: "Grab" }));
+    expect(onGrab).toHaveBeenCalled();
+    rerender(<BoardCard card={card({ title: "auth", columnId: "review" })} onOpen={() => {}} />);
+    expect(screen.queryByRole("button", { name: "Grab" })).toBeNull();
+  });
+
+  it("renders the provenance badge when given", () => {
+    render(
+      <BoardCard card={card({ title: "auth", columnId: "review" })} provenance="Deliver · review" onOpen={() => {}} />,
+    );
+    expect(screen.getByText("Deliver · review")).toBeDefined();
+  });
+
+  it("shows the stated intent under the title, and nothing when there is none", () => {
+    const c = card({ title: "auth", columnId: "review" });
+    const { rerender, container } = render(<BoardCard card={c} intent="chasing the flaky suite" onOpen={() => {}} />);
+    expect(screen.getByText("chasing the flaky suite")).toBeDefined();
+    rerender(<BoardCard card={c} onOpen={() => {}} />);
+    expect(container.querySelector(".board-card__intent")).toBeNull();
+  });
+
+  it("shows the plate age chip, formatted by flagAge, and nothing when there is none", () => {
+    const c = card({ title: "auth", columnId: "review" });
+    const { rerender, container } = render(<BoardCard card={c} age="5d" onOpen={() => {}} />);
+    expect(screen.getByText("5d")).toBeDefined();
+    rerender(<BoardCard card={c} onOpen={() => {}} />);
+    expect(container.querySelector(".board-card__age")).toBeNull();
   });
 });

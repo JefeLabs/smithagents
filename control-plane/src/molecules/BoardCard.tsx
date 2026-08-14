@@ -21,10 +21,33 @@ interface BoardCardProps {
   className?: string;
   /** Workspace identity colour; applied to the card fill in the aggregate view only. */
   tint?: string;
+  /** Who holds this card's current step. Rendered on team boards. */
+  holder?: { name: string; state: "plate" | "today" };
+  /** "Deliver · review" — the workflow axis, shown when this card appears on Agenda. */
+  provenance?: string;
+  /** Present only for shared-queue cards; renders the Grab control. */
+  onGrab?: () => void;
+  /** The holder's latest stated intent. Shown under the title in the Today lane, so the
+      lane reads as a list of commitments rather than a list of titles. */
+  intent?: string;
+  /** How long this has been on the holder's plate, pre-formatted ("5d"). Derived from
+      `agenda.grabbedAt` — never from `since`, which the morning sweep re-stamps. */
+  age?: string;
 }
 
 /** One kanban card face: title, flag, Jira chip, delegation badge. Pure display — drag wiring wraps it. */
-export function BoardCard({ card, agent, onOpen, className, tint }: BoardCardProps) {
+export function BoardCard({
+  card,
+  agent,
+  onOpen,
+  className,
+  tint,
+  holder,
+  provenance,
+  onGrab,
+  intent,
+  age,
+}: BoardCardProps) {
   const d = card.delegation;
   const total = card.stories?.length ?? 0;
   const done = card.stories?.filter((s) => s.done).length ?? 0;
@@ -36,6 +59,7 @@ export function BoardCard({ card, agent, onOpen, className, tint }: BoardCardPro
       onClick={onOpen}
     >
       <span className="board-card__title">{card.title}</span>
+      {intent && <span className="board-card__intent">{intent}</span>}
       <span className="board-card__meta">
         {card.flag && (
           // biome-ignore lint/a11y/useSemanticElements: no semantic element fits a status chip inline in flow text; role="group" names it for AT and makes aria-label valid.
@@ -57,6 +81,25 @@ export function BoardCard({ card, agent, onOpen, className, tint }: BoardCardPro
           <span className="board-card__cap" title={`capability: ${card.capabilityRef.capabilityId}`}>
             ⧉ map
           </span>
+        )}
+        {provenance && <span className="board-card__provenance">{provenance}</span>}
+        {holder && (
+          <span className={`board-card__holder is-${holder.state}`}>
+            {holder.name} · {holder.state}
+          </span>
+        )}
+        {age && <span className="board-card__age">{age}</span>}
+        {onGrab && (
+          <button
+            type="button"
+            className="board-card__grab"
+            onClick={(e) => {
+              e.stopPropagation();
+              onGrab();
+            }}
+          >
+            Grab
+          </button>
         )}
         {card.jira && (
           <a
