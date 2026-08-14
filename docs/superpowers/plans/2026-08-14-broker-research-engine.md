@@ -1,5 +1,7 @@
 # Broker Research Engine — Implementation Plan (Phase 1)
 
+> **EXECUTED AND COMPLETE — 2026-08-14.** All five tasks are implemented, reviewed and pushed. Owner: session `5de6efcf`, worktree `.worktrees/broker-research-engine`, branch `broker-research-engine` at `b287764`, pushed to origin. Ledger with every ruling: `.superpowers/sdd/2026-08-14-broker-research-engine/progress.md`. **Do not re-execute this plan.** The only work left is the post-merge live smoke in Final Verification, which needs services running from the main checkout.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Let the broker run its six tool-free "research" calls on any authenticated CLI engine, chosen in Settings, instead of a hardcoded Anthropic key that is out of credits.
@@ -236,15 +238,28 @@ test("CliResearch returns trimmed stdout", async () => {
   assert.equal(await engine.complete({ system: "s", prompt: "p", maxTokens: 8 }), "a title");
 });
 
-test("CliResearch sends system and prompt on stdin, not argv", async () => {
-  // A long system prompt through argv risks E2BIG, and shell-escaping it is a
-  // whole class of injection bug we simply decline to have.
+test("CliResearch passes system+prompt as the final argv element", async () => {
+  // Every shipped driver does this — claude `--print '<p>'`, agy `--prompt
+  // '<p>'`, codex `exec '<p>'`. None of them read the prompt from stdin.
   const stub = spawnStub({ code: 0, stdout: "ok", stderr: "" });
   const engine = new CliResearch(stub.fn, ["claude", "--print"], undefined);
   await engine.complete({ system: "SYS", prompt: "PROMPT", maxTokens: 8 });
-  assert.deepEqual(stub.calls[0].argv, ["claude", "--print"]);
-  assert.match(stub.calls[0].stdin, /SYS/);
-  assert.match(stub.calls[0].stdin, /PROMPT/);
+  assert.deepEqual(stub.calls[0].argv.slice(0, 2), ["claude", "--print"]);
+  const last = stub.calls[0].argv.at(-1) as string;
+  assert.match(last, /SYS/);
+  assert.match(last, /PROMPT/);
+});
+
+test("CliResearch does not escape or quote the prompt — spawn takes an argv array", async () => {
+  // No shell is involved (spawn without shell:true goes straight to execve),
+  // so quotes, newlines and backticks are ordinary characters. Escaping them
+  // would corrupt the prompt, and the shipped drivers only escape because they
+  // build a shell STRING for tmux; this does not.
+  const stub = spawnStub({ code: 0, stdout: "ok", stderr: "" });
+  const engine = new CliResearch(stub.fn, ["claude", "--print"], undefined);
+  const nasty = `it's "quoted" \`and\` \n multi-line; rm -rf /`;
+  await engine.complete({ system: "s", prompt: nasty, maxTokens: 8 });
+  assert.ok((stub.calls[0].argv.at(-1) as string).includes(nasty), "prompt must survive byte-for-byte");
 });
 
 test("CliResearch appends the model flag only when a model is set", async () => {
@@ -254,7 +269,8 @@ test("CliResearch appends the model flag only when a model is set", async () => 
     prompt: "p",
     maxTokens: 8,
   });
-  assert.deepEqual(withModel.calls[0].argv, ["claude", "--print", "--model", "claude-sonnet"]);
+  // The prompt is always the LAST element, so the model flag lands before it.
+  assert.deepEqual(withModel.calls[0].argv, ["claude", "--print", "--model", "claude-sonnet", "s\n\np"]);
 
   const without = spawnStub({ code: 0, stdout: "ok", stderr: "" });
   await new CliResearch(without.fn, ["claude", "--print"], undefined).complete({
@@ -262,7 +278,7 @@ test("CliResearch appends the model flag only when a model is set", async () => 
     prompt: "p",
     maxTokens: 8,
   });
-  assert.deepEqual(without.calls[0].argv, ["claude", "--print"]);
+  assert.deepEqual(without.calls[0].argv, ["claude", "--print", "s\n\np"]);
 });
 
 test("CliResearch turns a non-zero exit into a ResearchError carrying stderr", async () => {
@@ -330,9 +346,15 @@ export type Spawner = (
 /**
  * Runs one research turn through a CLI tool.
  *
- * The prompt goes over STDIN, never argv: a system prompt is long enough to
- * risk E2BIG, and shell-escaping it is a class of injection bug worth
- * declining outright.
+ * The prompt is the FINAL argv element, matching every shipped driver:
+ * claude `--print '<p>'`, agy `--prompt '<p>'`, codex `exec '<p>'`. None of
+ * them read a prompt from stdin.
+ *
+ * It is passed unescaped and unquoted, deliberately. `spawn` receives an argv
+ * ARRAY and never sets `shell: true`, so the args reach execve directly with
+ * no shell to interpret them — quotes, newlines and backticks are ordinary
+ * bytes. The shipped drivers escape only because they assemble a shell STRING
+ * for tmux; escaping here would corrupt the prompt instead of protecting it.
  *
  * NOT a ToolDriver. That interface launches interactive panes and rebuilds
  * conversations by discovering and parsing transcript FILES; this spawns a
@@ -347,9 +369,9 @@ export class CliResearch implements ResearchEngine {
   ) {}
 
   async complete(input: ResearchInput): Promise<string> {
-    const argv = this.model ? [...this.baseArgv, "--model", this.model] : [...this.baseArgv];
-    const stdin = `${input.system}\n\n${input.prompt}`;
-    const { code, stdout, stderr } = await this.spawn(argv, stdin);
+    const withModel = this.model ? [...this.baseArgv, "--model", this.model] : [...this.baseArgv];
+    const argv = [...withModel, `${input.system}\n\n${input.prompt}`];
+    const { code, stdout, stderr } = await this.spawn(argv, "");
     if (code !== 0) {
       const detail = stderr.trim() || stdout.trim() || (code === null ? "killed or timed out" : `exit ${code}`);
       throw new ResearchError(`${this.baseArgv[0]} failed: ${detail}`);
@@ -362,6 +384,65 @@ export class CliResearch implements ResearchEngine {
 ```
 
 Note `maxTokens` is accepted and unused here — CLI tools have no equivalent flag. Keeping it in the interface is what lets the six call sites stay identical across both implementations.
+
+Also add the production spawner in the same file — Task 4 constructs `CliResearch` with it:
+
+```ts
+import { spawn } from "node:child_process";
+
+const RESEARCH_TIMEOUT_MS = 120_000;
+
+/**
+ * Production spawner. Resolves, never rejects: a spawn failure is data the
+ * caller must handle, not an exception thrown past it. Mirrors the swarm's
+ * defaultRunner contract for the same reason.
+ *
+ * The timeout matters more here than it looks — a hung CLI would otherwise
+ * hang a feed poll or an election indefinitely, and neither has its own clock.
+ */
+export const defaultSpawner: Spawner = (argv, stdin) =>
+  new Promise((resolve) => {
+    const child = spawn(argv[0], argv.slice(1), { stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const finish = (code: number | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ code, stdout, stderr });
+    };
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      finish(null);
+    }, RESEARCH_TIMEOUT_MS);
+    child.stdout.on("data", (d) => {
+      stdout += String(d);
+    });
+    child.stderr.on("data", (d) => {
+      stderr += String(d);
+    });
+    // A missing binary emits 'error', never 'close' with a code — without this
+    // the promise would never settle and the caller would hang until its own
+    // timeout, if it has one.
+    child.on("error", (err) => {
+      stderr += String((err as Error).message);
+      finish(null);
+    });
+    child.on("close", (code) => finish(code));
+    child.stdin.end(stdin);
+  });
+```
+
+Add one test for the error path that has no `close` event:
+
+```ts
+test("defaultSpawner settles when the binary does not exist", async () => {
+  const r = await defaultSpawner(["definitely-not-a-real-binary-xyz"], "hi");
+  assert.equal(r.code, null);
+  assert.match(r.stderr, /ENOENT|not found|spawn/i);
+});
+```
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -377,9 +458,10 @@ pnpm exec biome check src/research.ts src/research.test.ts
 git add broker/src/research.ts broker/src/research.test.ts
 git commit -m "feat(broker): CLI research engine
 
-Prompt over stdin, not argv — E2BIG and shell escaping are both
-avoidable by construction. A non-zero exit, a killed process, and
-empty output are all typed errors, never an empty string."
+The prompt is the final argv element, unescaped — spawn takes an
+array and never a shell, so there is nothing to escape into. A
+non-zero exit, a killed process, a missing binary and empty output
+are all typed errors, never an empty string."
 ```
 
 ---
@@ -658,7 +740,20 @@ Add `getResearchEngine()` to `broker/src/swarm-client.ts` beside `getMyVoice()`:
 
 Replace each of these `anthropic.messages.create({...})` calls with `(await researchEngine()).complete({ system, prompt, maxTokens })`, keeping each site's existing system prompt and token budget:
 
-- `main.ts:1513` — `runDocEditTurn`'s injected `create`
+- **`main.ts:1513` — `runDocEditTurn`'s injected `create`. This one is not a call site; it injects a function, so it needs `doc-edit.ts` changed too.**
+
+  `doc-edit.ts` defines its own hand-rolled seam — `type CreateLike = (params: object) => Promise<{ content: Array<{ type: string; text?: string }> }>` — and immediately reduces the reply to text: `reply.content.find((b) => b.type === "text")?.text ?? ""`. That is `ResearchEngine` with extra steps, written before the seam existed.
+
+  Replace it. In `broker/src/doc-edit.ts`:
+  - delete the `CreateLike` type;
+  - change the options bag from `create: CreateLike; model?: string` to `engine: ResearchEngine`;
+  - replace the `await create({ model, max_tokens: 4096, system, messages: [{ role: "user", content }] })` block plus the `reply.content.find(...)` line with a single `const text = await opts.engine.complete({ system, prompt: content, maxTokens: 4096 });`.
+
+  **Its `?? ""` fallback disappears with it, and that is an improvement, not a regression.** Today a reply with no text block silently becomes `""`, which then fails the JSON parse and returns an empty rewrite — a doc edit that reports success and changes nothing. `ResearchEngine.complete` throws `ResearchError` instead, so the caller learns the turn failed.
+
+  `doc-edit.test.ts` currently injects fakes as `create: second.create`. Those become one-line engine fakes: `engine: { complete: async () => '{"rewrites":[...],"note":"..."}' }`. Keep every existing assertion — this changes how the text arrives, not what the parser does with it.
+
+  Then at `main.ts:1513`, pass `engine: await researchEngine()` in place of the `create:` line.
 - `main.ts:1704` — feeds → `plan`
 - `main.ts:2034` — `analyzeBrief`
 - `main.ts:2396` — `askForClaim`'s `brokerAsk`
@@ -790,7 +885,9 @@ Add `qk.researchEngine` to `queries/keys.ts`, and `useResearchEngine()` / `useSa
 
 - [ ] **Step 4: Build the group**
 
-`ResearchEngineGroup.tsx` renders a labelled `<select>` over `cliTools.filter(t => t.active && t.kind !== "api")`, plus a model `<select>` populated from the chosen engine's own `models`. On change it calls the mutation; on a response carrying `error` it renders that message in a `wizard__error` paragraph and leaves the selection as it was. With no qualifying engine it renders a `wizard__hint` explaining that no CLI tools are ready and pointing at the CLI Tools group.
+`ResearchEngineGroup.tsx` renders a labelled `<select>` over `cliTools.filter(t => t.active)`, plus a model `<select>` populated from the chosen engine's own `models`.
+
+**Filter on `active` alone — do not add a `kind` check.** `CliToolListing` has no `kind` field (see `api/types.ts:301`: `{ cli, label, models, warmSessions, note?, status, active }`), and it doesn't need one: the route builds its payload as `buildCliToolListings(ENGINES, file)` (`swarm/src/server.ts:2184`), and `ENGINES` excludes `API_ENGINE`, which is declared separately. So `/cli-tools` only ever returns CLI engines. An earlier draft of this brief filtered on `t.kind !== "api"`, which would not have compiled. On change it calls the mutation; on a response carrying `error` it renders that message in a `wizard__error` paragraph and leaves the selection as it was. With no qualifying engine it renders a `wizard__hint` explaining that no CLI tools are ready and pointing at the CLI Tools group.
 
 - [ ] **Step 5: Register it in SettingsPanel**
 

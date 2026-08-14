@@ -16,11 +16,13 @@ import {
   buildChannelsUpdate,
   buildConnectorFields,
   buildConnectorUpdate,
+  buildResearchEngineUpdate,
   buildUserUpdate,
   buildVoiceUpdate,
   clearVoiceReferences,
   gitInitRequestedRepos,
   redactConnector,
+  redactResearchEngine,
   resolveAtlassianConnector,
   resolveCloseBy,
   resolveConnector,
@@ -522,4 +524,85 @@ test("resolveVoiceKeys: a still-encrypted apiKey (lost/rotated master key) resol
     voice: { stt: { instanceId: "dg1" } },
   };
   assert.deepEqual(resolveVoiceKeys(undecryptable), { stt: null, tts: null });
+});
+
+const ENGINES_FIXTURE = [
+  { cli: "claude", label: "Claude Code", models: ["claude-opus", "claude-sonnet"], warmSessions: true },
+  { cli: "agy", label: "Antigravity", models: ["default"], warmSessions: false },
+  {
+    cli: "api:anthropic",
+    label: "API — Anthropic",
+    models: ["claude-haiku-4-5"],
+    warmSessions: false,
+    kind: "api" as const,
+  },
+];
+/** Returns '' when the tool may be used, else the human reason — mirrors gateReason. */
+const openGate = () => "";
+const closedGate = () => "claude is not logged in";
+
+test("buildResearchEngineUpdate accepts a known, active CLI engine", () => {
+  const r = buildResearchEngineUpdate({ cli: "agy" }, ENGINES_FIXTURE, openGate);
+  assert.deepEqual(r, { researchEngine: { cli: "agy", model: undefined } });
+});
+
+test("buildResearchEngineUpdate accepts a model from that engine's list", () => {
+  const r = buildResearchEngineUpdate({ cli: "claude", model: "claude-sonnet" }, ENGINES_FIXTURE, openGate);
+  assert.deepEqual(r, { researchEngine: { cli: "claude", model: "claude-sonnet" } });
+});
+
+test("buildResearchEngineUpdate rejects an unknown cli", () => {
+  const r = buildResearchEngineUpdate({ cli: "nope" }, ENGINES_FIXTURE, openGate);
+  assert.match((r as { error: string }).error, /Unknown engine/);
+});
+
+test("buildResearchEngineUpdate rejects an api-kind engine", () => {
+  // Research mode spawns a CLI; an api entry has no binary to run.
+  const r = buildResearchEngineUpdate({ cli: "api:anthropic" }, ENGINES_FIXTURE, openGate);
+  assert.match((r as { error: string }).error, /not a CLI engine/);
+});
+
+test("buildResearchEngineUpdate rejects a CLI whose registry gate is closed", () => {
+  const r = buildResearchEngineUpdate({ cli: "claude" }, ENGINES_FIXTURE, closedGate);
+  assert.match((r as { error: string }).error, /not logged in/);
+});
+
+test("buildResearchEngineUpdate rejects a model the engine does not list", () => {
+  const r = buildResearchEngineUpdate({ cli: "agy", model: "gpt-5" }, ENGINES_FIXTURE, openGate);
+  assert.match((r as { error: string }).error, /Unknown model/);
+});
+
+test("buildResearchEngineUpdate clears the setting on null", () => {
+  const r = buildResearchEngineUpdate(null, ENGINES_FIXTURE, openGate);
+  assert.deepEqual(r, { researchEngine: undefined });
+});
+
+test("each rejection names the check that failed, never a silent coercion", () => {
+  const messages = [
+    buildResearchEngineUpdate({ cli: "nope" }, ENGINES_FIXTURE, openGate),
+    buildResearchEngineUpdate({ cli: "api:anthropic" }, ENGINES_FIXTURE, openGate),
+    buildResearchEngineUpdate({ cli: "claude" }, ENGINES_FIXTURE, closedGate),
+    buildResearchEngineUpdate({ cli: "agy", model: "gpt-5" }, ENGINES_FIXTURE, openGate),
+  ].map((r) => (r as { error: string }).error);
+  assert.equal(new Set(messages).size, 4, "four distinct failures need four distinct messages");
+});
+
+test("redactResearchEngine: no stored setting -> null", () => {
+  assert.equal(redactResearchEngine(null, openGate), null);
+});
+
+test("redactResearchEngine: a stored setting whose cli still passes its gate is returned as-is", () => {
+  const u: User = { id: "me", name: "You", default: true, researchEngine: { cli: "claude", model: "claude-opus" } };
+  assert.deepEqual(redactResearchEngine(u, openGate), { cli: "claude", model: "claude-opus" });
+});
+
+test("redactResearchEngine: a stored setting whose cli no longer passes its gate is hidden as null", () => {
+  // The write-time gate check (buildResearchEngineUpdate) only stops a BAD
+  // choice from being saved — it says nothing about a GOOD choice going bad
+  // later (the cli logs out, or gets disabled in the registry). Without a
+  // read-time check too, GET keeps handing back a dead cli forever and
+  // resolveResearchEngine (broker/src/research-engine.ts) keeps spawning it,
+  // failing every research turn instead of degrading to Anthropic.
+  const u: User = { id: "me", name: "You", default: true, researchEngine: { cli: "claude" } };
+  assert.equal(redactResearchEngine(u, closedGate), null);
 });

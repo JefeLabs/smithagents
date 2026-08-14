@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { runDocEditTurn } from "./doc-edit.ts";
 import type { Doc } from "./documents.ts";
+import { ResearchError, type ResearchInput } from "./research.ts";
 
 const DOC: Doc = {
   id: "d1",
@@ -20,16 +21,18 @@ const DOC: Doc = {
 };
 
 function stub(reply: string) {
-  const calls: object[] = [];
-  const create = async (params: object) => {
-    calls.push(params);
-    return { content: [{ type: "text", text: reply }] };
+  const calls: ResearchInput[] = [];
+  const engine = {
+    complete: async (input: ResearchInput) => {
+      calls.push(input);
+      return reply;
+    },
   };
-  return { calls, create };
+  return { calls, engine };
 }
 
 test("happy path: parses the fenced JSON, validates sections, carries target + persona into the prompt", async () => {
-  const { calls, create } = stub(
+  const { calls, engine } = stub(
     'Here you go:\n```json\n{"rewrites":[{"sectionId":"approach","newBody":"New approach."}],"note":"tightened Approach"}\n```',
   );
   const r = await runDocEditTurn({
@@ -37,47 +40,41 @@ test("happy path: parses the fenced JSON, validates sections, carries target + p
     instruction: "tighten the approach",
     targetSectionId: "approach",
     persona: "Osvaldo, senior",
-    create,
+    engine,
   });
   assert.deepEqual(r.rewrites, [{ sectionId: "approach", newBody: "New approach." }]);
   assert.equal(r.note, "tightened Approach");
-  const params = calls[0] as { model: string; system: string; messages: Array<{ content: string }> };
-  assert.equal(params.model, "claude-sonnet-5");
-  assert.match(params.system, /Osvaldo, senior/);
-  assert.match(params.messages[0].content, /TARGET SECTION: approach/);
-  assert.match(params.messages[0].content, /Old overview\./); // full doc rides along
-  assert.match(params.messages[0].content, /tighten the approach/);
+  const input = calls[0];
+  assert.match(input.system, /Osvaldo, senior/);
+  assert.match(input.prompt, /TARGET SECTION: approach/);
+  assert.match(input.prompt, /Old overview\./); // full doc rides along
+  assert.match(input.prompt, /tighten the approach/);
 });
 
 test("a dashboard doc's prompt carries the spec schema — texts[] included", async () => {
-  const { calls, create } = stub('```json\n{"rewrites":[{"sectionId":"spec","newBody":"{}"}],"note":"n"}\n```');
+  const { calls, engine } = stub('```json\n{"rewrites":[{"sectionId":"spec","newBody":"{}"}],"note":"n"}\n```');
   await runDocEditTurn({
     doc: { ...DOC, blueprintId: "dashboard", sections: [{ id: "spec", heading: "Spec", body: "{}" }] },
     instruction: "add a text card",
-    create,
+    engine,
   });
-  const content = String((calls[0] as { messages: Array<{ content: string }> }).messages[0]!.content);
-  assert.match(content, /SPEC SCHEMA/);
-  assert.match(content, /texts\?:/);
+  assert.match(calls[0].prompt, /SPEC SCHEMA/);
+  assert.match(calls[0].prompt, /texts\?:/);
   // A prose doc's prompt does NOT carry it.
   const second = stub('```json\n{"rewrites":[{"sectionId":"overview","newBody":"x"}],"note":"n"}\n```');
-  await runDocEditTurn({ doc: DOC, instruction: "tighten", create: second.create });
-  assert.doesNotMatch(
-    String((second.calls[0] as { messages: Array<{ content: string }> }).messages[0]!.content),
-    /SPEC SCHEMA/,
-  );
+  await runDocEditTurn({ doc: DOC, instruction: "tighten", engine: second.engine });
+  assert.doesNotMatch(second.calls[0].prompt, /SPEC SCHEMA/);
 });
 
-test("bare JSON (no fence) parses too; model overridable", async () => {
-  const { calls, create } = stub('{"rewrites":[{"sectionId":"overview","newBody":"X"}],"note":"n"}');
-  const r = await runDocEditTurn({ doc: DOC, instruction: "x", create, model: "claude-haiku-4-5" });
+test("bare JSON (no fence) parses too", async () => {
+  const { engine } = stub('{"rewrites":[{"sectionId":"overview","newBody":"X"}],"note":"n"}');
+  const r = await runDocEditTurn({ doc: DOC, instruction: "x", engine });
   assert.equal(r.rewrites[0].sectionId, "overview");
-  assert.equal((calls[0] as { model: string }).model, "claude-haiku-4-5");
 });
 
 test("a rewrite naming an unknown section throws — never a partial apply", async () => {
-  const { create } = stub('```json\n{"rewrites":[{"sectionId":"ghost","newBody":"X"}],"note":"n"}\n```');
-  await assert.rejects(runDocEditTurn({ doc: DOC, instruction: "x", create }), /usable rewrites/);
+  const { engine } = stub('```json\n{"rewrites":[{"sectionId":"ghost","newBody":"X"}],"note":"n"}\n```');
+  await assert.rejects(runDocEditTurn({ doc: DOC, instruction: "x", engine }), /usable rewrites/);
 });
 
 test("malformed or empty replies throw", async () => {
@@ -91,10 +88,19 @@ test("malformed or empty replies throw", async () => {
   );
 });
 
+test("an engine that rejects makes the turn reject — never a silent empty rewrite", async () => {
+  const engine = {
+    complete: async () => {
+      throw new ResearchError("engine down");
+    },
+  };
+  await assert.rejects(runDocEditTurn({ doc: DOC, instruction: "x", engine }), /engine down/);
+});
+
 test("a parroted section-header scaffold line is stripped from newBody", async () => {
-  const { create } = stub(
+  const { engine } = stub(
     '```json\n{"rewrites":[{"sectionId":"approach","newBody":"## section id=approach heading=\\"Approach\\"\\nReal content."}],"note":"n"}\n```',
   );
-  const r = await runDocEditTurn({ doc: DOC, instruction: "x", create });
+  const r = await runDocEditTurn({ doc: DOC, instruction: "x", engine });
   assert.equal(r.rewrites[0].newBody, "Real content.");
 });

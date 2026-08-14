@@ -398,6 +398,16 @@ export class TextChannel {
       save(body: Record<string, unknown>, isNew: boolean): Promise<Record<string, unknown>>;
       remove(name: string): Promise<Record<string, unknown>>;
     },
+    /**
+     * Research engine setting passthrough (Settings → Research group, spec
+     * 2026-08-14-broker-engine-selection-design). Origin-restricted like
+     * connectors/voice. `get` reads null both for "never set" and "the stored
+     * cli no longer passes its gate" — the swarm collapses those on purpose.
+     */
+    private readonly research?: {
+      get(): Promise<Record<string, unknown> | null>;
+      save(body: unknown): Promise<Record<string, unknown>>;
+    },
   ) {}
 
   private clientSeq = 0;
@@ -1048,6 +1058,34 @@ export class TextChannel {
               return credJson(400, { error: "body must be JSON" });
             }
             void voice.save(parsed).then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
+          });
+          return;
+        }
+        if (req.method === "GET" && url.pathname === "/me/research-engine" && this.research) {
+          if (originBlocked()) return;
+          void this.research.get().then((v) => credJson(200, v), credFail);
+          return;
+        }
+        if (req.method === "PUT" && url.pathname === "/me/research-engine" && this.research) {
+          const research = this.research;
+          if (originBlocked()) return;
+          let body = "";
+          req.on("data", (c) => {
+            body += c;
+          });
+          req.on("end", () => {
+            // Same `body || "{}"` as voice's PUT above, deliberately — a
+            // literal `null` body ("Off") is non-empty and survives through
+            // JSON.parse unchanged; only a truly empty body falls back to
+            // "{}". The swarm's clear path depends on receiving that exact
+            // `null`, not an object.
+            let parsed: Record<string, unknown> | null = null;
+            try {
+              parsed = JSON.parse(body || "{}") as Record<string, unknown> | null;
+            } catch {
+              return credJson(400, { error: "body must be JSON" });
+            }
+            void research.save(parsed).then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
           });
           return;
         }

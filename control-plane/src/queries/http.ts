@@ -83,6 +83,10 @@ export function useVoiceSettings() {
   return useQuery({ queryKey: qk.voiceSettings, queryFn: () => api.getVoiceSettings() });
 }
 
+export function useResearchEngine() {
+  return useQuery({ queryKey: qk.researchEngine, queryFn: () => api.getResearchEngine() });
+}
+
 export function useMe() {
   return useQuery({ queryKey: qk.me, queryFn: () => api.getMe() });
 }
@@ -165,6 +169,22 @@ export function useSaveVoiceSettings() {
       api.saveVoiceSettings(body),
     onSuccess: (result) => {
       if (!result.error) qc.setQueryData<VoiceSettingsRecord>(qk.voiceSettings, result);
+    },
+  });
+}
+
+export function useSaveResearchEngine() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { cli: string; model?: string } | null) => api.saveResearchEngine(body),
+    // A successful CLEAR resolves to a literal `null` body (see api.getResearchEngine's return
+    // type) — `result` is only ever a genuine `{error}` object on rejection, never `null`.
+    onSuccess: (result) => {
+      if (result?.error) return;
+      const value: { cli: string; model?: string } | null = result?.cli
+        ? { cli: result.cli, model: result.model }
+        : null;
+      qc.setQueryData(qk.researchEngine, value);
     },
   });
 }

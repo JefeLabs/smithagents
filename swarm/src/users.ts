@@ -35,6 +35,8 @@ export interface User {
   /** Local YYYY-MM-DD of this user's last agenda sweep. Per-user because the sweep is
       per-user — see sweepUserAgenda. */
   agendaSweptDay?: string;
+  /** Which CLI engine runs the broker's research turns. Absent = the broker's built-in default. */
+  researchEngine?: { cli: string; model?: string };
 }
 
 /** On-disk shape before migration — legacy files may still have these instead of `connectors`. */

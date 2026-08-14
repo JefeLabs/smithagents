@@ -275,6 +275,25 @@ export async function saveVoiceSettings(
   return (await res.json()) as VoiceSettingsRecord & { error?: string };
 }
 
+/** GET /me/research-engine */
+export async function getResearchEngine(base: string = BROKER_BASE): Promise<{ cli: string; model?: string } | null> {
+  const res = await brokerFetch(`/me/research-engine`, base);
+  return (await res.json()) as { cli: string; model?: string } | null;
+}
+
+/** PUT /me/research-engine */
+export async function saveResearchEngine(
+  body: { cli: string; model?: string } | null,
+  base: string = BROKER_BASE,
+): Promise<{ cli?: string; model?: string; error?: string }> {
+  const res = await brokerFetch(`/me/research-engine`, base, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return (await res.json()) as { cli?: string; model?: string; error?: string };
+}
+
 /** GET /me — the operator's own profile. */
 export async function getMe(base: string = BROKER_BASE): Promise<MeRecord> {
   const res = await brokerFetch(`/me`, base);

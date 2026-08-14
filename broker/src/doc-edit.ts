@@ -3,18 +3,16 @@
  * instruction against one doc, answered as structured section rewrites. The
  * caller owns everything stateful — resolving the doc, applying or proposing
  * the rewrites, broadcasting frames — so this stays a pure prompt/parse seam
- * that tests drive with a stubbed `create`.
+ * over a ResearchEngine, which tests drive with a one-line fake.
  */
 import type { Doc } from "./documents.ts";
+import type { ResearchEngine } from "./research.ts";
 
 export interface DocEditResult {
   rewrites: Array<{ sectionId: string; newBody: string }>;
   /** One short line for the transcript ("tightened Approach"). */
   note: string;
 }
-
-/** anthropic.messages.create-shaped; injected so tests never touch the network. */
-type CreateLike = (params: object) => Promise<{ content: Array<{ type: string; text?: string }> }>;
 
 const OUTPUT_CONTRACT = `Reply with EXACTLY one JSON object (fenced or bare), no other commentary:
 {"rewrites":[{"sectionId":"<id>","newBody":"<full replacement markdown for that section>"}],"note":"<one short line describing the change>"}
@@ -26,10 +24,9 @@ export async function runDocEditTurn(opts: {
   targetSectionId?: string;
   /** Crew agent persona line; absent = the host editor. */
   persona?: string;
-  create: CreateLike;
-  model?: string;
+  engine: ResearchEngine;
 }): Promise<DocEditResult> {
-  const { doc, instruction, targetSectionId, persona, create } = opts;
+  const { doc, instruction, targetSectionId, persona } = opts;
   const system = `You are ${persona ?? "the workspace's host editor"}, revising a working document at its owner's instruction. ${OUTPUT_CONTRACT}`;
   const sections = doc.sections
     .map((s) => `## section id=${s.id} heading=${JSON.stringify(s.heading)}\n${s.body || "(empty)"}`)
@@ -56,13 +53,7 @@ export async function runDocEditTurn(opts: {
     .filter(Boolean)
     .join("\n\n");
 
-  const reply = await create({
-    model: opts.model ?? "claude-sonnet-5",
-    max_tokens: 4096,
-    system,
-    messages: [{ role: "user", content }],
-  });
-  const text = reply.content.find((b) => b.type === "text")?.text ?? "";
+  const text = await opts.engine.complete({ system, prompt: content, maxTokens: 4096 });
   const raw = /```(?:json)?\s*(\{[\s\S]*?\})\s*```/.exec(text)?.[1] ?? /\{[\s\S]*\}/.exec(text)?.[0] ?? "";
   let parsed: { rewrites?: Array<{ sectionId?: unknown; newBody?: unknown }>; note?: unknown } = {};
   try {
