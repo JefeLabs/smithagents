@@ -2,6 +2,7 @@ import {
   ArrowLeft,
   Blocks,
   Container,
+  FlaskConical,
   KeyRound,
   MessageSquare,
   Mic,
@@ -17,6 +18,7 @@ import { CliToolsGroup } from "./settings/CliToolsGroup";
 import { ContainersGroup } from "./settings/ContainersGroup";
 import { GeneralGroup, type ResetScope } from "./settings/GeneralGroup";
 import { IntegrationsGroup } from "./settings/IntegrationsGroup";
+import { ResearchEngineGroup } from "./settings/ResearchEngineGroup";
 import { ThemesGroup } from "./settings/ThemesGroup";
 import { VoiceGroup } from "./settings/VoiceGroup";
 
@@ -28,7 +30,8 @@ export type SettingsGroupId =
   | "api-keys"
   | "channels"
   | "containers"
-  | "themes";
+  | "themes"
+  | "research";
 
 interface SettingsPanelProps {
   open: boolean;
@@ -62,6 +65,7 @@ const SECTIONS: Array<{
     groups: [
       { id: "integrations", label: "Integrations", icon: Blocks },
       { id: "voice", label: "Voice", icon: Mic },
+      { id: "research", label: "Research engine", icon: FlaskConical },
       { id: "channels", label: "Channels", icon: MessageSquare },
       { id: "containers", label: "Containers", icon: Container },
     ],
@@ -118,6 +122,7 @@ export function SettingsPanel({
         {active === "themes" && <ThemesGroup theme={theme} onThemeChange={onThemeChange} />}
         {active === "integrations" && <IntegrationsGroup />}
         {active === "voice" && <VoiceGroup />}
+        {active === "research" && <ResearchEngineGroup />}
         {active === "cli-tools" && <CliToolsGroup />}
         {active === "api-keys" && <ApiKeysGroup />}
         {active === "channels" && <ChannelsGroup />}

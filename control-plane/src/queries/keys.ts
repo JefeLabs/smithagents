@@ -18,6 +18,7 @@ export const qk = {
   apiKeys: ["api-keys"] as const,
   containers: ["containers"] as const,
   voiceSettings: ["voice-settings"] as const,
+  researchEngine: ["research-engine"] as const,
   me: ["me"] as const,
   executionModes: ["execution-modes"] as const,
   activity: (name: string) => ["activity", name] as const,
