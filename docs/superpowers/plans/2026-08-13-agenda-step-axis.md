@@ -6,7 +6,7 @@
 
 **Goal:** Give each card a single-holder step axis orthogonal to its team column, and surface unheld work from Maintain/React/Deliver in a shared queue people pull from.
 
-**Architecture:** One optional field on `WorkCard` — `agenda: {by, state, since}` — shaped after the existing `flag` axis. The shared queue is **derived, never stored**: a card is in the pool when it needs a human and nobody holds it. Advancing a card between columns clears the holder, because the step it described has ended.
+**Architecture:** One optional field on `WorkCard` — `agenda: {by, state, since, grabbedAt}` — shaped after the existing `flag` axis, plus an append-only `intents[]` narrative. The shared queue is **derived, never stored**: a card is in the pool when it needs a human and nobody holds it. Advancing a card between columns clears the holder, because the step it described has ended.
 
 **Tech Stack:** swarm = TypeScript + Fastify, tested with the node built-in test runner (`node --import tsx --test`) and `node:assert/strict`. control-plane = React + TanStack Query + dnd-kit, tested with vitest + Testing Library (jsdom).
 
@@ -959,7 +959,8 @@ describe("agenda lanes", () => {
         agenda: { by: "edwin", state: "plate" as const, since: "2026-08-13T12:00:00.000Z",
                   grabbedAt: "2026-08-13T12:00:00.000Z" } },
       { id: "t-hers", title: "ana's", columnId: "review", order: 3,
-        agenda: { by: "ana", state: "plate" as const, since: "2026-08-13T08:00:00.000Z" } },
+        agenda: { by: "ana", state: "plate" as const, since: "2026-08-13T08:00:00.000Z",
+                  grabbedAt: "2026-08-13T08:00:00.000Z" } },
     ],
   };
 
@@ -1224,7 +1225,14 @@ export function useCardAgenda() {
 }
 ```
 
-Widen `api.patchCard`'s body type in `api/work.ts` to accept `agenda?: { action: "grab" } | { state: "plate" | "today" } | null`.
+Widen `api.patchCard`'s body type in `api/work.ts` to accept **both** new fields at once — the step-axis write and the closing comment:
+
+```ts
+  agenda?: { action: "grab" } | { state: "plate" | "today"; intent?: string } | null;
+  close?: { text: string };
+```
+
+`intent` must be on that union member or the mutation above cannot send it. `close` rides on the ordinary card PATCH (with `columnId`/`order`), not on `agenda` — see the closing-composer step below. The route fills in `close.by` from the current user; the client never sends it.
 
 - [ ] **Step 5: Render four lanes and branch the drag**
 
