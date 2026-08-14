@@ -12,6 +12,7 @@ import { test } from "node:test";
 import { promisify } from "node:util";
 import type { WorkspaceChannels } from "./channels.js";
 import {
+  buildCardAgendaPatch,
   buildChannelsUpdate,
   buildConnectorFields,
   buildConnectorUpdate,
@@ -29,6 +30,7 @@ import {
 } from "./server.js";
 import type { ConnectorInstance, User } from "./users.js";
 import { loadUsersFromDir, saveUser } from "./users.js";
+import { addCard, createBoard } from "./work-items.js";
 import type { Workspace } from "./workspaces.js";
 import { isGitRepo } from "./workspaces.js";
 
@@ -464,6 +466,24 @@ test("resolveVoiceKeys: resolves selected slots to raw keys; unset/dangling/empt
     tts: null,
   });
   assert.deepEqual(resolveVoiceKeys(null), { stt: null, tts: null });
+});
+
+test("buildCardAgendaPatch: grab claims, state flips, null releases", () => {
+  const b = createBoard("deliver", "ws");
+  const c = addCard(b, { title: "auth", columnId: "review" });
+  buildCardAgendaPatch(c, "edwin", { action: "grab" }, "2026-08-13T10:00:00.000Z");
+  assert.equal(c.agenda?.by, "edwin");
+  buildCardAgendaPatch(c, "edwin", { state: "today", intent: "chasing the flaky suite" }, "2026-08-13T11:00:00.000Z");
+  assert.equal(c.agenda?.state, "today");
+  buildCardAgendaPatch(c, "edwin", null, "2026-08-13T12:00:00.000Z");
+  assert.equal(c.agenda, undefined);
+});
+
+test("buildCardAgendaPatch refuses to flip a card held by someone else", () => {
+  const b = createBoard("deliver", "ws");
+  const c = addCard(b, { title: "auth", columnId: "review" });
+  buildCardAgendaPatch(c, "ana", { action: "grab" }, "2026-08-13T10:00:00.000Z");
+  assert.throws(() => buildCardAgendaPatch(c, "edwin", { state: "today" }, "2026-08-13T11:00:00.000Z"), /not held by/);
 });
 
 test("resolveVoiceKeys: a still-encrypted apiKey (lost/rotated master key) resolves null, not the ciphertext", () => {

@@ -98,7 +98,7 @@ import {
   type TaskManifest,
   type TaskResult,
 } from "./index.js";
-import { createIssue, importIssues, searchIssues, transitionIssue } from "./jira-sync.js";
+import { commentIssue, createIssue, importIssues, searchIssues, transitionIssue } from "./jira-sync.js";
 import { agentUsage, isBusy } from "./lifecycle.js";
 import { MeetingOrchestrator } from "./meetings.js";
 import {
@@ -154,16 +154,21 @@ import {
   deleteBoardFile,
   findCardByRef,
   findRouteDestination,
+  grabCard,
   loadBoards,
   localDayStamp,
   msUntilNextMidnight,
   patchCard,
+  releaseCard,
   removeCard,
   resolveExit,
   routeCard,
+  type StepState,
   saveBoard,
+  setStepState,
   sweepUserAgenda,
   type WorkBoard,
+  type WorkCard,
 } from "./work-items.js";
 import {
   activeWorkspaces,
@@ -2677,7 +2682,34 @@ export class OrchestratorServer {
       }
 
       try {
-        const card = patchCard(board, req.params.cardId, req.body as Parameters<typeof patchCard>[2]);
+        const users = await loadUsersFromDir(resolve(process.cwd(), ".smith/users"));
+        const user = resolveCurrentUser(users);
+        // close.by and the grabbing user (below, for the agenda write) are
+        // resolved server-side from the current user — a client-supplied
+        // `by` must never be trusted.
+        const patchBody = req.body as Parameters<typeof patchCard>[2];
+        if (patchBody.close) patchBody.close = { ...patchBody.close, by: user?.id ?? "" };
+        const closeIntentBefore = targetCard?.intents?.at(-1);
+        const card = patchCard(board, req.params.cardId, patchBody);
+        if (user) await pushIntentComment(board, card, user, closeIntentBefore);
+
+        // Step-axis write: grab/state-flip/release. Kept as its own body
+        // field (never folded into patchCard's Pick<>, see buildCardAgendaPatch's
+        // docstring) so a column move and a step-state write never land in
+        // one call. A lost grab race (or any other domain violation) becomes
+        // a 400 here rather than a 500 — see buildCardAgendaPatch.
+        const agendaBody = req.body as {
+          agenda?: { action: "grab" } | { state: StepState; intent?: string } | null;
+        };
+        if (agendaBody.agenda !== undefined && user) {
+          const agendaIntentBefore = card.intents?.at(-1);
+          try {
+            buildCardAgendaPatch(card, user.id, agendaBody.agenda, new Date().toISOString());
+          } catch (err) {
+            return reply.status(400).send({ error: (err as Error).message });
+          }
+          await pushIntentComment(board, card, user, agendaIntentBefore);
+        }
 
         // Push-on-move: a Jira-linked card landing on a mapped column tries
         // the matching transition. Best-effort — the human's move always
@@ -3482,6 +3514,74 @@ export function buildUserUpdate(existing: User | null, body: { name?: string }):
     connectors: existing?.connectors,
     voice: existing?.voice,
   };
+}
+
+/**
+ * The step-axis half of the card PATCH. Kept out of patchCard because patchCard is pure
+ * over the board and knows nothing about who is asking — the current user is a
+ * request-scoped fact. `null` releases; the errors thrown by the helpers below become
+ * 400s so a lost grab race surfaces instead of silently overwriting.
+ */
+export function buildCardAgendaPatch(
+  card: WorkCard,
+  userId: string,
+  patch: { action: "grab" } | { state: StepState; intent?: string } | null,
+  now: string,
+): void {
+  if (patch === null) {
+    releaseCard(card);
+    return;
+  }
+  if ("action" in patch) {
+    grabCard(card, userId, now);
+    return;
+  }
+  setStepState(card, userId, patch.state, now, patch.intent);
+}
+
+type CardIntent = NonNullable<WorkCard["intents"]>[number];
+
+/**
+ * Push the intent (start/done) a card PATCH just appended as a Jira comment —
+ * best-effort, same credential resolution and error-handling contract as
+ * push-on-move (this file's other Jira side-effect, a few hundred lines up):
+ * a failed push marks the card via `lastPushError`, never the request.
+ * Shared by the closing-comment path (an ordinary PATCH ending a held step
+ * or a personal todo) and the agenda path (claiming today), so the block
+ * isn't duplicated per call site — callers tell a fresh append apart from an
+ * older one by identity (`before`), since patchCard/setStepState always
+ * replace `intents` with a new array rather than mutating one in place.
+ */
+async function pushIntentComment(
+  board: WorkBoard,
+  card: WorkCard,
+  user: User,
+  before: CardIntent | undefined,
+): Promise<void> {
+  if (!card.jira || !board.jira) return;
+  const appended = card.intents?.at(-1);
+  if (!appended || appended === before) return;
+  try {
+    const users = await loadUsersFromDir(resolve(process.cwd(), ".smith/users"));
+    const resolved = resolveAtlassianConnector(board.jira.connectorId, resolveCurrentUser(users), {
+      name: "key",
+      value: card.jira.key,
+    });
+    if ("error" in resolved) {
+      card.jira.lastPushError = resolved.error;
+      return;
+    }
+    await commentIssue(
+      board.jira.siteUrl,
+      resolved.instance.fields.email ?? "",
+      resolved.instance.fields.apiToken ?? "",
+      card.jira.key,
+      `${user.name} · ${appended.kind === "done" ? "done" : "started"}: ${appended.text}`,
+    );
+    card.jira.lastPushError = undefined;
+  } catch (err) {
+    card.jira.lastPushError = String((err as Error).message);
+  }
 }
 
 /** PUT /me/voice body → validated full-replace VoiceSettings (spec §2). */
