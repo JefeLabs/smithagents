@@ -31,6 +31,7 @@ import {
   routeCard,
   saveBoard,
   setStepState,
+  sharedQueue,
   type StepState,
   sweepPersonalBoard,
   terminalColumnId,
@@ -41,7 +42,7 @@ import {
 test("templates: seven typed column sets, ids unique and slug-shaped", () => {
   assert.deepEqual(
     BOARD_TEMPLATES.personal.map((c) => c.name),
-    ["Queue", "Todo", "Doing", "Done", "Not Doing"],
+    ["My plate", "Today", "Done", "Not Doing"],
   );
   assert.deepEqual(
     BOARD_TEMPLATES.ideation.map((c) => c.name),
@@ -114,12 +115,12 @@ test("assertBoard rejects a file with a missing or unknown type", async () => {
   for (const e of errors) assert.match(e.error, /type/i);
 });
 
-test("addCard defaults to Todo on the personal board, leftmost elsewhere; orders sequentially", () => {
+test("addCard defaults to My plate on the personal board, leftmost elsewhere; orders sequentially", () => {
   const b = createBoard("personal");
   const a = addCard(b, { title: "first" });
   const c = addCard(b, { title: "second" });
-  assert.equal(defaultColumnFor(b), "todo");
-  assert.equal(a.columnId, "todo");
+  assert.equal(defaultColumnFor(b), "plate");
+  assert.equal(a.columnId, "plate");
   assert.deepEqual([a.order, c.order], [0, 1]);
   assert.ok(a.id !== c.id && a.createdAt && a.updatedAt);
   const ws = createBoard("deliver", "acme");
@@ -130,7 +131,7 @@ test("addCard defaults to Todo on the personal board, leftmost elsewhere; orders
 });
 
 test("patchCard moves between columns at a target index and renumbers both columns", () => {
-  const b = createBoard("personal");
+  const b = createBoard("deliver", "acme");
   const [ready, inProgress] = [b.columns[1].id, b.columns[2].id];
   const c1 = addCard(b, { title: "one", columnId: ready });
   const c2 = addCard(b, { title: "two", columnId: ready });
@@ -155,7 +156,7 @@ test("patchCard moves between columns at a target index and renumbers both colum
 
 test("same-column reorder via order only", () => {
   const b = createBoard("personal");
-  const col = "todo"; // where default adds land on the personal board
+  const col = "plate"; // where default adds land on the personal board
   const c1 = addCard(b, { title: "a" });
   const c2 = addCard(b, { title: "b" });
   const c3 = addCard(b, { title: "c" });
@@ -396,11 +397,11 @@ test("an UNHELD team card advances freely — the rule is about finishing, not t
   assert.equal(c.intents, undefined);
 });
 
-test("a personal todo needs a comment to reach done, but not to reach doing", () => {
+test("a personal card needs a comment to reach done, but not to reach today", () => {
   const b = createBoard("personal");
-  const c = addCard(b, { title: "call the bank", columnId: "todo" });
-  patchCard(b, c.id, { columnId: "doing", order: 0 });
-  assert.equal(c.columnId, "doing");
+  const c = addCard(b, { title: "call the bank", columnId: "plate" });
+  patchCard(b, c.id, { columnId: "today", order: 0 });
+  assert.equal(c.columnId, "today");
   assert.throws(() => patchCard(b, c.id, { columnId: "done", order: 0 }), /closing comment is required/);
   patchCard(b, c.id, { columnId: "done", order: 0, close: { by: "edwin", text: "rescheduled the transfer" } });
   assert.equal(c.intents?.[0].kind, "done");
@@ -443,10 +444,13 @@ test("normalizeBoard migrates a pre-rename personal board and is idempotent", ()
   assert.equal(legacy.name, "Agenda");
   assert.deepEqual(
     legacy.columns.map((c) => c.id),
-    ["queue", "todo", "doing", "done", "not-doing"],
+    ["plate", "today", "done", "not-doing"],
   );
   normalizeBoard(legacy);
-  assert.equal(legacy.columns.filter((c) => c.id === "queue").length, 1);
+  assert.deepEqual(
+    legacy.columns.map((c) => c.id),
+    ["plate", "today", "done", "not-doing"],
+  );
 });
 
 test("normalizeBoard renames old default labels across types, keeps custom names", () => {
@@ -562,7 +566,7 @@ test("loadBoards migrates a legacy personal file in memory only", async () => {
   );
   const { boards } = await loadBoards(dir);
   assert.equal(boards[0].name, "Agenda");
-  assert.equal(boards[0].columns[0].id, "queue");
+  assert.equal(boards[0].columns[0].id, "plate");
   // In-memory only: the file still says Personal until the next mutation saves.
   assert.match(await readFile(join(dir, "personal.json"), "utf8"), /"Personal"/);
 });
@@ -637,7 +641,7 @@ test("routes: exits are per-column and the forward plan handoff exists", () => {
   const reactive = createBoard("reactive", "acme");
   assert.deepEqual(
     exitsFor(reactive, "triage").map((e) => e.toType),
-    ["maintenance", "ideation", "personal"],
+    ["maintenance", "ideation"],
   );
   assert.deepEqual(exitsFor(createBoard("ideation", "acme"), "confirm"), []);
 });
@@ -754,14 +758,11 @@ test("findRouteDestination: does not match a same-type board in a different work
   assert.equal(findRouteDestination([source, otherWorkspaceDest], source, exit), undefined);
 });
 
-test("escalation: maintenance and reactive triage each exit to the personal queue", () => {
+test("escalation: retired — maintenance and reactive triage no longer exit to the personal board", () => {
   const maintenance = createBoard("maintenance", "acme");
   const reactive = createBoard("reactive", "acme");
-  assert.deepEqual(
-    exitsFor(maintenance, "triage").map((e) => e.label),
-    ["Escalate to Agenda"],
-  );
-  assert.equal(resolveExit(reactive, "triage", "personal")?.toColumn, "queue");
+  assert.deepEqual(exitsFor(maintenance, "triage"), []);
+  assert.equal(resolveExit(reactive, "triage", "personal"), undefined);
   assert.deepEqual(exitsFor(maintenance, "doing"), []);
 });
 
@@ -769,21 +770,24 @@ test("findRouteDestination resolves the workspace-less personal board from any w
   const source = createBoard("maintenance", "acme");
   const personal = createBoard("personal");
   const boards = [createBoard("maintenance", "globex"), personal, source];
-  const exit = resolveExit(source, "triage", "personal");
-  assert.ok(exit);
+  // No route targets personal any more (Escalate to Agenda was retired) — this exercises
+  // findRouteDestination's own workspace-less resolution, independent of any real route.
+  const exit = { from: "triage", toType: "personal" as const, toColumn: "plate", label: "Test exit" };
   assert.equal(findRouteDestination(boards, source, exit), personal);
 });
 
-test("routeCard escalates a triage card into the personal queue with a provenance trace", () => {
+test("routeCard can move a card onto the personal board with a provenance trace", () => {
+  // Escalate to Agenda was retired (triage is already in the shared queue, and escalating
+  // is just grabbing it) — this exercises routeCard's own mechanics against the
+  // workspace-less personal board via a synthetic exit, independent of any real route.
   const maintenance = createBoard("maintenance", "acme");
   const personal = createBoard("personal");
-  addCard(personal, { title: "already queued", columnId: "queue" });
+  addCard(personal, { title: "already there", columnId: "plate" });
   const card = addCard(maintenance, { title: "prod leak", columnId: "triage" });
-  const exit = resolveExit(maintenance, "triage", "personal");
-  assert.ok(exit);
+  const exit = { from: "triage", toType: "personal" as const, toColumn: "plate", label: "Test move" };
   const plan = routeCard(maintenance, personal, card.id, exit, "2026-08-11T00:00:00.000Z");
-  assert.equal(plan.card.columnId, "queue");
-  assert.equal(plan.card.order, 1); // appended after the existing queue card
+  assert.equal(plan.card.columnId, "plate");
+  assert.equal(plan.card.order, 1); // appended after the existing plate card
   assert.equal(plan.writeFirst, personal); // destination-first persistence
   assert.deepEqual(plan.card.routedFrom?.at(-1), {
     boardId: maintenance.id,
@@ -856,4 +860,70 @@ test("a board with queue/terminal blocks and a card with sourceRef round-trips t
   });
   assert.equal(hasSourceRef(boards[0], { sourceId: "jira-plan", itemKey: "PROJ-1" }), true);
   assert.equal(hasSourceRef(boards[0], { sourceId: "jira-plan", itemKey: "PROJ-2" }), false);
+});
+
+test("normalizeBoard folds a legacy personal board into plate/today/done", () => {
+  const b = createBoard("personal");
+  b.columns = [
+    { id: "queue", name: "Queue" }, { id: "todo", name: "Todo" },
+    { id: "doing", name: "Doing" }, { id: "done", name: "Done" },
+    { id: "not-doing", name: "Not Doing" },
+  ];
+  b.cards = [
+    { id: "a", title: "q", columnId: "queue", order: 0, createdAt: "x", updatedAt: "x" },
+    { id: "b", title: "t", columnId: "todo", order: 0, createdAt: "x", updatedAt: "x" },
+    { id: "c", title: "d", columnId: "doing", order: 0, createdAt: "x", updatedAt: "x" },
+  ];
+  normalizeBoard(b);
+  assert.deepEqual(b.columns.map((c) => c.id), ["plate", "today", "done", "not-doing"]);
+  assert.deepEqual(b.cards.map((c) => c.columnId), ["plate", "plate", "today"]);
+  assert.deepEqual(b.cards.filter((c) => c.columnId === "plate").map((c) => c.order).sort(), [0, 1]);
+});
+
+test("normalizeBoard no longer forces a queue column onto the personal board", () => {
+  const b = createBoard("personal");
+  normalizeBoard(b);
+  assert.equal(b.columns.some((c) => c.id === "queue"), false);
+});
+
+test("templates gate exactly the four columns that wait on a person", () => {
+  const gated = (t: BoardType, id: string) => Boolean(BOARD_TEMPLATES[t].find((c) => c.id === id)?.gatesHuman);
+  assert.equal(gated("deliver", "review"), true);
+  assert.equal(gated("deliver", "verify"), true);
+  assert.equal(gated("reactive", "triage"), true);
+  assert.equal(gated("maintenance", "triage"), true);
+  assert.equal(gated("release", "sign-off"), false, "Release is not a source — Edwin named three boards");
+  assert.equal(gated("deliver", "in-progress"), false);
+});
+
+test("sharedQueue pools unheld work from Maintain, React and Deliver only", () => {
+  const d = createBoard("deliver", "ws");
+  const p = createBoard("plan", "ws");
+  const inPool = addCard(d, { title: "review me", columnId: "review" });
+  addCard(p, { title: "spec", columnId: "spec" });
+  const pooled = sharedQueue([d, p]);
+  assert.deepEqual(pooled.map((x) => x.card.id), [inPool.id]);
+});
+
+test("sharedQueue excludes held cards and cards an agent is mid-flight on", () => {
+  const d = createBoard("deliver", "ws");
+  const held = addCard(d, { title: "held", columnId: "review" });
+  grabCard(held, "edwin", "2026-08-13T10:00:00.000Z");
+  const working = addCard(d, { title: "agent has it", columnId: "review" });
+  working.delegation = { agentId: "a1", taskId: "t1", state: "working" };
+  assert.deepEqual(sharedQueue([d]), []);
+});
+
+test("sharedQueue includes a failed delegation, a flag, and a jira error even in an ungated column", () => {
+  const d = createBoard("deliver", "ws");
+  const failed = addCard(d, { title: "agent failed", columnId: "in-progress" });
+  failed.delegation = { agentId: "a1", taskId: "t1", state: "failed" };
+  const flagged = addCard(d, { title: "blocked", columnId: "in-progress" });
+  flagged.flag = { kind: "blocked", since: "2026-08-13T10:00:00.000Z" };
+  const broken = addCard(d, { title: "push broke", columnId: "in-progress" });
+  broken.jira = { key: "P-1", url: "http://x", lastPushError: "boom" };
+  assert.deepEqual(
+    sharedQueue([d]).map((x) => x.card.id).sort(),
+    [failed.id, flagged.id, broken.id].sort(),
+  );
 });

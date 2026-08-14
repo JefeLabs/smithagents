@@ -14,6 +14,8 @@ export interface WorkColumn {
   name: string;
   /** Jira status to transition a linked card to when it lands here; absent = no push. */
   jiraStatus?: string;
+  /** This column structurally waits on a human — its unheld cards surface in the shared queue. */
+  gatesHuman?: boolean;
 }
 
 export type FlagKind = "blocked" | "at-risk" | "waiting";
@@ -127,9 +129,8 @@ export const BOARD_TYPE_LABELS: Record<BoardType, string> = {
 // which is why plan and deliver have neither.
 export const BOARD_TEMPLATES: Record<BoardType, WorkColumn[]> = {
   personal: [
-    { id: "queue", name: "Queue" },
-    { id: "todo", name: "Todo" },
-    { id: "doing", name: "Doing" },
+    { id: "plate", name: "My plate" },
+    { id: "today", name: "Today" },
     { id: "done", name: "Done" },
     { id: "not-doing", name: "Not Doing" },
   ],
@@ -150,8 +151,8 @@ export const BOARD_TEMPLATES: Record<BoardType, WorkColumn[]> = {
     { id: "queue", name: "Queue" },
     { id: "ready", name: "Ready" },
     { id: "in-progress", name: "In progress" },
-    { id: "review", name: "Review" },
-    { id: "verify", name: "Verify" },
+    { id: "review", name: "Review", gatesHuman: true },
+    { id: "verify", name: "Verify", gatesHuman: true },
     { id: "merged", name: "Merged" },
   ],
   release: [
@@ -164,7 +165,7 @@ export const BOARD_TEMPLATES: Record<BoardType, WorkColumn[]> = {
   ],
   reactive: [
     { id: "queue", name: "Queue" },
-    { id: "triage", name: "Triage" },
+    { id: "triage", name: "Triage", gatesHuman: true },
     { id: "diagnose", name: "Diagnose" },
     { id: "fix", name: "Fix" },
     { id: "verify", name: "Verify" },
@@ -172,7 +173,7 @@ export const BOARD_TEMPLATES: Record<BoardType, WorkColumn[]> = {
   ],
   maintenance: [
     { id: "queue", name: "Queue" },
-    { id: "triage", name: "Triage" },
+    { id: "triage", name: "Triage", gatesHuman: true },
     { id: "doing", name: "Doing" },
     { id: "done", name: "Done" },
     { id: "wont-do", name: "Won't do" },
@@ -241,10 +242,9 @@ export const BOARD_ROUTES: Record<BoardType, RouteExit[]> = {
   reactive: [
     { from: "triage", toType: "maintenance", toColumn: "triage", label: "To maintenance" },
     { from: "triage", toType: "ideation", toColumn: "intake", label: "To ideation" },
-    { from: "triage", toType: "personal", toColumn: "queue", label: "Escalate to Agenda" },
   ],
   ideation: [],
-  maintenance: [{ from: "triage", toType: "personal", toColumn: "queue", label: "Escalate to Agenda" }],
+  maintenance: [],
   personal: [],
 };
 
@@ -364,8 +364,9 @@ const LEGACY_DEFAULT_NAMES: Partial<Record<BoardType, string[]>> = {
   maintenance: ["Maintenance"],
 };
 
-/** The boards whose leftmost lane is the Queue intake. */
-const QUEUE_TYPES: BoardType[] = ["personal", "plan", "deliver", "release", "reactive", "maintenance"];
+/** The boards whose leftmost lane is the Queue intake. Not personal — its intake is the
+    derived shared queue, which is not a column at all. */
+const QUEUE_TYPES: BoardType[] = ["plan", "deliver", "release", "reactive", "maintenance"];
 
 /**
  * Reshape a board persisted under an earlier template: default names follow
@@ -389,6 +390,20 @@ export function normalizeBoard(board: WorkBoard): WorkBoard {
       }
     } else {
       board.columns.unshift({ id: "queue", name: "Queue" });
+    }
+  }
+  if (board.type === "personal") {
+    const RENAMED: Record<string, string> = { queue: "plate", todo: "plate", doing: "today" };
+    if (board.columns.some((c) => RENAMED[c.id])) {
+      for (const card of board.cards) {
+        const to = RENAMED[card.columnId];
+        if (to) card.columnId = to;
+      }
+      // queue and todo both fold into plate, so rebuild the column list from the
+      // template rather than renaming in place — two columns collapsing into one
+      // cannot be expressed as a rename.
+      board.columns = BOARD_TEMPLATES.personal.map((c) => ({ ...c }));
+      renumberAll(board);
     }
   }
   return board;
@@ -471,6 +486,12 @@ function renumber(board: WorkBoard, columnId: string): void {
     });
 }
 
+/** Renumber every column on the board — needed when a migration can merge two columns
+    into one, which leaves duplicate `order` values that a single-column renumber can't fix. */
+function renumberAll(board: WorkBoard): void {
+  for (const column of board.columns) renumber(board, column.id);
+}
+
 /**
  * Quick-adds land where the user works, not where the system routes: Queue is
  * the system's intake lane (sweep, escalations, imports), so fresh cards
@@ -520,6 +541,38 @@ export function grabCard(card: WorkCard, userId: string, now: string): void {
  */
 export function releaseCard(card: WorkCard): void {
   card.agenda = undefined;
+}
+
+/** The boards whose work reaches a person's Agenda. Edwin named these three, twice. */
+export const AGENDA_SOURCE_TYPES: BoardType[] = ["maintenance", "reactive", "deliver"];
+
+/** Does this card want a human right now? Independent of whether one has taken it. */
+export function needsHuman(board: WorkBoard, card: WorkCard): boolean {
+  const gated = board.columns.find((c) => c.id === card.columnId)?.gatesHuman === true;
+  const handedBack = card.delegation?.state === "completed" || card.delegation?.state === "failed";
+  return gated || handedBack || Boolean(card.flag) || Boolean(card.jira?.lastPushError);
+}
+
+/**
+ * The shared queue — DERIVED, never stored. A card is in the pool when it needs a human
+ * and nobody has it. Because the pool IS "nobody holds it", releasing a card returns it
+ * here by deletion alone: there is no queued flag to write, and nothing can re-offer a
+ * card that was deliberately handed back.
+ *
+ * A card an agent is actively working belongs to the agent, not the pool — that
+ * distinction is the reason the axis exists.
+ */
+export function sharedQueue(boards: WorkBoard[]): Array<{ board: WorkBoard; card: WorkCard }> {
+  const out: Array<{ board: WorkBoard; card: WorkCard }> = [];
+  for (const board of boards) {
+    if (!AGENDA_SOURCE_TYPES.includes(board.type)) continue;
+    for (const card of board.cards) {
+      if (card.agenda) continue;
+      if (card.delegation?.state === "working") continue;
+      if (needsHuman(board, card)) out.push({ board, card });
+    }
+  }
+  return out;
 }
 
 /**
