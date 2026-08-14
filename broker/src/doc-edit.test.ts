@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { runDocEditTurn } from "./doc-edit.ts";
 import type { Doc } from "./documents.ts";
-import type { ResearchInput } from "./research.ts";
+import { ResearchError, type ResearchInput } from "./research.ts";
 
 const DOC: Doc = {
   id: "d1",
@@ -86,6 +86,15 @@ test("malformed or empty replies throw", async () => {
     runDocEditTurn({ doc: DOC, instruction: "x", ...stub('{"rewrites":[],"note":"n"}') }),
     /usable rewrites/,
   );
+});
+
+test("an engine that rejects makes the turn reject — never a silent empty rewrite", async () => {
+  const engine = {
+    complete: async () => {
+      throw new ResearchError("engine down");
+    },
+  };
+  await assert.rejects(runDocEditTurn({ doc: DOC, instruction: "x", engine }), /engine down/);
 });
 
 test("a parroted section-header scaffold line is stripped from newBody", async () => {

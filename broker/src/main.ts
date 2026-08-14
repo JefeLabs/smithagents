@@ -69,7 +69,8 @@ import { draftToAgentBody, type PersonaDraft, PersonaGenerator } from "./persona
 import { docSeedsInWorkspace } from "./pins.ts";
 import { polishText } from "./polish.ts";
 import { createRemovalService } from "./removal.ts";
-import { AnthropicResearch, CliResearch, defaultSpawner, type ResearchEngine } from "./research.ts";
+import { defaultSpawner, type ResearchEngine } from "./research.ts";
+import { resolveResearchEngine } from "./research-engine.ts";
 import { LiveKitRoomBridge } from "./room.ts";
 import { generateSessionTitle } from "./session-title.ts";
 import { type ExecutionMode, resolveLazyWorkspace, type Session, SessionManager, truncateTitle } from "./sessions.ts";
@@ -102,20 +103,6 @@ const streamFactory: StreamFactory = (params) =>
 
 const swarm = new SwarmClient({ baseUrl: config.swarm.baseUrl, token: config.swarm.token });
 
-/**
- * Research engine, resolved per turn from the operator's setting so a bad
- * choice is fixed by changing it back — not by restarting a broker that holds
- * live LiveKit and Discord connections.
- *
- * Falls back to the Anthropic default when unset, when the swarm is
- * unreachable, or when the stored engine no longer passes its gate. A research
- * call must never fail because a *setting* could not be read.
- */
-const anthropicResearch = new AnthropicResearch(
-  (p) => anthropic.messages.create(p as Parameters<typeof anthropic.messages.create>[0]),
-  "claude-haiku-4-5",
-);
-
 /** One-shot invocation per tool, verified against each binary's --help. */
 const RESEARCH_ARGV: Record<string, string[]> = {
   claude: ["claude", "--print"],
@@ -126,12 +113,29 @@ const RESEARCH_ARGV: Record<string, string[]> = {
 };
 const researchArgvFor = (cli: string): string[] | undefined => RESEARCH_ARGV[cli];
 
-async function researchEngine(): Promise<ResearchEngine> {
-  const chosen = await swarm.getResearchEngine().catch(() => null);
-  if (!chosen) return anthropicResearch;
-  const argv = researchArgvFor(chosen.cli);
-  if (!argv) return anthropicResearch;
-  return new CliResearch(defaultSpawner, argv, chosen.model);
+/**
+ * Research engine, resolved per turn from the operator's setting so a bad
+ * choice is fixed by changing it back — not by restarting a broker that holds
+ * live LiveKit and Discord connections.
+ *
+ * Falls back to the Anthropic default when unset, when the swarm is
+ * unreachable, or when the stored engine no longer passes its gate. A research
+ * call must never fail because a *setting* could not be read.
+ *
+ * `fallbackModel` lets one call site (doc-edit) ask for a stronger Anthropic
+ * model than the rest; the CLI path is unaffected — an operator's chosen tool
+ * already carries its own model, one setting as the spec intends.
+ */
+async function researchEngine(fallbackModel = "claude-haiku-4-5"): Promise<ResearchEngine> {
+  return resolveResearchEngine(
+    {
+      getStoredEngine: () => swarm.getResearchEngine().catch(() => null),
+      argvFor: researchArgvFor,
+      spawn: defaultSpawner,
+      anthropicCreate: (p) => anthropic.messages.create(p as Parameters<typeof anthropic.messages.create>[0]),
+    },
+    fallbackModel,
+  );
 }
 
 // Portrait generation resolved per request (spec §Avatar generation):
@@ -1543,7 +1547,10 @@ const textChannel = new TextChannel(
             instruction: text,
             targetSectionId: doc.sectionId,
             persona: editor,
-            engine: await researchEngine(),
+            // Sonnet, not the research default: doc edits restructure prose
+            // AND must hold a strict JSON contract — the most demanding
+            // research task in the set.
+            engine: await researchEngine("claude-sonnet-5"),
           });
           if (editor) {
             for (const rw of r.rewrites) {
