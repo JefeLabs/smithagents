@@ -14,6 +14,8 @@ export interface WorkColumn {
   name: string;
   /** Jira status to transition a linked card to when it lands here; absent = no push. */
   jiraStatus?: string;
+  /** This column structurally waits on a human — its unheld cards surface in the shared queue. */
+  gatesHuman?: boolean;
 }
 
 export type FlagKind = "blocked" | "at-risk" | "waiting";
@@ -27,6 +29,10 @@ export interface CardFlag {
 }
 
 const FLAG_KINDS: FlagKind[] = ["blocked", "at-risk", "waiting"];
+
+export type StepState = "plate" | "today";
+
+export const STEP_STATES: StepState[] = ["plate", "today"];
 
 export interface WorkCard {
   id: string;
@@ -49,6 +55,23 @@ export interface WorkCard {
   flag?: CardFlag;
   /** Set when this card was carded from a bound queue source — the dedup key hasSourceRef checks. */
   sourceRef?: { sourceId: string; itemKey: string };
+  /** Who holds this card's CURRENT step. Orthogonal to columnId, like `flag`; cleared
+      when the card changes column. One holder — grabbing is exclusive. An AGENT holding
+      work is `delegation`, not this. */
+  agenda?: {
+    by: string;
+    state: StepState;
+    /** Entry into the CURRENT state — same contract as CardFlag.since. The sweep re-stamps it. */
+    since: string;
+    /** When it landed on this plate. Set once at grab, never touched again — the clock
+        that answers "how long have I been sitting on this", which `since` cannot. */
+    grabbedAt: string;
+  };
+  /** Append-only: what people said they were doing, and what they said they did. On the
+      CARD, not inside `agenda`, so it survives the column change that clears the holder.
+      `kind` makes it start/done pairs rather than a flat stream, which is what a summary
+      needs. Substrate for Jira comments and AI summaries. */
+  intents?: Array<{ at: string; by: string; kind: "start" | "done"; text: string }>;
 }
 
 /** Terminal side-effect config (spec 2026-08-13 queue-sources). */
@@ -70,7 +93,9 @@ export interface WorkBoard {
   terminal?: { columnId?: string; effects: TerminalEffect[] };
   /** Present on every workspace board; absent only on the single personal board. */
   workspaceId?: string;
-  /** Local YYYY-MM-DD of the last midnight sweep. Personal board only. */
+  /** Local YYYY-MM-DD of the last midnight sweep. Personal board only. Legacy: retired by
+      the step-axis sweep (sweepUserAgenda, which stamps User.agendaSweptDay instead) —
+      kept on the type so older board files still parse, but no longer written. */
   sweptDay?: string;
 }
 
@@ -106,9 +131,8 @@ export const BOARD_TYPE_LABELS: Record<BoardType, string> = {
 // which is why plan and deliver have neither.
 export const BOARD_TEMPLATES: Record<BoardType, WorkColumn[]> = {
   personal: [
-    { id: "queue", name: "Queue" },
-    { id: "todo", name: "Todo" },
-    { id: "doing", name: "Doing" },
+    { id: "plate", name: "My plate" },
+    { id: "today", name: "Today" },
     { id: "done", name: "Done" },
     { id: "not-doing", name: "Not Doing" },
   ],
@@ -129,8 +153,8 @@ export const BOARD_TEMPLATES: Record<BoardType, WorkColumn[]> = {
     { id: "queue", name: "Queue" },
     { id: "ready", name: "Ready" },
     { id: "in-progress", name: "In progress" },
-    { id: "review", name: "Review" },
-    { id: "verify", name: "Verify" },
+    { id: "review", name: "Review", gatesHuman: true },
+    { id: "verify", name: "Verify", gatesHuman: true },
     { id: "merged", name: "Merged" },
   ],
   release: [
@@ -143,7 +167,7 @@ export const BOARD_TEMPLATES: Record<BoardType, WorkColumn[]> = {
   ],
   reactive: [
     { id: "queue", name: "Queue" },
-    { id: "triage", name: "Triage" },
+    { id: "triage", name: "Triage", gatesHuman: true },
     { id: "diagnose", name: "Diagnose" },
     { id: "fix", name: "Fix" },
     { id: "verify", name: "Verify" },
@@ -151,7 +175,7 @@ export const BOARD_TEMPLATES: Record<BoardType, WorkColumn[]> = {
   ],
   maintenance: [
     { id: "queue", name: "Queue" },
-    { id: "triage", name: "Triage" },
+    { id: "triage", name: "Triage", gatesHuman: true },
     { id: "doing", name: "Doing" },
     { id: "done", name: "Done" },
     { id: "wont-do", name: "Won't do" },
@@ -220,10 +244,9 @@ export const BOARD_ROUTES: Record<BoardType, RouteExit[]> = {
   reactive: [
     { from: "triage", toType: "maintenance", toColumn: "triage", label: "To maintenance" },
     { from: "triage", toType: "ideation", toColumn: "intake", label: "To ideation" },
-    { from: "triage", toType: "personal", toColumn: "queue", label: "Escalate to Agenda" },
   ],
   ideation: [],
-  maintenance: [{ from: "triage", toType: "personal", toColumn: "queue", label: "Escalate to Agenda" }],
+  maintenance: [],
   personal: [],
 };
 
@@ -268,6 +291,11 @@ export function routeCard(source: WorkBoard, dest: WorkBoard, cardId: string, ex
     order: dest.cards.filter((c) => c.columnId === exit.toColumn).length,
     updatedAt: now,
     routedFrom: [...(card.routedFrom ?? []), trace],
+    // A board change is strictly more than a column change, so the same invariant
+    // applies: the step this holder described no longer exists. Routing deliberately
+    // does NOT demand a closing comment — it is a board-to-board handoff with its own
+    // UI, and gating it here would block a route behind a composer that isn't built.
+    agenda: undefined,
   };
   dest.cards.push(moved);
   return { card: moved, writeFirst: dest, writeSecond: source };
@@ -338,16 +366,20 @@ const LEGACY_DEFAULT_NAMES: Partial<Record<BoardType, string[]>> = {
   maintenance: ["Maintenance"],
 };
 
-/** The boards whose leftmost lane is the Queue intake. */
-const QUEUE_TYPES: BoardType[] = ["personal", "plan", "deliver", "release", "reactive", "maintenance"];
+/** The boards whose leftmost lane is the Queue intake. Not personal — its intake is the
+    derived shared queue, which is not a column at all. */
+const QUEUE_TYPES: BoardType[] = ["plan", "deliver", "release", "reactive", "maintenance"];
 
 /**
  * Reshape a board persisted under an earlier template: default names follow
  * the current labels (a custom rename is preserved), the queue intake lane is
  * prepended where the type carries one, and maintenance's old `queued` column
  * becomes that lane — moved to the front with its cards' columnIds rewritten,
- * so nothing strands. In-memory only — the file is rewritten the next time
- * any mutation saves the board.
+ * so nothing strands. The personal board's pre-step-axis columns fold into
+ * plate/today/done/not-doing. Finally, every column is backfilled with its
+ * template's `gatesHuman`, so a board persisted before that field existed
+ * doesn't silently drop out of the shared queue. In-memory only — the file is
+ * rewritten the next time any mutation saves the board.
  */
 export function normalizeBoard(board: WorkBoard): WorkBoard {
   if (LEGACY_DEFAULT_NAMES[board.type]?.includes(board.name)) board.name = BOARD_TYPE_LABELS[board.type];
@@ -365,6 +397,28 @@ export function normalizeBoard(board: WorkBoard): WorkBoard {
       board.columns.unshift({ id: "queue", name: "Queue" });
     }
   }
+  if (board.type === "personal") {
+    const RENAMED: Record<string, string> = { queue: "plate", todo: "plate", doing: "today" };
+    if (board.columns.some((c) => RENAMED[c.id])) {
+      for (const card of board.cards) {
+        const to = RENAMED[card.columnId];
+        if (to) card.columnId = to;
+      }
+      // queue and todo both fold into plate, so rebuild the column list from the
+      // template rather than renaming in place — two columns collapsing into one
+      // cannot be expressed as a rename.
+      board.columns = BOARD_TEMPLATES.personal.map((c) => ({ ...c }));
+      renumberAll(board);
+    }
+  }
+  // Driven off the template rather than a second hardcoded list, so the two can't drift:
+  // a column persisted before `gatesHuman` existed otherwise never gets it, and its
+  // unheld cards would silently fall out of the shared queue.
+  for (const column of board.columns) {
+    if (column.gatesHuman !== undefined) continue;
+    const templateColumn = BOARD_TEMPLATES[board.type].find((c) => c.id === column.id);
+    if (templateColumn?.gatesHuman) column.gatesHuman = true;
+  }
   return board;
 }
 
@@ -380,28 +434,40 @@ export function msUntilNextMidnight(now: Date): number {
 }
 
 /**
- * Day rollover for Active To-dos: everything still in Todo or Doing joins the
- * end of Queue — Todo's cards first, then Doing's, relative order preserved.
- * Guarded by sweptDay so a double-fire is a no-op; a stamp-only change still
- * reports dirty because the stamp must persist. Pure: the caller owns load,
- * save, and the clock.
+ * Day rollover for the step axis: everything this user claimed for today reverts to
+ * their plate, so each morning starts from one honest list and they re-declare what
+ * they are actually working on.
+ *
+ * It never RELEASES: grabbing is a commitment that outlives the day, picking something
+ * for today is not. Pure — the caller owns load, save, the clock, and the
+ * agendaSweptDay stamp, which lives on the user because the sweep is per-user.
+ * Returns the boards that changed.
  */
-export function sweepPersonalBoard(board: WorkBoard, today: string): boolean {
-  if (board.type !== "personal" || board.sweptDay === today) return false;
-  if (!board.columns.some((c) => c.id === "queue")) return false;
-  board.sweptDay = today;
-  const rank = (c: WorkCard) => (c.columnId === "todo" ? 0 : 1);
-  const leftovers = board.cards
-    .filter((c) => c.columnId === "todo" || c.columnId === "doing")
-    .sort((a, b) => rank(a) - rank(b) || a.order - b.order);
-  const now = new Date().toISOString();
-  let order = board.cards.filter((c) => c.columnId === "queue").length;
-  for (const c of leftovers) {
-    c.columnId = "queue";
-    c.order = order++;
-    c.updatedAt = now;
+export function sweepUserAgenda(boards: WorkBoard[], userId: string, now: string): WorkBoard[] {
+  const dirty: WorkBoard[] = [];
+  for (const board of boards) {
+    let changed = false;
+    for (const card of board.cards) {
+      // Personal todos have no holder — their columnId IS their lane, so the same
+      // daily reset applies by column. This is what sweepPersonalBoard used to do,
+      // in the new vocabulary; keeping two sweeps would mean two vocabularies.
+      if (board.type === "personal") {
+        if (card.columnId !== "today") continue;
+        card.columnId = "plate";
+        card.updatedAt = now;
+        changed = true;
+        continue;
+      }
+      if (card.agenda?.by !== userId || card.agenda.state !== "today") continue;
+      setStepState(card, userId, "plate", now);
+      changed = true;
+    }
+    if (changed) {
+      if (board.type === "personal") renumber(board, "plate");
+      dirty.push(board);
+    }
   }
-  return true;
+  return dirty;
 }
 
 export async function loadBoards(
@@ -445,11 +511,18 @@ function renumber(board: WorkBoard, columnId: string): void {
     });
 }
 
+/** Renumber every column on the board — needed when a migration can merge two columns
+    into one, which leaves duplicate `order` values that a single-column renumber can't fix. */
+function renumberAll(board: WorkBoard): void {
+  for (const column of board.columns) renumber(board, column.id);
+}
+
 /**
  * Quick-adds land where the user works, not where the system routes: Queue is
- * the system's intake lane (sweep, escalations, imports), so fresh cards
- * default to the first column that ISN'T it — Todo on the planner, Ready on
- * Deliver, Triage on React/Maintain.
+ * the system's intake lane (bound sources card into it), so fresh cards
+ * default to the first column that ISN'T it — My plate on the personal
+ * board (which has no Queue lane at all — see BOARD_TEMPLATES.personal),
+ * Ready on Deliver, Triage on React/Maintain.
  */
 export function defaultColumnFor(board: WorkBoard): string {
   return (board.columns.find((c) => c.id !== "queue") ?? board.columns[0])?.id;
@@ -478,12 +551,57 @@ export function addCard(
   return card;
 }
 
+/**
+ * Pull a card out of the shared queue. Exclusive by design: two people pulling the
+ * same card at the same moment must not silently produce one winner and one confused
+ * loser, so a second grab throws rather than overwriting.
+ */
+export function grabCard(card: WorkCard, userId: string, now: string): void {
+  if (card.agenda) throw new Error(`Card already held by ${card.agenda.by}`);
+  card.agenda = { by: userId, state: "plate", since: now, grabbedAt: now };
+}
+
+/**
+ * Hand it back. The shared queue is derived from "nobody holds it", so deleting the
+ * field IS the return to the pool — there is no queued state to write.
+ */
+export function releaseCard(card: WorkCard): void {
+  card.agenda = undefined;
+}
+
+/**
+ * The holder's own daily declaration. `since` measures how long they have been in THIS
+ * state, so an unchanged state keeps its stamp — same contract as CardFlag.since.
+ *
+ * Claiming a card for TODAY demands a sentence, and the rule lives here rather than in
+ * the composer so no route, script or import can move a card into today silently. Every
+ * validation runs before anything mutates: a rejected claim must not leave the card
+ * half-applied.
+ */
+export function setStepState(card: WorkCard, userId: string, state: StepState, now: string, intent?: string): void {
+  if (!STEP_STATES.includes(state)) throw new Error(`Unknown step state: ${state}`);
+  if (!card.agenda) throw new Error("Card is not held — grab it first");
+  if (card.agenda.by !== userId) throw new Error(`Card is not held by ${userId}`);
+  const entering = card.agenda.state !== state;
+  const text = intent?.trim();
+  if (state === "today" && entering && !text) throw new Error("An intent is required to claim a card for today");
+  if (state === "today" && entering && text) {
+    card.intents = [...(card.intents ?? []), { at: now, by: userId, kind: "start", text }];
+  }
+  if (entering) card.agenda.since = now;
+  card.agenda.state = state;
+}
+
 export function patchCard(
   board: WorkBoard,
   cardId: string,
   patch: Partial<
     Pick<WorkCard, "title" | "notes" | "columnId" | "order" | "jira" | "delegation" | "stories" | "capabilityRef">
-  > & { flag?: { kind: FlagKind; reason?: string } | null },
+  > & {
+    flag?: { kind: FlagKind; reason?: string } | null;
+    /** Required when this move ends a held step, or sends a personal todo to done. */
+    close?: { by: string; text: string };
+  },
 ): WorkCard {
   const card = board.cards.find((c) => c.id === cardId);
   if (!card) throw new Error(`Unknown card: ${cardId}`);
@@ -491,6 +609,17 @@ export function patchCard(
     throw new Error(`Unknown column: ${patch.columnId}`);
   }
   const fromColumn = card.columnId;
+  const toColumn = patch.columnId ?? card.columnId;
+  const changingColumn = toColumn !== card.columnId;
+  // Finishing costs a sentence, symmetrically with claiming a day. Two gestures end
+  // work: advancing a card someone holds (whoever moves it — if Ana advances Edwin's
+  // card, Ana writes it), and sending a personal todo to done. An UNHELD team card
+  // moves freely: the rule attaches to finishing work someone took, not to tidying.
+  const endsHeldStep = changingColumn && Boolean(card.agenda);
+  const personalDone = changingColumn && board.type === "personal" && toColumn === "done";
+  if ((endsHeldStep || personalDone) && !patch.close?.text.trim()) {
+    throw new Error("A closing comment is required to finish this work");
+  }
   if (patch.title !== undefined) card.title = patch.title.trim() || card.title;
   if (patch.notes !== undefined) card.notes = patch.notes.trim() || undefined;
   if (patch.jira !== undefined) card.jira = patch.jira ?? undefined;
@@ -522,7 +651,20 @@ export function patchCard(
     siblings.forEach((c, i) => {
       c.order = i;
     });
-    if (fromColumn !== toColumn) renumber(board, fromColumn);
+    if (fromColumn !== toColumn) {
+      renumber(board, fromColumn);
+      const close = patch.close;
+      const closing = close?.text.trim();
+      if (close && closing) {
+        card.intents = [
+          ...(card.intents ?? []),
+          { at: new Date().toISOString(), by: close.by, kind: "done", text: closing },
+        ];
+      }
+      // The step this described has ended, so its holder is void. Appended FIRST —
+      // clearing the holder must not cost us the record of what closed it.
+      card.agenda = undefined;
+    }
   }
   card.updatedAt = new Date().toISOString();
   return card;

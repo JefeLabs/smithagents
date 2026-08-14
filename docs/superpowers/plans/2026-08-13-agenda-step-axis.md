@@ -1,10 +1,12 @@
 # Agenda Pull Queue — Implementation Plan
 
+> **CLAIMED 2026-08-13 — in execution.** Owner: session `5de6efcf`, worktree `.worktrees/agenda-step-axis`, branch `agenda-step-axis`. Ledger: `.superpowers/sdd/2026-08-13-agenda-step-axis/progress.md`. Do not start a second executor against this plan — check the ledger for which tasks are already complete, and coordinate before touching the branch.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Give each card a single-holder step axis orthogonal to its team column, and surface unheld work from Maintain/React/Deliver in a shared queue people pull from.
 
-**Architecture:** One optional field on `WorkCard` — `agenda: {by, state, since}` — shaped after the existing `flag` axis. The shared queue is **derived, never stored**: a card is in the pool when it needs a human and nobody holds it. Advancing a card between columns clears the holder, because the step it described has ended.
+**Architecture:** One optional field on `WorkCard` — `agenda: {by, state, since, grabbedAt}` — shaped after the existing `flag` axis, plus an append-only `intents[]` narrative. The shared queue is **derived, never stored**: a card is in the pool when it needs a human and nobody holds it. Advancing a card between columns clears the holder, because the step it described has ended.
 
 **Tech Stack:** swarm = TypeScript + Fastify, tested with the node built-in test runner (`node --import tsx --test`) and `node:assert/strict`. control-plane = React + TanStack Query + dnd-kit, tested with vitest + Testing Library (jsdom).
 
@@ -13,7 +15,7 @@
 ## Global Constraints
 
 - **pnpm, never npm.** One workspace at the repo root; node >= 24; TypeScript ~6.0.0.
-- **Biome 2.5.3 runs on `control-plane/` only** — swarm has no biome config. Control-plane lint baseline is **zero diagnostics**.
+- **Biome 2.5.3 runs on BOTH packages.** `swarm/package.json` defines `lint: biome check .` — an earlier draft of this plan wrongly said swarm had none. Control-plane's baseline is **zero diagnostics**. Swarm is **not** at zero: it carries 8 errors + 1 warning at this branch's base (375a9e8). Leave that pre-existing debt alone and fix only what your own change introduces — verify by running `pnpm exec biome check .` from the package and confirming you land back at its baseline, not at zero.
 - **Swarm helpers stay pure.** No clock, filesystem, or current-user reads inside `work-items.ts` — the caller passes `now` and `userId`.
 - **The shared queue is derived.** Never add a stored "queued" flag or a function that writes one.
 - **`StepState` is exactly `"plate" | "today"`.** No `done` — finishing a step means advancing the card.
@@ -108,6 +110,7 @@ test("each claim appends one intent; a same-state re-stamp does not append twice
   assert.deepEqual(c.intents?.[0], {
     at: "2026-08-13T11:00:00.000Z",
     by: "edwin",
+    kind: "start",
     text: "chasing the flaky suite",
   });
 });
@@ -319,6 +322,39 @@ Then replace `if (fromColumn !== toColumn) renumber(board, fromColumn);` with:
 
 `patchCard` already reads the clock for `card.updatedAt`, so this follows the function's existing convention rather than breaking the purity rule the *other* helpers keep. Assert on the entry's `by`/`kind`/`text` in tests, not its `at`.
 
+- [ ] **Step 5b: Clear the holder in `routeCard` too**
+
+`routeCard` does not go through `patchCard` — it builds `moved` by spreading `...card` onto the destination board, which carries `agenda` across with it. Add `agenda: undefined` to that spread:
+
+```ts
+  const moved: WorkCard = {
+    ...card,
+    columnId: exit.toColumn,
+    order: dest.cards.filter((c) => c.columnId === exit.toColumn).length,
+    updatedAt: now,
+    routedFrom: [...(card.routedFrom ?? []), trace],
+    // A board change is strictly more than a column change, so the same invariant
+    // applies: the step this holder described no longer exists. Routing deliberately
+    // does NOT demand a closing comment — it is a board-to-board handoff with its own
+    // UI, and gating it here would block a route behind a composer that isn't built.
+    agenda: undefined,
+  };
+```
+
+Test it:
+
+```ts
+test("routeCard clears the holder — a routed card must not carry a stale owner", () => {
+  const r = createBoard("reactive", "ws");
+  const m = createBoard("maintenance", "ws");
+  const c = addCard(r, { title: "flaky", columnId: "triage" });
+  grabCard(c, "edwin", "2026-08-13T10:00:00.000Z");
+  const exit = { from: "triage", toType: "maintenance" as const, toColumn: "triage", label: "To maintenance" };
+  const plan = routeCard(r, m, c.id, exit, "2026-08-13T11:00:00.000Z");
+  assert.equal(plan.card.agenda, undefined);
+});
+```
+
 - [ ] **Step 6: Run the tests, then the whole suite**
 
 ```bash
@@ -461,6 +497,70 @@ export function sharedQueue(boards: WorkBoard[]): Array<{ board: WorkBoard; card
 }
 ```
 
+- [ ] **Step 4b: Migrate the personal board to the new lane vocabulary**
+
+The Agenda's lanes and the personal board's columns must share one vocabulary, or every existing personal card matches no lane. Change `BOARD_TEMPLATES.personal` to:
+
+```ts
+  personal: [
+    { id: "plate", name: "My plate" },
+    { id: "today", name: "Today" },
+    { id: "done", name: "Done" },
+    { id: "not-doing", name: "Not Doing" },
+  ],
+```
+
+There is no `queue` column any more — the shared queue is derived, not a lane the board owns. So also **remove `"personal"` from `QUEUE_TYPES`** (work-items.ts:342), or `normalizeBoard` re-adds a `queue` column on every single load and quietly undoes this.
+
+Then migrate persisted boards in `normalizeBoard`, following the precedent already in that function (its `queued` → `queue` rewrite):
+
+```ts
+  if (board.type === "personal") {
+    const RENAMED: Record<string, string> = { queue: "plate", todo: "plate", doing: "today" };
+    if (board.columns.some((c) => RENAMED[c.id])) {
+      for (const card of board.cards) {
+        const to = RENAMED[card.columnId];
+        if (to) card.columnId = to;
+      }
+      // queue and todo both fold into plate, so rebuild the column list from the
+      // template rather than renaming in place — two columns collapsing into one
+      // cannot be expressed as a rename.
+      board.columns = BOARD_TEMPLATES.personal.map((c) => ({ ...c }));
+      renumberAll(board);
+    }
+  }
+```
+
+`renumberAll(board)` re-runs the existing per-column `renumber` for every column id on the board — two columns merging into `plate` leaves duplicate `order` values otherwise. Add it beside `renumber` if it does not exist.
+
+Test it:
+
+```ts
+test("normalizeBoard folds a legacy personal board into plate/today/done", () => {
+  const b = createBoard("personal");
+  b.columns = [
+    { id: "queue", name: "Queue" }, { id: "todo", name: "Todo" },
+    { id: "doing", name: "Doing" }, { id: "done", name: "Done" },
+    { id: "not-doing", name: "Not Doing" },
+  ];
+  b.cards = [
+    { id: "a", title: "q", columnId: "queue", order: 0, createdAt: "x", updatedAt: "x" },
+    { id: "b", title: "t", columnId: "todo", order: 0, createdAt: "x", updatedAt: "x" },
+    { id: "c", title: "d", columnId: "doing", order: 0, createdAt: "x", updatedAt: "x" },
+  ];
+  normalizeBoard(b);
+  assert.deepEqual(b.columns.map((c) => c.id), ["plate", "today", "done", "not-doing"]);
+  assert.deepEqual(b.cards.map((c) => c.columnId), ["plate", "plate", "today"]);
+  assert.deepEqual(b.cards.filter((c) => c.columnId === "plate").map((c) => c.order).sort(), [0, 1]);
+});
+
+test("normalizeBoard no longer forces a queue column onto the personal board", () => {
+  const b = createBoard("personal");
+  normalizeBoard(b);
+  assert.equal(b.columns.some((c) => c.id === "queue"), false);
+});
+```
+
 - [ ] **Step 5: Retire the Escalate-to-Agenda routes**
 
 In `BOARD_ROUTES`, delete the `{ from: "triage", toType: "personal", toColumn: "queue", label: "Escalate to Agenda" }` entry from **both** `reactive` and `maintenance`. Those routes *move* a card onto the personal board, hiding it from the team; a triage card is now already in the shared queue, and escalating is just grabbing it. Update any test asserting those exits.
@@ -553,15 +653,30 @@ export function sweepUserAgenda(boards: WorkBoard[], userId: string, now: string
   for (const board of boards) {
     let changed = false;
     for (const card of board.cards) {
+      // Personal todos have no holder — their columnId IS their lane, so the same
+      // daily reset applies by column. This is what sweepPersonalBoard used to do,
+      // in the new vocabulary; keeping two sweeps would mean two vocabularies.
+      if (board.type === "personal") {
+        if (card.columnId !== "today") continue;
+        card.columnId = "plate";
+        card.updatedAt = now;
+        changed = true;
+        continue;
+      }
       if (card.agenda?.by !== userId || card.agenda.state !== "today") continue;
       setStepState(card, userId, "plate", now);
       changed = true;
     }
-    if (changed) dirty.push(board);
+    if (changed) {
+      if (board.type === "personal") renumber(board, "plate");
+      dirty.push(board);
+    }
   }
   return dirty;
 }
 ```
+
+**Retire `sweepPersonalBoard`.** Delete the function, its export, and its tests. It rolls `todo`/`doing` into `queue` — three columns the personal board no longer has after Task 2's migration — so leaving it in place is dead code that would silently corrupt lanes if ever called. Remove its import and call from `server.ts`'s `scheduleMidnightSweep` (Step 6 below already rewrites that block). `WorkBoard.sweptDay` stays on the type for older board files but is no longer written; note that in its doc comment.
 
 - [ ] **Step 4: Add the per-user stamp**
 
@@ -589,11 +704,6 @@ In `swarm/src/server.ts`, extend `scheduleMidnightSweep`'s `try` block so both s
         const today = localDayStamp(new Date());
         const now = new Date().toISOString();
         const { boards } = await loadBoards(this.workDir());
-        const personal = boards.find((b) => b.type === "personal");
-        if (personal && sweepPersonalBoard(personal, today)) {
-          await saveBoard(this.workDir(), personal);
-          this.app.log.info("Swept Active To-dos leftovers into Queue");
-        }
         const dir = resolve(process.cwd(), ".smith/users");
         const user = resolveCurrentUser(await loadUsersFromDir(dir));
         if (user && user.agendaSweptDay !== today) {
@@ -827,6 +937,11 @@ best-effort like the existing push-on-move."
 
 - [ ] **Step 1: Write the failing tests**
 
+**Two traps in this test file — build your fixtures inline as written below, do not reach for the house helpers:**
+
+1. `board-aggregate.test.ts` has a `board(id, type, workspaceId, cards)` helper that builds boards with **`columns: []`**. `sharedQueueCards` resolves `gatesHuman` by looking a card's `columnId` up in `board.columns` — against an empty column list that is always `undefined`, so every pooling test would silently return `[]` and pass or fail for reasons unrelated to the logic. The fixtures below declare `columns` explicitly for exactly this reason.
+2. The file's shared `BOARDS` constant includes a personal board whose card sits in `columnId: "todo"` — a column Task 2's migration removed. It is fine for the existing `tabsFor`/`collectCards` tests that use it, but do **not** reuse `BOARDS` for the new lane tests: `todo` is no longer a lane and the fixture would quietly test nothing.
+
 ```ts
 describe("agenda lanes", () => {
   const personal = {
@@ -849,7 +964,8 @@ describe("agenda lanes", () => {
         agenda: { by: "edwin", state: "plate" as const, since: "2026-08-13T12:00:00.000Z",
                   grabbedAt: "2026-08-13T12:00:00.000Z" } },
       { id: "t-hers", title: "ana's", columnId: "review", order: 3,
-        agenda: { by: "ana", state: "plate" as const, since: "2026-08-13T08:00:00.000Z" } },
+        agenda: { by: "ana", state: "plate" as const, since: "2026-08-13T08:00:00.000Z",
+                  grabbedAt: "2026-08-13T08:00:00.000Z" } },
     ],
   };
 
@@ -941,7 +1057,7 @@ export function sharedQueueCards(boards: WorkBoardT[]): AggCard[] {
  * One Agenda lane. Two card kinds share it and order differently, deliberately:
  * personal cards have no workflow axis, so their columnId IS the lane and their drag
  * `order` still means something — they come first. Team cards are matched on the
- * holder's step state and ordered by `since`, oldest first, because `order` is
+ * holder's step state and ordered by `grabbedAt`, oldest first, because `order` is
  * per-column-per-board and cannot order a lane that spans boards.
  *
  * Team cards order by `grabbedAt`, NOT `since`: the morning sweep re-stamps `since` on
@@ -1010,27 +1126,53 @@ it("the Agenda tab spans every board — holders live on their home boards", () 
 
 In `BoardStage.test.tsx`, following the file's existing render/stub helpers:
 
+**These tests must go through the `fireDrop` seam** — jsdom cannot synthesize dnd-kit pointer sequences, so a "drag" in this file means calling `fireDrop(boardId, cardId, columnId, order)` from `./BoardStage`. Follow the existing `describe("BoardStage drag wiring")` block: it stubs fetch with `stubFetch()`, renders, and then calls the seam. Reuse its `readyToDrop(columnName)` helper verbatim, including the `await act(async () => {})` flush — its comment explains why, and skipping it leaves the seam holding a closure over an empty board list so `applyMove` bails without PATCHing and your test passes for the wrong reason.
+
 ```ts
 it("grab sends the grab action and no columnId", async () => {
-  // render Agenda, press Grab on a shared-queue card
-  expect(lastPatchBody()).toEqual({ agenda: { action: "grab" } });
+  const { calls } = stubFetch();
+  renderWithProviders(<BoardStage roster={ROSTER} />);
+  await readyToDrop("Shared queue");
+  fireEvent.click(screen.getByRole("button", { name: /grab/i }));
+  await waitFor(() => {
+    const patch = calls.find((c) => c.method === "PATCH" && c.url.includes("/cards/"));
+    expect(patch?.body).toEqual({ agenda: { action: "grab" } });
+  });
 });
 
 it("dragging a TEAM card to plate patches the step state only", async () => {
-  expect(lastPatchBody()).toEqual({ agenda: { state: "plate" } });
-  expect(lastPatchBody()).not.toHaveProperty("columnId");
+  const { calls } = stubFetch();
+  renderWithProviders(<BoardStage roster={ROSTER} />);
+  await readyToDrop("My plate");
+  const { fireDrop } = await import("./BoardStage");
+  await fireDrop("ws-deliver", "t1", "plate", 0);
+  await waitFor(() => {
+    const patch = calls.find((c) => c.method === "PATCH" && c.url.includes("/cards/t1"));
+    expect(patch?.body).toEqual({ agenda: { state: "plate" } });
+  });
+  const patch = calls.find((c) => c.method === "PATCH" && c.url.includes("/cards/t1"));
+  expect(patch?.body).not.toHaveProperty("columnId");
 });
 
 it("dropping into Today asks what you are doing before writing anything", async () => {
-  // drag a card from My plate onto Today
+  const { calls } = stubFetch();
+  renderWithProviders(<BoardStage roster={ROSTER} />);
+  await readyToDrop("Today");
+  const { fireDrop } = await import("./BoardStage");
+  await fireDrop("ws-deliver", "t1", "today", 0);
   expect(await screen.findByLabelText(/what are you doing/i)).toBeDefined();
-  expect(patchCalls()).toHaveLength(0);
+  expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(0);
 });
 
 it("cancelling the intent composer leaves the card where it was", async () => {
-  // drag onto Today, then press Cancel
-  fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
-  expect(patchCalls()).toHaveLength(0);
+  const { calls } = stubFetch();
+  renderWithProviders(<BoardStage roster={ROSTER} />);
+  await readyToDrop("Today");
+  const { fireDrop } = await import("./BoardStage");
+  await fireDrop("ws-deliver", "t1", "today", 0);
+  fireEvent.click(await screen.findByRole("button", { name: /cancel/i }));
+  expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(0);
+  expect(screen.queryByLabelText(/what are you doing/i)).toBeNull();
 });
 
 it("submitting the intent sends it with the state", async () => {
@@ -1044,9 +1186,13 @@ it("submitting the intent sends it with the state", async () => {
 });
 
 it("advancing a HELD card on the team board asks what you did before moving it", async () => {
-  // on the Deliver tab, drag a held card from Review to Verify
+  const { calls } = stubFetch();
+  renderWithProviders(<BoardStage roster={ROSTER} />);
+  await readyToDrop("Review");
+  const { fireDrop } = await import("./BoardStage");
+  await fireDrop("ws-deliver", "held1", "verify", 0);
   expect(await screen.findByLabelText(/what did you do/i)).toBeDefined();
-  expect(patchCalls()).toHaveLength(0);
+  expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(0);
 });
 
 it("advancing an UNHELD card on the team board moves it straight away", async () => {
@@ -1114,34 +1260,54 @@ export function useCardAgenda() {
 }
 ```
 
-Widen `api.patchCard`'s body type in `api/work.ts` to accept `agenda?: { action: "grab" } | { state: "plate" | "today" } | null`.
+Widen `api.patchCard`'s body type in `api/work.ts` to accept **both** new fields at once — the step-axis write and the closing comment:
+
+```ts
+  agenda?: { action: "grab" } | { state: "plate" | "today"; intent?: string } | null;
+  close?: { text: string };
+```
+
+`intent` must be on that union member or the mutation above cannot send it. `close` rides on the ordinary card PATCH (with `columnId`/`order`), not on `agenda` — see the closing-composer step below. The route fills in `close.by` from the current user; the client never sends it.
 
 - [ ] **Step 5: Render four lanes and branch the drag**
 
-The Agenda tab renders **Shared queue · My plate · Today · Done**. Shared queue is fed by `sharedQueueCards(boards)`; the other three by `collectAgendaCards(boards, me.id, laneId)`. Shared-queue cards are not draggable — each carries a **Grab** button calling `useCardAgenda` with `{ action: "grab" }`.
+**First, fix where the lane list comes from — this breaks otherwise.** `BoardStage.tsx:240` currently derives the rendered columns as `const columns = tabBoards[0]?.columns ?? []`. That was safe while every tab's boards shared one template, but Task 6 makes Agenda's `boardIds` span *every* board, so `tabBoards[0]` becomes whichever board happens to sit first in the `boards` array — very likely a deliver board, whose columns are `ready / in-progress / review / verify / merged`. The Agenda tab would render a team board's lanes and pool nothing into them.
 
-In `handleDragEnd`:
+Agenda's lanes must come from the **personal** board specifically, with the derived shared-queue lane prepended:
 
 ```ts
-    const source = boards.find((b) => b.id === outcome.boardId);
-    if (tab?.type === "personal" && source && source.type !== "personal") {
-      if (outcome.columnId !== "plate" && outcome.columnId !== "today") return;
-      if (outcome.columnId === "today") {
+  const SHARED_LANE = { id: "shared-queue", name: "Shared queue" };
+  const isAgendaTab = tab?.type === "personal";
+  const columns = isAgendaTab
+    ? [SHARED_LANE, ...(boards.find((b) => b.type === "personal")?.columns ?? [])]
+    : (tabBoards[0]?.columns ?? []);
+```
+
+`shared-queue` is a synthetic lane id that exists on no board — it is the derived pool. Nothing may persist a column with that id, and a drop targeting it is not a move: releasing a card back to the pool happens through the card's own control, not by dragging into this lane. Make it a non-droppable column.
+
+With that in place the Agenda tab renders **five** lanes: **Shared queue · My plate · Today · Done · Not Doing**. Shared queue is fed by `sharedQueueCards(boards)`; the other four by `collectAgendaCards(boards, me.id, laneId)`. Team cards can only ever occupy Shared queue, My plate and Today — `Done` and `Not Doing` are personal-only, because a team card's "done" is advancing it on its own board. Shared-queue cards are not draggable — each carries a **Grab** button calling `useCardAgenda` with `{ action: "grab" }`.
+
+**Put the branch inside `applyMove`, NOT in `handleDragEnd`.** This is load-bearing and easy to get wrong. `BoardStage.tsx:164` registers a module-level `dropHandler = applyMove`, and `fireDrop(boardId, cardId, columnId, order)` is the seam every drag test uses — jsdom cannot synthesize dnd-kit pointer sequences, so `fireDrop` is the only way a test reaches a drop. Its comment claims it invokes "the exact code path a real drop takes." Branch in `handleDragEnd` and that claim becomes false: the new logic sits *above* the seam, no test can reach it, and the drag tests below would silently exercise the old path only.
+
+So the branch goes at the top of `applyMove`, before the optimistic write:
+
+```ts
+    const source = boards.find((b) => b.id === boardId);
+    if (isAgendaTab && source && source.type !== "personal") {
+      if (columnId !== "plate" && columnId !== "today") return;
+      if (columnId === "today") {
         // Claiming a day needs a sentence. Nothing is written until it is submitted —
         // no optimistic move, no PATCH — so cancelling leaves the card exactly where it
         // was. This is the one drop in the app that a drag alone cannot complete.
-        setPendingIntent({ boardId: outcome.boardId, cardId });
+        setPendingIntent({ boardId, cardId });
         return;
       }
-      void cardAgendaMutation.mutateAsync({
-        boardId: outcome.boardId,
-        cardId,
-        agenda: { state: "plate" },
-      });
+      await cardAgendaMutation.mutateAsync({ boardId, cardId, agenda: { state: "plate" } });
       return;
     }
-    void applyMove(outcome.boardId, cardId, outcome.columnId, outcome.order);
 ```
+
+Everything after this point in `applyMove` is the existing optimistic-move-and-PATCH body, unchanged. `isAgendaTab` is `tab?.type === "personal"` — read it from the same `tab` the render uses, and make sure `applyMove`'s `useCallback` dependency list gains `tab` and `cardAgendaMutation`, or the seam will hold a stale closure and the branch will silently not fire.
 
 `pendingIntent` is `useState<{ boardId: string; cardId: string } | null>(null)`. While set, the target card renders the composer instead of its normal face. Submitting fires:
 
@@ -1153,20 +1319,19 @@ In `handleDragEnd`:
 
 Cancelling just calls `setPendingIntent(null)` — no network call at all.
 
-**The closing composer.** The same gate guards finishing, and it fires on the *team board* too, not only on Agenda. Before `applyMove`, intercept:
+**The closing composer.** The same gate guards finishing, and it fires on the *team board* too, not only on Agenda. It goes in `applyMove` as well — immediately after the Agenda branch above, still before the optimistic write:
 
 ```ts
     const moving = source?.cards.find((c) => c.id === cardId);
-    const changingColumn = moving && moving.columnId !== outcome.columnId;
+    const changingColumn = Boolean(moving) && moving?.columnId !== columnId;
     const endsHeldStep = changingColumn && Boolean(moving?.agenda);
-    const personalDone = changingColumn && source?.type === "personal" && outcome.columnId === "done";
+    const personalDone = changingColumn && source?.type === "personal" && columnId === "done";
     if (endsHeldStep || personalDone) {
       // Mirrors the server guard in patchCard. Asking here is a courtesy — the
       // server refuses the move regardless, which is what makes the rule real.
-      setPendingClose({ boardId: outcome.boardId, cardId, columnId: outcome.columnId, order: outcome.order });
+      setPendingClose({ boardId, cardId, columnId, order });
       return;
     }
-    void applyMove(outcome.boardId, cardId, outcome.columnId, outcome.order);
 ```
 
 Submitting sends the ordinary card PATCH with the move *and* the comment in one body — `{ columnId, order, close: { text } }` — so the server applies both atomically or neither. `applyMove`'s optimistic write must not run until that resolves, since a rejected close would otherwise leave the UI showing a move the server refused.
@@ -1198,6 +1363,11 @@ git commit -m "feat(cp): Agenda pull queue — shared lane, grab, drag branch"
 - Produces: `BoardCard` props `holder?: { name: string; state: "plate" | "today" }`, `provenance?: string`, `onGrab?: () => void`.
 
 - [ ] **Step 1: Write the failing tests**
+
+**Two house conventions in `BoardCard.test.tsx` that the literals below do not follow — match the file, not this text:**
+
+1. **Add these inside the existing `describe("BoardCard")` block.** It registers its own `afterEach(cleanup)`, with a comment explaining why: `vitest.config.ts` doesn't set `test.globals`, so RTL's auto-cleanup — which feature-detects a *global* `afterEach` — never registers. A new top-level `describe` would not inherit that, every `render()` would leak into the next test's queries, and you would get baffling duplicate-match failures that look like component bugs.
+2. **Use the file's `card(over)` fixture helper** (`const card = (over: Partial<WorkCardT> = {}) => ({ id: "c1", title: "Opt-in UI", columnId: "in-progress", order: 0, ...over }) as WorkCardT`) rather than the inline card literals written below.
 
 ```ts
 it("renders the holder chip with their step state", () => {
@@ -1291,7 +1461,21 @@ pnpm vitest run src/molecules/BoardCard.test.tsx
 
 - [ ] **Step 6: Styles**
 
-In `components.css`, beside `.board-card__flag`, add `.board-card__provenance`, `.board-card__holder` with `.is-plate` / `.is-today` variants, and `.board-card__grab`. Use existing tokens — no raw colors, and `--card-tint` must be mixed, never raw.
+In `components.css`, beside `.board-card__flag`, add `.board-card__provenance`, `.board-card__holder` with `.is-plate` / `.is-today` variants, and `.board-card__intent`. Use existing tokens — no raw colors, and `--card-tint` must be mixed, never raw.
+
+**Task 6 also shipped five classes with no styles at all** — it was told to leave `components.css` alone, so they are functional but bare. I verified each against `components.css`; these are unstyled and are yours to add:
+
+| class | what it is |
+|---|---|
+| `.board-card--action` | the card-face variant carrying a Grab or Release control |
+| `.board-card__action` | that control itself (it also carries `.settings-btn`, which IS already styled) |
+| `.board-card--composer` | the intent / closing composer card face |
+| `.board-card__composer-actions` | its submit + cancel row |
+| `.board-card__open` | the card's open-affordance element |
+
+`.board-stage__composer` and `.settings-btn--primary` are already styled — leave them.
+
+Two visual points that are behaviour, not decoration: the shared-queue lane inherits `.board-column--queue`, whose existing rule renders its cards at 85% grayscale and 0.75 opacity, restored on hover — that is what visually separates the pool from work you have taken, so do not override it on `.board-card--action`. And the composer must read as demanding input rather than as a card: it is the one drop in the app a drag cannot complete, so it should not look like a card that merely landed.
 
 - [ ] **Step 7: Full suite three times, lint, commit**
 

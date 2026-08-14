@@ -17,6 +17,7 @@ import {
   exitsFor,
   findCardByRef,
   findRouteDestination,
+  grabCard,
   hasSourceRef,
   intakeColumnId,
   loadBoards,
@@ -24,11 +25,13 @@ import {
   msUntilNextMidnight,
   normalizeBoard,
   patchCard,
+  releaseCard,
   removeCard,
   resolveExit,
   routeCard,
   saveBoard,
-  sweepPersonalBoard,
+  setStepState,
+  sweepUserAgenda,
   terminalColumnId,
   WORKSPACE_BOARD_TYPES,
   type WorkBoard,
@@ -37,7 +40,7 @@ import {
 test("templates: seven typed column sets, ids unique and slug-shaped", () => {
   assert.deepEqual(
     BOARD_TEMPLATES.personal.map((c) => c.name),
-    ["Queue", "Todo", "Doing", "Done", "Not Doing"],
+    ["My plate", "Today", "Done", "Not Doing"],
   );
   assert.deepEqual(
     BOARD_TEMPLATES.ideation.map((c) => c.name),
@@ -110,12 +113,12 @@ test("assertBoard rejects a file with a missing or unknown type", async () => {
   for (const e of errors) assert.match(e.error, /type/i);
 });
 
-test("addCard defaults to Todo on the personal board, leftmost elsewhere; orders sequentially", () => {
+test("addCard defaults to My plate on the personal board, leftmost elsewhere; orders sequentially", () => {
   const b = createBoard("personal");
   const a = addCard(b, { title: "first" });
   const c = addCard(b, { title: "second" });
-  assert.equal(defaultColumnFor(b), "todo");
-  assert.equal(a.columnId, "todo");
+  assert.equal(defaultColumnFor(b), "plate");
+  assert.equal(a.columnId, "plate");
   assert.deepEqual([a.order, c.order], [0, 1]);
   assert.ok(a.id !== c.id && a.createdAt && a.updatedAt);
   const ws = createBoard("deliver", "acme");
@@ -126,7 +129,7 @@ test("addCard defaults to Todo on the personal board, leftmost elsewhere; orders
 });
 
 test("patchCard moves between columns at a target index and renumbers both columns", () => {
-  const b = createBoard("personal");
+  const b = createBoard("deliver", "acme");
   const [ready, inProgress] = [b.columns[1].id, b.columns[2].id];
   const c1 = addCard(b, { title: "one", columnId: ready });
   const c2 = addCard(b, { title: "two", columnId: ready });
@@ -151,7 +154,7 @@ test("patchCard moves between columns at a target index and renumbers both colum
 
 test("same-column reorder via order only", () => {
   const b = createBoard("personal");
-  const col = "todo"; // where default adds land on the personal board
+  const col = "plate"; // where default adds land on the personal board
   const c1 = addCard(b, { title: "a" });
   const c2 = addCard(b, { title: "b" });
   const c3 = addCard(b, { title: "c" });
@@ -263,6 +266,142 @@ test("flags: unrelated patches (rename, drag) leave an existing flag and its sin
   assert.equal(b.cards[0].flag?.reason, "waiting on Edwin");
 });
 
+test("grabCard claims an unheld card; grabbing a held one throws", () => {
+  const b = createBoard("deliver", "ws");
+  const c = addCard(b, { title: "auth", columnId: "review" });
+  grabCard(c, "edwin", "2026-08-13T10:00:00.000Z");
+  assert.deepEqual(c.agenda, {
+    by: "edwin",
+    state: "plate",
+    since: "2026-08-13T10:00:00.000Z",
+    grabbedAt: "2026-08-13T10:00:00.000Z",
+  });
+  assert.throws(() => grabCard(c, "ana", "2026-08-13T10:00:01.000Z"), /already held/);
+});
+
+test("grabbedAt is set once and survives every state flip", () => {
+  const b = createBoard("deliver", "ws");
+  const c = addCard(b, { title: "auth", columnId: "review" });
+  grabCard(c, "edwin", "2026-08-10T10:00:00.000Z");
+  setStepState(c, "edwin", "today", "2026-08-13T09:00:00.000Z", "chasing the flaky suite");
+  setStepState(c, "edwin", "plate", "2026-08-14T00:00:00.000Z");
+  assert.equal(c.agenda?.grabbedAt, "2026-08-10T10:00:00.000Z", "age is measured from the grab");
+  assert.equal(c.agenda?.since, "2026-08-14T00:00:00.000Z", "since tracks the current state");
+});
+
+test("releaseCard deletes the field so the card falls back into the shared queue", () => {
+  const b = createBoard("deliver", "ws");
+  const c = addCard(b, { title: "auth", columnId: "review" });
+  grabCard(c, "edwin", "2026-08-13T10:00:00.000Z");
+  releaseCard(c);
+  assert.equal(c.agenda, undefined, "no empty object may linger");
+});
+
+test("setStepState flips plate<->today; since resets on change, survives a re-stamp", () => {
+  const b = createBoard("deliver", "ws");
+  const c = addCard(b, { title: "auth", columnId: "review" });
+  grabCard(c, "edwin", "2026-08-13T10:00:00.000Z");
+  setStepState(c, "edwin", "plate", "2026-08-13T11:00:00.000Z");
+  assert.equal(c.agenda?.since, "2026-08-13T10:00:00.000Z", "same state keeps its clock");
+  setStepState(c, "edwin", "today", "2026-08-13T12:00:00.000Z", "chasing the flaky suite");
+  assert.equal(c.agenda?.since, "2026-08-13T12:00:00.000Z");
+  assert.throws(() => setStepState(c, "ana", "today", "2026-08-13T12:00:00.000Z", "mine now"), /not held by/);
+});
+
+test("entering today demands a sentence — the rule lives in the domain, not the UI", () => {
+  const b = createBoard("deliver", "ws");
+  const c = addCard(b, { title: "auth", columnId: "review" });
+  grabCard(c, "edwin", "2026-08-13T10:00:00.000Z");
+  assert.throws(() => setStepState(c, "edwin", "today", "2026-08-13T11:00:00.000Z"), /intent is required/);
+  assert.throws(
+    () => setStepState(c, "edwin", "today", "2026-08-13T11:00:00.000Z", "   "),
+    /intent is required/,
+    "whitespace is not a sentence",
+  );
+  assert.equal(c.agenda?.state, "plate", "a rejected claim must not half-apply");
+  assert.equal(c.intents, undefined);
+});
+
+test("each claim appends one intent; a same-state re-stamp does not append twice", () => {
+  const b = createBoard("deliver", "ws");
+  const c = addCard(b, { title: "auth", columnId: "review" });
+  grabCard(c, "edwin", "2026-08-13T10:00:00.000Z");
+  setStepState(c, "edwin", "today", "2026-08-13T11:00:00.000Z", "chasing the flaky suite");
+  setStepState(c, "edwin", "today", "2026-08-13T12:00:00.000Z", "still on it");
+  assert.equal(c.intents?.length, 1, "already in today — no new claim was made");
+  assert.deepEqual(c.intents?.[0], {
+    at: "2026-08-13T11:00:00.000Z",
+    by: "edwin",
+    kind: "start",
+    text: "chasing the flaky suite",
+  });
+});
+
+test("intents survive the column change that clears the holder", () => {
+  const b = createBoard("deliver", "ws");
+  const c = addCard(b, { title: "auth", columnId: "review" });
+  grabCard(c, "edwin", "2026-08-13T10:00:00.000Z");
+  setStepState(c, "edwin", "today", "2026-08-13T11:00:00.000Z", "chasing the flaky suite");
+  patchCard(b, c.id, { columnId: "verify", order: 0, close: { by: "edwin", text: "it was the 20s ceiling" } });
+  assert.equal(c.agenda, undefined, "the step ended");
+  assert.deepEqual(
+    c.intents?.map((i) => i.kind),
+    ["start", "done"],
+    "the card's story does not end with the step",
+  );
+});
+
+test("patchCard clears the holder on a column change, keeps it on a reorder", () => {
+  const b = createBoard("deliver", "ws");
+  const c = addCard(b, { title: "auth", columnId: "review" });
+  addCard(b, { title: "other", columnId: "review" });
+  grabCard(c, "edwin", "2026-08-13T10:00:00.000Z");
+  patchCard(b, c.id, { order: 1 });
+  assert.ok(c.agenda, "a reorder is the same step");
+  patchCard(b, c.id, { columnId: "verify", order: 0, close: { by: "edwin", text: "reviewed, looks right" } });
+  assert.equal(c.agenda, undefined, "the step ended");
+});
+
+test("a held card cannot advance without a closing comment, and a refusal changes nothing", () => {
+  const b = createBoard("deliver", "ws");
+  const c = addCard(b, { title: "auth", columnId: "review" });
+  grabCard(c, "edwin", "2026-08-13T10:00:00.000Z");
+  assert.throws(() => patchCard(b, c.id, { columnId: "verify", order: 0 }), /closing comment is required/);
+  assert.equal(c.columnId, "review", "no half-applied move");
+  assert.equal(c.agenda?.by, "edwin", "holder intact");
+  assert.equal(c.intents, undefined);
+});
+
+test("closing appends a done entry that survives the holder being cleared", () => {
+  const b = createBoard("deliver", "ws");
+  const c = addCard(b, { title: "auth", columnId: "review" });
+  grabCard(c, "edwin", "2026-08-13T10:00:00.000Z");
+  patchCard(b, c.id, { columnId: "verify", order: 0, close: { by: "edwin", text: "it was the 20s ceiling" } });
+  assert.equal(c.agenda, undefined);
+  assert.equal(c.intents?.length, 1);
+  assert.equal(c.intents?.[0].kind, "done");
+  assert.equal(c.intents?.[0].by, "edwin");
+  assert.equal(c.intents?.[0].text, "it was the 20s ceiling");
+});
+
+test("an UNHELD team card advances freely — the rule is about finishing, not tidying", () => {
+  const b = createBoard("deliver", "ws");
+  const c = addCard(b, { title: "auth", columnId: "review" });
+  patchCard(b, c.id, { columnId: "verify", order: 0 });
+  assert.equal(c.columnId, "verify");
+  assert.equal(c.intents, undefined);
+});
+
+test("a personal card needs a comment to reach done, but not to reach today", () => {
+  const b = createBoard("personal");
+  const c = addCard(b, { title: "call the bank", columnId: "plate" });
+  patchCard(b, c.id, { columnId: "today", order: 0 });
+  assert.equal(c.columnId, "today");
+  assert.throws(() => patchCard(b, c.id, { columnId: "done", order: 0 }), /closing comment is required/);
+  patchCard(b, c.id, { columnId: "done", order: 0, close: { by: "edwin", text: "rescheduled the transfer" } });
+  assert.equal(c.intents?.[0].kind, "done");
+});
+
 test("save/load round-trip; malformed files land in errors without sinking the rest", async () => {
   const dir = await mkdtemp(join(tmpdir(), "work-"));
   const b = createBoard("plan", "alpha");
@@ -300,10 +439,13 @@ test("normalizeBoard migrates a pre-rename personal board and is idempotent", ()
   assert.equal(legacy.name, "Agenda");
   assert.deepEqual(
     legacy.columns.map((c) => c.id),
-    ["queue", "todo", "doing", "done", "not-doing"],
+    ["plate", "today", "done", "not-doing"],
   );
   normalizeBoard(legacy);
-  assert.equal(legacy.columns.filter((c) => c.id === "queue").length, 1);
+  assert.deepEqual(
+    legacy.columns.map((c) => c.id),
+    ["plate", "today", "done", "not-doing"],
+  );
 });
 
 test("normalizeBoard renames old default labels across types, keeps custom names", () => {
@@ -419,44 +561,79 @@ test("loadBoards migrates a legacy personal file in memory only", async () => {
   );
   const { boards } = await loadBoards(dir);
   assert.equal(boards[0].name, "Agenda");
-  assert.equal(boards[0].columns[0].id, "queue");
+  assert.equal(boards[0].columns[0].id, "plate");
   // In-memory only: the file still says Personal until the next mutation saves.
   assert.match(await readFile(join(dir, "personal.json"), "utf8"), /"Personal"/);
 });
 
-test("sweepPersonalBoard moves Todo then Doing to the end of Queue, preserving order", () => {
-  const b = createBoard("personal");
-  const queued = addCard(b, { title: "queued", columnId: "queue" });
-  const t1 = addCard(b, { title: "t1", columnId: "todo" });
-  const t2 = addCard(b, { title: "t2", columnId: "todo" });
-  const d1 = addCard(b, { title: "d1", columnId: "doing" });
-  const done = addCard(b, { title: "done", columnId: "done" });
-  assert.equal(sweepPersonalBoard(b, "2026-08-11"), true);
-  const queue = b.cards.filter((c) => c.columnId === "queue").sort((x, y) => x.order - y.order);
+test("sweepUserAgenda reverts today to plate without releasing the card", () => {
+  const d = createBoard("deliver", "ws");
+  const r = createBoard("reactive", "ws");
+  const mine = addCard(d, { title: "mine", columnId: "review" });
+  const alsoMine = addCard(r, { title: "also mine", columnId: "triage" });
+  const hers = addCard(d, { title: "hers", columnId: "review" });
+  grabCard(mine, "edwin", "2026-08-12T09:00:00.000Z");
+  setStepState(mine, "edwin", "today", "2026-08-12T09:00:00.000Z", "working it");
+  grabCard(alsoMine, "edwin", "2026-08-12T09:00:00.000Z");
+  grabCard(hers, "ana", "2026-08-12T09:00:00.000Z");
+  setStepState(hers, "ana", "today", "2026-08-12T09:00:00.000Z", "working it");
+
+  const dirty = sweepUserAgenda([d, r], "edwin", "2026-08-13T00:00:00.000Z");
+
   assert.deepEqual(
-    queue.map((c) => c.id),
-    [queued.id, t1.id, t2.id, d1.id],
+    dirty.map((b) => b.id),
+    [d.id],
   );
-  assert.deepEqual(
-    queue.map((c) => c.order),
-    [0, 1, 2, 3],
+  assert.equal(mine.agenda?.state, "plate");
+  assert.equal(mine.agenda?.by, "edwin", "grabbing outlives the day");
+  assert.equal(mine.agenda?.since, "2026-08-13T00:00:00.000Z");
+  assert.equal(
+    mine.agenda?.grabbedAt,
+    "2026-08-12T09:00:00.000Z",
+    "age survives the sweep — a card worked yesterday must not look brand new today",
   );
-  assert.equal(done.columnId, "done");
-  assert.equal(b.sweptDay, "2026-08-11");
+  assert.equal(alsoMine.agenda?.since, "2026-08-12T09:00:00.000Z", "already plate, untouched");
+  assert.equal(hers.agenda?.state, "today", "another user's day is not swept");
 });
 
-test("sweepPersonalBoard is idempotent per day; a stamp-only day still reports dirty", () => {
-  const b = createBoard("personal");
-  assert.equal(sweepPersonalBoard(b, "2026-08-11"), true); // nothing to move, stamp must persist
-  assert.equal(sweepPersonalBoard(b, "2026-08-11"), false); // same day: no-op
-  assert.equal(sweepPersonalBoard(b, "2026-08-12"), true); // next day stamps again
-});
+test("sweepUserAgenda merges Today into My plate on the personal board without duplicate order, alongside a workspace board in the same call", () => {
+  const personal = createBoard("personal");
+  const p1 = addCard(personal, { title: "p1", columnId: "plate" });
+  const p2 = addCard(personal, { title: "p2", columnId: "plate" });
+  const t1 = addCard(personal, { title: "t1", columnId: "today" });
+  const t2 = addCard(personal, { title: "t2", columnId: "today" });
 
-test("sweepPersonalBoard never touches workspace boards", () => {
-  const ws = createBoard("deliver", "acme");
-  addCard(ws, { title: "x", columnId: "in-progress" });
-  assert.equal(sweepPersonalBoard(ws, "2026-08-11"), false);
-  assert.equal(ws.sweptDay, undefined);
+  const d = createBoard("deliver", "ws");
+  const mine = addCard(d, { title: "mine", columnId: "review" });
+  grabCard(mine, "edwin", "2026-08-12T09:00:00.000Z");
+  setStepState(mine, "edwin", "today", "2026-08-12T09:00:00.000Z", "working it");
+
+  const dirty = sweepUserAgenda([personal, d], "edwin", "2026-08-13T00:00:00.000Z");
+
+  assert.deepEqual(
+    dirty.map((b) => b.id),
+    [personal.id, d.id],
+    "both boards swept in the same call",
+  );
+
+  assert.equal(t1.columnId, "plate", "Today card reverted to My plate");
+  assert.equal(t2.columnId, "plate", "Today card reverted to My plate");
+  assert.equal(t1.updatedAt, "2026-08-13T00:00:00.000Z");
+  assert.equal(t2.updatedAt, "2026-08-13T00:00:00.000Z");
+  assert.equal(p1.columnId, "plate", "already on plate, untouched");
+  assert.equal(p2.columnId, "plate", "already on plate, untouched");
+
+  // The workspace board's step-axis card swept independently, same call.
+  assert.equal(mine.agenda?.state, "plate");
+
+  // p1/p2 and t1/t2 all carried order 0 or 1 in their own columns before the
+  // merge — without renumber(board, "plate") the merged column would have
+  // duplicate order values instead of a clean 0..n-1 run.
+  const plateOrders = personal.cards
+    .filter((c) => c.columnId === "plate")
+    .map((c) => c.order)
+    .sort((a, b) => a - b);
+  assert.deepEqual(plateOrders, [0, 1, 2, 3], "plate renumbered to a clean 0..n-1 run, no duplicates");
 });
 
 test("localDayStamp and msUntilNextMidnight do local-midnight math", () => {
@@ -494,7 +671,7 @@ test("routes: exits are per-column and the forward plan handoff exists", () => {
   const reactive = createBoard("reactive", "acme");
   assert.deepEqual(
     exitsFor(reactive, "triage").map((e) => e.toType),
-    ["maintenance", "ideation", "personal"],
+    ["maintenance", "ideation"],
   );
   assert.deepEqual(exitsFor(createBoard("ideation", "acme"), "confirm"), []);
 });
@@ -549,6 +726,16 @@ test("routeCard moves the card, preserves identity and payload, and writes desti
   ]);
 });
 
+test("routeCard clears the holder — a routed card must not carry a stale owner", () => {
+  const r = createBoard("reactive", "ws");
+  const m = createBoard("maintenance", "ws");
+  const c = addCard(r, { title: "flaky", columnId: "triage" });
+  grabCard(c, "edwin", "2026-08-13T10:00:00.000Z");
+  const exit = { from: "triage", toType: "maintenance" as const, toColumn: "triage", label: "To maintenance" };
+  const plan = routeCard(r, m, c.id, exit, "2026-08-13T11:00:00.000Z");
+  assert.equal(plan.card.agenda, undefined);
+});
+
 test("routeCard chains across two real hops: delegation, stories, jira, capabilityRef survive and routedFrom records both legs", () => {
   const release = createBoard("release", "acme");
   const deliver = createBoard("deliver", "acme");
@@ -601,14 +788,11 @@ test("findRouteDestination: does not match a same-type board in a different work
   assert.equal(findRouteDestination([source, otherWorkspaceDest], source, exit), undefined);
 });
 
-test("escalation: maintenance and reactive triage each exit to the personal queue", () => {
+test("escalation: retired — maintenance and reactive triage no longer exit to the personal board", () => {
   const maintenance = createBoard("maintenance", "acme");
   const reactive = createBoard("reactive", "acme");
-  assert.deepEqual(
-    exitsFor(maintenance, "triage").map((e) => e.label),
-    ["Escalate to Agenda"],
-  );
-  assert.equal(resolveExit(reactive, "triage", "personal")?.toColumn, "queue");
+  assert.deepEqual(exitsFor(maintenance, "triage"), []);
+  assert.equal(resolveExit(reactive, "triage", "personal"), undefined);
   assert.deepEqual(exitsFor(maintenance, "doing"), []);
 });
 
@@ -616,21 +800,24 @@ test("findRouteDestination resolves the workspace-less personal board from any w
   const source = createBoard("maintenance", "acme");
   const personal = createBoard("personal");
   const boards = [createBoard("maintenance", "globex"), personal, source];
-  const exit = resolveExit(source, "triage", "personal");
-  assert.ok(exit);
+  // No route targets personal any more (Escalate to Agenda was retired) — this exercises
+  // findRouteDestination's own workspace-less resolution, independent of any real route.
+  const exit = { from: "triage", toType: "personal" as const, toColumn: "plate", label: "Test exit" };
   assert.equal(findRouteDestination(boards, source, exit), personal);
 });
 
-test("routeCard escalates a triage card into the personal queue with a provenance trace", () => {
+test("routeCard can move a card onto the personal board with a provenance trace", () => {
+  // Escalate to Agenda was retired (triage is already in the shared queue, and escalating
+  // is just grabbing it) — this exercises routeCard's own mechanics against the
+  // workspace-less personal board via a synthetic exit, independent of any real route.
   const maintenance = createBoard("maintenance", "acme");
   const personal = createBoard("personal");
-  addCard(personal, { title: "already queued", columnId: "queue" });
+  addCard(personal, { title: "already there", columnId: "plate" });
   const card = addCard(maintenance, { title: "prod leak", columnId: "triage" });
-  const exit = resolveExit(maintenance, "triage", "personal");
-  assert.ok(exit);
+  const exit = { from: "triage", toType: "personal" as const, toColumn: "plate", label: "Test move" };
   const plan = routeCard(maintenance, personal, card.id, exit, "2026-08-11T00:00:00.000Z");
-  assert.equal(plan.card.columnId, "queue");
-  assert.equal(plan.card.order, 1); // appended after the existing queue card
+  assert.equal(plan.card.columnId, "plate");
+  assert.equal(plan.card.order, 1); // appended after the existing plate card
   assert.equal(plan.writeFirst, personal); // destination-first persistence
   assert.deepEqual(plan.card.routedFrom?.at(-1), {
     boardId: maintenance.id,
@@ -703,4 +890,104 @@ test("a board with queue/terminal blocks and a card with sourceRef round-trips t
   });
   assert.equal(hasSourceRef(boards[0], { sourceId: "jira-plan", itemKey: "PROJ-1" }), true);
   assert.equal(hasSourceRef(boards[0], { sourceId: "jira-plan", itemKey: "PROJ-2" }), false);
+});
+
+test("normalizeBoard folds a legacy personal board into plate/today/done", () => {
+  const b = createBoard("personal");
+  b.columns = [
+    { id: "queue", name: "Queue" },
+    { id: "todo", name: "Todo" },
+    { id: "doing", name: "Doing" },
+    { id: "done", name: "Done" },
+    { id: "not-doing", name: "Not Doing" },
+  ];
+  b.cards = [
+    { id: "a", title: "q", columnId: "queue", order: 0, createdAt: "x", updatedAt: "x" },
+    { id: "b", title: "t", columnId: "todo", order: 0, createdAt: "x", updatedAt: "x" },
+    { id: "c", title: "d", columnId: "doing", order: 0, createdAt: "x", updatedAt: "x" },
+  ];
+  normalizeBoard(b);
+  assert.deepEqual(
+    b.columns.map((c) => c.id),
+    ["plate", "today", "done", "not-doing"],
+  );
+  assert.deepEqual(
+    b.cards.map((c) => c.columnId),
+    ["plate", "plate", "today"],
+  );
+  assert.deepEqual(
+    b.cards
+      .filter((c) => c.columnId === "plate")
+      .map((c) => c.order)
+      .sort(),
+    [0, 1],
+  );
+});
+
+test("normalizeBoard no longer forces a queue column onto the personal board", () => {
+  const b = createBoard("personal");
+  normalizeBoard(b);
+  assert.equal(
+    b.columns.some((c) => c.id === "queue"),
+    false,
+  );
+});
+
+test("normalizeBoard backfills gatesHuman from the template onto persisted columns that predate it", () => {
+  const deliver: WorkBoard = {
+    id: "acme-deliver",
+    name: "Deliver",
+    type: "deliver",
+    workspaceId: "acme",
+    columns: [
+      { id: "queue", name: "Queue" },
+      { id: "ready", name: "Ready" },
+      { id: "in-progress", name: "In progress" },
+      { id: "review", name: "Review" },
+      { id: "verify", name: "Verify" },
+      { id: "merged", name: "Merged" },
+    ],
+    cards: [{ id: "c1", title: "old card", columnId: "review", order: 0, createdAt: "x", updatedAt: "x" }],
+  };
+  normalizeBoard(deliver);
+  const gated = (id: string) => deliver.columns.find((c) => c.id === id)?.gatesHuman === true;
+  assert.equal(gated("review"), true);
+  assert.equal(gated("verify"), true);
+  assert.equal(gated("queue"), false);
+  assert.equal(gated("ready"), false);
+  assert.equal(gated("in-progress"), false);
+  assert.equal(gated("merged"), false);
+});
+
+test("normalizeBoard leaves a persisted gatesHuman:false alone — undefined and false are not the same thing", () => {
+  // PATCH /work/boards/:id accepts a client-supplied `columns` array wholesale, so an
+  // explicit `false` can reach disk. `if (column.gatesHuman) continue` can't tell that
+  // apart from "unset" and would flip it back to true on the next load.
+  const deliver: WorkBoard = {
+    id: "acme-deliver",
+    name: "Deliver",
+    type: "deliver",
+    workspaceId: "acme",
+    columns: [
+      { id: "queue", name: "Queue" },
+      { id: "ready", name: "Ready" },
+      { id: "in-progress", name: "In progress" },
+      { id: "review", name: "Review", gatesHuman: false },
+      { id: "verify", name: "Verify" },
+      { id: "merged", name: "Merged" },
+    ],
+    cards: [],
+  };
+  normalizeBoard(deliver);
+  assert.equal(deliver.columns.find((c) => c.id === "review")?.gatesHuman, false);
+});
+
+test("templates gate exactly the four columns that wait on a person", () => {
+  const gated = (t: BoardType, id: string) => Boolean(BOARD_TEMPLATES[t].find((c) => c.id === id)?.gatesHuman);
+  assert.equal(gated("deliver", "review"), true);
+  assert.equal(gated("deliver", "verify"), true);
+  assert.equal(gated("reactive", "triage"), true);
+  assert.equal(gated("maintenance", "triage"), true);
+  assert.equal(gated("release", "sign-off"), false, "Release is not a source — Edwin named three boards");
+  assert.equal(gated("deliver", "in-progress"), false);
 });

@@ -74,7 +74,10 @@ export function tabsFor(boards: WorkBoardT[], scope: ReadonlySet<string> | typeo
       key: "personal",
       label: personal.name,
       type: "personal",
-      boardIds: [personal.id],
+      // Holders live on the cards' HOME boards, so Agenda reads from all of them. It
+      // stays context-invariant — your plate is your plate regardless of the workspace
+      // filter — which is why this ignores `scope`.
+      boardIds: boards.map((b) => b.id),
       clustered: false,
     });
   }
@@ -107,6 +110,63 @@ export function collectCards(boards: WorkBoardT[], columnId: string): AggCard[] 
   );
 }
 
+export type StepStateT = "plate" | "today";
+
+const STEP_LANES: string[] = ["plate", "today"];
+const SOURCE_TYPES: BoardTypeT[] = ["maintenance", "reactive", "deliver"];
+
+/** Mirrors the swarm's `sharedQueue`: needs a human, nobody holds it, no agent mid-flight. */
+export function sharedQueueCards(boards: WorkBoardT[]): AggCard[] {
+  const out: AggCard[] = [];
+  for (const b of boards) {
+    if (!SOURCE_TYPES.includes(b.type)) continue;
+    for (const c of b.cards) {
+      if (c.agenda || c.delegation?.state === "working") continue;
+      const gated = b.columns.find((col) => col.id === c.columnId)?.gatesHuman === true;
+      const handedBack = c.delegation?.state === "completed" || c.delegation?.state === "failed";
+      if (gated || handedBack || c.flag || c.jira?.lastPushError) {
+        out.push({ ...c, boardId: b.id, workspaceId: b.workspaceId });
+      }
+    }
+  }
+  return out.sort((a, b) => (a.flag?.since ?? a.updatedAt ?? "").localeCompare(b.flag?.since ?? b.updatedAt ?? ""));
+}
+
+/**
+ * One Agenda lane. Two card kinds share it and order differently, deliberately:
+ * personal cards have no workflow axis, so their columnId IS the lane and their drag
+ * `order` still means something — they come first. Team cards are matched on the
+ * holder's step state, because `order` is per-column-per-board and cannot order a
+ * lane that spans boards.
+ *
+ * Team cards order by `grabbedAt`, NOT `since`: the morning sweep re-stamps `since` on
+ * everything it reverts, so sorting by it would reshuffle the lane every midnight and
+ * make the work you touched yesterday look newest. `grabbedAt` is the stable age.
+ */
+export function collectAgendaCards(boards: WorkBoardT[], userId: string, laneId: string): AggCard[] {
+  const personal: AggCard[] = [];
+  const team: Array<{ card: AggCard; grabbedAt: string }> = [];
+  for (const b of boards) {
+    for (const c of b.cards) {
+      const tagged: AggCard = { ...c, boardId: b.id, workspaceId: b.workspaceId };
+      if (b.type === "personal") {
+        if (c.columnId === laneId) personal.push(tagged);
+        continue;
+      }
+      // Also defends against a stale/malformed persisted `agenda.state`: it arrives as
+      // JSON, so TS's "plate" | "today" is erased at runtime and a corrupted value could
+      // otherwise coincidentally equal a non-lane laneId like "done" below.
+      if (!STEP_LANES.includes(laneId)) continue;
+      if (c.agenda?.by === userId && c.agenda.state === laneId) {
+        team.push({ card: tagged, grabbedAt: c.agenda.grabbedAt });
+      }
+    }
+  }
+  personal.sort((a, b) => a.order - b.order);
+  team.sort((a, b) => a.grabbedAt.localeCompare(b.grabbedAt));
+  return [...personal, ...team.map((t) => t.card)];
+}
+
 export function clusterByWorkspace(cards: AggCard[], clustered: boolean): Cluster[] {
   const byOrder = (a: AggCard, b: AggCard) => a.order - b.order;
   if (!clustered) return [{ label: null, cards: [...cards].sort(byOrder) }];
@@ -129,7 +189,11 @@ export interface RouteExitT {
   label: string;
 }
 
-/** Mirrors the swarm's BOARD_ROUTES. The server re-validates every route request. */
+/**
+ * Mirrors the swarm's BOARD_ROUTES (kept in sync by hand — the server
+ * re-validates every route request against its own copy, so drift here
+ * doesn't corrupt data, it just offers a pill that 400s on click).
+ */
 export const BOARD_ROUTES_UI: Record<BoardTypeT, RouteExitT[]> = {
   plan: [
     { from: "tech-design", toType: "ideation", toColumn: "scoping", label: "Back to ideation" },
@@ -143,10 +207,9 @@ export const BOARD_ROUTES_UI: Record<BoardTypeT, RouteExitT[]> = {
   reactive: [
     { from: "triage", toType: "maintenance", toColumn: "triage", label: "To maintenance" },
     { from: "triage", toType: "ideation", toColumn: "intake", label: "To ideation" },
-    { from: "triage", toType: "personal", toColumn: "queue", label: "Escalate to Agenda" },
   ],
   ideation: [],
-  maintenance: [{ from: "triage", toType: "personal", toColumn: "queue", label: "Escalate to Agenda" }],
+  maintenance: [],
   personal: [],
 };
 

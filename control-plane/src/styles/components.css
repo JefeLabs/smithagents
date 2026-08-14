@@ -2778,6 +2778,47 @@ button.logo {
   font-size: 12.5px;
   line-height: 1.35;
 }
+/* Under the title, not in the meta row — a stated commitment reads as a line
+   of its own, not one more chip lost among the badges. */
+.board-card__intent {
+  font-size: 11px;
+  font-style: italic;
+  line-height: 1.3;
+  color: var(--text-2);
+}
+/* The workflow axis a card carries onto Agenda: neutral, informational, same
+   pill family as .board-card__stories below. */
+.board-card__provenance {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--pill-br);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+/* Who holds the step: dim on the plate (waiting its turn), lit up once it's
+   today's committed work. */
+.board-card__holder {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--pill-br);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.board-card__holder.is-plate {
+  color: var(--text-dim);
+}
+.board-card__holder.is-today {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.board-card__age {
+  font-size: 11px;
+  opacity: 0.85;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
 .board-card__meta {
   display: flex;
   align-items: center;
@@ -2836,6 +2877,87 @@ button.logo {
   border: 1px solid var(--accent);
   color: var(--accent);
   text-decoration: none;
+}
+/* The Grab/Release face: an open control and one action, side by side rather
+   than stacked — the base .board-card is flex-column for title-over-meta, so
+   this variant flips the axis. The card itself isn't clickable (its two
+   children are), so cursor reverts to default. Deliberately does not touch
+   filter/opacity: nested in .board-column--queue this still inherits that
+   rule's grayscale-until-hover treatment, which is the entire visual cue that
+   separates the shared pool from work already taken. */
+.board-card--action {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: default;
+}
+.board-card__open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  background: none;
+  border: none;
+  padding: 0;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.board-card__open .board-card__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.board-card__action {
+  flex: none;
+}
+/* SortableCard's wrapper when a card carries an action (Release): the card
+   and the button are siblings in one sortable node (see BoardColumn's doc),
+   not nested — this row layout is what puts them side by side instead of
+   stacked, mirroring .board-card--action's row above for the Grab face. */
+.board-card-slot.has-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.board-card-slot.has-action > .board-card {
+  flex: 1;
+  min-width: 0;
+}
+/* The intent/closing composer: the one drop in the app a drag alone can't
+   finish, so it must read as demanding input, not as a card that merely
+   landed — accent border and a lifted fill instead of the ordinary card face. */
+.board-card--composer {
+  cursor: default;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--card-tint, rgba(255, 255, 255, 0.04)));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.board-card--composer label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-2);
+}
+.board-card--composer textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  font: inherit;
+  color: var(--text);
+  background: var(--ground-2);
+  border: 1px solid var(--pill-br);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+.board-card__composer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
 }
 .board-card.is-dragging {
   opacity: 0.4;

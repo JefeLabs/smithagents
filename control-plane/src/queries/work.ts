@@ -64,8 +64,29 @@ export function useMoveCard() {
     }: {
       boardId: string;
       cardId: string;
-      body: { columnId?: string; order: number };
+      // `close` rides on the ordinary move PATCH — the server applies the move
+      // and the closing comment atomically. Never combine this with `agenda`;
+      // the server treats a column move and a step-state write as mutually
+      // exclusive on one call.
+      body: { columnId?: string; order: number; close?: { text: string } };
     }) => api.patchCard(boardId, cardId, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.boards }),
+  });
+}
+
+/** Grab / release / flip the caller's step state. Never sends columnId — see invariant above. */
+export function useCardAgenda() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      boardId,
+      cardId,
+      agenda,
+    }: {
+      boardId: string;
+      cardId: string;
+      agenda: { action: "grab" } | { state: "plate" | "today"; intent?: string } | null;
+    }) => api.patchCard(boardId, cardId, { agenda }),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.boards }),
   });
 }

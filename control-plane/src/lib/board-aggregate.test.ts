@@ -5,8 +5,11 @@ import {
   addableTypes,
   BOARD_TYPE_ORDER_UI,
   clusterByWorkspace,
+  collectAgendaCards,
   collectCards,
   exitsForUI,
+  type StepStateT,
+  sharedQueueCards,
   tabsFor,
   WORKSPACE_BOARD_TYPES_UI,
 } from "./board-aggregate";
@@ -25,7 +28,9 @@ describe("tabsFor", () => {
   it("in workspace scope lists personal first, then that workspace's boards in canonical order", () => {
     const tabs = tabsFor(BOARDS, new Set(["acme"]));
     expect(tabs.map((t) => t.type)).toEqual(["personal", "ideation", "plan"]);
-    expect(tabs[0].boardIds).toEqual(["personal"]);
+    // Agenda spans every board regardless of workspace scope — see the
+    // dedicated "spans every board" test below for why.
+    expect(tabs[0].boardIds).toEqual(BOARDS.map((b) => b.id));
     expect(tabs[1].boardIds).toEqual(["acme-ideation"]);
   });
 
@@ -39,6 +44,14 @@ describe("tabsFor", () => {
 
   it("omits the personal tab entirely when no personal board exists", () => {
     expect(tabsFor([BOARDS[0]], new Set(["acme"])).map((t) => t.type)).toEqual(["ideation"]);
+  });
+
+  it("the Agenda tab spans every board — holders live on their home boards", () => {
+    const boards = [board("personal", "personal"), board("ws-deliver", "deliver", "ws")];
+    expect(tabsFor(boards, new Set(["ws"])).find((t) => t.type === "personal")?.boardIds).toEqual([
+      "personal",
+      "ws-deliver",
+    ]);
   });
 
   it("a multiselect of two workspaces unions their boards and clusters, same as all scope", () => {
@@ -115,9 +128,177 @@ describe("collectCards + clusterByWorkspace", () => {
 });
 
 describe("exitsForUI", () => {
-  it("maintenance and reactive triage offer the escalate exit to the personal queue", () => {
-    expect(exitsForUI("maintenance", "triage").map((e) => e.toColumn)).toEqual(["queue"]);
-    expect(exitsForUI("reactive", "triage").map((e) => e.toType)).toEqual(["maintenance", "ideation", "personal"]);
+  it("reactive triage offers maintenance and ideation only — Escalate to Agenda was retired", () => {
+    expect(exitsForUI("reactive", "triage").map((e) => e.toType)).toEqual(["maintenance", "ideation"]);
+  });
+
+  it("maintenance has no exits at all — its only exit was the retired Escalate to Agenda", () => {
+    expect(exitsForUI("maintenance", "triage")).toEqual([]);
     expect(exitsForUI("maintenance", "doing")).toEqual([]);
+  });
+});
+
+describe("agenda lanes", () => {
+  const personal = {
+    id: "personal",
+    name: "Agenda",
+    type: "personal" as const,
+    columns: [{ id: "plate", name: "My plate" }],
+    cards: [
+      { id: "p1", title: "call bank", columnId: "plate", order: 1 },
+      { id: "p0", title: "pay invoice", columnId: "plate", order: 0 },
+    ],
+  };
+  const deliver = {
+    id: "ws-deliver",
+    name: "Deliver",
+    type: "deliver" as const,
+    workspaceId: "ws",
+    columns: [
+      { id: "review", name: "Review", gatesHuman: true },
+      { id: "in-progress", name: "In progress" },
+    ],
+    cards: [
+      { id: "pool", title: "unheld", columnId: "review", order: 0 },
+      {
+        id: "t-old",
+        title: "older",
+        columnId: "review",
+        order: 1,
+        agenda: {
+          by: "edwin",
+          state: "plate" as const,
+          since: "2026-08-13T08:00:00.000Z",
+          grabbedAt: "2026-08-13T08:00:00.000Z",
+        },
+      },
+      {
+        id: "t-new",
+        title: "newer",
+        columnId: "review",
+        order: 2,
+        agenda: {
+          by: "edwin",
+          state: "plate" as const,
+          since: "2026-08-13T12:00:00.000Z",
+          grabbedAt: "2026-08-13T12:00:00.000Z",
+        },
+      },
+      {
+        id: "t-hers",
+        title: "ana's",
+        columnId: "review",
+        order: 3,
+        agenda: {
+          by: "ana",
+          state: "plate" as const,
+          since: "2026-08-13T08:00:00.000Z",
+          grabbedAt: "2026-08-13T08:00:00.000Z",
+        },
+      },
+      // Unheld AND gated, but an agent is mid-flight — must stay out of the pool.
+      // Proves the delegation:"working" exclusion at :121 is load-bearing, not incidental.
+      {
+        id: "working",
+        title: "agent has it",
+        columnId: "review",
+        order: 4,
+        delegation: { agentId: "agent-1", taskId: "task-1", state: "working" as const },
+      },
+      // Ungated column, but flagged — proves inclusion doesn't depend solely on gatesHuman.
+      {
+        id: "flagged",
+        title: "blocked, ungated",
+        columnId: "in-progress",
+        order: 0,
+        flag: { kind: "blocked" as const, reason: "waiting on design", since: "2026-08-13T08:00:00.000Z" },
+      },
+      // Ungated column, but a failed Jira push — the third independent inclusion trigger.
+      {
+        id: "jira-err",
+        title: "push failed, ungated",
+        columnId: "in-progress",
+        order: 1,
+        jira: { key: "OPS-1", url: "https://example.atlassian.net/browse/OPS-1", lastPushError: "500" },
+      },
+    ],
+  };
+
+  it("pools only unheld cards from source boards", () => {
+    expect(sharedQueueCards([personal, deliver]).map((c) => c.id)).toEqual(["pool", "jira-err", "flagged"]);
+  });
+
+  it("puts personal cards first by order, then team cards by grabbedAt", () => {
+    expect(collectAgendaCards([personal, deliver], "edwin", "plate").map((c) => c.id)).toEqual([
+      "p0",
+      "p1",
+      "t-old",
+      "t-new",
+    ]);
+  });
+
+  it("orders by grabbedAt, not since — a swept card must not jump to the front", () => {
+    const swept = {
+      ...deliver,
+      cards: [
+        {
+          id: "held-longest",
+          title: "held longest",
+          columnId: "review",
+          order: 0,
+          agenda: {
+            by: "edwin",
+            state: "plate" as const,
+            since: "2026-08-14T00:00:00.000Z", // re-stamped by this morning's sweep
+            grabbedAt: "2026-08-01T09:00:00.000Z",
+          },
+        },
+        {
+          id: "grabbed-today",
+          title: "grabbed today",
+          columnId: "review",
+          order: 1,
+          agenda: {
+            by: "edwin",
+            state: "plate" as const,
+            since: "2026-08-13T09:00:00.000Z",
+            grabbedAt: "2026-08-13T09:00:00.000Z",
+          },
+        },
+      ],
+    };
+    expect(collectAgendaCards([swept], "edwin", "plate").map((c) => c.id)).toEqual(["held-longest", "grabbed-today"]);
+  });
+
+  it("excludes other holders", () => {
+    expect(collectAgendaCards([personal, deliver], "edwin", "plate").map((c) => c.id)).not.toContain("t-hers");
+  });
+
+  it("never matches team cards in a lane that is not a step state, even against malformed persisted data", () => {
+    const withDone = { ...personal, cards: [{ id: "p-done", title: "done", columnId: "done", order: 0 }] };
+    // `agenda.state` is typed as "plate" | "today", but it arrives over the wire as JSON —
+    // types are erased at runtime, so a stale or corrupted persisted value coincidentally
+    // matching a non-lane laneId ("done") is genuinely reachable. Cast through `unknown` to
+    // simulate exactly that, so this test actually exercises the STEP_LANES guard rather
+    // than passing for a reason unrelated to it: without the guard, "done" === "done" would
+    // let this card leak into the "done" lane.
+    const malformed = {
+      ...deliver,
+      cards: [
+        {
+          id: "bad-state",
+          title: "corrupted holder state",
+          columnId: "review",
+          order: 0,
+          agenda: {
+            by: "edwin",
+            state: "done" as unknown as StepStateT,
+            since: "2026-08-13T08:00:00.000Z",
+            grabbedAt: "2026-08-13T08:00:00.000Z",
+          },
+        },
+      ],
+    };
+    expect(collectAgendaCards([withDone, malformed], "edwin", "done").map((c) => c.id)).toEqual(["p-done"]);
   });
 });

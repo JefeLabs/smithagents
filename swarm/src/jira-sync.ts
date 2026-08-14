@@ -92,6 +92,30 @@ export function importIssues(
   return { created, updated };
 }
 
+/**
+ * Post a plain-text comment. Jira v3 comment bodies are ADF documents, not strings —
+ * sending a string is accepted by the type system and rejected by the API, so the text
+ * is wrapped in the minimal doc → paragraph → text shape here rather than at call sites.
+ */
+export async function commentIssue(
+  siteUrl: string,
+  email: string,
+  apiToken: string,
+  key: string,
+  text: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  const base = siteUrl.replace(/\/$/, "");
+  const res = await fetchImpl(`${base}/rest/api/3/issue/${encodeURIComponent(key)}/comment`, {
+    method: "POST",
+    headers: { authorization: auth(email, apiToken), "content-type": "application/json" },
+    body: JSON.stringify({
+      body: { type: "doc", version: 1, content: [{ type: "paragraph", content: [{ type: "text", text }] }] },
+    }),
+  });
+  if (!res.ok) throw new Error(`Jira comment failed: ${res.status}`);
+}
+
 export async function transitionIssue(
   siteUrl: string,
   email: string,

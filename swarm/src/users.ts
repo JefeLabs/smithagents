@@ -32,6 +32,9 @@ export interface User {
   connectors?: ConnectorInstance[];
   /** Which connector instance powers each voice capability (spec §2). */
   voice?: VoiceSettings;
+  /** Local YYYY-MM-DD of this user's last agenda sweep. Per-user because the sweep is
+      per-user — see sweepUserAgenda. */
+  agendaSweptDay?: string;
 }
 
 /** On-disk shape before migration — legacy files may still have these instead of `connectors`. */

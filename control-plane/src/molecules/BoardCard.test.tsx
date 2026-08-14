@@ -53,4 +53,43 @@ describe("BoardCard", () => {
     expect(el.style.getPropertyValue("--card-tint")).toBe("#5fd0b0");
     expect(el.className).toContain("is-at-risk");
   });
+
+  it("renders the holder chip with their step state", () => {
+    render(
+      <BoardCard
+        card={card({ title: "auth", columnId: "review" })}
+        holder={{ name: "Edwin", state: "today" }}
+        onOpen={() => {}}
+      />,
+    );
+    expect(screen.getByText("Edwin · today")).toBeDefined();
+  });
+
+  it("renders no holder chrome when nobody holds it", () => {
+    const { container } = render(<BoardCard card={card({ title: "auth", columnId: "review" })} onOpen={() => {}} />);
+    expect(container.querySelector(".board-card__holder")).toBeNull();
+  });
+
+  it("renders the provenance badge when given", () => {
+    render(
+      <BoardCard card={card({ title: "auth", columnId: "review" })} provenance="Deliver · review" onOpen={() => {}} />,
+    );
+    expect(screen.getByText("Deliver · review")).toBeDefined();
+  });
+
+  it("shows the stated intent under the title, and nothing when there is none", () => {
+    const c = card({ title: "auth", columnId: "review" });
+    const { rerender, container } = render(<BoardCard card={c} intent="chasing the flaky suite" onOpen={() => {}} />);
+    expect(screen.getByText("chasing the flaky suite")).toBeDefined();
+    rerender(<BoardCard card={c} onOpen={() => {}} />);
+    expect(container.querySelector(".board-card__intent")).toBeNull();
+  });
+
+  it("shows the plate age chip, formatted by flagAge, and nothing when there is none", () => {
+    const c = card({ title: "auth", columnId: "review" });
+    const { rerender, container } = render(<BoardCard card={c} age="5d" onOpen={() => {}} />);
+    expect(screen.getByText("5d")).toBeDefined();
+    rerender(<BoardCard card={c} onOpen={() => {}} />);
+    expect(container.querySelector(".board-card__age")).toBeNull();
+  });
 });

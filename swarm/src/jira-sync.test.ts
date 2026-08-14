@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createIssue, importIssues, searchIssues, transitionIssue } from "./jira-sync.js";
+import { commentIssue, createIssue, importIssues, searchIssues, transitionIssue } from "./jira-sync.js";
 import { addCard, createBoard } from "./work-items.js";
 
 const fetchStub = (
@@ -121,5 +121,38 @@ test("createIssue throws on a non-2xx response with the status in the message", 
   await assert.rejects(
     () => createIssue("https://acme.atlassian.net", "e@x.com", "tok", "PROJ", "t", "d", fetchImpl),
     /403/,
+  );
+});
+
+test("commentIssue posts an ADF document, not a bare string", async () => {
+  let captured: { url: string; init: RequestInit } | null = null;
+  const fetchImpl = fetchStub([
+    {
+      match: /\/rest\/api\/3\/issue\/P-1\/comment$/,
+      status: 201,
+      body: {},
+      capture: (url, init) => {
+        captured = { url, init: init as RequestInit };
+      },
+    },
+  ]);
+
+  await commentIssue("https://x.atlassian.net", "e@x.com", "tok", "P-1", "chasing the flaky suite", fetchImpl);
+
+  assert.equal(captured!.url, "https://x.atlassian.net/rest/api/3/issue/P-1/comment");
+  assert.deepEqual(JSON.parse(String(captured!.init.body)), {
+    body: {
+      type: "doc",
+      version: 1,
+      content: [{ type: "paragraph", content: [{ type: "text", text: "chasing the flaky suite" }] }],
+    },
+  });
+});
+
+test("commentIssue throws on a non-ok response", async () => {
+  const fetchImpl = fetchStub([{ match: /\/comment$/, status: 403, body: { errorMessages: ["nope"] } }]);
+  await assert.rejects(
+    () => commentIssue("https://x.atlassian.net", "e@x.com", "tok", "P-1", "hi", fetchImpl),
+    /Jira comment failed: 403/,
   );
 });

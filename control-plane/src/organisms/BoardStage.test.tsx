@@ -63,6 +63,8 @@ function stubFetch(overrides: Record<string, unknown> = {}) {
       return respond(overrides.created ?? { ...BOARD, id: "beta", name: "Beta", cards: [] }, 201);
     if (url.endsWith("/workspaces") && method === "GET")
       return respond(overrides.workspaces ?? { workspaces: [{ name: "acme" }, { name: "beta-ws" }] });
+    if (url.endsWith("/me") && method === "GET")
+      return respond(overrides.me ?? { id: "edwin", name: "Edwin", connectors: [] });
     if (url.endsWith("/work/delegate") && method === "POST")
       return respond(overrides.delegated ?? { taskId: "t9" }, (overrides.delegateStatus as number) ?? 200);
     if (url.includes("/jira/import") && method === "POST")
@@ -91,6 +93,19 @@ function seedSessionFrame(client: QueryClient, session: { workspace: string }) {
   client.setQueryData(qk.session, { id: "s0", title: "t", workspace: session.workspace, runtime: "local-in-process" });
 }
 
+/**
+ * fireDrop reaches applyMove through a module-level seam that a passive
+ * effect registers. The tab derives synchronously from `boards`, so the
+ * column heading appears in the SAME commit that loads them — findByText can
+ * resolve before the effect has re-registered applyMove over the loaded
+ * boards, leaving the seam holding a closure whose board list is still empty.
+ * applyMove then bails without PATCHing. Flush effects before dropping.
+ */
+async function readyToDrop(columnName: string) {
+  await screen.findByText(columnName);
+  await act(async () => {});
+}
+
 describe("BoardStage", () => {
   beforeEach(() => stubFetch());
   afterEach(() => {
@@ -109,11 +124,15 @@ describe("BoardStage", () => {
   it("the context window hides cards not touched in range; a wide window shows everything", async () => {
     // c1 stamped inside the narrow window, c2 outside it, c3 undated
     // (undated cards can't be judged, so they stay visible — never hide silently).
+    // A workspace board, not personal — the Agenda tab is range-invariant
+    // (Task 6), so this exercises the window on a tab where it still applies.
     stubFetch({
       boards: {
         boards: [
           {
             ...BOARD,
+            type: "plan",
+            workspaceId: "acme",
             cards: [
               { id: "c1", title: "Write the spec", columnId: "todo", order: 0, updatedAt: "2026-08-10T12:00:00Z" },
               { id: "c2", title: "Fix login", columnId: "doing", order: 0, updatedAt: "2026-01-05T12:00:00Z" },
@@ -498,19 +517,6 @@ describe("BoardStage drag wiring", () => {
     vi.unstubAllGlobals();
   });
 
-  /**
-   * fireDrop reaches applyMove through a module-level seam that a passive
-   * effect registers. The tab derives synchronously from `boards`, so the
-   * column heading appears in the SAME commit that loads them — findByText can
-   * resolve before the effect has re-registered applyMove over the loaded
-   * boards, leaving the seam holding a closure whose board list is still empty.
-   * applyMove then bails without PATCHing. Flush effects before dropping.
-   */
-  async function readyToDrop(columnName: string) {
-    await screen.findByText(columnName);
-    await act(async () => {});
-  }
-
   it("a cross-column drop PATCHes the moved card with columnId and order and applies optimistically", async () => {
     const { calls } = stubFetch();
     renderWithProviders(<BoardStage roster={ROSTER} />);
@@ -606,6 +612,339 @@ describe("BoardStage drag wiring", () => {
     // Card c1 is back in Todo, not left dangling in Doing.
     const todoColumn = screen.getByText("Todo").closest(".board-column") as HTMLElement;
     expect(within(todoColumn).queryByText("Write the spec")).toBeTruthy();
+  });
+});
+
+describe("Agenda tab — pull queue, grab, and the drag branch", () => {
+  const PERSONAL_COLUMNS = [
+    { id: "plate", name: "My plate" },
+    { id: "today", name: "Today" },
+    { id: "done", name: "Done" },
+    { id: "not-doing", name: "Not Doing" },
+  ];
+  const TEAM_COLUMNS = [
+    { id: "ready", name: "Ready" },
+    { id: "in-progress", name: "In progress" },
+    { id: "review", name: "Review", gatesHuman: true },
+    { id: "verify", name: "Verify" },
+    { id: "merged", name: "Merged" },
+  ];
+  /** Builds the two-board fixture every test in this block needs, with each test supplying only the cards it cares about. */
+  function agendaBoards(personalCards: unknown[] = [], teamCards: unknown[] = []) {
+    return {
+      boards: [
+        { id: "personal", name: "Agenda", type: "personal" as const, columns: PERSONAL_COLUMNS, cards: personalCards },
+        {
+          id: "ws-deliver",
+          name: "Deliver",
+          type: "deliver" as const,
+          workspaceId: "ws",
+          columns: TEAM_COLUMNS,
+          cards: teamCards,
+        },
+      ],
+      errors: [],
+    };
+  }
+  const HELD_CARD = {
+    id: "held1",
+    title: "Held team card",
+    columnId: "review",
+    order: 0,
+    agenda: {
+      by: "edwin",
+      state: "plate" as const,
+      since: "2026-08-13T08:00:00.000Z",
+      grabbedAt: "2026-08-13T08:00:00.000Z",
+    },
+  };
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("renders five lanes: Shared queue, My plate, Today, Done, Not Doing", async () => {
+    stubFetch({ boards: agendaBoards() });
+    renderWithProviders(<BoardStage roster={ROSTER} />);
+    await screen.findByText("Shared queue");
+    for (const name of ["My plate", "Today", "Done", "Not Doing"]) {
+      expect(screen.getByText(name)).toBeTruthy();
+    }
+  });
+
+  it("is range-invariant — a long-held card with a stale updatedAt still appears in its lane", async () => {
+    // setStepState never re-stamps updatedAt, so a card grabbed weeks ago
+    // keeps an old one. The date window (default: last 14 days) would drop
+    // it from a normal board view; Agenda must not — that's the exact card
+    // it exists to surface (oldest grabbedAt first, an "old" age chip).
+    stubFetch({
+      boards: agendaBoards([], [{ ...HELD_CARD, updatedAt: "2026-07-01T00:00:00.000Z" }]),
+    });
+    renderWithProviders(<BoardStage roster={ROSTER} />);
+    act(() => useUiStore.getState().setDateRange({ kind: "custom", from: "2026-08-01", to: "2026-08-13" }));
+    await screen.findByText("My plate");
+    expect(screen.getByText("Held team card")).toBeTruthy();
+  });
+
+  it("grab sends the grab action and no columnId", async () => {
+    const { calls } = stubFetch({
+      boards: agendaBoards([], [{ id: "t1", title: "Unheld team card", columnId: "review", order: 0 }]),
+    });
+    renderWithProviders(<BoardStage roster={ROSTER} />);
+    await readyToDrop("Shared queue");
+    await userEvent.click(screen.getByRole("button", { name: /grab/i }));
+    await waitFor(() => {
+      const patch = calls.find((c) => c.method === "PATCH" && c.url.includes("/cards/"));
+      expect(patch?.body).toEqual({ agenda: { action: "grab" } });
+    });
+  });
+
+  it("release sends null agenda and no columnId", async () => {
+    const { calls } = stubFetch({ boards: agendaBoards([], [HELD_CARD]) });
+    renderWithProviders(<BoardStage roster={ROSTER} />);
+    await readyToDrop("My plate");
+    await userEvent.click(screen.getByRole("button", { name: "release" }));
+    await waitFor(() => {
+      const patch = calls.find((c) => c.method === "PATCH" && c.url.includes("/cards/held1"));
+      expect(patch?.body).toEqual({ agenda: null });
+    });
+    const patch = calls.find((c) => c.method === "PATCH" && c.url.includes("/cards/held1"));
+    expect(patch?.body).not.toHaveProperty("columnId");
+  });
+
+  it("a held team card in My plate is genuinely draggable, not merely reachable via fireDrop", async () => {
+    // The Release control must be an ADDITION to the card face, not a
+    // replacement of it — a full-face replacement (the shared-queue Grab
+    // pattern) drops the card out of SortableContext entirely, which would
+    // make the drag-to-Today branch in applyMove unreachable by any real
+    // gesture (fireDrop can call it directly, but nothing in the app could).
+    // dnd-kit's useSortable stamps aria-roledescription="sortable" on its
+    // node — that's the load-bearing assertion here, not just that the title
+    // renders. That same sortable wrapper carries dnd-kit's default
+    // role="button" with no explicit name, so its OWN computed accessible
+    // name rolls up every descendant text node once an action button shares
+    // the card face ("Held team card release") — an exact-name query below
+    // is what actually distinguishes the real button from that wrapper; a
+    // substring/regex match would hit both and throw "multiple elements".
+    stubFetch({ boards: agendaBoards([], [HELD_CARD]) });
+    renderWithProviders(<BoardStage roster={ROSTER} />);
+    await readyToDrop("My plate");
+    const title = screen.getByText("Held team card");
+    expect(title.closest('[aria-roledescription="sortable"]')).not.toBeNull();
+    // And the Release control still sits alongside it, not instead of it.
+    expect(screen.getByRole("button", { name: "release" })).toBeTruthy();
+  });
+
+  it("does not offer release for a card held by someone else — it never even reaches Edwin's plate", async () => {
+    const anasCard = {
+      ...HELD_CARD,
+      id: "hers1",
+      title: "Ana's card",
+      agenda: { ...HELD_CARD.agenda, by: "ana" },
+    };
+    stubFetch({ boards: agendaBoards([], [anasCard]) });
+    renderWithProviders(<BoardStage roster={ROSTER} />);
+    await readyToDrop("My plate");
+    expect(screen.queryByText("Ana's card")).toBeNull();
+    expect(screen.queryByRole("button", { name: /release/i })).toBeNull();
+  });
+
+  it("also offers release on a card held in the Today lane", async () => {
+    const todayHeld = { ...HELD_CARD, agenda: { ...HELD_CARD.agenda, state: "today" as const } };
+    stubFetch({ boards: agendaBoards([], [todayHeld]) });
+    renderWithProviders(<BoardStage roster={ROSTER} />);
+    await readyToDrop("Today");
+    expect(screen.getByRole("button", { name: "release" })).toBeTruthy();
+  });
+
+  it("does not offer grab on a card the current user already holds", async () => {
+    stubFetch({ boards: agendaBoards([], [HELD_CARD]) });
+    renderWithProviders(<BoardStage roster={ROSTER} />);
+    await readyToDrop("My plate");
+    expect(screen.queryByRole("button", { name: /grab/i })).toBeNull();
+  });
+
+  it("dragging a TEAM card to plate patches the step state only", async () => {
+    const { calls } = stubFetch({
+      boards: agendaBoards([], [{ id: "t1", title: "Unheld team card", columnId: "review", order: 0 }]),
+    });
+    renderWithProviders(<BoardStage roster={ROSTER} />);
+    await readyToDrop("My plate");
+    const { fireDrop } = await import("./BoardStage");
+    await fireDrop("ws-deliver", "t1", "plate", 0);
+    await waitFor(() => {
+      const patch = calls.find((c) => c.method === "PATCH" && c.url.includes("/cards/t1"));
+      expect(patch?.body).toEqual({ agenda: { state: "plate" } });
+    });
+    const patch = calls.find((c) => c.method === "PATCH" && c.url.includes("/cards/t1"));
+    expect(patch?.body).not.toHaveProperty("columnId");
+  });
+
+  it("dropping into Today asks what you are doing before writing anything", async () => {
+    const { calls } = stubFetch({
+      boards: agendaBoards([], [{ id: "t1", title: "Unheld team card", columnId: "review", order: 0 }]),
+    });
+    renderWithProviders(<BoardStage roster={ROSTER} />);
+    await readyToDrop("Today");
+    const { fireDrop } = await import("./BoardStage");
+    await fireDrop("ws-deliver", "t1", "today", 0);
+    expect(await screen.findByLabelText(/what are you doing/i)).toBeDefined();
+    expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(0);
+  });
+
+  it("cancelling the intent composer leaves the card where it was", async () => {
+    const { calls } = stubFetch({
+      boards: agendaBoards([], [{ id: "t1", title: "Unheld team card", columnId: "review", order: 0 }]),
+    });
+    renderWithProviders(<BoardStage roster={ROSTER} />);
+    await readyToDrop("Today");
+    const { fireDrop } = await import("./BoardStage");
+    await fireDrop("ws-deliver", "t1", "today", 0);
+    await userEvent.click(await screen.findByRole("button", { name: /cancel/i }));
+    expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(0);
+    expect(screen.queryByLabelText(/what are you doing/i)).toBeNull();
+  });
+
+  it("submitting the intent sends it with the state", async () => {
+    const { calls } = stubFetch({
+      boards: agendaBoards([], [{ id: "t1", title: "Unheld team card", columnId: "review", order: 0 }]),
+    });
+    renderWithProviders(<BoardStage roster={ROSTER} />);
+    await readyToDrop("Today");
+    const { fireDrop } = await import("./BoardStage");
+    await fireDrop("ws-deliver", "t1", "today", 0);
+    await userEvent.type(await screen.findByLabelText(/what are you doing/i), "chasing the flaky suite");
+    await userEvent.click(screen.getByRole("button", { name: /start/i }));
+    await waitFor(() => {
+      const patch = calls.find((c) => c.method === "PATCH" && c.url.includes("/cards/t1"));
+      expect(patch?.body).toEqual({ agenda: { state: "today", intent: "chasing the flaky suite" } });
+    });
+  });
+
+  it("advancing a HELD card on the team board asks what you did before moving it", async () => {
+    const { calls } = stubFetch({ boards: agendaBoards([], [HELD_CARD]) });
+    renderWithProviders(<BoardStage roster={ROSTER} />);
+    await userEvent.click(await screen.findByRole("tab", { name: "Deliver" }));
+    await readyToDrop("Review");
+    const { fireDrop } = await import("./BoardStage");
+    await fireDrop("ws-deliver", "held1", "verify", 0);
+    expect(await screen.findByLabelText(/what did you do/i)).toBeDefined();
+    expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(0);
+  });
+
+  it("advancing an UNHELD card on the team board moves it straight away", async () => {
+    const { calls } = stubFetch({
+      boards: agendaBoards([], [{ id: "unheld1", title: "Unheld, moves straight", columnId: "review", order: 0 }]),
+    });
+    renderWithProviders(<BoardStage roster={ROSTER} />);
+    await userEvent.click(await screen.findByRole("tab", { name: "Deliver" }));
+    await readyToDrop("Review");
+    const { fireDrop } = await import("./BoardStage");
+    await fireDrop("ws-deliver", "unheld1", "verify", 0);
+    await waitFor(() => {
+      const patch = calls.find((c) => c.method === "PATCH" && c.url.includes("/cards/unheld1"));
+      expect(patch?.body).toEqual({ columnId: "verify", order: 0 });
+    });
+    expect(screen.queryByLabelText(/what did you do/i)).toBeNull();
+  });
+
+  it("submitting the close sends the move and the comment in one body", async () => {
+    const { calls } = stubFetch({ boards: agendaBoards([], [HELD_CARD]) });
+    renderWithProviders(<BoardStage roster={ROSTER} />);
+    await userEvent.click(await screen.findByRole("tab", { name: "Deliver" }));
+    await readyToDrop("Review");
+    const { fireDrop } = await import("./BoardStage");
+    await fireDrop("ws-deliver", "held1", "verify", 0);
+    await userEvent.type(await screen.findByLabelText(/what did you do/i), "it was the 20s ceiling");
+    await userEvent.click(screen.getByRole("button", { name: /done/i }));
+    await waitFor(() => {
+      const patch = calls.find((c) => c.method === "PATCH" && c.url.includes("/cards/held1"));
+      expect(patch?.body).toEqual({ columnId: "verify", order: 0, close: { text: "it was the 20s ceiling" } });
+    });
+  });
+
+  it("dragging a PERSONAL card patches columnId only, never agenda", async () => {
+    const { calls } = stubFetch({
+      boards: agendaBoards([{ id: "p1", title: "Personal card", columnId: "plate", order: 0 }], []),
+    });
+    renderWithProviders(<BoardStage roster={ROSTER} />);
+    await readyToDrop("My plate");
+    const { fireDrop } = await import("./BoardStage");
+    await fireDrop("personal", "p1", "today", 0);
+    await waitFor(() => {
+      const patch = calls.find((c) => c.method === "PATCH" && c.url.includes("/cards/p1"));
+      expect(patch?.body).toEqual({ columnId: "today", order: 0 });
+    });
+    const patch = calls.find((c) => c.method === "PATCH" && c.url.includes("/cards/p1"));
+    expect(patch?.body).not.toHaveProperty("agenda");
+  });
+
+  it("dragging a PERSONAL card into Done also asks what you did, mirroring a held team card", async () => {
+    const { calls } = stubFetch({
+      boards: agendaBoards([{ id: "p1", title: "Personal card", columnId: "plate", order: 0 }], []),
+    });
+    renderWithProviders(<BoardStage roster={ROSTER} />);
+    await readyToDrop("My plate");
+    const { fireDrop } = await import("./BoardStage");
+    await fireDrop("personal", "p1", "done", 0);
+    expect(await screen.findByLabelText(/what did you do/i)).toBeDefined();
+    expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(0);
+  });
+
+  // These two enter through handleDragEnd itself (fireDragEnd), not fireDrop —
+  // fireDrop calls applyMove directly and so skips straight past the
+  // resolution bug these exist to pin (resolveCrossBoardDrop was written
+  // before Agenda spanned every board; see resolveAgendaDrop's doc).
+  it("handleDragEnd resolves a card-onto-ANOTHER-BOARD's-card drop to the rendered lane, not a cross-board error (Critical 2)", async () => {
+    const { calls } = stubFetch({
+      boards: agendaBoards(
+        [{ id: "p1", title: "Personal card", columnId: "plate", order: 0 }],
+        [{ id: "t1", title: "Unheld team card", columnId: "review", order: 0 }],
+      ),
+    });
+    renderWithProviders(<BoardStage roster={ROSTER} />);
+    await readyToDrop("My plate");
+    const { fireDragEnd } = await import("./BoardStage");
+    fireDragEnd("t1", "p1");
+    await waitFor(() => {
+      const patch = calls.find((c) => c.method === "PATCH" && c.url.includes("/cards/t1"));
+      expect(patch?.body).toEqual({ agenda: { state: "plate" } });
+    });
+    expect(screen.queryByText(/only move within their own workspace/i)).toBeNull();
+  });
+
+  it("handleDragEnd resolves a card-onto-a-card-from-its-OWN-BOARD drop to the rendered lane, not the over card's workflow column (Critical 2)", async () => {
+    // held2 is genuinely draggable (the "action" override, not "replace"), so
+    // this is a gesture a real drag can actually make — held2 dropped onto
+    // held1, both on ws-deliver. Old code read held1.columnId ("review", its
+    // real workflow column) instead of the lane it's rendered in ("plate"),
+    // so applyMove's `columnId !== "plate" && columnId !== "today"` guard
+    // silently ate the whole drop — zero PATCHes, zero errors, nothing.
+    const held2 = { ...HELD_CARD, id: "held2", title: "Second held card" };
+    const { calls } = stubFetch({ boards: agendaBoards([], [HELD_CARD, held2]) });
+    renderWithProviders(<BoardStage roster={ROSTER} />);
+    await readyToDrop("My plate");
+    const { fireDragEnd } = await import("./BoardStage");
+    fireDragEnd("held2", "held1");
+    await waitFor(() => {
+      const patches = calls.filter((c) => c.method === "PATCH" && c.url.includes("/cards/held2"));
+      expect(patches).toHaveLength(1);
+      expect(patches[0]?.body).toEqual({ agenda: { state: "plate" } });
+    });
+  });
+
+  it("a lost grab race surfaces visibly instead of failing silently (Important 3)", async () => {
+    const { calls } = stubFetch({
+      boards: agendaBoards([], [{ id: "t1", title: "Unheld team card", columnId: "review", order: 0 }]),
+      patched: { error: "Card already held by ana" },
+      patchStatus: 400,
+    });
+    renderWithProviders(<BoardStage roster={ROSTER} />);
+    await readyToDrop("Shared queue");
+    await userEvent.click(screen.getByRole("button", { name: /grab/i }));
+    await waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
+    expect(await screen.findByText(/card already held by ana/i)).toBeTruthy();
   });
 });
 
