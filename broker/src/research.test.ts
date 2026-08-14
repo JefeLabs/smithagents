@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { AnthropicResearch, ResearchError } from "./research.ts";
+import { AnthropicResearch, CliResearch, defaultSpawner, type ResearchEngine, ResearchError } from "./research.ts";
 
 /** Minimal stand-in for the SDK's messages.create. */
 const createStub = (reply: unknown) => {
@@ -61,4 +61,116 @@ test("AnthropicResearch treats an empty reply as an error, never as empty text",
     () => engine.complete({ system: "s", prompt: "p", maxTokens: 8 }),
     (err: unknown) => err instanceof ResearchError,
   );
+});
+
+test("AnthropicResearch errors when a reply has blocks but none are text", async () => {
+  const engine = new AnthropicResearch(async () => ({ content: [{ type: "thinking", thinking: "hmm" }] }), "m");
+  await assert.rejects(
+    () => engine.complete({ system: "s", prompt: "p", maxTokens: 8 }),
+    (err: unknown) => err instanceof ResearchError,
+  );
+});
+
+/** Stand-in for the subprocess: records argv/stdin, replays a scripted result. */
+const spawnStub = (result: { code: number | null; stdout: string; stderr: string }) => {
+  const calls: Array<{ argv: string[]; stdin: string }> = [];
+  return {
+    calls,
+    fn: async (argv: string[], stdin: string) => {
+      calls.push({ argv, stdin });
+      return result;
+    },
+  };
+};
+
+test("CliResearch returns trimmed stdout", async () => {
+  const stub = spawnStub({ code: 0, stdout: "  a title\n", stderr: "" });
+  const engine = new CliResearch(stub.fn, ["claude", "--print"], undefined);
+  assert.equal(await engine.complete({ system: "s", prompt: "p", maxTokens: 8 }), "a title");
+});
+
+test("CliResearch passes system+prompt as the final argv element", async () => {
+  // Every shipped driver does this — claude `--print '<p>'`, agy `--prompt
+  // '<p>'`, codex `exec '<p>'`. None of them read the prompt from stdin.
+  const stub = spawnStub({ code: 0, stdout: "ok", stderr: "" });
+  const engine = new CliResearch(stub.fn, ["claude", "--print"], undefined);
+  await engine.complete({ system: "SYS", prompt: "PROMPT", maxTokens: 8 });
+  assert.deepEqual(stub.calls[0].argv.slice(0, 2), ["claude", "--print"]);
+  const last = stub.calls[0].argv.at(-1) as string;
+  assert.match(last, /SYS/);
+  assert.match(last, /PROMPT/);
+});
+
+test("CliResearch does not escape or quote the prompt — spawn takes an argv array", async () => {
+  // No shell is involved (spawn without shell:true goes straight to execve),
+  // so quotes, newlines and backticks are ordinary characters. Escaping them
+  // would corrupt the prompt, and the shipped drivers only escape because they
+  // build a shell STRING for tmux; this does not.
+  const stub = spawnStub({ code: 0, stdout: "ok", stderr: "" });
+  const engine = new CliResearch(stub.fn, ["claude", "--print"], undefined);
+  const nasty = `it's "quoted" \`and\` \n multi-line; rm -rf /`;
+  await engine.complete({ system: "s", prompt: nasty, maxTokens: 8 });
+  assert.ok((stub.calls[0].argv.at(-1) as string).includes(nasty), "prompt must survive byte-for-byte");
+});
+
+test("CliResearch appends the model flag only when a model is set", async () => {
+  const withModel = spawnStub({ code: 0, stdout: "ok", stderr: "" });
+  await new CliResearch(withModel.fn, ["claude", "--print"], "claude-sonnet").complete({
+    system: "s",
+    prompt: "p",
+    maxTokens: 8,
+  });
+  assert.deepEqual(withModel.calls[0].argv, ["claude", "--print", "--model", "claude-sonnet", "s\n\np"]);
+
+  const without = spawnStub({ code: 0, stdout: "ok", stderr: "" });
+  await new CliResearch(without.fn, ["claude", "--print"], undefined).complete({
+    system: "s",
+    prompt: "p",
+    maxTokens: 8,
+  });
+  assert.deepEqual(without.calls[0].argv, ["claude", "--print", "s\n\np"]);
+});
+
+test("CliResearch turns a non-zero exit into a ResearchError carrying stderr", async () => {
+  const stub = spawnStub({ code: 1, stdout: "", stderr: "not logged in" });
+  const engine = new CliResearch(stub.fn, ["claude", "--print"], undefined);
+  await assert.rejects(
+    () => engine.complete({ system: "s", prompt: "p", maxTokens: 8 }),
+    (err: unknown) => err instanceof ResearchError && /not logged in/.test((err as Error).message),
+  );
+});
+
+test("CliResearch treats a killed process (code null) as an error", async () => {
+  const stub = spawnStub({ code: null, stdout: "partial", stderr: "" });
+  const engine = new CliResearch(stub.fn, ["claude", "--print"], undefined);
+  await assert.rejects(
+    () => engine.complete({ system: "s", prompt: "p", maxTokens: 8 }),
+    (err: unknown) => err instanceof ResearchError,
+  );
+});
+
+test("CliResearch treats empty stdout on a clean exit as an error, not empty text", async () => {
+  const stub = spawnStub({ code: 0, stdout: "   \n", stderr: "" });
+  const engine = new CliResearch(stub.fn, ["claude", "--print"], undefined);
+  await assert.rejects(
+    () => engine.complete({ system: "s", prompt: "p", maxTokens: 8 }),
+    (err: unknown) => err instanceof ResearchError,
+  );
+});
+
+test("CliResearch and AnthropicResearch satisfy the same contract", async () => {
+  // The six call sites must not be able to tell them apart.
+  const engines: ResearchEngine[] = [
+    new AnthropicResearch(async () => ({ content: [{ type: "text", text: "same" }] }), "m"),
+    new CliResearch(async () => ({ code: 0, stdout: "same", stderr: "" }), ["x"], undefined),
+  ];
+  for (const e of engines) {
+    assert.equal(await e.complete({ system: "s", prompt: "p", maxTokens: 8 }), "same");
+  }
+});
+
+test("defaultSpawner settles when the binary does not exist", async () => {
+  const r = await defaultSpawner(["definitely-not-a-real-binary-xyz"], "hi");
+  assert.equal(r.code, null);
+  assert.match(r.stderr, /ENOENT|not found|spawn/i);
 });
