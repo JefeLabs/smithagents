@@ -363,6 +363,65 @@ export class CliResearch implements ResearchEngine {
 
 Note `maxTokens` is accepted and unused here — CLI tools have no equivalent flag. Keeping it in the interface is what lets the six call sites stay identical across both implementations.
 
+Also add the production spawner in the same file — Task 4 constructs `CliResearch` with it:
+
+```ts
+import { spawn } from "node:child_process";
+
+const RESEARCH_TIMEOUT_MS = 120_000;
+
+/**
+ * Production spawner. Resolves, never rejects: a spawn failure is data the
+ * caller must handle, not an exception thrown past it. Mirrors the swarm's
+ * defaultRunner contract for the same reason.
+ *
+ * The timeout matters more here than it looks — a hung CLI would otherwise
+ * hang a feed poll or an election indefinitely, and neither has its own clock.
+ */
+export const defaultSpawner: Spawner = (argv, stdin) =>
+  new Promise((resolve) => {
+    const child = spawn(argv[0], argv.slice(1), { stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const finish = (code: number | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ code, stdout, stderr });
+    };
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      finish(null);
+    }, RESEARCH_TIMEOUT_MS);
+    child.stdout.on("data", (d) => {
+      stdout += String(d);
+    });
+    child.stderr.on("data", (d) => {
+      stderr += String(d);
+    });
+    // A missing binary emits 'error', never 'close' with a code — without this
+    // the promise would never settle and the caller would hang until its own
+    // timeout, if it has one.
+    child.on("error", (err) => {
+      stderr += String((err as Error).message);
+      finish(null);
+    });
+    child.on("close", (code) => finish(code));
+    child.stdin.end(stdin);
+  });
+```
+
+Add one test for the error path that has no `close` event:
+
+```ts
+test("defaultSpawner settles when the binary does not exist", async () => {
+  const r = await defaultSpawner(["definitely-not-a-real-binary-xyz"], "hi");
+  assert.equal(r.code, null);
+  assert.match(r.stderr, /ENOENT|not found|spawn/i);
+});
+```
+
 - [ ] **Step 4: Run the tests to verify they pass**
 
 ```bash
