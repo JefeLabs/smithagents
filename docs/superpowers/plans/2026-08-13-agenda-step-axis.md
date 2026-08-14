@@ -1271,7 +1271,21 @@ Widen `api.patchCard`'s body type in `api/work.ts` to accept **both** new fields
 
 - [ ] **Step 5: Render four lanes and branch the drag**
 
-The Agenda tab renders **five** lanes: **Shared queue · My plate · Today · Done · Not Doing**. Shared queue is fed by `sharedQueueCards(boards)`; the other four by `collectAgendaCards(boards, me.id, laneId)`. Team cards can only ever occupy Shared queue, My plate and Today — `Done` and `Not Doing` are personal-only, because a team card's "done" is advancing it on its own board. Shared-queue cards are not draggable — each carries a **Grab** button calling `useCardAgenda` with `{ action: "grab" }`.
+**First, fix where the lane list comes from — this breaks otherwise.** `BoardStage.tsx:240` currently derives the rendered columns as `const columns = tabBoards[0]?.columns ?? []`. That was safe while every tab's boards shared one template, but Task 6 makes Agenda's `boardIds` span *every* board, so `tabBoards[0]` becomes whichever board happens to sit first in the `boards` array — very likely a deliver board, whose columns are `ready / in-progress / review / verify / merged`. The Agenda tab would render a team board's lanes and pool nothing into them.
+
+Agenda's lanes must come from the **personal** board specifically, with the derived shared-queue lane prepended:
+
+```ts
+  const SHARED_LANE = { id: "shared-queue", name: "Shared queue" };
+  const isAgendaTab = tab?.type === "personal";
+  const columns = isAgendaTab
+    ? [SHARED_LANE, ...(boards.find((b) => b.type === "personal")?.columns ?? [])]
+    : (tabBoards[0]?.columns ?? []);
+```
+
+`shared-queue` is a synthetic lane id that exists on no board — it is the derived pool. Nothing may persist a column with that id, and a drop targeting it is not a move: releasing a card back to the pool happens through the card's own control, not by dragging into this lane. Make it a non-droppable column.
+
+With that in place the Agenda tab renders **five** lanes: **Shared queue · My plate · Today · Done · Not Doing**. Shared queue is fed by `sharedQueueCards(boards)`; the other four by `collectAgendaCards(boards, me.id, laneId)`. Team cards can only ever occupy Shared queue, My plate and Today — `Done` and `Not Doing` are personal-only, because a team card's "done" is advancing it on its own board. Shared-queue cards are not draggable — each carries a **Grab** button calling `useCardAgenda` with `{ action: "grab" }`.
 
 **Put the branch inside `applyMove`, NOT in `handleDragEnd`.** This is load-bearing and easy to get wrong. `BoardStage.tsx:164` registers a module-level `dropHandler = applyMove`, and `fireDrop(boardId, cardId, columnId, order)` is the seam every drag test uses — jsdom cannot synthesize dnd-kit pointer sequences, so `fireDrop` is the only way a test reaches a drop. Its comment claims it invokes "the exact code path a real drop takes." Branch in `handleDragEnd` and that claim becomes false: the new logic sits *above* the seam, no test can reach it, and the drag tests below would silently exercise the old path only.
 
