@@ -1122,26 +1122,53 @@ it("the Agenda tab spans every board — holders live on their home boards", () 
 In `BoardStage.test.tsx`, following the file's existing render/stub helpers:
 
 ```ts
+**These tests must go through the `fireDrop` seam** — jsdom cannot synthesize dnd-kit pointer sequences, so a "drag" in this file means calling `fireDrop(boardId, cardId, columnId, order)` from `./BoardStage`. Follow the existing `describe("BoardStage drag wiring")` block: it stubs fetch with `stubFetch()`, renders, and then calls the seam. Reuse its `readyToDrop(columnName)` helper verbatim, including the `await act(async () => {})` flush — its comment explains why, and skipping it leaves the seam holding a closure over an empty board list so `applyMove` bails without PATCHing and your test passes for the wrong reason.
+
+```ts
 it("grab sends the grab action and no columnId", async () => {
-  // render Agenda, press Grab on a shared-queue card
-  expect(lastPatchBody()).toEqual({ agenda: { action: "grab" } });
+  const { calls } = stubFetch();
+  renderWithProviders(<BoardStage roster={ROSTER} />);
+  await readyToDrop("Shared queue");
+  fireEvent.click(screen.getByRole("button", { name: /grab/i }));
+  await waitFor(() => {
+    const patch = calls.find((c) => c.method === "PATCH" && c.url.includes("/cards/"));
+    expect(patch?.body).toEqual({ agenda: { action: "grab" } });
+  });
 });
 
 it("dragging a TEAM card to plate patches the step state only", async () => {
-  expect(lastPatchBody()).toEqual({ agenda: { state: "plate" } });
-  expect(lastPatchBody()).not.toHaveProperty("columnId");
+  const { calls } = stubFetch();
+  renderWithProviders(<BoardStage roster={ROSTER} />);
+  await readyToDrop("My plate");
+  const { fireDrop } = await import("./BoardStage");
+  await fireDrop("ws-deliver", "t1", "plate", 0);
+  await waitFor(() => {
+    const patch = calls.find((c) => c.method === "PATCH" && c.url.includes("/cards/t1"));
+    expect(patch?.body).toEqual({ agenda: { state: "plate" } });
+  });
+  const patch = calls.find((c) => c.method === "PATCH" && c.url.includes("/cards/t1"));
+  expect(patch?.body).not.toHaveProperty("columnId");
 });
 
 it("dropping into Today asks what you are doing before writing anything", async () => {
-  // drag a card from My plate onto Today
+  const { calls } = stubFetch();
+  renderWithProviders(<BoardStage roster={ROSTER} />);
+  await readyToDrop("Today");
+  const { fireDrop } = await import("./BoardStage");
+  await fireDrop("ws-deliver", "t1", "today", 0);
   expect(await screen.findByLabelText(/what are you doing/i)).toBeDefined();
-  expect(patchCalls()).toHaveLength(0);
+  expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(0);
 });
 
 it("cancelling the intent composer leaves the card where it was", async () => {
-  // drag onto Today, then press Cancel
-  fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
-  expect(patchCalls()).toHaveLength(0);
+  const { calls } = stubFetch();
+  renderWithProviders(<BoardStage roster={ROSTER} />);
+  await readyToDrop("Today");
+  const { fireDrop } = await import("./BoardStage");
+  await fireDrop("ws-deliver", "t1", "today", 0);
+  fireEvent.click(await screen.findByRole("button", { name: /cancel/i }));
+  expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(0);
+  expect(screen.queryByLabelText(/what are you doing/i)).toBeNull();
 });
 
 it("submitting the intent sends it with the state", async () => {
@@ -1155,9 +1182,13 @@ it("submitting the intent sends it with the state", async () => {
 });
 
 it("advancing a HELD card on the team board asks what you did before moving it", async () => {
-  // on the Deliver tab, drag a held card from Review to Verify
+  const { calls } = stubFetch();
+  renderWithProviders(<BoardStage roster={ROSTER} />);
+  await readyToDrop("Review");
+  const { fireDrop } = await import("./BoardStage");
+  await fireDrop("ws-deliver", "held1", "verify", 0);
   expect(await screen.findByLabelText(/what did you do/i)).toBeDefined();
-  expect(patchCalls()).toHaveLength(0);
+  expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(0);
 });
 
 it("advancing an UNHELD card on the team board moves it straight away", async () => {
@@ -1238,28 +1269,27 @@ Widen `api.patchCard`'s body type in `api/work.ts` to accept **both** new fields
 
 The Agenda tab renders **five** lanes: **Shared queue · My plate · Today · Done · Not Doing**. Shared queue is fed by `sharedQueueCards(boards)`; the other four by `collectAgendaCards(boards, me.id, laneId)`. Team cards can only ever occupy Shared queue, My plate and Today — `Done` and `Not Doing` are personal-only, because a team card's "done" is advancing it on its own board. Shared-queue cards are not draggable — each carries a **Grab** button calling `useCardAgenda` with `{ action: "grab" }`.
 
-In `handleDragEnd`:
+**Put the branch inside `applyMove`, NOT in `handleDragEnd`.** This is load-bearing and easy to get wrong. `BoardStage.tsx:164` registers a module-level `dropHandler = applyMove`, and `fireDrop(boardId, cardId, columnId, order)` is the seam every drag test uses — jsdom cannot synthesize dnd-kit pointer sequences, so `fireDrop` is the only way a test reaches a drop. Its comment claims it invokes "the exact code path a real drop takes." Branch in `handleDragEnd` and that claim becomes false: the new logic sits *above* the seam, no test can reach it, and the drag tests below would silently exercise the old path only.
+
+So the branch goes at the top of `applyMove`, before the optimistic write:
 
 ```ts
-    const source = boards.find((b) => b.id === outcome.boardId);
-    if (tab?.type === "personal" && source && source.type !== "personal") {
-      if (outcome.columnId !== "plate" && outcome.columnId !== "today") return;
-      if (outcome.columnId === "today") {
+    const source = boards.find((b) => b.id === boardId);
+    if (isAgendaTab && source && source.type !== "personal") {
+      if (columnId !== "plate" && columnId !== "today") return;
+      if (columnId === "today") {
         // Claiming a day needs a sentence. Nothing is written until it is submitted —
         // no optimistic move, no PATCH — so cancelling leaves the card exactly where it
         // was. This is the one drop in the app that a drag alone cannot complete.
-        setPendingIntent({ boardId: outcome.boardId, cardId });
+        setPendingIntent({ boardId, cardId });
         return;
       }
-      void cardAgendaMutation.mutateAsync({
-        boardId: outcome.boardId,
-        cardId,
-        agenda: { state: "plate" },
-      });
+      await cardAgendaMutation.mutateAsync({ boardId, cardId, agenda: { state: "plate" } });
       return;
     }
-    void applyMove(outcome.boardId, cardId, outcome.columnId, outcome.order);
 ```
+
+Everything after this point in `applyMove` is the existing optimistic-move-and-PATCH body, unchanged. `isAgendaTab` is `tab?.type === "personal"` — read it from the same `tab` the render uses, and make sure `applyMove`'s `useCallback` dependency list gains `tab` and `cardAgendaMutation`, or the seam will hold a stale closure and the branch will silently not fire.
 
 `pendingIntent` is `useState<{ boardId: string; cardId: string } | null>(null)`. While set, the target card renders the composer instead of its normal face. Submitting fires:
 
@@ -1271,20 +1301,19 @@ In `handleDragEnd`:
 
 Cancelling just calls `setPendingIntent(null)` — no network call at all.
 
-**The closing composer.** The same gate guards finishing, and it fires on the *team board* too, not only on Agenda. Before `applyMove`, intercept:
+**The closing composer.** The same gate guards finishing, and it fires on the *team board* too, not only on Agenda. It goes in `applyMove` as well — immediately after the Agenda branch above, still before the optimistic write:
 
 ```ts
     const moving = source?.cards.find((c) => c.id === cardId);
-    const changingColumn = moving && moving.columnId !== outcome.columnId;
+    const changingColumn = Boolean(moving) && moving?.columnId !== columnId;
     const endsHeldStep = changingColumn && Boolean(moving?.agenda);
-    const personalDone = changingColumn && source?.type === "personal" && outcome.columnId === "done";
+    const personalDone = changingColumn && source?.type === "personal" && columnId === "done";
     if (endsHeldStep || personalDone) {
       // Mirrors the server guard in patchCard. Asking here is a courtesy — the
       // server refuses the move regardless, which is what makes the rule real.
-      setPendingClose({ boardId: outcome.boardId, cardId, columnId: outcome.columnId, order: outcome.order });
+      setPendingClose({ boardId, cardId, columnId, order });
       return;
     }
-    void applyMove(outcome.boardId, cardId, outcome.columnId, outcome.order);
 ```
 
 Submitting sends the ordinary card PATCH with the move *and* the comment in one body — `{ columnId, order, close: { text } }` — so the server applies both atomically or neither. `applyMove`'s optimistic write must not run until that resolves, since a rejected close would otherwise leave the UI showing a move the server refused.
