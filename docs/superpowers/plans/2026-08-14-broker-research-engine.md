@@ -267,7 +267,8 @@ test("CliResearch appends the model flag only when a model is set", async () => 
     prompt: "p",
     maxTokens: 8,
   });
-  assert.deepEqual(withModel.calls[0].argv, ["claude", "--print", "--model", "claude-sonnet"]);
+  // The prompt is always the LAST element, so the model flag lands before it.
+  assert.deepEqual(withModel.calls[0].argv, ["claude", "--print", "--model", "claude-sonnet", "s\n\np"]);
 
   const without = spawnStub({ code: 0, stdout: "ok", stderr: "" });
   await new CliResearch(without.fn, ["claude", "--print"], undefined).complete({
@@ -275,7 +276,7 @@ test("CliResearch appends the model flag only when a model is set", async () => 
     prompt: "p",
     maxTokens: 8,
   });
-  assert.deepEqual(without.calls[0].argv, ["claude", "--print"]);
+  assert.deepEqual(without.calls[0].argv, ["claude", "--print", "s\n\np"]);
 });
 
 test("CliResearch turns a non-zero exit into a ResearchError carrying stderr", async () => {
@@ -455,9 +456,10 @@ pnpm exec biome check src/research.ts src/research.test.ts
 git add broker/src/research.ts broker/src/research.test.ts
 git commit -m "feat(broker): CLI research engine
 
-Prompt over stdin, not argv — E2BIG and shell escaping are both
-avoidable by construction. A non-zero exit, a killed process, and
-empty output are all typed errors, never an empty string."
+The prompt is the final argv element, unescaped — spawn takes an
+array and never a shell, so there is nothing to escape into. A
+non-zero exit, a killed process, a missing binary and empty output
+are all typed errors, never an empty string."
 ```
 
 ---
