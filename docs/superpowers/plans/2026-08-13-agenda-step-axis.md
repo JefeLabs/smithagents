@@ -1461,7 +1461,21 @@ pnpm vitest run src/molecules/BoardCard.test.tsx
 
 - [ ] **Step 6: Styles**
 
-In `components.css`, beside `.board-card__flag`, add `.board-card__provenance`, `.board-card__holder` with `.is-plate` / `.is-today` variants, and `.board-card__grab`. Use existing tokens — no raw colors, and `--card-tint` must be mixed, never raw.
+In `components.css`, beside `.board-card__flag`, add `.board-card__provenance`, `.board-card__holder` with `.is-plate` / `.is-today` variants, and `.board-card__intent`. Use existing tokens — no raw colors, and `--card-tint` must be mixed, never raw.
+
+**Task 6 also shipped five classes with no styles at all** — it was told to leave `components.css` alone, so they are functional but bare. I verified each against `components.css`; these are unstyled and are yours to add:
+
+| class | what it is |
+|---|---|
+| `.board-card--action` | the card-face variant carrying a Grab or Release control |
+| `.board-card__action` | that control itself (it also carries `.settings-btn`, which IS already styled) |
+| `.board-card--composer` | the intent / closing composer card face |
+| `.board-card__composer-actions` | its submit + cancel row |
+| `.board-card__open` | the card's open-affordance element |
+
+`.board-stage__composer` and `.settings-btn--primary` are already styled — leave them.
+
+Two visual points that are behaviour, not decoration: the shared-queue lane inherits `.board-column--queue`, whose existing rule renders its cards at 85% grayscale and 0.75 opacity, restored on hover — that is what visually separates the pool from work you have taken, so do not override it on `.board-card--action`. And the composer must read as demanding input rather than as a card: it is the one drop in the app a drag cannot complete, so it should not look like a card that merely landed.
 
 - [ ] **Step 7: Full suite three times, lint, commit**
 
