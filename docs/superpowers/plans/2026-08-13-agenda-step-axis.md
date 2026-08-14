@@ -15,7 +15,7 @@
 ## Global Constraints
 
 - **pnpm, never npm.** One workspace at the repo root; node >= 24; TypeScript ~6.0.0.
-- **Biome 2.5.3 runs on `control-plane/` only** — swarm has no biome config. Control-plane lint baseline is **zero diagnostics**.
+- **Biome 2.5.3 runs on BOTH packages.** `swarm/package.json` defines `lint: biome check .` — an earlier draft of this plan wrongly said swarm had none. Control-plane's baseline is **zero diagnostics**. Swarm is **not** at zero: it carries 8 errors + 1 warning at this branch's base (375a9e8). Leave that pre-existing debt alone and fix only what your own change introduces — verify by running `pnpm exec biome check .` from the package and confirming you land back at its baseline, not at zero.
 - **Swarm helpers stay pure.** No clock, filesystem, or current-user reads inside `work-items.ts` — the caller passes `now` and `userId`.
 - **The shared queue is derived.** Never add a stored "queued" flag or a function that writes one.
 - **`StepState` is exactly `"plate" | "today"`.** No `done` — finishing a step means advancing the card.
