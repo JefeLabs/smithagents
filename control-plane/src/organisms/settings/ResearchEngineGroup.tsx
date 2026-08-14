@@ -10,30 +10,44 @@ import { useCliTools, useResearchEngine, useSaveResearchEngine } from "../../que
  * engines in the first place.
  */
 export function ResearchEngineGroup() {
-  const { data: tools = [] } = useCliTools();
+  const { data: tools } = useCliTools();
   const { data: current } = useResearchEngine();
   const saveEngine = useSaveResearchEngine();
   const [error, setError] = useState<string | null>(null);
 
-  const active = tools.filter((t) => t.active);
-  const selected = active.find((t) => t.cli === current?.cli);
-
   // Same "commit only when the response carries no `error`" contract as VoiceGroup's `save`:
   // a rejected save must never leave the select showing a value the operator didn't choose.
-  const choose = async (cli: string, model?: string) => {
-    let res: { cli?: string; model?: string; error?: string };
+  // `cli: null` is a distinct request from `cli: ""` — it's what clears the setting and
+  // returns the broker to its built-in Anthropic fallback (buildResearchEngineUpdate treats
+  // a `null` body as "clear", never as an unknown-engine rejection).
+  const choose = async (cli: string | null, model?: string) => {
+    // A successful CLEAR resolves to a literal `null` body, not `{}` — never assume `res` is an
+    // object once the fetch itself has succeeded.
+    let res: { cli?: string; model?: string; error?: string } | null;
     try {
-      res = await saveEngine.mutateAsync({ cli, model });
+      res = await saveEngine.mutateAsync(cli ? { cli, model } : null);
     } catch (err) {
       setError(String(err));
       return;
     }
-    if (res.error) {
+    if (res?.error) {
       setError(res.error);
       return;
     }
     setError(null);
   };
+
+  if (!tools) {
+    return (
+      <>
+        <h1>research engine</h1>
+        <p className="wizard__hint">Loading…</p>
+      </>
+    );
+  }
+
+  const active = tools.filter((t) => t.active);
+  const selected = active.find((t) => t.cli === current?.cli);
 
   if (active.length === 0) {
     return (
@@ -58,13 +72,15 @@ export function ResearchEngineGroup() {
           <select
             value={current?.cli ?? ""}
             onChange={(e) => {
+              if (!e.target.value) {
+                void choose(null);
+                return;
+              }
               const tool = active.find((t) => t.cli === e.target.value);
               void choose(e.target.value, tool?.models[0]);
             }}
           >
-            <option value="" disabled>
-              Choose…
-            </option>
+            <option value="">Off (Anthropic fallback)</option>
             {active.map((t) => (
               <option key={t.cli} value={t.cli}>
                 {t.label}

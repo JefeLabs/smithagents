@@ -83,6 +83,19 @@ describe("ResearchEngineGroup", () => {
     );
   });
 
+  it("choosing Off PUTs null, not an empty-string cli", async () => {
+    const fn = stubSave(null);
+    const { client } = renderWithProviders(<ResearchEngineGroup />);
+    seed(client, TOOLS, { cli: "agy", model: "default" });
+    fireEvent.change(await screen.findByLabelText("Research engine"), { target: { value: "" } });
+    await waitFor(() =>
+      expect(fn).toHaveBeenCalledWith(
+        expect.stringContaining("/me/research-engine"),
+        expect.objectContaining({ method: "PUT", body: JSON.stringify(null) }),
+      ),
+    );
+  });
+
   it("surfaces the server's reason and keeps the prior selection on a rejected save", async () => {
     stubSave({ error: "claude is not logged in" });
     const { client } = renderWithProviders(<ResearchEngineGroup />);
