@@ -1346,6 +1346,11 @@ git commit -m "feat(cp): Agenda pull queue — shared lane, grab, drag branch"
 
 - [ ] **Step 1: Write the failing tests**
 
+**Two house conventions in `BoardCard.test.tsx` that the literals below do not follow — match the file, not this text:**
+
+1. **Add these inside the existing `describe("BoardCard")` block.** It registers its own `afterEach(cleanup)`, with a comment explaining why: `vitest.config.ts` doesn't set `test.globals`, so RTL's auto-cleanup — which feature-detects a *global* `afterEach` — never registers. A new top-level `describe` would not inherit that, every `render()` would leak into the next test's queries, and you would get baffling duplicate-match failures that look like component bugs.
+2. **Use the file's `card(over)` fixture helper** (`const card = (over: Partial<WorkCardT> = {}) => ({ id: "c1", title: "Opt-in UI", columnId: "in-progress", order: 0, ...over }) as WorkCardT`) rather than the inline card literals written below.
+
 ```ts
 it("renders the holder chip with their step state", () => {
   render(<BoardCard card={{ id: "c1", title: "auth", columnId: "review", order: 0 }}
