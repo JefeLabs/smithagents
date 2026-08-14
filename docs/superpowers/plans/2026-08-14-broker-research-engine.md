@@ -736,7 +736,20 @@ Add `getResearchEngine()` to `broker/src/swarm-client.ts` beside `getMyVoice()`:
 
 Replace each of these `anthropic.messages.create({...})` calls with `(await researchEngine()).complete({ system, prompt, maxTokens })`, keeping each site's existing system prompt and token budget:
 
-- `main.ts:1513` — `runDocEditTurn`'s injected `create`
+- **`main.ts:1513` — `runDocEditTurn`'s injected `create`. This one is not a call site; it injects a function, so it needs `doc-edit.ts` changed too.**
+
+  `doc-edit.ts` defines its own hand-rolled seam — `type CreateLike = (params: object) => Promise<{ content: Array<{ type: string; text?: string }> }>` — and immediately reduces the reply to text: `reply.content.find((b) => b.type === "text")?.text ?? ""`. That is `ResearchEngine` with extra steps, written before the seam existed.
+
+  Replace it. In `broker/src/doc-edit.ts`:
+  - delete the `CreateLike` type;
+  - change the options bag from `create: CreateLike; model?: string` to `engine: ResearchEngine`;
+  - replace the `await create({ model, max_tokens: 4096, system, messages: [{ role: "user", content }] })` block plus the `reply.content.find(...)` line with a single `const text = await opts.engine.complete({ system, prompt: content, maxTokens: 4096 });`.
+
+  **Its `?? ""` fallback disappears with it, and that is an improvement, not a regression.** Today a reply with no text block silently becomes `""`, which then fails the JSON parse and returns an empty rewrite — a doc edit that reports success and changes nothing. `ResearchEngine.complete` throws `ResearchError` instead, so the caller learns the turn failed.
+
+  `doc-edit.test.ts` currently injects fakes as `create: second.create`. Those become one-line engine fakes: `engine: { complete: async () => '{"rewrites":[...],"note":"..."}' }`. Keep every existing assertion — this changes how the text arrives, not what the parser does with it.
+
+  Then at `main.ts:1513`, pass `engine: await researchEngine()` in place of the `create:` line.
 - `main.ts:1704` — feeds → `plan`
 - `main.ts:2034` — `analyzeBrief`
 - `main.ts:2396` — `askForClaim`'s `brokerAsk`
