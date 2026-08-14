@@ -937,6 +937,11 @@ best-effort like the existing push-on-move."
 
 - [ ] **Step 1: Write the failing tests**
 
+**Two traps in this test file — build your fixtures inline as written below, do not reach for the house helpers:**
+
+1. `board-aggregate.test.ts` has a `board(id, type, workspaceId, cards)` helper that builds boards with **`columns: []`**. `sharedQueueCards` resolves `gatesHuman` by looking a card's `columnId` up in `board.columns` — against an empty column list that is always `undefined`, so every pooling test would silently return `[]` and pass or fail for reasons unrelated to the logic. The fixtures below declare `columns` explicitly for exactly this reason.
+2. The file's shared `BOARDS` constant includes a personal board whose card sits in `columnId: "todo"` — a column Task 2's migration removed. It is fine for the existing `tabsFor`/`collectCards` tests that use it, but do **not** reuse `BOARDS` for the new lane tests: `todo` is no longer a lane and the fixture would quietly test nothing.
+
 ```ts
 describe("agenda lanes", () => {
   const personal = {
