@@ -29,7 +29,6 @@ function SortableCard({
   tint,
   holder,
   provenance,
-  onGrab,
   intent,
   age,
   onOpen,
@@ -40,7 +39,6 @@ function SortableCard({
   tint?: string;
   holder?: { name: string; state: "plate" | "today" };
   provenance?: string;
-  onGrab?: () => void;
   intent?: string;
   age?: string;
   onOpen: () => void;
@@ -62,7 +60,6 @@ function SortableCard({
         tint={tint}
         holder={holder}
         provenance={provenance}
-        onGrab={onGrab}
         intent={intent}
         age={age}
         onOpen={onOpen}
@@ -98,7 +95,6 @@ export function BoardColumn({
   agentFor,
   holderFor,
   provenanceFor,
-  onGrabFor,
   intentFor,
   ageFor,
   onOpenCard,
@@ -114,8 +110,6 @@ export function BoardColumn({
   holderFor?: (card: AggCard) => { name: string; state: "plate" | "today" } | undefined;
   /** The workflow-axis badge ("Deliver · review") — resolved per card, Agenda only. */
   provenanceFor?: (card: AggCard) => string | undefined;
-  /** The Grab control's handler — resolved per card, shared-queue lane only. */
-  onGrabFor?: (card: AggCard) => (() => void) | undefined;
   /** The holder's latest stated intent — resolved per card. */
   intentFor?: (card: AggCard) => string | undefined;
   /** How long a card has sat on the holder's plate, pre-formatted — resolved per card. */
@@ -180,7 +174,6 @@ export function BoardColumn({
                     tint={g.label !== null ? colorFor(card.workspaceId) : undefined}
                     holder={holderFor?.(card)}
                     provenance={provenanceFor?.(card)}
-                    onGrab={onGrabFor?.(card)}
                     intent={intentFor?.(card)}
                     age={ageFor?.(card)}
                     onOpen={() => onOpenCard(card.boardId, card.id)}

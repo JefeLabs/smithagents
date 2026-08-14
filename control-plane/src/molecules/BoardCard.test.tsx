@@ -1,5 +1,5 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
 import type { WorkCardT } from "../organisms/BoardStage";
 import { BoardCard, flagAge } from "./BoardCard";
 
@@ -68,20 +68,6 @@ describe("BoardCard", () => {
   it("renders no holder chrome when nobody holds it", () => {
     const { container } = render(<BoardCard card={card({ title: "auth", columnId: "review" })} onOpen={() => {}} />);
     expect(container.querySelector(".board-card__holder")).toBeNull();
-  });
-
-  it("shows Grab only when onGrab is given", () => {
-    const onGrab = vi.fn();
-    const { rerender } = render(
-      <BoardCard card={card({ title: "auth", columnId: "review" })} onGrab={onGrab} onOpen={() => {}} />,
-    );
-    // Exact match, not /grab/i: the outer card is itself a <button>, and its
-    // accessible name is computed from all descendant text — "auth Grab" —
-    // which a substring/regex matcher would also catch, finding two buttons.
-    fireEvent.click(screen.getByRole("button", { name: "Grab" }));
-    expect(onGrab).toHaveBeenCalled();
-    rerender(<BoardCard card={card({ title: "auth", columnId: "review" })} onOpen={() => {}} />);
-    expect(screen.queryByRole("button", { name: "Grab" })).toBeNull();
   });
 
   it("renders the provenance badge when given", () => {

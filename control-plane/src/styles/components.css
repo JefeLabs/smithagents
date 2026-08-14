@@ -2807,18 +2807,6 @@ button.logo {
   white-space: nowrap;
   color: var(--text-dim);
 }
-.board-card__grab {
-  font-size: 10px;
-  padding: 1px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--accent);
-  color: var(--accent);
-  background: transparent;
-  cursor: pointer;
-}
-.board-card__grab:hover {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-}
 .board-card__meta {
   display: flex;
   align-items: center;

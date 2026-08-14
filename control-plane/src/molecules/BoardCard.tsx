@@ -25,8 +25,6 @@ interface BoardCardProps {
   holder?: { name: string; state: "plate" | "today" };
   /** "Deliver · review" — the workflow axis, shown when this card appears on Agenda. */
   provenance?: string;
-  /** Present only for shared-queue cards; renders the Grab control. */
-  onGrab?: () => void;
   /** The holder's latest stated intent. Shown under the title in the Today lane, so the
       lane reads as a list of commitments rather than a list of titles. */
   intent?: string;
@@ -36,18 +34,7 @@ interface BoardCardProps {
 }
 
 /** One kanban card face: title, flag, Jira chip, delegation badge. Pure display — drag wiring wraps it. */
-export function BoardCard({
-  card,
-  agent,
-  onOpen,
-  className,
-  tint,
-  holder,
-  provenance,
-  onGrab,
-  intent,
-  age,
-}: BoardCardProps) {
+export function BoardCard({ card, agent, onOpen, className, tint, holder, provenance, intent, age }: BoardCardProps) {
   const d = card.delegation;
   const total = card.stories?.length ?? 0;
   const done = card.stories?.filter((s) => s.done).length ?? 0;
@@ -89,18 +76,6 @@ export function BoardCard({
           </span>
         )}
         {age && <span className="board-card__age">{age}</span>}
-        {onGrab && (
-          <button
-            type="button"
-            className="board-card__grab"
-            onClick={(e) => {
-              e.stopPropagation();
-              onGrab();
-            }}
-          >
-            Grab
-          </button>
-        )}
         {card.jira && (
           <a
             className={`board-card__jira${card.jira.lastPushError ? " has-error" : ""}`}

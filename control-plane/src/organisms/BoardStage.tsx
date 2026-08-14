@@ -589,19 +589,6 @@ export function BoardStage({ roster }: BoardStageProps) {
           <div className="board-stage__columns">
             {columns.map((col) => {
               const isSharedQueue = isAgendaTab && col.id === "shared-queue";
-              // Defined only for the shared-queue lane. In today's wiring every
-              // card there is already replaced wholesale by CardAction below
-              // (its own Grab button), so this never actually renders — kept
-              // for BoardCard's contract and to survive if that override is
-              // ever relaxed.
-              const onGrabFor = isSharedQueue
-                ? (card: AggCard) => () =>
-                    void cardAgendaMutation.mutateAsync({
-                      boardId: card.boardId,
-                      cardId: card.id,
-                      agenda: { action: "grab" },
-                    })
-                : undefined;
               // boards, not windowedBoards: Agenda is range-invariant, same
               // reasoning as its workspace-invariance (tabsFor's comment on
               // `personal`). A held team card's `updatedAt` is never
@@ -722,7 +709,6 @@ export function BoardStage({ roster }: BoardStageProps) {
                   agentFor={agentFor}
                   holderFor={holderFor}
                   provenanceFor={provenanceFor}
-                  onGrabFor={onGrabFor}
                   intentFor={intentFor}
                   ageFor={ageFor}
                   onOpenCard={(boardId, cardId) => setOpen({ boardId, cardId })}
