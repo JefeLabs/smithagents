@@ -373,8 +373,11 @@ const QUEUE_TYPES: BoardType[] = ["plan", "deliver", "release", "reactive", "mai
  * the current labels (a custom rename is preserved), the queue intake lane is
  * prepended where the type carries one, and maintenance's old `queued` column
  * becomes that lane — moved to the front with its cards' columnIds rewritten,
- * so nothing strands. In-memory only — the file is rewritten the next time
- * any mutation saves the board.
+ * so nothing strands. The personal board's pre-step-axis columns fold into
+ * plate/today/done/not-doing. Finally, every column is backfilled with its
+ * template's `gatesHuman`, so a board persisted before that field existed
+ * doesn't silently drop out of the shared queue. In-memory only — the file is
+ * rewritten the next time any mutation saves the board.
  */
 export function normalizeBoard(board: WorkBoard): WorkBoard {
   if (LEGACY_DEFAULT_NAMES[board.type]?.includes(board.name)) board.name = BOARD_TYPE_LABELS[board.type];
@@ -405,6 +408,14 @@ export function normalizeBoard(board: WorkBoard): WorkBoard {
       board.columns = BOARD_TEMPLATES.personal.map((c) => ({ ...c }));
       renumberAll(board);
     }
+  }
+  // Driven off the template rather than a second hardcoded list, so the two can't drift:
+  // a column persisted before `gatesHuman` existed otherwise never gets it, and its
+  // unheld cards would silently fall out of the shared queue.
+  for (const column of board.columns) {
+    if (column.gatesHuman) continue;
+    const templateColumn = BOARD_TEMPLATES[board.type].find((c) => c.id === column.id);
+    if (templateColumn?.gatesHuman) column.gatesHuman = true;
   }
   return board;
 }
@@ -494,9 +505,10 @@ function renumberAll(board: WorkBoard): void {
 
 /**
  * Quick-adds land where the user works, not where the system routes: Queue is
- * the system's intake lane (sweep, escalations, imports), so fresh cards
- * default to the first column that ISN'T it — Todo on the planner, Ready on
- * Deliver, Triage on React/Maintain.
+ * the system's intake lane (bound sources card into it), so fresh cards
+ * default to the first column that ISN'T it — My plate on the personal
+ * board (which has no Queue lane at all — see BOARD_TEMPLATES.personal),
+ * Ready on Deliver, Triage on React/Maintain.
  */
 export function defaultColumnFor(board: WorkBoard): string {
   return (board.columns.find((c) => c.id !== "queue") ?? board.columns[0])?.id;
@@ -584,13 +596,7 @@ export function sharedQueue(boards: WorkBoard[]): Array<{ board: WorkBoard; card
  * validation runs before anything mutates: a rejected claim must not leave the card
  * half-applied.
  */
-export function setStepState(
-  card: WorkCard,
-  userId: string,
-  state: StepState,
-  now: string,
-  intent?: string,
-): void {
+export function setStepState(card: WorkCard, userId: string, state: StepState, now: string, intent?: string): void {
   if (!STEP_STATES.includes(state)) throw new Error(`Unknown step state: ${state}`);
   if (!card.agenda) throw new Error("Card is not held — grab it first");
   if (card.agenda.by !== userId) throw new Error(`Card is not held by ${userId}`);
@@ -665,11 +671,12 @@ export function patchCard(
     });
     if (fromColumn !== toColumn) {
       renumber(board, fromColumn);
-      const closing = patch.close?.text.trim();
-      if (closing) {
+      const close = patch.close;
+      const closing = close?.text.trim();
+      if (close && closing) {
         card.intents = [
           ...(card.intents ?? []),
-          { at: new Date().toISOString(), by: patch.close!.by, kind: "done", text: closing },
+          { at: new Date().toISOString(), by: close.by, kind: "done", text: closing },
         ];
       }
       // The step this described has ended, so its holder is void. Appended FIRST —

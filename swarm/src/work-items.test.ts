@@ -32,7 +32,6 @@ import {
   saveBoard,
   setStepState,
   sharedQueue,
-  type StepState,
   sweepPersonalBoard,
   terminalColumnId,
   WORKSPACE_BOARD_TYPES,
@@ -307,10 +306,7 @@ test("setStepState flips plate<->today; since resets on change, survives a re-st
   assert.equal(c.agenda?.since, "2026-08-13T10:00:00.000Z", "same state keeps its clock");
   setStepState(c, "edwin", "today", "2026-08-13T12:00:00.000Z", "chasing the flaky suite");
   assert.equal(c.agenda?.since, "2026-08-13T12:00:00.000Z");
-  assert.throws(
-    () => setStepState(c, "ana", "today", "2026-08-13T12:00:00.000Z", "mine now"),
-    /not held by/,
-  );
+  assert.throws(() => setStepState(c, "ana", "today", "2026-08-13T12:00:00.000Z", "mine now"), /not held by/);
 });
 
 test("entering today demands a sentence — the rule lives in the domain, not the UI", () => {
@@ -865,8 +861,10 @@ test("a board with queue/terminal blocks and a card with sourceRef round-trips t
 test("normalizeBoard folds a legacy personal board into plate/today/done", () => {
   const b = createBoard("personal");
   b.columns = [
-    { id: "queue", name: "Queue" }, { id: "todo", name: "Todo" },
-    { id: "doing", name: "Doing" }, { id: "done", name: "Done" },
+    { id: "queue", name: "Queue" },
+    { id: "todo", name: "Todo" },
+    { id: "doing", name: "Doing" },
+    { id: "done", name: "Done" },
     { id: "not-doing", name: "Not Doing" },
   ];
   b.cards = [
@@ -875,15 +873,62 @@ test("normalizeBoard folds a legacy personal board into plate/today/done", () =>
     { id: "c", title: "d", columnId: "doing", order: 0, createdAt: "x", updatedAt: "x" },
   ];
   normalizeBoard(b);
-  assert.deepEqual(b.columns.map((c) => c.id), ["plate", "today", "done", "not-doing"]);
-  assert.deepEqual(b.cards.map((c) => c.columnId), ["plate", "plate", "today"]);
-  assert.deepEqual(b.cards.filter((c) => c.columnId === "plate").map((c) => c.order).sort(), [0, 1]);
+  assert.deepEqual(
+    b.columns.map((c) => c.id),
+    ["plate", "today", "done", "not-doing"],
+  );
+  assert.deepEqual(
+    b.cards.map((c) => c.columnId),
+    ["plate", "plate", "today"],
+  );
+  assert.deepEqual(
+    b.cards
+      .filter((c) => c.columnId === "plate")
+      .map((c) => c.order)
+      .sort(),
+    [0, 1],
+  );
 });
 
 test("normalizeBoard no longer forces a queue column onto the personal board", () => {
   const b = createBoard("personal");
   normalizeBoard(b);
-  assert.equal(b.columns.some((c) => c.id === "queue"), false);
+  assert.equal(
+    b.columns.some((c) => c.id === "queue"),
+    false,
+  );
+});
+
+test("normalizeBoard backfills gatesHuman from the template onto persisted columns that predate it", () => {
+  const deliver: WorkBoard = {
+    id: "acme-deliver",
+    name: "Deliver",
+    type: "deliver",
+    workspaceId: "acme",
+    columns: [
+      { id: "queue", name: "Queue" },
+      { id: "ready", name: "Ready" },
+      { id: "in-progress", name: "In progress" },
+      { id: "review", name: "Review" },
+      { id: "verify", name: "Verify" },
+      { id: "merged", name: "Merged" },
+    ],
+    cards: [{ id: "c1", title: "old card", columnId: "review", order: 0, createdAt: "x", updatedAt: "x" }],
+  };
+  normalizeBoard(deliver);
+  const gated = (id: string) => deliver.columns.find((c) => c.id === id)?.gatesHuman === true;
+  assert.equal(gated("review"), true);
+  assert.equal(gated("verify"), true);
+  assert.equal(gated("queue"), false);
+  assert.equal(gated("ready"), false);
+  assert.equal(gated("in-progress"), false);
+  assert.equal(gated("merged"), false);
+  // The bug this backfill fixes: without it, a card sitting in a gated column on an
+  // already-persisted board would never surface in the shared queue.
+  assert.deepEqual(
+    sharedQueue([deliver]).map((x) => x.card.id),
+    ["c1"],
+  );
 });
 
 test("templates gate exactly the four columns that wait on a person", () => {
@@ -902,7 +947,10 @@ test("sharedQueue pools unheld work from Maintain, React and Deliver only", () =
   const inPool = addCard(d, { title: "review me", columnId: "review" });
   addCard(p, { title: "spec", columnId: "spec" });
   const pooled = sharedQueue([d, p]);
-  assert.deepEqual(pooled.map((x) => x.card.id), [inPool.id]);
+  assert.deepEqual(
+    pooled.map((x) => x.card.id),
+    [inPool.id],
+  );
 });
 
 test("sharedQueue excludes held cards and cards an agent is mid-flight on", () => {
@@ -923,7 +971,9 @@ test("sharedQueue includes a failed delegation, a flag, and a jira error even in
   const broken = addCard(d, { title: "push broke", columnId: "in-progress" });
   broken.jira = { key: "P-1", url: "http://x", lastPushError: "boom" };
   assert.deepEqual(
-    sharedQueue([d]).map((x) => x.card.id).sort(),
+    sharedQueue([d])
+      .map((x) => x.card.id)
+      .sort(),
     [failed.id, flagged.id, broken.id].sort(),
   );
 });
