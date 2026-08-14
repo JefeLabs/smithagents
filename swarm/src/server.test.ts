@@ -15,6 +15,7 @@ import {
   buildChannelsUpdate,
   buildConnectorFields,
   buildConnectorUpdate,
+  buildResearchEngineUpdate,
   buildUserUpdate,
   buildVoiceUpdate,
   clearVoiceReferences,
@@ -473,4 +474,65 @@ test("resolveVoiceKeys: a still-encrypted apiKey (lost/rotated master key) resol
     voice: { stt: { instanceId: "dg1" } },
   };
   assert.deepEqual(resolveVoiceKeys(undecryptable), { stt: null, tts: null });
+});
+
+const ENGINES_FIXTURE = [
+  { cli: "claude", label: "Claude Code", models: ["claude-opus", "claude-sonnet"], warmSessions: true },
+  { cli: "agy", label: "Antigravity", models: ["default"], warmSessions: false },
+  {
+    cli: "api:anthropic",
+    label: "API — Anthropic",
+    models: ["claude-haiku-4-5"],
+    warmSessions: false,
+    kind: "api" as const,
+  },
+];
+/** Returns '' when the tool may be used, else the human reason — mirrors gateReason. */
+const openGate = () => "";
+const closedGate = () => "claude is not logged in";
+
+test("buildResearchEngineUpdate accepts a known, active CLI engine", () => {
+  const r = buildResearchEngineUpdate({ cli: "agy" }, ENGINES_FIXTURE, openGate);
+  assert.deepEqual(r, { researchEngine: { cli: "agy", model: undefined } });
+});
+
+test("buildResearchEngineUpdate accepts a model from that engine's list", () => {
+  const r = buildResearchEngineUpdate({ cli: "claude", model: "claude-sonnet" }, ENGINES_FIXTURE, openGate);
+  assert.deepEqual(r, { researchEngine: { cli: "claude", model: "claude-sonnet" } });
+});
+
+test("buildResearchEngineUpdate rejects an unknown cli", () => {
+  const r = buildResearchEngineUpdate({ cli: "nope" }, ENGINES_FIXTURE, openGate);
+  assert.match((r as { error: string }).error, /Unknown engine/);
+});
+
+test("buildResearchEngineUpdate rejects an api-kind engine", () => {
+  // Research mode spawns a CLI; an api entry has no binary to run.
+  const r = buildResearchEngineUpdate({ cli: "api:anthropic" }, ENGINES_FIXTURE, openGate);
+  assert.match((r as { error: string }).error, /not a CLI engine/);
+});
+
+test("buildResearchEngineUpdate rejects a CLI whose registry gate is closed", () => {
+  const r = buildResearchEngineUpdate({ cli: "claude" }, ENGINES_FIXTURE, closedGate);
+  assert.match((r as { error: string }).error, /not logged in/);
+});
+
+test("buildResearchEngineUpdate rejects a model the engine does not list", () => {
+  const r = buildResearchEngineUpdate({ cli: "agy", model: "gpt-5" }, ENGINES_FIXTURE, openGate);
+  assert.match((r as { error: string }).error, /Unknown model/);
+});
+
+test("buildResearchEngineUpdate clears the setting on null", () => {
+  const r = buildResearchEngineUpdate(null, ENGINES_FIXTURE, openGate);
+  assert.deepEqual(r, { researchEngine: undefined });
+});
+
+test("each rejection names the check that failed, never a silent coercion", () => {
+  const messages = [
+    buildResearchEngineUpdate({ cli: "nope" }, ENGINES_FIXTURE, openGate),
+    buildResearchEngineUpdate({ cli: "api:anthropic" }, ENGINES_FIXTURE, openGate),
+    buildResearchEngineUpdate({ cli: "claude" }, ENGINES_FIXTURE, closedGate),
+    buildResearchEngineUpdate({ cli: "agy", model: "gpt-5" }, ENGINES_FIXTURE, openGate),
+  ].map((r) => (r as { error: string }).error);
+  assert.equal(new Set(messages).size, 4, "four distinct failures need four distinct messages");
 });

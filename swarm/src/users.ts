@@ -29,6 +29,8 @@ export interface User {
   connectors?: ConnectorInstance[];
   /** Which connector instance powers each voice capability (spec §2). */
   voice?: VoiceSettings;
+  /** Which CLI engine runs the broker's research turns. Absent = the broker's built-in default. */
+  researchEngine?: { cli: string; model?: string };
 }
 
 /** On-disk shape before migration — legacy files may still have these instead of `connectors`. */

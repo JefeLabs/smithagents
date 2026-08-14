@@ -104,6 +104,7 @@ import { MeetingOrchestrator } from "./meetings.js";
 import {
   DEFAULT_LANGUAGE,
   ENGINES,
+  type EngineOption,
   findEngine,
   findJobRole,
   API_ENGINE,
@@ -2133,6 +2134,29 @@ export class OrchestratorServer {
       return redactVoice(merged);
     });
 
+    const redactResearchEngine = (u: User | null) => u?.researchEngine ?? null;
+
+    this.app.get("/me/research-engine", async () => {
+      const users = await loadUsersFromDir(resolve(process.cwd(), ".smith/users"));
+      return redactResearchEngine(resolveCurrentUser(users));
+    });
+
+    this.app.put("/me/research-engine", async (req, reply) => {
+      const dir = resolve(process.cwd(), ".smith/users");
+      const users = await loadUsersFromDir(dir);
+      const existing = resolveCurrentUser(users) ?? { id: "me", name: "You", default: true, connectors: [] };
+      const file = await loadCliToolsFile(resolve(process.cwd(), ".smith/cli-tools.json"));
+      const r = buildResearchEngineUpdate(req.body, ENGINES, (cli) => gateReason(file, cli));
+      if ("error" in r) return reply.status(400).send({ error: r.error });
+      const merged: User = { ...existing, researchEngine: r.researchEngine };
+      try {
+        await saveUser(dir, merged);
+      } catch (err) {
+        return reply.status(400).send({ error: String((err as Error).message) });
+      }
+      return redactResearchEngine(merged);
+    });
+
     // Internal-only — returns RAW voice keys, like /workspaces/:name/channels/discord-token
     // above: never proxied through broker's browser-facing text-channel.ts surface.
     // broker's SwarmClient calls it server-to-server on the same loopback-bound,
@@ -3476,6 +3500,32 @@ export function buildUserUpdate(existing: User | null, body: { name?: string }):
     connectors: existing?.connectors,
     voice: existing?.voice,
   };
+}
+
+/**
+ * Validate a research-engine selection. Pure — engines and the registry gate
+ * are injected so this is testable without a filesystem.
+ *
+ * Every rejection names the check that failed. Never coerce: a silently
+ * corrected setting leaves the broker running an engine the operator did not
+ * choose, and nothing on screen would say so.
+ */
+export function buildResearchEngineUpdate(
+  body: unknown,
+  engines: EngineOption[],
+  gate: (cli: string) => string,
+): { researchEngine?: { cli: string; model?: string } } | { error: string } {
+  if (body === null) return { researchEngine: undefined };
+  const b = (body ?? {}) as { cli?: string; model?: string };
+  const engine = engines.find((e) => e.cli === b.cli);
+  if (!engine) return { error: `Unknown engine: ${String(b.cli)}` };
+  if (engine.kind === "api") return { error: `${engine.label} is not a CLI engine` };
+  const reason = gate(engine.cli);
+  if (reason) return { error: reason };
+  if (b.model !== undefined && !engine.models.includes(b.model)) {
+    return { error: `Unknown model for ${engine.label}: ${b.model}` };
+  }
+  return { researchEngine: { cli: engine.cli, model: b.model } };
 }
 
 /** PUT /me/voice body → validated full-replace VoiceSettings (spec §2). */
