@@ -1,12 +1,10 @@
-# Agenda as a Per-User Step Axis — Design
+# Agenda as a Pull Queue over the Step Axis — Design
 
-**Date:** 2026-08-13 · **Status:** DRAFT, awaiting Edwin's review · **Decision trail (chat):** hybrid owns-todos-and-mirrors → qualify on signals *and* human-gated columns → "option A" (agenda has its own lanes) → axis is scoped to the card's current team state → holder must be visible on the team board → per-user, not one holder → morning sweep resets intent
+**Date:** 2026-08-13 · **Status:** DRAFT, awaiting Edwin's review · **Supersedes:** the first draft of this file (per-user array + auto-stamping triggers), which pushed work onto the operator instead of letting them pull it.
 
 Edwin's model, in his words:
 
 > "the agenda tab is not like the other boards — it's what the user is working on that is on the user's plate or needs their attention, where queue would show on their queue"
-
-> "agenda is on another axis for the given state a card is in on team boards"
 
 > "the team boards represent state of the workflow — agenda represent the state of the step by a user"
 
@@ -14,60 +12,56 @@ Edwin's model, in his words:
 
 > "every morning all cards assigned to user would just be thrown back to the queue and user would drag things as what they are actively working on"
 
+> "it's a team and it should fall into someone else's plate"
+
+> "the source for my Agenda can be Maintenance, React and Deliver, I should see items in the queue or shared plate and grab it"
+
 ## The model
 
-Two independent axes over one card. Nothing is copied, mirrored, or dual-homed.
+Two axes over one card, plus a shared pool that is a **query, not a state**.
 
-| Axis | Question it answers | Where it lives |
+| Axis | Question | Where it lives |
 |---|---|---|
 | **Workflow state** | Where is this work in the pipeline? | `card.columnId` on its home board |
-| **Step state** | How is the current step going, and whose is it? | `card.agenda[]`, one entry per user |
+| **Step state** | Who holds the current step, and are they on it today? | `card.agenda` — one holder |
 | **Impediment** | Is it stuck? | `card.flag` (existing, unchanged) |
 
-The step axis is **scoped to the column the card currently sits in**. It describes progress on *that step*, not a free-standing personal lane — which is why advancing a card clears it. `flag` is the existing precedent for an orthogonal axis: *"Orthogonal to columnId — a flagged card keeps its position."*
-
 ```
-TEAM BOARD (plan/spec)              EDWIN'S AGENDA
-  Auth rewrite                        Doing lane
-  👤 Edwin · doing                    ┌──────────────────┐
-  👤 Ana   · queue                    │ Auth rewrite     │
-                                      │ Plan · spec      │
-  organized by workflow state;        └──────────────────┘
-  shows every holder's step state     organized by HIS step state;
-                                      shows the workflow state
+  Deliver · review ─┐
+  React · triage    ├─→  SHARED QUEUE  ─grab→  MY PLATE  ─pick→  TODAY  ─→  DONE
+  Maintain · triage ─┘      (derived)              │                │
+                               ▲                   │                │
+                               └──── release ──────┴─── morning ────┘
+                                                        sweep
 ```
 
-Each surface is organized by the axis the other one displays. Neither invents lanes belonging to the other.
+Nothing is ever assigned to a person. Work becomes *visible* in a shared queue and a person takes it. This is the kanban pull mechanic, and adopting it removes the auto-stamping machinery the first draft needed — along with the bug where declining a card re-offered it on the next trigger pass.
 
 ## Part 1 — Schema
 
 **`WorkCard` gains one field** (swarm `work-items.ts`):
 
 ```ts
-/** Per-user state of the CURRENT step — orthogonal to columnId, like `flag`.
-    Cleared wholesale when the card changes column: the step it described has ended. */
-agenda?: Array<{
-  by: string;        // user id, resolved against .smith/users for display
-  state: StepState;
-  since: string;     // ISO, stamped on entry into the state; survives a re-stamp of the same state
-}>;
+/** Who holds this card's CURRENT step, and whether they picked it for today.
+    Orthogonal to columnId, like `flag`. Cleared when the card changes column:
+    the step it described has ended. One holder — grabbing is exclusive. */
+agenda?: { by: string; state: StepState; since: string };
 
-export type StepState = "queue" | "doing";
+export type StepState = "plate" | "today";
 ```
 
-`done` is deliberately **not** a state. Finishing a step is expressed by advancing the card, which clears the entries; and the morning sweep (Part 4) would wipe a Done lane nightly anyway, so it could never accumulate meaning.
+Single holder, not a list. "Grab it" is exclusive: the moment someone takes a card it leaves everyone else's shared queue. An **agent** holding work is not represented here — that is `delegation`, which already exists and already carries the execution state (`taskId`, `state`, `prUrl`) a human holder has no analogue for.
 
-Multiple entries per card, at most one per user. A card with three holders is normal — three people each have their own state on the same step.
+`done` is not a step state. Finishing a step means advancing the card on its team board, which clears `agenda` anyway.
 
 **`WorkColumn` gains one field:**
 
 ```ts
-/** This column structurally waits on a human — arriving cards auto-queue for the
-    operator (Part 3). Seeded by BOARD_TEMPLATES, toggled from the column config gear. */
+/** This column structurally waits on a human — its unheld cards appear in the shared queue. */
 gatesHuman?: boolean;
 ```
 
-Seeded `true` on: `deliver/review`, `deliver/verify`, `release/sign-off`, `release/regression`, `reactive/triage`, `maintenance/triage`. Everything else false. This is the containment valve for the flooding risk — a board that buries you is one gear click from not doing so.
+Seeded `true` by `BOARD_TEMPLATES` on exactly: `deliver/review`, `deliver/verify`, `reactive/triage`, `maintenance/triage`. **`release/sign-off` is deliberately excluded** — Edwin named Maintain, React and Deliver as the sources, twice. This is one boolean in a template; add it later if Release turns out to belong.
 
 **`User` gains one field** (swarm `users.ts`):
 
@@ -76,98 +70,97 @@ Seeded `true` on: `deliver/review`, `deliver/verify`, `release/sign-off`, `relea
 agendaSweptDay?: string;
 ```
 
-This supersedes `WorkBoard.sweptDay` for the agenda axis. `sweptDay` **stays** on the personal board, still governing that board's own cards (Part 4).
+`WorkBoard.sweptDay` stays as it is, still governing the personal board's own cards.
 
-## Part 2 — Invariants
+## Part 2 — The shared queue is derived
 
-1. **The step axis never writes the workflow axis, and vice versa.** Dragging on a team board writes `columnId`. Dragging a team card on Agenda writes that user's `agenda[].state`. No helper does both.
-   **Exception, personal-board cards:** they have no workflow axis, so their `columnId` *is* their Agenda lane. Dragging one on Agenda writes `columnId` and never touches `agenda`. The two card kinds take different write paths on the same surface; the drag handler branches on `board.type === "personal"`.
-2. **A column change clears `agenda` entirely.** The step ended; every holder's state on it is void. Enforced in the one card-move helper, not at call sites.
-3. **At most one entry per `by`.** Two distinct write modes, and conflating them is the likely bug:
-   - **User action** (you drag on Agenda) — upsert: replaces your existing entry's state.
-   - **Trigger** (Part 3) — insert-if-absent: adds a `queue` entry only when you have no entry at all, so an automated signal can never demote work you already pulled into `doing`.
-4. **`since` survives a same-state re-stamp** and resets on a state change — mirroring `CardFlag.since`'s documented behavior exactly.
-5. **An empty array is never persisted** — clearing the last entry drops the field, so `agenda?` absent and `agenda: []` never both mean "unclaimed".
+There is no stored "queued" state and no code that writes one. A card appears in the shared queue when **all** of:
 
-## Part 3 — What puts a card on your queue
+1. its board type is `maintenance`, `reactive`, or `deliver`;
+2. it needs a human — its column has `gatesHuman`, **or** it carries a `flag`, **or** its `delegation.state` is `completed`/`failed`, **or** `jira.lastPushError` is set;
+3. nobody holds it — `agenda` is absent;
+4. no agent is mid-flight on it — `delegation.state` is not `working`.
 
-These add a `{ by: <current user>, state: "queue" }` entry. They never set `doing` — the machine can put work *on* your queue; only you declare what you're working on.
+Condition 4 is the distinction the whole feature exists to draw: a card an agent is actively working belongs to the agent, not the pool. Conditions 3 and 4 together are why releasing a card sticks — it returns to the pool because the pool *is* "nobody has it," not because anything was written.
 
-| Trigger | Rationale |
-|---|---|
-| `flag` set to blocked / at-risk / waiting | Someone marked it stuck; it needs a human |
-| `delegation.state` → `completed` or `failed` | The agent handed it back to you |
-| `jira.lastPushError` present | The integration broke and can't self-heal |
-| Card enters a column with `gatesHuman` | The workflow structurally waits on a person |
+## Part 3 — Invariants
 
-A card whose `delegation.state` is `working` gets nothing — it's on the agent's plate, not yours. That distinction is the point of the whole feature.
-
-Stamping is idempotent: a trigger firing against an existing entry for that user is a no-op, so a card that's already in your `doing` is never yanked back to `queue` mid-day.
+1. **The step axis never writes the workflow axis, and vice versa.** Dragging on a team board writes `columnId`. Dragging a team card on Agenda writes `agenda.state`. No helper does both.
+   **Exception, personal-board cards:** they have no workflow axis, so their `columnId` *is* their Agenda lane. Dragging one writes `columnId` and never touches `agenda`. The drag handler branches on `board.type === "personal"`.
+2. **A column change clears `agenda`.** The step ended. Enforced inside the one card-move helper, not at call sites.
+3. **Grab is exclusive and guarded.** Grabbing a card that already has a holder is an error, not an overwrite — two people pulling the same card at the same moment must not silently produce one winner and one confused loser.
+4. **Release restores the pool by deletion.** Releasing removes `agenda` entirely; the card re-enters the shared queue by satisfying Part 2, with nothing left behind.
+5. **`since` resets on a state change and survives a same-state re-stamp** — mirroring `CardFlag.since`.
 
 ## Part 4 — The morning sweep
 
-> "every morning all cards assigned to user would just be thrown back to the queue and user would drag things as what they are actively working on"
+> "every morning all cards assigned to user would just be thrown back to the queue"
 
-Generalizes the existing `sweepPersonalBoard`, which already rolls Todo/Doing into Queue at local midnight under a `sweptDay` idempotence guard.
+`today` reverts to `plate` for that user, across every board. **It does not release the card.** Grabbing is a commitment that outlives the day; picking something for today is a daily declaration that does not. A card you grabbed last week is still yours this morning — it is simply no longer claimed for today until you say so.
 
-```ts
-/** Every agenda entry for `userId` in state "doing" reverts to "queue", across every board.
-    Guarded by user.agendaSweptDay so a double-fire is a no-op. Pure: caller owns load, save, clock. */
-export function sweepUserAgenda(boards: WorkBoard[], userId: string, today: string): boolean;
-```
+Generalizes the existing `sweepPersonalBoard`, which already rolls Todo/Doing into Queue at local midnight under a `sweptDay` guard. Same midnight timer, **cron-only**, preserving the ruling at `swarm/src/server.ts:471`: if the server is down at 00:00 the sweep waits.
 
-- **Cron-only**, preserving the 2026-08-11 ruling recorded at `server.ts:471`: if the server is down at 00:00 the sweep waits for the next one. No lazy on-read sweep.
-- Runs in the same midnight timer that already fires `sweepPersonalBoard`, which continues to run unchanged for the personal board's own cards.
-- `since` is re-stamped on revert, so "how long has this been on my queue" stays honest.
+## Part 5 — Handing work on
 
-The daily wipe is what makes `doing` mean *actively working on today* rather than *touched this once in March*.
+Three distinct actions, previously conflated in one "Not Doing" lane:
 
-## Part 5 — Rendering
+| Intent | Mechanism | Result |
+|---|---|---|
+| "Not mine — someone take it" | **Release** | `agenda` cleared; card returns to the shared queue |
+| "The crew should do this" | **Delegate** (exists) | `delegation` set; card leaves the pool while the agent works, and re-enters it if the agent fails |
+| "This work shouldn't happen" | The team board's **terminal column** (exists) | `ideation/killed`, `maintenance/wont-do` |
 
-**Team board.** Each card renders a holder chip per `agenda[]` entry: avatar/initial, user name, step state. Unclaimed cards render nothing — no empty-state chrome.
+So there is no handoff-to-a-named-person, and none is needed: a released card is visible to everyone in the shared queue, which is how it reaches someone else's plate. This also matters because **there is no roster of people** — `Workspace.members` is nested contexts, not humans, and there is exactly one user record (`{ id: "me" }`). The only other team members that exist are the crew, and delegation is already how work reaches them.
 
-**Agenda tab.** `useBoards()` already fetches every board in one query and `board-aggregate.ts` already supports one tab spanning many boards (`AggCard` carries `boardId`/`workspaceId`; `collectCards` gathers across boards). Changes:
+**Not Doing survives for personal todos only**, where it means "I've decided against this" and there is no team board to express that on.
 
-- `tabsFor` currently gives the personal tab `boardIds: [personal.id]`. Agenda's descriptor becomes **every** board id.
-- New sibling to `collectCards`:
-  ```ts
-  /** Cards where `userId` holds a step entry in `state`, tagged with provenance. */
-  export function collectAgendaCards(boards: WorkBoardT[], userId: string, state: StepState): AggCard[];
-  ```
-- Team cards render a provenance badge — home board + workflow column ("Plan · spec") — which is how the workflow axis stays visible from the Agenda side.
-- **Intra-lane order is two-tier**, because a lane mixes two card kinds with two different ordering stories: personal-board cards first, by their existing `order` (drag-reorderable, unchanged); then team cards, by `since` oldest-first — what's waited on you longest floats to the top of that group. `order` is per-column-per-board and the helpers renumber per board, so it cannot order a cross-board lane; team cards therefore have **no manual reordering** on Agenda.
+**Retired:** the `Escalate to Agenda` routes in `BOARD_ROUTES` (reactive and maintenance `triage` → personal `queue`). They *move* the card onto the personal board, hiding it from the team. Under this design a React/Maintain triage card is already in the shared queue by Part 2; escalation is just grabbing it.
 
-**The personal board's own cards keep their existing five columns** (`queue/todo/doing/done/not-doing`), their existing drag-ordering, and their existing sweep. They are standalone todos with no workflow axis, so they render in the matching Agenda lane by `columnId`. Team-card entries only ever occupy Queue and Doing.
+## Part 6 — Rendering
 
-## Part 6 — Out of scope
+**Team board.** One holder chip per card: the person's name and whether they're on it today. Unheld cards render nothing. Agent-held cards keep the existing delegation badge — one holder line either way, two records underneath.
 
-- No assignment *by* someone else. Entries are self-claimed or auto-queued; there is no "assign to Ana" action in v1.
-- No agent holders. `delegation` already tracks agent work; `agenda[].by` is humans only.
-- No cross-user views ("what is Ana working on") beyond the chips already on the team board.
-- No history of past steps. Entries are cleared on advance, not archived.
+**Agenda tab.** `useBoards()` already fetches every board in one query, and `board-aggregate.ts` already supports one tab spanning many boards (`AggCard` carries `boardId`/`workspaceId`). Changes:
+
+- `tabsFor` currently gives the personal tab `boardIds: [personal.id]`; Agenda's descriptor becomes every board id.
+- Four lanes: **Shared queue · My plate · Today · Done**.
+- Team cards occupy Shared queue / My plate / Today. **Done holds personal todos only** — a team card's "done" is expressed by advancing it on its board, at which point it leaves the Agenda entirely. This is the one asymmetry left and it is explicable on screen.
+- Team cards carry a dashed provenance chip — home board and workflow column ("Deliver · review").
+- Shared queue is not drag-reorderable and its cards are not draggable into Today directly; **grab** is a button on the card, and grabbing lands it in My plate.
+- Lanes sort personal cards first by `order` (drag-reorderable, unchanged), then team cards by `since` oldest-first. `order` is per-column-per-board and renumbered per board, so it cannot order a cross-board lane. The shared queue sorts by how long the card has been waiting — `flag.since` when flagged, else `updatedAt`.
+
+The app already renders intake-lane cards at 85% grayscale / 0.75 opacity, restored on hover, with the comment *"intake cards sit grey until someone picks them up."* Applying that treatment to the shared queue gives the pool its visual distinction for free.
+
+## Part 7 — Out of scope
+
+- Assigning to a named human. Needs a second user record; the passkey/cloud work is the seam where that arrives.
+- Agent holders in `agenda`. Delegation covers it.
+- History of past steps. Entries clear on advance, not archived.
+- Per-workspace scoping of the Agenda. It stays context-invariant: your plate is your plate regardless of the workspace filter. This reverses `tabsFor`'s current "not a function of the dropdown" comment, which must be updated rather than left contradicting the code.
 
 ## Open decisions for Edwin
 
-1. **Workspace scope.** `tabsFor`'s comment calls personal *"context-invariant — the one tab whose content is not a function of the dropdown."* Agenda now draws from workspace-scoped boards. **Recommendation: keep it context-invariant** — your plate is your plate regardless of which workspace you're filtered to. This does reverse the stated rule, so it needs your call.
-2. **Identity.** `users.ts` is single-operator (`resolveCurrentUser`: "no auth in all-local mode") and the default record is `{ id: "me", name: "You" }`. For the chip to read "Edwin", that record's `name` must be set to Edwin. Confirm the chip shows `user.name` rather than a new display-name concept.
-3. **Sweep target.** Confirm the sweep resets `doing → queue` only, and does not clear entries outright. Resetting keeps the card on your plate; clearing would drop it off entirely and rely on the Part 3 triggers to re-add it.
+1. **Release/sign-off** is excluded from the sources on a literal reading of "Maintenance, React and Deliver." One boolean to add if that was an omission rather than a decision.
+2. **Identity.** The default record is `{ id: "me", name: "You" }`; for the chip to read "Edwin" that record's `name` must be set to Edwin. The chip renders `user.name`.
+3. **Exclusive grab** is read from the word "grab." If two people should be able to hold one step (co-writing a spec), `agenda` must be a list from the start — widening it later rewrites every read site.
 
 ## Testing
 
-Swarm (node test runner, pure helpers — no server boot):
+Swarm (node test runner, pure helpers, no server boot):
 
-- `agenda` upsert-by-user: second write for the same user replaces, never appends; `since` resets on state change and survives a same-state re-stamp.
+- `grabCard` sets the holder; grabbing a held card throws.
+- `releaseCard` deletes the field entirely — no empty object left behind.
+- `setStepState` flips plate↔today; `since` resets on change, survives a same-state re-stamp.
 - A column change clears `agenda`; a same-column reorder does not.
-- Empty array is never persisted.
-- Each Part 3 trigger stamps exactly one `queue` entry and is idempotent against an existing `doing` entry.
-- `delegation.state: "working"` stamps nothing.
-- `sweepUserAgenda`: `doing → queue` across several boards; second call same day is a no-op; other users' entries untouched; `agendaSweptDay` persists even when no entry moved.
+- `sharedQueue`: includes a gated unheld card on deliver/reactive/maintenance; excludes one on plan/ideation/release; excludes a held card; excludes one with `delegation.state === "working"`; includes one whose delegation `failed`; includes a flagged card in an ungated column.
+- `sweepUserAgenda`: `today → plate` across boards; never releases; second call same day is a no-op; other users untouched; `agendaSweptDay` persists even when nothing moved.
 
 Control-plane (vitest + jsdom):
 
-- `collectAgendaCards` gathers a user's entries across boards, excludes other users'.
-- Lane ordering: personal cards (by `order`) precede team cards (by `since` oldest-first).
-- Team card on Agenda shows its provenance badge; personal card does not.
-- Team board renders one chip per holder; unclaimed renders none.
-- Dragging a **team** card on Agenda issues a step-state patch and **no** `columnId` patch.
-- Dragging a **personal** card on Agenda issues a `columnId` patch and **no** step-state patch. Both directions of invariant 1 need a test, or the drag handler's branch silently collapses to one path.
+- `collectAgendaCards` gathers the user's cards per lane and excludes other holders'.
+- `sharedQueueCards` derives the pool across boards and respects all four conditions.
+- Lane ordering: personal cards (by `order`) precede team cards (by `since`).
+- Grab issues a grab PATCH and no `columnId` patch.
+- Dragging a **team** card between plate and today patches `agenda.state` only.
+- Dragging a **personal** card patches `columnId` only. Both directions need a test or the drag branch silently collapses.
+- Team board renders one holder chip; unheld renders none.
