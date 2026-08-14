@@ -883,7 +883,9 @@ Add `qk.researchEngine` to `queries/keys.ts`, and `useResearchEngine()` / `useSa
 
 - [ ] **Step 4: Build the group**
 
-`ResearchEngineGroup.tsx` renders a labelled `<select>` over `cliTools.filter(t => t.active && t.kind !== "api")`, plus a model `<select>` populated from the chosen engine's own `models`. On change it calls the mutation; on a response carrying `error` it renders that message in a `wizard__error` paragraph and leaves the selection as it was. With no qualifying engine it renders a `wizard__hint` explaining that no CLI tools are ready and pointing at the CLI Tools group.
+`ResearchEngineGroup.tsx` renders a labelled `<select>` over `cliTools.filter(t => t.active)`, plus a model `<select>` populated from the chosen engine's own `models`.
+
+**Filter on `active` alone — do not add a `kind` check.** `CliToolListing` has no `kind` field (see `api/types.ts:301`: `{ cli, label, models, warmSessions, note?, status, active }`), and it doesn't need one: the route builds its payload as `buildCliToolListings(ENGINES, file)` (`swarm/src/server.ts:2184`), and `ENGINES` excludes `API_ENGINE`, which is declared separately. So `/cli-tools` only ever returns CLI engines. An earlier draft of this brief filtered on `t.kind !== "api"`, which would not have compiled. On change it calls the mutation; on a response carrying `error` it renders that message in a `wizard__error` paragraph and leaves the selection as it was. With no qualifying engine it renders a `wizard__hint` explaining that no CLI tools are ready and pointing at the CLI Tools group.
 
 - [ ] **Step 5: Register it in SettingsPanel**
 
