@@ -17,6 +17,7 @@ import {
   exitsFor,
   findCardByRef,
   findRouteDestination,
+  grabCard,
   hasSourceRef,
   intakeColumnId,
   loadBoards,
@@ -24,10 +25,13 @@ import {
   msUntilNextMidnight,
   normalizeBoard,
   patchCard,
+  releaseCard,
   removeCard,
   resolveExit,
   routeCard,
   saveBoard,
+  setStepState,
+  type StepState,
   sweepPersonalBoard,
   terminalColumnId,
   WORKSPACE_BOARD_TYPES,
@@ -261,6 +265,145 @@ test("flags: unrelated patches (rename, drag) leave an existing flag and its sin
   assert.equal(b.cards[0].flag?.since, since, "a column/order patch (a drag) must not touch the since clock");
   assert.equal(b.cards[0].flag?.kind, "blocked");
   assert.equal(b.cards[0].flag?.reason, "waiting on Edwin");
+});
+
+test("grabCard claims an unheld card; grabbing a held one throws", () => {
+  const b = createBoard("deliver", "ws");
+  const c = addCard(b, { title: "auth", columnId: "review" });
+  grabCard(c, "edwin", "2026-08-13T10:00:00.000Z");
+  assert.deepEqual(c.agenda, {
+    by: "edwin",
+    state: "plate",
+    since: "2026-08-13T10:00:00.000Z",
+    grabbedAt: "2026-08-13T10:00:00.000Z",
+  });
+  assert.throws(() => grabCard(c, "ana", "2026-08-13T10:00:01.000Z"), /already held/);
+});
+
+test("grabbedAt is set once and survives every state flip", () => {
+  const b = createBoard("deliver", "ws");
+  const c = addCard(b, { title: "auth", columnId: "review" });
+  grabCard(c, "edwin", "2026-08-10T10:00:00.000Z");
+  setStepState(c, "edwin", "today", "2026-08-13T09:00:00.000Z", "chasing the flaky suite");
+  setStepState(c, "edwin", "plate", "2026-08-14T00:00:00.000Z");
+  assert.equal(c.agenda?.grabbedAt, "2026-08-10T10:00:00.000Z", "age is measured from the grab");
+  assert.equal(c.agenda?.since, "2026-08-14T00:00:00.000Z", "since tracks the current state");
+});
+
+test("releaseCard deletes the field so the card falls back into the shared queue", () => {
+  const b = createBoard("deliver", "ws");
+  const c = addCard(b, { title: "auth", columnId: "review" });
+  grabCard(c, "edwin", "2026-08-13T10:00:00.000Z");
+  releaseCard(c);
+  assert.equal(c.agenda, undefined, "no empty object may linger");
+});
+
+test("setStepState flips plate<->today; since resets on change, survives a re-stamp", () => {
+  const b = createBoard("deliver", "ws");
+  const c = addCard(b, { title: "auth", columnId: "review" });
+  grabCard(c, "edwin", "2026-08-13T10:00:00.000Z");
+  setStepState(c, "edwin", "plate", "2026-08-13T11:00:00.000Z");
+  assert.equal(c.agenda?.since, "2026-08-13T10:00:00.000Z", "same state keeps its clock");
+  setStepState(c, "edwin", "today", "2026-08-13T12:00:00.000Z", "chasing the flaky suite");
+  assert.equal(c.agenda?.since, "2026-08-13T12:00:00.000Z");
+  assert.throws(
+    () => setStepState(c, "ana", "today", "2026-08-13T12:00:00.000Z", "mine now"),
+    /not held by/,
+  );
+});
+
+test("entering today demands a sentence — the rule lives in the domain, not the UI", () => {
+  const b = createBoard("deliver", "ws");
+  const c = addCard(b, { title: "auth", columnId: "review" });
+  grabCard(c, "edwin", "2026-08-13T10:00:00.000Z");
+  assert.throws(() => setStepState(c, "edwin", "today", "2026-08-13T11:00:00.000Z"), /intent is required/);
+  assert.throws(
+    () => setStepState(c, "edwin", "today", "2026-08-13T11:00:00.000Z", "   "),
+    /intent is required/,
+    "whitespace is not a sentence",
+  );
+  assert.equal(c.agenda?.state, "plate", "a rejected claim must not half-apply");
+  assert.equal(c.intents, undefined);
+});
+
+test("each claim appends one intent; a same-state re-stamp does not append twice", () => {
+  const b = createBoard("deliver", "ws");
+  const c = addCard(b, { title: "auth", columnId: "review" });
+  grabCard(c, "edwin", "2026-08-13T10:00:00.000Z");
+  setStepState(c, "edwin", "today", "2026-08-13T11:00:00.000Z", "chasing the flaky suite");
+  setStepState(c, "edwin", "today", "2026-08-13T12:00:00.000Z", "still on it");
+  assert.equal(c.intents?.length, 1, "already in today — no new claim was made");
+  assert.deepEqual(c.intents?.[0], {
+    at: "2026-08-13T11:00:00.000Z",
+    by: "edwin",
+    kind: "start",
+    text: "chasing the flaky suite",
+  });
+});
+
+test("intents survive the column change that clears the holder", () => {
+  const b = createBoard("deliver", "ws");
+  const c = addCard(b, { title: "auth", columnId: "review" });
+  grabCard(c, "edwin", "2026-08-13T10:00:00.000Z");
+  setStepState(c, "edwin", "today", "2026-08-13T11:00:00.000Z", "chasing the flaky suite");
+  patchCard(b, c.id, { columnId: "verify", order: 0, close: { by: "edwin", text: "it was the 20s ceiling" } });
+  assert.equal(c.agenda, undefined, "the step ended");
+  assert.deepEqual(
+    c.intents?.map((i) => i.kind),
+    ["start", "done"],
+    "the card's story does not end with the step",
+  );
+});
+
+test("patchCard clears the holder on a column change, keeps it on a reorder", () => {
+  const b = createBoard("deliver", "ws");
+  const c = addCard(b, { title: "auth", columnId: "review" });
+  addCard(b, { title: "other", columnId: "review" });
+  grabCard(c, "edwin", "2026-08-13T10:00:00.000Z");
+  patchCard(b, c.id, { order: 1 });
+  assert.ok(c.agenda, "a reorder is the same step");
+  patchCard(b, c.id, { columnId: "verify", order: 0, close: { by: "edwin", text: "reviewed, looks right" } });
+  assert.equal(c.agenda, undefined, "the step ended");
+});
+
+test("a held card cannot advance without a closing comment, and a refusal changes nothing", () => {
+  const b = createBoard("deliver", "ws");
+  const c = addCard(b, { title: "auth", columnId: "review" });
+  grabCard(c, "edwin", "2026-08-13T10:00:00.000Z");
+  assert.throws(() => patchCard(b, c.id, { columnId: "verify", order: 0 }), /closing comment is required/);
+  assert.equal(c.columnId, "review", "no half-applied move");
+  assert.equal(c.agenda?.by, "edwin", "holder intact");
+  assert.equal(c.intents, undefined);
+});
+
+test("closing appends a done entry that survives the holder being cleared", () => {
+  const b = createBoard("deliver", "ws");
+  const c = addCard(b, { title: "auth", columnId: "review" });
+  grabCard(c, "edwin", "2026-08-13T10:00:00.000Z");
+  patchCard(b, c.id, { columnId: "verify", order: 0, close: { by: "edwin", text: "it was the 20s ceiling" } });
+  assert.equal(c.agenda, undefined);
+  assert.equal(c.intents?.length, 1);
+  assert.equal(c.intents?.[0].kind, "done");
+  assert.equal(c.intents?.[0].by, "edwin");
+  assert.equal(c.intents?.[0].text, "it was the 20s ceiling");
+});
+
+test("an UNHELD team card advances freely — the rule is about finishing, not tidying", () => {
+  const b = createBoard("deliver", "ws");
+  const c = addCard(b, { title: "auth", columnId: "review" });
+  patchCard(b, c.id, { columnId: "verify", order: 0 });
+  assert.equal(c.columnId, "verify");
+  assert.equal(c.intents, undefined);
+});
+
+test("a personal todo needs a comment to reach done, but not to reach doing", () => {
+  const b = createBoard("personal");
+  const c = addCard(b, { title: "call the bank", columnId: "todo" });
+  patchCard(b, c.id, { columnId: "doing", order: 0 });
+  assert.equal(c.columnId, "doing");
+  assert.throws(() => patchCard(b, c.id, { columnId: "done", order: 0 }), /closing comment is required/);
+  patchCard(b, c.id, { columnId: "done", order: 0, close: { by: "edwin", text: "rescheduled the transfer" } });
+  assert.equal(c.intents?.[0].kind, "done");
 });
 
 test("save/load round-trip; malformed files land in errors without sinking the rest", async () => {
@@ -547,6 +690,16 @@ test("routeCard moves the card, preserves identity and payload, and writes desti
   assert.deepEqual(out.card.routedFrom, [
     { boardId: "acme-plan", boardType: "plan", columnId: "ready", at: "2026-08-07T10:00:00.000Z" },
   ]);
+});
+
+test("routeCard clears the holder — a routed card must not carry a stale owner", () => {
+  const r = createBoard("reactive", "ws");
+  const m = createBoard("maintenance", "ws");
+  const c = addCard(r, { title: "flaky", columnId: "triage" });
+  grabCard(c, "edwin", "2026-08-13T10:00:00.000Z");
+  const exit = { from: "triage", toType: "maintenance" as const, toColumn: "triage", label: "To maintenance" };
+  const plan = routeCard(r, m, c.id, exit, "2026-08-13T11:00:00.000Z");
+  assert.equal(plan.card.agenda, undefined);
 });
 
 test("routeCard chains across two real hops: delegation, stories, jira, capabilityRef survive and routedFrom records both legs", () => {
