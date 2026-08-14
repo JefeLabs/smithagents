@@ -319,6 +319,39 @@ Then replace `if (fromColumn !== toColumn) renumber(board, fromColumn);` with:
 
 `patchCard` already reads the clock for `card.updatedAt`, so this follows the function's existing convention rather than breaking the purity rule the *other* helpers keep. Assert on the entry's `by`/`kind`/`text` in tests, not its `at`.
 
+- [ ] **Step 5b: Clear the holder in `routeCard` too**
+
+`routeCard` does not go through `patchCard` — it builds `moved` by spreading `...card` onto the destination board, which carries `agenda` across with it. Add `agenda: undefined` to that spread:
+
+```ts
+  const moved: WorkCard = {
+    ...card,
+    columnId: exit.toColumn,
+    order: dest.cards.filter((c) => c.columnId === exit.toColumn).length,
+    updatedAt: now,
+    routedFrom: [...(card.routedFrom ?? []), trace],
+    // A board change is strictly more than a column change, so the same invariant
+    // applies: the step this holder described no longer exists. Routing deliberately
+    // does NOT demand a closing comment — it is a board-to-board handoff with its own
+    // UI, and gating it here would block a route behind a composer that isn't built.
+    agenda: undefined,
+  };
+```
+
+Test it:
+
+```ts
+test("routeCard clears the holder — a routed card must not carry a stale owner", () => {
+  const r = createBoard("reactive", "ws");
+  const m = createBoard("maintenance", "ws");
+  const c = addCard(r, { title: "flaky", columnId: "triage" });
+  grabCard(c, "edwin", "2026-08-13T10:00:00.000Z");
+  const exit = { from: "triage", toType: "maintenance" as const, toColumn: "triage", label: "To maintenance" };
+  const plan = routeCard(r, m, c.id, exit, "2026-08-13T11:00:00.000Z");
+  assert.equal(plan.card.agenda, undefined);
+});
+```
+
 - [ ] **Step 6: Run the tests, then the whole suite**
 
 ```bash
@@ -461,6 +494,70 @@ export function sharedQueue(boards: WorkBoard[]): Array<{ board: WorkBoard; card
 }
 ```
 
+- [ ] **Step 4b: Migrate the personal board to the new lane vocabulary**
+
+The Agenda's lanes and the personal board's columns must share one vocabulary, or every existing personal card matches no lane. Change `BOARD_TEMPLATES.personal` to:
+
+```ts
+  personal: [
+    { id: "plate", name: "My plate" },
+    { id: "today", name: "Today" },
+    { id: "done", name: "Done" },
+    { id: "not-doing", name: "Not Doing" },
+  ],
+```
+
+There is no `queue` column any more — the shared queue is derived, not a lane the board owns. So also **remove `"personal"` from `QUEUE_TYPES`** (work-items.ts:342), or `normalizeBoard` re-adds a `queue` column on every single load and quietly undoes this.
+
+Then migrate persisted boards in `normalizeBoard`, following the precedent already in that function (its `queued` → `queue` rewrite):
+
+```ts
+  if (board.type === "personal") {
+    const RENAMED: Record<string, string> = { queue: "plate", todo: "plate", doing: "today" };
+    if (board.columns.some((c) => RENAMED[c.id])) {
+      for (const card of board.cards) {
+        const to = RENAMED[card.columnId];
+        if (to) card.columnId = to;
+      }
+      // queue and todo both fold into plate, so rebuild the column list from the
+      // template rather than renaming in place — two columns collapsing into one
+      // cannot be expressed as a rename.
+      board.columns = BOARD_TEMPLATES.personal.map((c) => ({ ...c }));
+      renumberAll(board);
+    }
+  }
+```
+
+`renumberAll(board)` re-runs the existing per-column `renumber` for every column id on the board — two columns merging into `plate` leaves duplicate `order` values otherwise. Add it beside `renumber` if it does not exist.
+
+Test it:
+
+```ts
+test("normalizeBoard folds a legacy personal board into plate/today/done", () => {
+  const b = createBoard("personal");
+  b.columns = [
+    { id: "queue", name: "Queue" }, { id: "todo", name: "Todo" },
+    { id: "doing", name: "Doing" }, { id: "done", name: "Done" },
+    { id: "not-doing", name: "Not Doing" },
+  ];
+  b.cards = [
+    { id: "a", title: "q", columnId: "queue", order: 0, createdAt: "x", updatedAt: "x" },
+    { id: "b", title: "t", columnId: "todo", order: 0, createdAt: "x", updatedAt: "x" },
+    { id: "c", title: "d", columnId: "doing", order: 0, createdAt: "x", updatedAt: "x" },
+  ];
+  normalizeBoard(b);
+  assert.deepEqual(b.columns.map((c) => c.id), ["plate", "today", "done", "not-doing"]);
+  assert.deepEqual(b.cards.map((c) => c.columnId), ["plate", "plate", "today"]);
+  assert.deepEqual(b.cards.filter((c) => c.columnId === "plate").map((c) => c.order).sort(), [0, 1]);
+});
+
+test("normalizeBoard no longer forces a queue column onto the personal board", () => {
+  const b = createBoard("personal");
+  normalizeBoard(b);
+  assert.equal(b.columns.some((c) => c.id === "queue"), false);
+});
+```
+
 - [ ] **Step 5: Retire the Escalate-to-Agenda routes**
 
 In `BOARD_ROUTES`, delete the `{ from: "triage", toType: "personal", toColumn: "queue", label: "Escalate to Agenda" }` entry from **both** `reactive` and `maintenance`. Those routes *move* a card onto the personal board, hiding it from the team; a triage card is now already in the shared queue, and escalating is just grabbing it. Update any test asserting those exits.
@@ -553,15 +650,30 @@ export function sweepUserAgenda(boards: WorkBoard[], userId: string, now: string
   for (const board of boards) {
     let changed = false;
     for (const card of board.cards) {
+      // Personal todos have no holder — their columnId IS their lane, so the same
+      // daily reset applies by column. This is what sweepPersonalBoard used to do,
+      // in the new vocabulary; keeping two sweeps would mean two vocabularies.
+      if (board.type === "personal") {
+        if (card.columnId !== "today") continue;
+        card.columnId = "plate";
+        card.updatedAt = now;
+        changed = true;
+        continue;
+      }
       if (card.agenda?.by !== userId || card.agenda.state !== "today") continue;
       setStepState(card, userId, "plate", now);
       changed = true;
     }
-    if (changed) dirty.push(board);
+    if (changed) {
+      if (board.type === "personal") renumber(board, "plate");
+      dirty.push(board);
+    }
   }
   return dirty;
 }
 ```
+
+**Retire `sweepPersonalBoard`.** Delete the function, its export, and its tests. It rolls `todo`/`doing` into `queue` — three columns the personal board no longer has after Task 2's migration — so leaving it in place is dead code that would silently corrupt lanes if ever called. Remove its import and call from `server.ts`'s `scheduleMidnightSweep` (Step 6 below already rewrites that block). `WorkBoard.sweptDay` stays on the type for older board files but is no longer written; note that in its doc comment.
 
 - [ ] **Step 4: Add the per-user stamp**
 
@@ -589,11 +701,6 @@ In `swarm/src/server.ts`, extend `scheduleMidnightSweep`'s `try` block so both s
         const today = localDayStamp(new Date());
         const now = new Date().toISOString();
         const { boards } = await loadBoards(this.workDir());
-        const personal = boards.find((b) => b.type === "personal");
-        if (personal && sweepPersonalBoard(personal, today)) {
-          await saveBoard(this.workDir(), personal);
-          this.app.log.info("Swept Active To-dos leftovers into Queue");
-        }
         const dir = resolve(process.cwd(), ".smith/users");
         const user = resolveCurrentUser(await loadUsersFromDir(dir));
         if (user && user.agendaSweptDay !== today) {
@@ -1118,7 +1225,7 @@ Widen `api.patchCard`'s body type in `api/work.ts` to accept `agenda?: { action:
 
 - [ ] **Step 5: Render four lanes and branch the drag**
 
-The Agenda tab renders **Shared queue · My plate · Today · Done**. Shared queue is fed by `sharedQueueCards(boards)`; the other three by `collectAgendaCards(boards, me.id, laneId)`. Shared-queue cards are not draggable — each carries a **Grab** button calling `useCardAgenda` with `{ action: "grab" }`.
+The Agenda tab renders **five** lanes: **Shared queue · My plate · Today · Done · Not Doing**. Shared queue is fed by `sharedQueueCards(boards)`; the other four by `collectAgendaCards(boards, me.id, laneId)`. Team cards can only ever occupy Shared queue, My plate and Today — `Done` and `Not Doing` are personal-only, because a team card's "done" is advancing it on its own board. Shared-queue cards are not draggable — each carries a **Grab** button calling `useCardAgenda` with `{ action: "grab" }`.
 
 In `handleDragEnd`:
 
