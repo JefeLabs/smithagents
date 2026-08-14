@@ -1,5 +1,7 @@
 # Broker Research Engine — Implementation Plan (Phase 1)
 
+> **EXECUTED AND COMPLETE — 2026-08-14.** All five tasks are implemented, reviewed and pushed. Owner: session `5de6efcf`, worktree `.worktrees/broker-research-engine`, branch `broker-research-engine` at `b287764`, pushed to origin. Ledger with every ruling: `.superpowers/sdd/2026-08-14-broker-research-engine/progress.md`. **Do not re-execute this plan.** The only work left is the post-merge live smoke in Final Verification, which needs services running from the main checkout.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Let the broker run its six tool-free "research" calls on any authenticated CLI engine, chosen in Settings, instead of a hardcoded Anthropic key that is out of credits.
