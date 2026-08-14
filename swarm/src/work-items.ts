@@ -93,7 +93,9 @@ export interface WorkBoard {
   terminal?: { columnId?: string; effects: TerminalEffect[] };
   /** Present on every workspace board; absent only on the single personal board. */
   workspaceId?: string;
-  /** Local YYYY-MM-DD of the last midnight sweep. Personal board only. */
+  /** Local YYYY-MM-DD of the last midnight sweep. Personal board only. Legacy: retired by
+      the step-axis sweep (sweepUserAgenda, which stamps User.agendaSweptDay instead) —
+      kept on the type so older board files still parse, but no longer written. */
   sweptDay?: string;
 }
 
@@ -432,28 +434,40 @@ export function msUntilNextMidnight(now: Date): number {
 }
 
 /**
- * Day rollover for Active To-dos: everything still in Todo or Doing joins the
- * end of Queue — Todo's cards first, then Doing's, relative order preserved.
- * Guarded by sweptDay so a double-fire is a no-op; a stamp-only change still
- * reports dirty because the stamp must persist. Pure: the caller owns load,
- * save, and the clock.
+ * Day rollover for the step axis: everything this user claimed for today reverts to
+ * their plate, so each morning starts from one honest list and they re-declare what
+ * they are actually working on.
+ *
+ * It never RELEASES: grabbing is a commitment that outlives the day, picking something
+ * for today is not. Pure — the caller owns load, save, the clock, and the
+ * agendaSweptDay stamp, which lives on the user because the sweep is per-user.
+ * Returns the boards that changed.
  */
-export function sweepPersonalBoard(board: WorkBoard, today: string): boolean {
-  if (board.type !== "personal" || board.sweptDay === today) return false;
-  if (!board.columns.some((c) => c.id === "queue")) return false;
-  board.sweptDay = today;
-  const rank = (c: WorkCard) => (c.columnId === "todo" ? 0 : 1);
-  const leftovers = board.cards
-    .filter((c) => c.columnId === "todo" || c.columnId === "doing")
-    .sort((a, b) => rank(a) - rank(b) || a.order - b.order);
-  const now = new Date().toISOString();
-  let order = board.cards.filter((c) => c.columnId === "queue").length;
-  for (const c of leftovers) {
-    c.columnId = "queue";
-    c.order = order++;
-    c.updatedAt = now;
+export function sweepUserAgenda(boards: WorkBoard[], userId: string, now: string): WorkBoard[] {
+  const dirty: WorkBoard[] = [];
+  for (const board of boards) {
+    let changed = false;
+    for (const card of board.cards) {
+      // Personal todos have no holder — their columnId IS their lane, so the same
+      // daily reset applies by column. This is what sweepPersonalBoard used to do,
+      // in the new vocabulary; keeping two sweeps would mean two vocabularies.
+      if (board.type === "personal") {
+        if (card.columnId !== "today") continue;
+        card.columnId = "plate";
+        card.updatedAt = now;
+        changed = true;
+        continue;
+      }
+      if (card.agenda?.by !== userId || card.agenda.state !== "today") continue;
+      setStepState(card, userId, "plate", now);
+      changed = true;
+    }
+    if (changed) {
+      if (board.type === "personal") renumber(board, "plate");
+      dirty.push(board);
+    }
   }
-  return true;
+  return dirty;
 }
 
 export async function loadBoards(

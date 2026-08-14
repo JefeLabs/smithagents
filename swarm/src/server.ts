@@ -162,7 +162,7 @@ import {
   resolveExit,
   routeCard,
   saveBoard,
-  sweepPersonalBoard,
+  sweepUserAgenda,
   type WorkBoard,
 } from "./work-items.js";
 import {
@@ -467,9 +467,9 @@ export class OrchestratorServer {
       }
     }, 15_000);
 
-    // Day rollover for the Active To-dos board. Cron-only by design (spec:
-    // 2026-08-11 ruling) — if the server is down at 00:00 the sweep waits
-    // for the next midnight; there is no boot-time catch-up.
+    // Day rollover for the step axis: today reverts to plate. Cron-only by
+    // design (spec: 2026-08-11 ruling) — if the server is down at 00:00 the
+    // sweep waits for the next midnight; there is no boot-time catch-up.
     this.scheduleMidnightSweep();
 
     // Belt-and-braces on top of sweepEncryptUsers' own per-file skip-and-
@@ -517,11 +517,17 @@ export class OrchestratorServer {
   private scheduleMidnightSweep(): void {
     this.sweepTimer = setTimeout(async () => {
       try {
+        const today = localDayStamp(new Date());
+        const now = new Date().toISOString();
         const { boards } = await loadBoards(this.workDir());
-        const personal = boards.find((b) => b.type === "personal");
-        if (personal && sweepPersonalBoard(personal, localDayStamp(new Date()))) {
-          await saveBoard(this.workDir(), personal);
-          this.app.log.info("Swept Active To-dos leftovers into Queue");
+        const dir = resolve(process.cwd(), ".smith/users");
+        const user = resolveCurrentUser(await loadUsersFromDir(dir));
+        if (user && user.agendaSweptDay !== today) {
+          for (const board of sweepUserAgenda(boards, user.id, now)) {
+            await saveBoard(this.workDir(), board);
+          }
+          await saveUser(dir, { ...user, agendaSweptDay: today });
+          this.app.log.info(`Swept agenda for ${user.id}`);
         }
       } catch (err) {
         this.app.log.warn(`Midnight sweep failed: ${(err as Error).message}`);

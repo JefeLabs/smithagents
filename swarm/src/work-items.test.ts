@@ -32,7 +32,7 @@ import {
   saveBoard,
   setStepState,
   sharedQueue,
-  sweepPersonalBoard,
+  sweepUserAgenda,
   terminalColumnId,
   WORKSPACE_BOARD_TYPES,
   type WorkBoard,
@@ -567,39 +567,34 @@ test("loadBoards migrates a legacy personal file in memory only", async () => {
   assert.match(await readFile(join(dir, "personal.json"), "utf8"), /"Personal"/);
 });
 
-test("sweepPersonalBoard moves Todo then Doing to the end of Queue, preserving order", () => {
-  const b = createBoard("personal");
-  const queued = addCard(b, { title: "queued", columnId: "queue" });
-  const t1 = addCard(b, { title: "t1", columnId: "todo" });
-  const t2 = addCard(b, { title: "t2", columnId: "todo" });
-  const d1 = addCard(b, { title: "d1", columnId: "doing" });
-  const done = addCard(b, { title: "done", columnId: "done" });
-  assert.equal(sweepPersonalBoard(b, "2026-08-11"), true);
-  const queue = b.cards.filter((c) => c.columnId === "queue").sort((x, y) => x.order - y.order);
-  assert.deepEqual(
-    queue.map((c) => c.id),
-    [queued.id, t1.id, t2.id, d1.id],
-  );
-  assert.deepEqual(
-    queue.map((c) => c.order),
-    [0, 1, 2, 3],
-  );
-  assert.equal(done.columnId, "done");
-  assert.equal(b.sweptDay, "2026-08-11");
-});
+test("sweepUserAgenda reverts today to plate without releasing the card", () => {
+  const d = createBoard("deliver", "ws");
+  const r = createBoard("reactive", "ws");
+  const mine = addCard(d, { title: "mine", columnId: "review" });
+  const alsoMine = addCard(r, { title: "also mine", columnId: "triage" });
+  const hers = addCard(d, { title: "hers", columnId: "review" });
+  grabCard(mine, "edwin", "2026-08-12T09:00:00.000Z");
+  setStepState(mine, "edwin", "today", "2026-08-12T09:00:00.000Z", "working it");
+  grabCard(alsoMine, "edwin", "2026-08-12T09:00:00.000Z");
+  grabCard(hers, "ana", "2026-08-12T09:00:00.000Z");
+  setStepState(hers, "ana", "today", "2026-08-12T09:00:00.000Z", "working it");
 
-test("sweepPersonalBoard is idempotent per day; a stamp-only day still reports dirty", () => {
-  const b = createBoard("personal");
-  assert.equal(sweepPersonalBoard(b, "2026-08-11"), true); // nothing to move, stamp must persist
-  assert.equal(sweepPersonalBoard(b, "2026-08-11"), false); // same day: no-op
-  assert.equal(sweepPersonalBoard(b, "2026-08-12"), true); // next day stamps again
-});
+  const dirty = sweepUserAgenda([d, r], "edwin", "2026-08-13T00:00:00.000Z");
 
-test("sweepPersonalBoard never touches workspace boards", () => {
-  const ws = createBoard("deliver", "acme");
-  addCard(ws, { title: "x", columnId: "in-progress" });
-  assert.equal(sweepPersonalBoard(ws, "2026-08-11"), false);
-  assert.equal(ws.sweptDay, undefined);
+  assert.deepEqual(
+    dirty.map((b) => b.id),
+    [d.id],
+  );
+  assert.equal(mine.agenda?.state, "plate");
+  assert.equal(mine.agenda?.by, "edwin", "grabbing outlives the day");
+  assert.equal(mine.agenda?.since, "2026-08-13T00:00:00.000Z");
+  assert.equal(
+    mine.agenda?.grabbedAt,
+    "2026-08-12T09:00:00.000Z",
+    "age survives the sweep — a card worked yesterday must not look brand new today",
+  );
+  assert.equal(alsoMine.agenda?.since, "2026-08-12T09:00:00.000Z", "already plate, untouched");
+  assert.equal(hers.agenda?.state, "today", "another user's day is not swept");
 });
 
 test("localDayStamp and msUntilNextMidnight do local-midnight math", () => {
