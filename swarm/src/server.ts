@@ -2688,7 +2688,7 @@ export class OrchestratorServer {
         // resolved server-side from the current user — a client-supplied
         // `by` must never be trusted.
         const patchBody = req.body as Parameters<typeof patchCard>[2];
-        if (patchBody.close) patchBody.close = { ...patchBody.close, by: user?.id ?? "" };
+        patchBody.close = resolveCloseBy(patchBody.close, user?.id);
         const closeIntentBefore = targetCard?.intents?.at(-1);
         const card = patchCard(board, req.params.cardId, patchBody);
         if (user) await pushIntentComment(board, card, user, closeIntentBefore);
@@ -3537,6 +3537,22 @@ export function buildCardAgendaPatch(
     return;
   }
   setStepState(card, userId, patch.state, now, patch.intent);
+}
+
+/**
+ * `close.by` is a request-scoped fact — the current user, not whatever the client sent —
+ * same rule as `buildCardAgendaPatch`'s userId, extracted so it gets its own test rather
+ * than living as an inline two-liner verified only by reading it. A full stomp, never a
+ * fallback: `close.by ?? userId` would let a client-supplied value survive whenever the
+ * client bothered to set one, which is exactly the trust-the-client bug this closes. No
+ * current user resolved is pinned to an empty `by`, not left incidental.
+ */
+export function resolveCloseBy(
+  close: { by: string; text: string } | undefined,
+  userId: string | undefined,
+): { by: string; text: string } | undefined {
+  if (!close) return undefined;
+  return { ...close, by: userId ?? "" };
 }
 
 type CardIntent = NonNullable<WorkCard["intents"]>[number];

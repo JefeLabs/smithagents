@@ -22,6 +22,7 @@ import {
   gitInitRequestedRepos,
   redactConnector,
   resolveAtlassianConnector,
+  resolveCloseBy,
   resolveConnector,
   resolveTaskRuntime,
   resolveVoiceKeys,
@@ -484,6 +485,24 @@ test("buildCardAgendaPatch refuses to flip a card held by someone else", () => {
   const c = addCard(b, { title: "auth", columnId: "review" });
   buildCardAgendaPatch(c, "ana", { action: "grab" }, "2026-08-13T10:00:00.000Z");
   assert.throws(() => buildCardAgendaPatch(c, "edwin", { state: "today" }, "2026-08-13T11:00:00.000Z"), /not held by/);
+});
+
+test("resolveCloseBy overwrites a client-supplied by, never falls back to it", () => {
+  // A softened `close.by ?? userId` would keep "attacker" here, since ?? only
+  // falls through on null/undefined, not on a truthy client-supplied string.
+  // Asserting "edwin" specifically (not just "not attacker") is what pins
+  // this to a stomp instead of a fallback.
+  const result = resolveCloseBy({ by: "attacker", text: "done" }, "edwin");
+  assert.equal(result?.by, "edwin");
+});
+
+test("resolveCloseBy: no current user resolved falls back to an empty by, not undefined", () => {
+  const result = resolveCloseBy({ by: "attacker", text: "done" }, undefined);
+  assert.equal(result?.by, "");
+});
+
+test("resolveCloseBy: no close in the patch is a no-op", () => {
+  assert.equal(resolveCloseBy(undefined, "edwin"), undefined);
 });
 
 test("resolveVoiceKeys: a still-encrypted apiKey (lost/rotated master key) resolves null, not the ciphertext", () => {
