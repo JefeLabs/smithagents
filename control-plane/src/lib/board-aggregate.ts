@@ -107,6 +107,60 @@ export function collectCards(boards: WorkBoardT[], columnId: string): AggCard[] 
   );
 }
 
+export type StepStateT = "plate" | "today";
+
+const STEP_LANES: string[] = ["plate", "today"];
+const SOURCE_TYPES: BoardTypeT[] = ["maintenance", "reactive", "deliver"];
+
+/** Mirrors the swarm's `sharedQueue`: needs a human, nobody holds it, no agent mid-flight. */
+export function sharedQueueCards(boards: WorkBoardT[]): AggCard[] {
+  const out: AggCard[] = [];
+  for (const b of boards) {
+    if (!SOURCE_TYPES.includes(b.type)) continue;
+    for (const c of b.cards) {
+      if (c.agenda || c.delegation?.state === "working") continue;
+      const gated = b.columns.find((col) => col.id === c.columnId)?.gatesHuman === true;
+      const handedBack = c.delegation?.state === "completed" || c.delegation?.state === "failed";
+      if (gated || handedBack || c.flag || c.jira?.lastPushError) {
+        out.push({ ...c, boardId: b.id, workspaceId: b.workspaceId });
+      }
+    }
+  }
+  return out.sort((a, b) => (a.flag?.since ?? a.updatedAt ?? "").localeCompare(b.flag?.since ?? b.updatedAt ?? ""));
+}
+
+/**
+ * One Agenda lane. Two card kinds share it and order differently, deliberately:
+ * personal cards have no workflow axis, so their columnId IS the lane and their drag
+ * `order` still means something — they come first. Team cards are matched on the
+ * holder's step state and ordered by `since`, oldest first, because `order` is
+ * per-column-per-board and cannot order a lane that spans boards.
+ *
+ * Team cards order by `grabbedAt`, NOT `since`: the morning sweep re-stamps `since` on
+ * everything it reverts, so sorting by it would reshuffle the lane every midnight and
+ * make the work you touched yesterday look newest. `grabbedAt` is the stable age.
+ */
+export function collectAgendaCards(boards: WorkBoardT[], userId: string, laneId: string): AggCard[] {
+  const personal: AggCard[] = [];
+  const team: Array<{ card: AggCard; grabbedAt: string }> = [];
+  for (const b of boards) {
+    for (const c of b.cards) {
+      const tagged: AggCard = { ...c, boardId: b.id, workspaceId: b.workspaceId };
+      if (b.type === "personal") {
+        if (c.columnId === laneId) personal.push(tagged);
+        continue;
+      }
+      if (!STEP_LANES.includes(laneId)) continue;
+      if (c.agenda?.by === userId && c.agenda.state === laneId) {
+        team.push({ card: tagged, grabbedAt: c.agenda.grabbedAt });
+      }
+    }
+  }
+  personal.sort((a, b) => a.order - b.order);
+  team.sort((a, b) => a.grabbedAt.localeCompare(b.grabbedAt));
+  return [...personal, ...team.map((t) => t.card)];
+}
+
 export function clusterByWorkspace(cards: AggCard[], clustered: boolean): Cluster[] {
   const byOrder = (a: AggCard, b: AggCard) => a.order - b.order;
   if (!clustered) return [{ label: null, cards: [...cards].sort(byOrder) }];

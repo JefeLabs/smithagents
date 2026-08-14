@@ -33,6 +33,7 @@ export interface WorkColumn {
   id: string;
   name: string;
   jiraStatus?: string;
+  gatesHuman?: boolean;
 }
 export interface WorkCardT {
   id: string;
@@ -49,6 +50,9 @@ export interface WorkCardT {
   /** Present when this card tracks a capability slice — its checklist becomes toggle-only. */
   capabilityRef?: { capabilityId: string; sliceId: string };
   flag?: { kind: "blocked" | "at-risk" | "waiting"; reason?: string; since: string };
+  /** Who holds this card's current step — orthogonal to columnId. */
+  agenda?: { by: string; state: "plate" | "today"; since: string; grabbedAt: string };
+  intents?: Array<{ at: string; by: string; kind: "start" | "done"; text: string }>;
   routedFrom?: Array<{ boardId: string; boardType: string; columnId: string; at: string }>;
   /** Set when this card was carded from a bound queue source. */
   sourceRef?: { sourceId: string; itemKey: string };

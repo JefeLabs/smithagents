@@ -5,8 +5,10 @@ import {
   addableTypes,
   BOARD_TYPE_ORDER_UI,
   clusterByWorkspace,
+  collectAgendaCards,
   collectCards,
   exitsForUI,
+  sharedQueueCards,
   tabsFor,
   WORKSPACE_BOARD_TYPES_UI,
 } from "./board-aggregate";
@@ -119,5 +121,119 @@ describe("exitsForUI", () => {
     expect(exitsForUI("maintenance", "triage").map((e) => e.toColumn)).toEqual(["queue"]);
     expect(exitsForUI("reactive", "triage").map((e) => e.toType)).toEqual(["maintenance", "ideation", "personal"]);
     expect(exitsForUI("maintenance", "doing")).toEqual([]);
+  });
+});
+
+describe("agenda lanes", () => {
+  const personal = {
+    id: "personal",
+    name: "Agenda",
+    type: "personal" as const,
+    columns: [{ id: "plate", name: "My plate" }],
+    cards: [
+      { id: "p1", title: "call bank", columnId: "plate", order: 1 },
+      { id: "p0", title: "pay invoice", columnId: "plate", order: 0 },
+    ],
+  };
+  const deliver = {
+    id: "ws-deliver",
+    name: "Deliver",
+    type: "deliver" as const,
+    workspaceId: "ws",
+    columns: [{ id: "review", name: "Review", gatesHuman: true }],
+    cards: [
+      { id: "pool", title: "unheld", columnId: "review", order: 0 },
+      {
+        id: "t-old",
+        title: "older",
+        columnId: "review",
+        order: 1,
+        agenda: {
+          by: "edwin",
+          state: "plate" as const,
+          since: "2026-08-13T08:00:00.000Z",
+          grabbedAt: "2026-08-13T08:00:00.000Z",
+        },
+      },
+      {
+        id: "t-new",
+        title: "newer",
+        columnId: "review",
+        order: 2,
+        agenda: {
+          by: "edwin",
+          state: "plate" as const,
+          since: "2026-08-13T12:00:00.000Z",
+          grabbedAt: "2026-08-13T12:00:00.000Z",
+        },
+      },
+      {
+        id: "t-hers",
+        title: "ana's",
+        columnId: "review",
+        order: 3,
+        agenda: {
+          by: "ana",
+          state: "plate" as const,
+          since: "2026-08-13T08:00:00.000Z",
+          grabbedAt: "2026-08-13T08:00:00.000Z",
+        },
+      },
+    ],
+  };
+
+  it("pools only unheld cards from source boards", () => {
+    expect(sharedQueueCards([personal, deliver]).map((c) => c.id)).toEqual(["pool"]);
+  });
+
+  it("puts personal cards first by order, then team cards by grabbedAt", () => {
+    expect(collectAgendaCards([personal, deliver], "edwin", "plate").map((c) => c.id)).toEqual([
+      "p0",
+      "p1",
+      "t-old",
+      "t-new",
+    ]);
+  });
+
+  it("orders by grabbedAt, not since — a swept card must not jump to the front", () => {
+    const swept = {
+      ...deliver,
+      cards: [
+        {
+          id: "held-longest",
+          title: "held longest",
+          columnId: "review",
+          order: 0,
+          agenda: {
+            by: "edwin",
+            state: "plate" as const,
+            since: "2026-08-14T00:00:00.000Z", // re-stamped by this morning's sweep
+            grabbedAt: "2026-08-01T09:00:00.000Z",
+          },
+        },
+        {
+          id: "grabbed-today",
+          title: "grabbed today",
+          columnId: "review",
+          order: 1,
+          agenda: {
+            by: "edwin",
+            state: "plate" as const,
+            since: "2026-08-13T09:00:00.000Z",
+            grabbedAt: "2026-08-13T09:00:00.000Z",
+          },
+        },
+      ],
+    };
+    expect(collectAgendaCards([swept], "edwin", "plate").map((c) => c.id)).toEqual(["held-longest", "grabbed-today"]);
+  });
+
+  it("excludes other holders", () => {
+    expect(collectAgendaCards([personal, deliver], "edwin", "plate").map((c) => c.id)).not.toContain("t-hers");
+  });
+
+  it("never matches team cards in a lane that is not a step state", () => {
+    const withDone = { ...personal, cards: [{ id: "p-done", title: "done", columnId: "done", order: 0 }] };
+    expect(collectAgendaCards([withDone, deliver], "edwin", "done").map((c) => c.id)).toEqual(["p-done"]);
   });
 });
