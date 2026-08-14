@@ -1279,6 +1279,30 @@ test("research: GET and PUT /me/research-engine are proxied when the research de
   }
 });
 
+test("research: clearing to null answers instead of hanging", async () => {
+  // A successful clear resolves to literal `null` — that is what "no engine
+  // set" looks like on the wire. Reading `.error` off it throws inside the
+  // .then, `void` swallows the rejection, and the response is never written:
+  // the client hangs forever rather than failing. Found by a live smoke, not
+  // by any unit test, because every other fixture resolves to an object.
+  const channel = channelWith({
+    research: { get: async () => null, save: async () => null },
+  });
+  const port = await channel.start(0);
+  try {
+    const put = await fetch(`http://127.0.0.1:${port}/me/research-engine`, {
+      method: "PUT",
+      headers: { Origin: "http://localhost:1420", "content-type": "application/json" },
+      body: JSON.stringify(null),
+      signal: AbortSignal.timeout(5000),
+    });
+    assert.equal(put.status, 200);
+    assert.equal(await put.json(), null);
+  } finally {
+    await channel.stop();
+  }
+});
+
 test("voice: /me/voice/keys is NOT proxied on 7790 — raw keys never reach the browser surface", async () => {
   const channel = channelWith({ voice: voiceDep });
   const port = await channel.start(0);

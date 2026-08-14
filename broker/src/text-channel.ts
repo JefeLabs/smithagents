@@ -1085,7 +1085,15 @@ export class TextChannel {
             } catch {
               return credJson(400, { error: "body must be JSON" });
             }
-            void research.save(parsed).then((r) => credJson((r as { error?: string }).error ? 400 : 200, r), credFail);
+            // `?.` is load-bearing: a successful CLEAR returns literal `null`
+            // (that is what "no engine set" looks like on the wire), and a bare
+            // `.error` on it throws a TypeError inside this .then — which `void`
+            // swallows, so no response is ever written and the client hangs
+            // forever rather than failing. Voice's PUT never hits this because
+            // it always resolves to an object.
+            void research
+              .save(parsed)
+              .then((r) => credJson((r as { error?: string } | null)?.error ? 400 : 200, r), credFail);
           });
           return;
         }
