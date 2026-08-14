@@ -1457,6 +1457,12 @@ button.logo {
   flex-direction: column;
   gap: 8px;
 }
+/* Rows disclosed under a parent control (Voice Mode's STT/TTS pickers): indented
+   so they read as children of the switch above them. */
+.settings-panel__suboptions {
+  margin-top: 12px;
+  margin-left: 26px;
+}
 .settings-option {
   display: flex;
   gap: 8px;
@@ -1637,6 +1643,12 @@ button.logo {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+/* Title row with a trailing control (Voice Mode's switch): row, not column. */
+.connector-card__head--row {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
 }
 .connector-card__head b {
   font-size: 14px;

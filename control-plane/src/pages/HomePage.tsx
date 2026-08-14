@@ -128,13 +128,26 @@ export function HomePage() {
   const toggleMic = useAudioStore((s) => s.toggleMic);
   const toggleSound = useAudioStore((s) => s.toggleSound);
 
+  // Voice Mode (Settings → Voice). Only a CONFIRMED record gates — while the
+  // prefs are still loading the app behaves as voice-on, so a boot-time gap
+  // never mutes an enabled user or kills their mic (same pattern the old
+  // hide-inactive flag used for the mic hero).
+  const { data: voicePrefs } = useVoiceSettings();
+  const voiceEnabled = voicePrefs ? voicePrefs.enabled : true;
+  useEffect(() => {
+    // The Settings toggle hides the mic buttons; this is the matching state
+    // settle — a mic left hot when Voice Mode goes off would keep streaming
+    // with no visible control to stop it.
+    if (!voiceEnabled && micLive) toggleMic();
+  }, [voiceEnabled, micLive, toggleMic]);
+
   const { theme, setTheme } = useTheme();
   // Both mounted here, at app scope, and deliberately not below the router:
   // usePushToTalk holds a live MediaStream in refs (navigating with a hot mic
   // would orphan it), and useSpokenReplies must keep voicing broker replies on
   // every stage, not only /voice. Each reads its own data and publishes what
   // routes need through audioStore, so neither returns anything used here.
-  useSpokenReplies();
+  useSpokenReplies({ enabled: voiceEnabled });
   usePushToTalk({
     begin: () => micControl("mic-start"),
     audio: micAudio,
@@ -210,11 +223,8 @@ export function HomePage() {
   const { data: docs = NO_DOCS } = useDocuments();
   const { data: blueprints = NO_BLUEPRINTS } = useBlueprints();
   const { voice } = useVoiceStatus();
-  const { data: voicePrefs } = useVoiceSettings();
   const voiceNotice = useUiStore((s) => s.voiceNotice);
   const showVoiceBlockedNotice = useUiStore((s) => s.showVoiceBlockedNotice);
-  // Hide the mic hero only on a CONFIRMED no-STT broker the user asked to hide.
-  const hideMic = Boolean(voicePrefs?.hideInactive) && !voice.stt;
   // The one view-dependent override (spec v5): arriving on the dashboards
   // LAUNCHER mid-thread keeps the conversation beside the stage instead of
   // burying it under the ask screen's center box. Presented dashboards are
@@ -410,7 +420,7 @@ export function HomePage() {
             onSoundToggle={toggleSound}
             sttEnabled={voice.stt}
             onVoiceBlocked={showVoiceBlockedNotice}
-            showMicHero={!hideMic}
+            voiceEnabled={voiceEnabled}
             voiceNotice={voiceNotice}
             onPolish={api.polishDraft}
             onPickKind={makePickKind(navigate, qc, blueprints)}
@@ -430,7 +440,7 @@ export function HomePage() {
       }
       overlays={
         <>
-          {audioBlocked && soundOn && (
+          {audioBlocked && soundOn && voiceEnabled && (
             <div className="audio-blocked-hint">audio is blocked — click anywhere to enable sound</div>
           )}
           <ConfirmSheet

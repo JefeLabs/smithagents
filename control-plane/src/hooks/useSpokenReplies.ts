@@ -61,7 +61,13 @@ const NO_ROSTER: RosterAgent[] = [];
  * queue overlaps utterances with different voices). The consumed-message
  * pointer advances even while muted, so unmuting never replays a backlog.
  */
-export function useSpokenReplies() {
+export function useSpokenReplies(opts?: { enabled?: boolean }) {
+  // Voice Mode (Settings → Voice). Gated here rather than by forcing the store's
+  // soundOn off: that flag persists as the user's mute preference and must
+  // survive Voice Mode round-trips untouched.
+  const enabled = opts?.enabled ?? true;
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
   const { data: messages = NO_MESSAGES } = useTranscript();
   const { data: rosterFrame } = useRoster();
   const roster = rosterFrame?.agents ?? NO_ROSTER;
@@ -161,8 +167,9 @@ export function useSpokenReplies() {
   const playAudioFrame = async (frame: AudioFrame) => {
     // Read through, never off a captured render value: frames arrive from a
     // socket subscription registered once, so a closed-over `soundOn` would be
-    // whatever it was the moment this hook first mounted.
-    if (!useAudioStore.getState().soundOn) return;
+    // whatever it was the moment this hook first mounted. Same for `enabled`,
+    // hence the ref.
+    if (!enabledRef.current || !useAudioStore.getState().soundOn) return;
     ctx.current ??= new AudioContext();
     const audioCtx = ctx.current;
     if (audioCtx.state !== "running") {
@@ -209,7 +216,7 @@ export function useSpokenReplies() {
     for (const m of messages) {
       if (m.id <= lastConsumed.current) continue;
       lastConsumed.current = m.id;
-      if (!webSpeechEnabled || !soundOn || m.role !== "broker" || !("speechSynthesis" in window)) continue;
+      if (!enabled || !webSpeechEnabled || !soundOn || m.role !== "broker" || !("speechSynthesis" in window)) continue;
       const parsed = SPEAKER_RE.exec(m.text);
       const speaker = parsed?.[1];
       const profile = speaker ? profiles.current.get(speaker) : undefined;
@@ -221,7 +228,7 @@ export function useSpokenReplies() {
       speechQueue.current.push({ utterance, speaker });
     }
     pumpSpeech();
-  }, [messages, soundOn, webSpeechEnabled]);
+  }, [messages, soundOn, webSpeechEnabled, enabled]);
 
   /**
    * Muting silences what is already in flight, not just what comes next.

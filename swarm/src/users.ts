@@ -18,6 +18,9 @@ export interface ConnectorInstance {
 export interface VoiceSettings {
   stt?: { instanceId: string };
   tts?: { instanceId: string };
+  /** Voice Mode master switch — may only be true while BOTH slots are assigned. */
+  enabled?: boolean;
+  /** Legacy pre-Voice-Mode field; upgraded to `enabled` on load, never written back. */
   hideInactive?: boolean;
 }
 
@@ -71,13 +74,29 @@ function upgradeLegacyConnectors(raw: User & LegacyUserFields): User {
   return connectors.length ? { ...rest, connectors } : rest;
 }
 
+/**
+ * Pre-Voice-Mode files carry `hideInactive` and no `enabled`. Same lazy-migration
+ * contract as upgradeLegacyConnectors: upgraded in memory on every load, written
+ * back in the new shape only when the user is next saved. `enabled` derives to
+ * true only when both slots were assigned — a working voice setup keeps working,
+ * everyone else starts off. A record that already has `enabled` is trusted as-is
+ * (an explicit "off" with both slots set must survive reloads).
+ */
+function upgradeLegacyVoice(user: User): User {
+  const voice = user.voice;
+  if (!voice) return user;
+  const { hideInactive: _legacy, ...rest } = voice;
+  if (voice.enabled !== undefined) return { ...user, voice: rest };
+  return { ...user, voice: { ...rest, enabled: Boolean(rest.stt && rest.tts) } };
+}
+
 function assertUser(file: string, v: unknown): User {
   const o = v as Partial<User> & LegacyUserFields;
   const ok = o && typeof o.id === "string" && typeof o.name === "string";
   if (!ok) {
     throw new Error(`Invalid user file ${file}: requires id and name`);
   }
-  return upgradeLegacyConnectors(o as User & LegacyUserFields);
+  return upgradeLegacyVoice(upgradeLegacyConnectors(o as User & LegacyUserFields));
 }
 
 /** Which of this instance's field keys are secrets, per the vendor registry. Unknown vendor → none. */

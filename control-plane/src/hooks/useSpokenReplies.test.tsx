@@ -92,13 +92,13 @@ const startedSources = () => FakeAudioContext.instances.flatMap((c) => c.sources
 const blocked = () => useAudioStore.getState().audioBlocked;
 
 /** Renders the hook over a QueryClient the caller can seed with pushed-query data. */
-function renderSpokenReplies(seed?: (c: QueryClient) => void) {
+function renderSpokenReplies(seed?: (c: QueryClient) => void, opts?: { enabled?: boolean }) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   seed?.(client);
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
   );
-  return { client, ...renderHook(() => useSpokenReplies(), { wrapper }) };
+  return { client, ...renderHook(() => useSpokenReplies(opts), { wrapper }) };
 }
 
 beforeEach(() => {
@@ -201,6 +201,19 @@ describe("useSpokenReplies — broker audio frames", () => {
     });
     expect(startedSources()).toBe(0);
   });
+
+  it("Voice Mode off drops broker audio even with sound on (the toggle is hidden, not the gate)", async () => {
+    FakeAudioContext.gestureHappened = true;
+    const { client } = renderSpokenReplies(undefined, { enabled: false });
+    useSocketStore.getState().connect(client);
+
+    await act(async () => {
+      FakeSocket.last?.onmessage?.({ data: JSON.stringify({ type: "audio", ...FRAME }) });
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+
+    expect(startedSources()).toBe(0);
+  });
 });
 
 describe("useSpokenReplies — the Web Speech fallback", () => {
@@ -236,6 +249,17 @@ describe("useSpokenReplies — the Web Speech fallback", () => {
     });
 
     expect(speak).toHaveBeenCalledTimes(1);
+  });
+
+  it("Voice Mode off silences the fallback too", async () => {
+    const { client } = renderSpokenReplies(transcript, { enabled: false });
+    useSocketStore.getState().connect(client);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+
+    expect(speak).not.toHaveBeenCalled();
   });
 
   it("stays silent once the broker's config frame says it produces audio itself", async () => {

@@ -46,8 +46,10 @@ export interface ChatDockProps {
   onSoundToggle: () => void;
   sttEnabled?: boolean;
   onVoiceBlocked?: () => void;
-  /** The `/` empty-hero MicHero; false hides it AND drops the composer's mic buttons. */
-  showMicHero?: boolean;
+  /** Voice Mode (Settings → Voice). false strips every voice affordance in every
+   * variant — MicHero, hold-to-talk, always-listening, speaker — and swaps the
+   * empty-hero greeting for a text-first hello. */
+  voiceEnabled?: boolean;
   voiceNotice?: string | null;
   onPolish?: (text: string) => Promise<string | null>;
   onPickKind?: (kind: ArtifactKind) => void;
@@ -79,7 +81,7 @@ export function ChatDock({
   onSoundToggle,
   sttEnabled = true,
   onVoiceBlocked,
-  showMicHero = true,
+  voiceEnabled = true,
   voiceNotice = null,
   onPolish,
   onPickKind,
@@ -98,9 +100,9 @@ export function ChatDock({
       targets={targets}
       disabled={!brokerConnected}
       micLive={micLive}
-      onMicToggle={showMicHero ? onMicToggle : undefined}
+      onMicToggle={voiceEnabled ? onMicToggle : undefined}
       soundOn={soundOn}
-      onSoundToggle={onSoundToggle}
+      onSoundToggle={voiceEnabled ? onSoundToggle : undefined}
       sttEnabled={sttEnabled}
       onVoiceBlocked={onVoiceBlocked}
       onPolish={onPolish}
@@ -129,9 +131,17 @@ export function ChatDock({
               transition={spring}
             >
               <h1 className="greeting">
-                The mic is yours, <em>Edwin</em>
+                {voiceEnabled ? (
+                  <>
+                    The mic is yours, <em>Edwin</em>
+                  </>
+                ) : (
+                  <>
+                    Hello, <em>Edwin</em>!
+                  </>
+                )}
               </h1>
-              {showMicHero && (
+              {voiceEnabled && (
                 <MicHero
                   live={micLive}
                   onToggle={onMicToggle}

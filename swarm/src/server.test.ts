@@ -422,14 +422,24 @@ const voiceUser: User = {
   ],
 };
 
-test("buildVoiceUpdate: accepts matching-capability instances and hideInactive", () => {
-  const r = buildVoiceUpdate(voiceUser, { stt: { instanceId: "dg1" }, tts: { instanceId: "el1" }, hideInactive: true });
-  assert.deepEqual(r, { voice: { stt: { instanceId: "dg1" }, tts: { instanceId: "el1" }, hideInactive: true } });
+test("buildVoiceUpdate: both slots assigned + enabled:true → Voice Mode on", () => {
+  const r = buildVoiceUpdate(voiceUser, { stt: { instanceId: "dg1" }, tts: { instanceId: "el1" }, enabled: true });
+  assert.deepEqual(r, { voice: { stt: { instanceId: "dg1" }, tts: { instanceId: "el1" }, enabled: true } });
 });
 
-test("buildVoiceUpdate: null slots clear; omitted hideInactive defaults false-ish", () => {
+test("buildVoiceUpdate: enabled:true with a missing slot is coerced off, not an error (server-enforced gate)", () => {
+  const r = buildVoiceUpdate(voiceUser, { stt: { instanceId: "dg1" }, tts: null, enabled: true });
+  assert.deepEqual(r, { voice: { stt: { instanceId: "dg1" }, enabled: false } });
+});
+
+test("buildVoiceUpdate: null slots clear; omitted enabled defaults off", () => {
   const r = buildVoiceUpdate(voiceUser, { stt: null, tts: null });
-  assert.deepEqual(r, { voice: { hideInactive: false } });
+  assert.deepEqual(r, { voice: { enabled: false } });
+});
+
+test("buildVoiceUpdate: enabling is explicit — both slots set with enabled omitted stays off", () => {
+  const r = buildVoiceUpdate(voiceUser, { stt: { instanceId: "dg1" }, tts: { instanceId: "el1" } });
+  assert.deepEqual(r, { voice: { stt: { instanceId: "dg1" }, tts: { instanceId: "el1" }, enabled: false } });
 });
 
 test("buildVoiceUpdate: unknown instance id → error", () => {
@@ -444,9 +454,9 @@ test("buildVoiceUpdate: wrong-capability instance rejected (github can neither h
   }
 });
 
-test("clearVoiceReferences: deleting a selected instance clears only that slot", () => {
-  const voice = { stt: { instanceId: "dg1" }, tts: { instanceId: "el1" }, hideInactive: true };
-  assert.deepEqual(clearVoiceReferences(voice, "dg1"), { tts: { instanceId: "el1" }, hideInactive: true });
+test("clearVoiceReferences: deleting a selected instance clears that slot AND forces Voice Mode off", () => {
+  const voice = { stt: { instanceId: "dg1" }, tts: { instanceId: "el1" }, enabled: true };
+  assert.deepEqual(clearVoiceReferences(voice, "dg1"), { tts: { instanceId: "el1" }, enabled: false });
   assert.deepEqual(clearVoiceReferences(voice, "other"), voice);
   assert.equal(clearVoiceReferences(undefined, "dg1"), undefined);
 });

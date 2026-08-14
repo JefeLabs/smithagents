@@ -52,7 +52,7 @@ function stubBackend(
       if (opts.vendorsThrow) throw new Error("broker unreachable");
       return jsonResponse(opts.vendors ?? VENDORS);
     }
-    if (url.endsWith("/me/voice")) return jsonResponse(opts.voice ?? { stt: null, tts: null, hideInactive: false });
+    if (url.endsWith("/me/voice")) return jsonResponse(opts.voice ?? { stt: null, tts: null, enabled: false });
     if (url.endsWith("/me/connectors") && method === "GET") return jsonResponse(connectors);
     if (url.endsWith("/me/connectors") && method === "POST") {
       const saved: ConnectorInstanceRecord = {
@@ -150,7 +150,7 @@ describe("IntegrationsGroup", () => {
   it("deleting an instance wired into Settings → Voice warns before it goes, and proceeds on confirm", async () => {
     const { calls } = stubBackend({
       connectors: [{ id: "c1", vendorId: "github", label: "personal", fields: { hasToken: true } }],
-      voice: { stt: { instanceId: "c1" }, tts: null, hideInactive: false },
+      voice: { stt: { instanceId: "c1" }, tts: null, enabled: false },
     });
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     renderWithProviders(<IntegrationsGroup />);
@@ -166,7 +166,7 @@ describe("IntegrationsGroup", () => {
   it("cancelling the delete-confirm leaves the instance in place and never calls deleteConnector", async () => {
     const { calls } = stubBackend({
       connectors: [{ id: "c1", vendorId: "github", label: "personal", fields: { hasToken: true } }],
-      voice: { stt: { instanceId: "c1" }, tts: null, hideInactive: false },
+      voice: { stt: { instanceId: "c1" }, tts: null, enabled: false },
     });
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     renderWithProviders(<IntegrationsGroup />);
@@ -180,7 +180,7 @@ describe("IntegrationsGroup", () => {
   it("deleting an instance not referenced by voice skips the confirm entirely", async () => {
     const { calls } = stubBackend({
       connectors: [{ id: "c1", vendorId: "github", label: "personal", fields: { hasToken: true } }],
-      voice: { stt: null, tts: null, hideInactive: false },
+      voice: { stt: null, tts: null, enabled: false },
     });
     const confirmSpy = vi.spyOn(window, "confirm");
     renderWithProviders(<IntegrationsGroup />);

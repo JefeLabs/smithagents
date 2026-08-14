@@ -284,7 +284,8 @@ export interface ChannelsRecord {
 export interface VoiceSettingsRecord {
   stt: { instanceId: string } | null;
   tts: { instanceId: string } | null;
-  hideInactive: boolean;
+  /** Voice Mode master switch — the swarm coerces it off unless both slots are assigned. */
+  enabled: boolean;
 }
 
 /** One CLI tool's machine status, as the registry persists it. */

@@ -32,4 +32,27 @@ describe("ChatDock", () => {
     render(<ChatDock variant="dock" messages={[]} activeKind="documents" {...base} />);
     expect(screen.queryByRole("heading", { name: /the mic is yours/i })).toBeNull();
   });
+
+  it("voice controls are all present by default (positive control for the disabled cases)", () => {
+    render(<ChatDock variant="dock" messages={MSGS} activeKind="documents" {...base} />);
+    expect(screen.getByRole("button", { name: /hold to talk/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /always listening/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /mute agent voices/i })).toBeInTheDocument();
+  });
+
+  it("voiceEnabled=false: full-variant hero greets with Hello instead of the mic pitch, MicHero gone", () => {
+    render(<ChatDock variant="full" messages={[]} activeKind="chat" {...base} voiceEnabled={false} />);
+    expect(screen.getByRole("heading", { name: /hello,/i })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /the mic is yours/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /hold to talk/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /always listening/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /mute agent voices/i })).toBeNull();
+  });
+
+  it("voiceEnabled=false: mic, listener and speaker are gone from the right dock too", () => {
+    render(<ChatDock variant="dock" messages={MSGS} activeKind="documents" {...base} voiceEnabled={false} />);
+    expect(screen.queryByRole("button", { name: /hold to talk/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /always listening/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /mute agent voices/i })).toBeNull();
+  });
 });

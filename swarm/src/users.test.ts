@@ -208,3 +208,50 @@ test("a value that fails to decrypt is passed through as-is (connected-but-faili
   assert.ok(String(user!.connectors![0]!.fields.token).startsWith(ENC_PREFIX)); // ciphertext passthrough
   process.env.SMITH_MASTER_KEY = MASTER_HEX; // restore the file-wide key for any test that runs after this one
 });
+
+test("loadUsersFromDir: legacy voice.hideInactive is dropped and enabled derived — on only when BOTH slots were set", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "users-voice-migrate-"));
+  await writeFile(
+    join(dir, "both.json"),
+    JSON.stringify({
+      id: "both",
+      name: "Both",
+      default: true,
+      connectors: [],
+      voice: { stt: { instanceId: "a" }, tts: { instanceId: "b" }, hideInactive: true },
+    }),
+  );
+  await writeFile(
+    join(dir, "one.json"),
+    JSON.stringify({
+      id: "one",
+      name: "One",
+      connectors: [],
+      voice: { stt: { instanceId: "a" }, hideInactive: false },
+    }),
+  );
+  const users = await loadUsersFromDir(dir);
+  const both = users.find((u) => u.id === "both");
+  const one = users.find((u) => u.id === "one");
+  assert.equal(both?.voice?.enabled, true, "both slots configured → migrates enabled (voice kept working)");
+  assert.equal(one?.voice?.enabled, false, "one slot → cannot be enabled");
+  for (const u of [both, one]) {
+    assert.equal(u?.voice?.hideInactive, undefined, "legacy field must not survive onto the in-memory User");
+  }
+});
+
+test("loadUsersFromDir: an explicit voice.enabled survives load untouched (no re-derive on already-migrated records)", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "users-voice-stable-"));
+  await writeFile(
+    join(dir, "me.json"),
+    JSON.stringify({
+      id: "me",
+      name: "Me",
+      default: true,
+      connectors: [],
+      voice: { stt: { instanceId: "a" }, tts: { instanceId: "b" }, enabled: false },
+    }),
+  );
+  const [user] = await loadUsersFromDir(dir);
+  assert.equal(user!.voice?.enabled, false, "a user who turned Voice Mode off stays off despite both slots being set");
+});

@@ -264,7 +264,7 @@ export async function getVoiceSettings(base: string = BROKER_BASE): Promise<Voic
 
 /** PUT /me/voice */
 export async function saveVoiceSettings(
-  body: { stt: { instanceId: string } | null; tts: { instanceId: string } | null; hideInactive: boolean },
+  body: { stt: { instanceId: string } | null; tts: { instanceId: string } | null; enabled: boolean },
   base: string = BROKER_BASE,
 ): Promise<VoiceSettingsRecord & { error?: string }> {
   const res = await brokerFetch(`/me/voice`, base, {

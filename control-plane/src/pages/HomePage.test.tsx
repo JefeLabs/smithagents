@@ -8,6 +8,7 @@ import { useSpokenReplies } from "../hooks/useSpokenReplies";
 import { useTheme } from "../hooks/useTheme";
 import { qk } from "../queries/keys";
 import { createAppRouter } from "../router";
+import { useAudioStore } from "../stores/audioStore";
 import { useSocketStore } from "../stores/socketStore";
 import { useUiStore } from "../stores/uiStore";
 import { renderWithProviders } from "../test/renderWithProviders";
@@ -76,6 +77,8 @@ const SESSION_FRAME = {
 };
 
 let fetchMock: ReturnType<typeof vi.fn>;
+/** What GET /me/voice answers — per-test settable so a mount refetch can never race a seed. */
+let voiceResponse: unknown;
 
 function stubBroker() {
   fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -83,6 +86,7 @@ function stubBroker() {
     if (url.endsWith("/agents")) return new Response(JSON.stringify({ agents: [], voice: { stt: false, tts: true } }));
     if (url.endsWith("/workspaces")) return new Response(JSON.stringify({ workspaces: [] }));
     if (url.endsWith("/cli-tools")) return new Response(JSON.stringify({ tools: [] }));
+    if (url.endsWith("/me/voice")) return new Response(JSON.stringify(voiceResponse));
     return new Response(JSON.stringify({}));
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -135,6 +139,7 @@ beforeEach(() => {
   vi.mocked(useTheme).mockReturnValue({ theme: "dark", setTheme: vi.fn() });
   vi.mocked(useSpokenReplies).mockReturnValue({ playAudioFrame: vi.fn() });
   vi.mocked(usePushToTalk).mockReturnValue({ micLive: false, micError: null, toggleMic: vi.fn() });
+  voiceResponse = { stt: null, tts: null, enabled: true };
   stubBroker();
 });
 
@@ -180,6 +185,40 @@ describe("HomePage — the broker socket", () => {
     await appMounted();
     expect(vi.mocked(useSpokenReplies)).toHaveBeenCalled();
     expect(vi.mocked(usePushToTalk)).toHaveBeenCalled();
+  });
+});
+
+describe("HomePage — Voice Mode", () => {
+  const seedVoice = (v: unknown) => {
+    voiceResponse = v;
+    return (c: QueryClient) => c.setQueryData(qk.voiceSettings, v);
+  };
+
+  afterEach(() => {
+    useAudioStore.setState({ micLive: false });
+  });
+
+  it("passes a confirmed Voice Mode OFF to the reply speaker", async () => {
+    renderApp(seedVoice({ stt: null, tts: null, enabled: false }));
+    await appMounted();
+    expect(vi.mocked(useSpokenReplies)).toHaveBeenCalledWith({ enabled: false });
+  });
+
+  it("drops a live mic once Voice Mode is confirmed off — no invisible hot mic", async () => {
+    const toggleMic = vi.fn();
+    useAudioStore.setState({ micLive: true, toggleMic });
+    renderApp(seedVoice({ stt: null, tts: null, enabled: false }));
+    await appMounted();
+    await waitFor(() => expect(toggleMic).toHaveBeenCalled());
+  });
+
+  it("leaves a live mic alone while Voice Mode is on (positive control)", async () => {
+    const toggleMic = vi.fn();
+    useAudioStore.setState({ micLive: true, toggleMic });
+    renderApp(seedVoice({ stt: { instanceId: "dg1" }, tts: { instanceId: "el1" }, enabled: true }));
+    await appMounted();
+    expect(vi.mocked(useSpokenReplies)).toHaveBeenCalledWith({ enabled: true });
+    expect(toggleMic).not.toHaveBeenCalled();
   });
 });
 

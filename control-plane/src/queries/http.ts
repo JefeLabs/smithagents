@@ -161,11 +161,8 @@ export function useRefreshCliTools() {
 export function useSaveVoiceSettings() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: {
-      stt: { instanceId: string } | null;
-      tts: { instanceId: string } | null;
-      hideInactive: boolean;
-    }) => api.saveVoiceSettings(body),
+    mutationFn: (body: { stt: { instanceId: string } | null; tts: { instanceId: string } | null; enabled: boolean }) =>
+      api.saveVoiceSettings(body),
     onSuccess: (result) => {
       if (!result.error) qc.setQueryData<VoiceSettingsRecord>(qk.voiceSettings, result);
     },

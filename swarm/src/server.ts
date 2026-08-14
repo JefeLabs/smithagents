@@ -102,11 +102,11 @@ import { createIssue, importIssues, searchIssues, transitionIssue } from "./jira
 import { agentUsage, isBusy } from "./lifecycle.js";
 import { MeetingOrchestrator } from "./meetings.js";
 import {
+  API_ENGINE,
   DEFAULT_LANGUAGE,
   ENGINES,
   findEngine,
   findJobRole,
-  API_ENGINE,
   findLanguage,
   findStereotype,
   JOB_ROLES,
@@ -2110,7 +2110,7 @@ export class OrchestratorServer {
     const redactVoice = (u: User | null) => ({
       stt: u?.voice?.stt ?? null,
       tts: u?.voice?.tts ?? null,
-      hideInactive: Boolean(u?.voice?.hideInactive),
+      enabled: Boolean(u?.voice?.enabled),
     });
 
     this.app.get("/me/voice", async () => {
@@ -3465,7 +3465,7 @@ export async function runJiraSearch(
  * three connector-writing siblings below carry forward (connectors, voice)
  * must be explicitly threaded here too, or renaming the operator silently
  * wipes it. Final-review caught `voice` missing from this list: an operator
- * rename turned off both voice capabilities and reset hideInactive with no
+ * rename turned off both voice capabilities and reset voice settings with no
  * error — currently latent (no shipped UI calls this route) but a landmine.
  */
 export function buildUserUpdate(existing: User | null, body: { name?: string }): User {
@@ -3483,9 +3483,9 @@ export function buildVoiceUpdate(user: User | null, body: unknown): { voice: Voi
   const b = (body ?? {}) as {
     stt?: { instanceId?: string } | null;
     tts?: { instanceId?: string } | null;
-    hideInactive?: boolean;
+    enabled?: boolean;
   };
-  const voice: VoiceSettings = { hideInactive: Boolean(b.hideInactive) };
+  const voice: VoiceSettings = {};
   for (const slot of ["stt", "tts"] as const) {
     const sel = b[slot];
     if (!sel) continue; // null/undefined → slot off
@@ -3500,6 +3500,9 @@ export function buildVoiceUpdate(user: User | null, body: unknown): { voice: Voi
     }
     voice[slot] = { instanceId };
   }
+  // The gate lives here, not in the UI: Voice Mode can only be on with both slots
+  // assigned, and an over-claiming client is coerced off rather than rejected.
+  voice.enabled = Boolean(b.enabled) && Boolean(voice.stt) && Boolean(voice.tts);
   return { voice };
 }
 
@@ -3507,8 +3510,16 @@ export function buildVoiceUpdate(user: User | null, body: unknown): { voice: Voi
 export function clearVoiceReferences(voice: VoiceSettings | undefined, instanceId: string): VoiceSettings | undefined {
   if (!voice) return undefined;
   const next: VoiceSettings = { ...voice };
-  if (next.stt?.instanceId === instanceId) delete next.stt;
-  if (next.tts?.instanceId === instanceId) delete next.tts;
+  let vacated = false;
+  if (next.stt?.instanceId === instanceId) {
+    delete next.stt;
+    vacated = true;
+  }
+  if (next.tts?.instanceId === instanceId) {
+    delete next.tts;
+    vacated = true;
+  }
+  if (vacated) next.enabled = false; // a vacated slot can never leave Voice Mode claiming to be on
   return next;
 }
 
