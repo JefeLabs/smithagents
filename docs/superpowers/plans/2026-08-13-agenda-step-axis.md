@@ -1057,7 +1057,7 @@ export function sharedQueueCards(boards: WorkBoardT[]): AggCard[] {
  * One Agenda lane. Two card kinds share it and order differently, deliberately:
  * personal cards have no workflow axis, so their columnId IS the lane and their drag
  * `order` still means something — they come first. Team cards are matched on the
- * holder's step state and ordered by `since`, oldest first, because `order` is
+ * holder's step state and ordered by `grabbedAt`, oldest first, because `order` is
  * per-column-per-board and cannot order a lane that spans boards.
  *
  * Team cards order by `grabbedAt`, NOT `since`: the morning sweep re-stamps `since` on
