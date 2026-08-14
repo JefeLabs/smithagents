@@ -60,6 +60,19 @@ test("AnthropicResearch turns a rejected call into a typed ResearchError", async
   );
 });
 
+test('AnthropicResearch turns a non-Error rejection into a message, never the literal string "undefined"', async () => {
+  // A rejection that isn't an Error instance has no .message — String((err as
+  // Error).message) stringifies that to "undefined" and the doc-edit path
+  // broadcasts it to the user verbatim ("couldn't apply that: undefined").
+  const engine = new AnthropicResearch(async () => {
+    throw "credit balance is too low";
+  }, "claude-haiku-4-5");
+  await assert.rejects(
+    () => engine.complete({ system: "s", prompt: "p", maxTokens: 8 }),
+    (err: unknown) => err instanceof ResearchError && /credit balance/.test((err as Error).message),
+  );
+});
+
 test("AnthropicResearch treats an empty reply as an error, never as empty text", async () => {
   // An empty string would silently poison a feed card or an election claim —
   // the caller cannot tell "the model said nothing" from "the call failed".
@@ -78,13 +91,13 @@ test("AnthropicResearch errors when a reply has blocks but none are text", async
   );
 });
 
-/** Stand-in for the subprocess: records argv/stdin, replays a scripted result. */
+/** Stand-in for the subprocess: records argv, replays a scripted result. */
 const spawnStub = (result: { code: number | null; stdout: string; stderr: string }) => {
-  const calls: Array<{ argv: string[]; stdin: string }> = [];
+  const calls: Array<{ argv: string[] }> = [];
   return {
     calls,
-    fn: async (argv: string[], stdin: string) => {
-      calls.push({ argv, stdin });
+    fn: async (argv: string[]) => {
+      calls.push({ argv });
       return result;
     },
   };
@@ -138,6 +151,19 @@ test("CliResearch appends the model flag only when a model is set", async () => 
   assert.deepEqual(without.calls[0].argv, ["claude", "--print", "s\n\np"]);
 });
 
+test('CliResearch treats model "default" the same as no model — matching swarm/drivers/model-flag.ts\'s sentinel rule', async () => {
+  // agy and copilot's only catalog entry is "default"; the UI always sends
+  // tool.models[0], so a literal "--model default" would be spawned and every
+  // driver treats that flag as unsupported. The CLI's own default must stand.
+  const stub = spawnStub({ code: 0, stdout: "ok", stderr: "" });
+  await new CliResearch(stub.fn, ["agy", "--print"], "default").complete({
+    system: "s",
+    prompt: "p",
+    maxTokens: 8,
+  });
+  assert.deepEqual(stub.calls[0].argv, ["agy", "--print", "s\n\np"]);
+});
+
 test("CliResearch turns a non-zero exit into a ResearchError carrying stderr", async () => {
   const stub = spawnStub({ code: 1, stdout: "", stderr: "not logged in" });
   const engine = new CliResearch(stub.fn, ["claude", "--print"], undefined);
@@ -177,7 +203,7 @@ test("CliResearch and AnthropicResearch satisfy the same contract", async () => 
 });
 
 test("defaultSpawner settles when the binary does not exist", async () => {
-  const r = await defaultSpawner(["definitely-not-a-real-binary-xyz"], "hi");
+  const r = await defaultSpawner(["definitely-not-a-real-binary-xyz"]);
   assert.equal(r.code, null);
   assert.match(r.stderr, /ENOENT|not found|spawn/i);
 });
@@ -191,7 +217,7 @@ test("a timed-out spawner SIGKILLs the child and settles with code null well bef
   // slow and racing it against a short timeout.
   const spawner = makeSpawner(100);
   const started = Date.now();
-  const r = await spawner(["sleep", "5"], "");
+  const r = await spawner(["sleep", "5"]);
   const elapsed = Date.now() - started;
   assert.equal(r.code, null);
   assert.ok(elapsed < 2000, `expected the 100ms timeout to win, took ${elapsed}ms`);

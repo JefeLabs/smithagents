@@ -2134,11 +2134,10 @@ export class OrchestratorServer {
       return redactVoice(merged);
     });
 
-    const redactResearchEngine = (u: User | null) => u?.researchEngine ?? null;
-
     this.app.get("/me/research-engine", async () => {
       const users = await loadUsersFromDir(resolve(process.cwd(), ".smith/users"));
-      return redactResearchEngine(resolveCurrentUser(users));
+      const file = await loadCliToolsFile(resolve(process.cwd(), ".smith/cli-tools.json"));
+      return redactResearchEngine(resolveCurrentUser(users), (cli) => gateReason(file, cli));
     });
 
     this.app.put("/me/research-engine", async (req, reply) => {
@@ -2146,7 +2145,8 @@ export class OrchestratorServer {
       const users = await loadUsersFromDir(dir);
       const existing = resolveCurrentUser(users) ?? { id: "me", name: "You", default: true, connectors: [] };
       const file = await loadCliToolsFile(resolve(process.cwd(), ".smith/cli-tools.json"));
-      const r = buildResearchEngineUpdate(req.body, ENGINES, (cli) => gateReason(file, cli));
+      const gate = (cli: string) => gateReason(file, cli);
+      const r = buildResearchEngineUpdate(req.body, ENGINES, gate);
       if ("error" in r) return reply.status(400).send({ error: r.error });
       const merged: User = { ...existing, researchEngine: r.researchEngine };
       try {
@@ -2154,7 +2154,7 @@ export class OrchestratorServer {
       } catch (err) {
         return reply.status(400).send({ error: String((err as Error).message) });
       }
-      return redactResearchEngine(merged);
+      return redactResearchEngine(merged, gate);
     });
 
     // Internal-only — returns RAW voice keys, like /workspaces/:name/channels/discord-token
@@ -3526,6 +3526,24 @@ export function buildResearchEngineUpdate(
     return { error: `Unknown model for ${engine.label}: ${b.model}` };
   }
   return { researchEngine: { cli: engine.cli, model: b.model } };
+}
+
+/**
+ * GET /me/research-engine's shaping: hides a stored engine whose cli no
+ * longer passes its gate (logged out, disabled) behind null, the same way a
+ * never-set engine reads. The write-time check in buildResearchEngineUpdate
+ * only keeps a bad choice from being SAVED; a good one can still go bad
+ * later, and this is what makes resolveResearchEngine's Anthropic fallback
+ * (broker/src/research-engine.ts) actually reachable for that case instead
+ * of the broker spawning a dead cli on every research turn.
+ */
+export function redactResearchEngine(
+  u: User | null,
+  gate: (cli: string) => string,
+): { cli: string; model?: string } | null {
+  const r = u?.researchEngine;
+  if (!r) return null;
+  return gate(r.cli) ? null : r;
 }
 
 /** PUT /me/voice body → validated full-replace VoiceSettings (spec §2). */

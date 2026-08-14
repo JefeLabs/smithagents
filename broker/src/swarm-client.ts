@@ -623,6 +623,10 @@ export class SwarmClient {
     return (await this.http("GET", "/me/research-engine")) as { cli: string; model?: string } | null;
   }
 
+  async saveResearchEngine(body: unknown): Promise<Record<string, unknown>> {
+    return this.http("PUT", "/me/research-engine", body);
+  }
+
   async saveMyVoice(body: unknown): Promise<Record<string, unknown>> {
     return this.http("PUT", "/me/voice", body);
   }

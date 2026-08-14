@@ -54,7 +54,13 @@ test("a stored + gated CLI setting wins over the Anthropic fallback, regardless 
   assert.ok(engine instanceof CliResearch);
 });
 
-test("a stored setting for an ungated cli falls back to Anthropic", async () => {
+test("a stored cli with no known research argv falls back to Anthropic", async () => {
+  // Gate enforcement itself is NOT this resolver's job — the swarm's GET
+  // /me/research-engine already hides a gated-off cli behind null (see
+  // server.ts's redactResearchEngine), so getStoredEngine never hands this
+  // resolver a gated cli in the first place. This exercises the other
+  // "can't build an engine" path: a cli the swarm returned that this
+  // broker's RESEARCH_ARGV table doesn't know how to invoke.
   const engine = await resolveResearchEngine({
     getStoredEngine: async () => ({ cli: "unknown-tool" }),
     argvFor: () => undefined,

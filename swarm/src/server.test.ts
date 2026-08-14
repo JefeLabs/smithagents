@@ -21,6 +21,7 @@ import {
   clearVoiceReferences,
   gitInitRequestedRepos,
   redactConnector,
+  redactResearchEngine,
   resolveAtlassianConnector,
   resolveConnector,
   resolveTaskRuntime,
@@ -535,4 +536,24 @@ test("each rejection names the check that failed, never a silent coercion", () =
     buildResearchEngineUpdate({ cli: "agy", model: "gpt-5" }, ENGINES_FIXTURE, openGate),
   ].map((r) => (r as { error: string }).error);
   assert.equal(new Set(messages).size, 4, "four distinct failures need four distinct messages");
+});
+
+test("redactResearchEngine: no stored setting -> null", () => {
+  assert.equal(redactResearchEngine(null, openGate), null);
+});
+
+test("redactResearchEngine: a stored setting whose cli still passes its gate is returned as-is", () => {
+  const u: User = { id: "me", name: "You", default: true, researchEngine: { cli: "claude", model: "claude-opus" } };
+  assert.deepEqual(redactResearchEngine(u, openGate), { cli: "claude", model: "claude-opus" });
+});
+
+test("redactResearchEngine: a stored setting whose cli no longer passes its gate is hidden as null", () => {
+  // The write-time gate check (buildResearchEngineUpdate) only stops a BAD
+  // choice from being saved — it says nothing about a GOOD choice going bad
+  // later (the cli logs out, or gets disabled in the registry). Without a
+  // read-time check too, GET keeps handing back a dead cli forever and
+  // resolveResearchEngine (broker/src/research-engine.ts) keeps spawning it,
+  // failing every research turn instead of degrading to Anthropic.
+  const u: User = { id: "me", name: "You", default: true, researchEngine: { cli: "claude" } };
+  assert.equal(redactResearchEngine(u, closedGate), null);
 });

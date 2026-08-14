@@ -123,6 +123,7 @@ function channelWith(opts: {
   directed?: ConstructorParameters<typeof TextChannel>[25];
   feeds?: ConstructorParameters<typeof TextChannel>[26];
   topics?: ConstructorParameters<typeof TextChannel>[27];
+  research?: ConstructorParameters<typeof TextChannel>[29];
   onUtterance?: ConstructorParameters<typeof TextChannel>[0];
 }): TextChannel {
   return new TextChannel(
@@ -154,6 +155,8 @@ function channelWith(opts: {
     opts.directed,
     opts.feeds,
     opts.topics,
+    undefined, // groups — not exercised by this suite (pre-existing gap)
+    opts.research,
   );
 }
 
@@ -1245,6 +1248,32 @@ test("voice: GET and PUT /me/voice are proxied when the voice dep is wired", asy
     });
     assert.equal(put.status, 200);
     assert.deepEqual(await put.json(), { stt: { instanceId: "dg1" }, tts: null, hideInactive: false });
+  } finally {
+    await channel.stop();
+  }
+});
+
+const researchDep = {
+  get: async () => ({ cli: "claude", model: "claude-opus" }),
+  save: async (body: unknown) => body as Record<string, unknown>,
+};
+
+test("research: GET and PUT /me/research-engine are proxied when the research dep is wired", async () => {
+  const channel = channelWith({ research: researchDep });
+  const port = await channel.start(0);
+  try {
+    const got = await fetch(`http://127.0.0.1:${port}/me/research-engine`, {
+      headers: { Origin: "http://localhost:1420" },
+    });
+    assert.equal(got.status, 200);
+    assert.deepEqual(await got.json(), { cli: "claude", model: "claude-opus" });
+    const put = await fetch(`http://127.0.0.1:${port}/me/research-engine`, {
+      method: "PUT",
+      headers: { Origin: "http://localhost:1420", "content-type": "application/json" },
+      body: JSON.stringify({ cli: "agy" }),
+    });
+    assert.equal(put.status, 200);
+    assert.deepEqual(await put.json(), { cli: "agy" });
   } finally {
     await channel.stop();
   }

@@ -54,7 +54,7 @@ export class AnthropicResearch implements ResearchEngine {
         messages: [{ role: "user", content: input.prompt }],
       });
     } catch (err) {
-      throw new ResearchError(String((err as Error).message));
+      throw new ResearchError(err instanceof Error ? err.message : String(err));
     }
     const blocks = (reply as { content?: Array<{ type: string; text?: string }> }).content ?? [];
     const text = blocks
@@ -73,10 +73,7 @@ export class AnthropicResearch implements ResearchEngine {
  * swarm's CommandRunner, for the same reason: a spawn failure is data the
  * caller must handle, not an exception thrown past it.
  */
-export type Spawner = (
-  argv: string[],
-  stdin: string,
-) => Promise<{ code: number | null; stdout: string; stderr: string }>;
+export type Spawner = (argv: string[]) => Promise<{ code: number | null; stdout: string; stderr: string }>;
 
 /**
  * Runs one research turn through a CLI tool.
@@ -104,9 +101,15 @@ export class CliResearch implements ResearchEngine {
   ) {}
 
   async complete(input: ResearchInput): Promise<string> {
-    const withModel = this.model ? [...this.baseArgv, "--model", this.model] : [...this.baseArgv];
+    // "default" is the sentinel every driver treats as "no opinion, let the
+    // CLI's own default stand" (swarm/drivers/model-flag.ts). agy and copilot
+    // each ship exactly one catalog entry — "default" — and the UI always
+    // sends tool.models[0], so without this an operator picking either would
+    // spawn `--model default`, which every driver rejects.
+    const model = this.model && this.model !== "default" ? this.model : undefined;
+    const withModel = model ? [...this.baseArgv, "--model", model] : [...this.baseArgv];
     const argv = [...withModel, `${input.system}\n\n${input.prompt}`];
-    const { code, stdout, stderr } = await this.spawn(argv, "");
+    const { code, stdout, stderr } = await this.spawn(argv);
     if (code !== 0) {
       const detail = stderr.trim() || stdout.trim() || (code === null ? "killed or timed out" : `exit ${code}`);
       throw new ResearchError(`${this.baseArgv[0]} failed: ${detail}`);
@@ -130,7 +133,7 @@ const RESEARCH_TIMEOUT_MS = 120_000;
 /** Builds a spawner with the given kill timeout — injectable so the SIGKILL path is testable without waiting 120s. */
 export const makeSpawner =
   (timeoutMs: number = RESEARCH_TIMEOUT_MS): Spawner =>
-  (argv, stdin) =>
+  (argv) =>
     new Promise((resolve) => {
       const child = spawn(argv[0], argv.slice(1), { stdio: ["pipe", "pipe", "pipe"] });
       let stdout = "";
@@ -156,11 +159,18 @@ export const makeSpawner =
       // the promise would never settle and the caller would hang until its own
       // timeout, if it has one.
       child.on("error", (err) => {
-        stderr += String((err as Error).message);
+        stderr += err instanceof Error ? err.message : String(err);
         finish(null);
       });
       child.on("close", (code) => finish(code));
-      child.stdin.end(stdin);
+      // Every target CLI takes the prompt from argv and never reads stdin, so
+      // the child can exit before this end() flush completes — an EPIPE on a
+      // stream with no 'error' listener is an uncaughtException, not a
+      // rejection (see discord-voice.ts's realGateway() for the same class of
+      // trap), and that would kill the long-lived broker process, not just
+      // this one research turn.
+      child.stdin.on("error", () => {});
+      child.stdin.end();
     });
 
 export const defaultSpawner: Spawner = makeSpawner();

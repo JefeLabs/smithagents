@@ -1018,6 +1018,14 @@ const voice = {
   save: (body: unknown) => swarm.saveMyVoice(body),
 };
 
+// Research engine setting passthrough (Settings → Research group), same
+// origin-restricted shape as voice above. The swarm's GET already hides a
+// gated-off cli behind null, so this is a pure proxy with no logic of its own.
+const research = {
+  get: () => swarm.getResearchEngine() as Promise<Record<string, unknown> | null>,
+  save: (body: unknown) => swarm.saveResearchEngine(body),
+};
+
 // Agent creation: the swarm owns the registry, the broker owns voices. A
 // named const (not an inline TextChannel argument) because the brain's
 // draft_agent/confirm_agent executors drive the same generate/create path
@@ -1683,6 +1691,7 @@ const textChannel = new TextChannel(
     },
   },
   groups,
+  research,
 );
 
 /**
