@@ -1,138 +1,170 @@
 # Broker Engine Selection — Design
 
 **Date:** 2026-08-14 · **Status:** DRAFT, awaiting Edwin's review
+**Supersedes:** the first draft of this file, which split the broker by *streaming vs one-shot* and claimed a CLI engine could serve both. Both claims were wrong — see "What the first draft got wrong".
 
-Edwin's ask, in his words:
+Edwin's framing, which is the one this design uses:
+
+> "so broker has two mode - brain and research?"
 
 > "i want to use the agy cli for my broker and i would like to change that assignment in my settings"
 
 > "actually i also want claude cli option for my broker"
 
-> "CAN WE add attribute on our agents for streaming candidates so the user can select from appropriate candidates"
-
-> "so claude Code, Antigravity or codex should be the option"
-
 ## Why
 
-The broker is hardcoded to the Anthropic SDK — `new Anthropic({ apiKey: config.anthropicApiKey })` in `broker/src/main.ts`, five call sites. That key is out of credits, so **every LLM path in the broker is dead**: chat, voice, document edits, feed analysis, and election claims.
+The broker is hardcoded to the Anthropic SDK — `new Anthropic({ apiKey: config.anthropicApiKey })` in `broker/src/main.ts`. That key is out of credits, so **every LLM path in the broker is dead**.
 
-Meanwhile five CLI tools are installed, authenticated and idle on this machine, under subscriptions already being paid for. This is the subscription-first principle the portfolio already runs on: API keys only for what subscriptions cannot do.
+Five CLI tools sit installed, authenticated and idle on this machine, under subscriptions already being paid for. This is the subscription-first principle the portfolio runs on: API keys only for what subscriptions cannot do.
 
-## Part 1 — The capability flag
+## The two modes
 
-`EngineOption` (swarm `personas.ts`) gains one field:
+The broker asks a model for two categorically different things. The division is **tools, not streaming**:
 
-```ts
-/** Whether the tool can stream a one-shot response as it generates
-    (--output-format stream-json, codex exec --json). ORTHOGONAL to
-    warmSessions: agy streams a print-mode response but cannot host a warm
-    session, because it persists no transcript to observe turn completion
-    from. One flag answers "can I tail its turns from disk?", the other
-    "can it emit tokens as it thinks?" — the broker only needs the second. */
-streaming: boolean;
-```
-
-`agy` is the proof that these are independent: `streaming: true`, `warmSessions: false`. Reusing `warmSessions` would have excluded exactly the engine Edwin asked for first.
-
-**Values, read from the installed binaries' own `--help`, not assumed:**
-
-| engine | `streaming` | `warmSessions` | evidence |
+| mode | sites | shape | requires |
 |---|---|---|---|
-| `claude` | `true` | `true` | `--print --output-format=stream-json` |
-| `codex` | `true` | `true` | `codex exec --json` — JSONL events to stdout |
-| `agy` | `true` | `false` | `--print --output-format stream-json` |
-| `copilot` | `false` | `true` | `-p/--prompt` only; no stream format in `--help` |
-| `opencode` | `false` | `true` | no stream flag in `--help` — unverified |
-| `api:anthropic` | `false` | `false` | the Messages API streams, but `ApiProvider.complete()` does not |
+| **Research** | 6 | `{system, prompt} → text`, `tools: []`, no history, no deltas read | anything that turns a prompt into text |
+| **Brain** | 1 | 10 caller-defined tool schemas, `stop_reason === "tool_use"` loop, conversation history, text deltas fed to the speech chunker | caller-defined **tool calling** + **streaming** |
 
-The two unverified entries default to `false` deliberately. A wrong `true` fails inside the broker's voice path — the worst place to discover it. A wrong `false` merely hides an option until someone verifies the flag and flips it.
+**Research mode — six sites**, all on `claude-haiku-4-5`:
 
-`api:anthropic` at `false` documents an honest gap rather than hiding one: when `ApiProvider` learns to stream, the flag flips and API engines join the picker with no UI change.
+| site | file | what it does |
+|---|---|---|
+| `generateSessionTitle` | `session-title.ts` | names a chat session |
+| `polishText` | `polish.ts` | cleans up dictated text |
+| feeds → `plan` | `main.ts:1704` | turns a release into work cards |
+| `analyzeBrief` | `main.ts:2034` | analyses an HTTP context source |
+| `askForClaim` | `main.ts:2396` | election claims |
+| `runDocEditTurn` | `main.ts:1513` | rewrites a document from an instruction |
+
+`polish.ts` and `session-title.ts` reach the model through `streamFactory`, which makes them *look* like streaming. They are not: both pass `tools: [] as never` and both only `await stream.finalMessage()`. **Neither ever subscribes to `on("text")`.** The stream is an accident of plumbing, not a requirement.
+
+**Brain mode — one site.** `BrokerBrain` hands the model ten tool schemas (`delegate`, `check_status`, `remember`, `raise_hand`, `lookup_ticket`, `draft_agent`, `confirm_agent`, `track_topic`, `check_feeds`, `search_docs`) and runs the agentic loop: `if (final.stop_reason !== "tool_use") break;`, execute each block, feed back `tool_result`. Its streamed text deltas *are* the speech fed to the chunker.
+
+Both modes already default to the same model, so the brain is not distinguished by needing a bigger one. It is distinguished **solely by needing tool calling** — which is why six of seven sites can move to a CLI and the seventh cannot.
+
+---
+
+# Phase 1 — Research mode (this spec)
+
+## Part 1 — What research mode needs
+
+One capability: turn a prompt into text, non-interactively. **All five CLI engines can:**
+
+| engine | invocation | verified |
+|---|---|---|
+| `claude` | `--print '<prompt>'` | `--help` |
+| `codex` | `codex exec` | `--help` |
+| `agy` | `--print '<prompt>'` (alias `--prompt`) | `--help` |
+| `copilot` | `-p/--prompt` | `--help` |
+| `opencode` | `opencode run <message>` | `--help` |
+
+No new capability flag is needed on `EngineOption`. Research mode's requirement is the definition of a CLI engine in this codebase — every entry in `ENGINES` already satisfies it, and `warmSessions` correctly stays about something else.
+
+> The first draft added `streaming: boolean` and restricted the picker to three engines. That flag solved a problem research mode does not have. It belongs to Phase 2, under a different name — see below.
 
 ## Part 2 — The setting
 
-**Persistence** follows the existing `/me/voice` shape — operator-level machine config, stored on the user record in the swarm, read by the broker:
+**Persistence** follows the `/me/voice` shape exactly — operator-level machine config on the user record:
 
 ```ts
-/** Which engine the broker runs its LLM turns on. Absent = the built-in default. */
-brokerEngine?: { cli: string; model?: string };
+/** Which engine runs the broker's research turns. Absent = the built-in Anthropic default. */
+researchEngine?: { cli: string; model?: string };
 ```
 
-**Route:** `GET /me/broker-engine`, `PUT /me/broker-engine`, mirroring the voice routes exactly — same redaction shape, same validation posture.
+**Routes:** `GET /me/research-engine`, `PUT /me/research-engine`, mirroring `/me/voice` — same redaction shape, same 400-on-invalid posture, same `buildResearchEngineUpdate` pure-helper split that `buildVoiceUpdate` already uses.
 
 **Validation is server-side and layered**, because a client cannot be trusted to have filtered correctly:
-1. the `cli` must name a known engine;
-2. that engine must have `streaming: true`;
-3. the tool-registry gate must pass (`detected`, `authOk`, `enabled`) — the same gate agent launches already use.
+1. `cli` names a known `ENGINES` entry;
+2. that entry is a CLI (`kind !== "api"`);
+3. the tool-registry gate passes — `detected`, `authOk`, `enabled`, the same gate agent launches use;
+4. `model`, if given, is one of that entry's `models`.
 
-A request failing any of these is a 400 naming which check failed, never a silent coercion.
+Each failure returns a 400 naming the check that failed. Never a silent coercion — the voice bug fixed earlier this session was exactly a silent-coercion failure, and it cost a live debugging session to find.
 
-**UI:** a new Settings group beside Voice, listing `ENGINES.filter(e => e.streaming)` and further narrowed to tools the registry reports active. Today that yields exactly three: **Claude Code**, **Antigravity**, **Codex**. Each shows its model list from the same registry entry, so model choice comes free and stays data-driven.
-
-If no engine qualifies — nothing installed, or all unauthenticated — the group says so and points at CLI Tools, rather than rendering an empty dropdown.
+**UI:** a Settings group beside Voice, listing CLI engines the registry reports active, with the model list from the same registry entry so model choice is data-driven and free. If nothing qualifies, the group says so and points at CLI Tools rather than rendering an empty select.
 
 ## Part 3 — The broker side
 
-The broker's five LLM call sites (`broker/src/main.ts`) today:
+**The seam.** `broker/src/research.ts` exports:
 
-| line | site | shape |
-|---|---|---|
-| 100 | `streamFactory` → `messages.stream` | streaming — chat + voice |
-| 1513 | `runDocEditTurn` | one-shot |
-| 1704 | feeds → `plan` | one-shot |
-| 2034 | `analyzeBrief` | one-shot |
-| 2396 | `askForClaim` → `brokerAsk` | one-shot |
+```ts
+/** One research turn: a prompt in, text out. No tools, no history, no deltas. */
+export interface ResearchEngine {
+  complete(input: { system: string; prompt: string; maxTokens: number }): Promise<string>;
+}
+```
 
-Four are `{system, prompt} → text`. One streams. **A CLI engine serves both**: the same subprocess with `--print --output-format stream-json` streams for the chat path, and its reduction to final text serves the other four — the same `invoke() = reduceStream` relationship helmsmith's adapter already models.
+Two implementations:
+- **`AnthropicResearch`** — wraps the existing SDK call. Default when the setting is unset, so behaviour is unchanged for anyone who never opens it.
+- **`CliResearch`** — spawns the chosen tool, writes the prompt, reads stdout, returns text.
 
-**The seam:** a `BrokerEngine` interface with two methods — `stream(input): AsyncIterable<Chunk>` and `complete(input): Promise<string>`, where `complete` is `reduceStream`. Two implementations to start: the existing Anthropic SDK path (unchanged, still the default) and a CLI path that spawns the chosen tool.
+**All six research sites route through `ResearchEngine.complete`.** For `polish` and `session-title` this also removes their accidental dependency on `streamFactory`, which they never used as a stream — a simplification the mode split earns for free.
 
-The CLI implementation owns exactly what the SDK gave us for free, and each is a real failure mode rather than a hypothetical:
-- **process lifecycle** — non-zero exit, killed, never-starts;
-- **partial JSON lines** — a JSONL stream chunked mid-line across reads must buffer, not parse-and-throw;
-- **per-tool event shapes** — `claude`, `codex` and `agy` emit different JSON; normalising them is the adapter's job, exactly as `ToolDriver.parseSessionFile` already normalises transcripts;
-- **timeouts** — a hung subprocess must not hang a voice turn.
+**What `CliResearch` owns**, each a real failure mode rather than a hypothetical:
+- **process lifecycle** — non-zero exit, killed, never-starts, each a typed error;
+- **timeouts** — a hung subprocess must not hang a feed poll or an election;
+- **prompt delivery** — via argv the prompt must be shell-escaped; prefer stdin where the tool accepts it, since a long system prompt through argv risks `E2BIG`;
+- **output shape** — plain stdout for `--print`; JSON modes are Phase 2's problem.
 
-`ToolDriver` is deliberately **not** reused. It is CLI-shaped but for a different job: it launches interactive panes and reconstructs conversations by discovering and parsing transcript **files on disk**. The broker spawns a one-shot process and reads **stdout**. Sharing an interface across those two would serve neither; what they share is knowledge of each tool's flags, which stays in the registry.
+`ToolDriver` is deliberately **not** reused. It is CLI-shaped but for a different job: it launches interactive panes and reconstructs conversations by discovering and parsing transcript **files on disk**. `CliResearch` spawns a one-shot process and reads **stdout**. What they share is per-tool flag knowledge, which stays in the registry where both read it.
 
 ## Part 4 — Switching
 
-Changing the setting takes effect on the **next turn**, not at restart. The engine is resolved per-turn from the stored setting, so a bad choice is corrected by changing it back rather than by restarting a service. This matters because the broker is long-lived and holds LiveKit and Discord connections that a restart drops.
+The engine resolves **per turn** from the stored setting. A bad choice is corrected by changing it back, not by restarting a service — the broker is long-lived and holds LiveKit and Discord connections a restart would drop.
 
-## Part 5 — Out of scope
+## Part 5 — Phase 1 out of scope
 
-- **Retiring `ToolDriver` or `ApiProvider`.** Three provider abstractions will exist after this. Consolidating them — plausibly onto helmsmith's `AgentAdapter`, which already spans CLI and SDK behind one interface — is a portfolio decision, not a broker feature, and should not be made as a side effect of wanting a working broker.
+- **Brain mode.** Needs caller-defined tool calling; no CLI provides it. Phase 2.
+- **Gemini.** `@google/genai` is already a broker dependency, wired only to avatar images. Once `ResearchEngine` exists, an API-backed research engine is one implementation — but the dead-key problem is what Phase 1 routes around.
+- **Retiring `ToolDriver` or `ApiProvider`.** Three provider abstractions will exist after this. Consolidating them is a portfolio decision, not a broker feature.
+- **Adopting `@helmsmith/agent-adapter`.** Checked 2026-08-14: all-or-nothing. `src/adapters/index.ts` is a side-effect barrel of eleven bare imports, each running `registerAdapter(...)`, and its comment states the intent — *"nothing here is re-exported (the public surface is `createAgent`, not the adapter classes)."* The `exports` map carries only `"."` and `"./conformance"`; the root exports the `AdapterFactory` *type* but no individual factory. A consumer wanting three CLI tools gets eleven adapters and their SDKs, from a package that is `private: true`, unbuilt, and pulls `@helmsmith/agent-auth` behind it. `registerAdapter` *is* public, so the registry supports selective registration — the package simply exposes no handle on one factory. **The concrete ask for helmsmith, if revisited:** subpath exports (`./adapters/gemini-sdk`) or exported factories. Deep-importing `src/` would couple this repo to their file layout.
 
-- **Adopting `@helmsmith/agent-adapter` now.** Checked on 2026-08-14 and it is all-or-nothing: `src/adapters/index.ts` is a side-effect barrel of eleven bare imports, each running a module-level `registerAdapter(...)`, and its own comment states the intent — *"nothing here is re-exported (the public surface is `createAgent`, not the adapter classes)."* The `exports` map carries only `"."` and `"./conformance"`, no per-adapter subpath, and the root exports the `AdapterFactory` *type* but no individual factory. So a consumer wanting three CLI tools gets eleven adapters and their SDKs — `@anthropic-ai/sdk` is already a declared dependency, with bedrock/openai/copilot/gemini implied — from a package that is `private: true`, unbuilt, and pulls `@helmsmith/agent-auth` behind it.
+---
 
-  `registerAdapter` *is* public, so the registry itself supports selective registration; the package simply exposes no handle on a single factory. **The concrete ask for helmsmith, if this is revisited:** add subpath exports (`./adapters/gemini-sdk`) or export the factories, so a consumer can register only what it supports. That is their change to make — deep-importing `src/` to work around it would couple this repo to their file layout.
-- **Gemini.** `@google/genai` is already a broker dependency but wired only to avatar images. Once `streaming` exists as a flag and the CLI seam is in place, `gemini-cli` is a registry entry plus a normaliser, not a redesign.
-- **Streaming `ApiProvider`.** Would flip `api:anthropic` to `streaming: true`, but the API keys are the thing this design routes around.
-- **Per-capability engines** (one for reasoning, another for conversation). All three candidates stream, so the split has no reason to exist.
+# Phase 2 — Brain mode (sketch, not this spec)
+
+Recorded so Phase 1 does not foreclose it.
+
+The brain needs a provider that accepts **caller-defined tool schemas**, returns structured tool calls, and **streams text deltas** for the speech chunker. That is an API capability: Anthropic has it today, Gemini and OpenAI both offer function calling.
+
+The `EngineOption` flag Phase 2 wants is therefore **`toolCalling: boolean`**, not `streaming` — every CLI streams text fine, and none accepts foreign tool schemas. Phase 1 deliberately adds no flag so Phase 2 can add the right one without first removing a wrong one.
+
+The real work in Phase 2 is translating ten Anthropic-shaped tool schemas and the `tool_use`/`tool_result` protocol into another provider's function-calling dialect, then proving the loop still terminates. That deserves its own spec.
+
+---
+
+## What the first draft got wrong
+
+Recorded because both errors came from reading the call sites too shallowly, and the second was caught only by reading `polish.ts` line by line:
+
+1. **"A CLI engine serves both."** False. `BrokerBrain` runs an agentic loop over its own tool schemas; `claude --print` runs *Claude Code's* tool loop and will never emit a `tool_use` block for a `delegate` schema it was never given.
+2. **The split is streaming vs one-shot.** False. `polish` and `session-title` go *through* `streamFactory` and stream nothing — `tools: []`, and only `finalMessage()` is awaited. The real split is tools vs no tools, which is Edwin's framing.
+
+The `streaming: boolean` flag the first draft proposed would have restricted the research picker to three engines when all five qualify.
 
 ## Open decisions for Edwin
 
-1. **Default when unset.** Keep the Anthropic SDK as the default (behaviour unchanged for anyone who never opens the setting), or default to the first active streaming CLI (works out of the box, but silently changes what the broker runs on). Recommendation: keep the SDK default; changing what a working broker runs on without being asked is the more surprising failure.
-2. **Model per engine.** The registry lists models per engine (`claude-opus`/`claude-sonnet`/`claude-haiku`, `gpt-5-codex`/`gpt-5`, `default`). Store a model alongside the engine, or take each tool's default? Recommendation: store it — it's one field and the models are already in the registry.
-3. **`copilot` and `opencode`.** Left `streaming: false` on unverified help output. Worth ten minutes each to confirm before shipping, or leave until someone wants them?
+1. **Default when unset.** Keep Anthropic (behaviour unchanged for anyone who never opens the setting), or default to the first active CLI (works out of the box, but silently changes what a working broker runs on)? Recommendation: keep Anthropic — silently changing what a working broker runs on is the more surprising failure.
+2. **Model per engine.** Store a model alongside the engine, or take each tool's default? Recommendation: store it — one field, and the models are already in the registry.
+3. **One engine for all six sites, or per-site?** Recommendation: one. Six settings for six calls that do the same kind of work is configuration nobody wants to maintain.
 
 ## Testing
 
 Swarm (node test runner, pure helpers):
-- every `ENGINES` entry carries an explicit `streaming` boolean — no `undefined` treated as false by accident;
-- `agy` is `streaming: true, warmSessions: false` — the orthogonality case, asserted directly so a future edit cannot quietly collapse the two flags;
-- the setting's validator rejects an unknown cli, a known-but-non-streaming cli, and a streaming cli whose registry gate is closed — each with a distinct message;
-- a valid selection round-trips through save and load.
+- `buildResearchEngineUpdate` rejects an unknown cli, an `api`-kind cli, a cli whose registry gate is closed, and a model not in that engine's list — four distinct messages;
+- a valid selection round-trips through save and load;
+- an absent setting reads back as absent, not as a coerced default.
 
 Broker:
-- the CLI engine reduces a stream to the same text `complete()` returns — `reduceStream` equivalence, proving the four one-shot sites and the streaming site agree;
-- a JSONL event split mid-line across two reads parses as one event, not a throw;
-- a non-zero exit surfaces as a typed error, not a hang;
+- `CliResearch.complete` returns stdout text for a stubbed successful process;
+- a non-zero exit surfaces as a typed error, not an empty string — an empty string would silently poison a feed card or an election claim;
 - a timeout aborts the subprocess rather than leaking it;
-- each of the three tools' event shapes normalises to the same chunk type — one test per tool, with a captured real payload as the fixture.
+- a prompt containing quotes and newlines survives delivery intact;
+- `AnthropicResearch` and `CliResearch` satisfy the same interface test, so the six call sites cannot tell them apart.
 
 Control-plane (vitest + jsdom):
-- the picker lists only engines that are both `streaming` and registry-active;
+- the picker lists only CLI engines the registry reports active;
 - with none qualifying, the group renders guidance pointing at CLI Tools rather than an empty select;
 - selecting an engine issues the PUT and reflects the saved value;
-- a rejected save surfaces the server's reason and leaves the prior selection intact — the same contract `VoiceGroup` already follows.
+- a rejected save surfaces the server's reason and leaves the prior selection intact — the contract `VoiceGroup` already follows.
