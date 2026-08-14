@@ -1121,7 +1121,6 @@ it("the Agenda tab spans every board — holders live on their home boards", () 
 
 In `BoardStage.test.tsx`, following the file's existing render/stub helpers:
 
-```ts
 **These tests must go through the `fireDrop` seam** — jsdom cannot synthesize dnd-kit pointer sequences, so a "drag" in this file means calling `fireDrop(boardId, cardId, columnId, order)` from `./BoardStage`. Follow the existing `describe("BoardStage drag wiring")` block: it stubs fetch with `stubFetch()`, renders, and then calls the seam. Reuse its `readyToDrop(columnName)` helper verbatim, including the `await act(async () => {})` flush — its comment explains why, and skipping it leaves the seam holding a closure over an empty board list so `applyMove` bails without PATCHing and your test passes for the wrong reason.
 
 ```ts
