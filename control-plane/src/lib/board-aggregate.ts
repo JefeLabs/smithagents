@@ -133,8 +133,8 @@ export function sharedQueueCards(boards: WorkBoardT[]): AggCard[] {
  * One Agenda lane. Two card kinds share it and order differently, deliberately:
  * personal cards have no workflow axis, so their columnId IS the lane and their drag
  * `order` still means something — they come first. Team cards are matched on the
- * holder's step state and ordered by `since`, oldest first, because `order` is
- * per-column-per-board and cannot order a lane that spans boards.
+ * holder's step state, because `order` is per-column-per-board and cannot order a
+ * lane that spans boards.
  *
  * Team cards order by `grabbedAt`, NOT `since`: the morning sweep re-stamps `since` on
  * everything it reverts, so sorting by it would reshuffle the lane every midnight and
@@ -150,6 +150,9 @@ export function collectAgendaCards(boards: WorkBoardT[], userId: string, laneId:
         if (c.columnId === laneId) personal.push(tagged);
         continue;
       }
+      // Also defends against a stale/malformed persisted `agenda.state`: it arrives as
+      // JSON, so TS's "plate" | "today" is erased at runtime and a corrupted value could
+      // otherwise coincidentally equal a non-lane laneId like "done" below.
       if (!STEP_LANES.includes(laneId)) continue;
       if (c.agenda?.by === userId && c.agenda.state === laneId) {
         team.push({ card: tagged, grabbedAt: c.agenda.grabbedAt });

@@ -8,6 +8,7 @@ import {
   collectAgendaCards,
   collectCards,
   exitsForUI,
+  type StepStateT,
   sharedQueueCards,
   tabsFor,
   WORKSPACE_BOARD_TYPES_UI,
@@ -140,7 +141,10 @@ describe("agenda lanes", () => {
     name: "Deliver",
     type: "deliver" as const,
     workspaceId: "ws",
-    columns: [{ id: "review", name: "Review", gatesHuman: true }],
+    columns: [
+      { id: "review", name: "Review", gatesHuman: true },
+      { id: "in-progress", name: "In progress" },
+    ],
     cards: [
       { id: "pool", title: "unheld", columnId: "review", order: 0 },
       {
@@ -179,11 +183,36 @@ describe("agenda lanes", () => {
           grabbedAt: "2026-08-13T08:00:00.000Z",
         },
       },
+      // Unheld AND gated, but an agent is mid-flight — must stay out of the pool.
+      // Proves the delegation:"working" exclusion at :121 is load-bearing, not incidental.
+      {
+        id: "working",
+        title: "agent has it",
+        columnId: "review",
+        order: 4,
+        delegation: { agentId: "agent-1", taskId: "task-1", state: "working" as const },
+      },
+      // Ungated column, but flagged — proves inclusion doesn't depend solely on gatesHuman.
+      {
+        id: "flagged",
+        title: "blocked, ungated",
+        columnId: "in-progress",
+        order: 0,
+        flag: { kind: "blocked" as const, reason: "waiting on design", since: "2026-08-13T08:00:00.000Z" },
+      },
+      // Ungated column, but a failed Jira push — the third independent inclusion trigger.
+      {
+        id: "jira-err",
+        title: "push failed, ungated",
+        columnId: "in-progress",
+        order: 1,
+        jira: { key: "OPS-1", url: "https://example.atlassian.net/browse/OPS-1", lastPushError: "500" },
+      },
     ],
   };
 
   it("pools only unheld cards from source boards", () => {
-    expect(sharedQueueCards([personal, deliver]).map((c) => c.id)).toEqual(["pool"]);
+    expect(sharedQueueCards([personal, deliver]).map((c) => c.id)).toEqual(["pool", "jira-err", "flagged"]);
   });
 
   it("puts personal cards first by order, then team cards by grabbedAt", () => {
@@ -232,8 +261,31 @@ describe("agenda lanes", () => {
     expect(collectAgendaCards([personal, deliver], "edwin", "plate").map((c) => c.id)).not.toContain("t-hers");
   });
 
-  it("never matches team cards in a lane that is not a step state", () => {
+  it("never matches team cards in a lane that is not a step state, even against malformed persisted data", () => {
     const withDone = { ...personal, cards: [{ id: "p-done", title: "done", columnId: "done", order: 0 }] };
-    expect(collectAgendaCards([withDone, deliver], "edwin", "done").map((c) => c.id)).toEqual(["p-done"]);
+    // `agenda.state` is typed as "plate" | "today", but it arrives over the wire as JSON —
+    // types are erased at runtime, so a stale or corrupted persisted value coincidentally
+    // matching a non-lane laneId ("done") is genuinely reachable. Cast through `unknown` to
+    // simulate exactly that, so this test actually exercises the STEP_LANES guard rather
+    // than passing for a reason unrelated to it: without the guard, "done" === "done" would
+    // let this card leak into the "done" lane.
+    const malformed = {
+      ...deliver,
+      cards: [
+        {
+          id: "bad-state",
+          title: "corrupted holder state",
+          columnId: "review",
+          order: 0,
+          agenda: {
+            by: "edwin",
+            state: "done" as unknown as StepStateT,
+            since: "2026-08-13T08:00:00.000Z",
+            grabbedAt: "2026-08-13T08:00:00.000Z",
+          },
+        },
+      ],
+    };
+    expect(collectAgendaCards([withDone, malformed], "edwin", "done").map((c) => c.id)).toEqual(["p-done"]);
   });
 });
