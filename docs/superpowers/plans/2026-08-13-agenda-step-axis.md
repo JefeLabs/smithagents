@@ -17,6 +17,8 @@
 - **Swarm helpers stay pure.** No clock, filesystem, or current-user reads inside `work-items.ts` — the caller passes `now` and `userId`.
 - **The shared queue is derived.** Never add a stored "queued" flag or a function that writes one.
 - **`StepState` is exactly `"plate" | "today"`.** No `done` — finishing a step means advancing the card.
+- **Entering `today` requires a non-empty intent**, enforced in the domain helper so no route or script can bypass it. `plate` never requires one.
+- **`card.intents` is append-only.** Nothing rewrites or truncates it — not the sweep, not a column change, not a release.
 - **Sources are `maintenance`, `reactive`, `deliver`.** `release/sign-off` is deliberately excluded.
 - Run swarm tests from `swarm/`, control-plane tests from `control-plane/`.
 
@@ -29,7 +31,7 @@
 - Test: `swarm/src/work-items.test.ts`
 
 **Interfaces:**
-- Produces: `type StepState = "plate" | "today"`, `WorkCard.agenda?: { by: string; state: StepState; since: string }`, `grabCard(card, userId, now): void`, `releaseCard(card): void`, `setStepState(card, userId, state, now): void`.
+- Produces: `type StepState = "plate" | "today"`, `WorkCard.agenda?: { by: string; state: StepState; since: string }`, `WorkCard.intents?: Array<{ at: string; by: string; text: string }>`, `grabCard(card, userId, now): void`, `releaseCard(card): void`, `setStepState(card, userId, state, now, intent?): void`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -58,9 +60,50 @@ test("setStepState flips plate<->today; since resets on change, survives a re-st
   grabCard(c, "edwin", "2026-08-13T10:00:00.000Z");
   setStepState(c, "edwin", "plate", "2026-08-13T11:00:00.000Z");
   assert.equal(c.agenda?.since, "2026-08-13T10:00:00.000Z", "same state keeps its clock");
-  setStepState(c, "edwin", "today", "2026-08-13T12:00:00.000Z");
+  setStepState(c, "edwin", "today", "2026-08-13T12:00:00.000Z", "chasing the flaky suite");
   assert.equal(c.agenda?.since, "2026-08-13T12:00:00.000Z");
-  assert.throws(() => setStepState(c, "ana", "today", "2026-08-13T12:00:00.000Z"), /not held by/);
+  assert.throws(
+    () => setStepState(c, "ana", "today", "2026-08-13T12:00:00.000Z", "mine now"),
+    /not held by/,
+  );
+});
+
+test("entering today demands a sentence — the rule lives in the domain, not the UI", () => {
+  const b = createBoard("deliver", "ws");
+  const c = addCard(b, { title: "auth", columnId: "review" });
+  grabCard(c, "edwin", "2026-08-13T10:00:00.000Z");
+  assert.throws(() => setStepState(c, "edwin", "today", "2026-08-13T11:00:00.000Z"), /intent is required/);
+  assert.throws(
+    () => setStepState(c, "edwin", "today", "2026-08-13T11:00:00.000Z", "   "),
+    /intent is required/,
+    "whitespace is not a sentence",
+  );
+  assert.equal(c.agenda?.state, "plate", "a rejected claim must not half-apply");
+  assert.equal(c.intents, undefined);
+});
+
+test("each claim appends one intent; a same-state re-stamp does not append twice", () => {
+  const b = createBoard("deliver", "ws");
+  const c = addCard(b, { title: "auth", columnId: "review" });
+  grabCard(c, "edwin", "2026-08-13T10:00:00.000Z");
+  setStepState(c, "edwin", "today", "2026-08-13T11:00:00.000Z", "chasing the flaky suite");
+  setStepState(c, "edwin", "today", "2026-08-13T12:00:00.000Z", "still on it");
+  assert.equal(c.intents?.length, 1, "already in today — no new claim was made");
+  assert.deepEqual(c.intents?.[0], {
+    at: "2026-08-13T11:00:00.000Z",
+    by: "edwin",
+    text: "chasing the flaky suite",
+  });
+});
+
+test("intents survive the column change that clears the holder", () => {
+  const b = createBoard("deliver", "ws");
+  const c = addCard(b, { title: "auth", columnId: "review" });
+  grabCard(c, "edwin", "2026-08-13T10:00:00.000Z");
+  setStepState(c, "edwin", "today", "2026-08-13T11:00:00.000Z", "chasing the flaky suite");
+  patchCard(b, c.id, { columnId: "verify", order: 0 });
+  assert.equal(c.agenda, undefined, "the step ended");
+  assert.equal(c.intents?.length, 1, "the card's story does not end with the step");
 });
 
 test("patchCard clears the holder on a column change, keeps it on a reorder", () => {
@@ -100,6 +143,10 @@ Add to `WorkCard`, after `flag?: CardFlag;`:
       when the card changes column. One holder — grabbing is exclusive. An AGENT holding
       work is `delegation`, not this. */
   agenda?: { by: string; state: StepState; since: string };
+  /** Append-only: what each holder said they were doing when they claimed this card for
+      a day. On the CARD, not inside `agenda`, so it survives the column change that
+      clears the holder. Substrate for Jira comments and AI summaries. */
+  intents?: Array<{ at: string; by: string; text: string }>;
 ```
 
 - [ ] **Step 4: Add the three helpers**
@@ -128,12 +175,29 @@ export function releaseCard(card: WorkCard): void {
 /**
  * The holder's own daily declaration. `since` measures how long they have been in THIS
  * state, so an unchanged state keeps its stamp — same contract as CardFlag.since.
+ *
+ * Claiming a card for TODAY demands a sentence, and the rule lives here rather than in
+ * the composer so no route, script or import can move a card into today silently. Every
+ * validation runs before anything mutates: a rejected claim must not leave the card
+ * half-applied.
  */
-export function setStepState(card: WorkCard, userId: string, state: StepState, now: string): void {
+export function setStepState(
+  card: WorkCard,
+  userId: string,
+  state: StepState,
+  now: string,
+  intent?: string,
+): void {
   if (!STEP_STATES.includes(state)) throw new Error(`Unknown step state: ${state}`);
   if (!card.agenda) throw new Error("Card is not held — grab it first");
   if (card.agenda.by !== userId) throw new Error(`Card is not held by ${userId}`);
-  if (card.agenda.state !== state) card.agenda.since = now;
+  const entering = card.agenda.state !== state;
+  const text = intent?.trim();
+  if (state === "today" && entering && !text) throw new Error("An intent is required to claim a card for today");
+  if (state === "today" && entering && text) {
+    card.intents = [...(card.intents ?? []), { at: now, by: userId, text }];
+  }
+  if (entering) card.agenda.since = now;
   card.agenda.state = state;
 }
 ```
@@ -450,15 +514,15 @@ per the 2026-08-11 ruling."
 
 ---
 
-### Task 4: Routes
+### Task 4: Routes and the Jira comment push
 
 **Files:**
-- Modify: `swarm/src/server.ts:2628-2760` (card PATCH)
-- Test: `swarm/src/server.test.ts`
+- Modify: `swarm/src/jira-sync.ts` (new `commentIssue`), `swarm/src/server.ts:2628-2760` (card PATCH)
+- Test: `swarm/src/server.test.ts`, `swarm/src/jira-sync.test.ts`
 
 **Interfaces:**
 - Consumes: `grabCard`, `releaseCard`, `setStepState` from Task 1.
-- Produces: `PATCH /work/boards/:id/cards/:cardId` accepts `agenda?: { action: "grab" } | { state: StepState } | null`; `buildCardAgendaPatch(card, userId, patch, now): void`.
+- Produces: `commentIssue(siteUrl, email, apiToken, key, text, fetchImpl?): Promise<void>`; `PATCH /work/boards/:id/cards/:cardId` accepts `agenda?: { action: "grab" } | { state: StepState; intent?: string } | null`; `buildCardAgendaPatch(card, userId, patch, now): void`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -508,12 +572,12 @@ In `swarm/src/server.ts`, beside `buildVoiceUpdate` / `buildUserUpdate`:
 export function buildCardAgendaPatch(
   card: WorkCard,
   userId: string,
-  patch: { action: "grab" } | { state: StepState } | null,
+  patch: { action: "grab" } | { state: StepState; intent?: string } | null,
   now: string,
 ): void {
   if (patch === null) return releaseCard(card);
   if ("action" in patch) return grabCard(card, userId, now);
-  setStepState(card, userId, patch.state, now);
+  setStepState(card, userId, patch.state, now, patch.intent);
 }
 ```
 
@@ -537,7 +601,93 @@ After the existing `const card = patchCard(board, req.params.cardId, ...)` call 
 
 Do **not** add `agenda` to `patchCard`'s `Pick<>` — a column move and a step-state write must never land in one call, or invariant 1 breaks.
 
-- [ ] **Step 5: Run the tests, typecheck, full suite, commit**
+- [ ] **Step 5: Add `commentIssue` to jira-sync**
+
+Write the failing test first, in `swarm/src/jira-sync.test.ts`, following that file's existing `fetchImpl` stub style:
+
+```ts
+test("commentIssue posts an ADF document, not a bare string", async () => {
+  let sent: { url: string; body: unknown } | null = null;
+  const fetchImpl = (async (url: string, init: RequestInit) => {
+    sent = { url: String(url), body: JSON.parse(String(init.body)) };
+    return { ok: true, status: 201, json: async () => ({}) } as Response;
+  }) as unknown as typeof fetch;
+
+  await commentIssue("https://x.atlassian.net", "e@x.com", "tok", "P-1", "chasing the flaky suite", fetchImpl);
+
+  assert.equal(sent!.url, "https://x.atlassian.net/rest/api/3/issue/P-1/comment");
+  assert.deepEqual(sent!.body, {
+    body: {
+      type: "doc",
+      version: 1,
+      content: [{ type: "paragraph", content: [{ type: "text", text: "chasing the flaky suite" }] }],
+    },
+  });
+});
+
+test("commentIssue throws on a non-ok response", async () => {
+  const fetchImpl = (async () => ({ ok: false, status: 403 }) as Response) as unknown as typeof fetch;
+  await assert.rejects(
+    () => commentIssue("https://x.atlassian.net", "e@x.com", "tok", "P-1", "hi", fetchImpl),
+    /Jira comment failed: 403/,
+  );
+});
+```
+
+Run it (expect FAIL, `commentIssue is not a function`), then implement in `swarm/src/jira-sync.ts` beside `transitionIssue`:
+
+```ts
+/**
+ * Post a plain-text comment. Jira v3 comment bodies are ADF documents, not strings —
+ * sending a string is accepted by the type system and rejected by the API, so the text
+ * is wrapped in the minimal doc → paragraph → text shape here rather than at call sites.
+ */
+export async function commentIssue(
+  siteUrl: string,
+  email: string,
+  apiToken: string,
+  key: string,
+  text: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  const base = siteUrl.replace(/\/$/, "");
+  const res = await fetchImpl(`${base}/rest/api/3/issue/${encodeURIComponent(key)}/comment`, {
+    method: "POST",
+    headers: { authorization: auth(email, apiToken), "content-type": "application/json" },
+    body: JSON.stringify({
+      body: { type: "doc", version: 1, content: [{ type: "paragraph", content: [{ type: "text", text }] }] },
+    }),
+  });
+  if (!res.ok) throw new Error(`Jira comment failed: ${res.status}`);
+}
+```
+
+- [ ] **Step 6: Push the intent as a comment**
+
+In the card PATCH handler, after `buildCardAgendaPatch` succeeds, mirror the existing push-on-move block (`server.ts:2684`) — read it first and follow its credential resolution and error handling exactly:
+
+```ts
+        const appended = card.intents?.at(-1);
+        if (appended && appended.at === /* the `now` passed above */ stampedNow && card.jira && board.jira) {
+          try {
+            await commentIssue(
+              board.jira.siteUrl,
+              /* email + token resolved exactly as the transition push does */,
+              card.jira.key,
+              `${user.name} · today: ${appended.text}`,
+            );
+            card.jira.lastPushError = undefined;
+          } catch (err) {
+            // Best-effort, same contract as the transition push: a Jira outage must
+            // never cost the operator their local claim.
+            card.jira.lastPushError = String((err as Error).message);
+          }
+        }
+```
+
+Capture `now` in a local (`stampedNow`) when calling `buildCardAgendaPatch` so this block can tell a freshly appended intent from an older one — comparing against `new Date()` again would be a different instant.
+
+- [ ] **Step 7: Run the tests, typecheck, full suite, commit**
 
 ```bash
 node --import tsx --test --test-timeout 60000 --test-name-pattern='buildCardAgendaPatch' src/server.test.ts
@@ -545,10 +695,12 @@ pnpm typecheck && pnpm test 2>&1 | tail -20
 ```
 
 ```bash
-git add swarm/src/server.ts swarm/src/server.test.ts
-git commit -m "feat(swarm): card PATCH accepts grab, step-state and release
+git add swarm/src/server.ts swarm/src/server.test.ts swarm/src/jira-sync.ts swarm/src/jira-sync.test.ts
+git commit -m "feat(swarm): grab, step-state, release + intent comments to Jira
 
-A lost grab race 400s rather than silently overwriting the holder."
+A lost grab race 400s rather than silently overwriting the holder.
+Claiming a card for today posts the stated intent as a Jira comment,
+best-effort like the existing push-on-move."
 ```
 
 ---
@@ -726,9 +878,31 @@ it("grab sends the grab action and no columnId", async () => {
   expect(lastPatchBody()).toEqual({ agenda: { action: "grab" } });
 });
 
-it("dragging a TEAM card between lanes patches the step state only", async () => {
-  expect(lastPatchBody()).toEqual({ agenda: { state: "today" } });
+it("dragging a TEAM card to plate patches the step state only", async () => {
+  expect(lastPatchBody()).toEqual({ agenda: { state: "plate" } });
   expect(lastPatchBody()).not.toHaveProperty("columnId");
+});
+
+it("dropping into Today asks what you are doing before writing anything", async () => {
+  // drag a card from My plate onto Today
+  expect(await screen.findByLabelText(/what are you doing/i)).toBeDefined();
+  expect(patchCalls()).toHaveLength(0);
+});
+
+it("cancelling the intent composer leaves the card where it was", async () => {
+  // drag onto Today, then press Cancel
+  fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+  expect(patchCalls()).toHaveLength(0);
+});
+
+it("submitting the intent sends it with the state", async () => {
+  fireEvent.change(screen.getByLabelText(/what are you doing/i), {
+    target: { value: "chasing the flaky suite" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: /start/i }));
+  await waitFor(() =>
+    expect(lastPatchBody()).toEqual({ agenda: { state: "today", intent: "chasing the flaky suite" } }),
+  );
 });
 
 it("dragging a PERSONAL card patches columnId only", async () => {
@@ -770,7 +944,7 @@ export function useCardAgenda() {
     }: {
       boardId: string;
       cardId: string;
-      agenda: { action: "grab" } | { state: "plate" | "today" } | null;
+      agenda: { action: "grab" } | { state: "plate" | "today"; intent?: string } | null;
     }) => api.patchCard(boardId, cardId, { agenda }),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.boards }),
   });
@@ -789,15 +963,32 @@ In `handleDragEnd`:
     const source = boards.find((b) => b.id === outcome.boardId);
     if (tab?.type === "personal" && source && source.type !== "personal") {
       if (outcome.columnId !== "plate" && outcome.columnId !== "today") return;
+      if (outcome.columnId === "today") {
+        // Claiming a day needs a sentence. Nothing is written until it is submitted —
+        // no optimistic move, no PATCH — so cancelling leaves the card exactly where it
+        // was. This is the one drop in the app that a drag alone cannot complete.
+        setPendingIntent({ boardId: outcome.boardId, cardId });
+        return;
+      }
       void cardAgendaMutation.mutateAsync({
         boardId: outcome.boardId,
         cardId,
-        agenda: { state: outcome.columnId },
+        agenda: { state: "plate" },
       });
       return;
     }
     void applyMove(outcome.boardId, cardId, outcome.columnId, outcome.order);
 ```
+
+`pendingIntent` is `useState<{ boardId: string; cardId: string } | null>(null)`. While set, the target card renders the composer instead of its normal face. Submitting fires:
+
+```ts
+    void cardAgendaMutation
+      .mutateAsync({ boardId, cardId, agenda: { state: "today", intent: text } })
+      .then(() => setPendingIntent(null));
+```
+
+Cancelling just calls `setPendingIntent(null)` — no network call at all.
 
 - [ ] **Step 6: Run, lint, commit**
 
@@ -853,6 +1044,15 @@ it("renders the provenance badge when given", () => {
     provenance="Deliver · review" onOpen={() => {}} />);
   expect(screen.getByText("Deliver · review")).toBeDefined();
 });
+
+it("shows the stated intent under the title, and nothing when there is none", () => {
+  const card = { id: "c1", title: "auth", columnId: "review", order: 0 };
+  const { rerender, container } = render(
+    <BoardCard card={card} intent="chasing the flaky suite" onOpen={() => {}} />);
+  expect(screen.getByText("chasing the flaky suite")).toBeDefined();
+  rerender(<BoardCard card={card} onOpen={() => {}} />);
+  expect(container.querySelector(".board-card__intent")).toBeNull();
+});
 ```
 
 - [ ] **Step 2: Run them to verify they fail**
@@ -872,6 +1072,9 @@ Extend `BoardCardProps`:
   provenance?: string;
   /** Present only for shared-queue cards; renders the Grab control. */
   onGrab?: () => void;
+  /** The holder's latest stated intent. Shown under the title in the Today lane, so the
+      lane reads as a list of commitments rather than a list of titles. */
+  intent?: string;
 ```
 
 Render beside the existing `card.flag` chip, following its markup shape:
@@ -924,6 +1127,7 @@ git commit -m "feat(cp): holder chips, provenance badges, grab control"
   tmux send-keys -t smith-swarm C-c && tmux send-keys -t smith-swarm "pnpm serve" Enter
   curl -s --retry 20 --retry-connrefused http://127.0.0.1:7777/work/boards | head -c 200
   ```
-- [ ] Smoke at `http://localhost:1420`: put a card in Deliver/Review, confirm it appears in Agenda's **Shared queue**, press Grab, confirm it moves to **My plate** and vanishes from the shared lane, drag it to **Today**, and confirm the Deliver board still shows it in Review with an "Edwin · today" chip.
+- [ ] Smoke at `http://localhost:1420`: put a card in Deliver/Review, confirm it appears in Agenda's **Shared queue**, press Grab, confirm it moves to **My plate** and vanishes from the shared lane, drag it to **Today**, confirm the composer appears and that **cancelling writes nothing**, then submit an intent and confirm the Deliver board still shows it in Review with an "Edwin · today" chip and the intent under the title.
 - [ ] Release it and confirm it returns to the shared queue.
+- [ ] On a Jira-linked card, submit an intent and confirm the comment lands on the issue. If the push fails, confirm the local claim still succeeded and `lastPushError` is set — a Jira outage must never cost the operator their claim.
 - [ ] Verify the sweep by hand: set `agendaSweptDay` to yesterday in `swarm/.smith/users/me.json`, restart, confirm `today` reverted to `plate` and nothing was released.

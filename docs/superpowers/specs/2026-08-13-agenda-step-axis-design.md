@@ -48,6 +48,12 @@ Nothing is ever assigned to a person. Work becomes *visible* in a shared queue a
 agenda?: { by: string; state: StepState; since: string };
 
 export type StepState = "plate" | "today";
+
+/** Append-only narrative: what the holder said they were doing, stamped each time
+    someone claims this card for a day. Lives on the CARD, not inside `agenda`, so it
+    survives the column change that clears the holder — it is the card's story, not the
+    step's, and it is the substrate for Jira comments and AI summaries. Never rewritten. */
+intents?: Array<{ at: string; by: string; text: string }>;
 ```
 
 Single holder, not a list. "Grab it" is exclusive: the moment someone takes a card it leaves everyone else's shared queue. An **agent** holding work is not represented here — that is `delegation`, which already exists and already carries the execution state (`taskId`, `state`, `prUrl`) a human holder has no analogue for.
@@ -91,6 +97,7 @@ Condition 4 is the distinction the whole feature exists to draw: a card an agent
 3. **Grab is exclusive and guarded.** Grabbing a card that already has a holder is an error, not an overwrite — two people pulling the same card at the same moment must not silently produce one winner and one confused loser.
 4. **Release restores the pool by deletion.** Releasing removes `agenda` entirely; the card re-enters the shared queue by satisfying Part 2, with nothing left behind.
 5. **`since` resets on a state change and survives a same-state re-stamp** — mirroring `CardFlag.since`.
+6. **Entering `today` requires a stated intent.** Enforced in the domain helper, not the UI, so no route or script can move a card into today silently. `plate` never requires one — grabbing is cheap, committing your day is not.
 
 ## Part 4 — The morning sweep
 
@@ -116,7 +123,25 @@ So there is no handoff-to-a-named-person, and none is needed: a released card is
 
 **Retired:** the `Escalate to Agenda` routes in `BOARD_ROUTES` (reactive and maintenance `triage` → personal `queue`). They *move* the card onto the personal board, hiding it from the team. Under this design a React/Maintain triage card is already in the shared queue by Part 2; escalation is just grabbing it.
 
-## Part 6 — Rendering
+## Part 6 — Stating intent
+
+> "placing on my plate assigns it to me — pulling to Doing (Today) should force user to state what they are doing — can be used by system to add comments to original jira or create ai summaries"
+
+**Grab is the assignment.** Taking a card off the shared queue is what "assigned to me" means in this system; the holder chip on the team board is how everyone sees it. There is no separate assign step.
+
+**Entering `today` demands a sentence.** Dragging a card into Today opens a required composer — "what are you doing with this?" — and the move does not commit until it is answered. Cancelling leaves the card on your plate. The check lives in `setStepState`, not the component, so the rule holds for every caller.
+
+Each statement appends to `card.intents`. It is never rewritten and never cleared, including when the holder is cleared by a column change — the sentence someone wrote about the spec step stays true after the card moves to tech-design. That append-only log is what makes the next two things possible:
+
+**Jira comments.** When the card carries `jira` and its board carries `jira`, appending an intent posts a comment on the issue: *"Edwin · today: chasing the flaky suite on main."* This mirrors the existing push-on-move, which transitions a linked issue when a card lands in a column with `jiraStatus` and records failures in `card.jira.lastPushError` rather than failing the write. Comment pushes follow the same contract — best-effort, never blocking the local move.
+
+`jira-sync.ts` has `searchIssues`, `createIssue`, `importIssues` and `transitionIssue`; a `commentIssue` is new. Jira's v3 comment body is ADF, not a string, so the helper wraps plain text in a minimal `doc → paragraph → text` document.
+
+**AI summaries** are enabled, not built. The log is the substrate a standup or status summary would read; generating them is separate work and out of scope here. Worth knowing before anyone plans it: the broker's API key is currently out of credits, so any LLM path is dead until that is resolved.
+
+**Not built: pushing the assignee to Jira.** Jira's assignee endpoint needs an `accountId`, and nothing maps the local operator to a Jira account — `users.ts` has `id` and `name` only. Grab therefore assigns *in this system* and, on a linked card, announces itself as a comment. Real assignee sync needs an `accountId` on the user record and should be its own change.
+
+## Part 7 — Rendering
 
 **Team board.** One holder chip per card: the person's name and whether they're on it today. Unheld cards render nothing. Agent-held cards keep the existing delegation badge — one holder line either way, two records underneath.
 
@@ -129,9 +154,12 @@ So there is no handoff-to-a-named-person, and none is needed: a released card is
 - Shared queue is not drag-reorderable and its cards are not draggable into Today directly; **grab** is a button on the card, and grabbing lands it in My plate.
 - Lanes sort personal cards first by `order` (drag-reorderable, unchanged), then team cards by `since` oldest-first. `order` is per-column-per-board and renumbered per board, so it cannot order a cross-board lane. The shared queue sorts by how long the card has been waiting — `flag.since` when flagged, else `updatedAt`.
 
+- Dropping into **Today** opens the intent composer inline on the card. It is a required field: the drop is optimistic-free — nothing is written until the sentence is submitted, and cancelling returns the card to its lane with no PATCH at all. This is the one gesture in the app that cannot be completed by dragging alone, which is deliberate: the friction is the feature.
+- A card in Today shows its latest intent beneath the title, so the lane reads as a list of commitments rather than a list of titles.
+
 The app already renders intake-lane cards at 85% grayscale / 0.75 opacity, restored on hover, with the comment *"intake cards sit grey until someone picks them up."* Applying that treatment to the shared queue gives the pool its visual distinction for free.
 
-## Part 7 — Out of scope
+## Part 8 — Out of scope
 
 - Assigning to a named human. Needs a second user record; the passkey/cloud work is the seam where that arrives.
 - Agent holders in `agenda`. Delegation covers it.
@@ -153,7 +181,11 @@ Swarm (node test runner, pure helpers, no server boot):
 - `setStepState` flips plate↔today; `since` resets on change, survives a same-state re-stamp.
 - A column change clears `agenda`; a same-column reorder does not.
 - `sharedQueue`: includes a gated unheld card on deliver/reactive/maintenance; excludes one on plan/ideation/release; excludes a held card; excludes one with `delegation.state === "working"`; includes one whose delegation `failed`; includes a flagged card in an ungated column.
-- `sweepUserAgenda`: `today → plate` across boards; never releases; second call same day is a no-op; other users untouched; `agendaSweptDay` persists even when nothing moved.
+- `sweepUserAgenda`: `today → plate` across boards; never releases; second call same day is a no-op; other users untouched; `agendaSweptDay` persists even when nothing moved; **`intents` is never truncated by a sweep**.
+- `setStepState` into `today` throws without an intent, and throws on a whitespace-only one; into `plate` needs none.
+- Each entry into `today` appends one entry to `intents`; a same-state re-stamp does not append twice.
+- `intents` survives the column change that clears `agenda`.
+- `commentIssue` posts an ADF document, not a bare string; a failed comment push records `lastPushError` and does not throw.
 
 Control-plane (vitest + jsdom):
 
