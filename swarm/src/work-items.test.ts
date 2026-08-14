@@ -597,6 +597,46 @@ test("sweepUserAgenda reverts today to plate without releasing the card", () => 
   assert.equal(hers.agenda?.state, "today", "another user's day is not swept");
 });
 
+test("sweepUserAgenda merges Today into My plate on the personal board without duplicate order, alongside a workspace board in the same call", () => {
+  const personal = createBoard("personal");
+  const p1 = addCard(personal, { title: "p1", columnId: "plate" });
+  const p2 = addCard(personal, { title: "p2", columnId: "plate" });
+  const t1 = addCard(personal, { title: "t1", columnId: "today" });
+  const t2 = addCard(personal, { title: "t2", columnId: "today" });
+
+  const d = createBoard("deliver", "ws");
+  const mine = addCard(d, { title: "mine", columnId: "review" });
+  grabCard(mine, "edwin", "2026-08-12T09:00:00.000Z");
+  setStepState(mine, "edwin", "today", "2026-08-12T09:00:00.000Z", "working it");
+
+  const dirty = sweepUserAgenda([personal, d], "edwin", "2026-08-13T00:00:00.000Z");
+
+  assert.deepEqual(
+    dirty.map((b) => b.id),
+    [personal.id, d.id],
+    "both boards swept in the same call",
+  );
+
+  assert.equal(t1.columnId, "plate", "Today card reverted to My plate");
+  assert.equal(t2.columnId, "plate", "Today card reverted to My plate");
+  assert.equal(t1.updatedAt, "2026-08-13T00:00:00.000Z");
+  assert.equal(t2.updatedAt, "2026-08-13T00:00:00.000Z");
+  assert.equal(p1.columnId, "plate", "already on plate, untouched");
+  assert.equal(p2.columnId, "plate", "already on plate, untouched");
+
+  // The workspace board's step-axis card swept independently, same call.
+  assert.equal(mine.agenda?.state, "plate");
+
+  // p1/p2 and t1/t2 all carried order 0 or 1 in their own columns before the
+  // merge — without renumber(board, "plate") the merged column would have
+  // duplicate order values instead of a clean 0..n-1 run.
+  const plateOrders = personal.cards
+    .filter((c) => c.columnId === "plate")
+    .map((c) => c.order)
+    .sort((a, b) => a - b);
+  assert.deepEqual(plateOrders, [0, 1, 2, 3], "plate renumbered to a clean 0..n-1 run, no duplicates");
+});
+
 test("localDayStamp and msUntilNextMidnight do local-midnight math", () => {
   const nearMidnight = new Date(2026, 7, 11, 23, 59, 0); // Aug 11, 23:59 local
   assert.equal(localDayStamp(nearMidnight), "2026-08-11");

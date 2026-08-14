@@ -257,7 +257,7 @@ export class OrchestratorServer {
   /** Device pairing registry — the writer behind /workers/connect auth. */
   readonly deviceRegistry = new DeviceRegistry(resolve(process.cwd(), ".smith/devices.json"));
   private reapTimer: ReturnType<typeof setInterval> | null = null;
-  /** Midnight sweep of the Active To-dos board — Todo/Doing leftovers roll into Queue. */
+  /** Midnight sweep of the step axis — this user's Today cards revert to their plate. */
   private sweepTimer: ReturnType<typeof setTimeout> | null = null;
   readonly squadPool = new SquadPool();
   /** Warm conversational sessions (design §3) — lazy so tests don't need tmux. */

@@ -30,7 +30,7 @@ export interface User {
   /** Which connector instance powers each voice capability (spec §2). */
   voice?: VoiceSettings;
   /** Local YYYY-MM-DD of this user's last agenda sweep. Per-user because the sweep is
-      per-user; WorkBoard.sweptDay still governs the personal board's own cards. */
+      per-user — see sweepUserAgenda. */
   agendaSweptDay?: string;
 }
 
