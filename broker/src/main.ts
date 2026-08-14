@@ -69,6 +69,7 @@ import { draftToAgentBody, type PersonaDraft, PersonaGenerator } from "./persona
 import { docSeedsInWorkspace } from "./pins.ts";
 import { polishText } from "./polish.ts";
 import { createRemovalService } from "./removal.ts";
+import { AnthropicResearch, CliResearch, defaultSpawner, type ResearchEngine } from "./research.ts";
 import { LiveKitRoomBridge } from "./room.ts";
 import { generateSessionTitle } from "./session-title.ts";
 import { type ExecutionMode, resolveLazyWorkspace, type Session, SessionManager, truncateTitle } from "./sessions.ts";
@@ -100,6 +101,38 @@ const streamFactory: StreamFactory = (params) =>
   anthropic.messages.stream(params as Parameters<typeof anthropic.messages.stream>[0]);
 
 const swarm = new SwarmClient({ baseUrl: config.swarm.baseUrl, token: config.swarm.token });
+
+/**
+ * Research engine, resolved per turn from the operator's setting so a bad
+ * choice is fixed by changing it back — not by restarting a broker that holds
+ * live LiveKit and Discord connections.
+ *
+ * Falls back to the Anthropic default when unset, when the swarm is
+ * unreachable, or when the stored engine no longer passes its gate. A research
+ * call must never fail because a *setting* could not be read.
+ */
+const anthropicResearch = new AnthropicResearch(
+  (p) => anthropic.messages.create(p as Parameters<typeof anthropic.messages.create>[0]),
+  "claude-haiku-4-5",
+);
+
+/** One-shot invocation per tool, verified against each binary's --help. */
+const RESEARCH_ARGV: Record<string, string[]> = {
+  claude: ["claude", "--print"],
+  codex: ["codex", "exec"],
+  agy: ["agy", "--print"],
+  copilot: ["copilot", "--prompt"],
+  opencode: ["opencode", "run"],
+};
+const researchArgvFor = (cli: string): string[] | undefined => RESEARCH_ARGV[cli];
+
+async function researchEngine(): Promise<ResearchEngine> {
+  const chosen = await swarm.getResearchEngine().catch(() => null);
+  if (!chosen) return anthropicResearch;
+  const argv = researchArgvFor(chosen.cli);
+  if (!argv) return anthropicResearch;
+  return new CliResearch(defaultSpawner, argv, chosen.model);
+}
 
 // Portrait generation resolved per request (spec §Avatar generation):
 // verified google key (api-keys store, or legacy .env) accelerates to the
@@ -787,7 +820,7 @@ async function maybeRetitle(): Promise<void> {
   const firstUser = s.transcript.find((t) => t.role === "user")?.text ?? "";
   const firstReply = s.transcript.find((t) => t.role === "broker")?.text ?? "";
   if (!firstReply) return; // no reply landed yet — the next turn retries
-  const title = await generateSessionTitle(streamFactory, "claude-haiku-4-5", firstUser, firstReply);
+  const title = await generateSessionTitle(await researchEngine(), firstUser, firstReply);
   if (title && sessionManager.retitle(s.id, title)) textChannel.broadcast(sessionFrame());
 }
 
@@ -1374,13 +1407,13 @@ const textChannel = new TextChannel(
     set: (enabled: boolean) => swarm.setContainers(enabled),
     verify: () => swarm.verifyContainers(),
   },
-  (text) => {
+  async (text) => {
     const s = sessionManager.activeOrNull();
     const context = s?.transcript
       .slice(-6)
       .map((t) => `${t.role}: ${t.text}`)
       .join("\n");
-    return polishText(streamFactory, "claude-haiku-4-5", text, context);
+    return polishText(await researchEngine(), text, context);
   },
   () => blueprints,
   {
@@ -1510,7 +1543,7 @@ const textChannel = new TextChannel(
             instruction: text,
             targetSectionId: doc.sectionId,
             persona: editor,
-            create: (p) => anthropic.messages.create(p as Parameters<typeof anthropic.messages.create>[0]) as never,
+            engine: await researchEngine(),
           });
           if (editor) {
             for (const rw of r.rewrites) {
@@ -1701,19 +1734,12 @@ async function makeCard(item: FeedItem, workspace: string, currentVersion: strin
         if (status >= 400) throw new Error(`board rejected the card (${status})`);
       },
       plan: async (release, from) => {
-        const message = await anthropic.messages.create({
-          model: "claude-haiku-4-5",
-          max_tokens: 400,
+        return (await researchEngine()).complete({
           system:
             "You write short upgrade plans for a working engineer. At most 5 numbered steps, imperative, specific to the change. No preamble.",
-          messages: [
-            {
-              role: "user",
-              content: `We are on ${release.release.name} ${from} and ${release.release.version} is out.\n\nRelease notes:\n${release.summary || "(none available)"}\n\nWhat should we do?`,
-            },
-          ],
+          prompt: `We are on ${release.release.name} ${from} and ${release.release.version} is out.\n\nRelease notes:\n${release.summary || "(none available)"}\n\nWhat should we do?`,
+          maxTokens: 400,
         });
-        return message.content.map((b) => ("text" in b ? b.text : "")).join("");
       },
       now: () => new Date().toISOString(),
     },
@@ -2031,12 +2057,12 @@ async function fetchSource(source: FeedSource): Promise<{ ok: boolean; error?: s
       // than after analyzeBrief's later 6000-char cap, keeping the
       // intermediate buffer bounded regardless of how the response arrived.
       const raw = (await res.text()).slice(0, 50_000);
-      const message = await anthropic.messages.create({
-        model: "claude-haiku-4-5",
-        max_tokens: 700,
-        messages: [{ role: "user", content: analyzeBrief(source, raw) }],
+      const text = await (await researchEngine()).complete({
+        system: "",
+        prompt: analyzeBrief(source, raw),
+        maxTokens: 700,
       });
-      const found = workItemsFrom(message.content.map((b) => ("text" in b ? b.text : "")).join(""));
+      const found = workItemsFrom(text);
       const stamp = new Date().toISOString();
       // Analyze items are stamped per run, so addItems can't dedup them across
       // polls the way rss/jira items do — cross-poll dedup for analyze sources
@@ -2376,13 +2402,14 @@ broker = new Broker(
 );
 
 /**
- * Elections run on the broker's own model client — never through the agents'
- * coding CLIs, which would start a tmux session per voter and mark the whole
- * group busy just to hold a vote (spec §5.1). One short call per member,
- * seeded with only that member's directives, so each answers as itself.
+ * Elections run through the research seam — never through the agents' coding
+ * CLIs' warm tmux sessions, which would mark the whole group busy just to
+ * hold a vote (spec §5.1). One short call per member, seeded with only that
+ * member's directives, so each answers as itself.
  *
- * `claude-haiku-4-5` matches BrokerBrain's default: an election is a small
- * judgement call, the same weight class as a brain turn.
+ * Defaults to claude-haiku-4-5, matching BrokerBrain's default weight class
+ * for a small judgement call; an operator's CLI research setting applies here
+ * too, since it's the same seam every research site shares.
  */
 // Swarm-first since the elections-via-api-runtime spec (2026-08-13): a member
 // who exists in the swarm registry as an api-kind agent answers as their
@@ -2392,15 +2419,7 @@ broker = new Broker(
 // the typed reason — never a second paid ask.
 const askForClaim: AskFactory = makeClaimAsk({
   swarmOneShot: (agentId, message) => swarm.apiAgentOneShot(agentId, message),
-  brokerAsk: async ({ system, prompt }) => {
-    const message = await anthropic.messages.create({
-      model: "claude-haiku-4-5",
-      max_tokens: 200,
-      system,
-      messages: [{ role: "user", content: prompt }],
-    });
-    return message.content.map((block) => ("text" in block ? block.text : "")).join("");
-  },
+  brokerAsk: async ({ system, prompt }) => (await researchEngine()).complete({ system, prompt, maxTokens: 200 }),
 });
 
 const elections = new ElectionScheduler({
