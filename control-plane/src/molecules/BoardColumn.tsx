@@ -8,22 +8,44 @@ import type { AggCard, Cluster } from "../lib/board-aggregate";
 import type { WorkColumn } from "../organisms/BoardStage";
 import { BoardCard } from "./BoardCard";
 
-/** One sortable card wrapper — BoardCard stays a pure display button. */
+export interface CardFaceAction {
+  verb: string;
+  pending: boolean;
+  onAction: () => void;
+}
+
+/**
+ * One sortable card wrapper — BoardCard stays a pure display button. `action`
+ * (Release on a held card) renders as a SIBLING button inside the same
+ * sortable node, never nested inside BoardCard's own `<button>` — this is
+ * still one genuinely draggable, sortable item; the action is an addition to
+ * its face, not a replacement of it. Its own pointerdown/click stop
+ * propagation so a click doesn't get eaten by the drag listeners on the
+ * wrapping div (same pattern BoardCard already uses for its Jira/PR links).
+ */
 function SortableCard({
   card,
   agent,
   tint,
   onOpen,
+  action,
 }: {
   card: AggCard;
   agent?: RosterAgent;
   tint?: string;
   onOpen: () => void;
+  action?: CardFaceAction;
 }) {
   const sortable = useSortable({ id: card.id });
   const style = { transform: CSS.Transform.toString(sortable.transform), transition: sortable.transition };
   return (
-    <div ref={sortable.setNodeRef} style={style} {...sortable.attributes} {...sortable.listeners}>
+    <div
+      ref={sortable.setNodeRef}
+      style={style}
+      className={action ? "board-card-slot has-action" : undefined}
+      {...sortable.attributes}
+      {...sortable.listeners}
+    >
       <BoardCard
         card={card}
         agent={agent}
@@ -31,6 +53,20 @@ function SortableCard({
         onOpen={onOpen}
         className={sortable.isDragging ? "is-dragging" : undefined}
       />
+      {action && (
+        <button
+          type="button"
+          className="settings-btn board-card__action"
+          disabled={action.pending}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            action.onAction();
+          }}
+        >
+          {action.verb}
+        </button>
+      )}
     </div>
   );
 }
@@ -59,16 +95,23 @@ export function BoardColumn({
   /** False for the synthetic shared-queue lane — it is a derived pool, not a move target. */
   droppable?: boolean;
   /**
-   * Full replacement for one card's face (a Grab control, an intent/close
-   * composer). Returning undefined falls back to the normal sortable card.
-   * The overridden card is also excluded from the sortable items list — it
-   * isn't draggable while overridden.
+   * Two kinds of per-card override, never conflated:
+   * `{kind:"replace"}` swaps the card's whole face out (an intent/close
+   * composer, or the shared-queue Grab control) — that card is excluded from
+   * the sortable items list and cannot be dragged. `{kind:"action"}` keeps
+   * the card a genuine, draggable SortableCard and layers one extra button
+   * onto its face (Release on a held card) — dropping the drag capability
+   * here would make the card's drag-driven state changes unreachable by any
+   * real gesture, only by a test calling the seam directly. Returning
+   * undefined falls back to the plain sortable card, no override at all.
    */
-  cardOverride?: (card: AggCard) => ReactNode | undefined;
+  cardOverride?: (
+    card: AggCard,
+  ) => { kind: "replace"; node: ReactNode } | ({ kind: "action" } & CardFaceAction) | undefined;
 }) {
   const droppable = useDroppable({ id: `column:${col.id}`, disabled: !isDroppable });
   const flat = clusters.flatMap((g) => g.cards);
-  const sortableIds = flat.filter((c) => cardOverride?.(c) === undefined).map((c) => c.id);
+  const sortableIds = flat.filter((c) => cardOverride?.(c)?.kind !== "replace").map((c) => c.id);
   return (
     <div
       ref={droppable.setNodeRef}
@@ -98,7 +141,7 @@ export function BoardColumn({
               )}
               {g.cards.map((card) => {
                 const override = cardOverride?.(card);
-                if (override !== undefined) return <div key={card.id}>{override}</div>;
+                if (override?.kind === "replace") return <div key={card.id}>{override.node}</div>;
                 return (
                   <SortableCard
                     key={card.id}
@@ -106,6 +149,7 @@ export function BoardColumn({
                     agent={agentFor(card.delegation?.agentId)}
                     tint={g.label !== null ? colorFor(card.workspaceId) : undefined}
                     onOpen={() => onOpenCard(card.boardId, card.id)}
+                    action={override?.kind === "action" ? override : undefined}
                   />
                 );
               })}

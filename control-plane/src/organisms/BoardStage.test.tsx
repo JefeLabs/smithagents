@@ -704,7 +704,7 @@ describe("Agenda tab — pull queue, grab, and the drag branch", () => {
     const { calls } = stubFetch({ boards: agendaBoards([], [HELD_CARD]) });
     renderWithProviders(<BoardStage roster={ROSTER} />);
     await readyToDrop("My plate");
-    await userEvent.click(screen.getByRole("button", { name: /release/i }));
+    await userEvent.click(screen.getByRole("button", { name: "release" }));
     await waitFor(() => {
       const patch = calls.find((c) => c.method === "PATCH" && c.url.includes("/cards/held1"));
       expect(patch?.body).toEqual({ agenda: null });
@@ -713,12 +713,49 @@ describe("Agenda tab — pull queue, grab, and the drag branch", () => {
     expect(patch?.body).not.toHaveProperty("columnId");
   });
 
+  it("a held team card in My plate is genuinely draggable, not merely reachable via fireDrop", async () => {
+    // The Release control must be an ADDITION to the card face, not a
+    // replacement of it — a full-face replacement (the shared-queue Grab
+    // pattern) drops the card out of SortableContext entirely, which would
+    // make the drag-to-Today branch in applyMove unreachable by any real
+    // gesture (fireDrop can call it directly, but nothing in the app could).
+    // dnd-kit's useSortable stamps aria-roledescription="sortable" on its
+    // node — that's the load-bearing assertion here, not just that the title
+    // renders. That same sortable wrapper carries dnd-kit's default
+    // role="button" with no explicit name, so its OWN computed accessible
+    // name rolls up every descendant text node once an action button shares
+    // the card face ("Held team card release") — an exact-name query below
+    // is what actually distinguishes the real button from that wrapper; a
+    // substring/regex match would hit both and throw "multiple elements".
+    stubFetch({ boards: agendaBoards([], [HELD_CARD]) });
+    renderWithProviders(<BoardStage roster={ROSTER} />);
+    await readyToDrop("My plate");
+    const title = screen.getByText("Held team card");
+    expect(title.closest('[aria-roledescription="sortable"]')).not.toBeNull();
+    // And the Release control still sits alongside it, not instead of it.
+    expect(screen.getByRole("button", { name: "release" })).toBeTruthy();
+  });
+
+  it("does not offer release for a card held by someone else — it never even reaches Edwin's plate", async () => {
+    const anasCard = {
+      ...HELD_CARD,
+      id: "hers1",
+      title: "Ana's card",
+      agenda: { ...HELD_CARD.agenda, by: "ana" },
+    };
+    stubFetch({ boards: agendaBoards([], [anasCard]) });
+    renderWithProviders(<BoardStage roster={ROSTER} />);
+    await readyToDrop("My plate");
+    expect(screen.queryByText("Ana's card")).toBeNull();
+    expect(screen.queryByRole("button", { name: /release/i })).toBeNull();
+  });
+
   it("also offers release on a card held in the Today lane", async () => {
     const todayHeld = { ...HELD_CARD, agenda: { ...HELD_CARD.agenda, state: "today" as const } };
     stubFetch({ boards: agendaBoards([], [todayHeld]) });
     renderWithProviders(<BoardStage roster={ROSTER} />);
     await readyToDrop("Today");
-    expect(screen.getByRole("button", { name: /release/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "release" })).toBeTruthy();
   });
 
   it("does not offer grab on a card the current user already holds", async () => {

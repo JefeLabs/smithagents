@@ -580,80 +580,96 @@ export function BoardStage({ roster }: BoardStageProps) {
               // per-board and would scramble it. Agenda is never clustered
               // (tabsFor never sets it), so it bypasses that sort entirely.
               const clusters = isAgendaTab ? [{ label: null, cards }] : clusterByWorkspace(cards, tab.clustered);
+              // Two override shapes, never conflated (see BoardColumn's
+              // doc): "replace" swaps the whole face out and drops the card
+              // from SortableContext — right for the two composers and for
+              // Shared queue, whose cards are button-only by design and
+              // never draggable. "action" leaves the card a genuine
+              // SortableCard and only adds a button to its face — required
+              // for Release, or a held card could never again be dragged to
+              // advance it, which is the whole point of the drag branch.
               const cardOverride = (card: AggCard) => {
                 if (pendingIntent?.cardId === card.id) {
                   const target = pendingIntent;
-                  return (
-                    <CardComposer
-                      question="What are you doing?"
-                      verb="start"
-                      submitting={cardAgendaMutation.isPending}
-                      onCancel={() => setPendingIntent(null)}
-                      onSubmit={(text) =>
-                        void cardAgendaMutation
-                          .mutateAsync({
-                            boardId: target.boardId,
-                            cardId: target.cardId,
-                            agenda: { state: "today", intent: text },
-                          })
-                          .then(() => setPendingIntent(null))
-                      }
-                    />
-                  );
+                  return {
+                    kind: "replace" as const,
+                    node: (
+                      <CardComposer
+                        question="What are you doing?"
+                        verb="start"
+                        submitting={cardAgendaMutation.isPending}
+                        onCancel={() => setPendingIntent(null)}
+                        onSubmit={(text) =>
+                          void cardAgendaMutation
+                            .mutateAsync({
+                              boardId: target.boardId,
+                              cardId: target.cardId,
+                              agenda: { state: "today", intent: text },
+                            })
+                            .then(() => setPendingIntent(null))
+                        }
+                      />
+                    ),
+                  };
                 }
                 if (pendingClose?.cardId === card.id) {
                   const target = pendingClose;
-                  return (
-                    <CardComposer
-                      question="What did you do?"
-                      verb="done"
-                      submitting={moveCardMutation.isPending}
-                      onCancel={() => setPendingClose(null)}
-                      onSubmit={(text) =>
-                        void moveCardMutation
-                          .mutateAsync({
-                            boardId: target.boardId,
-                            cardId: target.cardId,
-                            body: { columnId: target.columnId, order: target.order, close: { text } },
-                          })
-                          .then(() => setPendingClose(null))
-                      }
-                    />
-                  );
+                  return {
+                    kind: "replace" as const,
+                    node: (
+                      <CardComposer
+                        question="What did you do?"
+                        verb="done"
+                        submitting={moveCardMutation.isPending}
+                        onCancel={() => setPendingClose(null)}
+                        onSubmit={(text) =>
+                          void moveCardMutation
+                            .mutateAsync({
+                              boardId: target.boardId,
+                              cardId: target.cardId,
+                              body: { columnId: target.columnId, order: target.order, close: { text } },
+                            })
+                            .then(() => setPendingClose(null))
+                        }
+                      />
+                    ),
+                  };
                 }
                 if (isSharedQueue) {
-                  return (
-                    <CardAction
-                      card={card}
-                      verb="grab"
-                      pending={cardAgendaMutation.isPending}
-                      onOpen={() => setOpen({ boardId: card.boardId, cardId: card.id })}
-                      onAction={() =>
-                        void cardAgendaMutation.mutateAsync({
-                          boardId: card.boardId,
-                          cardId: card.id,
-                          agenda: { action: "grab" },
-                        })
-                      }
-                    />
-                  );
+                  return {
+                    kind: "replace" as const,
+                    node: (
+                      <CardAction
+                        card={card}
+                        verb="grab"
+                        pending={cardAgendaMutation.isPending}
+                        onOpen={() => setOpen({ boardId: card.boardId, cardId: card.id })}
+                        onAction={() =>
+                          void cardAgendaMutation.mutateAsync({
+                            boardId: card.boardId,
+                            cardId: card.id,
+                            agenda: { action: "grab" },
+                          })
+                        }
+                      />
+                    ),
+                  };
                 }
                 // A team card the viewer holds, sitting in My plate or Today
-                // — Release is the mirror of Grab. Someone else's held card
-                // never reaches this branch: collectAgendaCards only ever
-                // returns cards held by the current user in these two lanes.
-                if (isAgendaTab && (col.id === "plate" || col.id === "today") && card.agenda) {
-                  return (
-                    <CardAction
-                      card={card}
-                      verb="release"
-                      pending={cardAgendaMutation.isPending}
-                      onOpen={() => setOpen({ boardId: card.boardId, cardId: card.id })}
-                      onAction={() =>
-                        void cardAgendaMutation.mutateAsync({ boardId: card.boardId, cardId: card.id, agenda: null })
-                      }
-                    />
-                  );
+                // — Release is the mirror of Grab. Checked here explicitly
+                // (not only relied on via collectAgendaCards' own by===userId
+                // filter) so a future wiring drift between `me.id` and that
+                // collector's argument can't silently offer Release on
+                // someone else's card — a belt-and-suspenders check, not the
+                // only one.
+                if (isAgendaTab && (col.id === "plate" || col.id === "today") && card.agenda?.by === me?.id) {
+                  return {
+                    kind: "action" as const,
+                    verb: "release",
+                    pending: cardAgendaMutation.isPending,
+                    onAction: () =>
+                      void cardAgendaMutation.mutateAsync({ boardId: card.boardId, cardId: card.id, agenda: null }),
+                  };
                 }
                 return undefined;
               };
