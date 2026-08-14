@@ -45,7 +45,11 @@ describe("CardSheet routes", () => {
     render(<CardSheet {...props} />);
     expect(screen.getByRole("button", { name: "To maintenance" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "To ideation" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Escalate to Agenda" })).toBeTruthy();
+  });
+
+  it("no longer offers Escalate to Agenda — the route was retired", () => {
+    render(<CardSheet {...props} />);
+    expect(screen.queryByRole("button", { name: "Escalate to Agenda" })).toBeNull();
   });
 
   it("renders no pills from a column with no exits", () => {

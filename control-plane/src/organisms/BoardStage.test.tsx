@@ -891,6 +891,61 @@ describe("Agenda tab — pull queue, grab, and the drag branch", () => {
     expect(await screen.findByLabelText(/what did you do/i)).toBeDefined();
     expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(0);
   });
+
+  // These two enter through handleDragEnd itself (fireDragEnd), not fireDrop —
+  // fireDrop calls applyMove directly and so skips straight past the
+  // resolution bug these exist to pin (resolveCrossBoardDrop was written
+  // before Agenda spanned every board; see resolveAgendaDrop's doc).
+  it("handleDragEnd resolves a card-onto-ANOTHER-BOARD's-card drop to the rendered lane, not a cross-board error (Critical 2)", async () => {
+    const { calls } = stubFetch({
+      boards: agendaBoards(
+        [{ id: "p1", title: "Personal card", columnId: "plate", order: 0 }],
+        [{ id: "t1", title: "Unheld team card", columnId: "review", order: 0 }],
+      ),
+    });
+    renderWithProviders(<BoardStage roster={ROSTER} />);
+    await readyToDrop("My plate");
+    const { fireDragEnd } = await import("./BoardStage");
+    fireDragEnd("t1", "p1");
+    await waitFor(() => {
+      const patch = calls.find((c) => c.method === "PATCH" && c.url.includes("/cards/t1"));
+      expect(patch?.body).toEqual({ agenda: { state: "plate" } });
+    });
+    expect(screen.queryByText(/only move within their own workspace/i)).toBeNull();
+  });
+
+  it("handleDragEnd resolves a card-onto-a-card-from-its-OWN-BOARD drop to the rendered lane, not the over card's workflow column (Critical 2)", async () => {
+    // held2 is genuinely draggable (the "action" override, not "replace"), so
+    // this is a gesture a real drag can actually make — held2 dropped onto
+    // held1, both on ws-deliver. Old code read held1.columnId ("review", its
+    // real workflow column) instead of the lane it's rendered in ("plate"),
+    // so applyMove's `columnId !== "plate" && columnId !== "today"` guard
+    // silently ate the whole drop — zero PATCHes, zero errors, nothing.
+    const held2 = { ...HELD_CARD, id: "held2", title: "Second held card" };
+    const { calls } = stubFetch({ boards: agendaBoards([], [HELD_CARD, held2]) });
+    renderWithProviders(<BoardStage roster={ROSTER} />);
+    await readyToDrop("My plate");
+    const { fireDragEnd } = await import("./BoardStage");
+    fireDragEnd("held2", "held1");
+    await waitFor(() => {
+      const patches = calls.filter((c) => c.method === "PATCH" && c.url.includes("/cards/held2"));
+      expect(patches).toHaveLength(1);
+      expect(patches[0]?.body).toEqual({ agenda: { state: "plate" } });
+    });
+  });
+
+  it("a lost grab race surfaces visibly instead of failing silently (Important 3)", async () => {
+    const { calls } = stubFetch({
+      boards: agendaBoards([], [{ id: "t1", title: "Unheld team card", columnId: "review", order: 0 }]),
+      patched: { error: "Card already held by ana" },
+      patchStatus: 400,
+    });
+    renderWithProviders(<BoardStage roster={ROSTER} />);
+    await readyToDrop("Shared queue");
+    await userEvent.click(screen.getByRole("button", { name: /grab/i }));
+    await waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
+    expect(await screen.findByText(/card already held by ana/i)).toBeTruthy();
+  });
 });
 
 describe("resolveDrop + moveCard composed (direction-aware drop resolution)", () => {

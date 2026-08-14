@@ -31,7 +31,6 @@ import {
   routeCard,
   saveBoard,
   setStepState,
-  sharedQueue,
   sweepUserAgenda,
   terminalColumnId,
   WORKSPACE_BOARD_TYPES,
@@ -958,12 +957,29 @@ test("normalizeBoard backfills gatesHuman from the template onto persisted colum
   assert.equal(gated("ready"), false);
   assert.equal(gated("in-progress"), false);
   assert.equal(gated("merged"), false);
-  // The bug this backfill fixes: without it, a card sitting in a gated column on an
-  // already-persisted board would never surface in the shared queue.
-  assert.deepEqual(
-    sharedQueue([deliver]).map((x) => x.card.id),
-    ["c1"],
-  );
+});
+
+test("normalizeBoard leaves a persisted gatesHuman:false alone — undefined and false are not the same thing", () => {
+  // PATCH /work/boards/:id accepts a client-supplied `columns` array wholesale, so an
+  // explicit `false` can reach disk. `if (column.gatesHuman) continue` can't tell that
+  // apart from "unset" and would flip it back to true on the next load.
+  const deliver: WorkBoard = {
+    id: "acme-deliver",
+    name: "Deliver",
+    type: "deliver",
+    workspaceId: "acme",
+    columns: [
+      { id: "queue", name: "Queue" },
+      { id: "ready", name: "Ready" },
+      { id: "in-progress", name: "In progress" },
+      { id: "review", name: "Review", gatesHuman: false },
+      { id: "verify", name: "Verify" },
+      { id: "merged", name: "Merged" },
+    ],
+    cards: [],
+  };
+  normalizeBoard(deliver);
+  assert.equal(deliver.columns.find((c) => c.id === "review")?.gatesHuman, false);
 });
 
 test("templates gate exactly the four columns that wait on a person", () => {
@@ -974,41 +990,4 @@ test("templates gate exactly the four columns that wait on a person", () => {
   assert.equal(gated("maintenance", "triage"), true);
   assert.equal(gated("release", "sign-off"), false, "Release is not a source — Edwin named three boards");
   assert.equal(gated("deliver", "in-progress"), false);
-});
-
-test("sharedQueue pools unheld work from Maintain, React and Deliver only", () => {
-  const d = createBoard("deliver", "ws");
-  const p = createBoard("plan", "ws");
-  const inPool = addCard(d, { title: "review me", columnId: "review" });
-  addCard(p, { title: "spec", columnId: "spec" });
-  const pooled = sharedQueue([d, p]);
-  assert.deepEqual(
-    pooled.map((x) => x.card.id),
-    [inPool.id],
-  );
-});
-
-test("sharedQueue excludes held cards and cards an agent is mid-flight on", () => {
-  const d = createBoard("deliver", "ws");
-  const held = addCard(d, { title: "held", columnId: "review" });
-  grabCard(held, "edwin", "2026-08-13T10:00:00.000Z");
-  const working = addCard(d, { title: "agent has it", columnId: "review" });
-  working.delegation = { agentId: "a1", taskId: "t1", state: "working" };
-  assert.deepEqual(sharedQueue([d]), []);
-});
-
-test("sharedQueue includes a failed delegation, a flag, and a jira error even in an ungated column", () => {
-  const d = createBoard("deliver", "ws");
-  const failed = addCard(d, { title: "agent failed", columnId: "in-progress" });
-  failed.delegation = { agentId: "a1", taskId: "t1", state: "failed" };
-  const flagged = addCard(d, { title: "blocked", columnId: "in-progress" });
-  flagged.flag = { kind: "blocked", since: "2026-08-13T10:00:00.000Z" };
-  const broken = addCard(d, { title: "push broke", columnId: "in-progress" });
-  broken.jira = { key: "P-1", url: "http://x", lastPushError: "boom" };
-  assert.deepEqual(
-    sharedQueue([d])
-      .map((x) => x.card.id)
-      .sort(),
-    [failed.id, flagged.id, broken.id].sort(),
-  );
 });

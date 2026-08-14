@@ -2902,6 +2902,19 @@ button.logo {
 .board-card__action {
   flex: none;
 }
+/* SortableCard's wrapper when a card carries an action (Release): the card
+   and the button are siblings in one sortable node (see BoardColumn's doc),
+   not nested — this row layout is what puts them side by side instead of
+   stacked, mirroring .board-card--action's row above for the Grab face. */
+.board-card-slot.has-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.board-card-slot.has-action > .board-card {
+  flex: 1;
+  min-width: 0;
+}
 /* The intent/closing composer: the one drop in the app a drag alone can't
    finish, so it must read as demanding input, not as a card that merely
    landed — accent border and a lifted fill instead of the ordinary card face. */

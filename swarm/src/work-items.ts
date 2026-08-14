@@ -415,7 +415,7 @@ export function normalizeBoard(board: WorkBoard): WorkBoard {
   // a column persisted before `gatesHuman` existed otherwise never gets it, and its
   // unheld cards would silently fall out of the shared queue.
   for (const column of board.columns) {
-    if (column.gatesHuman) continue;
+    if (column.gatesHuman !== undefined) continue;
     const templateColumn = BOARD_TEMPLATES[board.type].find((c) => c.id === column.id);
     if (templateColumn?.gatesHuman) column.gatesHuman = true;
   }
@@ -567,38 +567,6 @@ export function grabCard(card: WorkCard, userId: string, now: string): void {
  */
 export function releaseCard(card: WorkCard): void {
   card.agenda = undefined;
-}
-
-/** The boards whose work reaches a person's Agenda. Edwin named these three, twice. */
-export const AGENDA_SOURCE_TYPES: BoardType[] = ["maintenance", "reactive", "deliver"];
-
-/** Does this card want a human right now? Independent of whether one has taken it. */
-export function needsHuman(board: WorkBoard, card: WorkCard): boolean {
-  const gated = board.columns.find((c) => c.id === card.columnId)?.gatesHuman === true;
-  const handedBack = card.delegation?.state === "completed" || card.delegation?.state === "failed";
-  return gated || handedBack || Boolean(card.flag) || Boolean(card.jira?.lastPushError);
-}
-
-/**
- * The shared queue — DERIVED, never stored. A card is in the pool when it needs a human
- * and nobody has it. Because the pool IS "nobody holds it", releasing a card returns it
- * here by deletion alone: there is no queued flag to write, and nothing can re-offer a
- * card that was deliberately handed back.
- *
- * A card an agent is actively working belongs to the agent, not the pool — that
- * distinction is the reason the axis exists.
- */
-export function sharedQueue(boards: WorkBoard[]): Array<{ board: WorkBoard; card: WorkCard }> {
-  const out: Array<{ board: WorkBoard; card: WorkCard }> = [];
-  for (const board of boards) {
-    if (!AGENDA_SOURCE_TYPES.includes(board.type)) continue;
-    for (const card of board.cards) {
-      if (card.agenda) continue;
-      if (card.delegation?.state === "working") continue;
-      if (needsHuman(board, card)) out.push({ board, card });
-    }
-  }
-  return out;
 }
 
 /**

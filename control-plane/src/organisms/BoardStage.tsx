@@ -170,6 +170,60 @@ export function resolveCrossBoardDrop(
   return { boardId: source.id, ...target };
 }
 
+/**
+ * Resolves a drop on the Agenda tab, where the rendered lanes (Shared queue /
+ * My plate / Today / Done / Not Doing) are NOT any one board's columns —
+ * they're derived (collectAgendaCards, sharedQueueCards). resolveCrossBoardDrop
+ * can't be reused here: its same-board fence rejects the cross-board drops
+ * that are the entire point of this tab, and card-onto-card resolution reads
+ * overCard.columnId, which for a team card is its real workflow column (e.g.
+ * "review") and never "plate"/"today" — this maps `overId` to the LANE the
+ * over card is rendered in instead.
+ *
+ * A team card's own drop position never matters (applyMove's Agenda branch
+ * writes a pure step-state PATCH for it, order and all), so only a personal
+ * card's `order` needs to be a real per-column index — computed against the
+ * personal board alone, since that's the only board a personal card's
+ * siblings can come from. Team cards always render after every personal card
+ * in a lane (collectAgendaCards), so dropping onto one, or onto the lane's
+ * empty background, both land at the end of the personal cards already there.
+ */
+export function resolveAgendaDrop(
+  boards: WorkBoardT[],
+  userId: string,
+  activeCardId: string,
+  overId: string,
+): { boardId: string; columnId: string; order: number } | null {
+  if (overId === activeCardId) return null;
+  const entries = boards.flatMap((b) => b.cards.map((c) => ({ card: c, board: b })));
+  const active = entries.find((x) => x.card.id === activeCardId);
+  if (!active) return null;
+
+  const laneOf = ({ card, board }: { card: WorkCardT; board: WorkBoardT }): string | undefined =>
+    board.type === "personal" ? card.columnId : card.agenda?.by === userId ? card.agenda.state : undefined;
+
+  let laneId: string | undefined;
+  if (overId.startsWith("column:")) {
+    laneId = overId.slice("column:".length);
+  } else {
+    const overEntry = entries.find((x) => x.card.id === overId);
+    laneId = overEntry ? laneOf(overEntry) : undefined;
+  }
+  if (!laneId) return null;
+
+  if (active.board.type !== "personal") return { boardId: active.board.id, columnId: laneId, order: 0 };
+
+  const personalBoard = active.board;
+  const overEntry = overId.startsWith("column:") ? undefined : entries.find((x) => x.card.id === overId);
+  if (overEntry && overEntry.board.id === personalBoard.id) {
+    const target = resolveDrop(personalBoard, activeCardId, overId);
+    if (!target) return null;
+    return { boardId: personalBoard.id, ...target };
+  }
+  const order = personalBoard.cards.filter((c) => c.columnId === laneId && c.id !== activeCardId).length;
+  return { boardId: personalBoard.id, columnId: laneId, order };
+}
+
 // Test seam: jsdom cannot synthesize dnd-kit pointer sequences; the drop
 // handler is registered here so tests can invoke the exact code path a real
 // drop takes.
@@ -177,6 +231,17 @@ let dropHandler: ((boardId: string, cardId: string, columnId: string, order: num
 export async function fireDrop(boardId: string, cardId: string, columnId: string, order: number): Promise<void> {
   if (!dropHandler) throw new Error("BoardStage is not mounted");
   await dropHandler(boardId, cardId, columnId, order);
+}
+
+// Test seam, one layer above fireDrop: fireDrop calls applyMove directly, so
+// it cannot exercise the RESOLUTION layer (resolveCrossBoardDrop /
+// resolveAgendaDrop) that sits between a real dnd-kit gesture and applyMove.
+// This registers the actual onDragEnd handler DndContext is wired to, so a
+// test can drive the exact code path a real drop takes, over.id and all.
+let dragEndHandler: ((e: DragEndEvent) => void) | null = null;
+export function fireDragEnd(activeId: string, overId: string): void {
+  if (!dragEndHandler) throw new Error("BoardStage is not mounted");
+  dragEndHandler({ active: { id: activeId }, over: { id: overId } } as DragEndEvent);
 }
 
 /** Shared face for the two card-position composers below — only the label/verb differ. */
@@ -481,17 +546,38 @@ export function BoardStage({ roster }: BoardStageProps) {
     };
   }, [applyMove]);
 
-  const handleDragEnd = (e: DragEndEvent) => {
-    if (!e.over) return;
-    const cardId = String(e.active.id);
-    const outcome = resolveCrossBoardDrop(boards, cardId, String(e.over.id));
-    if (!outcome) return;
-    if ("error" in outcome) {
-      setError(outcome.error);
-      return;
-    }
-    void applyMove(outcome.boardId, cardId, outcome.columnId, outcome.order);
-  };
+  const handleDragEnd = useCallback(
+    (e: DragEndEvent) => {
+      if (!e.over) return;
+      const cardId = String(e.active.id);
+      const overId = String(e.over.id);
+      // Agenda's lanes are rendered lanes spanning every board, not any one
+      // board's columns — resolveCrossBoardDrop's same-board fence and its
+      // reliance on overCard.columnId both assume a single board's column
+      // set, which Agenda breaks by design. See resolveAgendaDrop's doc.
+      if (isAgendaTab) {
+        const outcome = resolveAgendaDrop(boards, me?.id ?? "", cardId, overId);
+        if (!outcome) return;
+        void applyMove(outcome.boardId, cardId, outcome.columnId, outcome.order);
+        return;
+      }
+      const outcome = resolveCrossBoardDrop(boards, cardId, overId);
+      if (!outcome) return;
+      if ("error" in outcome) {
+        setError(outcome.error);
+        return;
+      }
+      void applyMove(outcome.boardId, cardId, outcome.columnId, outcome.order);
+    },
+    [boards, isAgendaTab, me?.id, applyMove],
+  );
+
+  useEffect(() => {
+    dragEndHandler = handleDragEnd;
+    return () => {
+      dragEndHandler = null;
+    };
+  }, [handleDragEnd]);
 
   const addCard = async () => {
     const target = addCardTarget;
@@ -634,6 +720,9 @@ export function BoardStage({ roster }: BoardStageProps) {
                               agenda: { state: "today", intent: text },
                             })
                             .then(() => setPendingIntent(null))
+                            .catch((err) =>
+                              setError(err instanceof Error ? err.message : "Could not start the day's work"),
+                            )
                         }
                       />
                     ),
@@ -657,6 +746,7 @@ export function BoardStage({ roster }: BoardStageProps) {
                               body: { columnId: target.columnId, order: target.order, close: { text } },
                             })
                             .then(() => setPendingClose(null))
+                            .catch((err) => setError(err instanceof Error ? err.message : "Could not close the card"))
                         }
                       />
                     ),
@@ -672,11 +762,13 @@ export function BoardStage({ roster }: BoardStageProps) {
                         pending={cardAgendaMutation.isPending}
                         onOpen={() => setOpen({ boardId: card.boardId, cardId: card.id })}
                         onAction={() =>
-                          void cardAgendaMutation.mutateAsync({
-                            boardId: card.boardId,
-                            cardId: card.id,
-                            agenda: { action: "grab" },
-                          })
+                          void cardAgendaMutation
+                            .mutateAsync({
+                              boardId: card.boardId,
+                              cardId: card.id,
+                              agenda: { action: "grab" },
+                            })
+                            .catch((err) => setError(err instanceof Error ? err.message : "Could not grab the card"))
                         }
                       />
                     ),
@@ -695,7 +787,9 @@ export function BoardStage({ roster }: BoardStageProps) {
                     verb: "release",
                     pending: cardAgendaMutation.isPending,
                     onAction: () =>
-                      void cardAgendaMutation.mutateAsync({ boardId: card.boardId, cardId: card.id, agenda: null }),
+                      void cardAgendaMutation
+                        .mutateAsync({ boardId: card.boardId, cardId: card.id, agenda: null })
+                        .catch((err) => setError(err instanceof Error ? err.message : "Could not release the card")),
                   };
                 }
                 return undefined;

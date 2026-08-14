@@ -189,7 +189,11 @@ export interface RouteExitT {
   label: string;
 }
 
-/** Mirrors the swarm's BOARD_ROUTES. The server re-validates every route request. */
+/**
+ * Mirrors the swarm's BOARD_ROUTES (kept in sync by hand — the server
+ * re-validates every route request against its own copy, so drift here
+ * doesn't corrupt data, it just offers a pill that 400s on click).
+ */
 export const BOARD_ROUTES_UI: Record<BoardTypeT, RouteExitT[]> = {
   plan: [
     { from: "tech-design", toType: "ideation", toColumn: "scoping", label: "Back to ideation" },
@@ -203,10 +207,9 @@ export const BOARD_ROUTES_UI: Record<BoardTypeT, RouteExitT[]> = {
   reactive: [
     { from: "triage", toType: "maintenance", toColumn: "triage", label: "To maintenance" },
     { from: "triage", toType: "ideation", toColumn: "intake", label: "To ideation" },
-    { from: "triage", toType: "personal", toColumn: "queue", label: "Escalate to Agenda" },
   ],
   ideation: [],
-  maintenance: [{ from: "triage", toType: "personal", toColumn: "queue", label: "Escalate to Agenda" }],
+  maintenance: [],
   personal: [],
 };
 

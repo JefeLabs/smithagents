@@ -128,9 +128,12 @@ describe("collectCards + clusterByWorkspace", () => {
 });
 
 describe("exitsForUI", () => {
-  it("maintenance and reactive triage offer the escalate exit to the personal queue", () => {
-    expect(exitsForUI("maintenance", "triage").map((e) => e.toColumn)).toEqual(["queue"]);
-    expect(exitsForUI("reactive", "triage").map((e) => e.toType)).toEqual(["maintenance", "ideation", "personal"]);
+  it("reactive triage offers maintenance and ideation only — Escalate to Agenda was retired", () => {
+    expect(exitsForUI("reactive", "triage").map((e) => e.toType)).toEqual(["maintenance", "ideation"]);
+  });
+
+  it("maintenance has no exits at all — its only exit was the retired Escalate to Agenda", () => {
+    expect(exitsForUI("maintenance", "triage")).toEqual([]);
     expect(exitsForUI("maintenance", "doing")).toEqual([]);
   });
 });
