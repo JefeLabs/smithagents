@@ -42,8 +42,23 @@ test("grabCard claims an unheld card; grabbing a held one throws", () => {
   const b = createBoard("deliver", "ws");
   const c = addCard(b, { title: "auth", columnId: "review" });
   grabCard(c, "edwin", "2026-08-13T10:00:00.000Z");
-  assert.deepEqual(c.agenda, { by: "edwin", state: "plate", since: "2026-08-13T10:00:00.000Z" });
+  assert.deepEqual(c.agenda, {
+    by: "edwin",
+    state: "plate",
+    since: "2026-08-13T10:00:00.000Z",
+    grabbedAt: "2026-08-13T10:00:00.000Z",
+  });
   assert.throws(() => grabCard(c, "ana", "2026-08-13T10:00:01.000Z"), /already held/);
+});
+
+test("grabbedAt is set once and survives every state flip", () => {
+  const b = createBoard("deliver", "ws");
+  const c = addCard(b, { title: "auth", columnId: "review" });
+  grabCard(c, "edwin", "2026-08-10T10:00:00.000Z");
+  setStepState(c, "edwin", "today", "2026-08-13T09:00:00.000Z", "chasing the flaky suite");
+  setStepState(c, "edwin", "plate", "2026-08-14T00:00:00.000Z");
+  assert.equal(c.agenda?.grabbedAt, "2026-08-10T10:00:00.000Z", "age is measured from the grab");
+  assert.equal(c.agenda?.since, "2026-08-14T00:00:00.000Z", "since tracks the current state");
 });
 
 test("releaseCard deletes the field so the card falls back into the shared queue", () => {
@@ -142,7 +157,15 @@ Add to `WorkCard`, after `flag?: CardFlag;`:
   /** Who holds this card's CURRENT step. Orthogonal to columnId, like `flag`; cleared
       when the card changes column. One holder — grabbing is exclusive. An AGENT holding
       work is `delegation`, not this. */
-  agenda?: { by: string; state: StepState; since: string };
+  agenda?: {
+    by: string;
+    state: StepState;
+    /** Entry into the CURRENT state — same contract as CardFlag.since. The sweep re-stamps it. */
+    since: string;
+    /** When it landed on this plate. Set once at grab, never touched again — the clock
+        that answers "how long have I been sitting on this", which `since` cannot. */
+    grabbedAt: string;
+  };
   /** Append-only: what each holder said they were doing when they claimed this card for
       a day. On the CARD, not inside `agenda`, so it survives the column change that
       clears the holder. Substrate for Jira comments and AI summaries. */
@@ -161,7 +184,7 @@ In `swarm/src/work-items.ts`, immediately before `export function patchCard`:
  */
 export function grabCard(card: WorkCard, userId: string, now: string): void {
   if (card.agenda) throw new Error(`Card already held by ${card.agenda.by}`);
-  card.agenda = { by: userId, state: "plate", since: now };
+  card.agenda = { by: userId, state: "plate", since: now, grabbedAt: now };
 }
 
 /**
@@ -412,6 +435,11 @@ test("sweepUserAgenda reverts today to plate without releasing the card", () => 
   assert.equal(mine.agenda?.state, "plate");
   assert.equal(mine.agenda?.by, "edwin", "grabbing outlives the day");
   assert.equal(mine.agenda?.since, "2026-08-13T00:00:00.000Z");
+  assert.equal(
+    mine.agenda?.grabbedAt,
+    "2026-08-12T09:00:00.000Z",
+    "age survives the sweep — a card worked yesterday must not look brand new today",
+  );
   assert.equal(alsoMine.agenda?.since, "2026-08-12T09:00:00.000Z", "already plate, untouched");
   assert.equal(hers.agenda?.state, "today", "another user's day is not swept");
 });
@@ -732,9 +760,11 @@ describe("agenda lanes", () => {
     cards: [
       { id: "pool", title: "unheld", columnId: "review", order: 0 },
       { id: "t-old", title: "older", columnId: "review", order: 1,
-        agenda: { by: "edwin", state: "plate" as const, since: "2026-08-13T08:00:00.000Z" } },
+        agenda: { by: "edwin", state: "plate" as const, since: "2026-08-13T08:00:00.000Z",
+                  grabbedAt: "2026-08-13T08:00:00.000Z" } },
       { id: "t-new", title: "newer", columnId: "review", order: 2,
-        agenda: { by: "edwin", state: "plate" as const, since: "2026-08-13T12:00:00.000Z" } },
+        agenda: { by: "edwin", state: "plate" as const, since: "2026-08-13T12:00:00.000Z",
+                  grabbedAt: "2026-08-13T12:00:00.000Z" } },
       { id: "t-hers", title: "ana's", columnId: "review", order: 3,
         agenda: { by: "ana", state: "plate" as const, since: "2026-08-13T08:00:00.000Z" } },
     ],
@@ -744,9 +774,27 @@ describe("agenda lanes", () => {
     expect(sharedQueueCards([personal, deliver]).map((c) => c.id)).toEqual(["pool"]);
   });
 
-  it("puts personal cards first by order, then team cards by since", () => {
+  it("puts personal cards first by order, then team cards by grabbedAt", () => {
     expect(collectAgendaCards([personal, deliver], "edwin", "plate").map((c) => c.id))
       .toEqual(["p0", "p1", "t-old", "t-new"]);
+  });
+
+  it("orders by grabbedAt, not since — a swept card must not jump to the front", () => {
+    const swept = {
+      ...deliver,
+      cards: [
+        { id: "held-longest", title: "held longest", columnId: "review", order: 0,
+          agenda: { by: "edwin", state: "plate" as const,
+                    since: "2026-08-14T00:00:00.000Z",   // re-stamped by this morning's sweep
+                    grabbedAt: "2026-08-01T09:00:00.000Z" } },
+        { id: "grabbed-today", title: "grabbed today", columnId: "review", order: 1,
+          agenda: { by: "edwin", state: "plate" as const,
+                    since: "2026-08-13T09:00:00.000Z",
+                    grabbedAt: "2026-08-13T09:00:00.000Z" } },
+      ],
+    };
+    expect(collectAgendaCards([swept], "edwin", "plate").map((c) => c.id))
+      .toEqual(["held-longest", "grabbed-today"]);
   });
 
   it("excludes other holders", () => {
@@ -775,7 +823,8 @@ In `BoardStage.tsx`, add `gatesHuman?: boolean;` to `WorkColumn`, and to `WorkCa
 
 ```ts
   /** Who holds this card's current step — orthogonal to columnId. */
-  agenda?: { by: string; state: "plate" | "today"; since: string };
+  agenda?: { by: string; state: "plate" | "today"; since: string; grabbedAt: string };
+  intents?: Array<{ at: string; by: string; text: string }>;
 ```
 
 - [ ] **Step 4: Add the two collectors**
@@ -811,10 +860,14 @@ export function sharedQueueCards(boards: WorkBoardT[]): AggCard[] {
  * `order` still means something — they come first. Team cards are matched on the
  * holder's step state and ordered by `since`, oldest first, because `order` is
  * per-column-per-board and cannot order a lane that spans boards.
+ *
+ * Team cards order by `grabbedAt`, NOT `since`: the morning sweep re-stamps `since` on
+ * everything it reverts, so sorting by it would reshuffle the lane every midnight and
+ * make the work you touched yesterday look newest. `grabbedAt` is the stable age.
  */
 export function collectAgendaCards(boards: WorkBoardT[], userId: string, laneId: string): AggCard[] {
   const personal: AggCard[] = [];
-  const team: Array<{ card: AggCard; since: string }> = [];
+  const team: Array<{ card: AggCard; grabbedAt: string }> = [];
   for (const b of boards) {
     for (const c of b.cards) {
       const tagged: AggCard = { ...c, boardId: b.id, workspaceId: b.workspaceId };
@@ -823,11 +876,13 @@ export function collectAgendaCards(boards: WorkBoardT[], userId: string, laneId:
         continue;
       }
       if (!STEP_LANES.includes(laneId)) continue;
-      if (c.agenda?.by === userId && c.agenda.state === laneId) team.push({ card: tagged, since: c.agenda.since });
+      if (c.agenda?.by === userId && c.agenda.state === laneId) {
+        team.push({ card: tagged, grabbedAt: c.agenda.grabbedAt });
+      }
     }
   }
   personal.sort((a, b) => a.order - b.order);
-  team.sort((a, b) => a.since.localeCompare(b.since));
+  team.sort((a, b) => a.grabbedAt.localeCompare(b.grabbedAt));
   return [...personal, ...team.map((t) => t.card)];
 }
 ```
@@ -1075,7 +1130,12 @@ Extend `BoardCardProps`:
   /** The holder's latest stated intent. Shown under the title in the Today lane, so the
       lane reads as a list of commitments rather than a list of titles. */
   intent?: string;
+  /** How long this has been on the holder's plate, pre-formatted ("5d"). Derived from
+      `agenda.grabbedAt` — never from `since`, which the morning sweep re-stamps. */
+  age?: string;
 ```
+
+Reuse the existing `flagAge(since, now)` helper at `BoardCard.tsx:10` for the formatting rather than writing a second duration formatter — it already produces the "2d" shape the flag chip uses.
 
 Render beside the existing `card.flag` chip, following its markup shape:
 

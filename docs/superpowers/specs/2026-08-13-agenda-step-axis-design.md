@@ -45,7 +45,18 @@ Nothing is ever assigned to a person. Work becomes *visible* in a shared queue a
 /** Who holds this card's CURRENT step, and whether they picked it for today.
     Orthogonal to columnId, like `flag`. Cleared when the card changes column:
     the step it described has ended. One holder — grabbing is exclusive. */
-agenda?: { by: string; state: StepState; since: string };
+agenda?: {
+  by: string;
+  state: StepState;
+  /** Entry into the CURRENT state — the same contract as CardFlag.since. The morning
+      sweep re-stamps this, because reverting to plate really is entering a new state. */
+  since: string;
+  /** When it landed on this person's plate. Stamped once at grab and never touched
+      again — not by a state flip, not by the sweep. This is the clock that answers
+      "how long have I been sitting on this", which `since` cannot: a card worked
+      yesterday would otherwise look brand new every morning. */
+  grabbedAt: string;
+};
 
 export type StepState = "plate" | "today";
 
@@ -105,6 +116,8 @@ Condition 4 is the distinction the whole feature exists to draw: a card an agent
 
 `today` reverts to `plate` for that user, across every board. **It does not release the card.** Grabbing is a commitment that outlives the day; picking something for today is a daily declaration that does not. A card you grabbed last week is still yours this morning — it is simply no longer claimed for today until you say so.
 
+The sweep re-stamps `since` (reverting to plate is genuinely entering a new state) and **never touches `grabbedAt`**. That split is what lets the plate lane show "on your plate 5 days" the morning after you worked something, instead of resetting its age every midnight.
+
 Generalizes the existing `sweepPersonalBoard`, which already rolls Todo/Doing into Queue at local midnight under a `sweptDay` guard. Same midnight timer, **cron-only**, preserving the ruling at `swarm/src/server.ts:471`: if the server is down at 00:00 the sweep waits.
 
 ## Part 5 — Handing work on
@@ -152,7 +165,8 @@ Each statement appends to `card.intents`. It is never rewritten and never cleare
 - Team cards occupy Shared queue / My plate / Today. **Done holds personal todos only** — a team card's "done" is expressed by advancing it on its board, at which point it leaves the Agenda entirely. This is the one asymmetry left and it is explicable on screen.
 - Team cards carry a dashed provenance chip — home board and workflow column ("Deliver · review").
 - Shared queue is not drag-reorderable and its cards are not draggable into Today directly; **grab** is a button on the card, and grabbing lands it in My plate.
-- Lanes sort personal cards first by `order` (drag-reorderable, unchanged), then team cards by `since` oldest-first. `order` is per-column-per-board and renumbered per board, so it cannot order a cross-board lane. The shared queue sorts by how long the card has been waiting — `flag.since` when flagged, else `updatedAt`.
+- Lanes sort personal cards first by `order` (drag-reorderable, unchanged), then team cards by **`grabbedAt`** oldest-first — the longest-held work floats up, and stays up whether or not you touched it yesterday. Sorting by `since` here would reshuffle the lane every midnight. `order` is per-column-per-board and renumbered per board, so it cannot order a cross-board lane. The shared queue sorts by how long the card has been waiting — `flag.since` when flagged, else `updatedAt`.
+- A card on your plate shows its age from `grabbedAt` ("5d"), which is the visible half of "it's still on your plate."
 
 - Dropping into **Today** opens the intent composer inline on the card. It is a required field: the drop is optimistic-free — nothing is written until the sentence is submitted, and cancelling returns the card to its lane with no PATCH at all. This is the one gesture in the app that cannot be completed by dragging alone, which is deliberate: the friction is the feature.
 - A card in Today shows its latest intent beneath the title, so the lane reads as a list of commitments rather than a list of titles.
@@ -181,7 +195,7 @@ Swarm (node test runner, pure helpers, no server boot):
 - `setStepState` flips plate↔today; `since` resets on change, survives a same-state re-stamp.
 - A column change clears `agenda`; a same-column reorder does not.
 - `sharedQueue`: includes a gated unheld card on deliver/reactive/maintenance; excludes one on plan/ideation/release; excludes a held card; excludes one with `delegation.state === "working"`; includes one whose delegation `failed`; includes a flagged card in an ungated column.
-- `sweepUserAgenda`: `today → plate` across boards; never releases; second call same day is a no-op; other users untouched; `agendaSweptDay` persists even when nothing moved; **`intents` is never truncated by a sweep**.
+- `sweepUserAgenda`: `today → plate` across boards; never releases; second call same day is a no-op; other users untouched; `agendaSweptDay` persists even when nothing moved; **`intents` is never truncated by a sweep**; **`grabbedAt` survives while `since` is re-stamped** — a card grabbed three days ago and worked yesterday still reports three days.
 - `setStepState` into `today` throws without an intent, and throws on a whitespace-only one; into `plate` needs none.
 - Each entry into `today` appends one entry to `intents`; a same-state re-stamp does not append twice.
 - `intents` survives the column change that clears `agenda`.
