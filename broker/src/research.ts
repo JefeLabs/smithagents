@@ -127,35 +127,40 @@ const RESEARCH_TIMEOUT_MS = 120_000;
  * The timeout matters more here than it looks — a hung CLI would otherwise
  * hang a feed poll or an election indefinitely, and neither has its own clock.
  */
-export const defaultSpawner: Spawner = (argv, stdin) =>
-  new Promise((resolve) => {
-    const child = spawn(argv[0], argv.slice(1), { stdio: ["pipe", "pipe", "pipe"] });
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    const finish = (code: number | null) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({ code, stdout, stderr });
-    };
-    const timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      finish(null);
-    }, RESEARCH_TIMEOUT_MS);
-    child.stdout.on("data", (d) => {
-      stdout += String(d);
+/** Builds a spawner with the given kill timeout — injectable so the SIGKILL path is testable without waiting 120s. */
+export const makeSpawner =
+  (timeoutMs: number = RESEARCH_TIMEOUT_MS): Spawner =>
+  (argv, stdin) =>
+    new Promise((resolve) => {
+      const child = spawn(argv[0], argv.slice(1), { stdio: ["pipe", "pipe", "pipe"] });
+      let stdout = "";
+      let stderr = "";
+      let settled = false;
+      const finish = (code: number | null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({ code, stdout, stderr });
+      };
+      const timer = setTimeout(() => {
+        child.kill("SIGKILL");
+        finish(null);
+      }, timeoutMs);
+      child.stdout.on("data", (d) => {
+        stdout += String(d);
+      });
+      child.stderr.on("data", (d) => {
+        stderr += String(d);
+      });
+      // A missing binary emits 'error', never 'close' with a code — without this
+      // the promise would never settle and the caller would hang until its own
+      // timeout, if it has one.
+      child.on("error", (err) => {
+        stderr += String((err as Error).message);
+        finish(null);
+      });
+      child.on("close", (code) => finish(code));
+      child.stdin.end(stdin);
     });
-    child.stderr.on("data", (d) => {
-      stderr += String(d);
-    });
-    // A missing binary emits 'error', never 'close' with a code — without this
-    // the promise would never settle and the caller would hang until its own
-    // timeout, if it has one.
-    child.on("error", (err) => {
-      stderr += String((err as Error).message);
-      finish(null);
-    });
-    child.on("close", (code) => finish(code));
-    child.stdin.end(stdin);
-  });
+
+export const defaultSpawner: Spawner = makeSpawner();

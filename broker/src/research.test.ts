@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { AnthropicResearch, CliResearch, defaultSpawner, type ResearchEngine, ResearchError } from "./research.ts";
+import {
+  AnthropicResearch,
+  CliResearch,
+  defaultSpawner,
+  makeSpawner,
+  type ResearchEngine,
+  ResearchError,
+} from "./research.ts";
 
 /** Minimal stand-in for the SDK's messages.create. */
 const createStub = (reply: unknown) => {
@@ -173,4 +180,19 @@ test("defaultSpawner settles when the binary does not exist", async () => {
   const r = await defaultSpawner(["definitely-not-a-real-binary-xyz"], "hi");
   assert.equal(r.code, null);
   assert.match(r.stderr, /ENOENT|not found|spawn/i);
+});
+
+test("a timed-out spawner SIGKILLs the child and settles with code null well before it would exit on its own", async () => {
+  // Proves three things at once: the timer fires, the process is actually
+  // killed (not just abandoned), and the promise settles from the timer
+  // branch rather than waiting on 'close'. A stubbed `code: null` in the
+  // CliResearch tests above cannot exercise any of that — this is
+  // defaultSpawner's own timer-and-kill logic, spawning something genuinely
+  // slow and racing it against a short timeout.
+  const spawner = makeSpawner(100);
+  const started = Date.now();
+  const r = await spawner(["sleep", "5"], "");
+  const elapsed = Date.now() - started;
+  assert.equal(r.code, null);
+  assert.ok(elapsed < 2000, `expected the 100ms timeout to win, took ${elapsed}ms`);
 });
