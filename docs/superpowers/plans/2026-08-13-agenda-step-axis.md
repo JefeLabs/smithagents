@@ -108,6 +108,7 @@ test("each claim appends one intent; a same-state re-stamp does not append twice
   assert.deepEqual(c.intents?.[0], {
     at: "2026-08-13T11:00:00.000Z",
     by: "edwin",
+    kind: "start",
     text: "chasing the flaky suite",
   });
 });
