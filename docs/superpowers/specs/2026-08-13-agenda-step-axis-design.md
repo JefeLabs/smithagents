@@ -60,11 +60,14 @@ agenda?: {
 
 export type StepState = "plate" | "today";
 
-/** Append-only narrative: what the holder said they were doing, stamped each time
-    someone claims this card for a day. Lives on the CARD, not inside `agenda`, so it
-    survives the column change that clears the holder — it is the card's story, not the
-    step's, and it is the substrate for Jira comments and AI summaries. Never rewritten. */
-intents?: Array<{ at: string; by: string; text: string }>;
+/** Append-only narrative: what people said they were doing, and what they said they
+    did. Lives on the CARD, not inside `agenda`, so it survives the column change that
+    clears the holder — it is the card's story, not the step's, and it is the substrate
+    for Jira comments and AI summaries. Never rewritten.
+
+    `kind` makes the log a sequence of start/done pairs rather than a flat stream, which
+    is what a summary needs to say "picked this up Monday, closed it Wednesday". */
+intents?: Array<{ at: string; by: string; kind: "start" | "done"; text: string }>;
 ```
 
 Single holder, not a list. "Grab it" is exclusive: the moment someone takes a card it leaves everyone else's shared queue. An **agent** holding work is not represented here — that is `delegation`, which already exists and already carries the execution state (`taskId`, `state`, `prUrl`) a human holder has no analogue for.
@@ -109,6 +112,11 @@ Condition 4 is the distinction the whole feature exists to draw: a card an agent
 4. **Release restores the pool by deletion.** Releasing removes `agenda` entirely; the card re-enters the shared queue by satisfying Part 2, with nothing left behind.
 5. **`since` resets on a state change and survives a same-state re-stamp** — mirroring `CardFlag.since`.
 6. **Entering `today` requires a stated intent.** Enforced in the domain helper, not the UI, so no route or script can move a card into today silently. `plate` never requires one — grabbing is cheap, committing your day is not.
+7. **Closing costs a sentence too.** Two gestures end work and both demand a comment, enforced in `patchCard`:
+   - a **held** card changing column — the step is ending, whoever moves it;
+   - a **personal** card entering its `done` column.
+
+   Note the first has no user check: if Ana advances a card Edwin holds, Ana writes the closing comment. Someone is ending someone else's step, and that is exactly the moment worth recording. An **unheld** team card moves between columns freely — the requirement attaches to finishing work someone took, not to tidying a board.
 
 ## Part 4 — The morning sweep
 
@@ -144,9 +152,13 @@ So there is no handoff-to-a-named-person, and none is needed: a released card is
 
 **Entering `today` demands a sentence.** Dragging a card into Today opens a required composer — "what are you doing with this?" — and the move does not commit until it is answered. Cancelling leaves the card on your plate. The check lives in `setStepState`, not the component, so the rule holds for every caller.
 
+**Finishing demands one too.** Advancing a held card on its team board, or dropping a personal todo into Done, opens the same composer asking what you did. Same contract: nothing is written until it is answered, cancelling aborts the move. This is the one place the team board changes behaviour beyond the holder chip — a held card can no longer be dragged forward silently, because that drag is what ends someone's step.
+
+Opening and closing costing the same is what turns the log into start/done pairs. A card that only ever accumulates "starts" tells a summary nothing about whether anything landed.
+
 Each statement appends to `card.intents`. It is never rewritten and never cleared, including when the holder is cleared by a column change — the sentence someone wrote about the spec step stays true after the card moves to tech-design. That append-only log is what makes the next two things possible:
 
-**Jira comments.** When the card carries `jira` and its board carries `jira`, appending an intent posts a comment on the issue: *"Edwin · today: chasing the flaky suite on main."* This mirrors the existing push-on-move, which transitions a linked issue when a card lands in a column with `jiraStatus` and records failures in `card.jira.lastPushError` rather than failing the write. Comment pushes follow the same contract — best-effort, never blocking the local move.
+**Jira comments.** When the card carries `jira` and its board carries `jira`, appending an entry posts a comment on the issue — *"Edwin · started: chasing the flaky suite on main"*, and later *"Edwin · done: it was the 20s asyncUtil ceiling, fixed in #412."* This mirrors the existing push-on-move, which transitions a linked issue when a card lands in a column with `jiraStatus` and records failures in `card.jira.lastPushError` rather than failing the write. Comment pushes follow the same contract — best-effort, never blocking the local move.
 
 `jira-sync.ts` has `searchIssues`, `createIssue`, `importIssues` and `transitionIssue`; a `commentIssue` is new. Jira's v3 comment body is ADF, not a string, so the helper wraps plain text in a minimal `doc → paragraph → text` document.
 
@@ -197,7 +209,11 @@ Swarm (node test runner, pure helpers, no server boot):
 - `sharedQueue`: includes a gated unheld card on deliver/reactive/maintenance; excludes one on plan/ideation/release; excludes a held card; excludes one with `delegation.state === "working"`; includes one whose delegation `failed`; includes a flagged card in an ungated column.
 - `sweepUserAgenda`: `today → plate` across boards; never releases; second call same day is a no-op; other users untouched; `agendaSweptDay` persists even when nothing moved; **`intents` is never truncated by a sweep**; **`grabbedAt` survives while `since` is re-stamped** — a card grabbed three days ago and worked yesterday still reports three days.
 - `setStepState` into `today` throws without an intent, and throws on a whitespace-only one; into `plate` needs none.
-- Each entry into `today` appends one entry to `intents`; a same-state re-stamp does not append twice.
+- Each entry into `today` appends one `kind: "start"` entry; a same-state re-stamp does not append twice.
+- `patchCard` throws when a **held** card changes column with no closing comment, and the card is left untouched — no half-applied move, holder still intact.
+- `patchCard` with a closing comment appends `kind: "done"` **and then** clears the holder; the appended entry survives.
+- An **unheld** team card changes column with no comment required.
+- A **personal** card entering `done` requires a comment; entering any other column does not.
 - `intents` survives the column change that clears `agenda`.
 - `commentIssue` posts an ADF document, not a bare string; a failed comment push records `lastPushError` and does not throw.
 

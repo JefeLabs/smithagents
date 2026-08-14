@@ -18,6 +18,7 @@
 - **The shared queue is derived.** Never add a stored "queued" flag or a function that writes one.
 - **`StepState` is exactly `"plate" | "today"`.** No `done` — finishing a step means advancing the card.
 - **Entering `today` requires a non-empty intent**, enforced in the domain helper so no route or script can bypass it. `plate` never requires one.
+- **Closing requires one too**, enforced in `patchCard`: a **held** card changing column, or a **personal** card entering `done`. An unheld team card moves freely. Every such check runs *before* any mutation — a rejected move must leave the card untouched.
 - **`card.intents` is append-only.** Nothing rewrites or truncates it — not the sweep, not a column change, not a release.
 - **Sources are `maintenance`, `reactive`, `deliver`.** `release/sign-off` is deliberately excluded.
 - Run swarm tests from `swarm/`, control-plane tests from `control-plane/`.
@@ -116,9 +117,13 @@ test("intents survive the column change that clears the holder", () => {
   const c = addCard(b, { title: "auth", columnId: "review" });
   grabCard(c, "edwin", "2026-08-13T10:00:00.000Z");
   setStepState(c, "edwin", "today", "2026-08-13T11:00:00.000Z", "chasing the flaky suite");
-  patchCard(b, c.id, { columnId: "verify", order: 0 });
+  patchCard(b, c.id, { columnId: "verify", order: 0, close: { by: "edwin", text: "it was the 20s ceiling" } });
   assert.equal(c.agenda, undefined, "the step ended");
-  assert.equal(c.intents?.length, 1, "the card's story does not end with the step");
+  assert.deepEqual(
+    c.intents?.map((i) => i.kind),
+    ["start", "done"],
+    "the card's story does not end with the step",
+  );
 });
 
 test("patchCard clears the holder on a column change, keeps it on a reorder", () => {
@@ -128,8 +133,48 @@ test("patchCard clears the holder on a column change, keeps it on a reorder", ()
   grabCard(c, "edwin", "2026-08-13T10:00:00.000Z");
   patchCard(b, c.id, { order: 1 });
   assert.ok(c.agenda, "a reorder is the same step");
-  patchCard(b, c.id, { columnId: "verify", order: 0 });
+  patchCard(b, c.id, { columnId: "verify", order: 0, close: { by: "edwin", text: "reviewed, looks right" } });
   assert.equal(c.agenda, undefined, "the step ended");
+});
+
+test("a held card cannot advance without a closing comment, and a refusal changes nothing", () => {
+  const b = createBoard("deliver", "ws");
+  const c = addCard(b, { title: "auth", columnId: "review" });
+  grabCard(c, "edwin", "2026-08-13T10:00:00.000Z");
+  assert.throws(() => patchCard(b, c.id, { columnId: "verify", order: 0 }), /closing comment is required/);
+  assert.equal(c.columnId, "review", "no half-applied move");
+  assert.equal(c.agenda?.by, "edwin", "holder intact");
+  assert.equal(c.intents, undefined);
+});
+
+test("closing appends a done entry that survives the holder being cleared", () => {
+  const b = createBoard("deliver", "ws");
+  const c = addCard(b, { title: "auth", columnId: "review" });
+  grabCard(c, "edwin", "2026-08-13T10:00:00.000Z");
+  patchCard(b, c.id, { columnId: "verify", order: 0, close: { by: "edwin", text: "it was the 20s ceiling" } });
+  assert.equal(c.agenda, undefined);
+  assert.equal(c.intents?.length, 1);
+  assert.equal(c.intents?.[0].kind, "done");
+  assert.equal(c.intents?.[0].by, "edwin");
+  assert.equal(c.intents?.[0].text, "it was the 20s ceiling");
+});
+
+test("an UNHELD team card advances freely — the rule is about finishing, not tidying", () => {
+  const b = createBoard("deliver", "ws");
+  const c = addCard(b, { title: "auth", columnId: "review" });
+  patchCard(b, c.id, { columnId: "verify", order: 0 });
+  assert.equal(c.columnId, "verify");
+  assert.equal(c.intents, undefined);
+});
+
+test("a personal todo needs a comment to reach done, but not to reach doing", () => {
+  const b = createBoard("personal");
+  const c = addCard(b, { title: "call the bank", columnId: "todo" });
+  patchCard(b, c.id, { columnId: "doing", order: 0 });
+  assert.equal(c.columnId, "doing");
+  assert.throws(() => patchCard(b, c.id, { columnId: "done", order: 0 }), /closing comment is required/);
+  patchCard(b, c.id, { columnId: "done", order: 0, close: { by: "edwin", text: "rescheduled the transfer" } });
+  assert.equal(c.intents?.[0].kind, "done");
 });
 ```
 
@@ -166,10 +211,11 @@ Add to `WorkCard`, after `flag?: CardFlag;`:
         that answers "how long have I been sitting on this", which `since` cannot. */
     grabbedAt: string;
   };
-  /** Append-only: what each holder said they were doing when they claimed this card for
-      a day. On the CARD, not inside `agenda`, so it survives the column change that
-      clears the holder. Substrate for Jira comments and AI summaries. */
-  intents?: Array<{ at: string; by: string; text: string }>;
+  /** Append-only: what people said they were doing, and what they said they did. On the
+      CARD, not inside `agenda`, so it survives the column change that clears the holder.
+      `kind` makes it start/done pairs rather than a flat stream, which is what a summary
+      needs. Substrate for Jira comments and AI summaries. */
+  intents?: Array<{ at: string; by: string; kind: "start" | "done"; text: string }>;
 ```
 
 - [ ] **Step 4: Add the three helpers**
@@ -218,25 +264,60 @@ export function setStepState(
   const text = intent?.trim();
   if (state === "today" && entering && !text) throw new Error("An intent is required to claim a card for today");
   if (state === "today" && entering && text) {
-    card.intents = [...(card.intents ?? []), { at: now, by: userId, text }];
+    card.intents = [...(card.intents ?? []), { at: now, by: userId, kind: "start", text }];
   }
   if (entering) card.agenda.since = now;
   card.agenda.state = state;
 }
 ```
 
-- [ ] **Step 5: Clear the holder on a column change**
+- [ ] **Step 5: Require a closing comment, then clear the holder**
 
-In `patchCard`, replace the line `if (fromColumn !== toColumn) renumber(board, fromColumn);` with:
+Widen `patchCard`'s patch parameter with one non-card field beside the existing `flag`:
+
+```ts
+  > & {
+    flag?: { kind: FlagKind; reason?: string } | null;
+    /** Required when this move ends a held step, or sends a personal todo to done. */
+    close?: { by: string; text: string };
+  },
+```
+
+Add the guard at the **top** of `patchCard`, beside the existing unknown-column check and before any mutation — a rejected move must leave the card exactly as it was:
+
+```ts
+  const toColumn = patch.columnId ?? card.columnId;
+  const changingColumn = toColumn !== card.columnId;
+  // Finishing costs a sentence, symmetrically with claiming a day. Two gestures end
+  // work: advancing a card someone holds (whoever moves it — if Ana advances Edwin's
+  // card, Ana writes it), and sending a personal todo to done. An UNHELD team card
+  // moves freely: the rule attaches to finishing work someone took, not to tidying.
+  const endsHeldStep = changingColumn && Boolean(card.agenda);
+  const personalDone = changingColumn && board.type === "personal" && toColumn === "done";
+  if ((endsHeldStep || personalDone) && !patch.close?.text.trim()) {
+    throw new Error("A closing comment is required to finish this work");
+  }
+```
+
+Then replace `if (fromColumn !== toColumn) renumber(board, fromColumn);` with:
 
 ```ts
     if (fromColumn !== toColumn) {
       renumber(board, fromColumn);
-      // The step this described has ended, so its holder is void. Enforced here
-      // rather than at call sites so no route can forget.
+      const closing = patch.close?.text.trim();
+      if (closing) {
+        card.intents = [
+          ...(card.intents ?? []),
+          { at: new Date().toISOString(), by: patch.close!.by, kind: "done", text: closing },
+        ];
+      }
+      // The step this described has ended, so its holder is void. Appended FIRST —
+      // clearing the holder must not cost us the record of what closed it.
       card.agenda = undefined;
     }
 ```
+
+`patchCard` already reads the clock for `card.updatedAt`, so this follows the function's existing convention rather than breaking the purity rule the *other* helpers keep. Assert on the entry's `by`/`kind`/`text` in tests, not its `at`.
 
 - [ ] **Step 6: Run the tests, then the whole suite**
 
@@ -702,7 +783,7 @@ In the card PATCH handler, after `buildCardAgendaPatch` succeeds, mirror the exi
               board.jira.siteUrl,
               /* email + token resolved exactly as the transition push does */,
               card.jira.key,
-              `${user.name} · today: ${appended.text}`,
+              `${user.name} · ${appended.kind === "done" ? "done" : "started"}: ${appended.text}`,
             );
             card.jira.lastPushError = undefined;
           } catch (err) {
@@ -714,6 +795,8 @@ In the card PATCH handler, after `buildCardAgendaPatch` succeeds, mirror the exi
 ```
 
 Capture `now` in a local (`stampedNow`) when calling `buildCardAgendaPatch` so this block can tell a freshly appended intent from an older one — comparing against `new Date()` again would be a different instant.
+
+The same push must also fire for a **closing** comment, which arrives through the ordinary card PATCH rather than the agenda one. Since both paths end by appending to `card.intents`, hoist this into one helper called after either write — comparing the last entry's identity rather than duplicating the block. The route resolves `close.by` from the current user; a client-supplied `by` must never be trusted.
 
 - [ ] **Step 7: Run the tests, typecheck, full suite, commit**
 
@@ -960,6 +1043,31 @@ it("submitting the intent sends it with the state", async () => {
   );
 });
 
+it("advancing a HELD card on the team board asks what you did before moving it", async () => {
+  // on the Deliver tab, drag a held card from Review to Verify
+  expect(await screen.findByLabelText(/what did you do/i)).toBeDefined();
+  expect(patchCalls()).toHaveLength(0);
+});
+
+it("advancing an UNHELD card on the team board moves it straight away", async () => {
+  await waitFor(() => expect(lastPatchBody()).toEqual({ columnId: "verify", order: 0 }));
+  expect(screen.queryByLabelText(/what did you do/i)).toBeNull();
+});
+
+it("submitting the close sends the move and the comment in one body", async () => {
+  fireEvent.change(screen.getByLabelText(/what did you do/i), {
+    target: { value: "it was the 20s ceiling" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: /done/i }));
+  await waitFor(() =>
+    expect(lastPatchBody()).toEqual({
+      columnId: "verify",
+      order: 0,
+      close: { text: "it was the 20s ceiling" },
+    }),
+  );
+});
+
 it("dragging a PERSONAL card patches columnId only", async () => {
   expect(lastPatchBody()).toHaveProperty("columnId");
   expect(lastPatchBody()).not.toHaveProperty("agenda");
@@ -1044,6 +1152,26 @@ In `handleDragEnd`:
 ```
 
 Cancelling just calls `setPendingIntent(null)` — no network call at all.
+
+**The closing composer.** The same gate guards finishing, and it fires on the *team board* too, not only on Agenda. Before `applyMove`, intercept:
+
+```ts
+    const moving = source?.cards.find((c) => c.id === cardId);
+    const changingColumn = moving && moving.columnId !== outcome.columnId;
+    const endsHeldStep = changingColumn && Boolean(moving?.agenda);
+    const personalDone = changingColumn && source?.type === "personal" && outcome.columnId === "done";
+    if (endsHeldStep || personalDone) {
+      // Mirrors the server guard in patchCard. Asking here is a courtesy — the
+      // server refuses the move regardless, which is what makes the rule real.
+      setPendingClose({ boardId: outcome.boardId, cardId, columnId: outcome.columnId, order: outcome.order });
+      return;
+    }
+    void applyMove(outcome.boardId, cardId, outcome.columnId, outcome.order);
+```
+
+Submitting sends the ordinary card PATCH with the move *and* the comment in one body — `{ columnId, order, close: { text } }` — so the server applies both atomically or neither. `applyMove`'s optimistic write must not run until that resolves, since a rejected close would otherwise leave the UI showing a move the server refused.
+
+Widen `api.patchCard`'s body type with `close?: { text: string }`. The route fills in `by` from the current user; the client never sends it.
 
 - [ ] **Step 6: Run, lint, commit**
 
@@ -1188,6 +1316,8 @@ git commit -m "feat(cp): holder chips, provenance badges, grab control"
   curl -s --retry 20 --retry-connrefused http://127.0.0.1:7777/work/boards | head -c 200
   ```
 - [ ] Smoke at `http://localhost:1420`: put a card in Deliver/Review, confirm it appears in Agenda's **Shared queue**, press Grab, confirm it moves to **My plate** and vanishes from the shared lane, drag it to **Today**, confirm the composer appears and that **cancelling writes nothing**, then submit an intent and confirm the Deliver board still shows it in Review with an "Edwin · today" chip and the intent under the title.
-- [ ] Release it and confirm it returns to the shared queue.
+- [ ] On the **Deliver** board, drag that held card from Review to Verify: confirm the closing composer appears, that cancelling writes nothing, and that submitting moves the card and clears the holder chip in one step. Then repeat with an **unheld** card and confirm it moves with no prompt at all.
+- [ ] Drop a personal todo into **Done** and confirm it asks what you did; confirm moving that same todo between other lanes does not.
+- [ ] Release a card and confirm it returns to the shared queue.
 - [ ] On a Jira-linked card, submit an intent and confirm the comment lands on the issue. If the push fails, confirm the local claim still succeeded and `lastPushError` is set — a Jira outage must never cost the operator their claim.
 - [ ] Verify the sweep by hand: set `agendaSweptDay` to yesterday in `swarm/.smith/users/me.json`, restart, confirm `today` reverted to `plate` and nothing was released.
