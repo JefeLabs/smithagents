@@ -1,5 +1,7 @@
 # Agenda Pull Queue — Implementation Plan
 
+> **CLAIMED 2026-08-13 — in execution.** Owner: session `5de6efcf`, worktree `.worktrees/agenda-step-axis`, branch `agenda-step-axis`. Ledger: `.superpowers/sdd/2026-08-13-agenda-step-axis/progress.md`. Do not start a second executor against this plan — check the ledger for which tasks are already complete, and coordinate before touching the branch.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Give each card a single-holder step axis orthogonal to its team column, and surface unheld work from Maintain/React/Deliver in a shared queue people pull from.
