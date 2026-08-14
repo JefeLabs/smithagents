@@ -6,21 +6,24 @@ import type { RosterAgent, TerminalEffectT, WorkspaceRecord } from "../api/types
 import type { BoardsResult } from "../api/work";
 import { useRangeBounds } from "../hooks/useRangeBounds";
 import {
+  type AggCard,
   ALL_WORKSPACES,
   addableTypes,
   type BoardTypeT,
   clusterByWorkspace,
+  collectAgendaCards,
   collectCards,
+  sharedQueueCards,
   tabsFor,
 } from "../lib/board-aggregate";
 import { inDateRange } from "../lib/dateRange";
 import { workspaceColor } from "../lib/workspace-color";
 import { BoardColumn } from "../molecules/BoardColumn";
 import { BoardTabs } from "../molecules/BoardTabs";
-import { useWorkspaceRecords } from "../queries/http";
+import { useMe, useWorkspaceRecords } from "../queries/http";
 import { qk } from "../queries/keys";
 import { useSession } from "../queries/pushed";
-import { useBoards, useCreateBoard, useCreateCard, useImportJira, useMoveCard } from "../queries/work";
+import { useBoards, useCardAgenda, useCreateBoard, useCreateCard, useImportJira, useMoveCard } from "../queries/work";
 import { useUiStore } from "../stores/uiStore";
 import { CardSheet } from "./CardSheet";
 import { QueueSourcesSheet } from "./QueueSourcesSheet";
@@ -28,6 +31,9 @@ import { TerminalEffectsSheet } from "./TerminalEffectsSheet";
 
 /** Stable empty while the records query is pending — `colorFor` runs per card. */
 const NO_WORKSPACES: WorkspaceRecord[] = [];
+
+/** The Agenda tab's derived pool lane. Exists on no board — nothing may persist this id. */
+const SHARED_LANE: WorkColumn = { id: "shared-queue", name: "Shared queue" };
 
 export interface WorkColumn {
   id: string;
@@ -171,6 +177,75 @@ export async function fireDrop(boardId: string, cardId: string, columnId: string
   await dropHandler(boardId, cardId, columnId, order);
 }
 
+/** Shared face for the two card-position composers below — only the label/verb differ. */
+function CardComposer({
+  question,
+  verb,
+  submitting,
+  onCancel,
+  onSubmit,
+}: {
+  question: string;
+  verb: string;
+  submitting: boolean;
+  onCancel: () => void;
+  onSubmit: (text: string) => void;
+}) {
+  const [text, setText] = useState("");
+  return (
+    <div className="board-card board-card--composer">
+      <label>
+        {question}
+        <textarea rows={2} value={text} onChange={(e) => setText(e.target.value)} />
+      </label>
+      <div className="board-card__composer-actions">
+        <button type="button" className="settings-btn" onClick={onCancel}>
+          cancel
+        </button>
+        <button
+          type="button"
+          className="settings-btn settings-btn--primary"
+          disabled={!text.trim() || submitting}
+          onClick={() => onSubmit(text.trim())}
+        >
+          {verb}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A card reduced to an open control plus one card-level action, never a
+ * nested button — the action sits beside the title, not inside it. Shared by
+ * Grab (shared-queue cards) and Release (cards the viewer already holds, in
+ * My plate / Today): same shape, only the verb and the write differ.
+ */
+function CardAction({
+  card,
+  verb,
+  pending,
+  onOpen,
+  onAction,
+}: {
+  card: AggCard;
+  verb: string;
+  pending: boolean;
+  onOpen: () => void;
+  onAction: () => void;
+}) {
+  return (
+    <div className="board-card board-card--action">
+      <button type="button" className="board-card__open" onClick={onOpen}>
+        <span className="board-card__title">{card.title}</span>
+      </button>
+      <button type="button" className="settings-btn board-card__action" disabled={pending} onClick={onAction}>
+        {verb}
+      </button>
+    </div>
+  );
+}
+
 /**
  * The kanban stage — the user's boards. Drag (Task 6) only ever changes the
  * user's own status; delegation state is badges on cards, never movement.
@@ -186,6 +261,8 @@ export function BoardStage({ roster }: BoardStageProps) {
   const createCardMutation = useCreateCard();
   const moveCardMutation = useMoveCard();
   const importJiraMutation = useImportJira();
+  const cardAgendaMutation = useCardAgenda();
+  const { data: me } = useMe();
 
   const { data: session } = useSession();
   const viewed = useUiStore((s) => s.viewedWorkspaces);
@@ -216,6 +293,15 @@ export function BoardStage({ roster }: BoardStageProps) {
   const [cardTitle, setCardTitle] = useState("");
   const [open, setOpen] = useState<{ boardId: string; cardId: string } | null>(null);
   const [configOpen, setConfigOpen] = useState<{ boardId: string; column: "queue" | "terminal" } | null>(null);
+  // Claiming "today" needs a sentence; ending a held step needs a word. Both
+  // hold the drop's target coordinates and gate the card's face — see applyMove.
+  const [pendingIntent, setPendingIntent] = useState<{ boardId: string; cardId: string } | null>(null);
+  const [pendingClose, setPendingClose] = useState<{
+    boardId: string;
+    cardId: string;
+    columnId: string;
+    order: number;
+  } | null>(null);
   // Same endpoint and envelope the hand-rolled fetch here used, but on the
   // shared key — so this stage and the map issue one request between them
   // rather than one each, and a workspace edit invalidates both.
@@ -237,7 +323,17 @@ export function BoardStage({ roster }: BoardStageProps) {
         cards: b.cards.filter((c) => !c.updatedAt || inDateRange(c.updatedAt, rangeBounds)),
       }))
     : tabBoards;
-  const columns = tabBoards[0]?.columns ?? [];
+  const isAgendaTab = tab?.type === "personal";
+  const personalBoard = boards.find((b) => b.type === "personal") ?? null;
+  // Agenda's boardIds span every board (Task 6), so tabBoards[0] is no longer
+  // the personal board — it's whichever board happens to sort first. The
+  // rendered lanes come from the personal board specifically, with the
+  // derived shared-queue lane prepended.
+  const columns = isAgendaTab ? [SHARED_LANE, ...(personalBoard?.columns ?? [])] : (tabBoards[0]?.columns ?? []);
+  // The composer targets a single board: on Agenda that's always the personal
+  // board (unambiguous even though the tab spans every board), everywhere
+  // else it's the tab's one board, when there is exactly one in view.
+  const addCardTarget = isAgendaTab ? personalBoard : tabBoards.length === 1 ? tabBoards[0] : null;
   // Cards go to the board they came from, never the tab — in aggregate scope a
   // tab spans several boards.
   const boardOf = (id: string) => boards.find((b) => b.id === id) ?? null;
@@ -269,6 +365,8 @@ export function BoardStage({ roster }: BoardStageProps) {
     setCardTitle("");
     setOpen(null);
     setConfigOpen(null);
+    setPendingIntent(null);
+    setPendingClose(null);
   }, [scope, tab?.key]);
 
   // Lifted from BoardTabs: the add-board menu unmounts whenever `addable` is
@@ -290,6 +388,39 @@ export function BoardStage({ roster }: BoardStageProps) {
       const previous = boards.find((b) => b.id === boardId);
       if (!previous) return;
       const movingCard = previous.cards.find((c) => c.id === cardId);
+
+      // Agenda's plate/today lanes hold TEAM cards on their home board — the
+      // dragged card's own board, not "personal". Their drop writes a step
+      // state, never a columnId; the server treats a column move and a
+      // step-state write as mutually exclusive on one call.
+      if (isAgendaTab && previous.type !== "personal") {
+        if (columnId !== "plate" && columnId !== "today") return;
+        if (columnId === "today") {
+          // Claiming a day needs a sentence. Nothing is written until it is
+          // submitted — no optimistic move, no PATCH — so cancelling leaves
+          // the card exactly where it was. This is the one drop in the app
+          // that a drag alone cannot complete.
+          setPendingIntent({ boardId, cardId });
+          return;
+        }
+        await cardAgendaMutation.mutateAsync({ boardId, cardId, agenda: { state: "plate" } });
+        return;
+      }
+
+      // The closing composer: fires here too, on the team board's own
+      // columns, not only on Agenda — ending a held step, or a personal card
+      // entering Done.
+      const changingColumn = Boolean(movingCard) && movingCard?.columnId !== columnId;
+      const endsHeldStep = changingColumn && Boolean(movingCard?.agenda);
+      const personalDone = changingColumn && previous.type === "personal" && columnId === "done";
+      if (endsHeldStep || personalDone) {
+        // Mirrors the server guard in patchCard. Asking here is a courtesy —
+        // the server refuses the move regardless, which is what makes the
+        // rule real.
+        setPendingClose({ boardId, cardId, columnId, order });
+        return;
+      }
+
       const sameColumn = movingCard?.columnId === columnId;
       const next = moveCard(previous, cardId, columnId, order);
       qc.setQueryData<BoardsResult>(qk.boards, (curr) =>
@@ -313,7 +444,7 @@ export function BoardStage({ roster }: BoardStageProps) {
         setError("Move failed — restored the previous order");
       }
     },
-    [boards, moveCardMutation, qc],
+    [boards, moveCardMutation, qc, isAgendaTab, cardAgendaMutation],
   );
 
   useEffect(() => {
@@ -336,7 +467,7 @@ export function BoardStage({ roster }: BoardStageProps) {
   };
 
   const addCard = async () => {
-    const target = tabBoards[0];
+    const target = addCardTarget;
     if (!target || !cardTitle.trim()) return;
     try {
       await createCardMutation.mutateAsync({ boardId: target.id, body: { title: cardTitle.trim() } });
@@ -399,8 +530,8 @@ export function BoardStage({ roster }: BoardStageProps) {
           type="button"
           className="settings-btn"
           onClick={() => setAddingCard((v) => !v)}
-          disabled={tabBoards.length !== 1}
-          title={tabBoards.length > 1 ? "Pick a single workspace to add a card" : undefined}
+          disabled={!addCardTarget}
+          title={!isAgendaTab && tabBoards.length > 1 ? "Pick a single workspace to add a card" : undefined}
         >
           <Plus size={12} strokeWidth={2} /> add card
         </button>
@@ -410,7 +541,7 @@ export function BoardStage({ roster }: BoardStageProps) {
           </button>
         )}
       </header>
-      {addingCard && tabBoards.length === 1 && (
+      {addingCard && addCardTarget && (
         <div className="board-stage__composer">
           <input
             placeholder="Card title"
@@ -429,23 +560,123 @@ export function BoardStage({ roster }: BoardStageProps) {
       {tab && (
         <DndContext sensors={sensors} collisionDetection={pointerWithin} onDragEnd={handleDragEnd}>
           <div className="board-stage__columns">
-            {columns.map((col) => (
-              <BoardColumn
-                key={col.id}
-                col={col}
-                clusters={clusterByWorkspace(collectCards(windowedBoards, col.id), tab.clustered)}
-                colorFor={colorFor}
-                agentFor={agentFor}
-                onOpenCard={(boardId, cardId) => setOpen({ boardId, cardId })}
-                onConfigure={
-                  configBoard && col.id === intakeId
-                    ? () => setConfigOpen({ boardId: configBoard.id, column: "queue" })
-                    : configBoard && col.id === terminalId
-                      ? () => setConfigOpen({ boardId: configBoard.id, column: "terminal" })
-                      : undefined
+            {columns.map((col) => {
+              const isSharedQueue = isAgendaTab && col.id === "shared-queue";
+              // boards, not windowedBoards: Agenda is range-invariant, same
+              // reasoning as its workspace-invariance (tabsFor's comment on
+              // `personal`). A held team card's `updatedAt` is never
+              // re-stamped by setStepState or the morning sweep, so the date
+              // window would silently drop long-held cards from the exact
+              // view that exists to surface them (grabbedAt ordering, age
+              // chip). Team-board tabs keep windowedBoards unchanged below.
+              const cards: AggCard[] = isAgendaTab
+                ? isSharedQueue
+                  ? sharedQueueCards(boards)
+                  : collectAgendaCards(boards, me?.id ?? "", col.id)
+                : collectCards(windowedBoards, col.id);
+              // Agenda's lane order (personal cards first by order, then team
+              // cards by grabbedAt) is meaningful — clusterByWorkspace's
+              // single-cluster path re-sorts by `order`, which is per-column-
+              // per-board and would scramble it. Agenda is never clustered
+              // (tabsFor never sets it), so it bypasses that sort entirely.
+              const clusters = isAgendaTab ? [{ label: null, cards }] : clusterByWorkspace(cards, tab.clustered);
+              const cardOverride = (card: AggCard) => {
+                if (pendingIntent?.cardId === card.id) {
+                  const target = pendingIntent;
+                  return (
+                    <CardComposer
+                      question="What are you doing?"
+                      verb="start"
+                      submitting={cardAgendaMutation.isPending}
+                      onCancel={() => setPendingIntent(null)}
+                      onSubmit={(text) =>
+                        void cardAgendaMutation
+                          .mutateAsync({
+                            boardId: target.boardId,
+                            cardId: target.cardId,
+                            agenda: { state: "today", intent: text },
+                          })
+                          .then(() => setPendingIntent(null))
+                      }
+                    />
+                  );
                 }
-              />
-            ))}
+                if (pendingClose?.cardId === card.id) {
+                  const target = pendingClose;
+                  return (
+                    <CardComposer
+                      question="What did you do?"
+                      verb="done"
+                      submitting={moveCardMutation.isPending}
+                      onCancel={() => setPendingClose(null)}
+                      onSubmit={(text) =>
+                        void moveCardMutation
+                          .mutateAsync({
+                            boardId: target.boardId,
+                            cardId: target.cardId,
+                            body: { columnId: target.columnId, order: target.order, close: { text } },
+                          })
+                          .then(() => setPendingClose(null))
+                      }
+                    />
+                  );
+                }
+                if (isSharedQueue) {
+                  return (
+                    <CardAction
+                      card={card}
+                      verb="grab"
+                      pending={cardAgendaMutation.isPending}
+                      onOpen={() => setOpen({ boardId: card.boardId, cardId: card.id })}
+                      onAction={() =>
+                        void cardAgendaMutation.mutateAsync({
+                          boardId: card.boardId,
+                          cardId: card.id,
+                          agenda: { action: "grab" },
+                        })
+                      }
+                    />
+                  );
+                }
+                // A team card the viewer holds, sitting in My plate or Today
+                // — Release is the mirror of Grab. Someone else's held card
+                // never reaches this branch: collectAgendaCards only ever
+                // returns cards held by the current user in these two lanes.
+                if (isAgendaTab && (col.id === "plate" || col.id === "today") && card.agenda) {
+                  return (
+                    <CardAction
+                      card={card}
+                      verb="release"
+                      pending={cardAgendaMutation.isPending}
+                      onOpen={() => setOpen({ boardId: card.boardId, cardId: card.id })}
+                      onAction={() =>
+                        void cardAgendaMutation.mutateAsync({ boardId: card.boardId, cardId: card.id, agenda: null })
+                      }
+                    />
+                  );
+                }
+                return undefined;
+              };
+              return (
+                <BoardColumn
+                  key={col.id}
+                  col={col}
+                  clusters={clusters}
+                  colorFor={colorFor}
+                  agentFor={agentFor}
+                  onOpenCard={(boardId, cardId) => setOpen({ boardId, cardId })}
+                  droppable={!isSharedQueue}
+                  cardOverride={cardOverride}
+                  onConfigure={
+                    configBoard && col.id === intakeId
+                      ? () => setConfigOpen({ boardId: configBoard.id, column: "queue" })
+                      : configBoard && col.id === terminalId
+                        ? () => setConfigOpen({ boardId: configBoard.id, column: "terminal" })
+                        : undefined
+                  }
+                />
+              );
+            })}
           </div>
         </DndContext>
       )}

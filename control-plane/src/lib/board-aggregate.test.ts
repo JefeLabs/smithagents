@@ -28,7 +28,9 @@ describe("tabsFor", () => {
   it("in workspace scope lists personal first, then that workspace's boards in canonical order", () => {
     const tabs = tabsFor(BOARDS, new Set(["acme"]));
     expect(tabs.map((t) => t.type)).toEqual(["personal", "ideation", "plan"]);
-    expect(tabs[0].boardIds).toEqual(["personal"]);
+    // Agenda spans every board regardless of workspace scope — see the
+    // dedicated "spans every board" test below for why.
+    expect(tabs[0].boardIds).toEqual(BOARDS.map((b) => b.id));
     expect(tabs[1].boardIds).toEqual(["acme-ideation"]);
   });
 
@@ -42,6 +44,14 @@ describe("tabsFor", () => {
 
   it("omits the personal tab entirely when no personal board exists", () => {
     expect(tabsFor([BOARDS[0]], new Set(["acme"])).map((t) => t.type)).toEqual(["ideation"]);
+  });
+
+  it("the Agenda tab spans every board — holders live on their home boards", () => {
+    const boards = [board("personal", "personal"), board("ws-deliver", "deliver", "ws")];
+    expect(tabsFor(boards, new Set(["ws"])).find((t) => t.type === "personal")?.boardIds).toEqual([
+      "personal",
+      "ws-deliver",
+    ]);
   });
 
   it("a multiselect of two workspaces unions their boards and clusters, same as all scope", () => {

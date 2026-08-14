@@ -74,7 +74,10 @@ export function tabsFor(boards: WorkBoardT[], scope: ReadonlySet<string> | typeo
       key: "personal",
       label: personal.name,
       type: "personal",
-      boardIds: [personal.id],
+      // Holders live on the cards' HOME boards, so Agenda reads from all of them. It
+      // stays context-invariant — your plate is your plate regardless of the workspace
+      // filter — which is why this ignores `scope`.
+      boardIds: boards.map((b) => b.id),
       clustered: false,
     });
   }
