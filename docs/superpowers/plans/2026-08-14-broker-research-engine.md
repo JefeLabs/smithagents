@@ -236,15 +236,28 @@ test("CliResearch returns trimmed stdout", async () => {
   assert.equal(await engine.complete({ system: "s", prompt: "p", maxTokens: 8 }), "a title");
 });
 
-test("CliResearch sends system and prompt on stdin, not argv", async () => {
-  // A long system prompt through argv risks E2BIG, and shell-escaping it is a
-  // whole class of injection bug we simply decline to have.
+test("CliResearch passes system+prompt as the final argv element", async () => {
+  // Every shipped driver does this — claude `--print '<p>'`, agy `--prompt
+  // '<p>'`, codex `exec '<p>'`. None of them read the prompt from stdin.
   const stub = spawnStub({ code: 0, stdout: "ok", stderr: "" });
   const engine = new CliResearch(stub.fn, ["claude", "--print"], undefined);
   await engine.complete({ system: "SYS", prompt: "PROMPT", maxTokens: 8 });
-  assert.deepEqual(stub.calls[0].argv, ["claude", "--print"]);
-  assert.match(stub.calls[0].stdin, /SYS/);
-  assert.match(stub.calls[0].stdin, /PROMPT/);
+  assert.deepEqual(stub.calls[0].argv.slice(0, 2), ["claude", "--print"]);
+  const last = stub.calls[0].argv.at(-1) as string;
+  assert.match(last, /SYS/);
+  assert.match(last, /PROMPT/);
+});
+
+test("CliResearch does not escape or quote the prompt — spawn takes an argv array", async () => {
+  // No shell is involved (spawn without shell:true goes straight to execve),
+  // so quotes, newlines and backticks are ordinary characters. Escaping them
+  // would corrupt the prompt, and the shipped drivers only escape because they
+  // build a shell STRING for tmux; this does not.
+  const stub = spawnStub({ code: 0, stdout: "ok", stderr: "" });
+  const engine = new CliResearch(stub.fn, ["claude", "--print"], undefined);
+  const nasty = `it's "quoted" \`and\` \n multi-line; rm -rf /`;
+  await engine.complete({ system: "s", prompt: nasty, maxTokens: 8 });
+  assert.ok((stub.calls[0].argv.at(-1) as string).includes(nasty), "prompt must survive byte-for-byte");
 });
 
 test("CliResearch appends the model flag only when a model is set", async () => {
@@ -330,9 +343,15 @@ export type Spawner = (
 /**
  * Runs one research turn through a CLI tool.
  *
- * The prompt goes over STDIN, never argv: a system prompt is long enough to
- * risk E2BIG, and shell-escaping it is a class of injection bug worth
- * declining outright.
+ * The prompt is the FINAL argv element, matching every shipped driver:
+ * claude `--print '<p>'`, agy `--prompt '<p>'`, codex `exec '<p>'`. None of
+ * them read a prompt from stdin.
+ *
+ * It is passed unescaped and unquoted, deliberately. `spawn` receives an argv
+ * ARRAY and never sets `shell: true`, so the args reach execve directly with
+ * no shell to interpret them — quotes, newlines and backticks are ordinary
+ * bytes. The shipped drivers escape only because they assemble a shell STRING
+ * for tmux; escaping here would corrupt the prompt instead of protecting it.
  *
  * NOT a ToolDriver. That interface launches interactive panes and rebuilds
  * conversations by discovering and parsing transcript FILES; this spawns a
@@ -347,9 +366,9 @@ export class CliResearch implements ResearchEngine {
   ) {}
 
   async complete(input: ResearchInput): Promise<string> {
-    const argv = this.model ? [...this.baseArgv, "--model", this.model] : [...this.baseArgv];
-    const stdin = `${input.system}\n\n${input.prompt}`;
-    const { code, stdout, stderr } = await this.spawn(argv, stdin);
+    const withModel = this.model ? [...this.baseArgv, "--model", this.model] : [...this.baseArgv];
+    const argv = [...withModel, `${input.system}\n\n${input.prompt}`];
+    const { code, stdout, stderr } = await this.spawn(argv, "");
     if (code !== 0) {
       const detail = stderr.trim() || stdout.trim() || (code === null ? "killed or timed out" : `exit ${code}`);
       throw new ResearchError(`${this.baseArgv[0]} failed: ${detail}`);
