@@ -166,6 +166,42 @@ which re-enters step 3a; the fork is never a one-way door.
 Boards, sessions, and documents all hang off a workspace; without one there is
 nowhere to put anything. Reuses the shipped new-workspace flow.
 
+**A GitHub account is never required, at any step.** `WorkspaceRepo.repository`
+(the remote URL) is optional and informational; `WorkspaceRepo.github` is
+optional and its own comment calls an unset `connectorId` a *soft-fail, not a
+required field*; agents commit on their branch and are instructed not to push,
+so the core loop never contacts a remote. GitHub is one of six optional
+connectors at step 7, and `copilot` is one of five CLIs. Nothing about the
+product's value depends on having an account.
+
+**A local repo is no longer required either.** Today `assertContext` demands
+`repos.length > 0` with an absolute path, which would strand anyone who wants
+the design side — diagrams, documents, dashboards, boards, and the council
+sketching a schema — none of which touches git. A workspace may now hold **zero
+repos**.
+
+This does not collide with groups. `isGroupRecord()` keys on
+`members !== undefined`, and `assertContext` branches on `Array.isArray(members)`
+before repos are considered, so "group" is identified by members and never by an
+empty repo list. The validator change is a single clause; the consequences are
+downstream and must be handled explicitly:
+
+- **Dispatch must soft-fail, not crash.** A task aimed at a repo-less context has
+  nowhere to build a worktree. It reports "this context has no repo — add one to
+  run agents" and declines. It must never throw or quarantine confusingly.
+- **Repo-dependent UI must tolerate empty.** Repo pickers, branch selectors, and
+  anything reading `repos[0]` need an empty state rather than an index error.
+- **Adding a repo later is the upgrade path.** A design-only context becomes a
+  working one the moment a repo is attached; nothing is migrated or recreated.
+
+So step 4 asks what the user is here to do, and both answers are complete:
+
+```
+  Where should work live?
+    → Point at a repo        agents can write code here     [choose folder]
+    → Just design for now    diagrams, docs, boards         (add a repo later)
+```
+
 ### Step 5 — Voice mode (optional)
 
 Assign the `deepgram` (STT) and `elevenlabs` (TTS) connectors. Voice Mode may
@@ -246,8 +282,11 @@ turns. Green tests do not prove reachability.
 
 - Should step 3a offer to run installers in v1, or stay copy-a-command? (Scoped
   out above; the audience mostly has the binaries.)
-- Should the wizard offer to import an existing repo as the first workspace, or
-  only create an empty one?
+- For the repo path in step 4, is choosing an existing local clone enough, or
+  should the wizard also offer `git init` on a new folder?
+- Does relaxing `repos.length > 0` belong in this plan, or as its own change
+  landed first? It touches the swarm validator and every repo-reading caller,
+  so it is arguably a prerequisite rather than wizard work.
 
 **Settled during design:** where the local/hosted fork belongs. It was first
 placed after subscription triage, on the reasoning that the choice needs a
