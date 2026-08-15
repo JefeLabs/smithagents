@@ -76,6 +76,54 @@ value — but the reference install was reset on 2026-08-15 and currently holds
 **no encrypted secrets at all**. That window closes the moment anyone re-enters a
 credential. If the move is not made now, it should not be made casually later.
 
+### 1b. Per-workspace directories — `~/.smithagents/workspaces/<name>/`
+
+**Direction (Edwin, 2026-08-15):** each named workspace gets its own directory
+under the state root.
+
+Everything is flat today — `.smith/workspaces/*.json` (records only),
+`.smith/work/*` (every board), `.smith/worktrees/<taskId>` (every task from every
+workspace), `broker/.smith/documents/*` (every document). A workspace is a record
+that *points at* scattered state rather than owning a place.
+
+The question this forces, and the one that must be answered before any of it
+moves, is **what is genuinely global versus workspace-scoped**:
+
+| Global — one per install | Workspace-scoped |
+|---|---|
+| `users/` (the operator, credentials, brain/research engine) | repos and their worktrees |
+| `api-keys.json`, `cli-tools.json`, `containers.json` | boards (`work/`) |
+| `master.key` | documents, diagrams, dashboards |
+| `identity.json` (Anderson is the host, one per install) | queue sources, feeds |
+| `agents/` — **argue this one** | sessions |
+
+Agents are the genuinely contested case. They live in a flat registry today and a
+crew plausibly works across every workspace, which argues global. But a
+consultancy running three clients may want three separate crews, which argues
+scoped. **Decide it explicitly rather than inheriting the current flatness by
+default** — it is the difference between "my crew" and "this project's team", and
+it shapes how the council reads to a user.
+
+```
+~/.smithagents/
+  .smith/            global: users, api-keys, cli-tools, master.key, identity
+  workspaces/
+    jefelabs/        repos, worktrees, boards, documents, sessions
+    acme/            …
+```
+
+**This is a migration, not a path change.** Every store resolving a flat path
+gains a workspace segment, and existing installs need their flat state
+distributed into per-workspace homes — including worktrees, whose `.git` files
+carry absolute paths that would need rewriting. It is worth doing for the same
+reason the board-id rename was: it is cheapest while installs are small, and the
+reference install currently holds **zero** workspaces. But it is its own spec and
+its own plan, not a rider on packaging.
+
+The payoff is real: deleting or archiving a workspace becomes removing a
+directory, per-workspace backup becomes possible, and the on-disk layout finally
+matches how a user thinks about their work.
+
 ### 2. Service supervision
 
 The app owns the lifecycle of the services it depends on.
