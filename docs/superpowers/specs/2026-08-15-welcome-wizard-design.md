@@ -405,6 +405,28 @@ problems are still unfixed. It should be a **permanent Settings screen that the
 wizard borrows**, not wizard-only UI. The same is true of steps 4, 5 and 6, all
 of which already have Settings homes.
 
+## Live-verified bug the wizard will hit immediately
+
+**Creating a workspace or an agent does not push an updated frame.** Verified
+2026-08-15 against running services: after `POST /workspaces` and `POST /agents`,
+the broker's `GET /workspaces` returned the new workspace correctly, but the
+WebSocket **session frame still carried `workspaces: []`** and the roster frame
+still listed only the seeded squads. The control-plane reads both from the socket
+(`queries/pushed.ts` — `useWorkspaces` is `skipToken` with `staleTime: Infinity`,
+push-only by design), so the UI showed an empty workspace picker and an empty
+crew rail. **Restarting the broker fixed both**, confirming the mirror is built at
+boot and never refreshed.
+
+This lands squarely on the wizard: a user who completes setup — naming
+themselves, creating their first workspace, picking a crew — would finish into an
+app that shows none of it, with a restart as the only remedy. That is the worst
+possible first impression, and it is invisible to any test that talks to HTTP
+routes rather than watching the socket.
+
+The fix belongs with whoever owns the broker's mirror: workspace and agent
+mutations must re-broadcast the session and roster frames, the same way board and
+document mutations already push their own.
+
 ## Error handling
 
 - **Every step is resumable.** A user who quits mid-wizard returns to the step
