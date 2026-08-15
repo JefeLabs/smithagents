@@ -97,18 +97,37 @@ moves, is **what is genuinely global versus workspace-scoped**:
 | `identity.json` (Anderson is the host, one per install) | queue sources, feeds |
 | `agents/` — **argue this one** | sessions |
 
-Agents are the genuinely contested case. They live in a flat registry today and a
-crew plausibly works across every workspace, which argues global. But a
-consultancy running three clients may want three separate crews, which argues
-scoped. **Decide it explicitly rather than inheriting the current flatness by
-default** — it is the difference between "my crew" and "this project's team", and
-it shapes how the council reads to a user.
+**Ruling (Edwin, 2026-08-15) — agents resolve in three layers, not two.** The
+earlier framing wrongly collapsed templates into the registry:
+
+| Layer | Scope | What it is |
+|---|---|---|
+| **Templates** | global | the premade personas/cards a user picks from — catalog, not instances |
+| **Registry** | global | the actual agents that exist — one María, defined once |
+| **Assignment** | per workspace | a roster naming which registered agents are present here |
+
+So an agent exists once and is *staffed onto* projects, the way a person is. The
+same María can serve two clients without being duplicated, her per-agent memory
+(`scope.agent`) stays coherent across both, and a new workspace starts empty
+until someone is assigned to it.
+
+This also settles a question the council design left open: a council convened in a
+workspace draws from **that workspace's roster**, not the whole registry — which
+is what makes "who is in the room" a meaningful, per-project answer rather than
+everyone always.
+
+The roster is a new concept and needs its own storage and UI. It is the cost of
+this option, and it is worth it: the alternatives are either one crew everywhere
+(no client isolation) or duplicated agents per workspace (divergent memories for
+the same person).
 
 ```
 ~/.smithagents/
-  .smith/            global: users, api-keys, cli-tools, master.key, identity
+  .smith/            global: users, api-keys, cli-tools, master.key, identity,
+                     agent TEMPLATES, and the agent REGISTRY
   workspaces/
     jefelabs/        repos, worktrees, boards, documents, sessions
+                     + roster: which registered agents are assigned here
     acme/            …
 ```
 
