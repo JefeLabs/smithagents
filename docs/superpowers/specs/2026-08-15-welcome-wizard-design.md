@@ -187,11 +187,29 @@ finally justifies collecting GitHub here.
     → Just subscribe         we run it for you
 ```
 
-**Only the first half exists today.** Hosted registration is invite-gated:
+**Subscribing is a planned product, on the `smithagents.com` domain — but it is
+not in this wizard.** Hosted registration is invite-gated today:
 `/auth/register/options` returns 400 without a `code`, and codes come from
-`auth.mintInvite()`. There is no open sign-up and no billing anywhere in the
-repo. "Just subscribe" therefore needs open registration plus payment before it
-can be shown — until then the button belongs behind a waitlist or is omitted.
+`auth.mintInvite()`. There is no open sign-up and no billing anywhere in the repo.
+
+The wizard does not need to wait for either. **"Just subscribe" opens
+`smithagents.com` and the wizard waits.** Sign-up and payment live on the site,
+where they belong; the user returns with credentials and signs in here. That
+makes the button real in v1 with no billing code in the app, and it does not
+change when self-serve registration ships — the destination simply gains a
+checkout.
+
+> ### ⚠ Decide the passkey domain before the first real user registers
+>
+> `auth.rpId` is commented **"the tenant domain — fixed for life"**, and it
+> defaults to `localhost` with `webOrigin` defaulting to
+> `http://localhost:1420`. WebAuthn credentials are bound to the rpID that
+> created them: passkeys registered under one rpID cannot be used under another,
+> and there is no migration. Whatever `smithagents.com` strategy is chosen — apex
+> versus a subdomain per tenant — must be settled **before** the first hosted
+> registration, or those users are stranded. This is the highest-consequence,
+> lowest-effort decision in the hosted path, and it is invisible until it is too
+> late to change.
 
 The rest of the hosted path is built: `control-plane/src/lib/cloud.ts`,
 `LoginScreen.tsx`, and the broker's passkey stack (`/auth/register/options`,
@@ -292,6 +310,9 @@ turns. Green tests do not prove reachability.
   built it should be a per-workspace opt-in, not a new default, since pushing
   from an agent worktree is a real behaviour change — and it is what finally
   justifies collecting GitHub in the workspace step.
+- **Passkey rpID must be chosen before any hosted user registers** — it is
+  "fixed for life" and defaults to `localhost`. Apex `smithagents.com`, or a
+  subdomain per tenant? Credentials cannot be migrated between rpIDs.
 - Does relaxing `repos.length > 0` belong in this plan, or as its own change
   landed first? It touches the swarm validator and every repo-reading caller,
   so it is arguably a prerequisite rather than wizard work.
