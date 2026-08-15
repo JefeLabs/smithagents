@@ -259,12 +259,29 @@ On top of neutral ids, **labels vary by work kind**:
 off ids. Change those and every route breaks; change only the display names and
 nothing downstream notices:
 
-| Column id | Product / software | Consulting | Content | Trading |
+| Work kind | `define` | `design` | `breakdown` | `complete` |
 |---|---|---|---|---|
-| `define` | Spec | Scope | Brief | Thesis |
-| `design` | Tech design | Approach | Outline | Sizing |
-| `breakdown` | Decomposed | Work packages | Sections | Orders |
-| `complete` | Merged | Delivered | Published | Closed |
+| Product / software | Spec | Tech design | Decomposed | Merged |
+| Marketing | Brief | Concept | Assets | Live |
+| Sales | Discovery | Proposal | Terms | Closed-won |
+| Consulting | Scope | Approach | Work packages | Delivered |
+| Content | Brief | Outline | Sections | Published |
+| Trading | Thesis | Sizing | Orders | Closed |
+
+**Marketing and sales fit better than software does in one respect.** The
+`review` and `verify` columns carry `gatesHuman: true`, and a brand or legal
+approval is a harder, more genuine human gate than a code review — which agents
+increasingly perform themselves. The gating machinery was built for software and
+lands more squarely outside it.
+
+**Work kinds must be data, not a union type.** This list reached six domains in
+the course of one conversation and will keep growing, and the codebase already
+settled this question elsewhere: `AgentEngine`'s `stereotype?: string` is an open
+string, and personas are loaded as config rather than enumerated in code. Board
+vocabularies follow the same rule — a vocabulary file keyed by work kind, not a
+TypeScript union that requires a release to extend. That also makes "add your
+own vocabulary" a product capability rather than a code change, which matters for
+any team whose words are their own.
 
 The label change is small because `board.columns` is already persisted per board
 — the template is consulted only at creation and for one `gatesHuman` backfill.
