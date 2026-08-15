@@ -75,6 +75,11 @@ interface OpenAiMessage {
  * standalone `{role:"tool", tool_call_id, content}` message, so a single
  * Anthropic user turn carrying several tool_result blocks (multiple tools
  * answered in one round) expands into several tool messages here.
+ *
+ * Assumes a message's block array is never MIXED — either all tool_result,
+ * or all text/tool_use — which holds today because that is what brain.ts's
+ * HistoryEntry ever produces. If that invariant ever changes, a mixed array
+ * silently drops whichever kind isn't matched by the first branch taken.
  */
 export function toOpenAiMessages(system: string, messages: unknown[]): OpenAiMessage[] {
   const out: OpenAiMessage[] = [{ role: "system", content: system }];
@@ -204,6 +209,18 @@ export class LocalBrainError extends Error {}
 
 export interface LocalBrainDeps {
   baseUrl: string;
+  /**
+   * A local server (LM Studio, Ollama) serves one fixed model per running
+   * instance, so the model is bound HERE, at factory construction — the
+   * per-call `AnthropicParams.model` is intentionally ignored (see
+   * toOpenAiRequest, which takes `model` as a separate argument rather than
+   * reading `params.model`). This is the opposite of gemini-brain.ts, which
+   * reads `params.model` on every call to pick the request URL, because a
+   * single Gemini API key can address many models. A caller that resolves
+   * the model per turn (e.g. a user picking from several locally-loaded
+   * models) must re-create the factory with the resolved model in `deps`,
+   * not rely on passing it through `params`.
+   */
   model: string;
   /** Defaults to global fetch; injected in tests. */
   fetchImpl?: FetchLike;
@@ -286,11 +303,25 @@ export function createLocalStreamFactory(deps: LocalBrainDeps) {
         for (const [index, acc] of [...toolCalls].sort(([a], [b]) => a - b)) {
           if (!acc.name) continue;
           sawToolCall = true;
+          let input: unknown = {};
+          if (acc.arguments) {
+            try {
+              input = JSON.parse(acc.arguments);
+            } catch (err) {
+              // A server killed mid-generation (or a model emitting malformed
+              // JSON) leaves a truncated argument string; surface it the same
+              // way as every other failure path in this file — a
+              // LocalBrainError naming the URL — instead of a raw SyntaxError.
+              throw new LocalBrainError(
+                `Local brain ${url}: tool call "${acc.name}" had unparseable arguments: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
+          }
           content.push({
             type: "tool_use",
             id: acc.id ?? `local_call_${index}_${++synth}`,
             name: acc.name,
-            input: acc.arguments ? JSON.parse(acc.arguments) : {},
+            input,
           });
         }
 
