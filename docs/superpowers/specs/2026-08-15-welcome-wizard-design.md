@@ -304,6 +304,62 @@ everyone on one CLI, and a council sharing one model is one mind in hats — see
 council turn design (2026-08-15). This is where the "your council spans 2 model
 families" line from the subscriptions screen finally cashes out.
 
+## The happy path, walked against a real machine
+
+Traced step by step on the author's own install (claude and agy working, Anderson
+on a Gemini key, a coding workspace with version control) — the setup v1 must be
+able to reproduce.
+
+| Step | Answer | API behind it | |
+|---|---|---|---|
+| Name | Edwin | `PUT /me` — `buildUserUpdate(existing, …)` creates when absent | ✓ |
+| Local or hosted | Local | UI only | ✓ |
+| Subscriptions | claude ✓, agy ✓ | `GET /cli-tools`, `POST /cli-tools/refresh` | ✓ |
+| Paste a key instead | anthropic · google · openai | `saveAndVerifyKey`, `verifyStoredKey` | ✓ |
+| **Configure Anderson** | **Gemini key** | **none** | **✗** |
+| Local workspace | coding + version control | `POST /workspaces`, `POST /me/connectors` | ✓ |
+| Voice mode | deepgram + elevenlabs | `PUT /me/voice`, `POST /me/connectors` | ✓ |
+| Integrations | atlassian, github | `POST /me/connectors` | ✓ |
+| Build a crew | spread across claude/agy | `POST /agents` | ✓ |
+
+**Exactly one step has nothing behind it, and the wizard cannot ship without it.**
+
+### The blocker: the brain provider is boot-time configuration
+
+`SMITH_BRAIN_PROVIDER` is read once, at boot, in `config.ts:74`, and consumed at
+`main.ts:110`. There is no route, no per-user storage, and no way to change it
+without editing `.env` and restarting the broker — which is exactly how this
+install was configured by hand while designing this spec. A wizard step cannot
+edit a dotfile and restart a service.
+
+**The fix is already precedented in this codebase.** The *research* engine solved
+the identical problem: `User.researchEngine?: {cli, model}` persists per user,
+`PUT /me/research-engine` sets it, and it is resolved per call rather than at
+boot. The brain wants the same treatment:
+
+- `User.brainEngine?: {kind: "cli" | "key", provider, model}` on the user record
+- `PUT /me/brain-engine` to set it, mirroring the research route
+- the broker resolving the brain engine **per turn**, not at process start, so a
+  change takes effect without a restart
+- `SMITH_BRAIN_PROVIDER` demoted to a fallback for when the user record is silent,
+  preserving today's behaviour for anyone who has set it
+
+This is a **prerequisite**, not wizard work. It should land before the wizard
+plan, for the same reason the `repos.length > 0` relaxation should: both are
+swarm/broker changes that the UI merely consumes, and both are testable on their
+own.
+
+### Prerequisites, collected
+
+1. **`PUT /me/brain-engine`** plus per-turn brain resolution — blocks *Configure
+   Anderson*, which blocks the happy path.
+2. **Relax `assertContext`'s `repos.length > 0`** — blocks a documents-only
+   workspace. Does not block the author's own coding path, so it is the lower
+   of the two priorities.
+
+Everything else the wizard needs already exists and was confirmed by route
+inspection rather than assumed.
+
 ## Reuse over rebuild
 
 The subscriptions screen is useful long after onboarding — the author's own copilot and codex
