@@ -180,7 +180,7 @@ git add swarm/src/users.ts swarm/src/server.ts swarm/src/server.test.ts
 git commit -m "feat(swarm): brainEngine on the user record, with validation"
 ```
 
-> **Note:** `npx tsc --noEmit` currently reports one **pre-existing** error at `swarm/src/server.ts:1577`. Confirm your change adds none beyond it.
+> **Note:** `npx tsc --noEmit` in `swarm/` reports **12 pre-existing errors across 3 files** — 10 in `src/agent-sessions.ts`, 1 in `src/jira-sync.test.ts`, 1 in `src/server.ts`. **None are yours.** The `server.ts` one drifts by line number as imports are added above it (1577 → 1578 after Task 1). Confirm you add no *new* errors; do not try to fix these.
 
 ---
 
