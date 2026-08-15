@@ -280,7 +280,13 @@ export const ENGINES: EngineOption[] = [
   {
     cli: "claude",
     label: "Claude Code",
-    models: ["claude-opus", "claude-sonnet", "claude-haiku"],
+    // The CLI's OWN aliases, verified against `claude --model` 2026-08-15.
+    // "claude-sonnet" is NOT one: the CLI rejects it with "There's an issue
+    // with the selected model", the agent exits 1 in ~5s with an empty log,
+    // and the task quarantines with no usable reason. Every agent created
+    // from this catalog inherited that. Full ids like
+    // "claude-sonnet-4-5-20250929" also work; the aliases track latest.
+    models: ["opus", "sonnet", "haiku"],
     warmSessions: true,
   },
   {
@@ -405,7 +411,7 @@ export interface PresetAgent {
 }
 
 const preset = (p: PresetAgent): PresetAgent => p;
-const ENGINE_DEFAULT = { cli: "claude", model: "claude-opus" };
+const ENGINE_DEFAULT = { cli: "claude", model: "opus" };
 
 export const PRESET_AGENTS: PresetAgent[] = [
   preset({
