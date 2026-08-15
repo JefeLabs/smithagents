@@ -359,7 +359,10 @@ buried:
       ~6s before he starts talking
       ~29s when he uses a tool, and he won't talk while thinking
 
-  ○ An API key  (anthropic · gemini)  much faster, and needed for voice
+  ○ A local model  (LM Studio · Ollama)   detected and running
+      ~1s, private, free — 27s on the first call after loading
+
+  ○ An API key  (anthropic · gemini)  fastest, and needed for voice
       ~1s before he starts talking, ~3s with a tool
       [ paste a key ]                            you can add this later
 ```
@@ -377,6 +380,35 @@ there. Totals are a two-sentence hello.
 | API Gemini | flash, turn that calls a tool | — | 3.3s |
 | CLI + `--json-schema` | any | **never — no speech until the end** | 26–29s |
 | `agy -p --json-schema` | — | did **not** enforce the schema | 18.5s |
+
+**A local model is a first-class brain option, and on this evidence the best
+zero-friction one.** Measured against LM Studio's OpenAI-compatible server
+(`openai/gpt-oss-20b`, one of six models totalling 147 GB already on this
+machine):
+
+| Local engine | First words | Total | Streams speech | Tool calls |
+|---|---|---|---|---|
+| `gpt-oss-20b`, warm, hello | **1.02s** | 1.27s | yes | — |
+| `gpt-oss-20b`, warm, tool turn | 0.69s | 1.09s | — | yes, streamed (18 chunks) |
+| `gpt-oss-20b`, **cold** (12 GB load) | 27.09s | 27.56s | — | yes |
+
+This is the only path that delivers **streaming speech and caller-defined tool
+calls together with no key, no subscription and no per-token cost** — precisely
+what the CLI cannot do and what the SDK was introduced to provide. It is
+competitive with `flash-lite` and roughly six times faster than any CLI.
+
+Its friction is different in kind rather than absent: a server must be running
+with a model loaded, the first call after a load costs ~27s, and this model
+occupies 12 GB of RAM. The wizard should therefore **detect a local server
+(LM Studio on :1234, Ollama on :11434) and offer it when present**, never
+instruct someone to install one during setup.
+
+Tool-selection quality across the brain's ten tools is untested on a 20B model
+and must be measured before it becomes a default rather than an option.
+
+**`opencode` is not a brain option.** It is a CLI, so it inherits the same
+streaming-XOR-tools limit as `claude` and `agy`. Its value is as a coding-agent
+engine that can be pointed at local models — crew, not brain.
 
 Two things follow, and both belong in the UI:
 
