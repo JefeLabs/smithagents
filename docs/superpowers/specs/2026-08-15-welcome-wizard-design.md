@@ -35,6 +35,27 @@ installation. That is also the product's sharpest opening argument: *you are
 already paying for several models; this is the thing that makes them argue with
 each other.* No competitor whose product assumes one model can say it.
 
+## Design principle: show the tradeoff, let them choose
+
+The audience above changes what good onboarding looks like. A power user does not
+need protecting from a decision — they need accurate information and the ability
+to act on it. Every screen here follows from that, and the rule resolved four
+separate questions during design:
+
+- **Subscription triage** shows the real failure reason — "signed in as the wrong
+  account", "workspace deactivated" — instead of a flat "unavailable". A vague
+  status is useless to someone who could fix it in thirty seconds.
+- **Configure Anderson** states measured latencies, so a slow default is a choice
+  rather than a discovery made during a 29-second silence.
+- **Hosted appears disabled** with "coming soon" rather than being hidden,
+  because a missing option reads as a missing capability.
+- **PR publishing is named as coming**, not implied as working, because a promise
+  broken on the first task costs more than a feature deferred honestly.
+
+The inverse — hiding a tradeoff to keep a flow smooth — optimises for the first
+five minutes at the expense of every day after. This audience will read the
+numbers and choose accordingly, and choosing well is exactly what they came for.
+
 ## Scope: v1 builds the local path; hosted is visible but disabled
 
 **The hosted branch is designed below and deferred — but it still appears in the
