@@ -364,15 +364,36 @@ buried:
       [ paste a key ]                            you can add this later
 ```
 
-Measured on this machine, 2026-08-15, with a `{speech, tool_calls[]}` schema:
+All figures measured on this machine, 2026-08-15. "First words" is when Anderson
+starts speaking — the number that matters for voice, since speech chunking begins
+there. Totals are a two-sentence hello.
 
-| Engine | Speech streams? | Structured tool calls? | First words | Total |
-|---|---|---|---|---|
-| `claude -p --output-format stream-json` | **yes** | no | 5.8s | 7.3s |
-| the same **plus** `--json-schema` | **no** | **yes** | — | 28.7s |
-| `claude -p --json-schema` (no stream) | no | yes | — | 26.5s |
-| Gemini API (`gemini-brain.ts`) | **yes** | **yes** | ~0.9s | 3.3s |
-| `agy -p --json-schema` | no | **did not enforce** | — | 18.5s |
+| Path | Model | First words | Total |
+|---|---|---|---|
+| CLI `claude` | `haiku` | 6.54s | 8.12s |
+| CLI `claude` | `sonnet` | 7.37s | 8.92s |
+| API Gemini | `gemini-flash-lite-latest` | **0.50–0.54s** | 0.55–0.58s |
+| API Gemini | `gemini-flash-latest` (3.7-flash) | 0.98–1.32s | 1.00–1.32s |
+| API Gemini | flash, turn that calls a tool | — | 3.3s |
+| CLI + `--json-schema` | any | **never — no speech until the end** | 26–29s |
+| `agy -p --json-schema` | — | did **not** enforce the schema | 18.5s |
+
+Two things follow, and both belong in the UI:
+
+**On the CLI path, the model barely matters.** haiku and sonnet land within a
+second of each other because roughly six seconds of CLI startup dominates the
+turn. Offering a model picker there implies a tuning knob that does not exist —
+someone chasing speed must change *path*, not model.
+
+**On the API path, the model is the whole story.** `flash-lite` is twice as fast
+as `flash` and about thirteen times faster than any CLI. That is where a picker
+earns its place, and where the default belongs: `flash-lite` for latency,
+`flash` when the brain needs to be sharper.
+
+One caveat worth surfacing rather than hiding: the *first* call to
+`gemini-flash-latest` took 7.68s, against 0.98–1.32s on three repeats. Cold
+starts happen, and a first-run measurement shown during setup should not be
+presented as the steady state.
 
 **This corrects, and then partly restores, an earlier conclusion.** The brain was
 put on an SDK (main @ `d943132`) because a CLI supposedly cannot accept
