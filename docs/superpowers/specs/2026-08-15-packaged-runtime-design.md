@@ -32,26 +32,49 @@ a pnpm workspace. There is no artifact to ship.
 
 ## Three parts, in dependency order
 
-### 1. A single state root
+### 1. A single state root — `~/.smithagents`
 
-One resolver, one environment variable, every path through it:
+**Ruling (Edwin, 2026-08-15): on startup the working directory is
+`~/.smithagents`.**
+
+That is far cheaper than the refactor this spec originally proposed. State paths
+are cwd-relative in **116 places** (102 in swarm, 14 in broker; 91 in
+`swarm/src/server.ts` alone), and `process.chdir(stateRoot)` at startup makes
+every one of them resolve correctly **with no code change**. A `stateDir()`
+helper threaded through 116 call sites was the expensive way to reach the same
+place.
 
 ```
-SMITH_STATE_DIR  →  packaged: the OS app-data dir
-                    dev:      ./.smith  (unchanged)
+~/.smithagents/          ← chdir target at startup
+  .smith/                ← existing layout, unchanged, now under a stable root
+    users/ agents/ workspaces/ work/ documents/ …
 ```
 
-- `stateDir(...segments)` replaces all 87 call sites in the swarm and the five
-  ad-hoc `BROKER_*_DIR` defaults in the broker. The per-directory overrides may
-  stay as escape hatches, but they resolve **under** the root rather than beside
-  it.
-- Default in dev is exactly today's behaviour, so no developer notices.
-- `~/.smith/master.key` stays where it is: it is machine-scoped rather than
-  install-scoped, and moving it would orphan every encrypted secret.
+The nested `.smith/` is mildly redundant but costs nothing and keeps every
+existing path literal valid. Renaming it later is cosmetic.
 
-This is mechanical, large, and the prerequisite for the other two. It is also
-independently shippable and testable **before** any packaging exists, which is
-the argument for doing it first.
+**Three consequences to handle explicitly, because `chdir` is process-global:**
+
+- **Dev must be gated, or every developer's state silently moves.** Running
+  `pnpm serve` from `swarm/` today uses `swarm/.smith`; an unconditional `chdir`
+  would relocate that to `~/.smithagents` mid-workflow. Gate on packaged mode, or
+  on an explicit env var, with dev keeping today's behaviour by default.
+- **Spawned children inherit the new cwd.** Dispatch already passes an explicit
+  `cwd` per worktree, so it is unaffected. `CliResearch` spawns with **no** `cwd`
+  (`research.ts:138`) and would move from the repo root to `~/.smithagents` —
+  probably an improvement, since a research turn has no business running in the
+  repo, but it is a behaviour change that must be verified rather than assumed.
+- **Relative paths anywhere else** in either service shift with it. The `.env`
+  load (`--env-file=../.env`) is resolved by node before any `chdir`, so it is
+  safe; anything else reading a relative path at runtime needs checking.
+
+**Move `~/.smith/master.key` into `~/.smithagents/` at the same time.** It is the
+only state living outside the repo today, and consolidating gives the product one
+home instead of two. Critically, **this is free right now and expensive later**:
+the key encrypts secrets at rest, so moving it normally orphans every encrypted
+value — but the reference install was reset on 2026-08-15 and currently holds
+**no encrypted secrets at all**. That window closes the moment anyone re-enters a
+credential. If the move is not made now, it should not be made casually later.
 
 ### 2. Service supervision
 
