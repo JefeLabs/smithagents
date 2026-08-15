@@ -368,6 +368,16 @@ trade are specified in
 
 ### Prerequisites, each specced separately
 
+**Two of these outrank the wizard itself.** The wizard assumes a person opens an
+application and it works; today that person cannot exist, because a packaged app
+starts no services and the broker will not boot without `.env`.
+
+| # | Spec | Blocks |
+|---|---|---|
+| 0a | [Packaged runtime](2026-08-15-packaged-runtime-design.md) | any user who has not cloned the repo |
+| 0b | [Env-free runtime](2026-08-15-env-free-runtime-design.md) | any user without a hand-written `.env` |
+
+
 Three swarm/broker changes the wizard only consumes. Each is independently
 testable and independently shippable, and none is wizard work:
 
