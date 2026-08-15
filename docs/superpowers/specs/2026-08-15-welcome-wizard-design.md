@@ -412,6 +412,28 @@ engine that can be pointed at local models — crew, not brain.
 
 Two things follow, and both belong in the UI:
 
+**Inline mode halves the floor but not the variance.** `claude` supports
+`--input-format stream-json` ("realtime streaming input"), so the process can be
+kept alive and fed turns over stdin instead of paying startup each time. Measured
+across one process:
+
+| Turn | First words | |
+|---|---|---|
+| 1, cold (startup paid) | 5.72s | "Hello — Anderson here, ready when you are." |
+| 2, warm | **13.66s** | answered by *reading the repo* — cited that day's Docker work |
+| 3, warm | **2.99s** | short conversational reply |
+
+Startup is roughly half the cold-turn cost, and a warm conversational turn lands
+near 3s. But turn 2 is the important one: the CLI is an **agentic tool, not a
+chat endpoint**, and it may go read files before answering. For a chief of staff
+that is genuinely attractive — it knows the repo without being told. For voice it
+is the worst kind of unpredictable: 3s to 14s depending on a decision the model
+makes per turn, with no way to know in advance which kind of turn this is.
+
+So inline mode improves the CLI path without rescuing it. It stays the
+zero-friction default and remains unsuitable for voice, which is what the UI
+copy says.
+
 **Default to the frontier model on every path.** This is a product stance, and
 the measurements support it. Attaching the brain's tools (the realistic case):
 
