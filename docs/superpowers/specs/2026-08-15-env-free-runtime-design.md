@@ -81,9 +81,24 @@ speech servers exist that speak the same OpenAI-compatible dialect the local
 brain already uses — whisper.cpp and friends for `/v1/audio/transcriptions`,
 Piper / Kokoro / OpenedAI-Speech for `/v1/audio/speech`.
 
-**Not today, and not with LM Studio**, which serves only LLM and embedding models
-and answers unknown routes with **HTTP 200 and an error body** — a probe that
-reads as support until the body is inspected.
+**LM Studio is not the vehicle** — it serves only LLM and embedding models, and
+answers unknown routes with **HTTP 200 and an error body**, a probe that reads as
+support until the body is inspected.
+
+**But STT is already within reach on the reference machine.** `whisper-cpp` is
+installed via Homebrew with `whisper-server` and `whisper-cli` on PATH, including
+**VAD options** — voice-activity detection being one of the things Deepgram
+currently supplies. The only gap is a ggml model file, which is a download rather
+than a purchase. So the key-free ladder is concrete:
+
+| Piece | Reference machine |
+|---|---|
+| brain | **available** — local models already installed |
+| STT | **available** — `whisper-server` installed, model not yet downloaded |
+| TTS | missing — needs a local server (Piper, Kokoro, OpenedAI-Speech) |
+
+TTS is therefore the last paid dependency on the path to an install that needs no
+keys at all.
 
 The design implication is the point: **STT and TTS should be a provider seam, not
 two hardcoded vendors.** `DeepgramSttStream` and the ElevenLabs synthesis call are
