@@ -60,13 +60,18 @@ families. Measured on this machine, 2026-08-15:
 | `claude` | Anthropic | works |
 | `agy` | Google / Antigravity | works |
 | `codex` | OpenAI | **402 `deactivated_workspace`** |
-| `copilot` | GitHub | **blocked by org policy** |
+| `copilot` | GitHub | **wrong identity** — logged in as `edwin-skoolscout`, whose org policy blocks it; a re-login as `ecruz165` is expected to work |
 | `opencode` | configurable | untested |
 
-Two independent families are available today, both on subscription auth with **no
-API credit**. `RESEARCH_ARGV` already maps all five CLIs, and `AgentEngine.cli`
-already accepts all five. Unblocking codex/copilot is billing and policy, not
-engineering; each adds a family.
+Two independent families are confirmed working today, both on subscription auth
+with **no API credit**, and copilot is a third pending a re-login. `RESEARCH_ARGV`
+already maps all five CLIs, and `AgentEngine.cli` already accepts all five.
+
+Note that the Copilot CLI keeps its **own** credential, independent of `gh auth`
+— switching the active `gh` account does not change it (`copilot login` does).
+Its identity is recorded in `~/.config/github-copilot/apps.json`. Worth knowing
+before diagnosing a policy error as an entitlement problem, which is the mistake
+made once already.
 
 A council of one family still works — it just disagrees less, so the dissent rule
 below carries more weight.
