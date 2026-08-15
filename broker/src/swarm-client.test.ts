@@ -386,6 +386,28 @@ test("getMyVoice/saveMyVoice: GET and PUT /me/voice pass through", async () => {
   assert.deepEqual(await client.saveMyVoice({ stt: null, tts: null }), { stt: null, tts: null, hideInactive: false });
 });
 
+test("getBrainEngine: returns the parsed BrainEngine, requesting GET /me/brain-engine", async () => {
+  const { calls, fetch } = fakeFetch({
+    "/me/brain-engine": { kind: "api", provider: "gemini", model: "gemini-flash-latest" },
+  });
+  const client = new SwarmClient({ baseUrl: "http://s", fetchImpl: fetch });
+  assert.deepEqual(await client.getBrainEngine(), {
+    kind: "api",
+    provider: "gemini",
+    model: "gemini-flash-latest",
+  });
+  assert.equal(calls[0]!.url, "http://s/me/brain-engine");
+  assert.equal(calls[0]!.init!.method, "GET");
+});
+
+test("getBrainEngine: a null body (nothing stored) returns null, not an error", async () => {
+  const client = new SwarmClient({
+    baseUrl: "http://s",
+    fetchImpl: fakeFetch({ "/me/brain-engine": null }).fetch,
+  });
+  assert.equal(await client.getBrainEngine(), null);
+});
+
 test("apiAgentOneShot: reply on 200, notApiAgent on 404, typed throw otherwise", async () => {
   const { calls, fetch } = fakeFetch({ "/api-agents/sage/turn": { reply: "I should lead." } });
   const c = new SwarmClient({ baseUrl: "http://x", token: "tok", fetchImpl: fetch });
