@@ -227,22 +227,49 @@ specific enough to feel wrong for other work:
 — generalises well to most knowledge work. The vocabulary does not, and there are
 **no column CRUD routes**, so a user cannot currently fix it themselves.
 
-**Vary the labels, never the ids.** `BOARD_ROUTES` matches on column ids
+**Neutral ids, varying labels.** Column ids are the contract — `BOARD_ROUTES`
+matches on them (`e.from === columnId`), the agenda axis stores one per card, and
+the shared queue keys off them. They should therefore mean something in every
+domain, not just software. The genuinely software-specific ones are renamed once:
+
+| Board | Old id | New id |
+|---|---|---|
+| plan | `spec` | `define` |
+| plan | `tech-design` | `design` |
+| plan | `decomposed` | `breakdown` |
+| deliver | `merged` | `complete` |
+| release | `cut` | `prepare` |
+| release | `regression` | `validate` |
+
+`plate`, `today`, `intake`, `triage`, `doing`, `done`, `ready`, `review`,
+`verify`, `ship`, `rollback`, `fix` and `diagnose` already read correctly for a
+trader or a consultant and are left alone.
+
+**Do this now, because right now it is free.** Cards carry `columnId`, so
+renaming ids is normally a migration over every stored card. The install was
+reset while writing this design and holds **zero** cards, which will not be true
+again. A migration must still ship for other checkouts — `normalizeBoard` already
+sets the precedent with its `queued` → `queue` card rewrite — but it is written
+against an empty local install rather than a live one.
+
+On top of neutral ids, **labels vary by work kind**:
+
+ `BOARD_ROUTES` matches on column ids
 (`e.from === columnId`), so routing, the agenda axis and the shared queue all key
 off ids. Change those and every route breaks; change only the display names and
 nothing downstream notices:
 
-| Column id | Product / software | Consulting | Content |
-|---|---|---|---|
-| `spec` | Spec | Scope | Brief |
-| `tech-design` | Tech design | Approach | Outline |
-| `decomposed` | Decomposed | Work packages | Sections |
-| `merged` | **Merged** | Delivered | Published |
+| Column id | Product / software | Consulting | Content | Trading |
+|---|---|---|---|---|
+| `define` | Spec | Scope | Brief | Thesis |
+| `design` | Tech design | Approach | Outline | Sizing |
+| `breakdown` | Decomposed | Work packages | Sections | Orders |
+| `complete` | Merged | Delivered | Published | Closed |
 
-The change is small because `board.columns` is already persisted per board — the
-template is consulted only at creation and for one `gatesHuman` backfill. So
-`BOARD_TEMPLATES[boardType]` gains a work-kind dimension used at seed time, and
-no stored data changes shape.
+The label change is small because `board.columns` is already persisted per board
+— the template is consulted only at creation and for one `gatesHuman` backfill.
+So `BOARD_TEMPLATES[boardType]` gains a work-kind dimension used at seed time,
+and no stored data changes shape. Only the id rename above touches stored cards.
 
 Placed among the optional steps, defaulting to product/software so anyone who
 skips it gets exactly today's behaviour. The set of work kinds offered is a
