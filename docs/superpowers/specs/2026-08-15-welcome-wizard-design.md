@@ -35,38 +35,66 @@ installation. That is also the product's sharpest opening argument: *you are
 already paying for several models; this is the thing that makes them argue with
 each other.* No competitor whose product assumes one model can say it.
 
-## Platform decides whether there is a choice at all
+## Scope: v1 builds the local path; hosted is visible but disabled
 
-**Desktop (Tauri) offers both paths. Mobile and tablet default to hosted, with
-no local option shown.** A phone cannot spawn `claude` into a git worktree, so
-presenting local there would be offering something that cannot work. The local
-branch is desktop-only; every other surface enters at the hosted branch and
-never sees a CLI, a repo picker, or a PATH probe.
+**The hosted branch is designed below and deferred — but it still appears in the
+UI, disabled, labelled "coming soon".** Showing it costs almost nothing and buys
+two things: the user learns the local requirement is temporary rather than the
+product's permanent shape, and the fork screen gets built now, so shipping hosted
+later means enabling an option instead of inserting a step into a flow people
+have already learned.
+
+A disabled control that someone actively wants is a frustration unless it names
+the way forward, so it never appears alone:
+
+```
+  ◉ Local — use your own subscriptions
+  ○ Hosted — we run it for you            [ Coming soon ]
+      no CLI to install, works on any device
+      → notify me                          smithagents.com
+```
+
+The "notify me" link goes to `smithagents.com`, which is already owned — so the
+disabled option still converts interest instead of discarding it.
+
+**Hosted was the rescue for a user with nothing installed, and in v1 there is no
+rescue.** That makes the subscriptions step load-bearing rather than convenient:
+install a CLI or paste an API key, and nothing else gets you past it. Its
+guide-and-validate behaviour is the whole safety net in v1.
+
+Mobile and tablet are out of scope for the same reason — they have no local path
+to offer, so they wait for hosted.
 
 ## Flow
 
 ```
-  Name
-  Local or Hosted?                    ← desktop only; mobile/tablet skip to HOSTED
+  Name                  ← CLI probe starts here, in the background
+  Local or Hosted?      hosted visible but disabled — "coming soon"
 
-  LOCAL ─────────────────────────────────────────────────────────
-    Subscriptions      no working CLI → guide and validate a
-                       subscription or an API key before continuing
-    Configure Anderson use a subscription, or a key
-    Local workspace    what is it for — documents and/or coding?
-                       version control and PR publishing?
-                       GitHub required if coding OR version control
+  Subscriptions         guide and validate; cannot continue until
+                        a subscription or an API key works
+  Configure Anderson    use a subscription, or a key
+  Local workspace       what is it for — documents and/or coding?
+                        version control and PR publishing?
+                        GitHub required if coding OR version control
 
-  HOSTED ────────────────────────────────────────────────────────
-    Bring a key, or subscribe
-    Cloud workspace    create one, or join a team workspace
-
-  ── both paths converge ──  the app works from here
+  ── the app works from here ──
   Voice mode      optional
   Location        optional
   Integrations    optional
   Build a crew    optional
 ```
+
+**Every required step precedes every optional one.** Someone who abandons the
+wizard after the workspace step still has a working app: a name, a brain, and
+somewhere to put work. Everything after is upside, so quitting among the optional
+steps costs nothing.
+
+**First run is detected by the absence of a user record.** After a reset,
+`swarm/.smith/users/` is empty; that is the sentinel, and no new flag is needed.
+
+**The wizard is re-runnable from Settings.** Without this, testing it means
+destroying an install — which is exactly what happened while designing it.
 
 ## The local branch
 
@@ -79,19 +107,6 @@ persist until this exists, so it goes first.
 The CLI probe starts here, in the background. Typing a name is dead time; PATH
 detection and auth probes run behind it so the next screen arrives populated
 rather than spinning.
-
-### Local or hosted
-
-The probe sets the default: a working CLI preselects local, nothing working
-preselects hosted, and a one-line summary names what was found. Someone with a
-working setup is never nagged; someone with an empty machine is pointed at the
-path that works immediately.
-
-```
-  We found Claude and Antigravity here.     We didn't find any AI CLIs.
-  ◉ Local — use your own subscriptions      ◉ Hosted — works right now
-  ○ Hosted — nothing to install             ○ Local — install one, or use an API key
-```
 
 ### Subscriptions — guide and validate
 
@@ -178,7 +193,28 @@ stored as intent, but the copy must not promise behaviour that will not happen o
 the first task. Building it should be a per-workspace opt-in, and it is what
 finally justifies collecting GitHub here.
 
-## The hosted branch
+## Deferred: the hosted branch
+
+**Not in v1.** Recorded because the decisions were made and the machinery
+largely exists; skip this section when planning v1 work.
+
+### The fork, when hosted is enabled
+
+The screen already exists from v1; hosted stops being disabled. Detection then
+sets the default rather than the position — a working CLI preselects local,
+nothing working preselects hosted.
+
+```
+  We found Claude and Antigravity here.     We didn't find any AI CLIs.
+  ◉ Local — use your own subscriptions      ◉ Hosted — works right now
+  ○ Hosted — nothing to install             ○ Local — install one, or use an API key
+```
+
+### Platform, when it returns
+
+Desktop offers both paths; mobile and tablet default to hosted with no local
+option shown, since a phone cannot spawn a CLI into a git worktree.
+
 
 ### Bring a key, or subscribe
 
