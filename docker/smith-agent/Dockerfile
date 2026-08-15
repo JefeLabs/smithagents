@@ -26,3 +26,15 @@ RUN rm -f /usr/local/bin/claude \
 # host), passed per-run with `-e CLAUDE_CODE_OAUTH_TOKEN=…` rather than baked
 # in. macOS Keychain credentials cannot be mounted into a Linux container,
 # which is the whole reason the token path exists.
+
+# Run as a non-root user. The CLI refuses `--dangerously-skip-permissions`
+# under root ("cannot be used with root/sudo privileges for security
+# reasons") — which the dispatcher always passes — so a root container fails
+# every task in under a second, before any auth is even attempted.
+#
+# uid 501 matches the macOS host user, so files the agent writes into the
+# bind-mounted worktree carry the host owner rather than root-owned artefacts
+# the host then cannot clean up.
+RUN useradd -m -u 501 -s /bin/bash agent 2>/dev/null || true
+USER agent
+ENV HOME=/home/agent
