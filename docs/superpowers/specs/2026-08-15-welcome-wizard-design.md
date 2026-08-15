@@ -40,15 +40,37 @@ each other.* No competitor whose product assumes one model can say it.
 ```
 1. What should we call you?      required   ← probe starts here, in the background
 2. Local or hosted?              required   — the fork; detection picks the default
-3a. (local)  Your subscriptions  required   — triage → install a CLI, or paste an API key
-3b. (hosted) Sign in             required   — passkey register/login
-4. Your first workspace          required   — source control? yes → GitHub, no → design-only
+3. Is this a coding workspace?   required   — decides engine kind AND repo, in one question
+4a. (local)  Your engine         required   — coding → a CLI; design → a CLI or an API key
+4b. (hosted) Sign in             required   — passkey register/login
+5. Your workspace                required   — coding → repo + source control; design → a name
    ══ the app works from here ══
-5. Voice mode?                   optional   — deepgram + elevenlabs
-6. Location?                     optional   — powers the weather line in the digest
-7. Connect your tools            optional   — atlassian, github, datadog, snyk
+6. Voice mode?                   optional   — deepgram + elevenlabs
+7. Location?                     optional   — powers the weather line in the digest
+8. Connect your tools            optional   — atlassian, github, datadog, snyk
    ── finish ── Anderson is here. You can add a crew → [Agents]
 ```
+
+**One question decides the shape of the rest.** "Is this a coding workspace?"
+is asked once, early, and tailors two later steps — because the coding answer
+carries a hard technical consequence that is easy to miss:
+
+**Coding work requires an agent CLI; an API key cannot substitute.** The
+dispatcher has no `api` branch — `ApiRuntime` is referenced only by its own file
+and `server.ts`'s `/api-agents` routes, never by dispatch — so a coding task
+spawns a CLI into a worktree or it does not run. Design work is the opposite: it
+goes through the broker's `ResearchEngine`, which is satisfied by
+`AnthropicResearch` on a plain key.
+
+| Answer | Engine needed | Repo needed | Source control |
+|---|---|---|---|
+| **Coding** | a working **CLI** (`claude`/`agy`/…) | yes, local clone | offered |
+| **Design** | a CLI **or** an API key | none | not asked |
+
+Asking this before engine setup means a design-only user is never told they must
+install a CLI they do not need, and a coding user is never allowed to finish with
+only a key — which would look fine on the setup screen and then fail on their
+first task.
 
 Three ordering rules produced this shape:
 
@@ -74,7 +96,7 @@ repays. **Nothing detected means hosted is the default**, which is the correct
 recommendation for that user rather than a nudge.
 
 **Every required step precedes every optional one.** A user who abandons the
-wizard after step 4 still has a working app: a name, a brain, and somewhere to
+wizard after step 5 still has a working app: a name, a brain, and somewhere to
 put work. Optional steps are pure upside, so nothing is lost by quitting among
 them. This is the "get going faster" principle applied to ordering.
 
@@ -97,8 +119,8 @@ found. Developers with a working setup are never nagged, and someone with an
 empty machine is pointed at the option that works immediately instead of being
 walked through an inventory of tools they do not have.
 
-Choosing hosted goes to **step 3b** (passkey sign-in) and skips local triage
-entirely. Choosing local goes to **step 3a**.
+Choosing hosted goes to **step 4b** (passkey sign-in) and skips local engine
+setup entirely. Choosing local goes to **step 4a**.
 
 The hosted path is largely built: `control-plane/src/lib/cloud.ts`,
 `LoginScreen.tsx`, and a full broker passkey stack (`/auth/register/options`,
@@ -106,7 +128,32 @@ The hosted path is largely built: `control-plane/src/lib/cloud.ts`,
 `/auth/me`, `/auth/logout`, `/auth/invites`). For this audience hosted is rarely
 "I have nothing" — it is "use my crew from my phone, or a teammate's machine".
 
-### Step 3a — Your subscriptions, local mode (required)
+### Step 3 — Is this a coding workspace? (required)
+
+The pivot. One question, asked in the user's terms, that decides engine kind and
+repo together rather than as two unrelated screens later.
+
+```
+  Is this a coding workspace?
+
+    → Yes    agents read and write code here
+             needs an agent CLI and a local repo
+
+    → No     diagrams, docs, dashboards, boards, the council
+             a model is all you need — CLI or API key
+```
+
+Its two consequences are enforced, not merely displayed. A **coding** answer
+makes step 4a refuse to complete without a working CLI, because an API key
+cannot run a coding task and discovering that on the first dispatch is a far
+worse experience than being told during setup. A **design** answer suppresses the
+repo and source-control questions in step 5 entirely, so nobody is asked for a
+clone they will never use.
+
+The answer is a property of this workspace, not of the install — a later
+workspace may answer differently.
+
+### Step 4a — Your engine, local mode (required)
 
 Local mode only. The screen that earns the wizard. Built entirely on the existing registry:
 `cli-tools.ts` already distinguishes `detected` (binary on PATH) from `authOk`
@@ -151,7 +198,7 @@ The key path is not hypothetical — the author's own brain runs on a Gemini API
 key today, after the Anthropic subscription's API balance ran dry. Whichever
 path is taken, the step completes only on a **live turn**, never on a green row.
 
-### Step 3b — Sign in, hosted mode (required)
+### Step 4b — Sign in, hosted mode (required)
 
 Hosted mode only, and the reason this fork is cheap to offer: the path is
 largely built. Passkey register or login against the broker's existing stack,
@@ -159,9 +206,9 @@ after which the brain runs in the cell and **nothing needs to be installed or
 pasted** — the step is done the moment the session is established.
 
 No local triage runs. A user who later wants local can switch from Settings,
-which re-enters step 3a; the fork is never a one-way door.
+which re-enters step 4a; the fork is never a one-way door.
 
-### Step 4 — Your first workspace (required)
+### Step 5 — Your workspace (required)
 
 Boards, sessions, and documents all hang off a workspace; without one there is
 nowhere to put anything. Reuses the shipped new-workspace flow.
@@ -171,10 +218,10 @@ nowhere to put anything. Reuses the shipped new-workspace flow.
 optional and its own comment calls an unset `connectorId` a *soft-fail, not a
 required field*; agents commit on their branch and are instructed not to push,
 so the core loop never contacts a remote. GitHub is one of six optional
-connectors at step 7, and `copilot` is one of five CLIs. Nothing about the
+connectors at step 8, and `copilot` is one of five CLIs. Nothing about the
 product's value depends on having an account.
 
-It *is* required on one branch of one step — choosing source control at step 4
+It *is* required on one branch of one step — choosing source control at step 5
 below — because that is a choice the user makes deliberately, not a gate on
 entry. Declining it costs nothing but code hosting.
 
@@ -217,19 +264,22 @@ downstream and must be handled explicitly:
 - **Adding a repo later is the upgrade path.** A design-only context becomes a
   working one the moment a repo is attached; nothing is migrated or recreated.
 
-So step 4 asks the question in the user's terms — intent, not mechanism — and
-both answers lead somewhere complete:
+Step 3 has already settled coding versus design, so step 5 never re-asks it. It
+renders one of two shapes:
 
 ```
-  Do you want source control?
-
-    → Yes    connect GitHub, pick or create a repo
-             agents work in worktrees and commit to branches you review
-             (opening PRs for you is coming)
-
-    → No     diagrams, docs, dashboards, boards, the council
-             (add a repo any time later)
+  ── coding ──────────────────        ── design ──────────────────
+  Repo      [ ~/dev/my-project ]      Name  [ Schema work        ]
+  Branch    [ main            ]
+  □ Connect GitHub                    Nothing else to set up.
+     agents commit to branches         (add a repo any time later)
+     you review — opening PRs
+     for you is coming
 ```
+
+The design shape asks for a name and nothing more, which is the whole point of
+routing the question early: a user who is here to draw diagrams is never shown a
+repo picker, a branch selector, or a GitHub prompt.
 
 **The copy describes today, not the roadmap.** Agents currently work in a
 worktree and commit to a `smith/<taskId>` branch — nothing more.
@@ -252,18 +302,18 @@ One consequence worth stating plainly: **the wizard stops offering a
 currently-supported case** — a local git repo with no remote, which the model
 still allows (`repository` and `github` are both optional). That case is not
 removed, only unlisted; it remains reachable from Settings by adding a repo to a
-context. This follows the pattern already used for step 3a: the wizard presents
+context. This follows the pattern already used for step 4a: the wizard presents
 the clean binary, Settings retains the full range. Keeping a third "local git,
 no remote" option in onboarding would cost every user a decision to serve a
 minority who can already get there another way.
 
-### Step 5 — Voice mode (optional)
+### Step 6 — Voice mode (optional)
 
 Assign the `deepgram` (STT) and `elevenlabs` (TTS) connectors. Voice Mode may
 only be enabled while **both** slots are filled — the existing invariant. Skipping
 leaves voice off and everything else working.
 
-### Step 6 — Location (optional)
+### Step 7 — Location (optional)
 
 Feeds `feeds/weather.ts` (`weatherLine`, `weatherUrl`), which supplies the
 weather line in Anderson's morning digest (`BrainTurn.digest`). Needs `lat,lon`,
@@ -274,7 +324,7 @@ Timezone is **detected, never asked**. The agenda's midnight sweep is per-user
 and date-keyed (`agendaSweptDay`), so a wrong zone sweeps plates at the wrong
 hour. Show what was detected and let it be corrected.
 
-### Step 7 — Connect your tools (optional)
+### Step 8 — Connect your tools (optional)
 
 A skippable menu over the six vendors in `connectors.ts` — atlassian, github,
 datadog, snyk, elevenlabs, deepgram. Deliberately **last**: asking for API
@@ -296,7 +346,7 @@ spanning model families, connectors — is depth the user goes looking for once
 they already have something working. A wizard that front-loads all of it trades
 a fast start for a long form, and loses both.
 
-But the council pitch must not vanish. Step 3a states the payoff ("your council
+But the council pitch must not vanish. Step 4a states the payoff ("your council
 spans 2 model families") and the finish screen carries the pointer to Agents.
 The promise lands; the work is deferred.
 
@@ -306,7 +356,7 @@ one mind in hats. See the council turn design (2026-08-15).
 
 ## Reuse over rebuild
 
-Step 3a is useful long after onboarding — the author's own copilot and codex
+Step 4a is useful long after onboarding — the author's own copilot and codex
 problems are still unfixed. It should be a **permanent Settings screen that the
 wizard borrows**, not wizard-only UI. The same is true of steps 4, 5 and 6, all
 of which already have Settings homes.
@@ -335,15 +385,15 @@ turns. Green tests do not prove reachability.
 
 ## Open questions
 
-- Should step 3a offer to run installers in v1, or stay copy-a-command? (Scoped
+- Should step 4a offer to run installers in v1, or stay copy-a-command? (Scoped
   out above; the audience mostly has the binaries.)
-- For the repo path in step 4, is choosing an existing local clone enough, or
+- For the repo path in step 5, is choosing an existing local clone enough, or
   should the wizard also offer `git init` on a new folder?
 - **Agents opening PRs does not exist** (no push, no `gh pr create`; the task
-  prompt says "Do not push"). It is named as coming in step 4 copy. When it is
+  prompt says "Do not push"). It is named as coming in step 5 copy. When it is
   built it should be a per-workspace opt-in, not a new default, since pushing
   from an agent worktree is a real behaviour change — and it is what finally
-  justifies collecting GitHub at step 4.
+  justifies collecting GitHub at step 5.
 - Does relaxing `repos.length > 0` belong in this plan, or as its own change
   landed first? It touches the swarm validator and every repo-reading caller,
   so it is arguably a prerequisite rather than wizard work.
