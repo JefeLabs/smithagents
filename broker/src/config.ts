@@ -23,6 +23,12 @@ export interface BrokerConfig {
   /** Optional: enables the avatar generator. Absent = feature degrades, presets still work. */
   geminiApiKey?: string;
   geminiImageModel: string;
+  /**
+   * Which provider backs the conversational brain (the one path that needs
+   * caller-defined tool schemas). Defaults to anthropic so nothing changes for
+   * anyone who does not set it; "gemini" routes through gemini-brain.ts.
+   */
+  brain: { provider: "anthropic" | "gemini"; model?: string };
 }
 
 export function loadBrokerConfig(env: Record<string, string | undefined> = process.env): BrokerConfig {
@@ -64,5 +70,9 @@ export function loadBrokerConfig(env: Record<string, string | undefined> = proce
     },
     geminiApiKey: env.GEMINI_API_KEY || undefined,
     geminiImageModel: env.GEMINI_IMAGE_MODEL || "gemini-2.5-flash-image",
+    brain: {
+      provider: env.SMITH_BRAIN_PROVIDER === "gemini" ? "gemini" : "anthropic",
+      model: env.SMITH_BRAIN_MODEL || undefined,
+    },
   };
 }

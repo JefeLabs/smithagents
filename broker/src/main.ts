@@ -62,6 +62,7 @@ import {
   repositoryUrl,
 } from "./feeds/versions.ts";
 import { weatherLine, weatherUrl } from "./feeds/weather.ts";
+import { createGeminiStreamFactory } from "./gemini-brain.ts";
 import { loadIdentity, promptInfo } from "./identity.ts";
 import { LocalMemory, type MemoryEntry } from "./memory.ts";
 import { MicSessionGate } from "./mic-gate.ts";
@@ -98,8 +99,25 @@ process.on("unhandledRejection", (err) => console.error("[broker] unhandled reje
 const config = loadBrokerConfig();
 
 const anthropic = new Anthropic({ apiKey: config.anthropicApiKey });
-const streamFactory: StreamFactory = (params) =>
+const anthropicStream: StreamFactory = (params) =>
   anthropic.messages.stream(params as Parameters<typeof anthropic.messages.stream>[0]);
+
+// The brain is the one path that needs caller-defined tool schemas, so it stays
+// on a function-calling SDK — but WHICH SDK is now a config choice, because a
+// dry Anthropic balance should not be able to mute Anderson outright. Research
+// mode picks its engine the same way (research-engine.ts); this is the brain's
+// equivalent seam, and it is one line wide by design.
+const useGemini = config.brain.provider === "gemini";
+if (useGemini && !config.geminiApiKey) {
+  throw new Error("SMITH_BRAIN_PROVIDER=gemini requires GEMINI_API_KEY to be set");
+}
+const streamFactory: StreamFactory = useGemini
+  ? createGeminiStreamFactory({ apiKey: config.geminiApiKey as string })
+  : anthropicStream;
+// Each provider needs its own default; BrokerBrain's built-in default is a
+// Claude model and would 404 against Gemini.
+const brainModel = config.brain.model ?? (useGemini ? "gemini-flash-latest" : undefined);
+console.log(`[broker] brain provider: ${config.brain.provider}${brainModel ? ` (${brainModel})` : ""}`);
 
 const swarm = new SwarmClient({ baseUrl: config.swarm.baseUrl, token: config.swarm.token });
 
@@ -452,7 +470,7 @@ const brain = new BrokerBrain(
         : `${draft.name} is on the crew — their real voice still needs casting in the wizard`;
     },
   },
-  { identity: promptInfo(identity) },
+  { identity: promptInfo(identity), ...(brainModel ? { model: brainModel } : {}) },
 );
 
 // Sessions — workspace-scoped conversations persisted under .smith/sessions/.
