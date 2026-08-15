@@ -26,6 +26,15 @@ const DEFAULT_DOCKER_CONFIG: DockerConfig = {
   image: "smith-agent:latest",
   shmSize: "2g",
   memoryLimit: "8g",
+  // Agent auth has to cross into Linux somehow. macOS Keychain credentials —
+  // what `claude` uses on the host — cannot be mounted into a container, so a
+  // containerised agent reports "Not logged in · Please run /login" and the
+  // task fails. `claude setup-token` mints a long-lived token for exactly this
+  // case; forwarded here when the host has one, absent otherwise so nothing
+  // changes for installs that do not use docker.
+  extraEnv: process.env.CLAUDE_CODE_OAUTH_TOKEN
+    ? { CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN }
+    : undefined,
 };
 
 /**
