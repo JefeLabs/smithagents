@@ -200,3 +200,9 @@ already ships, so this is seeding, not building.
   another opinion?
 - Does per-agent memory (`scope.agent`) get written automatically from council
   turns, or only when the human says "remember that"?
+
+## Out of scope
+
+Anderson voting (he convenes, narrates and writes, never votes), concurrent
+writers to one artifact, real DDL or a live database connection, and squad-leader
+weighting in a divergence — listed as an open question rather than designed.

@@ -447,3 +447,11 @@ concrete inventory behind it. That was wrong: detection can set the fork's
 *default and summary* without spending a whole screen on it, and triage is
 local-mode content that a hosted-bound user should never have to walk through.
 The fork sits at step 2, and nothing detected makes hosted the default.
+
+## Out of scope
+
+The hosted branch beyond a disabled "coming soon" control, mobile and tablet
+surfaces, running installers on the user's behalf, billing or self-serve
+sign-up (it links out to `smithagents.com`), crew *composition* beyond offering
+the step, and the three prerequisite changes, each of which is specced
+separately.

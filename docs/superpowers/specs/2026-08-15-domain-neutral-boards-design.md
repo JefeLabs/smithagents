@@ -1,4 +1,4 @@
-# Domain-Neutral Boards — Design
+# Domain-Neutral Work Kinds — Design
 
 **Status:** design, awaiting review
 **Date:** 2026-08-15
@@ -84,6 +84,38 @@ seed time only**. `board.columns` is already persisted per board, and the
 template is otherwise read only for the `gatesHuman` backfill, so no stored data
 changes shape from labels alone.
 
+### 3. Source presets are parochial too
+
+`ContextSource.preset` is a hardcoded set — `jira | releases | topic |
+observability | support | custom` — and every entry except `topic` and `custom`
+is a software word. `SOURCE_PRESETS` is a closed `Set`, so the same problem as
+the board vocabulary exists one layer down.
+
+It has the same cheap fix, for the same reason: the type comments `preset` as
+**"UI sugar — executors read origin/transform"**, so presets are presentational.
+New presets need no executor changes, only data.
+
+A work kind therefore bundles **two** things:
+
+| Work kind | Board vocabulary | Source presets |
+|---|---|---|
+| Product / software | Spec · Tech design · Decomposed · Merged | jira · releases · observability · support |
+| Marketing | Brief · Concept · Assets · Live | campaign metrics · brand mentions · competitor |
+| Sales | Discovery · Proposal · Terms · Closed-won | CRM · inbound · pipeline |
+| Influencer / creator | Hook · Concept · Shot list · Posted | youtube · tiktok · instagram · x · comments · trends |
+| Content | Brief · Outline · Sections · Published | topic · keyword · publication |
+| Trading | Thesis · Sizing · Orders · Closed | tickers · filings · news |
+
+**Influencer and content are deliberately separate kinds.** They look similar in
+board vocabulary and differ entirely in sources: content work is usually
+long-form through one channel, while a creator runs many channels at once and
+repurposes one idea across them. The distinguishing need is *many sources and a
+publishing flow*, which is a `ContextSource` story rather than a labelling one —
+and the polling-plus-transform machinery for it already ships.
+
+`custom` already accepts an arbitrary `origin: {url, query}` with an
+`analyze` transform, so these presets add discoverability rather than capability.
+
 ## A note on fit
 
 `review` and `verify` carry `gatesHuman: true`, and those gates land more
@@ -114,4 +146,6 @@ against a no-op — a measurement that never ran looks exactly like a clean resu
 ## Out of scope
 
 Column CRUD for users (renaming or adding columns per board), retitling existing
-boards when a vocabulary changes, and per-card vocabulary overrides.
+boards when a vocabulary changes, per-card vocabulary overrides, and any new
+source *executor* — presets are presentation over the existing
+origin/transform mechanism, not new polling capability.
