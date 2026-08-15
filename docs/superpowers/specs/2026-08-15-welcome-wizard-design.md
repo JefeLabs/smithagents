@@ -205,18 +205,29 @@ both answers lead somewhere complete:
   Do you want source control?
 
     → Yes    connect GitHub, pick or create a repo
-             agents work in worktrees, commit to branches, open PRs
+             agents work in worktrees and commit to branches you review
+             (opening PRs for you is coming)
 
     → No     diagrams, docs, dashboards, boards, the council
              (add a repo any time later)
 ```
 
-**"Yes" requires GitHub, and only there.** Not because git needs it, but because
-everything that makes managed source control worth choosing in this product is
-GitHub-shaped: `WorkspaceRepo.github {owner, repo}`, the `github` connector, PR
-and issue flows. Offering "source control" and then delivering a local-only clone
-with no remote would under-deliver on the word. So on that branch the github
-connector is collected here rather than waiting for step 7.
+**The copy describes today, not the roadmap.** Agents currently work in a
+worktree and commit to a `smith/<taskId>` branch — nothing more.
+`dispatcher.ts:327` appends *"Do not push"* to every task prompt, and there is no
+`gh pr create`, no push, and no use of the pulls API anywhere in `swarm/` or
+`broker/`. Promising PRs in onboarding would break on the user's first task, so
+they are named as coming and nothing more.
+
+**"Yes" collects GitHub, and only there** — `WorkspaceRepo.github {owner, repo}`
+plus the `github` connector, rather than waiting for step 7.
+
+**Known soft spot, recorded deliberately:** until agents push, this requirement
+is weakly justified. Local git alone delivers everything the yes branch currently
+promises, so GitHub is being collected mainly in anticipation of PR creation,
+plus the issue and PR context the connector already provides. This is a conscious
+trade — asking once during setup beats interrupting later — but it is the first
+thing to revisit when PR creation lands, along with the copy above.
 
 One consequence worth stating plainly: **the wizard stops offering a
 currently-supported case** — a local git repo with no remote, which the model
@@ -309,6 +320,11 @@ turns. Green tests do not prove reachability.
   out above; the audience mostly has the binaries.)
 - For the repo path in step 4, is choosing an existing local clone enough, or
   should the wizard also offer `git init` on a new folder?
+- **Agents opening PRs does not exist** (no push, no `gh pr create`; the task
+  prompt says "Do not push"). It is named as coming in step 4 copy. When it is
+  built it should be a per-workspace opt-in, not a new default, since pushing
+  from an agent worktree is a real behaviour change — and it is what finally
+  justifies collecting GitHub at step 4.
 - Does relaxing `repos.length > 0` belong in this plan, or as its own change
   landed first? It touches the swarm validator and every repo-reading caller,
   so it is arguably a prerequisite rather than wizard work.
