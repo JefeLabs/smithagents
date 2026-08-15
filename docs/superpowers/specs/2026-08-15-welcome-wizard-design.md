@@ -38,14 +38,39 @@ each other.* No competitor whose product assumes one model can say it.
 ## Flow
 
 ```
-1. What should we call you?      required
-2. Location?                     optional — powers the weather line in the digest
-3. Your subscriptions            required — triage, fix, prove live
-4. Voice mode?                   optional — deepgram + elevenlabs
-5. Your first workspace          required — where work lives
+1. What should we call you?      required   ← probe starts here, in the background
+2. Your subscriptions            required   — triage: what you have, what's broken, why
+3. Local or hosted?              required   — the fork, made with the inventory in hand
+4. Your first workspace          required   — where work lives
+   ══ the app works from here ══
+5. Voice mode?                   optional   — deepgram + elevenlabs
+6. Location?                     optional   — powers the weather line in the digest
+7. Connect your tools            optional   — atlassian, github, datadog, snyk
    ── finish ── Anderson is here. You can add a crew → [Agents]
-6. Connect your tools            optional, skippable — atlassian, github, datadog, snyk
 ```
+
+Three ordering rules produced this shape:
+
+**The probe starts during step 1.** Typing a name is dead time; PATH detection
+and auth probes run behind it, so step 2 is already populated on arrival instead
+of showing a spinner.
+
+**Triage precedes the fork.** The local-versus-hosted choice is only meaningful
+once the user knows what local is worth. Asked first, it is a choice between two
+abstractions thirty seconds into the product; asked after triage, it is a choice
+between a concrete inventory ("claude ✓, agy ✓ — two model families") and an
+alternative. It also puts hosted in front of the person whose screen came back
+all warnings at exactly the moment their problem became real, which converts far
+better than offering it before they knew they had one.
+
+The cost — someone who already intends to go hosted sits through a local
+inventory — is paid down with a persistent "use the hosted version instead"
+affordance on the triage screen, not by reordering.
+
+**Every required step precedes every optional one.** A user who abandons the
+wizard after step 4 still has a working app: a name, a brain, and somewhere to
+put work. Optional steps are pure upside, so nothing is lost by quitting among
+them. This is the "get going faster" principle applied to ordering.
 
 **First run is detected by the absence of a user record.** After a reset,
 `swarm/.smith/users/` is empty; that is the sentinel. No new flag.
@@ -58,18 +83,7 @@ destroying an install, which is exactly what happened while designing it.
 Creates the user record, which also clears the first-run sentinel. Nothing else
 in the wizard can persist until this exists.
 
-### Step 2 — Location (optional)
-
-Feeds `feeds/weather.ts` (`weatherLine`, `weatherUrl`), which supplies the
-weather line in Anderson's morning digest (`BrainTurn.digest`). Needs `lat,lon`,
-so browser geolocation fits. **Name the payoff in the UI** — a permission prompt
-with a stated reason converts far better than a bare one.
-
-Timezone is **detected, never asked**. The agenda's midnight sweep is per-user
-and date-keyed (`agendaSweptDay`), so a wrong zone sweeps plates at the wrong
-hour. Show what was detected and let it be corrected.
-
-### Step 3 — Your subscriptions (required)
+### Step 2 — Your subscriptions (required)
 
 The screen that earns the wizard. Built entirely on the existing registry:
 `cli-tools.ts` already distinguishes `detected` (binary on PATH) from `authOk`
@@ -101,6 +115,11 @@ Three requirements fall out of the table above:
   turn against the selected engine. Detection has been wrong twice in one day;
   a probe that never runs looks exactly like a passing one.
 
+### Step 3 — Local or hosted (required)
+
+Made with the inventory from step 2 in hand, so it is a choice between
+something concrete and an alternative rather than between two abstractions.
+
 **Adaptive local vs hosted.** Probe before asking. Working CLI found → local
 preselected, hosted offered as the alternative. Nothing working → lead with
 hosted, which works instantly, and offer guided local setup second. Developers
@@ -112,16 +131,34 @@ The hosted path is largely built: `control-plane/src/lib/cloud.ts`,
 `/auth/me`, `/auth/logout`, `/auth/invites`). For this audience hosted is rarely
 "I have nothing" — it is "use my crew from my phone, or a teammate's machine".
 
-### Step 4 — Voice mode (optional)
+### Step 4 — Your first workspace (required)
+
+Boards, sessions, and documents all hang off a workspace; without one there is
+nowhere to put anything. Reuses the shipped new-workspace flow.
+
+### Step 5 — Voice mode (optional)
 
 Assign the `deepgram` (STT) and `elevenlabs` (TTS) connectors. Voice Mode may
 only be enabled while **both** slots are filled — the existing invariant. Skipping
 leaves voice off and everything else working.
 
-### Step 5 — Workspace (required)
+### Step 6 — Location (optional)
 
-Boards, sessions, and documents all hang off a workspace; without one there is
-nowhere to put anything. Reuses the shipped new-workspace flow.
+Feeds `feeds/weather.ts` (`weatherLine`, `weatherUrl`), which supplies the
+weather line in Anderson's morning digest (`BrainTurn.digest`). Needs `lat,lon`,
+so browser geolocation fits. **Name the payoff in the UI** — a permission prompt
+with a stated reason converts far better than a bare one.
+
+Timezone is **detected, never asked**. The agenda's midnight sweep is per-user
+and date-keyed (`agendaSweptDay`), so a wrong zone sweeps plates at the wrong
+hour. Show what was detected and let it be corrected.
+
+### Step 7 — Connect your tools (optional)
+
+A skippable menu over the six vendors in `connectors.ts` — atlassian, github,
+datadog, snyk, elevenlabs, deepgram. Deliberately **last**: asking for API
+credentials before the user has seen anything work is the highest-friction ask at
+the moment of lowest trust. Equally reachable from Settings afterwards.
 
 ### Finish — Anderson, and the crew you could have
 
@@ -138,7 +175,7 @@ spanning model families, connectors — is depth the user goes looking for once
 they already have something working. A wizard that front-loads all of it trades
 a fast start for a long form, and loses both.
 
-But the council pitch must not vanish. Step 3 states the payoff ("your council
+But the council pitch must not vanish. Step 2 states the payoff ("your council
 spans 2 model families") and the finish screen carries the pointer to Agents.
 The promise lands; the work is deferred.
 
@@ -146,16 +183,9 @@ When a crew is created later, **engines spread across the working families** —
 left alone, people put everyone on one CLI, and a council sharing one model is
 one mind in hats. See the council turn design (2026-08-15).
 
-### Step 6 — Connect your tools (optional)
-
-A skippable menu over the six vendors in `connectors.ts` — atlassian, github,
-datadog, snyk, elevenlabs, deepgram. Deliberately **last**: asking for API
-credentials before the user has seen anything work is the highest-friction ask at
-the moment of lowest trust. Equally reachable from Settings afterwards.
-
 ## Reuse over rebuild
 
-Step 3 is useful long after onboarding — the author's own copilot and codex
+Step 2 is useful long after onboarding — the author's own copilot and codex
 problems are still unfixed. It should be a **permanent Settings screen that the
 wizard borrows**, not wizard-only UI. The same is true of steps 4, 5 and 6, all
 of which already have Settings homes.
@@ -184,8 +214,14 @@ turns. Green tests do not prove reachability.
 
 ## Open questions
 
-- Should step 3 offer to run installers in v1, or stay copy-a-command? (Scoped
+- Should step 2 offer to run installers in v1, or stay copy-a-command? (Scoped
   out above; the audience mostly has the binaries.)
-- Does hosted sign-in belong in step 3, or as its own screen before step 1?
 - Should the wizard offer to import an existing repo as the first workspace, or
   only create an empty one?
+
+**Settled during design:** where the local/hosted fork belongs. It was
+considered immediately after the name and placed after subscription triage
+instead, so the choice is made against a concrete inventory rather than in the
+abstract, and hosted reaches the user whose triage came back all warnings at the
+moment the problem became real. The cost — a hosted-bound user sitting through a
+local inventory — is paid down with an escape affordance on the triage screen.
