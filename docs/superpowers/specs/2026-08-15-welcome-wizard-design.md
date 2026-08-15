@@ -190,22 +190,13 @@ Two questions, because they have different consequences:
 **GitHub is required if coding OR version control is selected** — and only then.
 Neither selected means no repo, no remote, and no GitHub prompt.
 
-Two facts make this safe, both verified rather than assumed:
-
-- **Coding requires a CLI; an API key cannot substitute.** The dispatcher has no
-  `api` branch — `ApiRuntime` is referenced only by its own file and
-  `server.ts`'s `/api-agents` routes, never by dispatch — so a coding task
-  spawns a CLI into a worktree or it does not run.
-- **Documents need no git whatsoever.** Documents live in
-  `BROKER_DOCUMENTS_DIR ?? ".smith/documents"`, `documents.ts` and `doc-edit.ts`
-  contain zero git references, and `CliResearch` spawns with no `cwd` so it never
-  enters a repo. Boards, workspaces and squads are likewise plain JSON.
-
-So a documents-only workspace is a complete workspace, not a degraded one. This
-requires relaxing `assertContext`, which currently demands `repos.length > 0`;
-that does not collide with groups, since `isGroupRecord()` keys on
-`members !== undefined` and never on an empty repo list. Downstream, dispatch
-must soft-fail with "this context has no repo" rather than assume `repos[0]`.
+Neither selected means no repo, no remote, and no GitHub prompt — a documents-only
+workspace is a complete workspace, not a degraded one, because the design side
+touches no git at all. Coding, by contrast, requires an agent **CLI**: the
+dispatcher has no `api` branch, so a task spawns a CLI into a worktree or it does
+not run. Both facts, and the `assertContext` relaxation they require, are
+specified in
+[Repo-less contexts](2026-08-15-repo-less-contexts-design.md).
 
 **PR publishing does not exist yet.** There is no push, no `gh pr create`, and no
 use of the pulls API anywhere in `swarm/` or `broker/`; `dispatcher.ts:327`
@@ -227,79 +218,16 @@ specific enough to feel wrong for other work:
 — generalises well to most knowledge work. The vocabulary does not, and there are
 **no column CRUD routes**, so a user cannot currently fix it themselves.
 
-**Neutral ids, varying labels.** Column ids are the contract — `BOARD_ROUTES`
-matches on them (`e.from === columnId`), the agenda axis stores one per card, and
-the shared queue keys off them. They should therefore mean something in every
-domain, not just software. The genuinely software-specific ones are renamed once:
+The vocabulary is product-development shaped — `plan` runs spec / tech-design /
+decomposed, and `deliver` ends at **Merged**, a git word — and there are no
+column CRUD routes, so a user cannot fix it. The skeleton (Ideate, Plan, Deliver,
+Release, React, Maintain) generalises to most knowledge work; only the words do
+not.
 
-| Board | Old id | New id |
-|---|---|---|
-| plan | `spec` | `define` |
-| plan | `tech-design` | `design` |
-| plan | `decomposed` | `breakdown` |
-| deliver | `merged` | `complete` |
-| release | `cut` | `prepare` |
-| release | `regression` | `validate` |
-
-`plate`, `today`, `intake`, `triage`, `doing`, `done`, `ready`, `review`,
-`verify`, `ship`, `rollback`, `fix` and `diagnose` already read correctly for a
-trader or a consultant and are left alone.
-
-**Do this now, because right now it is free.** Cards carry `columnId`, so
-renaming ids is normally a migration over every stored card. The install was
-reset while writing this design and holds **zero** cards, which will not be true
-again. A migration must still ship for other checkouts — `normalizeBoard` already
-sets the precedent with its `queued` → `queue` card rewrite — but it is written
-against an empty local install rather than a live one.
-
-On top of neutral ids, **labels vary by work kind**:
-
- `BOARD_ROUTES` matches on column ids
-(`e.from === columnId`), so routing, the agenda axis and the shared queue all key
-off ids. Change those and every route breaks; change only the display names and
-nothing downstream notices:
-
-| Work kind | `define` | `design` | `breakdown` | `complete` |
-|---|---|---|---|---|
-| Product / software | Spec | Tech design | Decomposed | Merged |
-| Marketing | Brief | Concept | Assets | Live |
-| Sales | Discovery | Proposal | Terms | Closed-won |
-| Consulting | Scope | Approach | Work packages | Delivered |
-| Content | Brief | Outline | Sections | Published |
-| Trading | Thesis | Sizing | Orders | Closed |
-
-**Marketing and sales fit better than software does in one respect.** The
-`review` and `verify` columns carry `gatesHuman: true`, and a brand or legal
-approval is a harder, more genuine human gate than a code review — which agents
-increasingly perform themselves. The gating machinery was built for software and
-lands more squarely outside it.
-
-**Work kinds must be data, not a union type.** This list reached six domains in
-the course of one conversation and will keep growing, and the codebase already
-settled this question elsewhere: `AgentEngine`'s `stereotype?: string` is an open
-string, and personas are loaded as config rather than enumerated in code. Board
-vocabularies follow the same rule — a vocabulary file keyed by work kind, not a
-TypeScript union that requires a release to extend. That also makes "add your
-own vocabulary" a product capability rather than a code change, which matters for
-any team whose words are their own.
-
-The label change is small because `board.columns` is already persisted per board
-— the template is consulted only at creation and for one `gatesHuman` backfill.
-So `BOARD_TEMPLATES[boardType]` gains a work-kind dimension used at seed time,
-and no stored data changes shape. Only the id rename above touches stored cards.
-
-Placed among the optional steps, defaulting to product/software so anyone who
-skips it gets exactly today's behaviour. The set of work kinds offered is a
-product decision, not a technical one.
-
-**This is arguably its own change rather than wizard work** — the wizard is
-merely where the question belongs. It can ship before or after, and the wizard
-degrades gracefully to the default if it is not there.
-
-## Deferred: the hosted branch
-
-**Not in v1.** Recorded because the decisions were made and the machinery
-largely exists; skip this section when planning v1 work.
+The wizard contributes one optional question, defaulting to product/software so
+that skipping it reproduces today's behaviour exactly. Column ids, the migration,
+and the vocabulary-as-data requirement are specified in
+[Domain-neutral boards](2026-08-15-domain-neutral-boards-design.md).
 
 ### The fork, when hosted is enabled
 
@@ -427,178 +355,38 @@ able to reproduce.
 
 **Exactly one step has nothing behind it, and the wizard cannot ship without it.**
 
-### Configure Anderson — show the speed difference at the point of choice
+### The blocker, in one line
 
-Installation must not require obtaining anything, so this step **defaults to the
-CLI the subscriptions step already validated**: no key, no `.env`, no restart.
-But the choice has a large, measurable consequence, and it is named rather than
-buried:
-
-```
-  How should Anderson think?
-
-  ◉ Your Claude subscription          ready now — nothing to add
-      ~6s before he starts talking
-      ~29s when he uses a tool, and he won't talk while thinking
-
-  ○ A local model  (LM Studio · Ollama)   detected and running
-      ~1s, private, free — 27s on the first call after loading
-
-  ○ An API key  (anthropic · gemini)  fastest, and needed for voice
-      ~1s before he starts talking, ~3s with a tool
-      [ paste a key ]                            you can add this later
-```
-
-All figures measured on this machine, 2026-08-15. "First words" is when Anderson
-starts speaking — the number that matters for voice, since speech chunking begins
-there. Totals are a two-sentence hello.
-
-| Path | Model | First words | Total |
-|---|---|---|---|
-| CLI `claude` | `haiku` | 6.54s | 8.12s |
-| CLI `claude` | `sonnet` | 7.37s | 8.92s |
-| API Gemini | `gemini-flash-lite-latest` | **0.50–0.54s** | 0.55–0.58s |
-| API Gemini | `gemini-flash-latest` (3.7-flash) | 0.98–1.32s | 1.00–1.32s |
-| API Gemini | flash, turn that calls a tool | — | 3.3s |
-| CLI + `--json-schema` | any | **never — no speech until the end** | 26–29s |
-| `agy -p --json-schema` | — | did **not** enforce the schema | 18.5s |
-
-**A local model is a first-class brain option, and on this evidence the best
-zero-friction one.** Measured against LM Studio's OpenAI-compatible server
-(`openai/gpt-oss-20b`, one of six models totalling 147 GB already on this
-machine):
-
-| Local engine | First words | Total | Streams speech | Tool calls |
-|---|---|---|---|---|
-| `gpt-oss-20b`, warm, hello | **1.02s** | 1.27s | yes | — |
-| `gpt-oss-20b`, warm, tool turn | 0.69s | 1.09s | — | yes, streamed (18 chunks) |
-| `gpt-oss-20b`, **cold** (12 GB load) | 27.09s | 27.56s | — | yes |
-
-This is the only path that delivers **streaming speech and caller-defined tool
-calls together with no key, no subscription and no per-token cost** — precisely
-what the CLI cannot do and what the SDK was introduced to provide. It is
-competitive with `flash-lite` and roughly six times faster than any CLI.
-
-Its friction is different in kind rather than absent: a server must be running
-with a model loaded, the first call after a load costs ~27s, and this model
-occupies 12 GB of RAM. The wizard should therefore **detect a local server
-(LM Studio on :1234, Ollama on :11434) and offer it when present**, never
-instruct someone to install one during setup.
-
-Tool-selection quality across the brain's ten tools is untested on a 20B model
-and must be measured before it becomes a default rather than an option.
-
-**`opencode` is not a brain option.** It is a CLI, so it inherits the same
-streaming-XOR-tools limit as `claude` and `agy`. Its value is as a coding-agent
-engine that can be pointed at local models — crew, not brain.
-
-Two things follow, and both belong in the UI:
-
-**Inline mode makes the CLI conversational.** `claude` supports
-`--input-format stream-json` ("realtime streaming input"), so the process is held
-open and fed turns over stdin instead of paying startup each time. Measured on an
-otherwise-idle machine, one process, five warm turns:
-
-| | Latency |
-|---|---|
-| cold turn (startup paid once) | 5.77s |
-| warm turns | min **2.34s** · **median 2.71s** · max 4.25s (n=5) |
-
-A median of 2.71s is conversational, and comparable to `gemini-3.1-pro-preview`
-at 3.05s. **Any brain on the CLI path should therefore run inline**, not spawn a
-process per turn — the difference is roughly 6s versus 2.7s, for one architectural
-choice.
-
-An earlier measurement of this same setup produced a 13.66s turn and was written
-up as unpredictable 3–14s variance. That was n=1 on a loaded machine, and it did
-not replicate. The prompt in question ("today's priority") invited the CLI to go
-read the repo, which it did — real behaviour, but prompt-triggered rather than a
-constant tax. Worth keeping in mind as a capability: a CLI brain can consult the
-repo before answering, which no chat endpoint can.
-
-**Speed was never the CLI's real limitation.** The structural one stands: in
-`stream-json` mode the CLI streams speech but returns no structured tool calls,
-and `--json-schema` returns tool calls but suppresses streaming entirely. A voice
-brain needs both in the same turn, and only the API and local paths provide that.
-
-**Default to the frontier model on every path.** This is a product stance, and
-the measurements support it. Attaching the brain's tools (the realistic case):
-
-| Path | Frontier | Fast tier | What frontier costs |
-|---|---|---|---|
-| CLI subscription | `opus` **6.80s** | `haiku` 6.54s | **+0.26s — effectively free** |
-| Gemini API | `gemini-3.1-pro-preview` **3.05s** | `flash-lite` 0.56s | +2.5s |
-| Local | larger models untested | `gpt-oss-20b` 1.02s | — |
-
-**On the CLI path the model barely matters** — opus, sonnet and haiku land within
-0.9s of each other, because ~6s of CLI startup dominates the turn. Defaulting to
-a small model there trades a far better brain for nothing measurable, so frontier
-is simply correct. It also means a model picker on that path implies a tuning
-knob that does not exist: someone chasing speed must change *path*, not model.
-
-**On the API path frontier costs about 2.5s**, which is still conversational. The
-fast tiers stay available for anyone who wants them — `flash-lite` is genuinely
-quick — but they are a deliberate trade down, not the default. A brain that picks
-the wrong agent or writes a bad schema costs far more than two seconds.
-
-Note that tools change the numbers: `flash-latest` measured 0.98–1.32s without
-tools and 4.83s with them. Benchmarks taken without the brain's tool set overstate
-how fast the brain will actually feel, so every figure in this table has tools
-attached.
-
-One caveat worth surfacing rather than hiding: the *first* call to
-`gemini-flash-latest` took 7.68s, against 0.98–1.32s on three repeats. Cold
-starts happen, and a first-run measurement shown during setup should not be
-presented as the steady state.
-
-**This corrects, and then partly restores, an earlier conclusion.** The brain was
-put on an SDK (main @ `d943132`) because a CLI supposedly cannot accept
-caller-defined tool schemas without MCP inverting control. That reasoning was
-wrong: `--json-schema` does exactly that, with execution still in the broker. But
-the table shows a real constraint underneath it — **a CLI can stream speech, or
-return structured tool calls, never both in one turn.** Schema enforcement
-suppresses incremental text entirely. A voice brain needs both, which is what the
-SDK path uniquely provides.
-
-Hence the shape of this step: the CLI default costs nothing to set up and is
-honest about feeling slow, while the key is presented as the upgrade that makes
-voice work. Nobody is blocked, and nobody is surprised later by a 29-second
-silence.
-
-`agy` is not offered as a brain until its `--json-schema` invocation is worked
-out; it accepted the flag and answered *about* the schema instead of obeying it.
-
-### The prerequisite this creates
-
-The default above is only reachable if the brain engine is *settable*.
 `SMITH_BRAIN_PROVIDER` is read once at boot (`config.ts:74`, consumed
-`main.ts:110`) with no route and no per-user storage — configuring Anderson today
-means editing `.env` and restarting the broker, which is how this install was set
-up by hand while writing this spec. A wizard cannot do that.
+`main.ts:110`) with no route and no per-user storage, so configuring Anderson
+means editing `.env` and restarting the broker — which is how this install was
+set up by hand while writing this spec. A wizard cannot do that.
 
-**The fix is precedented.** The research engine solved the identical problem:
-`User.researchEngine?: {cli, model}` persists per user, `PUT /me/research-engine`
-sets it, and it resolves per call rather than at boot. The brain wants the same:
+Engine kinds, measured latencies, frontier defaults and the streaming/tool-call
+trade are specified in
+[Brain engine selection](2026-08-15-brain-engine-selection-design.md).
 
-- `User.brainEngine?: {kind: "cli" | "key", provider, model}` on the user record
-- `PUT /me/brain-engine`, mirroring the research route
-- the broker resolving the brain **per turn**, so a change needs no restart
-- `SMITH_BRAIN_PROVIDER` demoted to a fallback, preserving today's behaviour
+### Prerequisites, each specced separately
 
-It is what lets someone move from the free-but-slow default to the fast path
-without touching a dotfile — which is the whole point of offering both.
+Three swarm/broker changes the wizard only consumes. Each is independently
+testable and independently shippable, and none is wizard work:
 
-### Prerequisites, collected
+| # | Spec | Blocks | Why first |
+|---|---|---|---|
+| 1 | [Brain engine selection](2026-08-15-brain-engine-selection-design.md) | *Configure Anderson* | the brain engine is boot-time config with no route; without it the step cannot exist at all |
+| 2 | [Domain-neutral boards](2026-08-15-domain-neutral-boards-design.md) | *what kind of work* | column ids are software words; the id migration is free **only** while the install has zero cards |
+| 3 | [Repo-less contexts](2026-08-15-repo-less-contexts-design.md) | documents-only workspace | `assertContext` demands `repos.length > 0` |
 
-1. **`PUT /me/brain-engine`** plus per-turn brain resolution — blocks *Configure
-   Anderson*, and therefore the zero-friction CLI default as well as the API-key
-   upgrade path.
-2. **Relax `assertContext`'s `repos.length > 0`** — blocks a documents-only
-   workspace. Does not block the author's own coding path, so it is the lower
-   of the two priorities.
+Priority is 1, then 2, then 3. **1** blocks the reference happy path outright.
+**2** is second not by importance but by timing — its migration cost rises the
+moment anyone creates a card. **3** blocks only the design-only branch, which the
+reference user does not take.
 
-Everything else the wizard needs already exists and was confirmed by route
-inspection rather than assumed.
+Everything else the wizard needs already exists, confirmed by route inspection
+rather than assumed: `PUT /me` (creates the user when absent), `GET /cli-tools`
+and `POST /cli-tools/refresh`, `saveAndVerifyKey` / `verifyStoredKey` for
+anthropic · google · openai, `POST /workspaces`, `POST /me/connectors`,
+`PUT /me/voice`, and `POST /agents`.
 
 ## Reuse over rebuild
 
