@@ -214,6 +214,44 @@ stored as intent, but the copy must not promise behaviour that will not happen o
 the first task. Building it should be a per-workspace opt-in, and it is what
 finally justifies collecting GitHub here.
 
+### What kind of work do you do? (optional, one question)
+
+The board vocabulary that ships is **product-development shaped**, and it is
+specific enough to feel wrong for other work:
+
+- `plan`: queue → **spec** → **tech-design** → **decomposed** → ready
+- `deliver`: queue → ready → in-progress → review → verify → **merged**
+
+"Tech design", "decomposed" and above all **"Merged"** are software words. The
+*skeleton* — Ideate → Plan → Deliver → Release, with React and Maintain alongside
+— generalises well to most knowledge work. The vocabulary does not, and there are
+**no column CRUD routes**, so a user cannot currently fix it themselves.
+
+**Vary the labels, never the ids.** `BOARD_ROUTES` matches on column ids
+(`e.from === columnId`), so routing, the agenda axis and the shared queue all key
+off ids. Change those and every route breaks; change only the display names and
+nothing downstream notices:
+
+| Column id | Product / software | Consulting | Content |
+|---|---|---|---|
+| `spec` | Spec | Scope | Brief |
+| `tech-design` | Tech design | Approach | Outline |
+| `decomposed` | Decomposed | Work packages | Sections |
+| `merged` | **Merged** | Delivered | Published |
+
+The change is small because `board.columns` is already persisted per board — the
+template is consulted only at creation and for one `gatesHuman` backfill. So
+`BOARD_TEMPLATES[boardType]` gains a work-kind dimension used at seed time, and
+no stored data changes shape.
+
+Placed among the optional steps, defaulting to product/software so anyone who
+skips it gets exactly today's behaviour. The set of work kinds offered is a
+product decision, not a technical one.
+
+**This is arguably its own change rather than wizard work** — the wizard is
+merely where the question belongs. It can ship before or after, and the wizard
+degrades gracefully to the default if it is not there.
+
 ## Deferred: the hosted branch
 
 **Not in v1.** Recorded because the decisions were made and the machinery
