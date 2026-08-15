@@ -124,6 +124,35 @@ test("local kind: the resolved model reaches the adapter's construction-time dep
   assert.deepEqual(seenModels, ["qwen-14b"]);
 });
 
+test("local kind with no stored model: the request omits `model` entirely, never leaking params.model", async () => {
+  // Regression, twin of the gemini-default-model bug: swarm only requires
+  // baseUrl for a stored `local` engine, so `model` is legally unset here.
+  // Before the fix this fell back to params.model — BrokerBrain's Anthropic
+  // default ("claude-haiku-4-5") sent to a local, non-Anthropic server.
+  const originalFetch = globalThis.fetch;
+  let sentBody: Record<string, unknown> | undefined;
+  globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    sentBody = JSON.parse(String(init?.body));
+    return new Response("data: [DONE]\n\n", { status: 200 });
+  }) as typeof fetch;
+
+  try {
+    const factory = await resolveBrainFactory({
+      getStoredEngine: async () => ({ kind: "local", provider: "lmstudio", baseUrl: "http://x" }),
+      argvFor: () => undefined,
+      spawn: dummySpawn,
+      geminiApiKey: undefined,
+      anthropicFactory: () => dummyFactory,
+    });
+    await factory(PARAMS).finalMessage();
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.ok(sentBody);
+  assert.equal("model" in (sentBody ?? {}), false, `expected no "model" key, got ${JSON.stringify(sentBody)}`);
+});
+
 test("api/gemini kind: the resolved model overrides params.model, since createGeminiStreamFactory reads params.model", async () => {
   const originalFetch = globalThis.fetch;
   const seenUrls: string[] = [];

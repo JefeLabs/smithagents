@@ -143,15 +143,22 @@ export function toOpenAiTools(
   }));
 }
 
-/** Anthropic-shaped request → the OpenAI-compatible chat completions body. Pure, so tests can assert it. */
-export function toOpenAiRequest(params: AnthropicParams, model: string): Record<string, unknown> {
+/**
+ * Anthropic-shaped request → the OpenAI-compatible chat completions body. Pure, so tests can assert it.
+ *
+ * `model` undefined omits the field entirely rather than sending a placeholder —
+ * a local server (LM Studio, Ollama) serves one fixed model per instance, so an
+ * operator who names only a baseUrl means "whatever's loaded", and the field
+ * must not carry brain.ts's Anthropic-model default (see LocalBrainDeps.model).
+ */
+export function toOpenAiRequest(params: AnthropicParams, model: string | undefined): Record<string, unknown> {
   // brain.ts sends `{type:"none"}` on the final round to force a text-only
   // close; the OpenAI-compatible wire format spells the same intent as the
   // literal string "none" (vs. leaving tool_choice unset, i.e. "auto").
   const forceTextOnly = (params.tool_choice as { type?: string } | undefined)?.type === "none";
 
   return {
-    model,
+    ...(model ? { model } : {}),
     stream: true,
     max_tokens: params.max_tokens,
     messages: toOpenAiMessages(params.system, params.messages),
@@ -220,8 +227,18 @@ export interface LocalBrainDeps {
    * the model per turn (e.g. a user picking from several locally-loaded
    * models) must re-create the factory with the resolved model in `deps`,
    * not rely on passing it through `params`.
+   *
+   * Optional because swarm only requires `baseUrl` for a stored `local`
+   * engine — an operator can leave the model unnamed to mean "whatever's
+   * loaded". `undefined` here must NOT fall back to `params.model`: that
+   * value is BrokerBrain's Anthropic default (brain.ts), which is meaningless
+   * — and, against a local server that validates it strictly, breaking —
+   * to send to a non-Anthropic API. toOpenAiRequest omits the field outright
+   * instead (measured against LM Studio: sending an unrecognized model id is
+   * harmless there, silently ignored in favor of whatever's loaded, but that
+   * leniency isn't a contract this code should depend on).
    */
-  model: string;
+  model?: string;
   /** Defaults to global fetch; injected in tests. */
   fetchImpl?: FetchLike;
 }

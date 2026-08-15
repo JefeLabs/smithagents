@@ -71,13 +71,12 @@ export async function resolveBrainFactory(deps: BrainEngineDeps): Promise<Stream
   const stored = await deps.getStoredEngine();
 
   if (stored?.kind === "local") {
-    // LocalBrainDeps.model is a required string bound at construction, but
-    // an operator can leave it unset (swarm only requires baseUrl for this
-    // kind) — so, uniquely among these kinds, building the real adapter is
-    // deferred until a turn's params.model is available as the fallback.
-    const baseUrl = stored.baseUrl ?? "";
-    const model = stored.model;
-    return (params) => createLocalStreamFactory({ baseUrl, model: model ?? params.model })(params);
+    // LocalBrainDeps.model is optional (swarm only requires baseUrl for this
+    // kind) and createLocalStreamFactory omits the field outright when it's
+    // unset — it must NOT fall back to params.model, BrokerBrain's Anthropic
+    // default, which is meaningless (and, against a strict local server,
+    // breaking) to send to a non-Anthropic API. See LocalBrainDeps.model.
+    return createLocalStreamFactory({ baseUrl: stored.baseUrl ?? "", model: stored.model });
   }
 
   if (stored?.kind === "cli") {

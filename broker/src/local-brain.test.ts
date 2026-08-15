@@ -56,6 +56,29 @@ test("streams text deltas and assembles a tool call into Anthropic blocks", asyn
   );
 });
 
+test("no deps.model: the request body omits `model` entirely, never falling back to params.model", async () => {
+  // Regression: a stored `local` engine only requires baseUrl (swarm
+  // validation) — a leftover fallback to params.model would leak
+  // BrokerBrain's Anthropic default ("claude-haiku-4-5") into a request
+  // meant for a local, non-Anthropic server.
+  let sentBody: Record<string, unknown> | undefined;
+  const fetchImpl = async (_url: string, init: RequestInit) => {
+    sentBody = JSON.parse(String(init.body));
+    return sse([{ choices: [{ delta: { content: "ok" } }] }]);
+  };
+  const stream = createLocalStreamFactory({ baseUrl: "http://127.0.0.1:1234", fetchImpl })({
+    model: "claude-haiku-4-5",
+    max_tokens: 10,
+    system: "s",
+    messages: [],
+    tools: [],
+  });
+  await stream.finalMessage();
+
+  assert.ok(sentBody);
+  assert.equal("model" in (sentBody ?? {}), false, `expected no "model" key, got ${JSON.stringify(sentBody)}`);
+});
+
 test("a dead server fails with a message naming the url, not a silent empty turn", async () => {
   const fetchImpl = async () => {
     throw new Error("ECONNREFUSED");
