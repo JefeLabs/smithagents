@@ -128,7 +128,21 @@ Recorded so Phase 1 does not foreclose it.
 
 The brain needs a provider that accepts **caller-defined tool schemas**, returns structured tool calls, and **streams text deltas** for the speech chunker. That is an API capability: Anthropic has it today, Gemini and OpenAI both offer function calling.
 
-The `EngineOption` flag Phase 2 wants is therefore **`toolCalling: boolean`**, not `streaming` — every CLI streams text fine, and none accepts foreign tool schemas. Phase 1 deliberately adds no flag so Phase 2 can add the right one without first removing a wrong one.
+The `EngineOption` flag Phase 2 wants is therefore **`toolCalling: boolean`**, not `streaming` — every CLI streams text fine. Phase 1 deliberately adds no flag so Phase 2 can add the right one without first removing a wrong one.
+
+## Decided 2026-08-14: the brain stays on an SDK. Do not relitigate.
+
+A CLI *can* technically host the brain, and an earlier claim here that none could was wrong. **MCP is exactly the mechanism for giving a CLI caller-defined tools**, and two of the three streaming engines support it: Claude Code (`--mcp-config`, `--strict-mcp-config`) and Codex (`codex mcp`, `codex mcp-server`). Antigravity does not — its only tool mechanism is `agy plugin`, which imports at install time rather than per invocation. The structure would even fit: `brain.ts` already separates `TOOLS` (ten JSON schemas) from `ToolExecutors` (ten injected functions), so an MCP server would expose the same schemas and route to the same executors.
+
+**It was rejected anyway, because MCP inverts control.**
+
+Today the broker drives the loop: it sends the schemas, sees `stop_reason === "tool_use"`, executes the block, feeds back `tool_result`, and decides when the turn ends. Under MCP the **CLI** drives its own loop and calls back into a broker-hosted MCP server — deciding for itself which tools to call, how often, in what order, and when to stop, using its own system prompt and tool-use policy.
+
+That makes the CLI *the brain*, not the brain's engine. Anderson's persona, the ten-tool choreography, and the speech chunking all live in that loop, and handing the loop away turns them from behaviour into suggestions. Concretely: "have Ana pick up the auth work" today means one `delegate` call the broker chooses to make; under MCP the CLI might call `check_status` first, delegate twice, or ask a clarifying question instead.
+
+Forcing single-tool-call turns to keep control would fight the CLI's design and discard most of what makes it good — so the honest choice is an SDK, where the loop is ours.
+
+**Therefore Phase 2 is: add a second function-calling SDK provider** (Gemini and OpenAI both offer it) behind the same `ApiProvider`-shaped seam, so the brain can move off a dead Anthropic key without moving off a driven loop. Its real work is translating ten Anthropic-shaped tool schemas and the `tool_use`/`tool_result` protocol into another provider's dialect, then proving the loop still terminates.
 
 The real work in Phase 2 is translating ten Anthropic-shaped tool schemas and the `tool_use`/`tool_result` protocol into another provider's function-calling dialect, then proving the loop still terminates. That deserves its own spec.
 
