@@ -180,9 +180,28 @@ entry. Declining it costs nothing but code hosting.
 
 **A local repo is no longer required either.** Today `assertContext` demands
 `repos.length > 0` with an absolute path, which would strand anyone who wants
-the design side — diagrams, documents, dashboards, boards, and the council
-sketching a schema — none of which touches git. A workspace may now hold **zero
-repos**.
+the design side. A workspace may now hold **zero repos**.
+
+That the design side truly needs no git is verified, not assumed:
+
+- Documents live in `BROKER_DOCUMENTS_DIR ?? ".smith/documents"` — the broker's
+  own state directory, never a repo. (The reset performed while writing this
+  design found all 60 documents there.)
+- `documents.ts` and `doc-edit.ts` contain **zero** git references — no `git`,
+  no worktree, no `.git`.
+- `CliResearch` spawns with **no `cwd`**, inheriting the broker's directory, so
+  a generation turn never enters a user repo.
+
+Boards, workspaces and squads are the same: plain JSON under `.smith/`. The
+dependency line falls cleanly between the product's two halves:
+
+| Half | Needs git? | Why |
+|---|---|---|
+| Design (broker) — documents, diagrams, dashboards, boards, the council | **No** | JSON state; the CLI runs outside any repo |
+| Code (swarm) — dispatch, worktrees, branch commits | **Yes** | worktrees are cut from a local clone |
+
+So a repo-less context is not a degraded workspace. It is a complete one for
+everything except running coding agents.
 
 This does not collide with groups. `isGroupRecord()` keys on
 `members !== undefined`, and `assertContext` branches on `Array.isArray(members)`
