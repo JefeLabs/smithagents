@@ -86,8 +86,17 @@ export function toPrompt(system: string, messages: unknown[]): string {
  * Anthropic `tools[]` → the `{speech, tool_calls[]}` JSON Schema this kind's
  * `--json-schema` flag needs. `name` is an enum of the caller's own tool
  * names, so the CLI can only ever request a tool that actually exists.
+ *
+ * `forceTextOnly` mirrors `tool_choice: {type:"none"}`, which brain.ts sets
+ * on the last permitted tool round to force a text-only close — without it,
+ * the turn could end with a dangling tool_use that never receives a
+ * tool_result. gemini-brain.ts and local-brain.ts honour that flag through
+ * their own request shapes (`functionCallingConfig.mode`, `tool_choice:
+ * "none"`); a one-shot CLI schema has no such field, so the schema itself is
+ * the only lever — `tool_calls` is constrained to length 0 so nothing valid
+ * can populate it, rather than merely leaving it unenforced.
  */
-export function toJsonSchema(tools: unknown[]): Record<string, unknown> {
+export function toJsonSchema(tools: unknown[], forceTextOnly = false): Record<string, unknown> {
   const names = (tools as CliTool[]).map((t) => t.name);
   return {
     type: "object",
@@ -103,6 +112,7 @@ export function toJsonSchema(tools: unknown[]): Record<string, unknown> {
           },
           required: ["name", "input"],
         },
+        ...(forceTextOnly ? { maxItems: 0 } : {}),
       },
     },
     required: ["speech", "tool_calls"],
@@ -174,7 +184,8 @@ export function createCliStreamFactory(deps: CliBrainDeps) {
 
       async finalMessage() {
         const withModel = model ? [...deps.argv, "--model", model] : [...deps.argv];
-        const schema = toJsonSchema(params.tools);
+        const forceTextOnly = (params.tool_choice as { type?: string } | undefined)?.type === "none";
+        const schema = toJsonSchema(params.tools, forceTextOnly);
         // The prompt is the FINAL argv element, unescaped — see research.ts's
         // CliResearch for why: spawn takes an argv ARRAY with no shell, so
         // quotes/newlines/backticks reach execve as ordinary bytes.
