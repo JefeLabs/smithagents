@@ -73,6 +73,26 @@ Two rules make this honest rather than mysterious:
   configuration. This is the load-bearing requirement: everything else is
   recoverable from inside the app, and a failed boot is not.
 
+## Forward note: local voice would remove the last two keys
+
+The happy path is a local model with no API key, and the only keys it still needs
+are Deepgram (STT) and ElevenLabs (TTS). Those could go too, since local
+speech servers exist that speak the same OpenAI-compatible dialect the local
+brain already uses — whisper.cpp and friends for `/v1/audio/transcriptions`,
+Piper / Kokoro / OpenedAI-Speech for `/v1/audio/speech`.
+
+**Not today, and not with LM Studio**, which serves only LLM and embedding models
+and answers unknown routes with **HTTP 200 and an error body** — a probe that
+reads as support until the body is inspected.
+
+The design implication is the point: **STT and TTS should be a provider seam, not
+two hardcoded vendors.** `DeepgramSttStream` and the ElevenLabs synthesis call are
+wired in directly today. Giving speech the same shape the brain now has — a kind
+of `api` or `local`, with a `baseUrl` for the local case — costs little while the
+call sites are few, and is what makes a genuinely key-free install possible later.
+Deepgram and ElevenLabs become the first two implementations of that seam rather
+than the definition of it.
+
 ## Error handling
 
 - A malformed registry value is treated as absent, with a warning naming the
