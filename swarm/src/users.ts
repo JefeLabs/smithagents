@@ -37,6 +37,17 @@ export interface User {
   agendaSweptDay?: string;
   /** Which CLI engine runs the broker's research turns. Absent = the broker's built-in default. */
   researchEngine?: { cli: string; model?: string };
+  /** Which engine backs the conversational brain. Absent = SMITH_BRAIN_PROVIDER, then the no-key default. */
+  brainEngine?: BrainEngine;
+}
+
+export interface BrainEngine {
+  kind: "cli" | "local" | "api";
+  /** cli: a CLI id ("claude") · local: a server id ("lmstudio") · api: "anthropic" | "gemini" */
+  provider: string;
+  model?: string;
+  /** local only — where the OpenAI-compatible server listens. */
+  baseUrl?: string;
 }
 
 /** On-disk shape before migration — legacy files may still have these instead of `connectors`. */

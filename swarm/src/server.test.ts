@@ -11,7 +11,9 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
 import type { WorkspaceChannels } from "./channels.js";
+import { ENGINES } from "./personas.js";
 import {
+  buildBrainEngineUpdate,
   buildCardAgendaPatch,
   buildChannelsUpdate,
   buildConnectorFields,
@@ -21,6 +23,7 @@ import {
   buildVoiceUpdate,
   clearVoiceReferences,
   gitInitRequestedRepos,
+  redactBrainEngine,
   redactConnector,
   redactResearchEngine,
   resolveAtlassianConnector,
@@ -605,4 +608,44 @@ test("redactResearchEngine: a stored setting whose cli no longer passes its gate
   // failing every research turn instead of degrading to Anthropic.
   const u: User = { id: "me", name: "You", default: true, researchEngine: { cli: "claude" } };
   assert.equal(redactResearchEngine(u, closedGate), null);
+});
+
+test("buildBrainEngineUpdate: null clears, cli is gated, local needs a baseUrl", () => {
+  const ok = () => "";
+  assert.deepEqual(buildBrainEngineUpdate(null, ENGINES, ok), { brainEngine: undefined });
+
+  assert.deepEqual(buildBrainEngineUpdate({ kind: "cli", provider: "claude" }, ENGINES, ok), {
+    brainEngine: { kind: "cli", provider: "claude" },
+  });
+
+  // A gated CLI is refused with the gate's own reason, like research does.
+  const gated = () => "binary not found on PATH";
+  assert.deepEqual(buildBrainEngineUpdate({ kind: "cli", provider: "claude" }, ENGINES, gated), {
+    error: "binary not found on PATH",
+  });
+
+  assert.deepEqual(buildBrainEngineUpdate({ kind: "local", provider: "lmstudio" }, ENGINES, ok), {
+    error: "local engines require a baseUrl",
+  });
+
+  assert.deepEqual(
+    buildBrainEngineUpdate({ kind: "api", provider: "gemini", model: "gemini-flash-latest" }, ENGINES, ok),
+    { brainEngine: { kind: "api", provider: "gemini", model: "gemini-flash-latest" } },
+  );
+
+  assert.deepEqual(buildBrainEngineUpdate({ kind: "api", provider: "nope" }, ENGINES, ok), {
+    error: "Unknown api provider: nope",
+  });
+});
+
+test("redactBrainEngine hides a cli whose gate now fails", () => {
+  const u = { id: "me", name: "You", brainEngine: { kind: "cli" as const, provider: "claude" } };
+  assert.deepEqual(
+    redactBrainEngine(u, () => ""),
+    { kind: "cli", provider: "claude" },
+  );
+  assert.equal(
+    redactBrainEngine(u, () => "not installed"),
+    null,
+  );
 });

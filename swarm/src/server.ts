@@ -134,6 +134,7 @@ import {
 import { applyTerminalEffects, shouldFireTerminal } from "./terminal-effects.js";
 import type { RemoteWorkerEntry } from "./types.js";
 import {
+  type BrainEngine,
   type ConnectorInstance,
   loadUsersFromDir,
   resolveCurrentUser,
@@ -3666,6 +3667,55 @@ export function redactResearchEngine(
   const r = u?.researchEngine;
   if (!r) return null;
   return gate(r.cli) ? null : r;
+}
+
+const API_BRAIN_PROVIDERS = new Set(["anthropic", "gemini"]);
+
+/** PUT /me/brain-engine body → validated setting. `null` clears it. Mirrors buildResearchEngineUpdate. */
+export function buildBrainEngineUpdate(
+  body: unknown,
+  engines: EngineOption[],
+  gate: (cli: string) => string,
+): { brainEngine?: BrainEngine } | { error: string } {
+  if (body === null) return { brainEngine: undefined };
+  const b = (body ?? {}) as Partial<BrainEngine>;
+
+  if (b.kind === "cli") {
+    const engine = engines.find((e) => e.cli === b.provider);
+    if (!engine || engine.kind === "api") return { error: `Unknown engine: ${String(b.provider)}` };
+    const reason = gate(engine.cli);
+    if (reason) return { error: reason };
+    return { brainEngine: { kind: "cli", provider: engine.cli, ...(b.model ? { model: b.model } : {}) } };
+  }
+
+  if (b.kind === "local") {
+    if (!b.baseUrl) return { error: "local engines require a baseUrl" };
+    return {
+      brainEngine: {
+        kind: "local",
+        provider: b.provider ?? "local",
+        baseUrl: b.baseUrl,
+        ...(b.model ? { model: b.model } : {}),
+      },
+    };
+  }
+
+  if (b.kind === "api") {
+    if (!b.provider || !API_BRAIN_PROVIDERS.has(b.provider)) {
+      return { error: `Unknown api provider: ${String(b.provider)}` };
+    }
+    return { brainEngine: { kind: "api", provider: b.provider, ...(b.model ? { model: b.model } : {}) } };
+  }
+
+  return { error: `Unknown engine kind: ${String(b.kind)}` };
+}
+
+/** A stored cli brain whose gate now fails is reported as unset, like research. */
+export function redactBrainEngine(u: User | null, gate: (cli: string) => string): BrainEngine | null {
+  const e = u?.brainEngine;
+  if (!e) return null;
+  if (e.kind === "cli" && gate(e.provider)) return null;
+  return e;
 }
 
 /** PUT /me/voice body → validated full-replace VoiceSettings (spec §2). */
