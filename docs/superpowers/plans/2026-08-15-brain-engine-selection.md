@@ -20,11 +20,18 @@
 - **The happy path is local, with no API key.** Resolution prefers `local` (an
   OpenAI-compatible server already running), then `cli` (a subscription), and
   only then `api`. A user who never enters a key must reach a working Anderson.
-- **Voice is a separate opt-in and is NOT part of the no-key path.** Speech
-  needs Deepgram (STT) and ElevenLabs (TTS) keys entered as connectors, and the
-  existing invariant stands: Voice Mode may only be enabled while **both** slots
-  are filled. A no-key brain that cannot do voice is the intended state, not a
-  bug — do not try to make voice work without those two keys.
+- **Voice needs a *streaming* brain — not a particular vendor, and not LiveKit.**
+  Speech requires Deepgram (STT) and ElevenLabs (TTS) as connectors, with the
+  existing invariant that Voice Mode enables only while **both** slots are
+  filled. TTS reaches the browser as an `audio` frame over the WebSocket
+  (`textChannel.broadcast({type:"audio", mime:"audio/mpeg", dataB64})`), so
+  **single-user local voice never touches LiveKit** — that path (`publishPcm`)
+  is for meetings and Discord.
+  Engine choice matters only because speech chunking needs incremental text:
+  **`local` and `api` stream and are voice-capable; `cli` is not**, since
+  `--json-schema` suppresses streaming and Anderson would sit silent for ~26s
+  then say everything at once. So **the no-key happy path (local model +
+  Deepgram + ElevenLabs) is fully voice-capable.**
 - **Every task ends green**: `pnpm test` in the package you touched.
 
 ---
@@ -273,7 +280,7 @@ git commit -m "feat(swarm): PUT/GET /me/brain-engine, with a broker client"
 - Produces: `createLocalStreamFactory({ baseUrl, model, fetchImpl? }): StreamFactory`.
 - Consumes: `StreamFactory`, `BrainStreamLike` from `./brain.ts`.
 
-Measured: `gpt-oss-20b` on LM Studio streams first words in **1.02s** and returns streamed tool calls in 0.69s. **This is the happy path** — fastest, no key, no per-token cost, and the only no-key kind that streams *and* calls tools.
+Measured: `gpt-oss-20b` on LM Studio streams first words in **1.02s** and returns streamed tool calls in 0.69s. **This is the happy path** — fastest, no key, no per-token cost, and the only no-key kind that streams *and* calls tools, which also makes it the only no-key kind that supports voice.
 
 - [ ] **Step 1: Write the failing test**
 

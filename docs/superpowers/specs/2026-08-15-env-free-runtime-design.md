@@ -59,7 +59,7 @@ piece disables exactly one capability and nothing else:
 
 | Missing | What stops | What still works |
 |---|---|---|
-| LiveKit connector | the voice **room** (LiveKit transport) | text chat, boards, documents, diagrams, agents, dispatch |
+| LiveKit connector | **meetings and Discord voice only** — `publishPcm`. Single-user voice is unaffected: TTS reaches the browser as an `audio` frame over the WebSocket | text chat, boards, documents, diagrams, agents, dispatch, **and local voice** |
 | brain engine | Anderson replies | everything not requiring the brain |
 | deepgram / elevenlabs | STT / TTS | text chat — the existing both-slots invariant already covers this |
 | api key + no CLI + no local server | agent work | reading and organising what exists |
