@@ -412,15 +412,30 @@ engine that can be pointed at local models — crew, not brain.
 
 Two things follow, and both belong in the UI:
 
-**On the CLI path, the model barely matters.** haiku and sonnet land within a
-second of each other because roughly six seconds of CLI startup dominates the
-turn. Offering a model picker there implies a tuning knob that does not exist —
-someone chasing speed must change *path*, not model.
+**Default to the frontier model on every path.** This is a product stance, and
+the measurements support it. Attaching the brain's tools (the realistic case):
 
-**On the API path, the model is the whole story.** `flash-lite` is twice as fast
-as `flash` and about thirteen times faster than any CLI. That is where a picker
-earns its place, and where the default belongs: `flash-lite` for latency,
-`flash` when the brain needs to be sharper.
+| Path | Frontier | Fast tier | What frontier costs |
+|---|---|---|---|
+| CLI subscription | `opus` **6.80s** | `haiku` 6.54s | **+0.26s — effectively free** |
+| Gemini API | `gemini-3.1-pro-preview` **3.05s** | `flash-lite` 0.56s | +2.5s |
+| Local | larger models untested | `gpt-oss-20b` 1.02s | — |
+
+**On the CLI path the model barely matters** — opus, sonnet and haiku land within
+0.9s of each other, because ~6s of CLI startup dominates the turn. Defaulting to
+a small model there trades a far better brain for nothing measurable, so frontier
+is simply correct. It also means a model picker on that path implies a tuning
+knob that does not exist: someone chasing speed must change *path*, not model.
+
+**On the API path frontier costs about 2.5s**, which is still conversational. The
+fast tiers stay available for anyone who wants them — `flash-lite` is genuinely
+quick — but they are a deliberate trade down, not the default. A brain that picks
+the wrong agent or writes a bad schema costs far more than two seconds.
+
+Note that tools change the numbers: `flash-latest` measured 0.98–1.32s without
+tools and 4.83s with them. Benchmarks taken without the brain's tool set overstate
+how fast the brain will actually feel, so every figure in this table has tools
+attached.
 
 One caveat worth surfacing rather than hiding: the *first* call to
 `gemini-flash-latest` took 7.68s, against 0.98–1.32s on three repeats. Cold
