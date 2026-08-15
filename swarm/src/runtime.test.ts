@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { WorkerPool } from "./remote-runtime.js";
-import { createRuntime, TmuxRuntime } from "./runtime.js";
+import { createRuntime, DockerRuntime, TmuxRuntime } from "./runtime.js";
 
 test("TmuxRuntime.launch: env vars are exported inside the wrapped command, not interpolated into it", async () => {
   const runtime = new TmuxRuntime();
@@ -22,6 +22,29 @@ test("TmuxRuntime.launch: env vars are exported inside the wrapped command, not 
     await runtime.kill(sessionName).catch(() => {});
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+/**
+ * The image's /entrypoint.sh already runs the command inside a tmux session
+ * named "main". Wrapping it in a second `tmux new-session -d -s main` here
+ * collides with that session and every docker task exits 1 in ~500ms — a
+ * failure invisible to any test that stops at "launch resolved".
+ */
+test("DockerRuntime.launch: passes the command raw — the entrypoint owns the tmux wrapping", async () => {
+  const runtime = new DockerRuntime({ image: "smith-agent:latest" });
+  let captured: string[] = [];
+  (runtime as unknown as { docker: (args: string[]) => Promise<unknown> }).docker = async (args) => {
+    captured = args;
+    return { stdout: "", stderr: "" };
+  };
+
+  await runtime.launch("task-abc", "claude --print 'hi there'", "/repo");
+
+  assert.deepEqual(captured.slice(-3), ["/bin/bash", "-c", "claude --print 'hi there'"]);
+  assert.ok(
+    !captured.some((a) => a.includes("new-session")),
+    `launch must not wrap in tmux itself; got: ${captured.join(" ")}`,
+  );
 });
 
 test("createRuntime: remote without a WorkerPool throws; with one, returns the RemoteRuntime adapter", () => {

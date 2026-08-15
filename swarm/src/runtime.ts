@@ -340,15 +340,20 @@ export class DockerRuntime implements RuntimeAdapter {
       }
     }
 
-    // Image and command
-    // The entrypoint wraps the command in tmux so sub-agents can
-    // spawn tmux sessions inside the same container
-    args.push(
-      image,
-      "/bin/bash",
-      "-c",
-      `tmux new-session -d -s main '${command.replace(/'/g, "'\\''")}' && tmux wait-for main-done`,
-    );
+    // Image and command.
+    //
+    // Pass the command RAW — /entrypoint.sh already runs it inside a tmux
+    // session named "main", blocks on `tmux wait-for main-done`, and
+    // propagates the inner exit code as the container's. Wrapping it in a
+    // second `tmux new-session -d -s main` here made the inner one collide
+    // with the session the entrypoint had already created ("duplicate
+    // session: main"), so every docker task died with exit 1 in ~500ms.
+    //
+    // The entrypoint reassembles argv with `printf '%q '`, so the command
+    // must arrive as the three args `/bin/bash -c <command>`: a single
+    // pre-joined arg would be quoted into one word and exec'd as a literal
+    // filename (exit 127).
+    args.push(image, "/bin/bash", "-c", command);
 
     await this.docker(args);
   }
