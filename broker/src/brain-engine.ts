@@ -26,7 +26,11 @@ export type { BrainEngine };
 
 export interface BrainEngineDeps {
   /** Operator's stored setting (swarm's `/me/brain-engine`), re-read on every
-   * turn by resolvingStreamFactory so a change needs no broker restart. */
+   * turn by resolvingStreamFactory so a change needs no broker restart.
+   * resolveBrainFactory wraps every call to this in its own
+   * `.catch(() => null)`, so a rejecting implementation degrades to the same
+   * "nothing stored" path as a clean null return — this resolver defends
+   * itself, so a caller is never required to remember to catch it too. */
   getStoredEngine(): Promise<BrainEngine | null>;
   /** cli id -> one-shot invocation argv, or undefined when that cli can't serve as a brain. */
   argvFor(cli: string): string[] | undefined;
@@ -40,6 +44,29 @@ export interface BrainEngineDeps {
   /** Builds the Anthropic SDK StreamFactory. A thunk so it is only constructed
    * when the fallback actually needs it, not on every resolution. */
   anthropicFactory(): StreamFactory;
+}
+
+/**
+ * The brain has a requirement research does not: the cli must actually
+ * ENFORCE `--json-schema` for tool calls, not merely accept the flag (spec
+ * 2026-08-15-brain-engine-selection, "Out of scope": "agy is not offered as
+ * a brain yet: it accepts --json-schema but did not enforce it";
+ * codex/opencode/copilot were never claimed to support it either). Only
+ * claude is verified.
+ *
+ * Wrapping an existing argvFor table (e.g. main.ts's research one), rather
+ * than passing it straight through as the brain's own argvFor, is the point:
+ * reusing research's "every listed cli works" table unmodified is the exact
+ * mistake this closes — a cli research can run is not automatically one the
+ * brain can.
+ */
+const BRAIN_CLI_ALLOWLIST = new Set(["claude"]);
+
+/** See BRAIN_CLI_ALLOWLIST. Callers not in the allowlist resolve as if
+ * argvFor didn't know them — resolveBrainFactory's existing cli branch
+ * already falls through to the terminal fallback for that case. */
+export function brainArgvFor(argvFor: (cli: string) => string[] | undefined): (cli: string) => string[] | undefined {
+  return (cli) => (BRAIN_CLI_ALLOWLIST.has(cli) ? argvFor(cli) : undefined);
 }
 
 /**
@@ -68,7 +95,7 @@ function withModel(factory: StreamFactory, model: string | undefined): StreamFac
  * no-key-first order and why the model has to travel two different ways.
  */
 export async function resolveBrainFactory(deps: BrainEngineDeps): Promise<StreamFactory> {
-  const stored = await deps.getStoredEngine();
+  const stored = await deps.getStoredEngine().catch(() => null);
 
   if (stored?.kind === "local") {
     // LocalBrainDeps.model is optional (swarm only requires baseUrl for this

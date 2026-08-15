@@ -214,6 +214,35 @@ export async function* parseSse(body: ReadableStream<Uint8Array>): AsyncGenerato
 
 export class LocalBrainError extends Error {}
 
+/**
+ * Bounds a single request. Without this, a local server that accepts the
+ * connection and never responds never rejects — brain.ts's caller (broker.ts's
+ * serialized turn queue) catches only rejections, so a hung server would queue
+ * every later turn behind this one forever, permanently muting Anderson in a
+ * way fixable only by the restart per-turn resolution exists to eliminate.
+ *
+ * Measured local turns on dev hardware (gpt-oss-20b on LM Studio, see the file
+ * header) run 5-11s; a large model on a cold load can push past 30s. 10s (the
+ * house idiom for a bounded read, e.g. swarm-client.ts's apiAgentOneShot) is
+ * too short here and would fire on legitimate slow-but-alive generations.
+ * research.ts's CLI kind waits up to 120s before SIGKILL for the same reason
+ * (a real model doing real work); matching that order of magnitude covers the
+ * slow-cold-load case without reopening the wedge this constant closes.
+ */
+const BRAIN_REQUEST_TIMEOUT_MS = 120_000;
+
+/**
+ * AbortSignal.timeout()'s firing surfaces as a `TimeoutError` DOMException
+ * (or, depending on where fetch/undici observes the abort, a generic
+ * `AbortError`) whose message is the unhelpful "The operation was aborted."
+ * Recognize either by name so the caller can throw something that names the
+ * URL and the timeout instead.
+ */
+function isAbortTimeout(err: unknown): boolean {
+  const name = (err as { name?: string } | undefined)?.name;
+  return name === "TimeoutError" || name === "AbortError";
+}
+
 export interface LocalBrainDeps {
   baseUrl: string;
   /**
@@ -241,6 +270,8 @@ export interface LocalBrainDeps {
   model?: string;
   /** Defaults to global fetch; injected in tests. */
   fetchImpl?: FetchLike;
+  /** Overridable for tests; production default is BRAIN_REQUEST_TIMEOUT_MS. */
+  timeoutMs?: number;
 }
 
 interface ToolCallAccumulator {
@@ -261,6 +292,7 @@ interface ToolCallAccumulator {
 export function createLocalStreamFactory(deps: LocalBrainDeps) {
   const doFetch: FetchLike = deps.fetchImpl ?? ((u, i) => fetch(u, i));
   const url = `${deps.baseUrl}/v1/chat/completions`;
+  const timeoutMs = deps.timeoutMs ?? BRAIN_REQUEST_TIMEOUT_MS;
 
   return (params: AnthropicParams) => {
     const listeners: Array<(delta: string) => void> = [];
@@ -277,8 +309,12 @@ export function createLocalStreamFactory(deps: LocalBrainDeps) {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify(toOpenAiRequest(params, deps.model)),
+            signal: AbortSignal.timeout(timeoutMs),
           });
         } catch (err) {
+          if (isAbortTimeout(err)) {
+            throw new LocalBrainError(`Local brain ${url} timed out after ${timeoutMs}ms`);
+          }
           throw new LocalBrainError(
             `Local brain request to ${url} failed: ${err instanceof Error ? err.message : String(err)}`,
           );

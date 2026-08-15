@@ -235,6 +235,31 @@ test("no request is made until finalMessage() is awaited", async () => {
   assert.deepEqual(deltas, ["hi"], "listener attached before the request still sees every delta");
 });
 
+test("a server that accepts the connection and never responds rejects via the timeout, instead of hanging forever", async () => {
+  // I2: the identical gap local-brain.ts has, closed the same way. timeoutMs
+  // is overridable (deps.timeoutMs) so this doesn't have to wait out the real
+  // 120s production default to prove it fires.
+  const hangingFetch: FetchLike = (_url, init) =>
+    new Promise<Response>((_resolve, reject) => {
+      init.signal?.addEventListener("abort", () => {
+        reject(new DOMException("The operation was aborted.", "TimeoutError"));
+      });
+    });
+
+  const stream = createGeminiStreamFactory({ apiKey: "k", fetchImpl: hangingFetch, timeoutMs: 20 })({
+    model: "m",
+    max_tokens: 10,
+    system: "s",
+    messages: [],
+    tools: [],
+  });
+
+  await assert.rejects(
+    () => stream.finalMessage(),
+    (e: Error) => e instanceof GeminiError && /timed out after 20ms/.test(e.message),
+  );
+});
+
 test("a non-200 surfaces the API's own message instead of a silent empty turn", async () => {
   const fetchImpl: FetchLike = async () =>
     new Response(JSON.stringify({ error: { message: "API key not valid", status: "INVALID_ARGUMENT" } }), {

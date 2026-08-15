@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createLocalStreamFactory } from "./local-brain.ts";
+import { createLocalStreamFactory, LocalBrainError } from "./local-brain.ts";
 
 const enc = new TextEncoder();
 function sse(frames: unknown[]): Response {
@@ -77,6 +77,36 @@ test("no deps.model: the request body omits `model` entirely, never falling back
 
   assert.ok(sentBody);
   assert.equal("model" in (sentBody ?? {}), false, `expected no "model" key, got ${JSON.stringify(sentBody)}`);
+});
+
+test("a server that accepts the connection and never responds rejects via the timeout, instead of hanging forever", async () => {
+  // I2: without an AbortSignal, a server that connects but never answers
+  // never rejects — brain.ts's caller (broker.ts's serialized turn queue)
+  // catches only rejections, so this would otherwise wedge every later turn
+  // behind this one, permanently, restart-only. timeoutMs is overridable
+  // (deps.timeoutMs) precisely so this doesn't have to wait out the real
+  // 120s production default to prove it fires.
+  const hangingFetch = (_url: string, init: RequestInit) =>
+    new Promise<Response>((_resolve, reject) => {
+      init.signal?.addEventListener("abort", () => {
+        reject(new DOMException("The operation was aborted.", "TimeoutError"));
+      });
+    });
+  const stream = createLocalStreamFactory({
+    baseUrl: "http://127.0.0.1:4321",
+    fetchImpl: hangingFetch,
+    timeoutMs: 20,
+  })({
+    model: "m",
+    max_tokens: 10,
+    system: "s",
+    messages: [],
+    tools: [],
+  });
+  await assert.rejects(
+    () => stream.finalMessage(),
+    (e: Error) => e instanceof LocalBrainError && /4321/.test(e.message) && /timed out after 20ms/.test(e.message),
+  );
 });
 
 test("a dead server fails with a message naming the url, not a silent empty turn", async () => {

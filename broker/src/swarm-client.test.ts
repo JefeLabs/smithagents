@@ -408,6 +408,13 @@ test("getBrainEngine: a null body (nothing stored) returns null, not an error", 
   assert.equal(await client.getBrainEngine(), null);
 });
 
+test("getBrainEngine: the request carries a bounded AbortSignal — this runs on every brain turn, so a hung swarm must reject, not hang", async () => {
+  const { calls, fetch } = fakeFetch({ "/me/brain-engine": null });
+  const client = new SwarmClient({ baseUrl: "http://s", fetchImpl: fetch });
+  await client.getBrainEngine();
+  assert.ok(calls[0]!.init!.signal instanceof AbortSignal, "expected an AbortSignal on the request init");
+});
+
 test("apiAgentOneShot: reply on 200, notApiAgent on 404, typed throw otherwise", async () => {
   const { calls, fetch } = fakeFetch({ "/api-agents/sage/turn": { reply: "I should lead." } });
   const c = new SwarmClient({ baseUrl: "http://x", token: "tok", fetchImpl: fetch });

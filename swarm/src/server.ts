@@ -3694,6 +3694,16 @@ export function redactResearchEngine(
 
 const API_BRAIN_PROVIDERS = new Set(["anthropic", "gemini"]);
 
+/**
+ * A brain cli must ENFORCE `--json-schema` for tool calls, not merely accept
+ * the flag — a stricter bar than research's ENGINES table promises (spec
+ * 2026-08-15-brain-engine-selection, "Out of scope": "agy is not offered as
+ * a brain yet: it accepts --json-schema but did not enforce it";
+ * codex/opencode/copilot were never claimed to support it either). Only
+ * claude is verified, so only claude may be saved as a cli brain.
+ */
+const BRAIN_CLI_ALLOWLIST = new Set(["claude"]);
+
 /** PUT /me/brain-engine body → validated setting. `null` clears it. Mirrors buildResearchEngineUpdate. */
 export function buildBrainEngineUpdate(
   body: unknown,
@@ -3706,6 +3716,9 @@ export function buildBrainEngineUpdate(
   if (b.kind === "cli") {
     const engine = engines.find((e) => e.cli === b.provider);
     if (!engine || engine.kind === "api") return { error: `Unknown engine: ${String(b.provider)}` };
+    if (!BRAIN_CLI_ALLOWLIST.has(engine.cli)) {
+      return { error: `${engine.label} is not supported as a brain yet — only Claude Code enforces --json-schema` };
+    }
     const reason = gate(engine.cli);
     if (reason) return { error: reason };
     return { brainEngine: { kind: "cli", provider: engine.cli, ...(b.model ? { model: b.model } : {}) } };

@@ -638,6 +638,19 @@ test("buildBrainEngineUpdate: null clears, cli is gated, local needs a baseUrl",
   });
 });
 
+test("buildBrainEngineUpdate: only claude may be saved as a cli brain — the rest accept --json-schema without enforcing it", () => {
+  const ok = () => "";
+  assert.deepEqual(buildBrainEngineUpdate({ kind: "cli", provider: "claude" }, ENGINES, ok), {
+    brainEngine: { kind: "cli", provider: "claude" },
+  });
+
+  for (const provider of ["codex", "opencode", "copilot", "agy"]) {
+    const r = buildBrainEngineUpdate({ kind: "cli", provider }, ENGINES, ok);
+    assert.ok("error" in r, `expected ${provider} to be refused as a brain`);
+    assert.match((r as { error: string }).error, /claude|--json-schema/i);
+  }
+});
+
 test("redactBrainEngine hides a cli whose gate now fails", () => {
   const u = { id: "me", name: "You", brainEngine: { kind: "cli" as const, provider: "claude" } };
   assert.deepEqual(

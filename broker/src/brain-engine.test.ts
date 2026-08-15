@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { StreamFactory } from "./brain.ts";
-import { type BrainEngine, resolveBrainFactory, resolvingStreamFactory } from "./brain-engine.ts";
+import { type BrainEngine, brainArgvFor, resolveBrainFactory, resolvingStreamFactory } from "./brain-engine.ts";
 import type { Spawner } from "./research.ts";
 
 const PARAMS: Parameters<StreamFactory>[0] = {
@@ -289,6 +289,53 @@ test("no stored setting, envProvider=gemini, no envModel: gets gemini's own defa
 
   assert.ok(!seenUrls[0]?.includes(PARAMS.model), `must not carry BrokerBrain's Claude default, got ${seenUrls[0]}`);
   assert.ok(seenUrls[0]?.includes("gemini"), `expected a gemini model in the URL, got ${seenUrls[0]}`);
+});
+
+test("a rejecting getStoredEngine degrades to the same fallback as a clean null — the resolver defends itself", async () => {
+  // I4: the JSDoc-only "this must never throw" contract is now enforced by
+  // resolveBrainFactory's own .catch, not merely documented. main.ts already
+  // wraps its own getStoredEngine, so this proves the SECOND, independent
+  // layer — a caller that forgot to catch must not kill the turn either.
+  const seen: string[] = [];
+  await resolveBrainFactory({
+    getStoredEngine: async () => {
+      throw new Error("swarm unreachable");
+    },
+    argvFor: () => undefined,
+    spawn: dummySpawn,
+    geminiApiKey: undefined,
+    anthropicFactory: () => {
+      seen.push("anthropic");
+      return dummyFactory;
+    },
+  });
+  assert.deepEqual(seen, ["anthropic"]);
+});
+
+test("brainArgvFor: only claude passes through; every other cli resolves as unknown to argvFor", () => {
+  const underlying = (cli: string): string[] | undefined => (cli === "not-real" ? undefined : [cli, "--print"]);
+  const wrapped = brainArgvFor(underlying);
+
+  assert.deepEqual(wrapped("claude"), ["claude", "--print"]);
+  for (const cli of ["codex", "opencode", "copilot", "agy"]) {
+    assert.equal(wrapped(cli), undefined, `${cli} accepts --json-schema without enforcing it — must not resolve`);
+  }
+});
+
+test("a stored cli brainArgvFor refuses (e.g. agy) falls through to the fallback, same as an argv the broker can't invoke at all", async () => {
+  const seen: string[] = [];
+  const underlying = (cli: string): string[] | undefined => [cli, "--print"]; // would resolve EVERY cli if not wrapped
+  await resolveBrainFactory({
+    getStoredEngine: async () => ({ kind: "cli", provider: "agy" }),
+    argvFor: brainArgvFor(underlying),
+    spawn: dummySpawn,
+    geminiApiKey: undefined,
+    anthropicFactory: () => {
+      seen.push("anthropic");
+      return dummyFactory;
+    },
+  });
+  assert.deepEqual(seen, ["anthropic"]);
 });
 
 test("stored api/gemini with no model: gets gemini's own default, not BrokerBrain's Claude default", async () => {

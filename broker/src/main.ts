@@ -15,7 +15,7 @@ import { resolveAvatarEngine } from "./avatar-engine.ts";
 import { AvatarGenerator, type AvatarRequest } from "./avatar-generator.ts";
 import { loadBlueprints } from "./blueprints.ts";
 import { BrokerBrain, type StreamFactory } from "./brain.ts";
-import { resolvingStreamFactory } from "./brain-engine.ts";
+import { brainArgvFor, resolvingStreamFactory } from "./brain-engine.ts";
 import type { RosterState, TurnOrigin, UiRoster } from "./broker.ts";
 import { Broker, TTS_SAMPLE_RATE } from "./broker.ts";
 import { AdapterHub } from "./channels.ts";
@@ -123,7 +123,11 @@ const researchArgvFor = (cli: string): string[] | undefined => RESEARCH_ARGV[cli
 // (research-engine.ts) — this is the brain's equivalent seam.
 const streamFactory: StreamFactory = resolvingStreamFactory({
   getStoredEngine: () => swarm.getBrainEngine().catch(() => null),
-  argvFor: researchArgvFor,
+  // NOT researchArgvFor directly — the brain requires a cli that ENFORCES
+  // --json-schema, a stricter bar than research needs. See brain-engine.ts's
+  // BRAIN_CLI_ALLOWLIST for why reusing research's table unmodified is the
+  // mistake this wrapper avoids.
+  argvFor: brainArgvFor(researchArgvFor),
   spawn: defaultSpawner,
   envProvider: config.brain.provider,
   envModel: config.brain.model,
@@ -133,6 +137,16 @@ const streamFactory: StreamFactory = resolvingStreamFactory({
 console.log(
   `[broker] brain fallback provider: ${config.brain.provider}${config.brain.model ? ` (${config.brain.model})` : ""}`,
 );
+// Degrade, never wall (docs/superpowers/specs/2026-08-15-env-free-runtime-design.md):
+// boot must succeed either way, but a gemini fallback with no key mutes
+// Anderson on every turn that reaches it with no explanation anywhere. Named
+// loudly here instead, since nothing else in the app tells this store — a
+// crash used to do that; a crash is no longer the fix.
+if (config.brain.provider === "gemini" && !config.geminiApiKey) {
+  console.warn(
+    "[broker] WARNING: brain fallback provider is gemini (SMITH_BRAIN_PROVIDER=gemini) but GEMINI_API_KEY is unset — every turn that falls through to this fallback will fail instead of replying, until GEMINI_API_KEY is set or an operator picks a brain engine in Settings",
+  );
+}
 
 /**
  * Research engine, resolved per turn from the operator's setting so a bad

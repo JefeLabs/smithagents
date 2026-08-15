@@ -635,8 +635,19 @@ export class SwarmClient {
     return this.http("PUT", "/me/research-engine", body);
   }
 
+  /**
+   * Bounded at 10s — same idiom and reason as apiAgentOneShot above. Unlike
+   * every other `http()` caller in this class, this one runs on EVERY brain
+   * turn (brain-engine.ts's resolvingStreamFactory re-reads it fresh per
+   * turn, by design, so a change needs no restart) — including every install
+   * that never touched brain settings. A swarm that accepts the connection
+   * and never answers must not wedge every later conversational turn behind
+   * this one read; main.ts's `.catch(() => null)` around this call turns
+   * either a timeout or any other failure into "nothing stored," the same
+   * degrade-not-wall behavior as a clean null response.
+   */
   async getBrainEngine(): Promise<BrainEngine | null> {
-    return (await this.http("GET", "/me/brain-engine")) as unknown as BrainEngine | null;
+    return (await this.http("GET", "/me/brain-engine", undefined, 10_000)) as unknown as BrainEngine | null;
   }
 
   async saveMyVoice(body: unknown): Promise<Record<string, unknown>> {
@@ -691,7 +702,22 @@ export class SwarmClient {
     return { status: res.status, payload: await res.json().catch(() => ({})) };
   }
 
-  private async http(method: string, path: string, body?: unknown): Promise<Record<string, unknown>> {
+  /**
+   * `timeoutMs` is optional and per-call, not a blanket default: most of this
+   * class's 50+ call sites are fine waiting on the swarm's own natural
+   * response time (task submission returns immediately; long-running work is
+   * polled or streamed over `/ws`, never awaited here), and several — the
+   * Atlassian/GitHub/connector `verify*` routes — legitimately call out to a
+   * third-party API that can take longer than any one bound would fit for
+   * everyone. Only getBrainEngine (below) sets one, because that call runs on
+   * every brain turn rather than in response to a user action.
+   */
+  private async http(
+    method: string,
+    path: string,
+    body?: unknown,
+    timeoutMs?: number,
+  ): Promise<Record<string, unknown>> {
     // Only set content-type when a body actually follows: fastify's default
     // JSON body parser 400s ("FST_ERR_CTP_EMPTY_JSON_BODY") on a
     // Content-Type: application/json request with no body, which is exactly
@@ -704,6 +730,7 @@ export class SwarmClient {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
+      ...(timeoutMs !== undefined ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
     });
     if (!res.ok) {
       // Surface swarm's own reason. Validation errors ("Invalid model id: …")

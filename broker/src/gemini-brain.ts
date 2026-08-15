@@ -260,10 +260,34 @@ export async function* parseSse(body: ReadableStream<Uint8Array>): AsyncGenerato
 
 export class GeminiError extends Error {}
 
+/**
+ * Bounds a single request — the identical gap local-brain.ts closes, and for
+ * the identical reason: a request that hangs instead of rejecting would queue
+ * every later turn behind it forever (brain.ts's caller only catches
+ * rejections). Same value and justification as local-brain.ts's
+ * BRAIN_REQUEST_TIMEOUT_MS: matches research.ts's 120s CLI-kill order of
+ * magnitude, generous enough for a cold-loaded model's first response.
+ */
+const BRAIN_REQUEST_TIMEOUT_MS = 120_000;
+
+/**
+ * AbortSignal.timeout()'s firing surfaces as a `TimeoutError` DOMException
+ * (or, depending on where fetch/undici observes the abort, a generic
+ * `AbortError`) whose message is the unhelpful "The operation was aborted."
+ * Recognize either by name so the caller can throw something that names the
+ * URL and the timeout instead.
+ */
+function isAbortTimeout(err: unknown): boolean {
+  const name = (err as { name?: string } | undefined)?.name;
+  return name === "TimeoutError" || name === "AbortError";
+}
+
 export interface GeminiDeps {
   apiKey: string;
   /** Defaults to global fetch; injected in tests. */
   fetchImpl?: FetchLike;
+  /** Overridable for tests; production default is BRAIN_REQUEST_TIMEOUT_MS. */
+  timeoutMs?: number;
 }
 
 /**
@@ -276,6 +300,7 @@ export interface GeminiDeps {
  */
 export function createGeminiStreamFactory(deps: GeminiDeps) {
   const doFetch: FetchLike = deps.fetchImpl ?? ((u, i) => fetch(u, i));
+  const timeoutMs = deps.timeoutMs ?? BRAIN_REQUEST_TIMEOUT_MS;
 
   return (params: AnthropicParams) => {
     const listeners: Array<(delta: string) => void> = [];
@@ -287,11 +312,20 @@ export function createGeminiStreamFactory(deps: GeminiDeps) {
 
       async finalMessage() {
         const url = `${ENDPOINT}/${params.model}:streamGenerateContent?alt=sse`;
-        const res = await doFetch(url, {
-          method: "POST",
-          headers: { "x-goog-api-key": deps.apiKey, "content-type": "application/json" },
-          body: JSON.stringify(toGeminiRequest(params)),
-        });
+        let res: Response;
+        try {
+          res = await doFetch(url, {
+            method: "POST",
+            headers: { "x-goog-api-key": deps.apiKey, "content-type": "application/json" },
+            body: JSON.stringify(toGeminiRequest(params)),
+            signal: AbortSignal.timeout(timeoutMs),
+          });
+        } catch (err) {
+          if (isAbortTimeout(err)) {
+            throw new GeminiError(`Gemini ${url} timed out after ${timeoutMs}ms`);
+          }
+          throw new GeminiError(`Gemini request to ${url} failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
 
         if (!res.ok || !res.body) {
           const detail = await res.text().catch(() => "");
