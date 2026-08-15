@@ -2169,6 +2169,29 @@ export class OrchestratorServer {
       return redactResearchEngine(merged, gate);
     });
 
+    this.app.get("/me/brain-engine", async () => {
+      const users = await loadUsersFromDir(resolve(process.cwd(), ".smith/users"));
+      const file = await loadCliToolsFile(resolve(process.cwd(), ".smith/cli-tools.json"));
+      return redactBrainEngine(resolveCurrentUser(users), (cli) => gateReason(file, cli));
+    });
+
+    this.app.put("/me/brain-engine", async (req, reply) => {
+      const dir = resolve(process.cwd(), ".smith/users");
+      const users = await loadUsersFromDir(dir);
+      const existing = resolveCurrentUser(users) ?? { id: "me", name: "You", default: true, connectors: [] };
+      const file = await loadCliToolsFile(resolve(process.cwd(), ".smith/cli-tools.json"));
+      const gate = (cli: string) => gateReason(file, cli);
+      const r = buildBrainEngineUpdate(req.body, ENGINES, gate);
+      if ("error" in r) return reply.status(400).send({ error: r.error });
+      const merged: User = { ...existing, brainEngine: r.brainEngine };
+      try {
+        await saveUser(dir, merged);
+      } catch (err) {
+        return reply.status(400).send({ error: String((err as Error).message) });
+      }
+      return redactBrainEngine(merged, gate);
+    });
+
     // Internal-only — returns RAW voice keys, like /workspaces/:name/channels/discord-token
     // above: never proxied through broker's browser-facing text-channel.ts surface.
     // broker's SwarmClient calls it server-to-server on the same loopback-bound,

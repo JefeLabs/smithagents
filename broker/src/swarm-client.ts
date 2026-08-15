@@ -13,6 +13,14 @@ export interface SpeechProfile {
   rate?: number;
 }
 
+/** Mirrors swarm's BrainEngine (swarm/src/users.ts) — not imported, per this file's header. */
+export interface BrainEngine {
+  kind: "cli" | "local" | "api";
+  provider: string;
+  model?: string;
+  baseUrl?: string;
+}
+
 export interface ConnectorFieldDef {
   key: string;
   label: string;
@@ -625,6 +633,10 @@ export class SwarmClient {
 
   async saveResearchEngine(body: unknown): Promise<Record<string, unknown>> {
     return this.http("PUT", "/me/research-engine", body);
+  }
+
+  async getBrainEngine(): Promise<BrainEngine | null> {
+    return (await this.http("GET", "/me/brain-engine")) as unknown as BrainEngine | null;
   }
 
   async saveMyVoice(body: unknown): Promise<Record<string, unknown>> {
