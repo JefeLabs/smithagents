@@ -412,27 +412,32 @@ engine that can be pointed at local models — crew, not brain.
 
 Two things follow, and both belong in the UI:
 
-**Inline mode halves the floor but not the variance.** `claude` supports
-`--input-format stream-json` ("realtime streaming input"), so the process can be
-kept alive and fed turns over stdin instead of paying startup each time. Measured
-across one process:
+**Inline mode makes the CLI conversational.** `claude` supports
+`--input-format stream-json` ("realtime streaming input"), so the process is held
+open and fed turns over stdin instead of paying startup each time. Measured on an
+otherwise-idle machine, one process, five warm turns:
 
-| Turn | First words | |
-|---|---|---|
-| 1, cold (startup paid) | 5.72s | "Hello — Anderson here, ready when you are." |
-| 2, warm | **13.66s** | answered by *reading the repo* — cited that day's Docker work |
-| 3, warm | **2.99s** | short conversational reply |
+| | Latency |
+|---|---|
+| cold turn (startup paid once) | 5.77s |
+| warm turns | min **2.34s** · **median 2.71s** · max 4.25s (n=5) |
 
-Startup is roughly half the cold-turn cost, and a warm conversational turn lands
-near 3s. But turn 2 is the important one: the CLI is an **agentic tool, not a
-chat endpoint**, and it may go read files before answering. For a chief of staff
-that is genuinely attractive — it knows the repo without being told. For voice it
-is the worst kind of unpredictable: 3s to 14s depending on a decision the model
-makes per turn, with no way to know in advance which kind of turn this is.
+A median of 2.71s is conversational, and comparable to `gemini-3.1-pro-preview`
+at 3.05s. **Any brain on the CLI path should therefore run inline**, not spawn a
+process per turn — the difference is roughly 6s versus 2.7s, for one architectural
+choice.
 
-So inline mode improves the CLI path without rescuing it. It stays the
-zero-friction default and remains unsuitable for voice, which is what the UI
-copy says.
+An earlier measurement of this same setup produced a 13.66s turn and was written
+up as unpredictable 3–14s variance. That was n=1 on a loaded machine, and it did
+not replicate. The prompt in question ("today's priority") invited the CLI to go
+read the repo, which it did — real behaviour, but prompt-triggered rather than a
+constant tax. Worth keeping in mind as a capability: a CLI brain can consult the
+repo before answering, which no chat endpoint can.
+
+**Speed was never the CLI's real limitation.** The structural one stands: in
+`stream-json` mode the CLI streams speech but returns no structured tool calls,
+and `--json-schema` returns tool calls but suppresses streaming entirely. A voice
+brain needs both in the same turn, and only the API and local paths provide that.
 
 **Default to the frontier model on every path.** This is a product stance, and
 the measurements support it. Attaching the brain's tools (the realistic case):
