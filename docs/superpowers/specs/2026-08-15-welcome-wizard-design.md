@@ -316,7 +316,7 @@ able to reproduce.
 | Local or hosted | Local | UI only | ✓ |
 | Subscriptions | claude ✓, agy ✓ | `GET /cli-tools`, `POST /cli-tools/refresh` | ✓ |
 | Paste a key instead | anthropic · google · openai | `saveAndVerifyKey`, `verifyStoredKey` | ✓ |
-| **Configure Anderson** | **Gemini key** | **none** | **✗** |
+| **Configure Anderson** | CLI default (key = optional upgrade) | **none** | **✗** |
 | Local workspace | coding + version control | `POST /workspaces`, `POST /me/connectors` | ✓ |
 | Voice mode | deepgram + elevenlabs | `PUT /me/voice`, `POST /me/connectors` | ✓ |
 | Integrations | atlassian, github | `POST /me/connectors` | ✓ |
@@ -324,35 +324,64 @@ able to reproduce.
 
 **Exactly one step has nothing behind it, and the wizard cannot ship without it.**
 
-### The blocker: the brain provider is boot-time configuration
+### Zero-friction default: the brain runs on a CLI, no key required
 
-`SMITH_BRAIN_PROVIDER` is read once, at boot, in `config.ts:74`, and consumed at
-`main.ts:110`. There is no route, no per-user storage, and no way to change it
-without editing `.env` and restarting the broker — which is exactly how this
-install was configured by hand while designing this spec. A wizard step cannot
-edit a dotfile and restart a service.
+Installation must not require obtaining anything. The subscriptions step has
+already validated a working CLI, so **Configure Anderson defaults to that CLI** —
+nothing new to fetch, no `.env`, no restart, no API key.
 
-**The fix is already precedented in this codebase.** The *research* engine solved
-the identical problem: `User.researchEngine?: {cli, model}` persists per user,
-`PUT /me/research-engine` sets it, and it is resolved per call rather than at
-boot. The brain wants the same treatment:
+This corrects an earlier conclusion in this project. The brain was put on an SDK
+(main @ `d943132`) on the reasoning that a CLI cannot accept caller-defined tool
+schemas without MCP inverting control. That is **false for these CLIs**: both
+`claude` and `agy` expose `--json-schema`, and a caller-supplied brain schema
+returns structured tool calls while execution stays in the broker. Measured
+2026-08-15 with a `{speech, tool_calls[]}` schema:
+
+| Engine | Behaviour | Latency |
+|---|---|---|
+| `claude -p --json-schema` | correct shape, `delegate` call and all | **26.5s** |
+| `agy -p --json-schema` | did **not** enforce — answered *about* the schema | 18.5s |
+| Gemini API (`gemini-brain.ts`) | streaming, native function calls | **0.9s** / 3.3s tool round |
+
+The real constraint is latency, not capability — roughly 25×. Tolerable for typed
+chat, unusable for voice, where nobody waits 26 seconds after saying hello.
+
+So the default is chosen for friction and the upgrade for speed:
+
+```
+  Anderson is ready — running on your Claude subscription.
+  Replies take ~25s.  Add an API key any time for near-instant
+  replies and voice mode.                        [ Settings ]
+```
+
+`agy`'s flag needs its invocation worked out before it is offered as a brain; it
+accepts the flag but did not enforce the schema in this form.
+
+### The prerequisite this creates
+
+The default above is only reachable if the brain engine is *settable*.
+`SMITH_BRAIN_PROVIDER` is read once at boot (`config.ts:74`, consumed
+`main.ts:110`) with no route and no per-user storage — configuring Anderson today
+means editing `.env` and restarting the broker, which is how this install was set
+up by hand while writing this spec. A wizard cannot do that.
+
+**The fix is precedented.** The research engine solved the identical problem:
+`User.researchEngine?: {cli, model}` persists per user, `PUT /me/research-engine`
+sets it, and it resolves per call rather than at boot. The brain wants the same:
 
 - `User.brainEngine?: {kind: "cli" | "key", provider, model}` on the user record
-- `PUT /me/brain-engine` to set it, mirroring the research route
-- the broker resolving the brain engine **per turn**, not at process start, so a
-  change takes effect without a restart
-- `SMITH_BRAIN_PROVIDER` demoted to a fallback for when the user record is silent,
-  preserving today's behaviour for anyone who has set it
+- `PUT /me/brain-engine`, mirroring the research route
+- the broker resolving the brain **per turn**, so a change needs no restart
+- `SMITH_BRAIN_PROVIDER` demoted to a fallback, preserving today's behaviour
 
-This is a **prerequisite**, not wizard work. It should land before the wizard
-plan, for the same reason the `repos.length > 0` relaxation should: both are
-swarm/broker changes that the UI merely consumes, and both are testable on their
-own.
+It is what lets someone move from the free-but-slow default to the fast path
+without touching a dotfile — which is the whole point of offering both.
 
 ### Prerequisites, collected
 
 1. **`PUT /me/brain-engine`** plus per-turn brain resolution — blocks *Configure
-   Anderson*, which blocks the happy path.
+   Anderson*, and therefore the zero-friction CLI default as well as the API-key
+   upgrade path.
 2. **Relax `assertContext`'s `repos.length > 0`** — blocks a documents-only
    workspace. Does not block the author's own coding path, so it is the lower
    of the two priorities.
