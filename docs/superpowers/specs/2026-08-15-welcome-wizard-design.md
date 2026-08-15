@@ -30,7 +30,7 @@ Five installed, two usable, and the two failures had completely different causes
 — neither of which was "not installed", and one of which was misdiagnosed as an
 entitlement problem before the identity file was read.
 
-So the central screen of this wizard is **subscription triage**, not
+So the central screen of local-mode setup is **subscription triage**, not
 installation. That is also the product's sharpest opening argument: *you are
 already paying for several models; this is the thing that makes them argue with
 each other.* No competitor whose product assumes one model can say it.
@@ -39,8 +39,9 @@ each other.* No competitor whose product assumes one model can say it.
 
 ```
 1. What should we call you?      required   ← probe starts here, in the background
-2. Your subscriptions            required   — triage: what you have, what's broken, why
-3. Local or hosted?              required   — the fork, made with the inventory in hand
+2. Local or hosted?              required   — the fork; detection picks the default
+3a. (local)  Your subscriptions  required   — triage → install a CLI, or paste an API key
+3b. (hosted) Sign in             required   — passkey register/login
 4. Your first workspace          required   — where work lives
    ══ the app works from here ══
 5. Voice mode?                   optional   — deepgram + elevenlabs
@@ -52,20 +53,25 @@ each other.* No competitor whose product assumes one model can say it.
 Three ordering rules produced this shape:
 
 **The probe starts during step 1.** Typing a name is dead time; PATH detection
-and auth probes run behind it, so step 2 is already populated on arrival instead
-of showing a spinner.
+and auth probes run behind it, so the fork already knows what is on the machine
+before the user gets there.
 
-**Triage precedes the fork.** The local-versus-hosted choice is only meaningful
-once the user knows what local is worth. Asked first, it is a choice between two
-abstractions thirty seconds into the product; asked after triage, it is a choice
-between a concrete inventory ("claude ✓, agy ✓ — two model families") and an
-alternative. It also puts hosted in front of the person whose screen came back
-all warnings at exactly the moment their problem became real, which converts far
-better than offering it before they knew they had one.
+**The fork comes second, and detection sets its default — not its position.**
+The choice still has to be informed, but a one-line summary and a preselected
+option carry that just as well as a full inventory would, at a fraction of the
+cost:
 
-The cost — someone who already intends to go hosted sits through a local
-inventory — is paid down with a persistent "use the hosted version instead"
-affordance on the triage screen, not by reordering.
+```
+  We found Claude and Antigravity here.     We didn't find any AI CLIs.
+  ◉ Local — use your own subscriptions      ◉ Hosted — works right now
+  ○ Hosted — nothing to install             ○ Local — install one, or use an API key
+```
+
+Detailed triage is **local-mode content**, so it belongs after the fork, not
+before it. Putting it first would march every hosted-bound user through an
+inventory of tools they have chosen not to use — a cost no escape hatch fully
+repays. **Nothing detected means hosted is the default**, which is the correct
+recommendation for that user rather than a nudge.
 
 **Every required step precedes every optional one.** A user who abandons the
 wizard after step 4 still has a working app: a name, a brain, and somewhere to
@@ -83,9 +89,26 @@ destroying an install, which is exactly what happened while designing it.
 Creates the user record, which also clears the first-run sentinel. Nothing else
 in the wizard can persist until this exists.
 
-### Step 2 — Your subscriptions (required)
+### Step 2 — Local or hosted (required)
 
-The screen that earns the wizard. Built entirely on the existing registry:
+The background probe from step 1 sets the default: a working CLI preselects
+local, nothing working preselects hosted. A one-line summary names what was
+found. Developers with a working setup are never nagged, and someone with an
+empty machine is pointed at the option that works immediately instead of being
+walked through an inventory of tools they do not have.
+
+Choosing hosted goes to **step 3b** (passkey sign-in) and skips local triage
+entirely. Choosing local goes to **step 3a**.
+
+The hosted path is largely built: `control-plane/src/lib/cloud.ts`,
+`LoginScreen.tsx`, and a full broker passkey stack (`/auth/register/options`,
+`/auth/register/verify`, `/auth/login/options`, `/auth/login/verify`,
+`/auth/me`, `/auth/logout`, `/auth/invites`). For this audience hosted is rarely
+"I have nothing" — it is "use my crew from my phone, or a teammate's machine".
+
+### Step 3a — Your subscriptions, local mode (required)
+
+Local mode only. The screen that earns the wizard. Built entirely on the existing registry:
 `cli-tools.ts` already distinguishes `detected` (binary on PATH) from `authOk`
 (driver auth probe), carries a human `detail`, exposes `gateReason()`, and
 re-probes via `sweepCliTools()`.
@@ -115,21 +138,28 @@ Three requirements fall out of the table above:
   turn against the selected engine. Detection has been wrong twice in one day;
   a probe that never runs looks exactly like a passing one.
 
-### Step 3 — Local or hosted (required)
+**Local does not mean CLI-only.** A subscription is one way to power local mode;
+an API key is the other, and for some users the faster one. The step offers both:
 
-Made with the inventory from step 2 in hand, so it is a choice between
-something concrete and an alternative rather than between two abstractions.
+```
+  No working subscription? Two ways forward:
+    → Install one            claude · agy · codex · copilot   [copy command] [re-check]
+    → Paste an API key       anthropic · gemini               [paste] [verify]
+```
 
-**Adaptive local vs hosted.** Probe before asking. Working CLI found → local
-preselected, hosted offered as the alternative. Nothing working → lead with
-hosted, which works instantly, and offer guided local setup second. Developers
-with a working setup are never nagged; everyone else gets the path that works.
+The key path is not hypothetical — the author's own brain runs on a Gemini API
+key today, after the Anthropic subscription's API balance ran dry. Whichever
+path is taken, the step completes only on a **live turn**, never on a green row.
 
-The hosted path is largely built: `control-plane/src/lib/cloud.ts`,
-`LoginScreen.tsx`, and a full broker passkey stack (`/auth/register/options`,
-`/auth/register/verify`, `/auth/login/options`, `/auth/login/verify`,
-`/auth/me`, `/auth/logout`, `/auth/invites`). For this audience hosted is rarely
-"I have nothing" — it is "use my crew from my phone, or a teammate's machine".
+### Step 3b — Sign in, hosted mode (required)
+
+Hosted mode only, and the reason this fork is cheap to offer: the path is
+largely built. Passkey register or login against the broker's existing stack,
+after which the brain runs in the cell and **nothing needs to be installed or
+pasted** — the step is done the moment the session is established.
+
+No local triage runs. A user who later wants local can switch from Settings,
+which re-enters step 3a; the fork is never a one-way door.
 
 ### Step 4 — Your first workspace (required)
 
@@ -175,7 +205,7 @@ spanning model families, connectors — is depth the user goes looking for once
 they already have something working. A wizard that front-loads all of it trades
 a fast start for a long form, and loses both.
 
-But the council pitch must not vanish. Step 2 states the payoff ("your council
+But the council pitch must not vanish. Step 3a states the payoff ("your council
 spans 2 model families") and the finish screen carries the pointer to Agents.
 The promise lands; the work is deferred.
 
@@ -185,7 +215,7 @@ one mind in hats. See the council turn design (2026-08-15).
 
 ## Reuse over rebuild
 
-Step 2 is useful long after onboarding — the author's own copilot and codex
+Step 3a is useful long after onboarding — the author's own copilot and codex
 problems are still unfixed. It should be a **permanent Settings screen that the
 wizard borrows**, not wizard-only UI. The same is true of steps 4, 5 and 6, all
 of which already have Settings homes.
@@ -214,14 +244,14 @@ turns. Green tests do not prove reachability.
 
 ## Open questions
 
-- Should step 2 offer to run installers in v1, or stay copy-a-command? (Scoped
+- Should step 3a offer to run installers in v1, or stay copy-a-command? (Scoped
   out above; the audience mostly has the binaries.)
 - Should the wizard offer to import an existing repo as the first workspace, or
   only create an empty one?
 
-**Settled during design:** where the local/hosted fork belongs. It was
-considered immediately after the name and placed after subscription triage
-instead, so the choice is made against a concrete inventory rather than in the
-abstract, and hosted reaches the user whose triage came back all warnings at the
-moment the problem became real. The cost — a hosted-bound user sitting through a
-local inventory — is paid down with an escape affordance on the triage screen.
+**Settled during design:** where the local/hosted fork belongs. It was first
+placed after subscription triage, on the reasoning that the choice needs a
+concrete inventory behind it. That was wrong: detection can set the fork's
+*default and summary* without spending a whole screen on it, and triage is
+local-mode content that a hosted-bound user should never have to walk through.
+The fork sits at step 2, and nothing detected makes hosted the default.
