@@ -15,6 +15,7 @@ import { resolveAvatarEngine } from "./avatar-engine.ts";
 import { AvatarGenerator, type AvatarRequest } from "./avatar-generator.ts";
 import { loadBlueprints } from "./blueprints.ts";
 import { BrokerBrain, type StreamFactory } from "./brain.ts";
+import { resolvingStreamFactory } from "./brain-engine.ts";
 import type { RosterState, TurnOrigin, UiRoster } from "./broker.ts";
 import { Broker, TTS_SAMPLE_RATE } from "./broker.ts";
 import { AdapterHub } from "./channels.ts";
@@ -62,7 +63,6 @@ import {
   repositoryUrl,
 } from "./feeds/versions.ts";
 import { weatherLine, weatherUrl } from "./feeds/weather.ts";
-import { createGeminiStreamFactory } from "./gemini-brain.ts";
 import { loadIdentity, promptInfo } from "./identity.ts";
 import { LocalMemory, type MemoryEntry } from "./memory.ts";
 import { MicSessionGate } from "./mic-gate.ts";
@@ -102,23 +102,6 @@ const anthropic = new Anthropic({ apiKey: config.anthropicApiKey });
 const anthropicStream: StreamFactory = (params) =>
   anthropic.messages.stream(params as Parameters<typeof anthropic.messages.stream>[0]);
 
-// The brain is the one path that needs caller-defined tool schemas, so it stays
-// on a function-calling SDK — but WHICH SDK is now a config choice, because a
-// dry Anthropic balance should not be able to mute Anderson outright. Research
-// mode picks its engine the same way (research-engine.ts); this is the brain's
-// equivalent seam, and it is one line wide by design.
-const useGemini = config.brain.provider === "gemini";
-if (useGemini && !config.geminiApiKey) {
-  throw new Error("SMITH_BRAIN_PROVIDER=gemini requires GEMINI_API_KEY to be set");
-}
-const streamFactory: StreamFactory = useGemini
-  ? createGeminiStreamFactory({ apiKey: config.geminiApiKey as string })
-  : anthropicStream;
-// Each provider needs its own default; BrokerBrain's built-in default is a
-// Claude model and would 404 against Gemini.
-const brainModel = config.brain.model ?? (useGemini ? "gemini-flash-latest" : undefined);
-console.log(`[broker] brain provider: ${config.brain.provider}${brainModel ? ` (${brainModel})` : ""}`);
-
 const swarm = new SwarmClient({ baseUrl: config.swarm.baseUrl, token: config.swarm.token });
 
 /** One-shot invocation per tool, verified against each binary's --help. */
@@ -130,6 +113,26 @@ const RESEARCH_ARGV: Record<string, string[]> = {
   opencode: ["opencode", "run"],
 };
 const researchArgvFor = (cli: string): string[] | undefined => RESEARCH_ARGV[cli];
+
+// The brain is the one path that needs caller-defined tool schemas, so it stays
+// on a function-calling SDK — but WHICH SDK/model backs it is resolved fresh on
+// every turn (brain-engine.ts) from the operator's stored setting, so a change
+// in Settings takes effect with no broker restart. `config.brain` is consulted
+// only as the fallback when nothing is stored, keeping every existing install's
+// behavior unchanged. Research mode resolves its engine the same way
+// (research-engine.ts) — this is the brain's equivalent seam.
+const streamFactory: StreamFactory = resolvingStreamFactory({
+  getStoredEngine: () => swarm.getBrainEngine().catch(() => null),
+  argvFor: researchArgvFor,
+  spawn: defaultSpawner,
+  envProvider: config.brain.provider,
+  envModel: config.brain.model,
+  geminiApiKey: config.geminiApiKey,
+  anthropicFactory: () => anthropicStream,
+});
+console.log(
+  `[broker] brain fallback provider: ${config.brain.provider}${config.brain.model ? ` (${config.brain.model})` : ""}`,
+);
 
 /**
  * Research engine, resolved per turn from the operator's setting so a bad
@@ -470,7 +473,7 @@ const brain = new BrokerBrain(
         : `${draft.name} is on the crew — their real voice still needs casting in the wizard`;
     },
   },
-  { identity: promptInfo(identity), ...(brainModel ? { model: brainModel } : {}) },
+  { identity: promptInfo(identity) },
 );
 
 // Sessions — workspace-scoped conversations persisted under .smith/sessions/.

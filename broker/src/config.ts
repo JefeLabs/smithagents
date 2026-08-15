@@ -24,9 +24,11 @@ export interface BrokerConfig {
   geminiApiKey?: string;
   geminiImageModel: string;
   /**
-   * Which provider backs the conversational brain (the one path that needs
-   * caller-defined tool schemas). Defaults to anthropic so nothing changes for
-   * anyone who does not set it; "gemini" routes through gemini-brain.ts.
+   * Fallback only. The user record's `brainEngine` (swarm's `/me/brain-engine`,
+   * resolved per turn by brain-engine.ts) wins whenever it is set; this is
+   * consulted only when that is unset, so existing installs keep working
+   * unchanged. Defaults to anthropic so nothing changes for anyone who does not
+   * set it; "gemini" routes through gemini-brain.ts.
    */
   brain: { provider: "anthropic" | "gemini"; model?: string };
 }

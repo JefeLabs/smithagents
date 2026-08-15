@@ -232,3 +232,57 @@ test("no stored setting, no envModel: params.model passes through unchanged (tod
   await factory(PARAMS).finalMessage();
   assert.equal(calls[0]?.model, PARAMS.model);
 });
+
+test("no stored setting, envProvider=gemini, no envModel: gets gemini's own default, not BrokerBrain's Claude default", async () => {
+  // Regression: BrokerBrain's built-in default (brain.ts) is a Claude model
+  // and 404s against Gemini's API — SMITH_BRAIN_PROVIDER=gemini with no
+  // SMITH_BRAIN_MODEL must still resolve to a real Gemini model.
+  const originalFetch = globalThis.fetch;
+  const seenUrls: string[] = [];
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    seenUrls.push(String(url));
+    return new Response("data: [DONE]\n\n", { status: 200 });
+  }) as typeof fetch;
+
+  try {
+    const factory = await resolveBrainFactory({
+      getStoredEngine: async () => null,
+      argvFor: () => undefined,
+      spawn: dummySpawn,
+      envProvider: "gemini",
+      geminiApiKey: "k",
+      anthropicFactory: () => dummyFactory,
+    });
+    await factory(PARAMS).finalMessage();
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.ok(!seenUrls[0]?.includes(PARAMS.model), `must not carry BrokerBrain's Claude default, got ${seenUrls[0]}`);
+  assert.ok(seenUrls[0]?.includes("gemini"), `expected a gemini model in the URL, got ${seenUrls[0]}`);
+});
+
+test("stored api/gemini with no model: gets gemini's own default, not BrokerBrain's Claude default", async () => {
+  const originalFetch = globalThis.fetch;
+  const seenUrls: string[] = [];
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    seenUrls.push(String(url));
+    return new Response("data: [DONE]\n\n", { status: 200 });
+  }) as typeof fetch;
+
+  try {
+    const factory = await resolveBrainFactory({
+      getStoredEngine: async () => ({ kind: "api", provider: "gemini" }),
+      argvFor: () => undefined,
+      spawn: dummySpawn,
+      geminiApiKey: "k",
+      anthropicFactory: () => dummyFactory,
+    });
+    await factory(PARAMS).finalMessage();
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.ok(!seenUrls[0]?.includes(PARAMS.model), `must not carry BrokerBrain's Claude default, got ${seenUrls[0]}`);
+  assert.ok(seenUrls[0]?.includes("gemini"), `expected a gemini model in the URL, got ${seenUrls[0]}`);
+});

@@ -43,11 +43,21 @@ export interface BrainEngineDeps {
 }
 
 /**
+ * BrokerBrain's own built-in default (brain.ts) is a Claude model — 404s
+ * against Gemini's API. Every gemini path below (stored api/gemini with no
+ * model, and the env fallback with SMITH_BRAIN_PROVIDER=gemini but no
+ * SMITH_BRAIN_MODEL) needs its own default rather than inheriting that one,
+ * same as main.ts computed pre-resolver.
+ */
+const GEMINI_DEFAULT_MODEL = "gemini-flash-latest";
+
+/**
  * Wraps a StreamFactory that reads its model from `params.model` (gemini,
  * anthropic) so a resolved model — when there is one — overrides whatever
  * brain.ts filled in at construction. `model` undefined means "nothing to
  * override": params pass through unchanged, which is what keeps today's
- * no-stored-setting behaviour byte for byte.
+ * no-stored-setting behaviour byte for byte (true for the anthropic default;
+ * gemini call sites pass GEMINI_DEFAULT_MODEL instead of leaving this undefined).
  */
 function withModel(factory: StreamFactory, model: string | undefined): StreamFactory {
   return (params) => factory(model ? { ...params, model } : params);
@@ -80,14 +90,20 @@ export async function resolveBrainFactory(deps: BrainEngineDeps): Promise<Stream
   }
 
   if (stored?.kind === "api" && stored.provider === "gemini") {
-    return withModel(createGeminiStreamFactory({ apiKey: deps.geminiApiKey ?? "" }), stored.model);
+    return withModel(
+      createGeminiStreamFactory({ apiKey: deps.geminiApiKey ?? "" }),
+      stored.model ?? GEMINI_DEFAULT_MODEL,
+    );
   }
   if (stored?.kind === "api") {
     return withModel(deps.anthropicFactory(), stored.model);
   }
 
   if (deps.envProvider === "gemini") {
-    return withModel(createGeminiStreamFactory({ apiKey: deps.geminiApiKey ?? "" }), deps.envModel);
+    return withModel(
+      createGeminiStreamFactory({ apiKey: deps.geminiApiKey ?? "" }),
+      deps.envModel ?? GEMINI_DEFAULT_MODEL,
+    );
   }
   return withModel(deps.anthropicFactory(), deps.envModel);
 }
