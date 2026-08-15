@@ -15,7 +15,7 @@ import { execFile } from "node:child_process";
 import { mkdir, readFile, unlink } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { WorkerPool } from "./remote-runtime.js";
 import type { DockerConfig, RuntimeType } from "./types.js";
 
@@ -275,6 +275,29 @@ export class TmuxRuntime implements RuntimeAdapter {
  * The container name IS the session name, so the RuntimeAdapter
  * interface maps cleanly.
  */
+/**
+ * The `-v` args that make a task worktree's git usable inside a container.
+ *
+ * `git worktree add` writes a `.git` FILE containing an absolute host path:
+ *   gitdir: /Users/…/<repo>/.git/worktrees/<taskId>
+ * That path means nothing in a container unless it is mounted at exactly the
+ * same location, so the parent repo's `.git` is bind-mounted at its own host
+ * path. Returns [] when `.git` is a directory (a plain clone, not a worktree)
+ * or unreadable — callers then get today's behaviour rather than a crash.
+ */
+async function gitdirMount(worktreePath: string): Promise<string[]> {
+  try {
+    const dotGit = await readFile(join(worktreePath, ".git"), "utf8");
+    const match = /^gitdir:\s*(.+)$/m.exec(dotGit.trim());
+    if (!match) return [];
+    // …/<repo>/.git/worktrees/<taskId> → …/<repo>/.git
+    const repoGitDir = resolve(match[1].trim(), "..", "..");
+    return ["-v", `${repoGitDir}:${repoGitDir}`];
+  } catch {
+    return [];
+  }
+}
+
 export class DockerRuntime implements RuntimeAdapter {
   private readonly dockerConfig: DockerConfig;
 
@@ -297,6 +320,15 @@ export class DockerRuntime implements RuntimeAdapter {
       `${cwd}:/workspace`,
       "-w",
       "/workspace",
+
+      // A task worktree's `.git` is a FILE holding an absolute host path
+      // (`gitdir: /…/<repo>/.git/worktrees/<id>`), not a directory. Mounting
+      // only the worktree therefore gives the container a dangling pointer:
+      // every git command fails with "not a git repository", so the agent
+      // cannot commit and the task's work is lost. Mounting the parent .git at
+      // that SAME absolute path inside the container makes the pointer
+      // resolve. Read-write on purpose — git writes refs and the index there.
+      ...(await gitdirMount(cwd)),
 
       // Environment variables
       "-e",
