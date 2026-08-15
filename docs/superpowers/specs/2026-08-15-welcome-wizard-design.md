@@ -324,38 +324,51 @@ able to reproduce.
 
 **Exactly one step has nothing behind it, and the wizard cannot ship without it.**
 
-### Zero-friction default: the brain runs on a CLI, no key required
+### Configure Anderson — show the speed difference at the point of choice
 
-Installation must not require obtaining anything. The subscriptions step has
-already validated a working CLI, so **Configure Anderson defaults to that CLI** —
-nothing new to fetch, no `.env`, no restart, no API key.
-
-This corrects an earlier conclusion in this project. The brain was put on an SDK
-(main @ `d943132`) on the reasoning that a CLI cannot accept caller-defined tool
-schemas without MCP inverting control. That is **false for these CLIs**: both
-`claude` and `agy` expose `--json-schema`, and a caller-supplied brain schema
-returns structured tool calls while execution stays in the broker. Measured
-2026-08-15 with a `{speech, tool_calls[]}` schema:
-
-| Engine | Behaviour | Latency |
-|---|---|---|
-| `claude -p --json-schema` | correct shape, `delegate` call and all | **26.5s** |
-| `agy -p --json-schema` | did **not** enforce — answered *about* the schema | 18.5s |
-| Gemini API (`gemini-brain.ts`) | streaming, native function calls | **0.9s** / 3.3s tool round |
-
-The real constraint is latency, not capability — roughly 25×. Tolerable for typed
-chat, unusable for voice, where nobody waits 26 seconds after saying hello.
-
-So the default is chosen for friction and the upgrade for speed:
+Installation must not require obtaining anything, so this step **defaults to the
+CLI the subscriptions step already validated**: no key, no `.env`, no restart.
+But the choice has a large, measurable consequence, and it is named rather than
+buried:
 
 ```
-  Anderson is ready — running on your Claude subscription.
-  Replies take ~25s.  Add an API key any time for near-instant
-  replies and voice mode.                        [ Settings ]
+  How should Anderson think?
+
+  ◉ Your Claude subscription          ready now — nothing to add
+      ~6s before he starts talking
+      ~29s when he uses a tool, and he won't talk while thinking
+
+  ○ An API key  (anthropic · gemini)  much faster, and needed for voice
+      ~1s before he starts talking, ~3s with a tool
+      [ paste a key ]                            you can add this later
 ```
 
-`agy`'s flag needs its invocation worked out before it is offered as a brain; it
-accepts the flag but did not enforce the schema in this form.
+Measured on this machine, 2026-08-15, with a `{speech, tool_calls[]}` schema:
+
+| Engine | Speech streams? | Structured tool calls? | First words | Total |
+|---|---|---|---|---|
+| `claude -p --output-format stream-json` | **yes** | no | 5.8s | 7.3s |
+| the same **plus** `--json-schema` | **no** | **yes** | — | 28.7s |
+| `claude -p --json-schema` (no stream) | no | yes | — | 26.5s |
+| Gemini API (`gemini-brain.ts`) | **yes** | **yes** | ~0.9s | 3.3s |
+| `agy -p --json-schema` | no | **did not enforce** | — | 18.5s |
+
+**This corrects, and then partly restores, an earlier conclusion.** The brain was
+put on an SDK (main @ `d943132`) because a CLI supposedly cannot accept
+caller-defined tool schemas without MCP inverting control. That reasoning was
+wrong: `--json-schema` does exactly that, with execution still in the broker. But
+the table shows a real constraint underneath it — **a CLI can stream speech, or
+return structured tool calls, never both in one turn.** Schema enforcement
+suppresses incremental text entirely. A voice brain needs both, which is what the
+SDK path uniquely provides.
+
+Hence the shape of this step: the CLI default costs nothing to set up and is
+honest about feeling slow, while the key is presented as the upgrade that makes
+voice work. Nobody is blocked, and nobody is surprised later by a 29-second
+silence.
+
+`agy` is not offered as a brain until its `--json-schema` invocation is worked
+out; it accepted the flag and answered *about* the schema instead of obeying it.
 
 ### The prerequisite this creates
 
