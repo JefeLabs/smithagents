@@ -42,7 +42,7 @@ each other.* No competitor whose product assumes one model can say it.
 2. Local or hosted?              required   — the fork; detection picks the default
 3a. (local)  Your subscriptions  required   — triage → install a CLI, or paste an API key
 3b. (hosted) Sign in             required   — passkey register/login
-4. Your first workspace          required   — where work lives
+4. Your first workspace          required   — source control? yes → GitHub, no → design-only
    ══ the app works from here ══
 5. Voice mode?                   optional   — deepgram + elevenlabs
 6. Location?                     optional   — powers the weather line in the digest
@@ -166,13 +166,17 @@ which re-enters step 3a; the fork is never a one-way door.
 Boards, sessions, and documents all hang off a workspace; without one there is
 nowhere to put anything. Reuses the shipped new-workspace flow.
 
-**A GitHub account is never required, at any step.** `WorkspaceRepo.repository`
+**A GitHub account is never required to use the product.** `WorkspaceRepo.repository`
 (the remote URL) is optional and informational; `WorkspaceRepo.github` is
 optional and its own comment calls an unset `connectorId` a *soft-fail, not a
 required field*; agents commit on their branch and are instructed not to push,
 so the core loop never contacts a remote. GitHub is one of six optional
 connectors at step 7, and `copilot` is one of five CLIs. Nothing about the
 product's value depends on having an account.
+
+It *is* required on one branch of one step — choosing source control at step 4
+below — because that is a choice the user makes deliberately, not a gate on
+entry. Declining it costs nothing but code hosting.
 
 **A local repo is no longer required either.** Today `assertContext` demands
 `repos.length > 0` with an absolute path, which would strand anyone who wants
@@ -194,13 +198,34 @@ downstream and must be handled explicitly:
 - **Adding a repo later is the upgrade path.** A design-only context becomes a
   working one the moment a repo is attached; nothing is migrated or recreated.
 
-So step 4 asks what the user is here to do, and both answers are complete:
+So step 4 asks the question in the user's terms — intent, not mechanism — and
+both answers lead somewhere complete:
 
 ```
-  Where should work live?
-    → Point at a repo        agents can write code here     [choose folder]
-    → Just design for now    diagrams, docs, boards         (add a repo later)
+  Do you want source control?
+
+    → Yes    connect GitHub, pick or create a repo
+             agents work in worktrees, commit to branches, open PRs
+
+    → No     diagrams, docs, dashboards, boards, the council
+             (add a repo any time later)
 ```
+
+**"Yes" requires GitHub, and only there.** Not because git needs it, but because
+everything that makes managed source control worth choosing in this product is
+GitHub-shaped: `WorkspaceRepo.github {owner, repo}`, the `github` connector, PR
+and issue flows. Offering "source control" and then delivering a local-only clone
+with no remote would under-deliver on the word. So on that branch the github
+connector is collected here rather than waiting for step 7.
+
+One consequence worth stating plainly: **the wizard stops offering a
+currently-supported case** — a local git repo with no remote, which the model
+still allows (`repository` and `github` are both optional). That case is not
+removed, only unlisted; it remains reachable from Settings by adding a repo to a
+context. This follows the pattern already used for step 3a: the wizard presents
+the clean binary, Settings retains the full range. Keeping a third "local git,
+no remote" option in onboarding would cost every user a decision to serve a
+minority who can already get there another way.
 
 ### Step 5 — Voice mode (optional)
 
