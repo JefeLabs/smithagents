@@ -36,6 +36,35 @@ tool-less benchmarks materially overstate speed (`gemini-flash-latest` measured
 | `local` | `gpt-oss-20b` via LM Studio | **1.02s** (cold load 27s) | yes | yes | a running server |
 | `api` | `gemini-3.1-pro-preview` | **3.05s** | yes | yes | a key |
 
+> ### ⚠ The latency figures below are MINIMAL-PROMPT benchmarks. Do not rank engines on them.
+>
+> Every number in this document was measured with a short system prompt and one
+> or two tools. `BrokerBrain` sends a full persona plus roster plus ten tool
+> schemas, and that difference dominates the measurement.
+>
+> Measured on the local path, warm model, n=3 each (2026-08-15, during
+> implementation):
+>
+> | Prompt | Time to first words |
+> |---|---|
+> | minimal, 1 tool | **0.72s** median (711–799ms) |
+> | real `BrokerBrain` persona + roster | **3.42s** median (3410–3523ms) |
+> | cold start adds | ~1.7s on top |
+>
+> So the local path's headline "1.02s" is a minimal-prompt figure; its real
+> production number is **~3.4s**. The prompt costs ~2.7s and warming does not
+> shrink it.
+>
+> **This invalidates the comparison in both directions, not just for local.** The
+> CLI's 2.71s inline median was measured the same minimal way, so it is not a
+> like-for-like rival to 3.42s. Until every engine is re-measured under the real
+> `BrokerBrain` prompt, the ordering below is unproven and must not be used to
+> justify a default.
+>
+> It also points somewhere unexpected: on a 20B local model the system prompt
+> costs more than the engine choice does. Trimming the persona and roster is
+> likely a bigger latency win than switching engines at all.
+
 ### The CLI constraint is structural, not performance
 
 A CLI can stream speech **or** return caller-defined tool calls, never both in
