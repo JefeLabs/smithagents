@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -79,6 +79,27 @@ test("needsMigration: null when the target already has state, else the source to
 
     assert.equal(await needsMigration(join(dir, "empty-target"), [join(dir, "no-such-old")]), null);
   } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("needsMigration: an unreadable target must not be mistaken for an absent one", async () => {
+  if (process.getuid?.() === 0) {
+    // chmod 0o000 does not restrict root's own access, so this test would pass
+    // vacuously as root — skip rather than pretend the discrimination was proven.
+    return;
+  }
+  const dir = fixture();
+  const locked = join(dir, "locked");
+  mkdirSync(locked, { recursive: true });
+  chmodSync(locked, 0o000);
+  try {
+    // An EACCES on readdir(to) must propagate as a rejection, not be swallowed
+    // into "no entries" — that would report a genuinely unreadable target as
+    // safe to migrate into.
+    await assert.rejects(() => needsMigration(locked, [join(dir, "old")]));
+  } finally {
+    chmodSync(locked, 0o700); // restore so rmSync below can traverse and remove it
     rmSync(dir, { recursive: true, force: true });
   }
 });

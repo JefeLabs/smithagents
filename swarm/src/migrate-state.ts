@@ -24,7 +24,11 @@ async function exists(path: string): Promise<boolean> {
   try {
     await stat(path);
     return true;
-  } catch {
+  } catch (err) {
+    // Only a genuinely absent path means "does not exist". A permissions
+    // failure or anything else must propagate — treating it as absent would
+    // let a collision or a legacy root hide behind an inaccessible entry.
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
     return false;
   }
 }
@@ -37,8 +41,12 @@ export async function needsMigration(to: string, candidates: string[]): Promise<
   let targetEntries: string[] = [];
   try {
     targetEntries = await readdir(to);
-  } catch {
-    targetEntries = []; // absent target is an empty one
+  } catch (err) {
+    // Only a genuinely absent target is an empty one. Anything else — most
+    // notably EACCES on an unreadable target — must propagate, so an
+    // inaccessible target is never reported as "safe to migrate into".
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    targetEntries = [];
   }
   if (targetEntries.length > 0) return null;
 
