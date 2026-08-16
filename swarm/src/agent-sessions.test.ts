@@ -384,11 +384,20 @@ test("a driver without sessionFileFor still resolves its transcript by directory
       // and returning undefined. This is the real shape of the non-pinning
       // drivers: they never implement sessionFileFor at all, so
       // `driver.sessionFileFor?.(...)` must short-circuit on the optional
-      // chain rather than call through to a stub. interactiveCommand is left
-      // untouched (inherited from FakeDriver) — the manager passes it a
-      // session id regardless of pinning capability, and it is each driver's
-      // own interactiveCommand that decides whether to use it.
+      // chain rather than call through to a stub.
       Object.defineProperty(this, "sessionFileFor", { value: undefined });
+    }
+    // create() passes the manager's session id to interactiveCommand
+    // regardless of pinning capability — it is each driver's own
+    // implementation that decides whether to use it. A real non-pinning
+    // driver (codex, agy, copilot, opencode) has no --session-id flag at
+    // all, so this must drop the id rather than inherit FakeDriver's
+    // pass-it-through behavior; otherwise the fake tool would still write
+    // `<id>.jsonl` and this test would exercise the same filename a pinning
+    // driver produces without ever forcing the script's `session.jsonl`
+    // fallback, and therefore the directory-diff discovery it protects.
+    interactiveCommand(baseCommand: string): string {
+      return baseCommand;
     }
   }
   const probe = new NoPinDriver();
@@ -407,6 +416,10 @@ test("a driver without sessionFileFor still resolves its transcript by directory
   const turn = await discovering.send(info.id, "found by discovery");
 
   assert.ok(turn.some((m) => m.role === "assistant" && m.text.includes("found by discovery")));
+  // The id never reached the tool, so it fell back to the fixed filename the
+  // script writes in that case — not <id>.jsonl. Finding THIS file is the
+  // proof that resolution went through directory discovery, not a pinned path.
+  execFileSync("test", ["-f", join(info.cwd, ".fake-sessions", "session.jsonl")]);
   await discovering.destroy(info.id).catch(() => {});
 });
 
