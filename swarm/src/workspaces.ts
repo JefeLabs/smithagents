@@ -276,6 +276,12 @@ export function workspaceDir(paths: SmithPaths, ws: Workspace): string {
  * config/ and .runtime/ directly inside it. Refuse instead of writing there;
  * a workspace whose name can't become a directory is a caller error to fix,
  * not one to paper over with a substitute name.
+ *
+ * Unreachable from any live caller today: POST /workspaces slugifies the name
+ * before building the record, and saveWorkspace's name regex rejects the
+ * resulting "" before this function ever runs. The guard exists for the
+ * back-fill caller the next plan adds, which walks existing records directly
+ * and has no such slugify-then-validate step ahead of it.
  */
 export async function ensureWorkspaceDir(paths: SmithPaths, ws: Workspace): Promise<string> {
   if (!ws.dir && !slugForDir(ws.name)) {

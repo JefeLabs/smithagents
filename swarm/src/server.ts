@@ -1789,10 +1789,12 @@ export class OrchestratorServer {
         sources: b.sources,
       };
       try {
+        // First: a mkdir failure (EACCES, ENOSPC, EROFS, ENOTDIR) must abort
+        // with nothing written — no demoted default, no saved record.
+        await ensureWorkspaceDir(this.paths, ws);
         if (ws.default)
           for (const other of all.filter((w) => w.default)) await saveWorkspace(dir, { ...other, default: undefined });
         await saveWorkspace(dir, ws);
-        await ensureWorkspaceDir(this.paths, ws);
       } catch (err) {
         return reply.status(400).send({ error: String((err as Error).message) });
       }
@@ -1884,6 +1886,12 @@ export class OrchestratorServer {
           .status(409)
           .send({ error: `Workspace "${ws.name}" has ${activeTasks} running task(s) — archive instead` });
       }
+      // This deletes no data: the record is removed but ws's directory is
+      // deliberately left on disk. Recreating "ws.name" later passes the
+      // collision check (records-only) and ensureWorkspaceDir's mkdir -p
+      // silently adopts the survivor with its contents intact — harmless
+      // while the directory is empty, a real provenance bug once it holds
+      // config/settings.json or boards.
       await removeWorkspaceFile(dir, ws.name);
       await this.reloadWorkspaces();
       return { ok: true, deleted: ws.name };
