@@ -15,6 +15,7 @@
 - Node >= 24, TypeScript ~6.0.0, biome 2.5.3. Lint baseline is ZERO diagnostics — any new warning is new debt.
 - Run tests from `swarm/`: `node --import tsx --test --test-timeout 60000 'src/*.test.ts' 'src/**/*.test.ts'`
 - Typecheck with the workspace binary, not `npx`: `swarm/node_modules/.bin/tsc --noEmit`. **Baseline is 12 pre-existing errors** — the goal is 12, not 0. `npx tsc` resolves a decoy binary that prints "This is not the tsc command you are looking for" and reports success without running.
+- Read the error count from tsc's own trailing `Found N errors` line, NOT `grep -c 'error TS'` — tsc can emit colorized output even when redirected, and the escape codes defeat that grep silently.
 - `ToolDriver` has five implementations: `claude`, `agy`, `codex`, `copilot`, `opencode`. New capabilities are **optional** interface members (the existing house pattern: `warmSessionsSupported?`, `readMessages?`, `prepareWorkspace?`), so drivers that cannot support them are unchanged.
 - Never assert on call shape where behavior can be asserted. A test that checks which flags were passed can stay green through a total failure of the thing those flags were meant to cause.
 - Exit codes after a pipe are the pipe's, not the command's. Measure with a redirect, not `$?` after `| grep`.
@@ -119,7 +120,7 @@ Expected: PASS, 3 tests.
 ```bash
 cd swarm && node --import tsx --test --test-timeout 60000 'src/*.test.ts' 'src/**/*.test.ts' > /tmp/suite.txt 2>&1; echo "exit=$?"
 grep -E "^. (tests|pass|fail)" /tmp/suite.txt
-./node_modules/.bin/tsc --noEmit > /tmp/tsc.txt 2>&1; echo "errors=$(grep -c 'error TS' /tmp/tsc.txt)"
+./node_modules/.bin/tsc --noEmit > /tmp/tsc.txt 2>&1; echo "errors=$(grep -oE 'Found [0-9]+ error' /tmp/tsc.txt | grep -oE '[0-9]+')"
 ```
 
 Expected: all tests pass; `errors=12` (the baseline — not 0).
@@ -255,7 +256,7 @@ Expected: PASS.
 ```bash
 cd swarm && node --import tsx --test --test-timeout 60000 'src/*.test.ts' 'src/**/*.test.ts' > /tmp/suite.txt 2>&1; echo "exit=$?"
 grep -E "^. (tests|pass|fail)" /tmp/suite.txt
-./node_modules/.bin/tsc --noEmit > /tmp/tsc.txt 2>&1; echo "errors=$(grep -c 'error TS' /tmp/tsc.txt)"
+./node_modules/.bin/tsc --noEmit > /tmp/tsc.txt 2>&1; echo "errors=$(grep -oE 'Found [0-9]+ error' /tmp/tsc.txt | grep -oE '[0-9]+')"
 ```
 
 Expected: all pass, `errors=12`. The readiness loop in `create()` still discovers a file for non-pinning drivers, so their tests are unaffected.
@@ -379,7 +380,7 @@ Expected: PASS.
 ```bash
 cd swarm && node --import tsx --test --test-timeout 60000 'src/*.test.ts' 'src/**/*.test.ts' > /tmp/suite.txt 2>&1; echo "exit=$?"
 grep -E "^. (tests|pass|fail)" /tmp/suite.txt
-./node_modules/.bin/tsc --noEmit > /tmp/tsc.txt 2>&1; echo "errors=$(grep -c 'error TS' /tmp/tsc.txt)"
+./node_modules/.bin/tsc --noEmit > /tmp/tsc.txt 2>&1; echo "errors=$(grep -oE 'Found [0-9]+ error' /tmp/tsc.txt | grep -oE '[0-9]+')"
 ```
 
 Expected: all pass, `errors=12`.
@@ -418,28 +419,36 @@ cd swarm && nohup node --env-file=../.env --import tsx src/server.ts > /tmp/swar
 until curl -s -m 3 http://127.0.0.1:7777/health > /dev/null; do sleep 1; done
 ```
 
-- [ ] **Step 2: Create a session and confirm the transcript is named for it**
+- [ ] **Step 2: Create a session, then send a turn**
+
+The real `claude` CLI writes its transcript **only once a turn happens** — that
+laziness is the whole reason §5 exists. Checking for the file straight after
+`create()` finds nothing and means nothing. Send first, verify after.
 
 ```bash
-NEW=$(curl -s -m 180 -X POST http://127.0.0.1:7777/agent-sessions \
+NEW=$(curl -s -m 240 -X POST http://127.0.0.1:7777/agent-sessions \
   -H 'Content-Type: application/json' -d '{"agent":"ignacio","workspace":"proving-ground"}')
 ID=$(echo "$NEW"  | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")
 CWD=$(echo "$NEW" | python3 -c "import sys,json;print(json.load(sys.stdin)['cwd'])")
+
+curl -s -m 240 -X POST "http://127.0.0.1:7777/agent-sessions/$ID/send" \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"Reply with exactly the word PONG and nothing else.","timeoutMs":200000}'
+```
+
+Expected: JSON containing an assistant message `PONG`. Run this in a background
+shell — a foreground call hits the 2-minute tool ceiling while the turn is still
+running, and killing the client does NOT cancel the turn.
+
+- [ ] **Step 3: Confirm the transcript is named for the swarm's session id**
+
+```bash
 ENC=$(python3 -c "import re,sys;print(re.sub(r'[^a-zA-Z0-9]','-',sys.argv[1]))" "$CWD")
 ls -1 ~/.claude/projects/"$ENC"/
 ```
 
-Expected: exactly `<ID>.jsonl`. Before this plan it was an unrelated CLI-generated UUID.
-
-- [ ] **Step 3: Confirm a turn still completes**
-
-```bash
-curl -s -m 200 -X POST "http://127.0.0.1:7777/agent-sessions/$ID/send" \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"Reply with exactly the word PONG and nothing else.","timeoutMs":180000}'
-```
-
-Expected: JSON containing an assistant message `PONG`. Run this in a background shell — a foreground call will hit the 2-minute tool ceiling while the turn is still running, and killing the client does not cancel the turn.
+Expected: exactly `<ID>.jsonl`. Before this plan it was an unrelated
+CLI-generated UUID, which is the whole point being verified.
 
 - [ ] **Step 4: Clean up and commit nothing**
 
