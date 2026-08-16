@@ -83,6 +83,21 @@ test("needsMigration: null when the target already has state, else the source to
   }
 });
 
+test("needsMigration is the startup gate: it reports the source instead of letting a server come up empty", async () => {
+  const dir = fixture();
+  try {
+    // A fresh root with the user's real state still in the legacy location.
+    const source = await needsMigration(join(dir, "new"), [join(dir, "old")]);
+    assert.equal(source, join(dir, "old"), "must surface the legacy root rather than returning null");
+
+    // After migrating, the gate goes quiet — startup proceeds on later boots.
+    await migrateState(join(dir, "old"), join(dir, "new"));
+    assert.equal(await needsMigration(join(dir, "new"), [join(dir, "old")]), null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("needsMigration: an unreadable target must not be mistaken for an absent one", async () => {
   if (process.getuid?.() === 0) {
     // chmod 0o000 does not restrict root's own access, so this test would pass

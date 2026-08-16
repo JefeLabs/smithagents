@@ -101,6 +101,7 @@ import {
 import { commentIssue, createIssue, importIssues, searchIssues, transitionIssue } from "./jira-sync.js";
 import { agentUsage, isBusy } from "./lifecycle.js";
 import { MeetingOrchestrator } from "./meetings.js";
+import { legacyStateRoots, needsMigration } from "./migrate-state.js";
 import { type SmithPaths, smithPaths } from "./paths.js";
 import {
   API_ENGINE,
@@ -398,6 +399,19 @@ export class OrchestratorServer {
 
   /** Start the server: HTTP + WebSocket + UDP heartbeat + queue worker */
   async start(): Promise<void> {
+    // A brand-new root while real state sits in a legacy one means this install
+    // would come up looking fresh — no agents, no workspaces, no boards. Refuse
+    // loudly instead; the copy is one command and it does not touch the source.
+    const legacy = await needsMigration(this.paths.root, legacyStateRoots(process.cwd()));
+    if (legacy) {
+      throw new Error(
+        `State root ${this.paths.root} is empty but state exists at ${legacy}.\n` +
+          `Run:  cd swarm && node --import tsx -e "import{migrateState}from'./src/migrate-state.js';` +
+          `migrateState('${legacy}','${this.paths.root}').then(r=>console.log(r))"\n` +
+          `It copies; ${legacy} is left untouched.`,
+      );
+    }
+
     // The steer/kill endpoints inject keystrokes into live sessions — never
     // expose them beyond loopback without authentication.
     const loopback = ["127.0.0.1", "::1", "localhost"].includes(this.config.host);
