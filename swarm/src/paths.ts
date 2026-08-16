@@ -1,10 +1,11 @@
 // Every `.smith` state path, resolved once from a single root.
 //
-// server.ts previously built these inline as `resolve(process.cwd(), ".smith/x")`
-// at 91 call sites. That idiom has two defects: it re-derives the root on every
-// call, and it can only ever name ONE location — so a process serving several
-// workspaces has no way to say which one it means. Naming the paths here makes
-// the root a parameter instead of an ambient fact.
+// server.ts previously built these inline, resolving process.cwd() against a
+// ".smith/x" suffix, at 91 call sites. That idiom has two defects: it
+// re-derives the root on every call, and it can only ever name ONE location —
+// so a process serving several workspaces has no way to say which one it
+// means. Naming the paths here makes the root a parameter instead of an
+// ambient fact.
 //
 // This module does NOT decide where the root is. Callers pass it in.
 import { join } from "node:path";

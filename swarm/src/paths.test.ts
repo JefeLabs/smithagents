@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { smithPaths } from "./paths.js";
@@ -42,4 +43,32 @@ test("smithPaths: the returned object is frozen — callers cannot repoint state
   assert.throws(() => {
     (p as unknown as Record<string, string>).users = "/tmp/hijacked";
   }, TypeError);
+});
+
+/**
+ * The refactor this guards is easy to undo one line at a time: the next feature
+ * that needs a state path will reach back for process.cwd() and rebuild a
+ * ".smith" path by hand, because that is what the surrounding code used to
+ * look like. This test fails the moment that happens, and names the file and
+ * line. (Written so this comment doesn't trip its own regex — see the check
+ * below for the exact idiom it bans.)
+ */
+test("no source file builds a .smith path from process.cwd()", async () => {
+  const entries = await readdir("src", { recursive: true });
+  const offenders: string[] = [];
+  for (const entry of entries) {
+    const rel = String(entry);
+    if (!rel.endsWith(".ts")) continue;
+    const content = await readFile(join("src", rel), "utf8");
+    content.split("\n").forEach((line, i) => {
+      if (/resolve\(\s*process\.cwd\(\)\s*,\s*["'`]\.smith/.test(line)) {
+        offenders.push(`src/${rel}:${i + 1}`);
+      }
+    });
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    `state paths must come from smithPaths(), not process.cwd():\n${offenders.join("\n")}`,
+  );
 });

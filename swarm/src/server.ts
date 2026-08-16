@@ -101,6 +101,7 @@ import {
 import { commentIssue, createIssue, importIssues, searchIssues, transitionIssue } from "./jira-sync.js";
 import { agentUsage, isBusy } from "./lifecycle.js";
 import { MeetingOrchestrator } from "./meetings.js";
+import { type SmithPaths, smithPaths } from "./paths.js";
 import {
   API_ENGINE,
   DEFAULT_LANGUAGE,
@@ -250,6 +251,7 @@ const DEFAULT_SERVER_CONFIG: ServerConfig = {
 export class OrchestratorServer {
   private readonly config: ServerConfig;
   private readonly orchConfig: OrchestratorConfig;
+  private readonly paths: SmithPaths;
   private readonly dispatcher: Dispatcher;
   private readonly quarantine: QuarantineManager;
   private readonly app;
@@ -261,8 +263,10 @@ export class OrchestratorServer {
   private readonly wsClients = new Set<WebSocket>();
   private readonly namePool = new AgentNamePool();
   readonly workerPool = new WorkerPool();
-  /** Device pairing registry — the writer behind /workers/connect auth. */
-  readonly deviceRegistry = new DeviceRegistry(resolve(process.cwd(), ".smith/devices.json"));
+  /** Device pairing registry — the writer behind /workers/connect auth. Built in the
+   * constructor body (not a field initializer) because it needs `this.paths`, which
+   * field initializers run before. */
+  readonly deviceRegistry: DeviceRegistry;
   private reapTimer: ReturnType<typeof setInterval> | null = null;
   /** Midnight sweep of the step axis — this user's Today cards revert to their plate. */
   private sweepTimer: ReturnType<typeof setTimeout> | null = null;
@@ -289,6 +293,12 @@ export class OrchestratorServer {
     this.config = { ...DEFAULT_SERVER_CONFIG, ...config };
     this.apiToken = process.env.SMITH_API_TOKEN?.trim() || null;
     this.orchConfig = loadConfig(this.config.orchestrator);
+    // Resolved once from the config's root. Previously every state path was
+    // re-derived from process.cwd() at each call site.
+    this.paths = smithPaths(this.orchConfig.smithRoot);
+    // Field initializers (deviceRegistry included) run before this constructor
+    // body, so anything needing this.paths is built here instead.
+    this.deviceRegistry = new DeviceRegistry(this.paths.devices);
     this.dispatcher = new Dispatcher(this.orchConfig, this.workerPool);
     this.quarantine = new QuarantineManager(this.orchConfig.logsDir);
 
@@ -338,12 +348,12 @@ export class OrchestratorServer {
 
   /** Reread `.smith/workspaces/*.json` — called at boot and after every mutation below. */
   private async reloadWorkspaces(): Promise<void> {
-    this.workspaces = await loadWorkspacesFromDir(resolve(process.cwd(), ".smith/workspaces"));
+    this.workspaces = await loadWorkspacesFromDir(this.paths.workspaces);
   }
 
   /** Group VIEWS over the one context store (spec 2026-08-13) — boot and after every /groups mutation. */
   private async reloadGroups(): Promise<void> {
-    this.groups = await loadGroupsFromDir(resolve(process.cwd(), ".smith/workspaces"));
+    this.groups = await loadGroupsFromDir(this.paths.workspaces);
   }
 
   /**
@@ -353,7 +363,7 @@ export class OrchestratorServer {
    */
   private async reconcileSessions(): Promise<void> {
     try {
-      const agents = await loadAgents(resolve(process.cwd(), ".smith/agents"));
+      const agents = await loadAgents(this.paths.agents);
       const hashes = new Map(
         agents.map((a) => [a.id, createHash("sha256").update(JSON.stringify(a)).digest("hex").slice(0, 16)]),
       );
@@ -364,9 +374,8 @@ export class OrchestratorServer {
       const manager = new AgentSessionManager(createRuntime(this.orchConfig.defaultRuntime, this.orchConfig.docker), {
         agentCommands: this.orchConfig.agentCommands,
         worktreeDir: this.orchConfig.worktreeDir,
-        store: new SessionStore(resolve(process.cwd(), ".smith/sessions")),
-        toolGate: async (cli) =>
-          gateReason(await loadCliToolsFile(resolve(process.cwd(), ".smith/cli-tools.json")), cli),
+        store: new SessionStore(this.paths.sessions),
+        toolGate: async (cli) => gateReason(await loadCliToolsFile(this.paths.cliTools), cli),
       });
       const summary = await manager.reconcile(hashes);
       this.agentSessions = manager;
@@ -401,16 +410,13 @@ export class OrchestratorServer {
 
     // Squads are data, like agents: seeded on first boot, then owned by
     // .smith/squads/*.json — an empty dir legitimately means "no squads".
-    setSquadRoster(await loadSquadsFromDir(resolve(process.cwd(), ".smith/squads")));
+    setSquadRoster(await loadSquadsFromDir(this.paths.squads));
 
     await this.reconcileSessions();
 
     // ONE-WAY legacy migration (spec 2026-08-13, one-context-entity): fold
     // .smith/groups/*.json into the one store before anything reads it.
-    for (const line of await migrateGroupsDir(
-      resolve(process.cwd(), ".smith/groups"),
-      resolve(process.cwd(), ".smith/workspaces"),
-    )) {
+    for (const line of await migrateGroupsDir(this.paths.groups, this.paths.workspaces)) {
       this.app.log.info(line);
     }
 
@@ -427,11 +433,11 @@ export class OrchestratorServer {
     // Idempotent — a second boot against the seeded state writes nothing.
     {
       const migration = seedSourceMigration(
-        await loadAllContextsFromDir(resolve(process.cwd(), ".smith/workspaces")),
+        await loadAllContextsFromDir(this.paths.workspaces),
         (await loadBoards(this.workDir())).boards,
       );
       for (const ws of migration.workspaceWrites) {
-        await saveWorkspace(resolve(process.cwd(), ".smith/workspaces"), ws);
+        await saveWorkspace(this.paths.workspaces, ws);
         this.app.log.info(`[source-migration] seeded sources on ${ws.name}`);
       }
       for (const b of migration.boardWrites) {
@@ -443,11 +449,11 @@ export class OrchestratorServer {
 
     try {
       const legacy = await Promise.all([
-        stat(resolve(process.cwd(), ".smith/project.json")).then(
+        stat(this.paths.legacyProjectFile).then(
           () => ".smith/project.json",
           () => null,
         ),
-        stat(resolve(process.cwd(), ".smith/projects")).then(
+        stat(this.paths.legacyProjectsDir).then(
           () => ".smith/projects/",
           () => null,
         ),
@@ -488,7 +494,7 @@ export class OrchestratorServer {
     // resolveMasterKey unable to create ~/.smith (read-only/absent HOME). An
     // un-swept file still works fine — saveUser encrypts on the next write.
     try {
-      await sweepEncryptUsers(resolve(process.cwd(), ".smith/users"));
+      await sweepEncryptUsers(this.paths.users);
     } catch (err) {
       this.app.log.warn(`User encrypt-sweep failed, continuing unswept: ${(err as Error).message}`);
     }
@@ -498,7 +504,7 @@ export class OrchestratorServer {
     // CLI tool registry: probe machine reality in the background — the cached
     // file serves until fresh results land (spec: startup + manual +
     // on-failure; never a boot gate, never periodic).
-    void sweepCliTools(resolve(process.cwd(), ".smith/cli-tools.json"), {
+    void sweepCliTools(this.paths.cliTools, {
       agentCommands: this.orchConfig.agentCommands,
       clis: ENGINES.map((e) => e.cli),
     }).then(
@@ -531,7 +537,7 @@ export class OrchestratorServer {
         const today = localDayStamp(new Date());
         const now = new Date().toISOString();
         const { boards } = await loadBoards(this.workDir());
-        const dir = resolve(process.cwd(), ".smith/users");
+        const dir = this.paths.users;
         const user = resolveCurrentUser(await loadUsersFromDir(dir));
         if (user && user.agendaSweptDay !== today) {
           for (const board of sweepUserAgenda(boards, user.id, now)) {
@@ -598,7 +604,7 @@ export class OrchestratorServer {
   /** Lazily build the meeting orchestrator (agents loaded from disk on first use). */
   private async meetings(): Promise<MeetingOrchestrator> {
     if (!this.meetingOrchestrator) {
-      const agents = await loadAgents(resolve(process.cwd(), ".smith/agents"));
+      const agents = await loadAgents(this.paths.agents);
       this.meetingOrchestrator = new MeetingOrchestrator(loadLiveKitConfig(), agents);
     }
     return this.meetingOrchestrator;
@@ -609,7 +615,7 @@ export class OrchestratorServer {
   // -------------------------------------------------------------------------
 
   private workDir(): string {
-    return resolve(process.cwd(), ".smith/work");
+    return this.paths.work;
   }
 
   /**
@@ -683,7 +689,7 @@ export class OrchestratorServer {
       const composedId = (body.metadata as Record<string, unknown> | undefined)?.composedAgentId;
       let agents: ComposedAgent[] = [];
       if (typeof composedId === "string") {
-        agents = await loadAgents(resolve(process.cwd(), ".smith/agents"));
+        agents = await loadAgents(this.paths.agents);
         const composedAgent = agents.find((a) => a.id === composedId);
         if (composedAgent?.archived) return reply.status(404).send({ error: `${composedAgent.name} is archived` });
       }
@@ -1205,11 +1211,11 @@ export class OrchestratorServer {
     this.app.get("/agents/catalog", async () => {
       // Annotate, don't filter (spec): the wizard grays out inactive engines
       // with the reason instead of hiding them.
-      const cliFile = await loadCliToolsFile(resolve(process.cwd(), ".smith/cli-tools.json"));
+      const cliFile = await loadCliToolsFile(this.paths.cliTools);
       // The api-kind entry rides the same annotate-don't-filter contract:
       // its "availability" is the provider key's verified state, not a CLI's
       // (api-runtime spec 2026-08-13).
-      const apiGate = await apiKeyEngineGate(resolve(process.cwd(), ".smith/api-keys.json"), API_ENGINE.provider);
+      const apiGate = await apiKeyEngineGate(this.paths.apiKeys, API_ENGINE.provider);
       return {
         stereotypes: STEREOTYPES,
         jobRoles: JOB_ROLES,
@@ -1231,12 +1237,9 @@ export class OrchestratorServer {
     // ── Api-kind agent turns (api-runtime spec 2026-08-13) ─────────────
     // The seam later phases (elections, crew sends, discovery) will call.
     // Wired to nothing yet; the broker learns nothing this round.
-    const apiRuntime = new ApiRuntime(
-      resolve(process.cwd(), ".smith/api-sessions"),
-      new AnthropicProvider(resolve(process.cwd(), ".smith/api-keys.json")),
-    );
+    const apiRuntime = new ApiRuntime(this.paths.apiSessions, new AnthropicProvider(this.paths.apiKeys));
     const findApiAgent = async (id: string) => {
-      const agents = await loadAgents(resolve(process.cwd(), ".smith/agents"));
+      const agents = await loadAgents(this.paths.agents);
       const agent = agents.find((a) => a.id === id && !a.archived);
       return agent?.engine.kind === "api" ? agent : null;
     };
@@ -1281,11 +1284,7 @@ export class OrchestratorServer {
     // one URL shape for roster avatars and chooser cards alike. The filename
     // regex inside readAvatar doubles as the traversal guard.
     this.app.get<{ Params: { file: string } }>("/avatars/:file", async (req, reply) => {
-      const buf = await readAvatar(
-        req.params.file,
-        resolve(process.cwd(), ".smith/avatars"),
-        resolve(process.cwd(), "assets/avatars"),
-      );
+      const buf = await readAvatar(req.params.file, this.paths.avatars, resolve(process.cwd(), "assets/avatars"));
       if (!buf) return reply.status(404).send({ error: `Unknown avatar: ${req.params.file}` });
       return reply.type("image/png").send(buf);
     });
@@ -1308,17 +1307,14 @@ export class OrchestratorServer {
         // The api-kind door (api-runtime spec 2026-08-13): subscription-first
         // means a provider key is only ever consumed deliberately — creation
         // requires one, stored AND verified. The CLI gate is not consulted.
-        const gate = await apiKeyEngineGate(resolve(process.cwd(), ".smith/api-keys.json"), b.engine.provider);
+        const gate = await apiKeyEngineGate(this.paths.apiKeys, b.engine.provider);
         if (gate) return reply.status(400).send({ error: gate });
       } else {
         if (b.engine?.cli && !findEngine(b.engine.cli)) {
           return reply.status(400).send({ error: `Unknown CLI: ${b.engine.cli}` });
         }
         const requestedCli = b.engine?.cli ?? "claude"; // must gate the default too
-        const cliGate = gateReason(
-          await loadCliToolsFile(resolve(process.cwd(), ".smith/cli-tools.json")),
-          requestedCli,
-        );
+        const cliGate = gateReason(await loadCliToolsFile(this.paths.cliTools), requestedCli);
         if (cliGate) return reply.status(400).send({ error: `${requestedCli} is not available: ${cliGate}` });
       }
       if (b.language && !findLanguage(b.language)) {
@@ -1334,7 +1330,7 @@ export class OrchestratorServer {
         });
       }
 
-      const agentsDir = resolve(process.cwd(), ".smith/agents");
+      const agentsDir = this.paths.agents;
       const existing = await loadAgents(agentsDir);
       const collider = existing.find((a) => a.id === id);
       if (collider) {
@@ -1350,7 +1346,7 @@ export class OrchestratorServer {
       try {
         avatar = await stageAvatar({
           agentId: id,
-          liveDir: resolve(process.cwd(), ".smith/avatars"),
+          liveDir: this.paths.avatars,
           presetDir: resolve(process.cwd(), "assets/avatars"),
           avatarData: withAvatar.avatarData,
           avatarPreset: withAvatar.avatarPreset,
@@ -1408,7 +1404,7 @@ export class OrchestratorServer {
     // display name, so isBusy/agentUsage can match by id first and fall
     // back to name only for tasks whose manifest predates the id.
     const agentFacts = async () => {
-      const records = await new SessionStore(resolve(process.cwd(), ".smith/sessions")).load();
+      const records = await new SessionStore(this.paths.sessions).load();
       const live = this.agentSessions ? (await this.agentSessions.list()).map((s) => s.agentId) : [];
       const taskRefs = [...this.activeTasks.values()]
         .map((t) => ({
@@ -1425,7 +1421,7 @@ export class OrchestratorServer {
     // silently blank the rest of the persona.
     this.app.put<{ Params: { id: string } }>("/agents/:id", async (req, reply) => {
       const b = req.body as Partial<ComposedAgent> & { stereotype?: string; jobRole?: string };
-      const agentsDir = resolve(process.cwd(), ".smith/agents");
+      const agentsDir = this.paths.agents;
       const agents = await loadAgents(agentsDir);
       const existing = agents.find((a) => a.id === req.params.id);
       if (!existing) return reply.status(404).send({ error: `Unknown agent: ${req.params.id}` });
@@ -1445,17 +1441,14 @@ export class OrchestratorServer {
       if (b.engine?.kind === "api") {
         // Same door as creation (api-runtime spec 2026-08-13): switching an
         // agent to the api kind is exactly as deliberate as creating one.
-        const gate = await apiKeyEngineGate(resolve(process.cwd(), ".smith/api-keys.json"), b.engine.provider);
+        const gate = await apiKeyEngineGate(this.paths.apiKeys, b.engine.provider);
         if (gate) return reply.status(400).send({ error: gate });
       } else {
         if (b.engine?.cli && !findEngine(b.engine.cli)) {
           return reply.status(400).send({ error: `Unknown CLI: ${b.engine.cli}` });
         }
         if (b.engine?.cli && b.engine.cli !== existing.engine.cli) {
-          const cliGate = gateReason(
-            await loadCliToolsFile(resolve(process.cwd(), ".smith/cli-tools.json")),
-            b.engine.cli,
-          );
+          const cliGate = gateReason(await loadCliToolsFile(this.paths.cliTools), b.engine.cli);
           if (cliGate) return reply.status(400).send({ error: `${b.engine.cli} is not available: ${cliGate}` });
         }
       }
@@ -1478,7 +1471,7 @@ export class OrchestratorServer {
         try {
           updated.avatar = await stageAvatar({
             agentId: existing.id,
-            liveDir: resolve(process.cwd(), ".smith/avatars"),
+            liveDir: this.paths.avatars,
             presetDir: resolve(process.cwd(), "assets/avatars"),
             avatarData: withAvatar.avatarData,
           });
@@ -1496,7 +1489,7 @@ export class OrchestratorServer {
     });
 
     this.app.get<{ Params: { id: string } }>("/agents/:id/usage", async (req, reply) => {
-      const agents = await loadAgents(resolve(process.cwd(), ".smith/agents"));
+      const agents = await loadAgents(this.paths.agents);
       const agent = agents.find((a) => a.id === req.params.id);
       if (!agent) return reply.status(404).send({ error: `Unknown agent: ${req.params.id}` });
       const { records, live, taskRefs } = await agentFacts();
@@ -1504,7 +1497,7 @@ export class OrchestratorServer {
     });
 
     this.app.post<{ Params: { id: string } }>("/agents/:id/archive", async (req, reply) => {
-      const agentsDir = resolve(process.cwd(), ".smith/agents");
+      const agentsDir = this.paths.agents;
       const agents = await loadAgents(agentsDir);
       const agent = agents.find((a) => a.id === req.params.id);
       if (!agent) return reply.status(404).send({ error: `Unknown agent: ${req.params.id}` });
@@ -1517,7 +1510,7 @@ export class OrchestratorServer {
     });
 
     this.app.delete<{ Params: { id: string } }>("/agents/:id", async (req, reply) => {
-      const agentsDir = resolve(process.cwd(), ".smith/agents");
+      const agentsDir = this.paths.agents;
       const agents = await loadAgents(agentsDir);
       const agent = agents.find((a) => a.id === req.params.id);
       if (!agent) return reply.status(404).send({ error: `Unknown agent: ${req.params.id}` });
@@ -1537,13 +1530,15 @@ export class OrchestratorServer {
       // Same fix as the reconcile path above: the configured runtime, not a
       // hardcoded one. These two constructions must agree — a session adopted
       // by one and driven by the other would target the wrong substrate.
-      this.agentSessions ??= new AgentSessionManager(createRuntime(this.orchConfig.defaultRuntime, this.orchConfig.docker), {
-        agentCommands: this.orchConfig.agentCommands,
-        worktreeDir: this.orchConfig.worktreeDir,
-        store: new SessionStore(resolve(process.cwd(), ".smith/sessions")),
-        toolGate: async (cli) =>
-          gateReason(await loadCliToolsFile(resolve(process.cwd(), ".smith/cli-tools.json")), cli),
-      });
+      this.agentSessions ??= new AgentSessionManager(
+        createRuntime(this.orchConfig.defaultRuntime, this.orchConfig.docker),
+        {
+          agentCommands: this.orchConfig.agentCommands,
+          worktreeDir: this.orchConfig.worktreeDir,
+          store: new SessionStore(this.paths.sessions),
+          toolGate: async (cli) => gateReason(await loadCliToolsFile(this.paths.cliTools), cli),
+        },
+      );
       return this.agentSessions;
     };
     const sessionErrorStatus = (err: unknown): number => {
@@ -1557,7 +1552,7 @@ export class OrchestratorServer {
     this.app.post("/agent-sessions", async (req, reply) => {
       const body = req.body as { agent?: string; workspace?: string; repo?: string };
       if (!body.agent) return reply.status(400).send({ error: "Missing required field: agent" });
-      const agents = await loadAgents(resolve(process.cwd(), ".smith/agents"));
+      const agents = await loadAgents(this.paths.agents);
       const agent = findAgent(agents, body.agent);
       if (!agent) return reply.status(404).send({ error: `Unknown agent: ${body.agent}` });
       if (agent?.archived) return reply.status(404).send({ error: `${agent.name} is archived` });
@@ -1579,11 +1574,7 @@ export class OrchestratorServer {
         if ((err as { code?: string }).code === "tool_launch_failed") {
           // Self-correction (spec: on-failure re-probe): a launch failure is
           // the freshest signal — refresh just this tool, fire-and-forget.
-          void refreshCliTool(
-            resolve(process.cwd(), ".smith/cli-tools.json"),
-            this.orchConfig.agentCommands,
-            agent.engine.cli,
-          ).catch(() => {});
+          void refreshCliTool(this.paths.cliTools, this.orchConfig.agentCommands, agent.engine.cli).catch(() => {});
         }
         return reply.status(sessionErrorStatus(err)).send({ error: String((err as Error).message) });
       }
@@ -1680,27 +1671,21 @@ export class OrchestratorServer {
       if (scope.agents) {
         // Roster wipe: personas and squads are user data, so they are
         // archived, never deleted — restore by moving the files back.
-        const stamp = Date.now();
-        const agentsDir = resolve(process.cwd(), ".smith/agents");
+        const stamp = String(Date.now());
+        const agentsDir = this.paths.agents;
         const existing = await loadAgents(agentsDir);
         if (existing.length > 0) {
-          await rename(agentsDir, resolve(process.cwd(), `.smith/agents-archived-${stamp}`)).catch(() => {});
+          await rename(agentsDir, this.paths.archived("agents", stamp)).catch(() => {});
           await mkdir(agentsDir, { recursive: true }).catch(() => {});
           killed.agents = existing.length;
         }
         // Portraits ride with the roster: archived beside it, never deleted.
-        await rename(
-          resolve(process.cwd(), ".smith/avatars"),
-          resolve(process.cwd(), `.smith/avatars-archived-${stamp}`),
-        ).catch(() => {});
+        await rename(this.paths.avatars, this.paths.archived("avatars", stamp)).catch(() => {});
         // Work boards are user data too: archived beside the roster, never deleted.
-        await rename(
-          resolve(process.cwd(), ".smith/work"),
-          resolve(process.cwd(), `.smith/work-archived-${stamp}`),
-        ).catch(() => {});
-        const squadsDir = resolve(process.cwd(), ".smith/squads");
+        await rename(this.paths.work, this.paths.archived("work", stamp)).catch(() => {});
+        const squadsDir = this.paths.squads;
         killed.squads = SQUAD_ROSTER.length;
-        await rename(squadsDir, resolve(process.cwd(), `.smith/squads-archived-${stamp}`)).catch(() => {});
+        await rename(squadsDir, this.paths.archived("squads", stamp)).catch(() => {});
         await mkdir(squadsDir, { recursive: true }).catch(() => {});
         setSquadRoster([]);
         if (killed.agents > 0 || killed.squads > 0) {
@@ -1735,7 +1720,7 @@ export class OrchestratorServer {
       if (!submittedName?.trim() || !submittedRepos?.length) {
         return reply.status(400).send({ error: "Invalid workspace payload" });
       }
-      const dir = resolve(process.cwd(), ".smith/workspaces");
+      const dir = this.paths.workspaces;
       const name = submittedName
         .trim()
         .toLowerCase()
@@ -1792,7 +1777,7 @@ export class OrchestratorServer {
 
     this.app.put<{ Params: { name: string } }>("/workspaces/:name", async (req, reply) => {
       const b = req.body as Partial<Workspace>;
-      const dir = resolve(process.cwd(), ".smith/workspaces");
+      const dir = this.paths.workspaces;
       const all = await loadWorkspacesFromDir(dir);
       const existing = all.find((w) => w.name === req.params.name);
       if (!existing) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
@@ -1838,7 +1823,7 @@ export class OrchestratorServer {
     });
 
     this.app.post<{ Params: { name: string } }>("/workspaces/:name/archive", async (req, reply) => {
-      const dir = resolve(process.cwd(), ".smith/workspaces");
+      const dir = this.paths.workspaces;
       const all = await loadWorkspacesFromDir(dir);
       const ws = all.find((w) => w.name === req.params.name);
       if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
@@ -1850,7 +1835,7 @@ export class OrchestratorServer {
     });
 
     this.app.delete<{ Params: { name: string } }>("/workspaces/:name", async (req, reply) => {
-      const dir = resolve(process.cwd(), ".smith/workspaces");
+      const dir = this.paths.workspaces;
       const all = await loadWorkspacesFromDir(dir);
       const ws = all.find((w) => w.name === req.params.name);
       if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
@@ -1872,7 +1857,7 @@ export class OrchestratorServer {
     });
 
     this.app.get<{ Params: { name: string } }>("/workspaces/:name/usage", async (req, reply) => {
-      const all = await loadWorkspacesFromDir(resolve(process.cwd(), ".smith/workspaces"));
+      const all = await loadWorkspacesFromDir(this.paths.workspaces);
       const ws = all.find((w) => w.name === req.params.name);
       if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
       const repoPaths = new Set(ws.repos.map((r) => r.path));
@@ -1918,7 +1903,7 @@ export class OrchestratorServer {
     }));
 
     this.app.post("/groups", async (req, reply) => {
-      const dir = resolve(process.cwd(), ".smith/workspaces");
+      const dir = this.paths.workspaces;
       let candidate: WorkspaceGroup;
       try {
         candidate = assertGroup("request", req.body);
@@ -1966,7 +1951,7 @@ export class OrchestratorServer {
     });
 
     this.app.put<{ Params: { name: string } }>("/groups/:name", async (req, reply) => {
-      const dir = resolve(process.cwd(), ".smith/workspaces");
+      const dir = this.paths.workspaces;
       const b = req.body as Partial<WorkspaceGroup>;
       const all = await loadGroupsFromDir(dir);
       const existing = all.find((g) => g.name === req.params.name);
@@ -1995,7 +1980,7 @@ export class OrchestratorServer {
     });
 
     this.app.delete<{ Params: { name: string } }>("/groups/:name", async (req, reply) => {
-      const dir = resolve(process.cwd(), ".smith/workspaces");
+      const dir = this.paths.workspaces;
       const all = await loadGroupsFromDir(dir);
       const existing = all.find((g) => g.name === req.params.name);
       if (!existing) return reply.status(404).send({ error: `Unknown group: ${req.params.name}` });
@@ -2011,13 +1996,13 @@ export class OrchestratorServer {
     });
 
     this.app.get("/me", async () => {
-      const users = await loadUsersFromDir(resolve(process.cwd(), ".smith/users"));
+      const users = await loadUsersFromDir(this.paths.users);
       return redactUser(resolveCurrentUser(users));
     });
 
     this.app.put("/me", async (req, reply) => {
       const b = req.body as { name?: string };
-      const dir = resolve(process.cwd(), ".smith/users");
+      const dir = this.paths.users;
       const users = await loadUsersFromDir(dir);
       const existing = resolveCurrentUser(users);
       const merged = buildUserUpdate(existing, b);
@@ -2041,7 +2026,7 @@ export class OrchestratorServer {
     });
 
     this.app.get("/me/connectors", async () => {
-      const users = await loadUsersFromDir(resolve(process.cwd(), ".smith/users"));
+      const users = await loadUsersFromDir(this.paths.users);
       const user = resolveCurrentUser(users);
       return (user?.connectors ?? []).map(redactConnector);
     });
@@ -2051,7 +2036,7 @@ export class OrchestratorServer {
       if (!b.vendorId || !findVendor(b.vendorId))
         return reply.status(400).send({ error: `Unknown vendor: ${b.vendorId}` });
       if (!b.label?.trim()) return reply.status(400).send({ error: "A label is required" });
-      const dir = resolve(process.cwd(), ".smith/users");
+      const dir = this.paths.users;
       const users = await loadUsersFromDir(dir);
       const existing = resolveCurrentUser(users) ?? { id: "me", name: "You", default: true, connectors: [] };
       const instance: ConnectorInstance = {
@@ -2073,7 +2058,7 @@ export class OrchestratorServer {
 
     this.app.put<{ Params: { id: string } }>("/me/connectors/:id", async (req, reply) => {
       const b = req.body as { label?: string; fields?: Record<string, string> };
-      const dir = resolve(process.cwd(), ".smith/users");
+      const dir = this.paths.users;
       const users = await loadUsersFromDir(dir);
       const existing = resolveCurrentUser(users);
       const connectors = existing?.connectors;
@@ -2097,7 +2082,7 @@ export class OrchestratorServer {
     });
 
     this.app.delete<{ Params: { id: string } }>("/me/connectors/:id", async (req, reply) => {
-      const dir = resolve(process.cwd(), ".smith/users");
+      const dir = this.paths.users;
       const users = await loadUsersFromDir(dir);
       const existing = resolveCurrentUser(users);
       if (!existing?.connectors?.some((c) => c.id === req.params.id)) {
@@ -2118,7 +2103,7 @@ export class OrchestratorServer {
 
     this.app.post<{ Params: { id: string } }>("/me/connectors/:id/verify", async (req, reply) => {
       const b = (req.body as { extra?: Record<string, string> } | undefined) ?? {};
-      const users = await loadUsersFromDir(resolve(process.cwd(), ".smith/users"));
+      const users = await loadUsersFromDir(this.paths.users);
       const user = resolveCurrentUser(users);
       const instance = user?.connectors?.find((c) => c.id === req.params.id);
       if (!instance) return reply.status(404).send({ error: `Unknown connector: ${req.params.id}` });
@@ -2134,12 +2119,12 @@ export class OrchestratorServer {
     });
 
     this.app.get("/me/voice", async () => {
-      const users = await loadUsersFromDir(resolve(process.cwd(), ".smith/users"));
+      const users = await loadUsersFromDir(this.paths.users);
       return redactVoice(resolveCurrentUser(users));
     });
 
     this.app.put("/me/voice", async (req, reply) => {
-      const dir = resolve(process.cwd(), ".smith/users");
+      const dir = this.paths.users;
       const users = await loadUsersFromDir(dir);
       const existing = resolveCurrentUser(users) ?? { id: "me", name: "You", default: true, connectors: [] };
       const r = buildVoiceUpdate(existing, req.body);
@@ -2154,16 +2139,16 @@ export class OrchestratorServer {
     });
 
     this.app.get("/me/research-engine", async () => {
-      const users = await loadUsersFromDir(resolve(process.cwd(), ".smith/users"));
-      const file = await loadCliToolsFile(resolve(process.cwd(), ".smith/cli-tools.json"));
+      const users = await loadUsersFromDir(this.paths.users);
+      const file = await loadCliToolsFile(this.paths.cliTools);
       return redactResearchEngine(resolveCurrentUser(users), (cli) => gateReason(file, cli));
     });
 
     this.app.put("/me/research-engine", async (req, reply) => {
-      const dir = resolve(process.cwd(), ".smith/users");
+      const dir = this.paths.users;
       const users = await loadUsersFromDir(dir);
       const existing = resolveCurrentUser(users) ?? { id: "me", name: "You", default: true, connectors: [] };
-      const file = await loadCliToolsFile(resolve(process.cwd(), ".smith/cli-tools.json"));
+      const file = await loadCliToolsFile(this.paths.cliTools);
       const gate = (cli: string) => gateReason(file, cli);
       const r = buildResearchEngineUpdate(req.body, ENGINES, gate);
       if ("error" in r) return reply.status(400).send({ error: r.error });
@@ -2177,16 +2162,16 @@ export class OrchestratorServer {
     });
 
     this.app.get("/me/brain-engine", async () => {
-      const users = await loadUsersFromDir(resolve(process.cwd(), ".smith/users"));
-      const file = await loadCliToolsFile(resolve(process.cwd(), ".smith/cli-tools.json"));
+      const users = await loadUsersFromDir(this.paths.users);
+      const file = await loadCliToolsFile(this.paths.cliTools);
       return redactBrainEngine(resolveCurrentUser(users), (cli) => gateReason(file, cli));
     });
 
     this.app.put("/me/brain-engine", async (req, reply) => {
-      const dir = resolve(process.cwd(), ".smith/users");
+      const dir = this.paths.users;
       const users = await loadUsersFromDir(dir);
       const existing = resolveCurrentUser(users) ?? { id: "me", name: "You", default: true, connectors: [] };
-      const file = await loadCliToolsFile(resolve(process.cwd(), ".smith/cli-tools.json"));
+      const file = await loadCliToolsFile(this.paths.cliTools);
       const gate = (cli: string) => gateReason(file, cli);
       const r = buildBrainEngineUpdate(req.body, ENGINES, gate);
       if ("error" in r) return reply.status(400).send({ error: r.error });
@@ -2205,30 +2190,29 @@ export class OrchestratorServer {
     // no-separate-auth trust boundary. In cloud mode this route is the seam where
     // platform-provisioned keys would be resolved instead (spec §7).
     this.app.get("/me/voice/keys", async () => {
-      const users = await loadUsersFromDir(resolve(process.cwd(), ".smith/users"));
+      const users = await loadUsersFromDir(this.paths.users);
       return resolveVoiceKeys(resolveCurrentUser(users));
     });
 
     // ── CLI tool registry (machine-level; spec 2026-08-06) ─────────────
-    const cliToolsPath = () => resolve(process.cwd(), ".smith/cli-tools.json");
     const cliSweepDeps = (): SweepDeps => ({
       agentCommands: this.orchConfig.agentCommands,
       clis: ENGINES.map((e) => e.cli),
     });
 
     this.app.get("/cli-tools", async () => {
-      let file = await loadCliToolsFile(cliToolsPath());
+      let file = await loadCliToolsFile(this.paths.cliTools);
       // Lazy first sweep: a fresh install that opens Settings before the
       // startup sweep lands still gets real statuses, not blanks.
       if (Object.keys(file.tools).length === 0) {
-        file = await sweepCliTools(cliToolsPath(), cliSweepDeps());
+        file = await sweepCliTools(this.paths.cliTools, cliSweepDeps());
       }
       return { tools: buildCliToolListings(ENGINES, file) };
     });
 
     this.app.post("/cli-tools/refresh", async (req) => {
       const tool = (req.query as { tool?: string }).tool;
-      const file = await sweepCliTools(cliToolsPath(), cliSweepDeps(), tool);
+      const file = await sweepCliTools(this.paths.cliTools, cliSweepDeps(), tool);
       return { tools: buildCliToolListings(ENGINES, file) };
     });
 
@@ -2237,34 +2221,33 @@ export class OrchestratorServer {
       if (typeof b?.enabled !== "boolean")
         return reply.status(400).send({ error: "body must be { enabled: boolean }" });
       if (!findEngine(req.params.id)) return reply.status(404).send({ error: `Unknown CLI tool: ${req.params.id}` });
-      const file = await loadCliToolsFile(cliToolsPath());
+      const file = await loadCliToolsFile(this.paths.cliTools);
       const current = file.tools[req.params.id];
       if (!current) return reply.status(409).send({ error: "Tool not probed yet — refresh first" });
       file.tools[req.params.id] = { ...current, enabled: b.enabled };
-      await saveCliToolsFile(cliToolsPath(), file);
+      await saveCliToolsFile(this.paths.cliTools, file);
       return { tools: buildCliToolListings(ENGINES, file) };
     });
 
     // ── Containers (Settings → Workspace → Containers; spec 2026-08-07) ────
-    const containersPath = () => resolve(process.cwd(), ".smith/containers.json");
 
-    this.app.get("/containers", async () => await loadContainersFile(containersPath()));
+    this.app.get("/containers", async () => await loadContainersFile(this.paths.containers));
 
     this.app.put("/containers", async (req, reply) => {
       const b = req.body as { docker?: { enabled?: boolean } };
       if (typeof b?.docker?.enabled !== "boolean") {
         return reply.status(400).send({ error: "body must be { docker: { enabled: boolean } }" });
       }
-      const file = await loadContainersFile(containersPath());
+      const file = await loadContainersFile(this.paths.containers);
       file.docker.enabled = b.docker.enabled;
-      await saveContainersFile(containersPath(), file);
+      await saveContainersFile(this.paths.containers, file);
       return file;
     });
 
     this.app.post("/containers/verify", async () => await probeDocker());
 
     this.app.get("/execution-modes", async () => {
-      const file = await loadContainersFile(containersPath());
+      const file = await loadContainersFile(this.paths.containers);
       return {
         modes: buildExecutionModes(
           file.docker.enabled,
@@ -2274,32 +2257,37 @@ export class OrchestratorServer {
     });
 
     // ── API key registry (Settings → API Keys; spec 2026-08-06) ────────────
-    const apiKeysPath = () => resolve(process.cwd(), ".smith/api-keys.json");
     const sendKeyOp = (reply: { status(code: number): { send(body: unknown): unknown } }, r: ApiKeyOpResult) =>
       "error" in r ? reply.status(r.status).send({ error: r.error }) : { providers: r.listings };
 
-    this.app.get("/api-keys", async () => ({ providers: buildApiKeyListings(await loadApiKeysFile(apiKeysPath())) }));
+    this.app.get("/api-keys", async () => ({
+      providers: buildApiKeyListings(await loadApiKeysFile(this.paths.apiKeys)),
+    }));
 
     this.app.put<{ Params: { provider: string } }>("/api-keys/:provider", async (req, reply) =>
       sendKeyOp(
         reply,
-        await saveAndVerifyKey(apiKeysPath(), req.params.provider, ((req.body ?? {}) as { key?: string }).key ?? ""),
+        await saveAndVerifyKey(
+          this.paths.apiKeys,
+          req.params.provider,
+          ((req.body ?? {}) as { key?: string }).key ?? "",
+        ),
       ),
     );
 
     this.app.post<{ Params: { provider: string } }>("/api-keys/:provider/verify", async (req, reply) =>
-      sendKeyOp(reply, await verifyStoredKey(apiKeysPath(), req.params.provider)),
+      sendKeyOp(reply, await verifyStoredKey(this.paths.apiKeys, req.params.provider)),
     );
 
     this.app.delete<{ Params: { provider: string } }>("/api-keys/:provider", async (req, reply) =>
-      sendKeyOp(reply, await deleteKey(apiKeysPath(), req.params.provider)),
+      sendKeyOp(reply, await deleteKey(this.paths.apiKeys, req.params.provider)),
     );
 
     // Raw-key hop for the broker's avatar generator ONLY. Guard: the swarm
     // binds 127.0.0.1, and this route is deliberately absent from the broker's
     // text-channel passthrough — 7790 can never serve it (spec invariant).
     this.app.get<{ Params: { provider: string } }>("/api-keys/:provider/credential", async (req, reply) => {
-      const r = await getCredential(apiKeysPath(), req.params.provider);
+      const r = await getCredential(this.paths.apiKeys, req.params.provider);
       return "error" in r ? reply.status(r.status).send({ error: r.error }) : r;
     });
 
@@ -2308,7 +2296,7 @@ export class OrchestratorServer {
       if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
       if (!ws.atlassian)
         return reply.status(400).send({ error: `Workspace "${ws.name}" has no Jira/Confluence site configured` });
-      const users = await loadUsersFromDir(resolve(process.cwd(), ".smith/users"));
+      const users = await loadUsersFromDir(this.paths.users);
       const user = resolveCurrentUser(users);
       const resolved = resolveConnector(ws.atlassian.connectorId, "atlassian", "an Atlassian", "workspace", user);
       if ("error" in resolved) return reply.status(400).send({ error: resolved.error });
@@ -2327,14 +2315,14 @@ export class OrchestratorServer {
     this.app.get<{ Params: { name: string } }>("/workspaces/:name/channels", async (req, reply) => {
       const ws = this.workspaces.find((w) => w.name === req.params.name);
       if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
-      const channels = await loadChannelsFor(resolve(process.cwd(), ".smith/channels"), req.params.name);
+      const channels = await loadChannelsFor(this.paths.channels, req.params.name);
       return redactChannels(channels);
     });
 
     this.app.put<{ Params: { name: string } }>("/workspaces/:name/channels", async (req, reply) => {
       const ws = this.workspaces.find((w) => w.name === req.params.name);
       if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
-      const dir = resolve(process.cwd(), ".smith/channels");
+      const dir = this.paths.channels;
       const existing = await loadChannelsFor(dir, req.params.name);
       const b = req.body as Partial<WorkspaceChannels>;
       const merged = buildChannelsUpdate(existing, b);
@@ -2349,7 +2337,7 @@ export class OrchestratorServer {
     this.app.post<{ Params: { name: string } }>("/workspaces/:name/channels/verify-discord", async (req, reply) => {
       const ws = this.workspaces.find((w) => w.name === req.params.name);
       if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
-      const channels = await loadChannelsFor(resolve(process.cwd(), ".smith/channels"), req.params.name);
+      const channels = await loadChannelsFor(this.paths.channels, req.params.name);
       if (!channels?.discord?.botToken) {
         return reply.status(400).send({ error: `Workspace "${ws.name}" has no Discord bot token saved yet` });
       }
@@ -2365,7 +2353,7 @@ export class OrchestratorServer {
     this.app.get<{ Params: { name: string } }>("/workspaces/:name/channels/discord-token", async (req, reply) => {
       const ws = this.workspaces.find((w) => w.name === req.params.name);
       if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
-      const channels = await loadChannelsFor(resolve(process.cwd(), ".smith/channels"), req.params.name);
+      const channels = await loadChannelsFor(this.paths.channels, req.params.name);
       if (!channels?.discord) return reply.status(404).send({ error: `Workspace "${ws.name}" has no Discord config` });
       return channels.discord;
     });
@@ -2379,7 +2367,7 @@ export class OrchestratorServer {
         if (!repo) return reply.status(404).send({ error: `Unknown repo: ${req.params.repoName}` });
         if (!repo.github)
           return reply.status(400).send({ error: `Repo "${repo.name}" has no GitHub owner/repo configured` });
-        const users = await loadUsersFromDir(resolve(process.cwd(), ".smith/users"));
+        const users = await loadUsersFromDir(this.paths.users);
         const user = resolveCurrentUser(users);
         const resolved = resolveConnector(repo.github.connectorId, "github", "a GitHub", "repo", user);
         if ("error" in resolved) return reply.status(400).send({ error: resolved.error });
@@ -2394,7 +2382,7 @@ export class OrchestratorServer {
         if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
         if (!ws.atlassian)
           return reply.status(400).send({ error: `Workspace "${ws.name}" has no Jira/Confluence site configured` });
-        const users = await loadUsersFromDir(resolve(process.cwd(), ".smith/users"));
+        const users = await loadUsersFromDir(this.paths.users);
         const user = resolveCurrentUser(users);
         const ticketKey = req.body?.ticketKey;
         const resolved = resolveAtlassianConnector(ws.atlassian.connectorId, user, {
@@ -2418,7 +2406,7 @@ export class OrchestratorServer {
         if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
         if (!ws.atlassian)
           return reply.status(400).send({ error: `Workspace "${ws.name}" has no Jira/Confluence site configured` });
-        const users = await loadUsersFromDir(resolve(process.cwd(), ".smith/users"));
+        const users = await loadUsersFromDir(this.paths.users);
         const user = resolveCurrentUser(users);
         const query = req.body?.query;
         const resolved = resolveAtlassianConnector(ws.atlassian.connectorId, user, { name: "query", value: query });
@@ -2440,7 +2428,7 @@ export class OrchestratorServer {
     this.app.post<{ Body: { connectorId?: string; siteUrl?: string; jql?: string } }>(
       "/atlassian/search",
       async (req, reply) => {
-        const users = await loadUsersFromDir(resolve(process.cwd(), ".smith/users"));
+        const users = await loadUsersFromDir(this.paths.users);
         const user = resolveCurrentUser(users);
         const adapter = (id: string) => {
           const resolved = resolveAtlassianConnector(id, user, { name: "jql", value: req.body?.jql });
@@ -2589,7 +2577,7 @@ export class OrchestratorServer {
     // ── Agents registry ───────────────────────────────────────────────
     this.app.get("/agents/registry", async () => {
       // Full registry, archived included — the broker filters for the roster and needs the rest for history.
-      const agents = await loadAgents(resolve(process.cwd(), ".smith/agents"));
+      const agents = await loadAgents(this.paths.agents);
       return { agents };
     });
 
@@ -2707,7 +2695,7 @@ export class OrchestratorServer {
       let capToPersist: Capability | undefined;
       let crossBoardSibling: WorkBoard | undefined;
       if (bodyPatch.stories && targetCard?.capabilityRef) {
-        const { capabilities } = await loadCapabilities(capsDir());
+        const { capabilities } = await loadCapabilities(this.paths.workCapabilities);
         const cap = capabilities.find((c) => c.id === targetCard.capabilityRef?.capabilityId);
         if (cap) {
           let canonical: ReturnType<typeof applyStoryToggles>;
@@ -2737,7 +2725,7 @@ export class OrchestratorServer {
       }
 
       try {
-        const users = await loadUsersFromDir(resolve(process.cwd(), ".smith/users"));
+        const users = await loadUsersFromDir(this.paths.users);
         const user = resolveCurrentUser(users);
         // close.by and the grabbing user (below, for the agenda write) are
         // resolved server-side from the current user — a client-supplied
@@ -2746,7 +2734,7 @@ export class OrchestratorServer {
         patchBody.close = resolveCloseBy(patchBody.close, user?.id);
         const closeIntentBefore = targetCard?.intents?.at(-1);
         const card = patchCard(board, req.params.cardId, patchBody);
-        if (user) await pushIntentComment(board, card, user, closeIntentBefore);
+        if (user) await pushIntentComment(board, card, user, closeIntentBefore, this.paths);
 
         // Step-axis write: grab/state-flip/release. Kept as its own body
         // field (never folded into patchCard's Pick<>, see buildCardAgendaPatch's
@@ -2763,7 +2751,7 @@ export class OrchestratorServer {
           } catch (err) {
             return reply.status(400).send({ error: (err as Error).message });
           }
-          await pushIntentComment(board, card, user, agendaIntentBefore);
+          await pushIntentComment(board, card, user, agendaIntentBefore, this.paths);
         }
 
         // Push-on-move: a Jira-linked card landing on a mapped column tries
@@ -2776,7 +2764,7 @@ export class OrchestratorServer {
         const target = movedTo ? board.columns.find((c) => c.id === movedTo) : undefined;
         if (card.jira && target?.jiraStatus && board.jira) {
           try {
-            const users = await loadUsersFromDir(resolve(process.cwd(), ".smith/users"));
+            const users = await loadUsersFromDir(this.paths.users);
             const resolved = resolveAtlassianConnector(board.jira.connectorId, resolveCurrentUser(users), {
               name: "key",
               value: card.jira.key,
@@ -2808,7 +2796,7 @@ export class OrchestratorServer {
           const { boards: allBoards } = await loadBoards(this.workDir());
           const { changed, errors } = await applyTerminalEffects(board, card, allBoards, {
             createIssue: async (connectorId, projectKey, summary, description) => {
-              const users = await loadUsersFromDir(resolve(process.cwd(), ".smith/users"));
+              const users = await loadUsersFromDir(this.paths.users);
               const resolved = resolveAtlassianConnector(connectorId, resolveCurrentUser(users), {
                 name: "projectKey",
                 value: projectKey,
@@ -2839,7 +2827,7 @@ export class OrchestratorServer {
         // Only now — patchCard applied cleanly — do the capability/sibling
         // writes computed above actually hit disk, alongside the board's own
         // save, so a failed patch (e.g. bad columnId) leaves nothing behind.
-        if (capToPersist) await saveCapability(capsDir(), capToPersist);
+        if (capToPersist) await saveCapability(this.paths.workCapabilities, capToPersist);
         if (crossBoardSibling) await saveBoard(this.workDir(), crossBoardSibling);
         await saveBoard(this.workDir(), board);
         return card;
@@ -2866,10 +2854,10 @@ export class OrchestratorServer {
           // Best-effort — a missing/renamed capability must not fail a delete
           // that has already succeeded.
           try {
-            const { capabilities } = await loadCapabilities(capsDir());
+            const { capabilities } = await loadCapabilities(this.paths.workCapabilities);
             const cap = capabilities.find((c) => c.id === capRef.capabilityId);
             if (cap && unlinkSliceCard(cap, capRef.sliceId, req.params.cardId)) {
-              await saveCapability(capsDir(), cap);
+              await saveCapability(this.paths.workCapabilities, cap);
             }
           } catch {
             // ignore — the delete already succeeded
@@ -2912,10 +2900,10 @@ export class OrchestratorServer {
           // card-DELETE unlink: a missing capability must not fail a move
           // that has already been persisted.
           try {
-            const { capabilities } = await loadCapabilities(capsDir());
+            const { capabilities } = await loadCapabilities(this.paths.workCapabilities);
             const cap = capabilities.find((c) => c.id === plan.card.capabilityRef?.capabilityId);
             if (cap && repointSliceCardRef(cap, plan.card.id, dest.id)) {
-              await saveCapability(capsDir(), cap);
+              await saveCapability(this.paths.workCapabilities, cap);
             }
           } catch {
             // ignore — the route already succeeded
@@ -2929,7 +2917,7 @@ export class OrchestratorServer {
       const board = await boardOr404(req.params.id, reply);
       if (!board) return;
       if (!board.jira) return reply.status(400).send({ error: `Board "${board.id}" has no Jira link configured` });
-      const users = await loadUsersFromDir(resolve(process.cwd(), ".smith/users"));
+      const users = await loadUsersFromDir(this.paths.users);
       const user = resolveCurrentUser(users);
       const resolved = resolveAtlassianConnector(board.jira.connectorId, user, {
         name: "jql",
@@ -2953,19 +2941,18 @@ export class OrchestratorServer {
     });
 
     // ── Capability story maps — the authoring layer above the boards ──
-    const capsDir = () => resolve(process.cwd(), ".smith/work/capabilities");
     const capOr404 = async (
       id: string,
       reply: { status: (n: number) => { send: (b: unknown) => unknown } },
     ): Promise<Capability | null> => {
-      const { capabilities } = await loadCapabilities(capsDir());
+      const { capabilities } = await loadCapabilities(this.paths.workCapabilities);
       const cap = capabilities.find((c) => c.id === id) ?? null;
       if (!cap) reply.status(404).send({ error: `Unknown capability: ${id}` });
       return cap;
     };
 
     this.app.get("/work/capabilities", async (req) => {
-      const { capabilities, errors } = await loadCapabilities(capsDir());
+      const { capabilities, errors } = await loadCapabilities(this.paths.workCapabilities);
       const ws = (req.query as { workspaceId?: string }).workspaceId;
       return { capabilities: ws ? capabilities.filter((c) => c.workspaceId === ws) : capabilities, errors };
     });
@@ -2975,7 +2962,7 @@ export class OrchestratorServer {
       if (!b?.name?.trim() || !b.workspaceId?.trim())
         return reply.status(400).send({ error: "Missing required fields: name, workspaceId" });
       try {
-        const { capabilities } = await loadCapabilities(capsDir());
+        const { capabilities } = await loadCapabilities(this.paths.workCapabilities);
         // LAST in its own workspace, not last overall: the row only ever shows one
         // workspace, so ordering against capabilities the user cannot see would leave
         // gaps in the sequence they can.
@@ -2984,7 +2971,7 @@ export class OrchestratorServer {
         const cap = createCapability(b.name, b.workspaceId.trim(), nextOrder);
         if (capabilities.some((c) => c.id === cap.id))
           return reply.status(409).send({ error: `Capability "${cap.id}" already exists` });
-        await saveCapability(capsDir(), cap);
+        await saveCapability(this.paths.workCapabilities, cap);
         await ensureWorkspaceBoards(this.workDir(), cap.workspaceId);
         return reply.status(201).send(cap);
       } catch (err) {
@@ -2997,7 +2984,7 @@ export class OrchestratorServer {
       if (!cap) return;
       try {
         patchCapability(cap, req.body as Parameters<typeof patchCapability>[1]);
-        await saveCapability(capsDir(), cap);
+        await saveCapability(this.paths.workCapabilities, cap);
         // Runs only after the capability patch itself has succeeded and
         // persisted (write-ordering discipline from T3): keeps every linked
         // card's checklist a synced view rather than a send-time snapshot
@@ -3017,7 +3004,7 @@ export class OrchestratorServer {
       // Unlink, never orphan: linked cards keep their story copies as local checklists.
       const { boards } = await loadBoards(this.workDir());
       for (const board of unlinkCapabilityCards(boards, cap)) await saveBoard(this.workDir(), board);
-      await deleteCapabilityFile(capsDir(), cap.id);
+      await deleteCapabilityFile(this.paths.workCapabilities, cap.id);
       return { ok: true };
     });
 
@@ -3029,7 +3016,7 @@ export class OrchestratorServer {
         const slice = cap.slices.find((s) => s.id === req.params.sliceId);
         if (!slice) return reply.status(404).send({ error: `Unknown slice: ${req.params.sliceId}` });
         if (slice.specPath) return reply.status(409).send({ error: `Slice already has a spec: ${slice.specPath}` });
-        const workspaces = await loadWorkspacesFromDir(resolve(process.cwd(), ".smith/workspaces"));
+        const workspaces = await loadWorkspacesFromDir(this.paths.workspaces);
         const resolved = resolveRepo(workspaces, cap.workspaceId);
         if (!resolved) return reply.status(400).send({ error: `No active workspace/repo for: ${cap.workspaceId}` });
         try {
@@ -3045,7 +3032,7 @@ export class OrchestratorServer {
           await writeFile(absPath, renderSpecSkeleton(slice.name, sliceStories(cap, slice.id), date));
           slice.specPath = relPath;
           cap.updatedAt = new Date().toISOString();
-          await saveCapability(capsDir(), cap);
+          await saveCapability(this.paths.workCapabilities, cap);
           return { specPath: relPath };
         } catch (err) {
           return reply.status(400).send({ error: String((err as Error).message) });
@@ -3083,7 +3070,7 @@ export class OrchestratorServer {
           // diff stamps, so stamp here (date-range spec 2026-08-12).
           slice.updatedAt = new Date().toISOString();
           cap.updatedAt = new Date().toISOString();
-          await saveCapability(capsDir(), cap);
+          await saveCapability(this.paths.workCapabilities, cap);
           return reply.status(201).send(card);
         } catch (err) {
           return reply.status(400).send({ error: String((err as Error).message) });
@@ -3628,12 +3615,13 @@ async function pushIntentComment(
   card: WorkCard,
   user: User,
   before: CardIntent | undefined,
+  paths: SmithPaths,
 ): Promise<void> {
   if (!card.jira || !board.jira) return;
   const appended = card.intents?.at(-1);
   if (!appended || appended === before) return;
   try {
-    const users = await loadUsersFromDir(resolve(process.cwd(), ".smith/users"));
+    const users = await loadUsersFromDir(paths.users);
     const resolved = resolveAtlassianConnector(board.jira.connectorId, resolveCurrentUser(users), {
       name: "key",
       value: card.jira.key,
