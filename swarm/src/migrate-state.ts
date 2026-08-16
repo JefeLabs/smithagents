@@ -34,6 +34,27 @@ async function exists(path: string): Promise<boolean> {
 }
 
 /**
+ * A collision is something a copy could destroy or shadow, not merely
+ * something present. A file always collides, and a non-empty directory
+ * always collides — but an empty directory holds nothing, so copying into it
+ * loses nothing. ensureDirectories()/boot routinely seed empty scaffolding
+ * (queue/, ...) under a fresh root before this ever runs; treating that as a
+ * collision made the guard's own remedy command fail for every user who ran
+ * it verbatim.
+ */
+async function isCollision(path: string): Promise<boolean> {
+  let info: Awaited<ReturnType<typeof stat>>;
+  try {
+    info = await stat(path);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    return false; // absent — nothing to lose
+  }
+  if (!info.isDirectory()) return true; // a file always collides, any size
+  return (await readdir(path)).length > 0;
+}
+
+/**
  * The legacy root to migrate from, or null when nothing should happen —
  * either every candidate is absent, or the target already holds everything
  * each candidate does.
@@ -82,7 +103,7 @@ export async function migrateState(from: string, to: string): Promise<{ copied: 
   // Check every collision first: a partial copy is worse than a refusal.
   const collisions: string[] = [];
   for (const entry of migratable) {
-    if (await exists(join(to, entry))) collisions.push(entry);
+    if (await isCollision(join(to, entry))) collisions.push(entry);
   }
   if (collisions.length > 0) {
     throw new Error(

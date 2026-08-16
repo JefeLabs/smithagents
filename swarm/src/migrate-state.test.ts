@@ -69,6 +69,43 @@ test("migrateState: refuses to overwrite an entry that already exists in the tar
   }
 });
 
+test("migrateState: an empty directory already in the target is not a collision — the source's contents land in it", async () => {
+  const dir = fixture();
+  try {
+    // Mirrors production: ensureDirectories() seeds an empty queue/ under the
+    // fresh root before migrateState ever runs.
+    mkdirSync(join(dir, "old", "queue"), { recursive: true });
+    writeFileSync(join(dir, "old", "queue", "task-1.json"), '{"id":"task-1"}');
+    mkdirSync(join(dir, "new", "queue"), { recursive: true }); // pre-seeded, empty
+
+    const result = await migrateState(join(dir, "old"), join(dir, "new"));
+
+    assert.equal(readFileSync(join(dir, "new", "queue", "task-1.json"), "utf8"), '{"id":"task-1"}');
+    assert.ok(result.copied.includes("queue"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("migrateState: a non-empty directory in the target is still a collision", async () => {
+  const dir = fixture();
+  try {
+    mkdirSync(join(dir, "old", "queue"), { recursive: true });
+    writeFileSync(join(dir, "old", "queue", "task-1.json"), '{"id":"task-1"}');
+    mkdirSync(join(dir, "new", "queue"), { recursive: true });
+    writeFileSync(join(dir, "new", "queue", "pending.json"), '{"id":"PRECIOUS"}'); // real pending state
+
+    await assert.rejects(
+      () => migrateState(join(dir, "old"), join(dir, "new")),
+      /queue/,
+      "a non-empty target directory must still refuse — it could hold real pending state",
+    );
+    assert.equal(readFileSync(join(dir, "new", "queue", "pending.json"), "utf8"), '{"id":"PRECIOUS"}');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("needsMigration: null when the target already holds everything the legacy root does, else the legacy root to copy from", async () => {
   const dir = fixture();
   try {
