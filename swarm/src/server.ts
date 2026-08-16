@@ -357,7 +357,11 @@ export class OrchestratorServer {
       const hashes = new Map(
         agents.map((a) => [a.id, createHash("sha256").update(JSON.stringify(a)).digest("hex").slice(0, 16)]),
       );
-      const manager = new AgentSessionManager(createRuntime("tmux", this.orchConfig.docker), {
+      // Honour the configured runtime, as every other createRuntime call site
+      // does. Hardcoding "tmux" here made persistent agent sessions the one
+      // path that could never run in a container, even with docker enabled —
+      // DockerRuntime implements launch/sendKeys/sendText for exactly this.
+      const manager = new AgentSessionManager(createRuntime(this.orchConfig.defaultRuntime, this.orchConfig.docker), {
         agentCommands: this.orchConfig.agentCommands,
         worktreeDir: this.orchConfig.worktreeDir,
         store: new SessionStore(resolve(process.cwd(), ".smith/sessions")),
@@ -1530,7 +1534,10 @@ export class OrchestratorServer {
 
     // ── Persistent agent sessions (warm conversational workers) ────────
     const sessionManager = (): AgentSessionManager => {
-      this.agentSessions ??= new AgentSessionManager(createRuntime("tmux", this.orchConfig.docker), {
+      // Same fix as the reconcile path above: the configured runtime, not a
+      // hardcoded one. These two constructions must agree — a session adopted
+      // by one and driven by the other would target the wrong substrate.
+      this.agentSessions ??= new AgentSessionManager(createRuntime(this.orchConfig.defaultRuntime, this.orchConfig.docker), {
         agentCommands: this.orchConfig.agentCommands,
         worktreeDir: this.orchConfig.worktreeDir,
         store: new SessionStore(resolve(process.cwd(), ".smith/sessions")),

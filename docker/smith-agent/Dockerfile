@@ -9,7 +9,14 @@
 # What the base image lacks: the agent CLIs are placeholder shims that print
 # "ERROR: claude CLI is not installed in this image" and exit 1, so every
 # docker task failed before the agent ever started.
-FROM smith-agent:latest
+#
+# Base on the PRISTINE stub image, never on smith-agent:latest. The build's
+# output is promoted to :latest, so `FROM smith-agent:latest` makes the second
+# build start from the first build's output — which already ends with
+# `USER agent`, so `npm install -g` runs unprivileged and the build dies at
+# "rm -f /usr/local/bin/claude". Pinning the original base keeps rebuilds
+# idempotent instead of working exactly once.
+FROM smith-agent:stub-backup
 
 # The real CLI, replacing the stub at /usr/local/bin/claude.
 # The stub must go FIRST: npm refuses to overwrite it and fails the build with
@@ -45,6 +52,28 @@ RUN useradd -m -u 501 -s /bin/bash agent 2>/dev/null || true
 # root-owned, and uid 501 cannot write its credential — login fails on a
 # permission error that looks nothing like an auth problem.
 RUN mkdir -p /home/agent/.claude && chown -R agent:agent /home/agent/.claude
+
+# Mark first-run onboarding complete.
+#
+# This file is NOT in the mounted .claude directory — it sits beside it at
+# $HOME/.claude.json, so it is per-container and cannot be persisted by the
+# credential mount. Without it an interactive session opens on the theme
+# picker, then a "select login method" prompt, and finally an OAuth URL
+# waiting for a pasted code — none of which a send-keys driver can answer, and
+# all of which are invisible to `--print`, which skips onboarding entirely.
+#
+# The mounted credential is already valid at that point (the CLI populates
+# `oauthAccount` from it); onboarding simply runs ahead of the auth check. So
+# the fix is to declare onboarding done, not to log in again.
+# `projects./workspace.hasTrustDialogAccepted` clears the second gate: the
+# "Is this a project you trust?" prompt, which is keyed by working directory.
+# The container's working directory is always /workspace, so the answer is
+# known at build time. The third gate — the Bypass Permissions warning, whose
+# default option is "No, exit" — needs nothing here: the CLI records
+# `skipDangerousModePermissionPrompt` in .claude/settings.json, which IS inside
+# the mounted directory and therefore persists across containers on its own.
+RUN printf '%s' '{"hasCompletedOnboarding":true,"theme":"dark","projects":{"/workspace":{"hasTrustDialogAccepted":true}}}' > /home/agent/.claude.json \
+ && chown agent:agent /home/agent/.claude.json
 
 USER agent
 ENV HOME=/home/agent
