@@ -60,6 +60,14 @@ Three problems today:
   blob rewritten per message would grow the repo without bound, produce
   unresolvable merge conflicts, and slow the clone the config repo exists to make
   cheap.
+- **Secrets are retrieved on demand, never held by the instance.** Agents call a
+  local registry through an injected shim at use time. This makes rotation and
+  revocation live operations, keeps credentials out of `ps` and out of the
+  instance's files, and is what lets a human fix an expired key without
+  restarting the agent that is blocked on it.
+- **Escalation is a separate channel from the inbox.** Inbox events are delivered
+  to an agent that keeps working; an escalation suspends the work item until a
+  human acts.
 
 ## 1. Directory layout and state ownership
 
@@ -328,7 +336,101 @@ earlier out-of-band exchange prepended to the agent's answer (fixed in
 `a326c0f`, but the fix restores a correct baseline rather than removing the
 inference).
 
-## 6. Testing
+## 6. Configuration refresh and escalation
+
+A running instance holds a snapshot. When settings change, it must be able to
+pick them up — and when it cannot proceed without a human, it must be able to say
+so. §3 gave the work item an inbound path; this section adds the outbound one.
+
+### 7.1 Three refresh classes
+
+Where a value is *read from* determines whether a live instance can refresh it:
+
+| Source | Refresh |
+|---|---|
+| **Workspace config repo** — boards, settings, artifacts, diagrams | **Pullable.** The instance's `config/` is a worktree sharing the object store, so refresh is a local checkout plus a steer. No network. |
+| **Read-per-use files** — `api-keys.json` via `loadApiKeysFile` | **Automatic.** No caching, so the next call sees the new value with no steering at all. |
+| **Process environment** — `GH_TOKEN`, `SMITH_ATLASSIAN_TOKEN` | **Impossible.** Env is fixed at exec. §7 removes this class by moving secrets to retrieval-on-demand. |
+
+Until §7 lands, a rotated connector credential requires relaunching the session.
+That is acceptable only because §5's `--session-id` lets the replacement resume
+the same transcript — relaunch-and-resume, not start-over.
+
+### 7.2 Config-changed is an inbox event
+
+A workspace config commit produces a `config-changed` event in the inbox of every
+work item whose instance is live. Delivery follows §3.1: the assignee refreshes
+its `config/` worktree and continues. Busy assignees queue; dead ones surface.
+
+### 7.3 Escalation is the mirror of the inbox
+
+```
+agent blocked  →  escalation  →  user acts in Settings  →  inbox event  →  agent continues
+```
+
+Escalation is a **separate channel from the inbox, not another event type**,
+because the two have opposite semantics: an inbox event is delivered to an agent
+that keeps working; an escalation **suspends the work item** until a human acts.
+Collapsing them would make "CI failed" and "paste a new key" indistinguishable to
+the user.
+
+An escalation carries a classified reason. `auth failed for connector <id>` is
+actionable; `task exited 1` is not. Credential failures in particular must be
+classified at the point of failure — today an expired key surfaces with the same
+shape as a syntax error, so a five-second fix in Settings looks like a broken
+agent.
+
+## 7. Secret registry
+
+Secrets are **retrieved on demand by the agent**, never held by the instance.
+
+### 8.1 What already exists
+
+`swarm/src/api-keys.ts` is the registry: AES-GCM at rest under `master.key`,
+`loadApiKeysFile` reading fresh per call, and a deliberate split between redacted
+listings (`hasKey`, `last4`, `verified` — never the value) and a narrow retrieval
+accessor. `GET /api-keys/:provider/credential` already serves raw values to one
+caller.
+
+**That split must be preserved.** The UI path and the agent path stay separate
+routes with separate guards; retrieval never becomes a `?reveal=true` flag on the
+listing route.
+
+### 8.2 What to add
+
+1. **A shim, following the `smith-delegate` precedent.** `bin/smith-secret <name>`
+   is copied into the instance's `bin/` with PATH prepended — the same mechanism
+   that already gives agents delegation. Agents call it at use time.
+2. **Per-instance identity, and it is mandatory.** Today's guard is *"the swarm
+   binds 127.0.0.1, and this route is deliberately absent from the broker's
+   passthrough."* That is airtight for a single in-process caller and provides
+   nothing once every agent can call it — and a Docker agent cannot reach host
+   loopback at all, so serving containers means widening the only guard that
+   exists. A token minted at instance creation and carried by the shim tells the
+   registry **which work item is asking**.
+3. **Scoping from data already present.** `repo.github.connectorId` already
+   resolves tokens per repo — "two repos in the same workspace can legitimately
+   resolve to two different tokens." A work item's grant set derives from its
+   workspace and repos rather than being invented.
+4. **Audit.** Log provider, work item, and timestamp on every retrieval. Never
+   the value.
+
+### 8.3 Why this is worth the work
+
+- **Rotation and revocation start working.** A value in env cannot be changed or
+  withdrawn from a running process; a capability can be refused on the next call.
+- **Secrets leave `ps`.** `runtime.ts` documents its own limit: env passed via
+  `tmux new-session -e` "remains visible in `tmux`'s own short-lived launch
+  invocation and `ps` output for that one moment — an intrinsic property of
+  process-based env passing on POSIX." Retrieval-on-demand removes the window
+  rather than narrowing it.
+- **Secrets stay out of the instance's files**, so an agent told to "stage and
+  commit ALL your changes" cannot commit one.
+
+This is the change that collapses §6.1's third row into its second, making
+credential rotation a live operation and removing the relaunch path entirely.
+
+## 8. Testing
 
 - **Layout**: creating a workspace produces the §1.2 shape; no state is written
   under `process.cwd()`.
@@ -342,6 +444,18 @@ inference).
   dead assignee marks the work item blocked.
 - **Rebase**: a conflict returns the item to in-progress rather than failing it.
 - **Drain**: a session on the old layout survives the migration and completes.
+- **Config refresh**: a config-repo commit reaches a live instance's `config/`
+  worktree after one inbox event, with no relaunch.
+- **Escalation**: a failed credential produces a classified, suspending
+  escalation — distinguishable from a task failure, and it does not appear in the
+  inbox.
+- **Secret retrieval**: `smith-secret` returns a value for a granted provider,
+  and **fails for a provider the work item was not granted** — the negative case
+  is the one that matters, since an unscoped registry passes the positive test.
+- **Rotation**: a key updated in Settings is returned by the very next
+  `smith-secret` call from an already-running session.
+- **No secrets at rest**: after a full task run, no credential value appears in
+  the instance's files or in the launch environment.
 
 Tests must assert observable behavior, not call shape. A `sendText` test that
 asserted which tmux flags were passed would have stayed green through a total
