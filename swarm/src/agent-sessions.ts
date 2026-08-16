@@ -130,6 +130,11 @@ export class AgentSessionManager {
     this.sessions.set(id, state);
 
     state.preexisting = new Set(await driver.listSessionFiles(cwd));
+    // A fresh worktree is a directory the tool has never seen, so it would come
+    // up on a first-run gate (claude: "Yes, I trust this folder"). A modal
+    // satisfies every readiness signal below, so the session would report ready
+    // and then silently swallow its first send. Clear the gate before launch.
+    await driver.prepareWorkspace?.(cwd);
     // The tmux process an agent lives in is fully determined by its
     // definition: its CLI picks the binary, its model picks the flag.
     await this.runtime.launch(state.tmuxSession, driver.interactiveCommand(baseCommand, agent.engine.model), cwd);

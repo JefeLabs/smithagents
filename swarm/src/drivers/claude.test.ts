@@ -164,3 +164,52 @@ test("materialize: never overwrites a .mcp.json the repo already tracks", async 
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+/**
+ * Every warm session runs in a FRESH worktree (`session-<uuid>`), a directory
+ * the CLI has never seen — so it raises the per-directory folder-trust gate
+ * ("Yes, I trust this folder"). The session manager reports `ready` anyway,
+ * because a modal satisfies both "tmux session exists" and "process alive".
+ * The first send then types into the modal and its Enter answers the DIALOG
+ * instead of submitting, so the turn silently never happens. The Dockerfile
+ * already solves this for /workspace via projects.<cwd>.hasTrustDialogAccepted;
+ * these tests carry that same fix to the local tmux path.
+ */
+test("ClaudeDriver.prepareWorkspace: pre-accepts the folder-trust gate for an unseen directory", async () => {
+  const home = await mkdtemp(join(tmpdir(), "claude-home-"));
+  try {
+    const d = new ClaudeDriver(join(home, ".claude"));
+    const cwd = join(home, "worktrees", "session-abc");
+
+    await d.prepareWorkspace(cwd);
+
+    const cfg = JSON.parse(await readFile(join(home, ".claude.json"), "utf8"));
+    assert.equal(cfg.projects[cwd].hasTrustDialogAccepted, true);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("ClaudeDriver.prepareWorkspace: merges into an existing config, never clobbering other projects", async () => {
+  const home = await mkdtemp(join(tmpdir(), "claude-home-"));
+  try {
+    const d = new ClaudeDriver(join(home, ".claude"));
+    await writeFile(
+      join(home, ".claude.json"),
+      JSON.stringify({
+        hasCompletedOnboarding: true,
+        projects: { "/existing/repo": { hasTrustDialogAccepted: true, lastCost: 1.25 } },
+      }),
+    );
+    const cwd = join(home, "worktrees", "session-def");
+
+    await d.prepareWorkspace(cwd);
+
+    const cfg = JSON.parse(await readFile(join(home, ".claude.json"), "utf8"));
+    assert.equal(cfg.projects[cwd].hasTrustDialogAccepted, true, "new project trusted");
+    assert.equal(cfg.projects["/existing/repo"].lastCost, 1.25, "existing project preserved intact");
+    assert.equal(cfg.hasCompletedOnboarding, true, "top-level keys preserved");
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});

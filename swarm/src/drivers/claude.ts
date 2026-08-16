@@ -8,9 +8,9 @@
 // message of a turn carries a terminal stop_reason — that, and only that, is
 // the turn-completion signal (never process exit, never screen state).
 import { execFile } from "node:child_process";
-import { readdir, writeFile } from "node:fs/promises";
+import { readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { SessionParseError } from "./errors.js";
 import { modelFlag } from "./model-flag.js";
@@ -60,6 +60,37 @@ export class ClaudeDriver implements ToolDriver {
 
   sessionDir(cwd: string): string {
     return join(this.configDir, "projects", encodeProjectDir(cwd));
+  }
+
+  /**
+   * Pre-accept the folder-trust gate for `cwd`. Every warm session runs in a
+   * fresh worktree, which the CLI has never seen, so it opens the "Yes, I trust
+   * this folder" modal. That modal satisfies both readiness signals (tmux
+   * session exists, process alive), so the session reports ready — and then the
+   * first send types into the dialog and its Enter answers the DIALOG instead
+   * of submitting the prompt. The turn silently never happens. The Dockerfile
+   * clears the same gate for /workspace; this is that fix for the local path.
+   */
+  async prepareWorkspace(cwd: string): Promise<void> {
+    // .claude.json sits BESIDE the config dir, not inside it.
+    const configPath = join(dirname(this.configDir), ".claude.json");
+    let cfg: { projects?: Record<string, Record<string, unknown>> } = {};
+    try {
+      cfg = JSON.parse(await readFile(configPath, "utf8"));
+    } catch (err) {
+      // Only a genuinely absent file justifies starting fresh. A parse error or
+      // a permissions failure must NOT be treated as "empty config" — that
+      // would overwrite every project the user has, trust flags and all.
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
+
+    cfg.projects = { ...cfg.projects, [cwd]: { ...cfg.projects?.[cwd], hasTrustDialogAccepted: true } };
+
+    // Write-and-rename: the CLI rewrites this file as it runs, so a torn write
+    // here would corrupt a config other live sessions depend on.
+    const tmp = `${configPath}.smith-${process.pid}`;
+    await writeFile(tmp, `${JSON.stringify(cfg, null, 2)}\n`);
+    await rename(tmp, configPath);
   }
 
   async listSessionFiles(cwd: string): Promise<string[]> {

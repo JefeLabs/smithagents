@@ -25,6 +25,33 @@ test("TmuxRuntime.launch: env vars are exported inside the wrapped command, not 
 });
 
 /**
+ * sendText must actually DELIVER. A test asserting the tmux argv passes happily
+ * while the keystrokes never reach the program — which is exactly how bracketed
+ * paste (`paste-buffer -p`) stayed broken against Claude Code v2.1.233: every
+ * warm-session send was a silent 4-minute no-op. So this launches a real reader
+ * and checks what it actually received.
+ */
+test("TmuxRuntime.sendText: the text reaches the program reading the pane, verbatim", async () => {
+  const runtime = new TmuxRuntime();
+  const sessionName = `test-sendtext-${Date.now()}`;
+  const dir = await mkdtemp(join(tmpdir(), "sendtext-"));
+  const outFile = join(dir, "got.txt");
+  try {
+    await runtime.launch(sessionName, `read -r line; printf '%s' "$line" > ${outFile}`, dir);
+    // Let the shell reach `read` before typing at it.
+    await new Promise((r) => setTimeout(r, 500));
+
+    await runtime.sendText(sessionName, "hello-from-sendtext");
+    await runtime.waitFor(sessionName);
+
+    assert.equal(await readFile(outFile, "utf8"), "hello-from-sendtext");
+  } finally {
+    await runtime.kill(sessionName).catch(() => {});
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * The image's /entrypoint.sh already runs the command inside a tmux session
  * named "main". Wrapping it in a second `tmux new-session -d -s main` here
  * collides with that session and every docker task exits 1 in ~500ms — a

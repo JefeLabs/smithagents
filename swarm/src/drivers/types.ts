@@ -53,6 +53,13 @@ export interface ToolDriver {
   /** Where this tool persists session files for work rooted at `cwd`. */
   sessionDir(cwd: string): string;
 
+  /**
+   * Clear any first-run gate this tool raises for a directory it has not seen
+   * before, so the TUI comes up at a real prompt. Optional: tools with no
+   * per-directory prompt omit it. Called once, before launch.
+   */
+  prepareWorkspace?(cwd: string): Promise<void>;
+
   /** Session files under sessionDir(cwd), absolute paths. Missing dir = []. */
   listSessionFiles(cwd: string): Promise<string[]>;
 
