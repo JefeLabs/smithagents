@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { chmodSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
@@ -134,6 +134,71 @@ test("send: one turn in, parsed completed turn out — detected from the session
   assert.ok(all.length >= 2);
   const listed = (await manager.list()).find((s) => s.id === info.id);
   assert.equal(listed?.turns, 1);
+});
+
+/**
+ * `before` is parsed while state.sessionFile is still undefined (discovery is
+ * lazy, inside the poll loop), so it comes back empty and the turn returns
+ * messages.slice(0) — the ENTIRE transcript, not just this turn. Invisible on a
+ * fresh session, which has no history to over-report; it fires whenever the TUI
+ * accumulated turns before the first API send (someone typed in the pane, or a
+ * reconciled session).
+ */
+test("send: reports only THIS turn when the pane already had turns before the first API send", async () => {
+  // A tool that writes its session file only once a turn happens — the real
+  // claude behavior. The shared fake creates the file at startup, so create()'s
+  // readiness loop discovers it and `before` is populated; that eagerness hides
+  // this bug entirely.
+  const lazyTool = join(repoRoot, "fake-tool-lazy.sh");
+  writeFileSync(
+    lazyTool,
+    `#!/bin/bash
+mkdir -p .fake-sessions
+F=.fake-sessions/session.jsonl
+while IFS= read -r line; do
+  clean=$(printf '%s' "$line" | tr -d '\\033' | sed 's/\\[200~//; s/\\[201~//')
+  ts=$(date -u +%Y-%m-%dT%H:%M:%S.999Z)
+  printf '{"role":"user","text":"%s","ts":"%s"}\\n' "$clean" "$ts" >> "$F"
+  printf '{"role":"assistant","text":"echo: %s","done":true,"ts":"%s"}\\n' "$clean" "$ts" >> "$F"
+done
+`,
+  );
+  chmodSync(lazyTool, 0o755);
+  const lazyManager = new AgentSessionManager(runtime, {
+    agentCommands: { claude: lazyTool },
+    worktreeDir: ".smith/worktrees",
+    resolveDriver: () => new FakeDriver(),
+    pollIntervalMs: 100,
+    readinessTimeoutMs: 10_000,
+    turnTimeoutMs: 10_000,
+  });
+
+  const info = await lazyManager.create(AGENT, JSON.stringify(AGENT), repoRoot, "main");
+
+  // Someone types directly into the pane — a turn the API never brokered.
+  await runtime.sendText(`smith-warm-${info.id}`, "typed in the pane");
+  const sessionFile = join(info.cwd, ".fake-sessions", "session.jsonl");
+  for (let i = 0; i < 100; i++) {
+    try {
+      if (readFileSync(sessionFile, "utf8").split("\n").filter(Boolean).length >= 2) break;
+    } catch {
+      /* not written yet */
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+
+  const turn = await lazyManager.send(info.id, "via the api");
+
+  assert.ok(
+    turn.some((m) => m.text.includes("via the api")),
+    "this turn's own exchange is reported",
+  );
+  assert.ok(
+    !turn.some((m) => m.text.includes("typed in the pane")),
+    `a turn that predates this send must not be reported as part of it; got: ${JSON.stringify(turn.map((m) => m.text))}`,
+  );
+
+  await lazyManager.destroy(info.id).catch(() => {});
 });
 
 test("death is surfaced, never silently respawned", async () => {

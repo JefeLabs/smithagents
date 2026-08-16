@@ -180,6 +180,11 @@ export class AgentSessionManager {
     const state = this.get(id);
     await this.assertAlive(state);
 
+    // Take the baseline against the REAL transcript. A tool that writes its
+    // session file lazily leaves state.sessionFile unset through create(), so
+    // parsing first would yield an empty baseline — and the turn would report
+    // the entire history as messages it just added.
+    await this.discoverSessionFile(state);
     const before = await this.parse(state);
     const sinceIso = new Date(Date.now() - 1000).toISOString(); // tolerate clock skew vs file timestamps
     state.status = "busy";
@@ -191,12 +196,7 @@ export class AgentSessionManager {
       const deadline = Date.now() + timeout;
       for (;;) {
         await this.sleep(this.config.pollIntervalMs ?? DEFAULTS.pollIntervalMs);
-        // Lazy discovery: tools that write their session file only once a turn
-        // starts get picked up here, on the first send.
-        if (!state.sessionFile) {
-          const fresh = (await state.driver.listSessionFiles(state.cwd)).filter((f) => !state.preexisting.has(f));
-          if (fresh.length > 0) state.sessionFile = await this.newest(fresh);
-        }
+        await this.discoverSessionFile(state);
         const messages = await this.parse(state);
         if (state.driver.isTurnComplete(messages, sinceIso)) {
           state.turns += 1;
@@ -219,6 +219,17 @@ export class AgentSessionManager {
     } finally {
       if (state.status === "busy") state.status = "ready";
     }
+  }
+
+  /**
+   * Lazy discovery: tools that write their session file only once a turn starts
+   * (claude) are picked up here rather than at launch. Idempotent — once a file
+   * is claimed it is never re-resolved.
+   */
+  private async discoverSessionFile(state: SessionState): Promise<void> {
+    if (state.sessionFile) return;
+    const fresh = (await state.driver.listSessionFiles(state.cwd)).filter((f) => !state.preexisting.has(f));
+    if (fresh.length > 0) state.sessionFile = await this.newest(fresh);
   }
 
   /** Full normalized transcript from the persisted session file. */
