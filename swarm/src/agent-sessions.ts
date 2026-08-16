@@ -40,7 +40,7 @@ interface SessionState extends AgentSessionInfo {
   tmuxSession: string;
   driver: ToolDriver;
   sessionFile?: string;
-  /** Session files present before launch — anything new belongs to us. */
+  /** Session files present before launch for drivers that cannot pin their id; empty for drivers that can. */
   preexisting: Set<string>;
 }
 
@@ -141,11 +141,7 @@ export class AgentSessionManager {
     await driver.prepareWorkspace?.(cwd);
     // The tmux process an agent lives in is fully determined by its
     // definition: its CLI picks the binary, its model picks the flag.
-    await this.runtime.launch(
-      state.tmuxSession,
-      driver.interactiveCommand(baseCommand, agent.engine.model, id),
-      cwd,
-    );
+    await this.runtime.launch(state.tmuxSession, driver.interactiveCommand(baseCommand, agent.engine.model, id), cwd);
 
     // Readiness: the TUI is up and stays up. Some tools (claude) only write
     // their session file once the first turn happens, so the file is
@@ -230,7 +226,15 @@ export class AgentSessionManager {
           // Cancel path: interrupt the turn, leave the session alive.
           await this.runtime.sendKeys(state.tmuxSession, "C-c").catch(() => {});
           state.status = "ready";
-          throw new TurnTimeoutError(id, timeout);
+          let detail: string | undefined;
+          if (state.sessionFile) {
+            try {
+              await stat(state.sessionFile);
+            } catch {
+              detail = `transcript file not found at ${state.sessionFile}`;
+            }
+          }
+          throw new TurnTimeoutError(id, timeout, detail);
         }
       }
     } finally {

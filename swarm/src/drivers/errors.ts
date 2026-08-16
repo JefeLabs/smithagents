@@ -28,8 +28,9 @@ export class SessionDeadError extends Error {
 /** A turn did not complete in time; the send was cancelled (C-c). */
 export class TurnTimeoutError extends Error {
   readonly code = "turn_timeout";
-  constructor(id: string, timeoutMs: number) {
-    super(`agent session ${id}: turn did not complete within ${timeoutMs}ms — cancelled`);
+  constructor(id: string, timeoutMs: number, detail?: string) {
+    const msg = `agent session ${id}: turn did not complete within ${timeoutMs}ms — cancelled`;
+    super(detail ? `${msg}; ${detail}` : msg);
   }
 }
 
