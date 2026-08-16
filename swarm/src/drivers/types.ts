@@ -44,14 +44,23 @@ export interface ToolDriver {
   /**
    * Interactive TUI command for a warm session. `model` comes from the agent
    * definition — the driver spells the flag its own tool understands.
+   * `sessionId`, when given, pins the tool's session id so the caller knows the
+   * transcript path without discovering it. Tools that cannot pin ignore it.
    */
-  interactiveCommand(baseCommand: string, model?: string): string;
+  interactiveCommand(baseCommand: string, model?: string, sessionId?: string): string;
 
   /** One-shot command for a fire-and-forget task run. */
   taskCommand(baseCommand: string, escapedPrompt: string, model?: string): string;
 
   /** Where this tool persists session files for work rooted at `cwd`. */
   sessionDir(cwd: string): string;
+
+  /**
+   * Where this tool writes the transcript when launched with `sessionId`.
+   * Present only for tools that let the caller pin the id; absent means the
+   * session manager must discover the file after launch.
+   */
+  sessionFileFor?(cwd: string, sessionId: string): string;
 
   /**
    * Clear any first-run gate this tool raises for a directory it has not seen

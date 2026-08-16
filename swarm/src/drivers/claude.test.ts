@@ -213,3 +213,23 @@ test("ClaudeDriver.prepareWorkspace: merges into an existing config, never clobb
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test("ClaudeDriver.interactiveCommand: pins the session id so the transcript path is known up front", () => {
+  const d = new ClaudeDriver("/tmp/fake-claude-home");
+  const cmd = d.interactiveCommand("claude", "sonnet", "11111111-2222-3333-4444-555555555555");
+  assert.match(cmd, /--session-id 11111111-2222-3333-4444-555555555555/);
+});
+
+test("ClaudeDriver.interactiveCommand: omits the flag when no id is pinned", () => {
+  const d = new ClaudeDriver("/tmp/fake-claude-home");
+  assert.ok(!d.interactiveCommand("claude", "sonnet").includes("--session-id"));
+});
+
+test("ClaudeDriver.sessionFileFor: the transcript is <sessionDir>/<id>.jsonl", () => {
+  const d = new ClaudeDriver("/tmp/fake-claude-home");
+  const cwd = "/repo/work";
+  assert.equal(
+    d.sessionFileFor(cwd, "11111111-2222-3333-4444-555555555555"),
+    join(d.sessionDir(cwd), "11111111-2222-3333-4444-555555555555.jsonl"),
+  );
+});

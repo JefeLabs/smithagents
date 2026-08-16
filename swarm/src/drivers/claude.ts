@@ -50,8 +50,8 @@ export class ClaudeDriver implements ToolDriver {
 
   constructor(private readonly configDir: string = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude")) {}
 
-  interactiveCommand(baseCommand: string, model?: string): string {
-    return `${baseCommand}${modelFlag(model)}`;
+  interactiveCommand(baseCommand: string, model?: string, sessionId?: string): string {
+    return `${baseCommand}${modelFlag(model)}${sessionId ? ` --session-id ${sessionId}` : ""}`;
   }
 
   taskCommand(baseCommand: string, escapedPrompt: string, model?: string): string {
@@ -60,6 +60,10 @@ export class ClaudeDriver implements ToolDriver {
 
   sessionDir(cwd: string): string {
     return join(this.configDir, "projects", encodeProjectDir(cwd));
+  }
+
+  sessionFileFor(cwd: string, sessionId: string): string {
+    return join(this.sessionDir(cwd), `${sessionId}.jsonl`);
   }
 
   /**
