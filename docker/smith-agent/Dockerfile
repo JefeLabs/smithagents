@@ -22,11 +22,6 @@ RUN rm -f /usr/local/bin/claude \
 # branch. Pushing and opening the PR happen on the host, in the dispatcher,
 # after the container exits — the agent is deliberately not given push rights.
 
-# Auth crosses into Linux via a long-lived token (`claude setup-token` on the
-# host), passed per-run with `-e CLAUDE_CODE_OAUTH_TOKEN=…` rather than baked
-# in. macOS Keychain credentials cannot be mounted into a Linux container,
-# which is the whole reason the token path exists.
-
 # Run as a non-root user. The CLI refuses `--dangerously-skip-permissions`
 # under root ("cannot be used with root/sudo privileges for security
 # reasons") — which the dispatcher always passes — so a root container fails
@@ -36,5 +31,20 @@ RUN rm -f /usr/local/bin/claude \
 # bind-mounted worktree carry the host owner rather than root-owned artefacts
 # the host then cannot clean up.
 RUN useradd -m -u 501 -s /bin/bash agent 2>/dev/null || true
+
+# The container holds its OWN subscription credential, obtained by logging in
+# once from inside a container (`claude auth login`) and persisted in a named
+# volume mounted here. On Linux the CLI stores credentials as a FILE under
+# $HOME/.claude, unlike macOS where they live in the Keychain — which is what
+# makes this possible at all, and why the Keychain itself can never be mounted
+# across the boundary.
+#
+# This directory must exist in the IMAGE, owned by agent, before any volume is
+# mounted over it: Docker seeds a fresh named volume from the image's contents
+# and ownership at that path. Without this line the volume is created
+# root-owned, and uid 501 cannot write its credential — login fails on a
+# permission error that looks nothing like an auth problem.
+RUN mkdir -p /home/agent/.claude && chown -R agent:agent /home/agent/.claude
+
 USER agent
 ENV HOME=/home/agent

@@ -12,9 +12,9 @@
 // ---------------------------------------------------------------------------
 
 import { execFile } from "node:child_process";
-import { mkdir, readFile, unlink } from "node:fs/promises";
+import { mkdir, readFile, stat, unlink } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { WorkerPool } from "./remote-runtime.js";
 import type { DockerConfig, RuntimeType } from "./types.js";
@@ -298,6 +298,39 @@ async function gitdirMount(worktreePath: string): Promise<string[]> {
   }
 }
 
+/** Host directory bind-mounted as the container agent's `$HOME/.claude`. */
+export function claudeCredentialDir(env: NodeJS.ProcessEnv = process.env): string {
+  return env.SMITH_DOCKER_CLAUDE_DIR ?? join(homedir(), ".smith", "docker-auth");
+}
+
+/**
+ * The `-v` args that give a container a working Claude subscription.
+ *
+ * On macOS the CLI keeps credentials in the Keychain, which a Linux container
+ * can never read; on Linux it keeps them in a FILE at `$HOME/.claude/
+ * .credentials.json`. Exporting the Keychain's `claudeAiOauth` object into that
+ * file format is therefore all it takes to carry a subscription across the
+ * boundary — no API key, no `setup-token`.
+ *
+ * Mounted read-WRITE, and as the directory rather than the file: the access
+ * token expires in hours and the CLI rewrites it in place on refresh. A `:ro`
+ * file mount passes every test written today and then starts failing overnight,
+ * reporting what looks like a dead subscription. Read-write means one shared,
+ * self-renewing credential for every container.
+ *
+ * Returns [] when nothing has been exported, so docker keeps today's behaviour
+ * instead of failing to launch.
+ */
+async function credentialMount(env: NodeJS.ProcessEnv = process.env): Promise<string[]> {
+  const dir = claudeCredentialDir(env);
+  try {
+    await stat(join(dir, ".credentials.json"));
+    return ["-v", `${dir}:/home/agent/.claude`];
+  } catch {
+    return [];
+  }
+}
+
 export class DockerRuntime implements RuntimeAdapter {
   private readonly dockerConfig: DockerConfig;
 
@@ -329,6 +362,11 @@ export class DockerRuntime implements RuntimeAdapter {
       // that SAME absolute path inside the container makes the pointer
       // resolve. Read-write on purpose — git writes refs and the index there.
       ...(await gitdirMount(cwd)),
+
+      // The agent's Claude subscription, exported from the host Keychain into
+      // the Linux credentials-file format. Without this the CLI starts, finds
+      // no credential, and every task fails as though the runtime were broken.
+      ...(await credentialMount()),
 
       // Environment variables
       "-e",
