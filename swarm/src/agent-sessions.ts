@@ -129,7 +129,11 @@ export class AgentSessionManager {
     };
     this.sessions.set(id, state);
 
-    state.preexisting = new Set(await driver.listSessionFiles(cwd));
+    // A driver that can pin its session id makes the transcript path known up
+    // front. Only tools that cannot pin need the before/after directory diff,
+    // which cannot distinguish two agents sharing one project dir.
+    state.sessionFile = driver.sessionFileFor?.(cwd, id);
+    state.preexisting = state.sessionFile ? new Set() : new Set(await driver.listSessionFiles(cwd));
     // A fresh worktree is a directory the tool has never seen, so it would come
     // up on a first-run gate (claude: "Yes, I trust this folder"). A modal
     // satisfies every readiness signal below, so the session would report ready
@@ -137,7 +141,11 @@ export class AgentSessionManager {
     await driver.prepareWorkspace?.(cwd);
     // The tmux process an agent lives in is fully determined by its
     // definition: its CLI picks the binary, its model picks the flag.
-    await this.runtime.launch(state.tmuxSession, driver.interactiveCommand(baseCommand, agent.engine.model), cwd);
+    await this.runtime.launch(
+      state.tmuxSession,
+      driver.interactiveCommand(baseCommand, agent.engine.model, id),
+      cwd,
+    );
 
     // Readiness: the TUI is up and stays up. Some tools (claude) only write
     // their session file once the first turn happens, so the file is

@@ -27,14 +27,17 @@ const AGENT: ComposedAgent = {
 class FakeDriver implements ToolDriver {
   readonly id = "claude";
 
-  interactiveCommand(baseCommand: string): string {
-    return baseCommand;
+  interactiveCommand(baseCommand: string, _model?: string, sessionId?: string): string {
+    return sessionId ? `${baseCommand} --session-id ${sessionId}` : baseCommand;
   }
   taskCommand(baseCommand: string, escapedPrompt: string): string {
     return `${baseCommand} '${escapedPrompt}'`;
   }
   sessionDir(cwd: string): string {
     return join(cwd, ".fake-sessions");
+  }
+  sessionFileFor(cwd: string, sessionId: string): string {
+    return join(this.sessionDir(cwd), `${sessionId}.jsonl`);
   }
   async listSessionFiles(cwd: string): Promise<string[]> {
     try {
@@ -81,7 +84,14 @@ before(() => {
     toolScript,
     `#!/bin/bash
 mkdir -p .fake-sessions
-F=.fake-sessions/session.jsonl
+SID=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --session-id) SID="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+F=.fake-sessions/\${SID:-session}.jsonl
 : > "$F"
 while IFS= read -r line; do
   clean=$(printf '%s' "$line" | tr -d '\\033' | sed 's/\\[200~//; s/\\[201~//')
@@ -137,12 +147,14 @@ test("send: one turn in, parsed completed turn out — detected from the session
 });
 
 /**
- * `before` is parsed while state.sessionFile is still undefined (discovery is
- * lazy, inside the poll loop), so it comes back empty and the turn returns
- * messages.slice(0) — the ENTIRE transcript, not just this turn. Invisible on a
- * fresh session, which has no history to over-report; it fires whenever the TUI
- * accumulated turns before the first API send (someone typed in the pane, or a
- * reconciled session).
+ * `before` must reflect whatever is already on disk at the moment send() is
+ * called, or the turn returns messages.slice(0) — the ENTIRE transcript, not
+ * just this turn. Invisible on a fresh session, which has no history to
+ * over-report; it fires whenever the TUI accumulated turns before the first
+ * API send (someone typed in the pane, or a reconciled session). This fake's
+ * driver pins state.sessionFile up front, so the hazard here is purely about
+ * `before`'s timing, not file discovery — a non-pinning driver additionally
+ * discovers state.sessionFile lazily inside this same call.
  */
 test("send: reports only THIS turn when the pane already had turns before the first API send", async () => {
   // A tool that writes its session file only once a turn happens — the real
@@ -154,7 +166,14 @@ test("send: reports only THIS turn when the pane already had turns before the fi
     lazyTool,
     `#!/bin/bash
 mkdir -p .fake-sessions
-F=.fake-sessions/session.jsonl
+SID=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --session-id) SID="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+F=.fake-sessions/\${SID:-session}.jsonl
 while IFS= read -r line; do
   clean=$(printf '%s' "$line" | tr -d '\\033' | sed 's/\\[200~//; s/\\[201~//')
   ts=$(date -u +%Y-%m-%dT%H:%M:%S.999Z)
@@ -177,7 +196,7 @@ done
 
   // Someone types directly into the pane — a turn the API never brokered.
   await runtime.sendText(`smith-warm-${info.id}`, "typed in the pane");
-  const sessionFile = join(info.cwd, ".fake-sessions", "session.jsonl");
+  const sessionFile = join(info.cwd, ".fake-sessions", `${info.id}.jsonl`);
   for (let i = 0; i < 100; i++) {
     try {
       if (readFileSync(sessionFile, "utf8").split("\n").filter(Boolean).length >= 2) break;
@@ -312,6 +331,19 @@ test("reconcile: a live warm session with no record is reported, never silently 
   assert.equal(summary.killed, 0);
   assert.equal(await runtime.exists(orphan), true, "an unexplained live process is left for a human to inspect");
   await runtime.kill(orphan);
+});
+
+test("create: a pinning driver's transcript path is known without discovery", async () => {
+  const info = await manager.create(AGENT, JSON.stringify(AGENT), repoRoot, "main");
+  created.push(info.id);
+
+  // The tool wrote its transcript to the id the manager chose, not one of its own.
+  const expected = join(info.cwd, ".fake-sessions", `${info.id}.jsonl`);
+  execFileSync("test", ["-f", expected]);
+
+  // And the session is usable through that path.
+  const turn = await manager.send(info.id, "hola crew");
+  assert.ok(turn.some((m) => m.role === "assistant" && m.text.includes("hola crew")));
 });
 
 test("create() refuses when toolGate reports a reason — before any worktree or tmux work", async () => {
