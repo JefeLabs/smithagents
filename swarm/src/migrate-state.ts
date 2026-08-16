@@ -35,7 +35,16 @@ async function exists(path: string): Promise<boolean> {
 
 /**
  * The legacy root to migrate from, or null when nothing should happen —
- * either the target already holds state, or no candidate source exists.
+ * either every candidate is absent, or the target already holds everything
+ * each candidate does.
+ *
+ * This is a set-difference question, not an emptiness one. A target is not
+ * "already migrated" merely because it is non-empty: by the time this runs,
+ * loadConfig()'s ensureDirectories() and boot have typically already seeded
+ * the new root with structural dirs (queue/, worktrees/, logs/) and a
+ * settings file, none of which is the user's actual state. Checking
+ * emptiness alone let a scaffolding-only target hide real state sitting in
+ * a legacy root — the server started clean instead of refusing.
  */
 export async function needsMigration(to: string, candidates: string[]): Promise<string | null> {
   let targetEntries: string[] = [];
@@ -48,12 +57,14 @@ export async function needsMigration(to: string, candidates: string[]): Promise<
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
     targetEntries = [];
   }
-  if (targetEntries.length > 0) return null;
+  const targetSet = new Set(targetEntries);
 
   for (const candidate of candidates) {
     if (!(await exists(candidate))) continue;
     const entries = (await readdir(candidate)).filter((e) => !SKIPPED_ENTRIES.includes(e));
-    if (entries.length > 0) return candidate;
+    // Does this candidate hold anything the target lacks? If so it still
+    // needs migrating, regardless of what else the target already has.
+    if (entries.some((entry) => !targetSet.has(entry))) return candidate;
   }
   return null;
 }

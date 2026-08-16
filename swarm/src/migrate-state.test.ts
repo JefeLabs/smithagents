@@ -69,15 +69,42 @@ test("migrateState: refuses to overwrite an entry that already exists in the tar
   }
 });
 
-test("needsMigration: null when the target already has state, else the source to copy from", async () => {
+test("needsMigration: null when the target already holds everything the legacy root does, else the legacy root to copy from", async () => {
   const dir = fixture();
   try {
     assert.equal(await needsMigration(join(dir, "new"), [join(dir, "old")]), join(dir, "old"));
 
+    // The target must hold every substantive entry the legacy root has — not
+    // merely be non-empty — before the gate goes quiet.
     mkdirSync(join(dir, "new", "agents"), { recursive: true });
+    writeFileSync(join(dir, "new", "cli-tools.json"), '{"version":1}');
     assert.equal(await needsMigration(join(dir, "new"), [join(dir, "old")]), null);
 
     assert.equal(await needsMigration(join(dir, "empty-target"), [join(dir, "no-such-old")]), null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("needsMigration: a target holding only boot-seeded scaffolding must not hide real legacy state", async () => {
+  const dir = fixture();
+  try {
+    // Mirrors what actually bit production: by the time the startup guard
+    // runs, loadConfig()'s ensureDirectories() and boot have already seeded
+    // the new root with structural dirs and a settings file. The target is
+    // non-empty, but none of it is the user's actual state — "agents" here
+    // stands in for the real users/workspaces/work/sessions left behind in
+    // the legacy root.
+    mkdirSync(join(dir, "new", "queue"), { recursive: true });
+    mkdirSync(join(dir, "new", "worktrees"), { recursive: true });
+    mkdirSync(join(dir, "new", "logs"), { recursive: true });
+    writeFileSync(join(dir, "new", "cli-tools.json"), '{"version":1}');
+
+    assert.equal(
+      await needsMigration(join(dir, "new"), [join(dir, "old")]),
+      join(dir, "old"),
+      "a non-empty but scaffolding-only target must not read as already-migrated",
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
