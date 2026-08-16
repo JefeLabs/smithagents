@@ -3,7 +3,8 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { migrateState, needsMigration, SKIPPED_ENTRIES } from "./migrate-state.js";
+import { loadConfig } from "./config.js";
+import { isInitialized, markInitialized, migrateState, needsMigration, SKIPPED_ENTRIES } from "./migrate-state.js";
 
 function fixture(): string {
   const dir = mkdtempSync(join(tmpdir(), "smith-mig-"));
@@ -16,6 +17,19 @@ function fixture(): string {
   writeFileSync(join(dir, "old", "logs", "a.log"), "noise");
   return dir;
 }
+
+test("isInitialized / markInitialized: false until marked, then true — and marking twice does not throw", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "smith-init-"));
+  try {
+    assert.equal(await isInitialized(dir), false, "a root with no marker has not booted yet");
+    await markInitialized(dir);
+    assert.equal(await isInitialized(dir), true);
+    await markInitialized(dir); // idempotent — a second boot must not fail here
+    assert.equal(await isInitialized(dir), true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test("migrateState: copies state and leaves the source completely untouched", async () => {
   const dir = fixture();
@@ -157,6 +171,41 @@ test("needsMigration is the startup gate: it reports the source instead of letti
     // After migrating, the gate goes quiet — startup proceeds on later boots.
     await migrateState(join(dir, "old"), join(dir, "new"));
     assert.equal(await needsMigration(join(dir, "new"), [join(dir, "old")]), null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * The positive control this migration guard never had: every other test
+ * above drives needsMigration() directly against hand-rolled fixtures, so
+ * none of them would notice a gap between "what a test imagines boot
+ * creates" and what boot actually creates. This one runs the real sequence —
+ * loadConfig() (which runs ensureDirectories() and seeds queue/, worktrees/,
+ * and logs/ under the root) followed immediately by needsMigration() against
+ * that same, now-scaffolded root — with a legacy fixture holding real state
+ * sitting alongside it. The guard must still see through the boot-seeded
+ * scaffolding to the real state it's missing.
+ */
+test("needsMigration after the real loadConfig(): boot-seeded scaffolding must not hide real legacy state", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "smith-boot-"));
+  try {
+    const legacyDir = join(dir, "legacy");
+    mkdirSync(join(legacyDir, "agents"), { recursive: true });
+    writeFileSync(join(legacyDir, "agents", "ignacio.json"), '{"id":"ignacio"}');
+    writeFileSync(join(legacyDir, "cli-tools.json"), '{"version":1}');
+
+    // The real boot path, not a simulation of it: loadConfig() scaffolds
+    // queue/, worktrees/, and logs/ under smithRoot as a side effect, before
+    // this test — or server.ts's start() — ever calls needsMigration.
+    const cfg = loadConfig({ smithRoot: join(dir, "new") });
+
+    const legacy = await needsMigration(cfg.smithRoot, [legacyDir]);
+    assert.equal(
+      legacy,
+      legacyDir,
+      "a root freshly scaffolded by the real loadConfig() must still be recognized as needing migration when real legacy state exists",
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

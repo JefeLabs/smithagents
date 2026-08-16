@@ -211,7 +211,7 @@ export class Dispatcher extends EventEmitter {
    */
   async resolveConnections(
     manifest: TaskManifest,
-    root: string = process.cwd(),
+    root: string = this.config.smithRoot,
   ): Promise<{
     atlassian?: { siteUrl: string; jiraProjectKeys?: string[]; confluenceSpaceKeys?: string[] };
     env: Record<string, string>;
@@ -219,7 +219,7 @@ export class Dispatcher extends EventEmitter {
     const env: Record<string, string> = {};
     if (!manifest.context.repoPath) return { env };
 
-    const workspaces = await loadWorkspacesFromDir(resolve(root, ".smith/workspaces"));
+    const workspaces = await loadWorkspacesFromDir(resolve(root, "workspaces"));
     const workspace = workspaces.find((w) => w.repos.some((r) => r.path === manifest.context.repoPath));
     // repoPath is server-resolved from the workspace registry (see
     // prepareWorktree), so failing to find a match here means this task
@@ -227,7 +227,7 @@ export class Dispatcher extends EventEmitter {
     if (!workspace) return { env };
     const repo = workspace.repos.find((r) => r.path === manifest.context.repoPath);
 
-    const users = await loadUsersFromDir(resolve(root, ".smith/users"));
+    const users = await loadUsersFromDir(resolve(root, "users"));
     const user = resolveCurrentUser(users);
 
     const atlassianConnectorId = workspace.atlassian?.connectorId;

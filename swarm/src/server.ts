@@ -17,6 +17,7 @@ import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { createSocket, type Socket as DgramSocket } from "node:dgram";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import websocket from "@fastify/websocket";
 import Fastify from "fastify";
 import { WebSocket } from "ws";
@@ -101,7 +102,7 @@ import {
 import { commentIssue, createIssue, importIssues, searchIssues, transitionIssue } from "./jira-sync.js";
 import { agentUsage, isBusy } from "./lifecycle.js";
 import { MeetingOrchestrator } from "./meetings.js";
-import { legacyStateRoots, needsMigration } from "./migrate-state.js";
+import { isInitialized, legacyStateRoots, markInitialized, needsMigration } from "./migrate-state.js";
 import { type SmithPaths, smithPaths } from "./paths.js";
 import {
   API_ENGINE,
@@ -197,6 +198,11 @@ import {
 
 /** Board card a task's manifest names in `metadata.workCardRef`, if any. */
 type WorkCardRef = { boardId: string; cardId: string };
+
+// Anchored to this module's own file location — NOT process.cwd() — so the
+// candidate legacy `.smith` roots below don't depend on where the process
+// happened to be launched from. See legacyStateRoots' docstring.
+const swarmPackageDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 /** Active task tracked by the server */
 interface ActiveTask {
@@ -399,17 +405,27 @@ export class OrchestratorServer {
 
   /** Start the server: HTTP + WebSocket + UDP heartbeat + queue worker */
   async start(): Promise<void> {
-    // A brand-new root while real state sits in a legacy one means this install
-    // would come up looking fresh — no agents, no workspaces, no boards. Refuse
-    // loudly instead; the copy is one command and it does not touch the source.
-    const legacy = await needsMigration(this.paths.root, legacyStateRoots(process.cwd()));
-    if (legacy) {
-      throw new Error(
-        `State root ${this.paths.root} is empty but state exists at ${legacy}.\n` +
-          `Run:  cd swarm && node --import tsx -e "import{migrateState}from'./src/migrate-state.js';` +
-          `migrateState('${legacy}','${this.paths.root}').then(r=>console.log(r))"\n` +
-          `It copies; ${legacy} is left untouched.`,
-      );
+    // A root that has booted cleanly once is settled forever: run the
+    // migration check only until then. Without this, an in-app reset that
+    // clears a subdirectory without recreating it (POST /reset and work/, for
+    // instance) would look identical to a never-migrated root on the next
+    // boot and re-trigger the guard below against a legacy root that no
+    // longer reflects reality.
+    if (!(await isInitialized(this.paths.root))) {
+      // A brand-new root while real state sits in a legacy one means this
+      // install would come up looking fresh — no agents, no workspaces, no
+      // boards. Refuse loudly instead; the copy is one command and it does
+      // not touch the source.
+      const legacy = await needsMigration(this.paths.root, legacyStateRoots(swarmPackageDir));
+      if (legacy) {
+        throw new Error(
+          `State root ${this.paths.root} is empty but state exists at ${legacy}.\n` +
+            `Run:  cd swarm && node --import tsx -e "import{migrateState}from'./src/migrate-state.js';` +
+            `migrateState('${legacy}','${this.paths.root}').then(r=>console.log(r))"\n` +
+            `It copies; ${legacy} is left untouched.`,
+        );
+      }
+      await markInitialized(this.paths.root);
     }
 
     // The steer/kill endpoints inject keystrokes into live sessions — never

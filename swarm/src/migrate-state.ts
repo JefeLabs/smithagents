@@ -3,7 +3,7 @@
 // COPY, never move. The source stays intact so rollback is "point the root
 // back" rather than "restore from a backup you may not have" — this install
 // lost boards and documents to an irreversible reset once already.
-import { cp, mkdir, readdir, stat } from "node:fs/promises";
+import { cp, mkdir, readdir, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 /**
@@ -15,9 +15,22 @@ import { join, resolve } from "node:path";
  */
 export const SKIPPED_ENTRIES: readonly string[] = ["worktrees", "logs"];
 
-/** Candidate legacy roots, most likely first. */
-export function legacyStateRoots(cwd: string): string[] {
-  return [resolve(cwd, ".smith"), resolve(cwd, "swarm", ".smith")];
+/**
+ * Candidate legacy roots, most likely first.
+ *
+ * `swarmDir` must be the swarm package's own directory on disk — NOT the
+ * caller's cwd. The pre-migration default resolved state against
+ * `process.cwd()`, so real legacy state could only ever land in one of two
+ * physical places: `<repo>/swarm/.smith` (the documented "cd swarm && start"
+ * workflow) or `<repo>/.smith` (starting from the repo root, where nothing
+ * about swarm/ was involved). Deriving `swarmDir` from process.cwd() would
+ * reintroduce the exact bug this guards against — a server started from
+ * anywhere else finds no candidate and boots empty, silently. Callers should
+ * derive it from this module's own file location (stable regardless of
+ * launch directory) instead.
+ */
+export function legacyStateRoots(swarmDir: string): string[] {
+  return [resolve(swarmDir, ".smith"), resolve(swarmDir, "..", ".smith")];
 }
 
 async function exists(path: string): Promise<boolean> {
@@ -31,6 +44,25 @@ async function exists(path: string): Promise<boolean> {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
     return false;
   }
+}
+
+/** Written into a state root the first time a server boots cleanly against it. */
+export const STATE_MARKER = "state-version.json";
+
+/**
+ * True when this root has booted before — migration was already settled for
+ * it. Once a root reaches this state it stays settled forever: an in-app
+ * reset that later clears out individual subdirectories (POST /reset removes
+ * work/, for instance, without recreating it) must never be mistaken for a
+ * fresh, unmigrated root and re-trigger the startup guard.
+ */
+export async function isInitialized(root: string): Promise<boolean> {
+  return exists(join(root, STATE_MARKER));
+}
+
+/** Record that this root is initialized. Idempotent. */
+export async function markInitialized(root: string): Promise<void> {
+  await writeFile(join(root, STATE_MARKER), JSON.stringify({ version: 1, initializedAt: new Date().toISOString() }));
 }
 
 /**

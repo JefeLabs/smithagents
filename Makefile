@@ -8,7 +8,27 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-STATE_DIRS  := swarm/.smith broker/.smith
+# Swarm's live state root — same default and SMITH_STATE_ROOT override as
+# swarm/src/config.ts's defaultStateRoot(). `swarm/.smith` (repo-relative) was
+# the default before the state-root migration; it now survives only as a
+# migration rollback copy the server never reads at runtime, so it must still
+# be wiped by a true reset (otherwise the startup guard in server.ts finds
+# real state there once the live root is empty and asks to migrate stale
+# pre-reset data back in) but is never where tracked seed files or the actual
+# live data live.
+SMITH_STATE_ROOT ?= $(HOME)/.smithagents
+# The same `/` → `-` flattening the backup loop below applies to every entry
+# in STATE_DIRS, precomputed here so reset-restore-voice can name the live
+# root's backup folder without re-deriving the transform.
+SWARM_STATE_BACKUP_NAME := $(subst /,-,$(SMITH_STATE_ROOT))
+
+# broker has not moved — broker/.smith is still its real, live state root.
+# broker/.smith/identity.json is a TRACKED seed file; swarm/.smith is entirely
+# gitignored (nothing tracked to restore from it) and $(SMITH_STATE_ROOT) sits
+# outside the repo entirely, so `git ls-files` must only ever be pointed at
+# these two — passing an out-of-repo path to it is a hard error.
+REPO_STATE_DIRS := swarm/.smith broker/.smith
+STATE_DIRS  := $(SMITH_STATE_ROOT) $(REPO_STATE_DIRS)
 MASTER_KEY  := $(HOME)/.smith/master.key
 STAMP       := $(shell date +%Y-%m-%d-%H%M%S)
 BACKUP_DIR  ?= $(HOME)/smith-reset-backup-$(STAMP)
@@ -39,7 +59,8 @@ agents-stop: ## Kill leftover agent tmux sessions (smith-warm-*, task-*) — nev
 
 reset: ## TRUE first-run wipe: state, master key, task branches, agent sessions, app env settings
 	@echo "==> True reset. This deletes:"
-	@echo "      swarm/.smith and broker/.smith   (agents, workspaces, boards, documents)"
+	@echo "      $(SMITH_STATE_ROOT) and broker/.smith   (agents, workspaces, boards, documents)"
+	@echo "      swarm/.smith   (pre-migration rollback copy, if still present)"
 	@echo "      $(MASTER_KEY)"
 	@echo "        the at-rest encryption key — any secret still encrypted with it"
 	@echo "        becomes unreadable. It regenerates on next use."
@@ -79,8 +100,10 @@ reset: ## TRUE first-run wipe: state, master key, task branches, agent sessions,
 
 	@# broker/.smith/identity.json is TRACKED — the "fresh install ships Anderson
 	@# only" seed. Driven by git ls-files so new seeds are picked up automatically.
+	@# Only REPO_STATE_DIRS here: $(SMITH_STATE_ROOT) is outside the repo and
+	@# `git ls-files` hard-errors on an out-of-repo pathspec.
 	@echo "==> Restoring tracked seed files"
-	@for f in $$(git ls-files $(STATE_DIRS)); do git checkout HEAD -- "$$f" && echo "  $$f"; done
+	@for f in $$(git ls-files $(REPO_STATE_DIRS)); do git checkout HEAD -- "$$f" && echo "  $$f"; done
 
 	@echo "==> Removing leftover task branches"
 	@n=$$(git branch --list 'smith/*' | wc -l | tr -d ' '); \
@@ -111,12 +134,12 @@ reset: ## TRUE first-run wipe: state, master key, task branches, agent sessions,
 
 reset-restore-voice: ## Restore only the voice credentials from a backup (BACKUP=path)
 	@[ -n "$(BACKUP)" ] || { echo "  usage: make reset-restore-voice BACKUP=<dir>"; exit 1; }
-	@[ -d "$(BACKUP)/swarm-.smith/users" ] || { echo "  no users/ in $(BACKUP)"; exit 1; }
+	@[ -d "$(BACKUP)/$(SWARM_STATE_BACKUP_NAME)/users" ] || { echo "  no users/ in $(BACKUP)"; exit 1; }
 	@# Secrets are encrypted with the master key that was live when they were
 	@# written, so the key must come back with them or they cannot be decrypted.
 	@if [ -f "$(BACKUP)/master.key" ]; then \
 	  mkdir -p "$(HOME)/.smith" && cp "$(BACKUP)/master.key" "$(MASTER_KEY)" && chmod 600 "$(MASTER_KEY)"; \
 	  echo "  restored master.key (required to decrypt those secrets)"; \
 	fi
-	@mkdir -p swarm/.smith && cp -R "$(BACKUP)/swarm-.smith/users" swarm/.smith/users
-	@echo "  restored swarm/.smith/users — voice keys are back, everything else stays reset"
+	@mkdir -p "$(SMITH_STATE_ROOT)" && cp -R "$(BACKUP)/$(SWARM_STATE_BACKUP_NAME)/users" "$(SMITH_STATE_ROOT)/users"
+	@echo "  restored $(SMITH_STATE_ROOT)/users — voice keys are back, everything else stays reset"
