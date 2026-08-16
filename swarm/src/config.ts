@@ -3,7 +3,8 @@
 // ---------------------------------------------------------------------------
 
 import { mkdirSync } from "node:fs";
-import { resolve } from "node:path";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import type { AgentType, DockerConfig, OrchestratorConfig } from "./types.js";
 
 /**
@@ -38,6 +39,17 @@ const DEFAULT_DOCKER_CONFIG: DockerConfig = {
 };
 
 /**
+ * Where state lives when the caller does not say. `~/.smithagents` keeps it out
+ * of the repo checkout — the previous default, `.smith`, resolved against the
+ * process's cwd and put live state inside the working tree, where a repo reset
+ * destroys it. `SMITH_STATE_ROOT` overrides for tests and alternate installs.
+ */
+export function defaultStateRoot(): string {
+  const fromEnv = process.env.SMITH_STATE_ROOT;
+  return fromEnv && fromEnv.trim() !== "" ? fromEnv : join(homedir(), ".smithagents");
+}
+
+/**
  * Load orchestrator configuration with sensible defaults.
  * Creates all required directories if they don't already exist.
  *
@@ -45,13 +57,9 @@ const DEFAULT_DOCKER_CONFIG: DockerConfig = {
  * @returns Fully resolved OrchestratorConfig
  */
 export function loadConfig(overrides?: Partial<OrchestratorConfig>): OrchestratorConfig {
-  const smithRoot = resolve(overrides?.smithRoot ?? ".smith");
+  const smithRoot = resolve(overrides?.smithRoot ?? defaultStateRoot());
 
   const config: OrchestratorConfig = {
-    smithRoot,
-    queueDir: resolve(smithRoot, "queue"),
-    worktreeDir: resolve(smithRoot, "worktrees"),
-    logsDir: resolve(smithRoot, "logs"),
     delegateBin: resolve("bin", "smith-delegate"),
     tmuxPrefix: "task",
     agentCommands: { ...DEFAULT_AGENT_COMMANDS },
@@ -59,6 +67,13 @@ export function loadConfig(overrides?: Partial<OrchestratorConfig>): Orchestrato
     defaultRuntime: "tmux",
     docker: { ...DEFAULT_DOCKER_CONFIG, ...overrides?.docker },
     ...overrides,
+    // These four derive from smithRoot and must survive the spread: a caller
+    // passing a relative smithRoot would otherwise get a relative root paired
+    // with absolute subdirectories.
+    smithRoot,
+    queueDir: resolve(smithRoot, "queue"),
+    worktreeDir: resolve(smithRoot, "worktrees"),
+    logsDir: resolve(smithRoot, "logs"),
     // Re-apply docker merge so partial docker overrides don't clobber defaults
     ...(overrides ? { docker: { ...DEFAULT_DOCKER_CONFIG, ...overrides.docker } } : {}),
   };
