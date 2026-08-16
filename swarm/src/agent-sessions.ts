@@ -158,17 +158,26 @@ export class AgentSessionManager {
         state.status = "dead";
         throw new ToolLaunchError(agent.engine.cli, "process exited at launch (binary missing or crashed)");
       }
-      const fresh = (await driver.listSessionFiles(cwd)).filter((f) => !state.preexisting.has(f));
-      if (fresh.length > 0) {
-        state.sessionFile = await this.newest(fresh);
-        state.status = "ready";
-        await this.persist(state);
-        return this.info(state);
-      }
-      if (Date.now() >= settleUntil) {
-        state.status = "ready"; // alive; session file resolves on the first turn
-        await this.persist(state);
-        return this.info(state);
+      if (state.sessionFile) {
+        // Path is already known; readiness is just "the TUI is up and stays up".
+        if (Date.now() >= settleUntil) {
+          state.status = "ready";
+          await this.persist(state);
+          return this.info(state);
+        }
+      } else {
+        const fresh = (await driver.listSessionFiles(cwd)).filter((f) => !state.preexisting.has(f));
+        if (fresh.length > 0) {
+          state.sessionFile = await this.newest(fresh);
+          state.status = "ready";
+          await this.persist(state);
+          return this.info(state);
+        }
+        if (Date.now() >= settleUntil) {
+          state.status = "ready"; // alive; session file resolves on the first turn
+          await this.persist(state);
+          return this.info(state);
+        }
       }
       if (Date.now() > deadline) {
         await this.runtime.kill(state.tmuxSession).catch(() => {});

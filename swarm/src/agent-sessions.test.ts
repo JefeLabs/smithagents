@@ -346,6 +346,70 @@ test("create: a pinning driver's transcript path is known without discovery", as
   assert.ok(turn.some((m) => m.role === "assistant" && m.text.includes("hola crew")));
 });
 
+test("a pinning driver never falls back to directory discovery", async () => {
+  class NoDiscoveryDriver extends FakeDriver {
+    async listSessionFiles(): Promise<string[]> {
+      throw new Error("listSessionFiles must not be called for a pinning driver");
+    }
+  }
+  const strict = new AgentSessionManager(runtime, {
+    agentCommands: { claude: toolScript },
+    worktreeDir: ".smith/worktrees",
+    resolveDriver: () => new NoDiscoveryDriver(),
+    pollIntervalMs: 100,
+    readinessTimeoutMs: 10_000,
+    turnTimeoutMs: 10_000,
+  });
+
+  const info = await strict.create(AGENT, JSON.stringify(AGENT), repoRoot, "main");
+  const turn = await strict.send(info.id, "still works");
+
+  assert.ok(turn.some((m) => m.role === "assistant" && m.text.includes("still works")));
+  await strict.destroy(info.id).catch(() => {});
+});
+
+/**
+ * Characterization test: Task 2 made FakeDriver.sessionFileFor unconditional,
+ * which left no AgentSessionManager-level test exercising the non-pinning
+ * discovery path — yet that path is live code for codex, agy, copilot, and
+ * opencode. This proves create()/send() still resolve the transcript by
+ * directory discovery when the driver cannot pin.
+ */
+test("a driver without sessionFileFor still resolves its transcript by directory discovery", async () => {
+  class NoPinDriver extends FakeDriver {
+    constructor() {
+      super();
+      // Shadow the inherited method with an own property so
+      // `sessionFileFor` is genuinely absent at runtime — not merely present
+      // and returning undefined. This is the real shape of the non-pinning
+      // drivers: they never implement sessionFileFor at all, so
+      // `driver.sessionFileFor?.(...)` must short-circuit on the optional
+      // chain rather than call through to a stub. interactiveCommand is left
+      // untouched (inherited from FakeDriver) — the manager passes it a
+      // session id regardless of pinning capability, and it is each driver's
+      // own interactiveCommand that decides whether to use it.
+      Object.defineProperty(this, "sessionFileFor", { value: undefined });
+    }
+  }
+  const probe = new NoPinDriver();
+  assert.equal(probe.sessionFileFor, undefined, "setup check: sessionFileFor must be genuinely absent");
+
+  const discovering = new AgentSessionManager(runtime, {
+    agentCommands: { claude: toolScript },
+    worktreeDir: ".smith/worktrees",
+    resolveDriver: () => new NoPinDriver(),
+    pollIntervalMs: 100,
+    readinessTimeoutMs: 10_000,
+    turnTimeoutMs: 10_000,
+  });
+
+  const info = await discovering.create(AGENT, JSON.stringify(AGENT), repoRoot, "main");
+  const turn = await discovering.send(info.id, "found by discovery");
+
+  assert.ok(turn.some((m) => m.role === "assistant" && m.text.includes("found by discovery")));
+  await discovering.destroy(info.id).catch(() => {});
+});
+
 test("create() refuses when toolGate reports a reason — before any worktree or tmux work", async () => {
   const gated = new AgentSessionManager(runtime, {
     agentCommands: { claude: "true" },
