@@ -8,7 +8,7 @@
 // ambient fact.
 //
 // This module does NOT decide where the root is. Callers pass it in.
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 /** Directories that get archived to a timestamped sibling rather than deleted. */
 export type ArchivableKind = "work" | "squads" | "avatars" | "agents";
@@ -38,27 +38,33 @@ export interface SmithPaths {
 }
 
 export function smithPaths(root: string): SmithPaths {
+  // Callers are not guaranteed to pass an absolute root (see config.ts's
+  // override spread, which can hand back the caller's raw relative string).
+  // Resolving once here, rather than trusting the argument, keeps every
+  // member — and any caller who joins further onto `.root` — anchored to
+  // the same location instead of splitting against the process's cwd.
+  const resolvedRoot = resolve(root);
   return Object.freeze({
-    root,
-    users: join(root, "users"),
-    workspaces: join(root, "workspaces"),
-    agents: join(root, "agents"),
-    cliTools: join(root, "cli-tools.json"),
-    apiKeys: join(root, "api-keys.json"),
-    containers: join(root, "containers.json"),
-    devices: join(root, "devices.json"),
-    channels: join(root, "channels"),
-    avatars: join(root, "avatars"),
-    sessions: join(root, "sessions"),
-    apiSessions: join(root, "api-sessions"),
-    work: join(root, "work"),
-    workCapabilities: join(root, "work", "capabilities"),
-    squads: join(root, "squads"),
-    groups: join(root, "groups"),
-    legacyProjectFile: join(root, "project.json"),
-    legacyProjectsDir: join(root, "projects"),
+    root: resolvedRoot,
+    users: join(resolvedRoot, "users"),
+    workspaces: join(resolvedRoot, "workspaces"),
+    agents: join(resolvedRoot, "agents"),
+    cliTools: join(resolvedRoot, "cli-tools.json"),
+    apiKeys: join(resolvedRoot, "api-keys.json"),
+    containers: join(resolvedRoot, "containers.json"),
+    devices: join(resolvedRoot, "devices.json"),
+    channels: join(resolvedRoot, "channels"),
+    avatars: join(resolvedRoot, "avatars"),
+    sessions: join(resolvedRoot, "sessions"),
+    apiSessions: join(resolvedRoot, "api-sessions"),
+    work: join(resolvedRoot, "work"),
+    workCapabilities: join(resolvedRoot, "work", "capabilities"),
+    squads: join(resolvedRoot, "squads"),
+    groups: join(resolvedRoot, "groups"),
+    legacyProjectFile: join(resolvedRoot, "project.json"),
+    legacyProjectsDir: join(resolvedRoot, "projects"),
     archived(kind: ArchivableKind, stamp: string): string {
-      return join(root, `${kind}-archived-${stamp}`);
+      return join(resolvedRoot, `${kind}-archived-${stamp}`);
     },
   });
 }

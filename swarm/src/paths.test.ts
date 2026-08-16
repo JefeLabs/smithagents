@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { smithPaths } from "./paths.js";
 
@@ -38,6 +38,13 @@ test("smithPaths.archived: timestamped sibling of the live directory", () => {
   assert.equal(p.archived("agents", "S"), join("/state", "agents-archived-S"));
 });
 
+test("smithPaths: a relative root is resolved to absolute, so members can't split from it", () => {
+  const p = smithPaths("state");
+  const absoluteRoot = resolve("state");
+  assert.equal(p.root, absoluteRoot);
+  assert.equal(p.users, join(absoluteRoot, "users"));
+});
+
 test("smithPaths: the returned object is frozen — callers cannot repoint state at runtime", () => {
   const p = smithPaths("/state");
   assert.throws(() => {
@@ -54,17 +61,21 @@ test("smithPaths: the returned object is frozen — callers cannot repoint state
  * below for the exact idiom it bans.)
  */
 test("no source file builds a .smith path from process.cwd()", async () => {
+  // Matched against the whole file (not per line) so a call that biome's
+  // lineWidth:120 has wrapped across several lines is still caught. Matches
+  // both resolve(...) and join(...), with or without a `process.` prefix, so
+  // a destructured `cwd()` import doesn't slip past either.
+  const banned = /(resolve|join)\(\s*(process\.)?cwd\(\)\s*,\s*["'`]\.smith/g;
   const entries = await readdir("src", { recursive: true });
   const offenders: string[] = [];
   for (const entry of entries) {
     const rel = String(entry);
     if (!rel.endsWith(".ts")) continue;
     const content = await readFile(join("src", rel), "utf8");
-    content.split("\n").forEach((line, i) => {
-      if (/resolve\(\s*process\.cwd\(\)\s*,\s*["'`]\.smith/.test(line)) {
-        offenders.push(`src/${rel}:${i + 1}`);
-      }
-    });
+    for (const match of content.matchAll(banned)) {
+      const line = content.slice(0, match.index).split("\n").length;
+      offenders.push(`src/${rel}:${line}`);
+    }
   }
   assert.deepEqual(
     offenders,
