@@ -178,6 +178,7 @@ import {
 import {
   activeWorkspaces,
   defaultViolation,
+  ensureWorkspaceDir,
   initGitRepo,
   isGitRepo,
   isGroupRecord,
@@ -190,6 +191,7 @@ import {
   validSources,
   type Workspace,
   type WorkspaceRepo,
+  workspaceDir,
 } from "./workspaces.js";
 
 // ---------------------------------------------------------------------------
@@ -1790,6 +1792,7 @@ export class OrchestratorServer {
         if (ws.default)
           for (const other of all.filter((w) => w.default)) await saveWorkspace(dir, { ...other, default: undefined });
         await saveWorkspace(dir, ws);
+        await ensureWorkspaceDir(this.paths, ws);
       } catch (err) {
         return reply.status(400).send({ error: String((err as Error).message) });
       }
@@ -1918,6 +1921,7 @@ export class OrchestratorServer {
           color: w.color,
           sprint: w.sprint,
           sources: w.sources,
+          dir: workspaceDir(this.paths, w),
         })),
       };
     });

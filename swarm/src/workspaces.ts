@@ -261,3 +261,31 @@ export function slugForDir(name: string): string {
 export function workspaceDir(paths: SmithPaths, ws: Workspace): string {
   return ws.dir ? resolve(ws.dir) : join(paths.workspaces, slugForDir(ws.name));
 }
+
+/**
+ * Create this workspace's directory and its two fixed children, and return the
+ * resolved path. `config/` is the versioned half (settings, boards, artifacts);
+ * `.runtime/` is the unversioned half (instances, logs, local caches). Both are
+ * created empty here — filling them is later work.
+ *
+ * Idempotent: `mkdir -p` semantics, existing contents untouched.
+ *
+ * A name that slugs to the empty string (e.g. "..." or "///") would otherwise
+ * make workspaceDir() resolve to `paths.workspaces` itself — the shared parent
+ * every workspace directory lives under — and this function would create
+ * config/ and .runtime/ directly inside it. Refuse instead of writing there;
+ * a workspace whose name can't become a directory is a caller error to fix,
+ * not one to paper over with a substitute name.
+ */
+export async function ensureWorkspaceDir(paths: SmithPaths, ws: Workspace): Promise<string> {
+  if (!ws.dir && !slugForDir(ws.name)) {
+    throw new Error(
+      `Workspace name "${ws.name}" has no characters usable in a directory name — refusing to create its ` +
+        `directory inside the shared workspaces root`,
+    );
+  }
+  const dir = workspaceDir(paths, ws);
+  await mkdir(join(dir, "config"), { recursive: true });
+  await mkdir(join(dir, ".runtime"), { recursive: true });
+  return dir;
+}

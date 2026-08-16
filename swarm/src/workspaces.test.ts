@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
@@ -9,6 +10,7 @@ import { smithPaths } from "./paths.js";
 import type { Workspace } from "./workspaces.js";
 import {
   defaultViolation,
+  ensureWorkspaceDir,
   initGitRepo,
   isGitRepo,
   loadWorkspacesFromDir,
@@ -251,4 +253,56 @@ test("slugForDir: refuses a name that would escape its parent", () => {
     got.startsWith(`${join("/state", "workspaces")}/`),
     `a traversal-shaped name must stay inside the workspaces dir; got ${got}`,
   );
+});
+
+test("ensureWorkspaceDir: creates config/ and .runtime/, and is idempotent", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ws-dir-"));
+  try {
+    const paths = smithPaths(root);
+    const ws = { name: "proving-ground", repos: [] } as Workspace;
+
+    const dir = await ensureWorkspaceDir(paths, ws);
+    assert.equal(dir, join(root, "workspaces", "proving-ground"));
+    assert.ok(statSync(join(dir, "config")).isDirectory(), "config/ exists");
+    assert.ok(statSync(join(dir, ".runtime")).isDirectory(), ".runtime/ exists");
+
+    // Running twice must not throw and must not disturb existing contents.
+    writeFileSync(join(dir, "config", "keep.txt"), "kept");
+    await ensureWorkspaceDir(paths, ws);
+    assert.equal(readFileSync(join(dir, "config", "keep.txt"), "utf8"), "kept");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("ensureWorkspaceDir: honours an explicit dir outside the state root", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ws-root-"));
+  const elsewhere = mkdtempSync(join(tmpdir(), "ws-elsewhere-"));
+  try {
+    const paths = smithPaths(root);
+    const target = join(elsewhere, "my-project");
+    const dir = await ensureWorkspaceDir(paths, { name: "pg", dir: target, repos: [] } as Workspace);
+
+    assert.equal(dir, target);
+    assert.ok(statSync(join(target, "config")).isDirectory(), "config/ created at the explicit dir");
+    assert.throws(() => statSync(join(root, "workspaces", "pg")), "nothing created under the state root");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(elsewhere, { recursive: true, force: true });
+  }
+});
+
+test("ensureWorkspaceDir: refuses a name that slugs to empty rather than writing into the shared workspaces root", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ws-empty-slug-"));
+  try {
+    const paths = smithPaths(root);
+    const ws = { name: "...", repos: [] } as Workspace;
+
+    await assert.rejects(() => ensureWorkspaceDir(paths, ws), /"\.\.\."/);
+    // Nothing may be written into the shared parent — not even the parent
+    // itself should have been created by this call.
+    assert.throws(() => statSync(paths.workspaces), "nothing created under the workspaces root");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
