@@ -4,8 +4,9 @@
 
 import { execFile } from "node:child_process";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
+import type { SmithPaths } from "./paths.js";
 
 export interface WorkspaceRepo {
   name: string;
@@ -89,6 +90,13 @@ export interface Workspace {
    * containment is invalid.
    */
   members?: string[];
+  /**
+   * Absolute path to this workspace's own directory — the container for its
+   * config repo, project repos, and ephemeral instances. Absent means the
+   * default under the state root; set explicitly to keep a workspace where the
+   * user keeps code.
+   */
+  dir?: string;
 }
 
 /** The group attribute, applied: a context with `members` (even []) is a group. */
@@ -232,4 +240,24 @@ export function defaultViolation(all: Workspace[], removingName: string): string
     return `"${removingName}" is the default workspace — set another default first`;
   }
   return null;
+}
+
+/**
+ * A workspace name reduced to a safe directory name. Lowercased, non-alphanumerics
+ * collapsed to single dashes, edges trimmed — so a name can never contain a path
+ * separator or a `..` segment and escape its parent.
+ */
+export function slugForDir(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+/**
+ * Where this workspace's directory is. An explicit `dir` wins and is resolved to
+ * absolute; otherwise it defaults under the state root, named from the slug.
+ */
+export function workspaceDir(paths: SmithPaths, ws: Workspace): string {
+  return ws.dir ? resolve(ws.dir) : join(paths.workspaces, slugForDir(ws.name));
 }

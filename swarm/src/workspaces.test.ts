@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
+import { smithPaths } from "./paths.js";
 import type { Workspace } from "./workspaces.js";
 import {
   defaultViolation,
@@ -15,7 +16,9 @@ import {
   removeWorkspaceFile,
   resolveRepo,
   saveWorkspace,
+  slugForDir,
   validSources,
+  workspaceDir,
 } from "./workspaces.js";
 
 const execFileAsync = promisify(execFile);
@@ -210,4 +213,42 @@ test("validSources accepts absent, rejects rows missing id/name/preset/cadence/t
     false,
   );
   assert.equal(validSources("x"), false);
+});
+
+test("workspaceDir: defaults under the state root's workspaces directory", () => {
+  const paths = smithPaths("/state");
+  assert.equal(
+    workspaceDir(paths, { name: "proving-ground", repos: [] } as Workspace),
+    join("/state", "workspaces", "proving-ground"),
+  );
+});
+
+test("workspaceDir: an explicit dir wins, so a workspace can live anywhere", () => {
+  const paths = smithPaths("/state");
+  assert.equal(
+    workspaceDir(paths, { name: "proving-ground", dir: "/Users/me/Development/pg", repos: [] } as Workspace),
+    "/Users/me/Development/pg",
+  );
+});
+
+test("workspaceDir: a relative explicit dir is resolved, never left relative", () => {
+  const paths = smithPaths("/state");
+  const got = workspaceDir(paths, { name: "pg", dir: "some/where", repos: [] } as Workspace);
+  assert.ok(isAbsolute(got), `expected an absolute path, got ${got}`);
+});
+
+test("slugForDir: a workspace name becomes a safe directory name", () => {
+  assert.equal(slugForDir("proving-ground"), "proving-ground");
+  assert.equal(slugForDir("My Client / Q3"), "my-client-q3");
+  assert.equal(slugForDir("  spaced  "), "spaced");
+});
+
+test("slugForDir: refuses a name that would escape its parent", () => {
+  // A workspace named "../../etc" must never resolve outside the state root.
+  const paths = smithPaths("/state");
+  const got = workspaceDir(paths, { name: "../../etc", repos: [] } as Workspace);
+  assert.ok(
+    got.startsWith(`${join("/state", "workspaces")}/`),
+    `a traversal-shaped name must stay inside the workspaces dir; got ${got}`,
+  );
 });
