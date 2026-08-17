@@ -26,7 +26,29 @@ function stubMeFailure() {
   (getMe as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("network error"));
 }
 
-afterEach(() => vi.restoreAllMocks());
+/**
+ * matchMedia is the mechanism this codebase already stubs for viewport/media
+ * state (see useTheme.test.tsx's stubPrefersLight) — jsdom implements none of
+ * it, and the inert default installed in test/setup.ts never matches, so a
+ * suite that cares about the result stubs over it itself. WizardGate queries
+ * a single fixed breakpoint, so — like useTheme's stub — this one ignores the
+ * query string and just reports whether `width` falls under it.
+ */
+function stubViewport({ width }: { width: number }) {
+  vi.stubGlobal(
+    "matchMedia",
+    vi.fn(() => ({
+      matches: width <= 768,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    })),
+  );
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe("WizardGate", () => {
   it("shows the wizard on a fresh install (no user record)", async () => {
@@ -104,5 +126,30 @@ describe("WizardGate", () => {
     );
 
     expect(await screen.findByText("THE APP")).toBeInTheDocument();
+  });
+
+  it("gate: a phone never sees the local path", async () => {
+    stubViewport({ width: 420 });
+    stubMe({ id: "me", name: "You", connectors: [], placeholder: true });
+    wrap(
+      <WizardGate>
+        <div>THE APP</div>
+      </WizardGate>,
+    );
+
+    expect(await screen.findByText(/works on any device|coming soon/i)).toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /local/i })).toBeNull();
+  });
+
+  it("gate: a desktop sees the local path", async () => {
+    stubViewport({ width: 1440 });
+    stubMe({ id: "me", name: "You", connectors: [], placeholder: true });
+    wrap(
+      <WizardGate>
+        <div>THE APP</div>
+      </WizardGate>,
+    );
+
+    expect(await screen.findByRole("heading", { name: /welcome/i })).toBeInTheDocument();
   });
 });

@@ -1,9 +1,25 @@
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as api from "../api/broker";
 import { qk } from "../queries/keys";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { SettingsPanel } from "./SettingsPanel";
+
+// Only `updateMe` is overridden — every other export keeps its real
+// implementation, so groups this file doesn't otherwise stub (Themes,
+// General's reset) are unaffected.
+vi.mock("../api/broker", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api/broker")>();
+  return { ...actual, updateMe: vi.fn() };
+});
+
+function renderSettings({ updateMe = vi.fn().mockResolvedValue({}) }: { updateMe?: ReturnType<typeof vi.fn> } = {}) {
+  (api.updateMe as ReturnType<typeof vi.fn>).mockImplementation(updateMe);
+  return renderWithProviders(
+    <SettingsPanel open onClose={() => {}} onReset={vi.fn()} theme="dark" onThemeChange={vi.fn()} />,
+  );
+}
 
 /**
  * A live broker really is listening on 127.0.0.1:7790 on dev machines — every group now
@@ -125,5 +141,18 @@ describe("SettingsPanel", () => {
     );
     client.setQueryData(qk.apiKeys, []);
     expect(await screen.findByRole("heading", { name: /api keys/i })).toBeDefined();
+  });
+
+  it("settings: re-running setup reopens the wizard without destroying the user", async () => {
+    const updateMe = vi.fn().mockResolvedValue({});
+    renderSettings({ updateMe });
+
+    await userEvent.click(screen.getByRole("button", { name: /re-run setup|run setup again/i }));
+
+    expect(updateMe).toHaveBeenCalledWith(
+      expect.objectContaining({ setup: expect.objectContaining({ step: "name" }) }),
+    );
+    // The name is NOT cleared — this is a re-run, not a factory reset.
+    expect(updateMe).not.toHaveBeenCalledWith(expect.objectContaining({ name: "" }));
   });
 });

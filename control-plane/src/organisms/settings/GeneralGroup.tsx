@@ -1,5 +1,7 @@
 import { AlertTriangle } from "lucide-react";
 import { useState } from "react";
+import { WIZARD_STEPS } from "../../lib/wizardSteps";
+import { useUpdateMe } from "../../queries/http";
 
 export interface ResetScope {
   runtime: boolean;
@@ -40,6 +42,7 @@ const OPTIONS: Array<{ key: keyof ResetScope; label: string; detail: string; dan
 
 /** General: the reset surface. Tiered, explicit, and confirmed before it fires. Unchanged behavior from the old SettingsPanel popover — just its own group now. */
 export function GeneralGroup({ onReset }: GeneralGroupProps) {
+  const updateMe = useUpdateMe();
   const [scope, setScope] = useState<ResetScope>({
     runtime: true,
     conversations: true,
@@ -67,6 +70,20 @@ export function GeneralGroup({ onReset }: GeneralGroupProps) {
   return (
     <>
       <h1>general</h1>
+      <section className="settings-panel__setup">
+        <p className="settings-panel__note">
+          Re-run the welcome setup. This only reopens the wizard — your name, connectors, and other settings are kept as
+          they are.
+        </p>
+        <button
+          type="button"
+          className="settings-btn"
+          onClick={() => updateMe.mutate({ setup: { step: WIZARD_STEPS[0] } })}
+          disabled={updateMe.isPending}
+        >
+          {updateMe.isPending ? "reopening…" : "re-run setup"}
+        </button>
+      </section>
       <div className="settings-panel__options">
         {OPTIONS.map((option) => (
           <label key={option.key} className={`settings-option${option.danger ? " settings-option--danger" : ""}`}>

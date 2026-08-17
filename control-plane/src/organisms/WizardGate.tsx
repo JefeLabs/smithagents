@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import * as api from "../api/broker";
 import type { MeRecord } from "../api/types";
 import { isSetupComplete, nextStep, resumeStep, SETUP_DONE, type WizardStep } from "../lib/wizardSteps";
@@ -8,6 +8,33 @@ import { useMe } from "../queries/http";
 import { qk } from "../queries/keys";
 import { WizardForkStep } from "./WizardForkStep";
 import { WizardNameStep } from "./WizardNameStep";
+
+/**
+ * Mirrors the app shell's own mobile breakpoint (`components.css`'s 768px
+ * sidebar collapse) rather than inventing a second one — phones and tablets
+ * get the same "compact" line the rest of the shell already draws.
+ */
+const COMPACT_QUERY = "(max-width: 768px)";
+
+/**
+ * matchMedia, not a resize listener — this is a device-class question ("does
+ * this viewport have room for a local machine's worth of chrome"), the same
+ * kind of query `useTheme` already asks of the OS. Reactive past mount (a
+ * tablet rotated mid-wizard) for the same reason `useTheme` keeps tracking
+ * the OS after mount: a one-shot read would strand a resized window on a
+ * stale answer.
+ */
+function useIsCompactViewport(): boolean {
+  const [compact, setCompact] = useState(() => window.matchMedia(COMPACT_QUERY).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(COMPACT_QUERY);
+    const apply = () => setCompact(mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
+  return compact;
+}
 
 /**
  * Decides between the welcome wizard and the app.
@@ -22,6 +49,7 @@ import { WizardNameStep } from "./WizardNameStep";
  */
 export function WizardGate({ children }: { children: ReactNode }) {
   const { data: me, isLoading, isError } = useMe();
+  const compact = useIsCompactViewport();
 
   if (isLoading) return <div className="wizard-gate__splash" aria-busy="true" />;
   if (isError || !me) return <>{children}</>;
@@ -33,7 +61,29 @@ export function WizardGate({ children }: { children: ReactNode }) {
   const needsSetup = me.placeholder === true || (me.setup !== undefined && !isSetupComplete(me.setup));
   if (!needsSetup) return <>{children}</>;
 
+  // The wizard's only working path is local mode, which needs a machine to
+  // run CLIs on — a phone or tablet has none. Rather than walking a compact
+  // viewport into that dead end, it sees what's coming instead of the wizard.
+  if (compact) return <WizardComingSoon />;
+
   return <WelcomeWizard initialStep={resumeStep(me.setup)} me={me} />;
+}
+
+/** Stands in for the wizard on phones/tablets: says what's coming (hosted
+ * mode) rather than leaving a compact viewport stranded on a blank gate. */
+function WizardComingSoon() {
+  return (
+    <div className="wizard-gate__host wizard-gate__compact">
+      <h1>Welcome</h1>
+      <p className="wizard-gate__compact-message">
+        This device has no local machine to run agents on. Hosted mode — works on any device, no CLI to install — is
+        coming soon.
+      </p>
+      <a className="wizard-fork-step__notify" href="https://smithagents.com" target="_blank" rel="noreferrer">
+        → notify me
+      </a>
+    </div>
+  );
 }
 
 /**

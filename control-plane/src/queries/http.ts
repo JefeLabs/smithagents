@@ -192,7 +192,7 @@ export function useSaveResearchEngine() {
 export function useUpdateMe() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { name?: string }) => api.updateMe(body),
+    mutationFn: (body: { name?: string; setup?: MeRecord["setup"] }) => api.updateMe(body),
     onSuccess: (result) => {
       if (!result.error) qc.setQueryData<MeRecord>(qk.me, result);
     },
