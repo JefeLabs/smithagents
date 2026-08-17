@@ -316,7 +316,9 @@ function defaultSquad(id: SquadId): SquadDefinition {
   const members = SQUAD_MEMBERS.filter((m) => m.squad === id);
   const leader = members.find((m) => m.role === "leader");
   if (members.length === 0 || !leader) {
-    throw new Error(`SQUAD_MEMBERS is malformed for squad "${id}": no members (expected at least one with a leader)`);
+    throw new Error(
+      `SQUAD_MEMBERS is malformed for squad "${id}": ${members.length} members, leader ${leader ? "present" : "missing"}`,
+    );
   }
   return { id, members, leader };
 }
@@ -337,7 +339,11 @@ export interface SquadFile {
 
 function toDefinition(file: SquadFile): SquadDefinition {
   const members = file.members.map((m) => ({ ...m, squad: file.id as SquadId })) as SquadDefinition["members"];
-  const leader = members.find((m) => m.role === "leader") ?? members[0];
+  const explicit = members.find((m) => m.role === "leader");
+  const leader = explicit ?? members[0];
+  if (!explicit && leader) {
+    console.warn(`Squad "${file.id}" has no member with role "leader"; using "${leader.name}" as the derived leader`);
+  }
   return { id: file.id as SquadId, members, leader };
 }
 
