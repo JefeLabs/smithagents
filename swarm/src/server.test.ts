@@ -48,7 +48,7 @@ import { loadUsersFromDir, saveUser } from "./users.js";
 import { addCard, createBoard } from "./work-items.js";
 import { ensureConfigRepo } from "./workspace-repos.js";
 import type { Workspace } from "./workspaces.js";
-import { isGitRepo, saveWorkspace, workspaceDir } from "./workspaces.js";
+import { isGitRepo, repoLessRefusal, saveWorkspace, workspaceDir } from "./workspaces.js";
 
 const git = promisify(execFile);
 
@@ -1000,4 +1000,14 @@ test("isValidWorkspaceCreateRepos: a missing or non-array repos is still refused
   assert.equal(isValidWorkspaceCreateRepos(undefined), false);
   assert.equal(isValidWorkspaceCreateRepos("nope"), false);
   assert.equal(isValidWorkspaceCreateRepos(null), false);
+});
+
+test("the repo-less refusal is a refusal, not an unknown-workspace error", () => {
+  // The three resolveRepo consumers previously said "Unknown workspace/repo"
+  // for a workspace that plainly exists. That message sent users looking for a
+  // typo instead of telling them to attach a repo.
+  const wss = [{ name: "design", repos: [] }] as never;
+  const refusal = repoLessRefusal(wss, "design");
+  assert.ok(refusal);
+  assert.doesNotMatch(refusal as string, /unknown/i);
 });

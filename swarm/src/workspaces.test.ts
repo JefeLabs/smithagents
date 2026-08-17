@@ -23,6 +23,7 @@ import {
   loadWorkspaces,
   normalizeRepoBranch,
   removeWorkspaceFile,
+  repoLessRefusal,
   resolveRepo,
   saveWorkspace,
   settingsPathFor,
@@ -817,4 +818,33 @@ test("assertContext: a GROUP carrying repos is still refused", () => {
 
 test("assertContext: a workspace with no name is still refused, repos or not", () => {
   assert.throws(() => assertContext("w.json", { repos: [] }), /name/i);
+});
+
+test("repoLessRefusal: names the real problem for a workspace that exists but has no repo", () => {
+  const wss = [{ name: "design", repos: [] }] as never;
+
+  const refusal = repoLessRefusal(wss, "design");
+
+  assert.ok(refusal, "a repo-less context gets a refusal");
+  assert.match(refusal as string, /no repo/i);
+  assert.match(refusal as string, /add one/i, "and tells the user how to fix it");
+  assert.doesNotMatch(refusal as string, /unknown/i, "it is NOT an unknown-workspace error");
+});
+
+test("repoLessRefusal: null when the workspace has a repo — nothing to refuse", () => {
+  const wss = [{ name: "coding", repos: [{ name: "app", path: "/tmp/app" }] }] as never;
+  assert.equal(repoLessRefusal(wss, "coding"), null);
+});
+
+test("repoLessRefusal: null when the workspace is genuinely unknown — that is a different error", () => {
+  const wss = [{ name: "design", repos: [] }] as never;
+  assert.equal(repoLessRefusal(wss, "nope"), null, "an unknown name is the caller's existing 400, not this");
+});
+
+test("repoLessRefusal: falls back to the default workspace when none is named", () => {
+  const wss = [
+    { name: "coding", repos: [{ name: "app", path: "/tmp/app" }] },
+    { name: "design", repos: [], default: true },
+  ] as never;
+  assert.ok(repoLessRefusal(wss, undefined), "the default workspace is the one a nameless request means");
 });

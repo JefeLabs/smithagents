@@ -202,6 +202,7 @@ import {
   loadWorkspaces,
   normalizeRepoBranch,
   removeWorkspaceFile,
+  repoLessRefusal,
   resolveRepo,
   saveWorkspace,
   validSources,
@@ -816,6 +817,10 @@ export class OrchestratorServer {
       // Resolve the target repo server-side. Client-sent repoPath is ignored —
       // only the workspace registry may name filesystem paths.
       const resolved = resolveRepo(this.workspaces, body.context.workspace, body.context.repo);
+      if (!resolved) {
+        const refusal = repoLessRefusal(this.workspaces, body.context.workspace);
+        if (refusal) return reply.status(400).send({ error: refusal });
+      }
       if ((body.context.workspace || body.context.repo) && !resolved) {
         return reply.status(400).send({
           error: `Unknown workspace/repo: ${body.context.workspace ?? "(default)"}/${body.context.repo ?? "(default)"}`,
@@ -1765,11 +1770,17 @@ export class OrchestratorServer {
       if (!agent) return reply.status(404).send({ error: `Unknown agent: ${body.agent}` });
       if (agent?.archived) return reply.status(404).send({ error: `${agent.name} is archived` });
       const resolved = resolveRepo(this.workspaces, body.workspace, body.repo);
+      if (!resolved) {
+        const refusal = repoLessRefusal(this.workspaces, body.workspace);
+        if (refusal) return reply.status(400).send({ error: refusal });
+      }
       if ((body.workspace || body.repo) && !resolved) {
         return reply
           .status(400)
           .send({ error: `Unknown workspace/repo: ${body.workspace ?? "(default)"}/${body.repo ?? "(default)"}` });
       }
+      // Falling back to process.cwd() would silently run against the swarm's own
+      // checkout. For a repo-less context the refusal above has already returned.
       const repoRoot = resolved?.repo.path ?? process.cwd();
       const baseBranch = resolved?.repo.branch ?? "main";
       try {
@@ -3295,7 +3306,10 @@ export class OrchestratorServer {
         if (slice.specPath) return reply.status(409).send({ error: `Slice already has a spec: ${slice.specPath}` });
         const workspaces = await loadWorkspaces(this.paths);
         const resolved = resolveRepo(workspaces, cap.workspaceId);
-        if (!resolved) return reply.status(400).send({ error: `No active workspace/repo for: ${cap.workspaceId}` });
+        if (!resolved) {
+          const refusal = repoLessRefusal(workspaces, cap.workspaceId);
+          return reply.status(400).send({ error: refusal ?? `No active workspace/repo for: ${cap.workspaceId}` });
+        }
         try {
           const date = new Date().toISOString().slice(0, 10);
           const relPath = `docs/superpowers/specs/${date}-${slugify(slice.name)}-design.md`;

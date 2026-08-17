@@ -373,6 +373,29 @@ export function resolveRepo(
 }
 
 /**
+ * Why a repo-aware operation cannot run in this context, when the reason is
+ * "there is no repo" rather than "no such workspace".
+ *
+ * `resolveRepo` returns null for both cases, which is correct for resolution
+ * but wrong for the message: a repo-less context is a VALID workspace (spec:
+ * repo-less contexts), and telling its owner "Unknown workspace/repo" sends
+ * them hunting for a typo instead of attaching a repo.
+ *
+ * Returns null when the workspace is genuinely unknown — that stays the
+ * caller's existing error — and null when it has a repo, since there is
+ * nothing to refuse.
+ */
+export function repoLessRefusal(workspaces: Workspace[], workspaceName?: string): string | null {
+  const live = activeWorkspaces(workspaces);
+  const workspace = workspaceName
+    ? live.find((w) => w.name.toLowerCase() === workspaceName.toLowerCase())
+    : (live.find((w) => w.default) ?? live[0]);
+  if (!workspace) return null;
+  if (workspace.repos.length > 0) return null;
+  return `Context "${workspace.name}" has no repo — add one to run agents.`;
+}
+
+/**
  * Pre-flight half of saveWorkspace's collision guard: throws
  * WorkspaceDirCollisionError without writing anything, for a caller that
  * needs to know BEFORE it does anything else — not merely before it writes
