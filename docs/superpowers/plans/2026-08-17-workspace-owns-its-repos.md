@@ -479,25 +479,63 @@ Expected: 10 tests pass.
 
 - [ ] **Step 5: Wire it into `POST /workspaces`**
 
-In `swarm/src/server.ts`, inside the `POST /workspaces` handler, the record is validated by `workspaceProblems(ws)` and then saved. Clone **before** that validation so it still sees real paths:
+Read `swarm/src/server.ts:1815-1876` before editing. The handler's real order is:
 
-- Import `materializeRepos` from `./workspace-repos.js`.
-- Immediately before the existing `workspaceProblems` call, replace the candidate record with its materialized form, and turn a clone failure into a 400 that names the repo:
+1. `:1817` `gitInitRequestedRepos(b.repos)` — pre-existing, git-inits an **empty local path** for any repo sent with `initGit: true`. **Leave it exactly as it is.** It is complementary to cloning: it runs first, so a repo it initialises is already a git repo by the time `materializeRepos` looks at it, and gets left alone.
+2. `:1819` `workspaceProblems(b)` — runs against the **raw request body**, before `ws` exists.
+3. `:1832` the name is slugified.
+4. `:1848` the `ws: Workspace` record is built.
+5. `:1864` a `try` block: `ensureWorkspaceDir` → `assertNoWorkspaceDirCollision` → demote → `saveWorkspace`.
+
+`materializeRepos(paths, ws)` needs a `Workspace` with its final name, so it cannot run before step 2. And `workspaceProblems` rejects any repo whose path is not already a git repo (`:3592`), which would reject a URL-only repo before it could ever be cloned. So make these three changes:
+
+**(a)** Give `workspaceProblems` an options parameter, defaulting to the current strict behaviour so the `PUT` call at `:1935` is unchanged:
 
 ```ts
-      let ws: Workspace;
-      try {
-        ws = await materializeRepos(this.paths, candidate);
-      } catch (err) {
-        // A clone failure (no remote, bad URL, unreachable host) is the user's
-        // input being wrong, not the server breaking. The workspace directory
-        // may survive a failed create — same as the DELETE route, which
-        // deliberately leaves a directory behind.
-        return reply.status(400).send({ error: String((err as Error).message) });
-      }
+export async function workspaceProblems(
+  b: Partial<Workspace>,
+  opts: { requireLocalRepos?: boolean } = {},
+): Promise<string | null> {
 ```
 
-Use whatever name the handler already gives the incoming record as `candidate`, and feed `ws` to the existing `workspaceProblems` / collision / save sequence. Do **not** change `workspaceProblems` itself — its contract (every repo path is an absolute, real git repo) is what makes this safe, and it now runs against the post-clone record.
+and guard only the on-disk check at `:3592` with it:
+
+```ts
+    if (opts.requireLocalRepos !== false && !(await isGitRepo(r.path))) {
+      return `Repo "${r.name}": ${r.path} is not a git repository`;
+    }
+```
+
+Leave every other check — name, absolute path, GitHub fields, links, Atlassian — running in both modes. Note the path check at `:3591` still requires an absolute path, so a URL-only repo must be submitted with `path: ""`; that is why the pre-clone call also relaxes nothing else.
+
+**(b)** At `:1819`, relax only the pre-clone pass:
+
+```ts
+      // Pre-clone: a repo may be a remote URL with no local checkout yet, so
+      // the on-disk check cannot run until materializeRepos has cloned it.
+      // Everything else about the payload is still validated here.
+      const problem = await workspaceProblems(b, { requireLocalRepos: false });
+```
+
+**(c)** Inside the existing `try` at `:1864`, clone before anything is written, then re-validate strictly. Import `materializeRepos` from `./workspace-repos.js`:
+
+```ts
+      let record = ws;
+      try {
+        // Clone first: the strict validation below is the invariant every
+        // saved record must satisfy, and it can only be checked once the
+        // repos actually exist on disk.
+        record = await materializeRepos(this.paths, ws);
+        const settled = await workspaceProblems(record);
+        if (settled) return reply.status(400).send({ error: settled });
+        await ensureWorkspaceDir(this.paths, record);
+        await assertNoWorkspaceDirCollision(this.paths, record);
+        ...
+```
+
+and use `record` in place of `ws` for the rest of the block (the demote loop's `saveWorkspace(this.paths, record)` and the response). A clone failure is a bad payload, not a server fault, so the existing `catch` should return its message as a 400 — which it already does for non-collision errors.
+
+The saved-record contract is unchanged: `workspaceProblems` still guarantees every persisted repo path is an absolute, real git repo. It simply now runs on the post-clone record.
 
 - [ ] **Step 6: Verify the whole suite, typecheck, lint**
 
