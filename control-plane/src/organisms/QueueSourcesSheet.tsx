@@ -21,6 +21,7 @@ interface QueueSourcesSheetProps {
 const FALLBACK_PRESETS: Array<{ id: string; label: string; cadence: ContextSourceT["cadence"] }> = [
   { id: "jira", label: "Jira", cadence: "nightly" },
   { id: "releases", label: "Releases", cadence: "nightly" },
+  { id: "topic", label: "Topic", cadence: "nightly" },
   { id: "observability", label: "Observability", cadence: "hourly" },
   { id: "support", label: "Support", cadence: "6h" },
   { id: "custom", label: "Custom", cadence: "nightly" },
