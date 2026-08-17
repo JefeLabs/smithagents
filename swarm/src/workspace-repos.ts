@@ -2,7 +2,8 @@ import { execFile } from "node:child_process";
 import { mkdir, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import type { WorkspaceRepo } from "./workspaces.js";
+import type { SmithPaths } from "./paths.js";
+import { ensureWorkspaceDir, isGitRepo, type Workspace, type WorkspaceRepo } from "./workspaces.js";
 
 const run = promisify(execFile);
 
@@ -115,4 +116,28 @@ export async function cloneRepoInto(workspaceDir: string, repo: WorkspaceRepo): 
     throw new Error(`Repo "${repo.name}": clone failed — ${(err as Error).message}`);
   }
   return dir;
+}
+
+/**
+ * Give a workspace the shape §1.2 requires before it is saved: its own
+ * directory, a git config repo, and every project repo present locally.
+ *
+ * A repo already at a valid local git path is LEFT THERE. Creation is not the
+ * moment to relocate someone's existing checkout — the boot migration handles
+ * that deliberately, and non-destructively.
+ *
+ * Returns a copy; the caller's record is never mutated.
+ */
+export async function materializeRepos(paths: SmithPaths, ws: Workspace): Promise<Workspace> {
+  const dir = await ensureWorkspaceDir(paths, ws);
+  await ensureConfigRepo(dir);
+  const repos: WorkspaceRepo[] = [];
+  for (const repo of ws.repos) {
+    if (repo.path && (await isGitRepo(repo.path))) {
+      repos.push(repo);
+      continue;
+    }
+    repos.push({ ...repo, path: await cloneRepoInto(dir, repo) });
+  }
+  return { ...ws, repos };
 }

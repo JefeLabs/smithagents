@@ -181,6 +181,7 @@ import {
   type WorkBoard,
   type WorkCard,
 } from "./work-items.js";
+import { materializeRepos } from "./workspace-repos.js";
 import {
   activeWorkspaces,
   assertNoWorkspaceDirCollision,
@@ -1816,7 +1817,10 @@ export class OrchestratorServer {
       const b = req.body as Partial<Workspace> & { repos?: Array<WorkspaceRepo & { initGit?: boolean }> };
       const initProblem = await gitInitRequestedRepos(b.repos);
       if (initProblem) return reply.status(400).send({ error: initProblem });
-      const problem = await workspaceProblems(b);
+      // Pre-clone: a repo may be a remote URL with no local checkout yet, so
+      // the on-disk check cannot run until materializeRepos has cloned it.
+      // Everything else about the payload is still validated here.
+      const problem = await workspaceProblems(b, { requireLocalRepos: false });
       if (problem) return reply.status(400).send({ error: problem });
       if (b.sprint !== undefined && !validSprint(b.sprint)) {
         return reply.status(400).send({ error: "sprint needs an anchor date and a positive integer lengthDays" });
@@ -1863,20 +1867,27 @@ export class OrchestratorServer {
         sprint: b.sprint,
         sources: b.sources,
       };
+      let record = ws;
       try {
-        // First: a mkdir failure (EACCES, ENOSPC, EROFS, ENOTDIR) or a
-        // directory collision with a different workspace must abort with
-        // nothing written — no demoted default, no saved record. The
-        // collision check has to run here, before the demote loop below,
-        // not merely inside the final saveWorkspace(ws) call — otherwise a
-        // collision on `ws` is only discovered after other workspaces have
-        // already been demoted from default.
-        await ensureWorkspaceDir(this.paths, ws);
-        await assertNoWorkspaceDirCollision(this.paths, ws);
-        if (ws.default)
+        // Clone first: the strict validation below is the invariant every
+        // saved record must satisfy, and it can only be checked once the
+        // repos actually exist on disk.
+        record = await materializeRepos(this.paths, ws);
+        const settled = await workspaceProblems(record);
+        if (settled) return reply.status(400).send({ error: settled });
+        // A mkdir failure (EACCES, ENOSPC, EROFS, ENOTDIR) or a directory
+        // collision with a different workspace must abort with nothing
+        // written — no demoted default, no saved record. The collision check
+        // has to run here, before the demote loop below, not merely inside
+        // the final saveWorkspace(record) call — otherwise a collision on
+        // `record` is only discovered after other workspaces have already
+        // been demoted from default.
+        await ensureWorkspaceDir(this.paths, record);
+        await assertNoWorkspaceDirCollision(this.paths, record);
+        if (record.default)
           for (const other of all.filter((w) => w.default))
             await saveWorkspace(this.paths, { ...other, default: undefined });
-        await saveWorkspace(this.paths, ws);
+        await saveWorkspace(this.paths, record);
       } catch (err) {
         if (err instanceof WorkspaceDirCollisionError) {
           return reply.status(409).send({ error: err.message });
@@ -1889,18 +1900,21 @@ export class OrchestratorServer {
       // Best-effort: a name too long to fit a board id (createBoard throws)
       // or a disk hiccup must not fail a workspace that already saved.
       //
-      // Computed directly from `ws` rather than boardsDirFor(this.paths,
-      // this.workspaces, ws.name): this.workspaces has not been reloaded yet
-      // (that happens below), so a lookup by name would miss the workspace
-      // just saved and silently fall back to the host directory. A brand new
-      // workspace cannot yet have boards sitting anywhere else, so the merged
-      // read and the resolved write both collapse to this one directory.
-      const newWorkspaceBoardsDir = join(workspaceDir(this.paths, ws), "config", "boards");
-      await ensureWorkspaceBoards([newWorkspaceBoardsDir], () => newWorkspaceBoardsDir, ws.name).catch((err) => {
-        this.app.log.warn(`Could not provision boards for workspace "${ws.name}": ${String((err as Error).message)}`);
+      // Computed directly from `record` rather than boardsDirFor(this.paths,
+      // this.workspaces, record.name): this.workspaces has not been reloaded
+      // yet (that happens below), so a lookup by name would miss the
+      // workspace just saved and silently fall back to the host directory. A
+      // brand new workspace cannot yet have boards sitting anywhere else, so
+      // the merged read and the resolved write both collapse to this one
+      // directory.
+      const newWorkspaceBoardsDir = join(workspaceDir(this.paths, record), "config", "boards");
+      await ensureWorkspaceBoards([newWorkspaceBoardsDir], () => newWorkspaceBoardsDir, record.name).catch((err) => {
+        this.app.log.warn(
+          `Could not provision boards for workspace "${record.name}": ${String((err as Error).message)}`,
+        );
       });
       await this.reloadWorkspaces();
-      return reply.status(201).send(ws);
+      return reply.status(201).send(record);
     });
 
     this.app.put<{ Params: { name: string } }>("/workspaces/:name", async (req, reply) => {
@@ -3583,13 +3597,18 @@ export function resolveTaskRuntime(
  * checks the object's truthiness. Pulled out of the route handler so it's
  * unit-testable without booting the server.
  */
-export async function workspaceProblems(b: Partial<Workspace>): Promise<string | null> {
+export async function workspaceProblems(
+  b: Partial<Workspace>,
+  opts: { requireLocalRepos?: boolean } = {},
+): Promise<string | null> {
   if (!b.name?.trim()) return "Missing required field: name";
   if (!Array.isArray(b.repos) || b.repos.length === 0) return "A workspace needs at least one repo";
   for (const r of b.repos) {
     if (!r?.name?.trim()) return "Every repo needs a name";
     if (!r.path || !isAbsolute(r.path)) return `Repo "${r.name}": path must be absolute`;
-    if (!(await isGitRepo(r.path))) return `Repo "${r.name}": ${r.path} is not a git repository`;
+    if (opts.requireLocalRepos !== false && !(await isGitRepo(r.path))) {
+      return `Repo "${r.name}": ${r.path} is not a git repository`;
+    }
   }
   if (b.links !== undefined && (!Array.isArray(b.links) || b.links.some((l) => typeof l !== "string"))) {
     return "links must be an array of strings";

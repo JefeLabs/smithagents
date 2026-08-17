@@ -4,7 +4,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { cloneRepoInto, ensureConfigRepo } from "./workspace-repos.js";
+import { smithPaths } from "./paths.js";
+import { cloneRepoInto, ensureConfigRepo, materializeRepos } from "./workspace-repos.js";
 
 test("ensureConfigRepo: turns config/ into a git repo with the settings file committed", async () => {
   const ws = mkdtempSync(join(tmpdir(), "cfgrepo-"));
@@ -233,6 +234,57 @@ test("cloneRepoInto: distinguishes interrupted clones from empty directories", a
     );
   } finally {
     rmSync(ws, { recursive: true, force: true });
+    rmSync(origin, { recursive: true, force: true });
+  }
+});
+
+test("materializeRepos: clones a URL-only repo and repoints its path inside the workspace", async () => {
+  const root = mkdtempSync(join(tmpdir(), "mat-"));
+  const origin = makeOrigin("d");
+  try {
+    const paths = smithPaths(root);
+    const ws = { name: "pg", repos: [{ name: "app", path: "", repository: origin }] };
+
+    const out = await materializeRepos(paths, ws);
+
+    const expected = join(paths.workspaces, "pg", "app");
+    assert.equal(out.repos[0].path, expected, "path now points inside the workspace");
+    assert.ok(statSync(join(expected, ".git")).isDirectory(), "and there is a real clone there");
+    assert.equal(ws.repos[0].path, "", "the input record was not mutated");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(origin, { recursive: true, force: true });
+  }
+});
+
+test("materializeRepos: a repo already at a valid local path is left where it is", async () => {
+  const root = mkdtempSync(join(tmpdir(), "mat-keep-"));
+  const origin = makeOrigin("e");
+  try {
+    const paths = smithPaths(root);
+    const ws = { name: "pg", repos: [{ name: "app", path: origin, repository: origin }] };
+
+    const out = await materializeRepos(paths, ws);
+
+    assert.equal(out.repos[0].path, origin, "an existing valid checkout is not relocated during creation");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(origin, { recursive: true, force: true });
+  }
+});
+
+test("materializeRepos: also makes config/ a git repo", async () => {
+  const root = mkdtempSync(join(tmpdir(), "mat-cfg-"));
+  const origin = makeOrigin("f");
+  try {
+    const paths = smithPaths(root);
+
+    await materializeRepos(smithPaths(root), { name: "pg", repos: [{ name: "app", path: "", repository: origin }] });
+
+    const cfg = join(paths.workspaces, "pg", "config");
+    assert.ok(statSync(join(cfg, ".git")).isDirectory(), "config/ is a repo after creation");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
     rmSync(origin, { recursive: true, force: true });
   }
 });
