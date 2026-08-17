@@ -12,11 +12,29 @@ import { getDriver } from "./drivers/index.js";
 import type { CommandRunner, ToolDriver } from "./drivers/types.js";
 import type { EngineOption } from "./personas.js";
 
+/**
+ * Why a tool cannot be used, as a CLASS rather than prose.
+ *
+ * The prose `detail` stays — it is what a human reads — but a class is what
+ * lets the UI offer the RIGHT next action: install a binary, log in, or fix
+ * billing. Collapsing these into one "unavailable" is the misdiagnosis the
+ * welcome-wizard spec calls out by name.
+ *
+ * `billing` and `policy` are defined here and rendered by the UI, but NO probe
+ * currently detects them: every driver's probe distinguishes only logged-in /
+ * logged-out / unrecognised. They are forward compatibility, not shipped
+ * detection — do not write guidance implying the system can spot a lapsed
+ * subscription today.
+ */
+export type AuthFailure = "missing" | "unauthenticated" | "billing" | "policy" | "unknown";
+
 export interface CliToolStatus {
   detected: boolean; // binary resolvable on PATH
   authOk: boolean | "unknown"; // driver auth probe result
   enabled: boolean; // user toggle; defaults true on first detection
   detail: string; // human-readable, e.g. "logged in as …"
+  /** Set only on a confirmed negative (missing binary or authOk === false); undefined otherwise, always undefined when authOk is 'unknown'. */
+  failure?: AuthFailure;
   version?: string; // tool-reported version when cheaply available
   lastCheckedAt: string; // ISO timestamp of last probe
 }
@@ -147,6 +165,7 @@ export async function sweepCliTools(path: string, deps: SweepDeps, only?: string
         entry.detected = found.code === 0 && found.stdout.trim().length > 0;
         if (!entry.detected) {
           entry.detail = `${binary} not found on PATH`;
+          entry.failure = "missing";
         } else {
           const ver = await run([binary, "--version"], VERSION_TIMEOUT_MS);
           if (ver.code === 0 && ver.stdout.trim()) entry.version = ver.stdout.trim().split("\n")[0];
@@ -155,6 +174,8 @@ export async function sweepCliTools(path: string, deps: SweepDeps, only?: string
             const auth = await probe(binary, run, authTimeoutMs);
             entry.authOk = auth.ok;
             entry.detail = auth.detail;
+            // ok === "unknown" is unconfirmed — never manufacture a class from it.
+            if (auth.ok === false) entry.failure = auth.failure ?? "unauthenticated";
           } else {
             entry.authOk = "unknown";
             entry.detail = "no auth probe for this tool";

@@ -2,6 +2,8 @@
 // driver owning the five responsibilities: launch, discover, parse, complete,
 // materialize. Everything tool-specific lives here — the dispatcher and the
 // session manager stay tool-agnostic.
+import type { AuthFailure } from "../cli-tools.js";
+
 /** The slice of an agent profile that materializes into tool config. */
 export interface AgentProfile {
   name: string;
@@ -113,11 +115,14 @@ export interface ToolDriver {
    * records authOk 'unknown' — treated as active, since the gate blocks only
    * confirmed negatives. Implementations must not throw and must return
    * ok:false only on a CONFIRMED logged-out signal; anything unrecognizable
-   * is 'unknown'. `binary` is the bare executable (no flags).
+   * is 'unknown'. `binary` is the bare executable (no flags). `failure` is
+   * supplied only when the driver can itself CONFIRM the cause (e.g. a
+   * distinguishable billing/policy response); when omitted, the registry
+   * derives the default classification from `ok`.
    */
   verifyAuth?(
     binary: string,
     run: CommandRunner,
     timeoutMs: number,
-  ): Promise<{ ok: boolean | "unknown"; detail: string }>;
+  ): Promise<{ ok: boolean | "unknown"; detail: string; failure?: AuthFailure }>;
 }

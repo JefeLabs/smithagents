@@ -175,3 +175,89 @@ test("sweepCliTools: a throwing verifyAuth lands as unknown, never rejects the s
   assert.equal(file.tools.codex?.authOk, "unknown");
   assert.match(file.tools.codex?.detail ?? "", /driver bug/);
 });
+
+test("sweepCliTools: a missing binary classifies as `missing`, not as an auth problem", async () => {
+  // The spec's whole point: three failures need three different fixes. Telling
+  // someone to log in when the binary isn't installed is the misdiagnosis.
+  const dir = await mkdtemp(join(tmpdir(), "cli-tools-"));
+  const path = join(dir, "cli-tools.json");
+  const deps: SweepDeps = {
+    agentCommands: { claude: "claude" },
+    clis: ["claude"],
+    run: scriptedRun({}), // nothing matches -> command -v exits 127
+    now: fixedNow,
+  };
+  const file = await sweepCliTools(path, deps);
+  assert.equal(file.tools.claude?.failure, "missing");
+  assert.equal(file.tools.claude?.detected, false);
+});
+
+test("sweepCliTools: a confirmed logged-out classifies as `unauthenticated`", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "cli-tools-"));
+  const path = join(dir, "cli-tools.json");
+  const deps: SweepDeps = {
+    agentCommands: { claude: "claude" },
+    clis: ["claude"],
+    run: scriptedRun({ "command -v": { code: 0, stdout: "/usr/local/bin/claude\n" } }),
+    resolveDriver: () => ({ verifyAuth: async () => ({ ok: false, detail: "not logged in" }) }),
+    now: fixedNow,
+  };
+  const file = await sweepCliTools(path, deps);
+  assert.equal(file.tools.claude?.failure, "unauthenticated");
+});
+
+test("sweepCliTools: an UNRECOGNISED probe result stays unknown and carries NO failure class", async () => {
+  // The driver contract's standing invariant: ok:false only on a CONFIRMED
+  // negative. A failure class must never manufacture a confirmed failure out of
+  // an unrecognised signal — that would start gating tools that actually work.
+  const dir = await mkdtemp(join(tmpdir(), "cli-tools-"));
+  const path = join(dir, "cli-tools.json");
+  const deps: SweepDeps = {
+    agentCommands: { claude: "claude" },
+    clis: ["claude"],
+    run: scriptedRun({ "command -v": { code: 0, stdout: "/usr/local/bin/claude\n" } }),
+    resolveDriver: () => ({ verifyAuth: async () => ({ ok: "unknown", detail: "???" }) }),
+    now: fixedNow,
+  };
+  const file = await sweepCliTools(path, deps);
+  assert.equal(file.tools.claude?.authOk, "unknown");
+  assert.equal(file.tools.claude?.failure, undefined);
+});
+
+test("sweepCliTools: a working tool carries no failure class", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "cli-tools-"));
+  const path = join(dir, "cli-tools.json");
+  const deps: SweepDeps = {
+    agentCommands: { claude: "claude" },
+    clis: ["claude"],
+    run: scriptedRun({ "command -v": { code: 0, stdout: "/usr/local/bin/claude\n" } }),
+    resolveDriver: () => ({ verifyAuth: async () => ({ ok: true, detail: "logged in as e@x" }) }),
+    now: fixedNow,
+  };
+  const file = await sweepCliTools(path, deps);
+  assert.equal(file.tools.claude?.failure, undefined);
+});
+
+test("sweepCliTools: a driver-supplied class wins over the default derivation", async () => {
+  // Forward compatibility: when a driver CAN confirm billing or policy, its
+  // classification must survive rather than be flattened to unauthenticated.
+  const dir = await mkdtemp(join(tmpdir(), "cli-tools-"));
+  const path = join(dir, "cli-tools.json");
+  const deps: SweepDeps = {
+    agentCommands: { claude: "claude" },
+    clis: ["claude"],
+    run: scriptedRun({ "command -v": { code: 0, stdout: "/usr/local/bin/claude\n" } }),
+    resolveDriver: () => ({
+      verifyAuth: async () => ({ ok: false, detail: "workspace deactivated", failure: "billing" }),
+    }),
+    now: fixedNow,
+  };
+  const file = await sweepCliTools(path, deps);
+  assert.equal(file.tools.claude?.failure, "billing");
+});
+
+test("inactiveDetail still returns prose, unchanged, for every class", () => {
+  // The class is ADDITIVE. Existing consumers of the human string must not change.
+  assert.match(inactiveDetail(status({ detected: false, authOk: "unknown", detail: "" })), /PATH/);
+  assert.equal(inactiveDetail(status({ enabled: false })), "disabled in Settings → CLI Tools");
+});

@@ -14,6 +14,7 @@
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { AuthFailure } from "../cli-tools.js";
 import { SessionParseError } from "./errors.js";
 import { modelFlag } from "./model-flag.js";
 import type { AgentProfile, CommandRunner, NormalizedMessage, ToolDriver } from "./types.js";
@@ -137,12 +138,13 @@ export class CodexDriver implements ToolDriver {
     binary: string,
     run: CommandRunner,
     timeoutMs: number,
-  ): Promise<{ ok: boolean | "unknown"; detail: string }> {
+  ): Promise<{ ok: boolean | "unknown"; detail: string; failure?: AuthFailure }> {
     // `codex login status` -> exit 0 "Logged in using ChatGPT" when authed.
     const res = await run([binary, "login", "status"], timeoutMs);
     const out = `${res.stdout}\n${res.stderr}`.trim();
     if (res.code === 0) return { ok: true, detail: out.split("\n")[0] || "logged in" };
-    if (/not logged in/i.test(out)) return { ok: false, detail: "not logged in — run `codex login`" };
+    if (/not logged in/i.test(out))
+      return { ok: false, detail: "not logged in — run `codex login`", failure: "unauthenticated" };
     return { ok: "unknown", detail: out.split("\n")[0] || "login status unrecognized" };
   }
 }

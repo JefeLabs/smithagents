@@ -12,6 +12,7 @@ import { readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
+import type { AuthFailure } from "../cli-tools.js";
 import { SessionParseError } from "./errors.js";
 import { modelFlag } from "./model-flag.js";
 import type { AgentProfile, CommandRunner, NormalizedMessage, ToolDriver } from "./types.js";
@@ -217,7 +218,7 @@ export class ClaudeDriver implements ToolDriver {
     binary: string,
     run: CommandRunner,
     timeoutMs: number,
-  ): Promise<{ ok: boolean | "unknown"; detail: string }> {
+  ): Promise<{ ok: boolean | "unknown"; detail: string; failure?: AuthFailure }> {
     // `claude auth status` prints JSON: {"loggedIn":true,"authMethod":"claude.ai","email":…}.
     const res = await run([binary, "auth", "status"], timeoutMs);
     try {
@@ -225,7 +226,8 @@ export class ClaudeDriver implements ToolDriver {
       if (parsed.loggedIn === true) {
         return { ok: true, detail: `logged in${parsed.email ? ` as ${parsed.email}` : ""}` };
       }
-      if (parsed.loggedIn === false) return { ok: false, detail: "not logged in — run `claude /login`" };
+      if (parsed.loggedIn === false)
+        return { ok: false, detail: "not logged in — run `claude /login`", failure: "unauthenticated" };
     } catch {
       /* not JSON — older CLI or unexpected output: not a confirmed negative */
     }
