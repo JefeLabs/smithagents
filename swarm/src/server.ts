@@ -102,7 +102,13 @@ import {
 import { commentIssue, createIssue, importIssues, searchIssues, transitionIssue } from "./jira-sync.js";
 import { agentUsage, isBusy } from "./lifecycle.js";
 import { MeetingOrchestrator } from "./meetings.js";
-import { isInitialized, legacyStateRoots, markInitialized, needsMigration } from "./migrate-state.js";
+import {
+  isInitialized,
+  legacyStateRoots,
+  markInitialized,
+  migrateWorkspaceRecords,
+  needsMigration,
+} from "./migrate-state.js";
 import { type SmithPaths, smithPaths } from "./paths.js";
 import {
   API_ENGINE,
@@ -451,6 +457,20 @@ export class OrchestratorServer {
     // .smith/groups/*.json into the one store before anything reads it.
     for (const line of await migrateGroupsDir(this.paths)) {
       this.app.log.info(line);
+    }
+
+    // ONE-WAY legacy migration (plan 6, workspace-registry): relocate each
+    // flat workspace record into its own directory as config/settings.json,
+    // before anything reads the store. Idempotent and cheap once no flat
+    // files remain, so no gate is needed — order against migrateGroupsDir
+    // above doesn't matter either way, since its own collision check reads
+    // loadAllContexts, which is dual-source and sees workspaces whether or
+    // not they've moved yet.
+    {
+      const { notes } = await migrateWorkspaceRecords(this.paths);
+      for (const note of notes) {
+        this.app.log.warn(note);
+      }
     }
 
     await this.reloadWorkspaces();
