@@ -181,7 +181,7 @@ import {
   type WorkBoard,
   type WorkCard,
 } from "./work-items.js";
-import { materializeRepos, migrateReposIntoWorkspace, repoNameProblem } from "./workspace-repos.js";
+import { commitConfigFiles, materializeRepos, migrateReposIntoWorkspace, repoNameProblem } from "./workspace-repos.js";
 import { loadRoster } from "./workspace-roster.js";
 import {
   activeWorkspaces,
@@ -489,7 +489,21 @@ export class OrchestratorServer {
     // inside it. Must run after workspace records have reached their final
     // location above, and before reloadWorkspaces() resolves repos from them.
     {
-      const globalAgentIds = (await loadAgents(this.paths.agents)).map((a) => a.id);
+      // loadAgents throws on a single malformed agent file — must not take
+      // the whole boot down (reconcileSessions above shows the pattern this
+      // one dropped). A caught failure passes `null`, not `[]`: [] is a real,
+      // distinct roster ("deliberately assigned nothing" per loadRoster's
+      // contract) — migrateReposIntoWorkspace treats null as "unknown, don't
+      // seed" so a later boot with a working registry still gets to seed it.
+      let globalAgentIds: string[] | null;
+      try {
+        globalAgentIds = (await loadAgents(this.paths.agents)).map((a) => a.id);
+      } catch (err) {
+        globalAgentIds = null;
+        this.app.log.warn(
+          `[repo-migration] could not load global agents — roster seeding skipped this boot: ${(err as Error).message}`,
+        );
+      }
       const globalSquadIds = SQUAD_ROSTER.map((s) => s.id);
       const repos = await migrateReposIntoWorkspace(this.paths, globalAgentIds, globalSquadIds);
       if (repos.cloned.length > 0) this.app.log.info(`[repo-migration] cloned: ${repos.cloned.join(", ")}`);
@@ -1920,10 +1934,21 @@ export class OrchestratorServer {
       // brand new workspace cannot yet have boards sitting anywhere else, so
       // the merged read and the resolved write both collapse to this one
       // directory.
-      const newWorkspaceBoardsDir = join(workspaceDir(this.paths, record), "config", "boards");
+      const newWorkspaceDir = workspaceDir(this.paths, record);
+      const newWorkspaceBoardsDir = join(newWorkspaceDir, "config", "boards");
       await ensureWorkspaceBoards([newWorkspaceBoardsDir], () => newWorkspaceBoardsDir, record.name).catch((err) => {
         this.app.log.warn(
           `Could not provision boards for workspace "${record.name}": ${String((err as Error).message)}`,
+        );
+      });
+      // materializeRepos' ensureConfigRepo (above) ran before settings.json or
+      // boards/ existed, and only ever commits once — without this, the config
+      // repo it created stays permanently empty. Same treatment as that
+      // ensureConfigRepo call: never fatal to workspace creation, note only;
+      // the next repo-migration boot pass retries it if this fails.
+      await commitConfigFiles(newWorkspaceDir).catch((err) => {
+        this.app.log.warn(
+          `Could not commit config files for workspace "${record.name}": ${String((err as Error).message)}`,
         );
       });
       await this.reloadWorkspaces();

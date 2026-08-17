@@ -80,6 +80,49 @@ export async function ensureConfigRepo(workspaceDir: string): Promise<boolean> {
   return true;
 }
 
+/** The only files this codebase ever commits into a workspace's config/ repo. */
+const SYSTEM_OWNED_CONFIG_PATHS = ["settings.json", "boards", "roster.json"];
+
+/**
+ * Commit whichever of settings.json, boards/, and roster.json currently have
+ * uncommitted changes, inside `<workspaceDir>/config`.
+ *
+ * Unlike `ensureConfigRepo` — which creates the repo and commits exactly
+ * once, ever — this is idempotent and meant to be called repeatedly: once
+ * right after each of those files is written, and once more on every boot,
+ * so a config repo whose one-shot creation commit predates one of them (the
+ * normal case: creation makes an empty repo before settings.json or boards/
+ * exist; migration writes roster.json only after ensureConfigRepo has
+ * already committed) still ends up with that content in HEAD.
+ *
+ * Stages ONLY these explicit paths — never `-A` — so a file the user drops
+ * into config/ by hand is never staged or committed on their behalf, the same
+ * guarantee `ensureConfigRepo`'s one-shot contract protects. `git add` with a
+ * pathspec that matches nothing fails the whole call, so each candidate is
+ * checked with `exists()` first and only the ones actually on disk are
+ * passed. Returns whether it made a commit.
+ */
+export async function commitConfigFiles(workspaceDir: string): Promise<boolean> {
+  const dir = join(workspaceDir, "config");
+  const present: string[] = [];
+  for (const path of SYSTEM_OWNED_CONFIG_PATHS) {
+    if (await exists(join(dir, path))) present.push(path);
+  }
+  if (present.length === 0) return false;
+
+  await run("git", ["add", "--", ...present], { cwd: dir });
+  try {
+    // Exit 0 means nothing is staged; a non-zero exit (thrown by execFile)
+    // means there is a staged diff to commit.
+    await run("git", ["diff", "--cached", "--quiet"], { cwd: dir });
+    return false;
+  } catch {
+    /* fall through to commit below */
+  }
+  await run("git", [...AUTHOR, "commit", "-q", "-m", "Update workspace config"], { cwd: dir });
+  return true;
+}
+
 /**
  * Why a repo name cannot become a directory name inside a workspace, or null
  * if it's fine. A path separator or ".." would let `join` climb outside the
@@ -96,7 +139,10 @@ export async function ensureConfigRepo(workspaceDir: string): Promise<boolean> {
  */
 export function repoNameProblem(name: string): string | null {
   const trimmed = name.trim();
-  if (/[/\\]/.test(name) || name === ".." || trimmed === "" || trimmed === ".") {
+  if (trimmed === "") {
+    return "a repo name can't be empty";
+  }
+  if (/[/\\]/.test(name) || trimmed === ".." || trimmed === ".") {
     return `a path separator, "..", or "." would let it escape onto or outside the workspace directory`;
   }
   return null;
@@ -230,10 +276,17 @@ export async function materializeRepos(paths: SmithPaths, ws: Workspace): Promis
  * at the host root (§4.1) — passed in, not loaded here, so this stays a pure
  * function of its arguments and the caller (server.ts, which already has the
  * agent registry and SQUAD_ROSTER in hand at boot) owns sourcing them.
+ *
+ * `globalAgentIds` is `null` when the caller could not determine it at all
+ * (loading the global agent registry threw) — that must skip roster seeding
+ * entirely, not fall back to `[]`: an empty array is itself a real, distinct
+ * roster ("deliberately assigned nothing", per loadRoster's contract), and
+ * writing it here would be a permanent lie the next boot can never correct,
+ * because a workspace only ever gets a roster written once.
  */
 export async function migrateReposIntoWorkspace(
   paths: SmithPaths,
-  globalAgentIds: string[],
+  globalAgentIds: string[] | null,
   globalSquadIds: string[],
 ): Promise<{ cloned: string[]; skipped: string[]; notes: string[] }> {
   const cloned: string[] = [];
@@ -322,18 +375,39 @@ export async function migrateReposIntoWorkspace(
         notes.push(`[repo-migration] ${ws.name}'s config/ could not become a git repo — ${(err as Error).message}`);
       }
 
-      // Record today's assignment — every global agent and squad — so the file
-      // exists and is committed with the config repo. This preserves current
-      // behaviour exactly; it does not start gating on the roster. Also
-      // outside the `changed` gate and in its own try/catch, for the same
-      // reason as ensureConfigRepo above: a workspace whose roster failed to
-      // save on some prior run keeps getting another chance.
+      // Record today's assignment — every global agent and squad — so the
+      // file exists. This preserves current behaviour exactly; it does not
+      // start gating on the roster. Getting it into HEAD is
+      // commitConfigFiles' job below, not this write — this only needs to
+      // put the content on disk to be staged. Also outside the `changed`
+      // gate and in its own try/catch, for the same reason as
+      // ensureConfigRepo above: a workspace whose roster failed to save on
+      // some prior run keeps getting another chance.
+      //
+      // A null or empty globalAgentIds means the caller could not determine
+      // — or truly has no — global agents this boot; skip seeding rather
+      // than write a roster that looks identical to "deliberately assigned
+      // nothing" (see the docstring above). Leaving roster.json absent lets
+      // a later boot, once there is a real list, seed it correctly.
       try {
-        if ((await loadRoster(dir)) === null) {
+        if (globalAgentIds !== null && globalAgentIds.length > 0 && (await loadRoster(dir)) === null) {
           await saveRoster(dir, { agents: globalAgentIds, squads: globalSquadIds });
         }
       } catch (err) {
         notes.push(`[repo-migration] ${ws.name}'s roster could not be recorded — ${(err as Error).message}`);
+      }
+
+      // Idempotent healing, outside the `changed` gate and in its own
+      // try/catch for the same reason as the two blocks above: ensureConfigRepo
+      // only ever commits once, so whichever of settings.json/boards/roster.json
+      // didn't exist yet at that moment (creation: neither did; migration:
+      // roster.json never does) needs a later, separate commit to ever reach
+      // HEAD. Runs every boot so an already-migrated workspace — one that got
+      // its one-shot commit before this function existed — heals too.
+      try {
+        await commitConfigFiles(dir);
+      } catch (err) {
+        notes.push(`[repo-migration] ${ws.name}'s config files did not get committed — ${(err as Error).message}`);
       }
     } catch (err) {
       for (const repo of ws.repos) skipped.push(`${ws.name}/${repo.name}`);

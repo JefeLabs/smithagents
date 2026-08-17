@@ -9,11 +9,14 @@ import {
   CLONE_TIMEOUT_MS,
   cloneExecOptions,
   cloneRepoInto,
+  commitConfigFiles,
   ensureConfigRepo,
   materializeRepos,
   migrateReposIntoWorkspace,
   repoDirFor,
+  repoNameProblem,
 } from "./workspace-repos.js";
+import { loadRoster } from "./workspace-roster.js";
 import { loadWorkspaces, saveWorkspace } from "./workspaces.js";
 
 test("ensureConfigRepo: turns config/ into a git repo with the settings file committed", async () => {
@@ -557,5 +560,178 @@ test("migrateReposIntoWorkspace: a config-repo failure after a successful save i
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(origin, { recursive: true, force: true });
+  }
+});
+
+// --- fix round (final review) ---------------------------------------------
+
+test("repoNameProblem: an empty or whitespace-only name gets its own message, not the escape one", () => {
+  assert.doesNotMatch(repoNameProblem("") ?? "", /path separator/, "an empty name isn't a path-escape problem");
+  assert.match(repoNameProblem("") ?? "", /empty/i, "says the actual problem: the name is empty");
+  assert.match(repoNameProblem("   ") ?? "", /empty/i, "whitespace-only is empty once trimmed");
+});
+
+test("repoNameProblem: '..' padded with whitespace is rejected using the trimmed value", () => {
+  assert.ok(repoNameProblem(" .. ") !== null, "a padded '..' still escapes once trimmed, so it must be rejected too");
+});
+
+test("migrateReposIntoWorkspace: a null globalAgentIds (id-gathering failed) leaves roster.json absent, not empty", async () => {
+  const root = mkdtempSync(join(tmpdir(), "migrepo-roster-null-"));
+  const origin = makeOrigin("o1");
+  try {
+    const paths = smithPaths(root);
+    await saveWorkspace(paths, { name: "pg", repos: [{ name: "app", path: origin, repository: origin }] });
+
+    await migrateReposIntoWorkspace(paths, null, []);
+
+    const dir = join(paths.workspaces, "pg");
+    assert.equal(
+      await loadRoster(dir),
+      null,
+      "roster.json must not exist — writing {agents:[],...} here would be a permanent, false 'assigned nothing'",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(origin, { recursive: true, force: true });
+  }
+});
+
+test("migrateReposIntoWorkspace: an empty (but non-null) globalAgentIds also leaves roster.json absent", async () => {
+  const root = mkdtempSync(join(tmpdir(), "migrepo-roster-empty-"));
+  const origin = makeOrigin("o2");
+  try {
+    const paths = smithPaths(root);
+    await saveWorkspace(paths, { name: "pg", repos: [{ name: "app", path: origin, repository: origin }] });
+
+    await migrateReposIntoWorkspace(paths, [], []);
+
+    const dir = join(paths.workspaces, "pg");
+    assert.equal(await loadRoster(dir), null, "an empty global agent list must not seed a permanent empty roster");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(origin, { recursive: true, force: true });
+  }
+});
+
+test("migrateReposIntoWorkspace: a later boot with a real agent list seeds the roster correctly", async () => {
+  const root = mkdtempSync(join(tmpdir(), "migrepo-roster-later-"));
+  const origin = makeOrigin("o3");
+  try {
+    const paths = smithPaths(root);
+    await saveWorkspace(paths, { name: "pg", repos: [{ name: "app", path: origin, repository: origin }] });
+    await migrateReposIntoWorkspace(paths, null, []); // first boot: id-gathering failed, nothing seeded
+
+    await migrateReposIntoWorkspace(paths, ["fabian", "gina"], ["core"]); // second boot: real registry
+
+    const dir = join(paths.workspaces, "pg");
+    assert.deepEqual(
+      await loadRoster(dir),
+      { agents: ["fabian", "gina"], squads: ["core"] },
+      "a later boot with a working registry gets to seed it, because nothing was written before",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(origin, { recursive: true, force: true });
+  }
+});
+
+test("commitConfigFiles: commits settings.json and boards/ written after ensureConfigRepo's one-shot empty commit", async () => {
+  const ws = mkdtempSync(join(tmpdir(), "commitcfg-create-"));
+  try {
+    // Mirrors the creation path: ensureConfigRepo runs first, against an
+    // empty config/ (materializeRepos, workspace-repos.ts), and only then do
+    // settings.json and boards/ get written (saveWorkspace / ensureWorkspaceBoards,
+    // server.ts) — after ensureConfigRepo's one commit has already happened.
+    await ensureConfigRepo(ws);
+    mkdirSync(join(ws, "config", "boards"), { recursive: true });
+    writeFileSync(join(ws, "config", "settings.json"), '{"name":"pg","repos":[]}\n');
+    writeFileSync(join(ws, "config", "boards", "personal.json"), '{"id":"personal"}\n');
+
+    const committed = await commitConfigFiles(ws);
+
+    assert.equal(committed, true, "reports that it made a commit");
+    const tree = execFileSync("git", ["ls-tree", "-r", "--name-only", "HEAD"], { cwd: join(ws, "config") }).toString();
+    assert.match(tree, /settings\.json/, "settings.json reached HEAD");
+    assert.match(tree, /boards\/personal\.json/, "boards\\/ reached HEAD");
+    const status = execFileSync("git", ["status", "--porcelain"], { cwd: join(ws, "config") })
+      .toString()
+      .trim();
+    assert.equal(status, "", "nothing system-owned is left uncommitted");
+  } finally {
+    rmSync(ws, { recursive: true, force: true });
+  }
+});
+
+test("commitConfigFiles: a second call with nothing new staged commits nothing", async () => {
+  const ws = mkdtempSync(join(tmpdir(), "commitcfg-idempotent-"));
+  try {
+    await ensureConfigRepo(ws);
+    writeFileSync(join(ws, "config", "settings.json"), '{"name":"pg","repos":[]}\n');
+    await commitConfigFiles(ws);
+    const first = execFileSync("git", ["rev-parse", "HEAD"], { cwd: join(ws, "config") })
+      .toString()
+      .trim();
+
+    const committed = await commitConfigFiles(ws);
+
+    assert.equal(committed, false, "reports it made no commit");
+    const second = execFileSync("git", ["rev-parse", "HEAD"], { cwd: join(ws, "config") })
+      .toString()
+      .trim();
+    assert.equal(second, first, "HEAD is unchanged");
+  } finally {
+    rmSync(ws, { recursive: true, force: true });
+  }
+});
+
+test("commitConfigFiles: an unrelated user file dropped in config/ is never staged or committed", async () => {
+  const ws = mkdtempSync(join(tmpdir(), "commitcfg-userfile-"));
+  try {
+    await ensureConfigRepo(ws);
+    writeFileSync(join(ws, "config", "settings.json"), '{"name":"pg","repos":[]}\n');
+    writeFileSync(join(ws, "config", "notes.txt"), "personal scratch notes\n");
+
+    await commitConfigFiles(ws);
+
+    const tracked = execFileSync("git", ["ls-files"], { cwd: join(ws, "config") }).toString();
+    assert.doesNotMatch(tracked, /notes\.txt/, "explicit pathspecs mean it was never staged in the first place");
+    const status = execFileSync("git", ["status", "--porcelain"], { cwd: join(ws, "config") }).toString();
+    assert.match(status, /\?\? notes\.txt/, "it is left exactly as the user dropped it: present, untracked");
+  } finally {
+    rmSync(ws, { recursive: true, force: true });
+  }
+});
+
+test("commitConfigFiles: an already-committed config repo heals when roster.json appears on a later call", async () => {
+  const ws = mkdtempSync(join(tmpdir(), "commitcfg-heal-"));
+  try {
+    // Reproduces the live-install bug: ensureConfigRepo already ran and
+    // committed (so it is one-shot-permanently done) before roster.json
+    // existed on disk.
+    mkdirSync(join(ws, "config"), { recursive: true });
+    writeFileSync(join(ws, "config", "settings.json"), '{"name":"pg","repos":[]}\n');
+    await ensureConfigRepo(ws);
+    writeFileSync(join(ws, "config", "roster.json"), '{"agents":["fabian"],"squads":[]}\n');
+
+    const committed = await commitConfigFiles(ws);
+
+    assert.equal(committed, true, "the healing commit happens even though config/ already had a commit");
+    const tree = execFileSync("git", ["ls-tree", "-r", "--name-only", "HEAD"], { cwd: join(ws, "config") }).toString();
+    assert.match(tree, /roster\.json/, "roster.json reached HEAD on this later, separate call");
+  } finally {
+    rmSync(ws, { recursive: true, force: true });
+  }
+});
+
+test("commitConfigFiles: an empty config/ (nothing system-owned exists yet) commits nothing without touching git", async () => {
+  const ws = mkdtempSync(join(tmpdir(), "commitcfg-empty-"));
+  try {
+    await ensureConfigRepo(ws);
+
+    const committed = await commitConfigFiles(ws);
+
+    assert.equal(committed, false, "no candidate files exist on disk, so there is nothing to stage");
+  } finally {
+    rmSync(ws, { recursive: true, force: true });
   }
 });
