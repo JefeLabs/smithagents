@@ -290,3 +290,73 @@ test("destroyInstance: an absent instance is a no-op, not an error", async () =>
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("instanceIsDirty: detects ignored files with real content", async () => {
+  const { dir, ws } = makeWorkspace("ignored", ["app"]);
+  try {
+    const inst = await createInstance(dir, ws as never, "work-5", ["app"]);
+
+    // Add .gitignore to exclude .env, then write a real .env file
+    writeFileSync(join(inst.dir, "app", ".gitignore"), ".env\n");
+    execFileSync("git", ["add", ".gitignore"], { cwd: join(inst.dir, "app") });
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "add gitignore"], {
+      cwd: join(inst.dir, "app"),
+    });
+
+    writeFileSync(join(inst.dir, "app", ".env"), "SECRET=xyz\n");
+    assert.deepEqual(await instanceIsDirty(inst), ["app"], "ignored file with content counts as dirty");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("destroyInstance: REFUSES to discard ignored content and says so clearly", async () => {
+  const { dir, ws } = makeWorkspace("ignored-refuse", ["app"]);
+  try {
+    const inst = await createInstance(dir, ws as never, "work-6", ["app"]);
+
+    // Set up gitignore with a real .env file
+    writeFileSync(join(inst.dir, "app", ".gitignore"), ".env\n");
+    execFileSync("git", ["add", ".gitignore"], { cwd: join(inst.dir, "app") });
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "add gitignore"], {
+      cwd: join(inst.dir, "app"),
+    });
+    writeFileSync(join(inst.dir, "app", ".env"), "SECRET=xyz\n");
+
+    // Destroy should refuse with a message that mentions ignored content
+    let errMessage = "";
+    try {
+      await destroyInstance(dir, ws as never, "work-6", ["app"]);
+      assert.fail("should have rejected");
+    } catch (e) {
+      errMessage = (e as Error).message;
+    }
+    assert.match(errMessage, /ignored/, "error message mentions ignored content");
+
+    // The file must survive
+    assert.ok(statSync(join(inst.dir, "app", ".env")).isFile(), "THE IGNORED FILE SURVIVES");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("destroyInstance: force discards ignored content too", async () => {
+  const { dir, ws } = makeWorkspace("ignored-force", ["app"]);
+  try {
+    const inst = await createInstance(dir, ws as never, "work-7", ["app"]);
+
+    // Set up gitignore with real content
+    writeFileSync(join(inst.dir, "app", ".gitignore"), ".env\n");
+    execFileSync("git", ["add", ".gitignore"], { cwd: join(inst.dir, "app") });
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "add gitignore"], {
+      cwd: join(inst.dir, "app"),
+    });
+    writeFileSync(join(inst.dir, "app", ".env"), "SECRET=xyz\n");
+
+    await destroyInstance(dir, ws as never, "work-7", ["app"], { force: true });
+
+    assert.throws(() => statSync(inst.dir), "the instance directory is gone");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

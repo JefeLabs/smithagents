@@ -171,24 +171,48 @@ export async function listInstances(workspaceDir: string): Promise<string[]> {
   }
 }
 
-/** Members holding uncommitted changes, by name. */
+/** Members holding uncommitted changes or ignored content that would be discarded on destroy. */
 export async function instanceIsDirty(inst: Instance): Promise<string[]> {
   const dirty: string[] = [];
   for (const m of inst.members) {
     if (!(await isDir(m.path))) continue;
-    const { stdout } = await run("git", ["status", "--porcelain"], { cwd: m.path });
+    // Check for both uncommitted changes and ignored files. Ignored files matter because
+    // they may contain irreplaceable content like .env, and a worktree's contents exist
+    // nowhere else. The `!!` prefix marks ignored files in the output.
+    const { stdout } = await run("git", ["status", "--porcelain", "--ignored"], { cwd: m.path });
     if (stdout.trim()) dirty.push(m.name);
   }
   return dirty;
 }
 
 /**
+ * Categorize a member's dirty status into uncommitted changes vs ignored content.
+ * Returns { hasChanges: boolean, hasIgnored: boolean }.
+ */
+async function categorizeMemberDirtiness(path: string): Promise<{ hasChanges: boolean; hasIgnored: boolean }> {
+  const { stdout } = await run("git", ["status", "--porcelain", "--ignored"], { cwd: path });
+  let hasChanges = false;
+  let hasIgnored = false;
+  for (const line of stdout.trim().split("\n")) {
+    if (!line) continue;
+    if (line.startsWith("!!")) {
+      hasIgnored = true;
+    } else {
+      hasChanges = true;
+    }
+  }
+  return { hasChanges, hasIgnored };
+}
+
+/**
  * Remove an instance and deregister its worktrees.
  *
- * REFUSES when any member holds uncommitted changes. §2.2 destroys an instance
- * only after the workspace clone has been fast-forwarded, so a dirty member
- * means the caller is destroying too early — and a worktree's contents exist
- * nowhere else. `force` is for a caller that has already preserved the work.
+ * REFUSES when any member holds uncommitted changes or ignored files with content.
+ * §2.2 destroys an instance only after the workspace clone has been fast-forwarded,
+ * so a dirty member means the caller is destroying too early — and a worktree's
+ * contents exist nowhere else. Ignored files matter because they may contain
+ * irreplaceable content like .env. `force` is for a caller that has already
+ * preserved the work.
  *
  * An absent instance is a no-op: this is the tail of a lifecycle, and making it
  * idempotent is what lets a retry finish a partial teardown.
@@ -216,8 +240,25 @@ export async function destroyInstance(
   if (!opts.force) {
     const dirty = await instanceIsDirty({ workId, dir, branch: `smith/${workId}`, members });
     if (dirty.length > 0) {
+      // Distinguish between uncommitted changes and ignored content for a better message
+      const categorized: { changes: string[]; ignored: string[] } = { changes: [], ignored: [] };
+      for (const m of members) {
+        if (!dirty.includes(m.name)) continue;
+        if (!(await isDir(m.path))) continue;
+        const { hasChanges, hasIgnored } = await categorizeMemberDirtiness(m.path);
+        if (hasIgnored) categorized.ignored.push(m.name);
+        if (hasChanges) categorized.changes.push(m.name);
+      }
+
+      const parts: string[] = [];
+      if (categorized.changes.length > 0) {
+        parts.push(`uncommitted changes in ${categorized.changes.join(", ")}`);
+      }
+      if (categorized.ignored.length > 0) {
+        parts.push(`ignored content in ${categorized.ignored.join(", ")}`);
+      }
       throw new Error(
-        `Instance "${workId}" has uncommitted changes in ${dirty.join(", ")} — commit them, or destroy with force to discard`,
+        `Instance "${workId}" has ${parts.join(" and ")} — commit them, or destroy with force to discard`,
       );
     }
   }
