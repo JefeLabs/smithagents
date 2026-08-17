@@ -5,12 +5,14 @@
 // lost boards and documents to an irreversible reset once already.
 import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import type { SmithPaths } from "./paths.js";
 import { loadBoards } from "./work-items.js";
 import { saveRegistryEntry } from "./workspace-registry.js";
 import {
+  assertContext,
   ensureWorkspaceDir,
-  loadWorkspacesFromDir,
+  loadWorkspaceFilesFromDir,
   settingsPathFor,
   type Workspace,
   workspaceDir,
@@ -211,19 +213,29 @@ export async function migrateBoards(
   return { moved, kept };
 }
 
-type SettingsProbe = { kind: "missing" } | { kind: "corrupt" } | { kind: "parsed"; value: unknown };
+type SettingsProbe = { kind: "missing" } | { kind: "corrupt" } | { kind: "parsed"; value: Workspace };
 
 /**
  * `stat` proves a file exists, not that it holds a complete record —
  * `saveWorkspace`'s `writeFile` is not atomic, so a crash mid-write leaves a
  * settings.json that exists but is truncated garbage. Distinguish "nothing
  * written yet" from "something unreadable was written" so callers can decide
- * per case instead of treating both as "already migrated". The parsed value
- * is returned too, so a caller can confirm the record belongs to the
- * workspace it thinks it does — two names can slug to the same directory
- * (`assertContext` does not enforce `saveWorkspace`'s name format, so legacy
- * data can carry names like "Foo" and "foo" that only differ by case), and a
- * settings.json that merely parses is not proof it is *this* workspace's.
+ * per case instead of treating both as "already migrated".
+ *
+ * "Unreadable" includes parses-as-JSON-but-fails-validation, not just
+ * malformed JSON: `assertContext` is what actually decides whether a record
+ * is usable, so a bare `JSON.parse` alone would let something like
+ * `{"name":"pg"}` (missing `repos`) through as "parsed" — trusting that is
+ * how one hand-edited settings.json turns into `loadWorkspaces()` throwing
+ * for the whole install on the next boot, after the flat backup that could
+ * have fixed it is already gone.
+ *
+ * The validated value is returned too, so a caller can confirm the record
+ * belongs to the workspace it thinks it does — two names can slug to the
+ * same directory (`assertContext` does not enforce `saveWorkspace`'s name
+ * format, so legacy data can carry names like "Foo" and "foo" that only
+ * differ by case), and a settings.json that merely validates is not proof it
+ * is *this* workspace's.
  */
 async function probeSettings(settings: string): Promise<SettingsProbe> {
   let raw: string;
@@ -234,7 +246,7 @@ async function probeSettings(settings: string): Promise<SettingsProbe> {
     return { kind: "missing" };
   }
   try {
-    return { kind: "parsed", value: JSON.parse(raw) };
+    return { kind: "parsed", value: assertContext(settings, JSON.parse(raw)) };
   } catch {
     return { kind: "corrupt" };
   }
@@ -242,41 +254,62 @@ async function probeSettings(settings: string): Promise<SettingsProbe> {
 
 /**
  * Move each flat workspace record into its own directory as config/settings.json
- * and register the directory. Write first, verify it reads back and parses,
- * then remove the flat file — a record is never in neither place, and the
- * flat copy is never deleted on the strength of a destination that merely
- * *exists*. Every workspace is isolated in its own try/catch: this runs at
- * boot, so one bad record (an unslugable name, a permissions failure) must
- * never abort the whole migration and brick every subsequent boot.
+ * and register the directory. Write first, verify it reads back and validates,
+ * then remove the flat file — a record is never in neither place, and the flat
+ * copy is never deleted on the strength of a destination that merely *exists*.
  *
- * An existing, parseable settings.json is NEVER overwritten. Since writes
- * have been going there since the registry landed, it is the newer copy; the
- * flat file is a stale leftover and is removed either way. A settings.json
- * that exists but does NOT parse — most likely a truncated write from an
- * earlier crash — is left alone rather than silently overwritten: the flat
- * record may be the only good copy left, so nothing is deleted and the
- * workspace is retried on the next run.
+ * Deletes the exact file each record was read from, never a name-derived path:
+ * a record's `name` field is not guaranteed to match its filename (a
+ * copied-then-hand-edited record, for instance), so guessing `${ws.name}.json`
+ * can delete an unrelated sibling file whose content was never migrated.
  *
- * A parseable settings.json is also not proof it belongs to the workspace
- * being migrated: `slugForDir` is identity only for names that already pass
- * `saveWorkspace`'s `^[a-z0-9][a-z0-9-]{0,63}$` check, but `assertContext`
- * (what the loader behind this function uses) does not enforce that format —
- * legacy flat records can carry names like "Foo" and "foo" that differ only
- * by case and slug to the same directory. Whichever name claims
- * the directory first wins it; the second sees a settings.json that parses
- * fine but names someone else, and must not delete its own flat record on
- * the strength of that — it is left in place, unregistered, for a human (or
- * a rename) to resolve.
+ * Records are isolated per-file in a try/catch, so one bad one (an unslugable
+ * name, a permissions failure) is skipped rather than aborting the rest —
+ * this is called at boot (server.ts, before reloadWorkspaces), so it must
+ * always return. That isolation does not reach a record that fails
+ * validation up front: `loadWorkspaceFilesFromDir` builds its whole list
+ * before this loop ever runs, so one `*.json` sibling that is not valid JSON
+ * or not a valid context throws from that call and aborts before anything is
+ * touched — the same pre-existing behavior `loadWorkspaces()` has, unchanged
+ * here.
  *
- * Group records (`members`, no `repos`) are never touched: `loadWorkspacesFromDir`
- * filters them out before this loop ever sees them. Groups deliberately stay flat.
+ * An existing settings.json for the SAME workspace, with the SAME content, is
+ * NEVER overwritten — since writes have been going there since the registry
+ * landed, it is the newer (or an identical) copy, and the flat file is a
+ * stale leftover safe to remove either way. Two further cases do NOT count as
+ * "the same workspace, migrated":
+ *
+ * - It exists but does not validate (parses as JSON but fails `assertContext`,
+ *   e.g. a hand-edited `{"name":"pg"}` missing `repos`) — left alone rather
+ *   than trusted or overwritten: the flat record may be the only good copy
+ *   left, so nothing is deleted and the workspace is retried on the next run.
+ * - It validates and even names the same workspace, but its CONTENT differs
+ *   from the flat record being migrated — two distinct records that merely
+ *   share a name (e.g. a copy made before a hand-edit). Deleting on a name
+ *   match alone would destroy whichever one lost the race to migrate first.
+ *
+ * A settings.json that validates is also not proof it belongs to the
+ * workspace being migrated at all: `slugForDir` is identity only for names
+ * that already pass `saveWorkspace`'s `^[a-z0-9][a-z0-9-]{0,63}$` check, but
+ * `assertContext` does not enforce that format — legacy flat records can
+ * carry names like "Foo" and "foo" that differ only by case and slug to the
+ * same directory. Whichever name claims the directory first wins it; the
+ * second sees a settings.json that validates fine but names someone else,
+ * and must not delete its own flat record on the strength of that — it is
+ * left in place, unregistered, for a human to resolve.
+ *
+ * Group records (`members`, no `repos`) are never touched: the loader this
+ * function uses filters them out before this loop ever sees them. Groups
+ * deliberately stay flat.
  */
-export async function migrateWorkspaceRecords(paths: SmithPaths): Promise<{ moved: string[]; skipped: string[] }> {
+export async function migrateWorkspaceRecords(
+  paths: SmithPaths,
+): Promise<{ moved: string[]; skipped: string[]; notes: string[] }> {
   const moved: string[] = [];
   const skipped: string[] = [];
+  const notes: string[] = [];
 
-  for (const ws of await loadWorkspacesFromDir(paths.workspaces)) {
-    const flatFile = join(paths.workspaces, `${ws.name}.json`);
+  for (const { file: flatFile, ws } of await loadWorkspaceFilesFromDir(paths.workspaces)) {
     try {
       const dir = await ensureWorkspaceDir(paths, ws);
       const settings = settingsPathFor(dir);
@@ -284,7 +317,7 @@ export async function migrateWorkspaceRecords(paths: SmithPaths): Promise<{ move
 
       if (before.kind === "corrupt") {
         skipped.push(ws.name);
-        console.error(`migrateWorkspaceRecords: ${settings} exists but does not parse — leaving ${flatFile} in place`);
+        notes.push(`[workspace-migration] ${settings} exists but is not a valid record — leaving ${flatFile} in place`);
         continue;
       }
 
@@ -295,41 +328,42 @@ export async function migrateWorkspaceRecords(paths: SmithPaths): Promise<{ move
           // The write didn't take, or produced something unreadable — same
           // rule applies: no confirmed replacement on disk, no deletion.
           skipped.push(ws.name);
-          console.error(
-            `migrateWorkspaceRecords: ${settings} did not verify after writing — leaving ${flatFile} in place`,
-          );
+          notes.push(`[workspace-migration] ${settings} did not verify after writing — leaving ${flatFile} in place`);
           continue;
         }
         moved.push(ws.name);
+      } else if (before.value.name !== ws.name) {
+        // Validates fine, but it is someone else's record — two names
+        // slugged to this same directory and the other one got here first.
+        skipped.push(ws.name);
+        notes.push(
+          `[workspace-migration] ${settings} already holds workspace "${before.value.name}" — ` +
+            `refusing to remove ${flatFile} for "${ws.name}" (both slug to ${dir})`,
+        );
+        continue;
+      } else if (!isDeepStrictEqual(before.value, ws)) {
+        // Same name, but different content — a distinct record that merely
+        // shares a name with whatever migrated here first.
+        skipped.push(ws.name);
+        notes.push(
+          `[workspace-migration] ${settings} holds a different "${ws.name}" record than ${flatFile} — ` +
+            `leaving ${flatFile} in place`,
+        );
+        continue;
       } else {
-        const claimedBy =
-          before.value && typeof before.value === "object" ? (before.value as { name?: unknown }).name : undefined;
-        if (claimedBy !== ws.name) {
-          // Parses fine, but it is someone else's record — two names slugged
-          // to this same directory and the other one got here first. Never
-          // delete the flat record on the strength of a file that merely
-          // parses; leave both the flat file and the directory's registration
-          // as they are for a human to resolve the collision.
-          skipped.push(ws.name);
-          console.error(
-            `migrateWorkspaceRecords: ${settings} already holds workspace "${String(claimedBy)}" — ` +
-              `refusing to remove ${flatFile} for "${ws.name}" (both slug to ${dir})`,
-          );
-          continue;
-        }
-        // Already present and parses as this workspace's own record — the
-        // authoritative copy. Untouched.
+        // Same name, identical content — a byte-for-byte duplicate of what's
+        // already migrated. Safe to drop.
         skipped.push(ws.name);
       }
 
-      // A parseable settings.json is confirmed on disk — safe to register
-      // the directory and drop the now-stale flat copy.
+      // A valid settings.json for this exact record is confirmed on disk —
+      // safe to register the directory and drop the now-stale flat copy.
       await saveRegistryEntry(paths, ws.name, dir);
       await rm(flatFile, { force: true });
     } catch (err) {
       skipped.push(ws.name);
-      console.error(`migrateWorkspaceRecords: skipping "${ws.name}" — ${(err as Error).message}`);
+      notes.push(`[workspace-migration] skipping "${ws.name}" (${flatFile}) — ${(err as Error).message}`);
     }
   }
-  return { moved, skipped };
+  return { moved, skipped, notes };
 }

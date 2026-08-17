@@ -105,7 +105,15 @@ export function isGroupRecord(w: Workspace): boolean {
   return w.members !== undefined;
 }
 
-function assertContext(file: string, v: unknown): Workspace {
+/**
+ * Validate a raw parsed record as a context (plain workspace or group).
+ * Exported so callers that read settings.json directly — migrateWorkspaceRecords,
+ * chiefly — can apply the same validation a flat record gets, instead of trusting
+ * a bare `JSON.parse`: a file that merely parses (`{"name":"pg"}`, missing `repos`)
+ * is not a valid record, and `loadWorkspaces` throws on exactly that shape once it
+ * is registered — trusting it earlier just moves the crash from "load" to "boot".
+ */
+export function assertContext(file: string, v: unknown): Workspace {
   const o = v as Partial<Workspace>;
   if (o && Array.isArray(o.members)) {
     const ok =
@@ -130,22 +138,47 @@ function assertContext(file: string, v: unknown): Workspace {
 }
 
 /**
- * Every context record in `dir` — plain workspaces AND groupish ones. The
- * store's raw read; collision checks and the group views build on it.
+ * Every context record in `dir` — plain workspaces AND groupish ones — paired
+ * with the exact file it was read from. The store's raw read; every other
+ * loader below builds on this one.
+ *
+ * The pairing matters to callers that delete: a record's `name` field is not
+ * guaranteed to match its filename (a copied-then-hand-edited record, say), so
+ * a name-derived path like `${ws.name}.json` is a guess, not the file that was
+ * actually read. Deleting the wrong guess can destroy a sibling file whose
+ * content was never migrated anywhere.
  */
-export async function loadAllContextsFromDir(dir: string): Promise<Workspace[]> {
+export async function loadAllContextFilesFromDir(dir: string): Promise<Array<{ file: string; ws: Workspace }>> {
   let entries: string[];
   try {
     entries = await readdir(dir);
   } catch {
     return [];
   }
-  const contexts: Workspace[] = [];
-  for (const file of entries.filter((f) => f.endsWith(".json"))) {
-    const raw = await readFile(join(dir, file), "utf8");
-    contexts.push(assertContext(file, JSON.parse(raw)));
+  const out: Array<{ file: string; ws: Workspace }> = [];
+  for (const name of entries.filter((f) => f.endsWith(".json"))) {
+    const file = join(dir, name);
+    const raw = await readFile(file, "utf8");
+    out.push({ file, ws: assertContext(name, JSON.parse(raw)) });
   }
-  return contexts;
+  return out;
+}
+
+/**
+ * Every context record in `dir` — plain workspaces AND groupish ones. The
+ * store's raw read; collision checks and the group views build on it.
+ */
+export async function loadAllContextsFromDir(dir: string): Promise<Workspace[]> {
+  return (await loadAllContextFilesFromDir(dir)).map((c) => c.ws);
+}
+
+/**
+ * PLAIN workspaces only, paired with the file each came from — what
+ * migrateWorkspaceRecords needs, since it must delete the exact file a record
+ * was read from and never a name-derived path.
+ */
+export async function loadWorkspaceFilesFromDir(dir: string): Promise<Array<{ file: string; ws: Workspace }>> {
+  return (await loadAllContextFilesFromDir(dir)).filter((c) => !isGroupRecord(c.ws));
 }
 
 /**
@@ -154,7 +187,7 @@ export async function loadAllContextsFromDir(dir: string): Promise<Workspace[]> 
  * filter lives at the loader and no call site needs auditing twice.
  */
 export async function loadWorkspacesFromDir(dir: string): Promise<Workspace[]> {
-  return (await loadAllContextsFromDir(dir)).filter((w) => !isGroupRecord(w));
+  return (await loadWorkspaceFilesFromDir(dir)).map((c) => c.ws);
 }
 
 /** A workspace's own record, inside its directory. */

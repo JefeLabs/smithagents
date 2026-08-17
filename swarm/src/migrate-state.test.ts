@@ -16,7 +16,7 @@ import {
 import { smithPaths } from "./paths.js";
 import { createBoard, saveBoard } from "./work-items.js";
 import { loadRegistry } from "./workspace-registry.js";
-import { settingsPathFor, type Workspace, workspaceDir } from "./workspaces.js";
+import { loadWorkspaces, settingsPathFor, type Workspace, workspaceDir } from "./workspaces.js";
 
 function fixture(): string {
   const dir = mkdtempSync(join(tmpdir(), "smith-mig-"));
@@ -362,7 +362,18 @@ test("migrateWorkspaceRecords: writes settings.json, registers the dir, removes 
   }
 });
 
-test("migrateWorkspaceRecords: never overwrites an existing settings.json", async () => {
+/**
+ * NOTE: this test's expected outcome changed from the original brief. The
+ * brief's version expected the "STALE" flat record removed unconditionally
+ * once a same-named settings.json existed — reasonable when the only known
+ * cause of divergence was a genuine post-migration edit via saveWorkspace().
+ * The content-check added for the same-name-sibling-collision finding (two
+ * flat records that happen to share a name, only one of which actually
+ * migrated) can't tell that apart from "these are honestly two different
+ * records" without comparing content — so it no longer deletes on a name
+ * match alone. See task-3-report.md's "Fix round 3" section.
+ */
+test("migrateWorkspaceRecords: never overwrites an existing settings.json — and never deletes a flat record whose content actually differs from it", async () => {
   const root = mkdtempSync(join(tmpdir(), "mig-keep-"));
   try {
     const paths = smithPaths(root);
@@ -378,31 +389,106 @@ test("migrateWorkspaceRecords: never overwrites an existing settings.json", asyn
       JSON.stringify({ name: "pg", description: "STALE", repos: [{ name: "r", path: "/abs/r" }] }),
     );
 
-    await migrateWorkspaceRecords(paths);
+    const result = await migrateWorkspaceRecords(paths);
 
     const kept = JSON.parse(readFileSync(settingsPathFor(dir), "utf8"));
-    assert.equal(kept.description, "NEWER", "the existing settings.json is authoritative");
-    assert.throws(() => statSync(join(paths.workspaces, "pg.json")), "stale flat record still removed");
+    assert.equal(kept.description, "NEWER", "the existing settings.json is authoritative — never overwritten");
+    assert.ok(
+      statSync(join(paths.workspaces, "pg.json")).isFile(),
+      "a flat record whose content differs from the destination is kept, not guessed-safe-to-delete",
+    );
+    assert.ok(result.skipped.includes("pg"));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("migrateWorkspaceRecords: is idempotent", async () => {
+test("migrateWorkspaceRecords: a flat record byte-identical to an already-migrated settings.json is removed — nothing is lost", async () => {
+  const root = mkdtempSync(join(tmpdir(), "mig-dup-"));
+  try {
+    const paths = smithPaths(root);
+    const dir = join(paths.workspaces, "pg");
+    mkdirSync(join(dir, "config"), { recursive: true });
+    mkdirSync(paths.workspaces, { recursive: true });
+    const record = { name: "pg", description: "SAME", repos: [{ name: "r", path: "/abs/r" }] };
+    writeFileSync(settingsPathFor(dir), JSON.stringify(record));
+    writeFileSync(join(paths.workspaces, "pg.json"), JSON.stringify(record));
+
+    const result = await migrateWorkspaceRecords(paths);
+
+    assert.throws(
+      () => statSync(join(paths.workspaces, "pg.json")),
+      "a duplicate that is genuinely byte-identical is safe to remove — nothing in it was unique",
+    );
+    assert.ok(result.skipped.includes("pg"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * A single persisting record proves nothing about idempotency once it has
+ * migrated: on run two the flat file is already gone, loadWorkspaceFilesFromDir
+ * returns [], and the loop body never executes at all — `moved === []` is
+ * trivially true either way. A record that keeps a flat sibling around (the
+ * collision fixture: one side always loses and stays flat) forces the loop
+ * body to run again on every pass, so this actually exercises repeated runs
+ * instead of the empty-directory case.
+ */
+test("migrateWorkspaceRecords: is idempotent — repeated runs over persisting state are stable and lose nothing", async () => {
   const root = mkdtempSync(join(tmpdir(), "mig-twice-"));
   try {
     const paths = smithPaths(root);
     mkdirSync(paths.workspaces, { recursive: true });
     writeFileSync(
-      join(paths.workspaces, "pg.json"),
-      JSON.stringify({ name: "pg", repos: [{ name: "r", path: "/abs/r" }] }),
+      join(paths.workspaces, "foo bar.json"),
+      JSON.stringify({ name: "foo bar", repos: [{ name: "r", path: "/abs/r" }] }),
+    );
+    writeFileSync(
+      join(paths.workspaces, "foo_bar.json"),
+      JSON.stringify({ name: "foo_bar", repos: [{ name: "r", path: "/abs/r" }] }),
     );
 
-    await migrateWorkspaceRecords(paths);
+    const first = await migrateWorkspaceRecords(paths);
     const second = await migrateWorkspaceRecords(paths);
+    const third = await migrateWorkspaceRecords(paths);
 
-    assert.deepEqual(second.moved, [], "nothing left to move");
-    assert.ok(statSync(settingsPathFor(join(paths.workspaces, "pg"))).isFile(), "and the record survives");
+    assert.equal(first.moved.length, 1, "one of the two claims the directory on the first run");
+    assert.equal(first.skipped.length, 1, "the other is skipped from the very first run");
+
+    // The winner's flat file is gone after run one, so it is never a
+    // candidate again — only the permanently-colliding loser keeps showing
+    // up, and it can never resolve to "moved" on its own (a human has to
+    // rename one side). Idempotent here means: stably re-skipped, not
+    // re-moved, and never dropped.
+    assert.deepEqual(second.moved, [], "nothing is left to move on a rerun");
+    assert.deepEqual(
+      second.skipped,
+      first.skipped,
+      "the unresolved collision is reported stably, not silently dropped",
+    );
+    assert.deepEqual(third.moved, [], "and stays that way on a third run");
+    assert.deepEqual(third.skipped, first.skipped);
+
+    const winner = first.moved[0] as string;
+    const loser = winner === "foo bar" ? "foo_bar" : "foo bar";
+
+    // Not just "still on disk" — still LOADABLE, after three passes: the
+    // winner via its migrated directory, the loser via the dual-source flat
+    // fallback.
+    const all = await loadWorkspaces(paths);
+    assert.ok(
+      all.some((w) => w.name === winner),
+      "the winner still loads",
+    );
+    assert.ok(
+      all.some((w) => w.name === loser),
+      "the loser still loads too — nothing was lost",
+    );
+    assert.ok(
+      statSync(join(paths.workspaces, `${loser}.json`)).isFile(),
+      "the loser's flat record survives three runs",
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -496,6 +582,90 @@ test("migrateWorkspaceRecords: two different names that slug to the same directo
     // And the directory holds only whichever workspace actually claimed it.
     const onDisk = JSON.parse(readFileSync(settingsPathFor(join(paths.workspaces, "foo-bar")), "utf8"));
     assert.equal(onDisk.name, winner);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("migrateWorkspaceRecords: deletes the file a record was actually read from, never a name-derived guess", async () => {
+  const root = mkdtempSync(join(tmpdir(), "mig-wrongfile-"));
+  try {
+    const paths = smithPaths(root);
+    mkdirSync(paths.workspaces, { recursive: true });
+    // Two distinct files that both hold a record named "pg" but with different
+    // content — e.g. a copy that got hand-edited afterward. A name-derived
+    // delete path (`${ws.name}.json`) can't tell these two files apart and,
+    // for whichever one is processed first, deletes the OTHER one by guessing
+    // its name from content rather than tracking the file it came from.
+    writeFileSync(
+      join(paths.workspaces, "aaa.json"),
+      JSON.stringify({ name: "pg", description: "FROM aaa.json", repos: [{ name: "r", path: "/abs/r" }] }),
+    );
+    writeFileSync(
+      join(paths.workspaces, "pg.json"),
+      JSON.stringify({ name: "pg", description: "FROM pg.json", repos: [{ name: "r", path: "/abs/r" }] }),
+    );
+
+    const result = await migrateWorkspaceRecords(paths);
+
+    assert.equal(result.moved.length, 1, "only one of the two same-named records claims the directory");
+    assert.equal(result.skipped.length, 1, "the other is never silently merged away");
+
+    const onDisk = JSON.parse(readFileSync(settingsPathFor(join(paths.workspaces, "pg")), "utf8"));
+    const winnerFile = onDisk.description === "FROM aaa.json" ? "aaa.json" : "pg.json";
+    const loserFile = winnerFile === "aaa.json" ? "pg.json" : "aaa.json";
+
+    // The property under test: whichever file did NOT win must still exist,
+    // holding its own original content — never deleted on the strength of a
+    // guessed filename that happened to name a file it never came from.
+    assert.ok(
+      statSync(join(paths.workspaces, loserFile)).isFile(),
+      `${loserFile} must survive — its content was never migrated`,
+    );
+    const loserOnDisk = JSON.parse(readFileSync(join(paths.workspaces, loserFile), "utf8"));
+    assert.equal(
+      loserOnDisk.description,
+      loserFile === "aaa.json" ? "FROM aaa.json" : "FROM pg.json",
+      "and its content is untouched",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("migrateWorkspaceRecords: a settings.json that parses but fails validation is corrupt, not authoritative", async () => {
+  const root = mkdtempSync(join(tmpdir(), "mig-semivalid-"));
+  try {
+    const paths = smithPaths(root);
+    const dir = join(paths.workspaces, "pg");
+    mkdirSync(join(dir, "config"), { recursive: true });
+    mkdirSync(paths.workspaces, { recursive: true });
+    // Parses as JSON and its name matches, but it's missing `repos` — not a
+    // valid workspace record. This migration moves records into a
+    // human-editable per-workspace file specifically so they can be
+    // hand-edited; a bad edit landing in exactly this shape is the designed
+    // use case, not an exotic one.
+    writeFileSync(settingsPathFor(dir), JSON.stringify({ name: "pg" }));
+    writeFileSync(
+      join(paths.workspaces, "pg.json"),
+      JSON.stringify({ name: "pg", repos: [{ name: "r", path: "/abs/r" }] }),
+    );
+
+    const result = await migrateWorkspaceRecords(paths);
+
+    assert.ok(statSync(join(paths.workspaces, "pg.json")).isFile(), "the only valid copy must survive");
+    assert.ok(result.skipped.includes("pg"), "reported as skipped, not silently moved");
+
+    // The amplification this guards against: registering the invalid
+    // settings.json would make loadWorkspaces() throw for the WHOLE install
+    // on the very next read — after destroying the flat copy that could have
+    // fixed it.
+    await assert.doesNotReject(() => loadWorkspaces(paths));
+    const all = await loadWorkspaces(paths);
+    assert.ok(
+      all.some((w) => w.name === "pg"),
+      "the workspace still loads, via the surviving flat record",
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
