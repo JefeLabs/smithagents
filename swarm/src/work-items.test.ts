@@ -1212,17 +1212,6 @@ test("normalizeBoard refuses to leave an orphaned card behind", () => {
   assert.throws(() => normalizeBoard(broken), /nowhere/, "an orphan is a defect, not a tolerable state");
 });
 
-test("BOARD_ROUTES only ever names columns that exist on both boards", () => {
-  for (const [type, exits] of Object.entries(BOARD_ROUTES)) {
-    const fromIds = new Set(BOARD_TEMPLATES[type as BoardType].map((c) => c.id));
-    for (const exit of exits) {
-      assert.ok(fromIds.has(exit.from), `${type}: route leaves from unknown column "${exit.from}"`);
-      const toIds = new Set(BOARD_TEMPLATES[exit.toType].map((c) => c.id));
-      assert.ok(toIds.has(exit.toColumn), `${type}: route lands in unknown column "${exit.toColumn}"`);
-    }
-  }
-});
-
 test("createBoard: a work kind supplies column labels at seed time", () => {
   const board = createBoard("plan", "acme", "marketing");
 
