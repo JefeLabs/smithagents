@@ -1,9 +1,8 @@
 import { execFile } from "node:child_process";
-import { mkdir, stat } from "node:fs/promises";
+import { mkdir, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { WorkspaceRepo } from "./workspaces.js";
-import { isGitRepo } from "./workspaces.js";
 
 const run = promisify(execFile);
 
@@ -69,8 +68,10 @@ export function repoDirFor(workspaceDir: string, repo: WorkspaceRepo): string {
  * Clone a project repo into its workspace and return the absolute path.
  *
  * An existing clone is REUSED, never cloned over: it may hold the user's
- * uncommitted work, and re-cloning would destroy it. Callers that want a fresh
- * copy delete the directory first, deliberately.
+ * uncommitted work, and re-cloning would destroy it. Reuse is detected by
+ * checking for a resolvable HEAD, so a partial clone (with .git but no commits)
+ * is not treated as usable. Callers that want a fresh copy delete the
+ * directory first, deliberately.
  *
  * Requires `repository`. A repo recorded only as a local path has nothing to
  * clone from, and inventing a remote from its path would silently bind the
@@ -78,15 +79,40 @@ export function repoDirFor(workspaceDir: string, repo: WorkspaceRepo): string {
  */
 export async function cloneRepoInto(workspaceDir: string, repo: WorkspaceRepo): Promise<string> {
   const dir = repoDirFor(workspaceDir, repo);
-  if (await isGitRepo(dir)) return dir;
+  if (await hasCommit(dir)) return dir;
+
   if (!repo.repository) {
     throw new Error(
       `Repo "${repo.name}" has no repository URL, so it cannot be cloned into ${workspaceDir} — ` +
         `add a remote to the workspace record, or leave the repo where it is`,
     );
   }
+
+  if (repo.repository.startsWith("-")) {
+    throw new Error(`Repo "${repo.name}": invalid repository URL`);
+  }
+  if (repo.branch?.startsWith("-")) {
+    throw new Error(`Repo "${repo.name}": invalid branch`);
+  }
+
+  // Check for non-empty destination with no resolvable HEAD (interrupted clone or stale debris)
+  if (await exists(dir)) {
+    const entries = await readdir(dir);
+    if (entries.length > 0) {
+      throw new Error(
+        `Repo "${repo.name}": destination ${dir} exists and is not empty, but is not a usable git clone ` +
+          `(no resolvable HEAD). This looks like an interrupted clone. Remove the directory by hand before ` +
+          `cloning this repo.`,
+      );
+    }
+  }
+
   await mkdir(workspaceDir, { recursive: true });
   const branch = repo.branch ? ["--branch", repo.branch] : [];
-  await run("git", ["clone", "-q", ...branch, repo.repository, dir]);
+  try {
+    await run("git", ["clone", "-q", ...branch, "--", repo.repository, dir]);
+  } catch (err) {
+    throw new Error(`Repo "${repo.name}": clone failed — ${(err as Error).message}`);
+  }
   return dir;
 }

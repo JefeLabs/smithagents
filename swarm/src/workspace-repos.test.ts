@@ -168,3 +168,71 @@ test("cloneRepoInto: checks out the recorded branch", async () => {
     rmSync(origin, { recursive: true, force: true });
   }
 });
+
+test("cloneRepoInto: rejects a repository URL starting with -", async () => {
+  const ws = mkdtempSync(join(tmpdir(), "clone-dash-repo-"));
+  try {
+    await assert.rejects(
+      () => cloneRepoInto(ws, { name: "app", path: "", repository: "-e open | sh" }),
+      /invalid repository URL/i,
+      "rejects dash-leading repository to prevent argument injection",
+    );
+  } finally {
+    rmSync(ws, { recursive: true, force: true });
+  }
+});
+
+test("cloneRepoInto: rejects a branch starting with -", async () => {
+  const ws = mkdtempSync(join(tmpdir(), "clone-dash-branch-"));
+  const origin = makeOrigin("d");
+  try {
+    await assert.rejects(
+      () => cloneRepoInto(ws, { name: "app", path: "", repository: origin, branch: "-e open | sh" }),
+      /invalid branch/i,
+      "rejects dash-leading branch to prevent argument injection",
+    );
+  } finally {
+    rmSync(ws, { recursive: true, force: true });
+    rmSync(origin, { recursive: true, force: true });
+  }
+});
+
+test("cloneRepoInto: detects partial clones and refuses to reuse them", async () => {
+  const ws = mkdtempSync(join(tmpdir(), "clone-partial-"));
+  const origin = makeOrigin("e");
+  try {
+    const appDir = join(ws, "app");
+    mkdirSync(appDir, { recursive: true });
+    execFileSync("git", ["init", "-q"], { cwd: appDir });
+    // At this point: .git exists but no commits, so hasCommit() returns false
+
+    await assert.rejects(
+      () => cloneRepoInto(ws, { name: "app", path: "", repository: origin }),
+      /looks like an interrupted clone/i,
+      "refuses to treat a partial clone as usable",
+    );
+  } finally {
+    rmSync(ws, { recursive: true, force: true });
+    rmSync(origin, { recursive: true, force: true });
+  }
+});
+
+test("cloneRepoInto: distinguishes interrupted clones from empty directories", async () => {
+  const ws = mkdtempSync(join(tmpdir(), "clone-nonempty-"));
+  const origin = makeOrigin("f");
+  try {
+    const appDir = join(ws, "app");
+    mkdirSync(appDir, { recursive: true });
+    writeFileSync(join(appDir, "some-file.txt"), "stale\n");
+    // Directory is non-empty but not a git repo
+
+    await assert.rejects(
+      () => cloneRepoInto(ws, { name: "app", path: "", repository: origin }),
+      /looks like an interrupted clone/i,
+      "gives a distinguishing error for non-repo debris",
+    );
+  } finally {
+    rmSync(ws, { recursive: true, force: true });
+    rmSync(origin, { recursive: true, force: true });
+  }
+});
