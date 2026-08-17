@@ -218,11 +218,29 @@ git add swarm/src/drivers/ && git commit -m "feat(drivers): copilot and agy repo
 ### Task 3: The subscriptions step
 
 **Files:**
-- Modify: `control-plane/src/organisms/settings/CliToolsGroup.tsx` (class-aware guidance)
+- Create: `control-plane/src/molecules/ConnectorCard.tsx` + test (the extracted card)
+- Modify: `control-plane/src/organisms/settings/CliToolsGroup.tsx` (use the card; class-aware guidance)
+- Modify: `control-plane/src/organisms/settings/ApiKeysGroup.tsx` (use the card)
 - Create: `control-plane/src/organisms/WizardSubscriptionsStep.tsx`
 - Modify: `control-plane/src/lib/wizardSteps.ts` (insert the step)
 - Modify: `control-plane/src/organisms/WizardGate.tsx` (render it)
 - Test: the corresponding `.test.tsx` files
+
+### Reuse the CARD, not the screen (Edwin's steer, 2026-08-17)
+
+The reusable unit is the **card**, not the Settings group. A whole group carries its own page chrome — heading, refresh-all button, section framing — which reads wrong inside a wizard step. Verified: `CliToolsGroup.tsx:61-91` and `ApiKeysGroup.tsx:50-72` render **structurally identical** cards today, duplicated inline:
+
+```
+.connector-card
+  .connector-card__head      <b>{label}</b> <em>{note}</em>
+  .connector-instance        <span class="connector-status {pill.cls}">{pill.label}</span> <span>{line}</span>
+  p.wizard__hint             "last checked …"   (optional)
+  …then per-card actions, which is the only part that differs
+```
+
+Extract `ConnectorCard` as a molecule taking `{ label, note?, pill, line, lastCheckedAt?, children }`, where `children` is the action area. Use it in **both** Settings groups and in the wizard step. That removes existing duplication, guarantees the wizard and Settings stay visually identical, and is why both files already reference a `wizard__hint` class from inside Settings.
+
+**Do not restyle anything.** This is an extraction: the rendered DOM and class names must be unchanged for both existing groups. Prove it — a test that the extracted card renders the same structure, and the existing Settings tests passing untouched, is the evidence.
 
 **Interfaces:**
 - Consumes: `WIZARD_STEPS`/`nextStep` from Plan 1's step machine; `useCliTools`/`useRefreshCliTools` from `queries/http`; `CliToolStatus.failure` from Task 1.
@@ -285,7 +303,7 @@ it("a verified API key unblocks continue with no CLI at all", async () => {
 
 - [ ] **Step 3: Build the step**
 
-It renders `CliToolsGroup` and the API-key route (borrow `ApiKeysGroup`, or its verify affordance if the whole screen is too heavy — read it and decide, then say which and why). Continue is enabled when **either** at least one CLI is active **or** at least one API key is verified.
+It composes `ConnectorCard`s directly — one per CLI and one per API-key provider — rather than embedding either Settings group. The groups keep their own page chrome; the wizard step supplies its own. Continue is enabled when **either** at least one CLI is active **or** at least one API key is verified.
 
 **A note on the spec's "validate live" requirement.** The spec says *"A green row is not proof; the step completes on one real turn."* That means actually running a CLI turn, which this plan does **not** implement — nothing here owns turn execution, and a fake "turn" would be worse than none. This plan gates on *probe* validity. Record the gap in your report; it belongs with whatever plan owns running a turn.
 
