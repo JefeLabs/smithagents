@@ -4278,3 +4278,12 @@ button.logo {
   line-height: 1.4;
   margin: 0;
 }
+/* Same red as .wizard__error (MapStage's unrelated add-story wizard) and every
+   other danger state in this file (#d9534f) — a different class because this
+   is a different feature, not a different color. */
+.wizard-gate__error {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: #d9534f;
+  margin: 0;
+}

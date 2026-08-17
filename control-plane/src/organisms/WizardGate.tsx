@@ -100,16 +100,30 @@ function WizardComingSoon() {
  * A reload before the PUT lands would resume one step behind, which is the
  * same "resume where you last landed" contract `resumeStep` already promises,
  * not a new failure mode.
+ *
+ * A *rejected* save is a different failure mode from that reload case — a
+ * down broker fails every step's save, not just one, so the whole wizard's
+ * worth of work would go unpersisted with nothing ever telling the user.
+ * Still never blocks the transition (worse than the silent case it replaces),
+ * but the rejection is caught and surfaced rather than left to become an
+ * unhandled promise rejection.
  */
 function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRecord }) {
   const [step, setStep] = useState(initialStep);
+  const [error, setError] = useState<string | null>(null);
   const qc = useQueryClient();
 
   const advance = (patch: { name?: string; setup?: MeRecord["setup"] }) => {
     const next = nextStep(step);
-    void api.updateMe({ ...patch, setup: { ...patch.setup, step: next ?? SETUP_DONE } }).then(() => {
-      void qc.invalidateQueries({ queryKey: qk.me });
-    });
+    setError(null);
+    api
+      .updateMe({ ...patch, setup: { ...patch.setup, step: next ?? SETUP_DONE } })
+      .then(() => {
+        void qc.invalidateQueries({ queryKey: qk.me });
+      })
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : "Could not save — check your connection and try again.");
+      });
     // Only a real next step moves the host's own view — the SETUP_DONE case
     // has no step of its own to show; the invalidated `me` query is what
     // makes WizardGate itself swap to the app.
@@ -119,6 +133,7 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
   return (
     <div className="wizard-gate__host" data-step={step}>
       <h1>Welcome{me.placeholder ? "" : `, ${me.name}`}</h1>
+      {error && <p className="wizard-gate__error">{error}</p>}
       {step === "name" && <WizardNameStep initialName={me.placeholder ? "" : me.name} onDone={advance} />}
       {step === "fork" && <WizardForkStep onDone={advance} />}
     </div>

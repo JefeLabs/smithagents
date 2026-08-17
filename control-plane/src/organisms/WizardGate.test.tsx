@@ -1,11 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../api/broker", () => ({ getMe: vi.fn() }));
+vi.mock("../api/broker", () => ({ getMe: vi.fn(), updateMe: vi.fn() }));
 
-import { getMe } from "../api/broker";
+import { getMe, updateMe } from "../api/broker";
 import type { MeRecord } from "../api/types";
 import { WizardGate } from "./WizardGate";
 
@@ -151,5 +152,23 @@ describe("WizardGate", () => {
     );
 
     expect(await screen.findByRole("heading", { name: /welcome/i })).toBeInTheDocument();
+  });
+
+  it("a failed save on advance surfaces an error instead of vanishing silently", async () => {
+    stubMe({ id: "me", name: "You", connectors: [], placeholder: true });
+    (updateMe as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("network error"));
+    wrap(
+      <WizardGate>
+        <div>THE APP</div>
+      </WizardGate>,
+    );
+
+    await screen.findByRole("heading", { name: /welcome/i });
+    await userEvent.type(screen.getByLabelText(/your name/i), "Edwin");
+    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+
+    // The step still advances optimistically (blocking on the network would be
+    // worse) — what must never happen is the failure going unreported.
+    expect(await screen.findByText(/network error|could not save/i)).toBeInTheDocument();
   });
 });
