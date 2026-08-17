@@ -64,3 +64,25 @@ test("ensureConfigRepo: an existing repo with uncommitted edits is left complete
     rmSync(ws, { recursive: true, force: true });
   }
 });
+
+test("ensureConfigRepo: self-heals a commit-less repo from a partial prior init", async () => {
+  const ws = mkdtempSync(join(tmpdir(), "cfgrepo-partial-"));
+  try {
+    mkdirSync(join(ws, "config"), { recursive: true });
+    writeFileSync(join(ws, "config", "settings.json"), '{"name":"pg","repos":[]}\n');
+    // Simulate a partial init: git init succeeded but add/commit failed
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: join(ws, "config") });
+
+    const created = await ensureConfigRepo(ws);
+
+    assert.equal(created, true, "reports that it completed the partial init");
+    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: join(ws, "config") })
+      .toString()
+      .trim();
+    assert.ok(head.length > 0, "HEAD now resolves — a commit exists");
+    const tracked = execFileSync("git", ["ls-files"], { cwd: join(ws, "config") }).toString();
+    assert.match(tracked, /settings\.json/, "settings.json is tracked");
+  } finally {
+    rmSync(ws, { recursive: true, force: true });
+  }
+});
