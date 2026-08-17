@@ -1930,9 +1930,10 @@ export class OrchestratorServer {
       }
       if (!validSources(b.sources)) return reply.status(400).send({ error: "invalid sources" });
       const { name: submittedName, repos: submittedRepos } = b;
-      // Unreachable — workspaceProblems already rejects a blank name or empty
-      // repos. The guard is what carries that guarantee into the type system.
-      if (!submittedName?.trim() || !submittedRepos?.length) {
+      // Unreachable — workspaceProblems already rejects a blank name or a
+      // non-array repos. The guard is what carries that guarantee into the
+      // type system (see isValidWorkspaceCreateRepos above).
+      if (!submittedName?.trim() || !isValidWorkspaceCreateRepos(submittedRepos)) {
         return reply.status(400).send({ error: "Invalid workspace payload" });
       }
       const name = submittedName
@@ -3892,6 +3893,20 @@ export function workKindForCapability(workspaces: Workspace[], workspaceId: stri
  */
 export function workKindsPayload(): { kinds: Array<(typeof WORK_KINDS)[string]> } {
   return { kinds: Object.values(WORK_KINDS) };
+}
+
+/**
+ * The final shape check before POST /workspaces builds a Workspace record:
+ * `repos` must be present and an array — it may be empty (spec: repo-less
+ * contexts). workspaceProblems already enforces this and runs first, so this
+ * is normally unreachable; its job is carrying that guarantee into the type
+ * system, narrowing `repos` from `Array<...> | undefined` to the non-optional
+ * shape buildWorkspaceCreate requires below. Pulled into its own function so
+ * this exact boundary — reject `undefined`, accept `[]` — is unit-testable
+ * without booting the server, matching workspaceProblems' convention.
+ */
+export function isValidWorkspaceCreateRepos(repos: unknown): repos is Array<WorkspaceRepo & { initGit?: boolean }> {
+  return Array.isArray(repos);
 }
 
 /**

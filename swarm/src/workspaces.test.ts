@@ -781,19 +781,23 @@ test("validSources: a preset no work kind declares is still refused", () => {
   assert.equal(validSources([source]), false, "presets are data, but still a closed set — a typo is caught");
 });
 
-test("assertContext: POSITIVE CONTROL — an empty-repos workspace is what the old validator rejected", () => {
-  // The clause under change is `o.repos.length > 0`. This test documents the
-  // exact shape that clause refused; if it ever stops being the interesting
-  // case, the test below is proving nothing.
-  const designOnly = { name: "acme", repos: [] };
-  assert.ok(Array.isArray(designOnly.repos) && designOnly.repos.length === 0, "the fixture is the empty-repos shape");
-  assert.equal((designOnly as { members?: string[] }).members, undefined, "and it is a workspace, not a group");
-});
-
+// The next two tests are a discrimination pair, not two independent checks:
+// one proves assertContext ACCEPTS an empty repos array, the other proves it
+// still REJECTS a malformed one. Together they prove the validator is still
+// running its per-repo check and not merely stubbed to return its input —
+// a stub that returned `v` unchanged would pass the first test too.
 test("assertContext: a workspace with no repos is valid — the design half needs no git", () => {
   const ws = assertContext("w.json", { name: "acme", repos: [] });
   assert.equal(ws.name, "acme");
   assert.deepEqual(ws.repos, []);
+});
+
+test("assertContext: a workspace with a MALFORMED repo is still refused (pairs with the empty-repos test above)", () => {
+  assert.throws(() => assertContext("w.json", { name: "acme", repos: [{ name: "app" }] }), /repos/i);
+  assert.throws(
+    () => assertContext("w.json", { name: "acme", repos: [{ name: "app", path: "relative/path" }] }),
+    /repos/i,
+  );
 });
 
 test("assertContext: a repo-less workspace still round-trips its other fields", () => {
@@ -808,14 +812,6 @@ test("assertContext: a GROUP carrying repos is still refused", () => {
   assert.throws(
     () => assertContext("g.json", { name: "acme", members: ["a", "b"], repos: [{ name: "app", path: "/tmp/app" }] }),
     /group/i,
-  );
-});
-
-test("assertContext: a workspace with a MALFORMED repo is still refused", () => {
-  assert.throws(() => assertContext("w.json", { name: "acme", repos: [{ name: "app" }] }), /repos/i);
-  assert.throws(
-    () => assertContext("w.json", { name: "acme", repos: [{ name: "app", path: "relative/path" }] }),
-    /repos/i,
   );
 });
 

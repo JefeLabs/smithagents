@@ -27,6 +27,7 @@ import {
   buildWorkspaceUpdate,
   clearVoiceReferences,
   gitInitRequestedRepos,
+  isValidWorkspaceCreateRepos,
   prepareSquadSwarm,
   redactBrainEngine,
   redactConnector,
@@ -979,4 +980,24 @@ test("workspaceProblems: a malformed repo is still refused", async () => {
 
 test("workspaceProblems: a missing name is still refused", async () => {
   assert.match((await workspaceProblems({ repos: [] })) ?? "", /name/i);
+});
+
+// POST /workspaces has its own narrowing gate below workspaceProblems
+// (isValidWorkspaceCreateRepos) so buildWorkspaceCreate can receive a
+// non-optional repos array. It must accept exactly what workspaceProblems
+// accepts, or the route still 400s on a payload the validator now allows —
+// which is exactly the bug fix round 1 found (fix round 1, spec: repo-less
+// contexts).
+test("isValidWorkspaceCreateRepos: an empty array is a valid repos payload — the route guard must not re-impose the old length check", () => {
+  assert.equal(isValidWorkspaceCreateRepos([]), true);
+});
+
+test("isValidWorkspaceCreateRepos: a non-empty array is still valid", () => {
+  assert.equal(isValidWorkspaceCreateRepos([{ name: "web", path: "/tmp/web" }]), true);
+});
+
+test("isValidWorkspaceCreateRepos: a missing or non-array repos is still refused", () => {
+  assert.equal(isValidWorkspaceCreateRepos(undefined), false);
+  assert.equal(isValidWorkspaceCreateRepos("nope"), false);
+  assert.equal(isValidWorkspaceCreateRepos(null), false);
 });
