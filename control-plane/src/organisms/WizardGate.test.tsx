@@ -171,4 +171,27 @@ describe("WizardGate", () => {
     // worse) — what must never happen is the failure going unreported.
     expect(await screen.findByText(/network error|could not save/i)).toBeInTheDocument();
   });
+
+  it("a server-reported save failure surfaces the error and does not silently advance the step", async () => {
+    // brokerFetch never throws on a non-2xx, and updateMe resolves with
+    // {error} rather than rejecting for a credential failure, an origin
+    // block, or a swarm-side validation error — this is that shape, not a
+    // network-level rejection.
+    stubMe({ id: "me", name: "You", connectors: [], placeholder: true });
+    (updateMe as ReturnType<typeof vi.fn>).mockResolvedValue({ error: "origin not allowed" });
+    const { container } = wrap(
+      <WizardGate>
+        <div>THE APP</div>
+      </WizardGate>,
+    );
+
+    await screen.findByRole("heading", { name: /welcome/i });
+    await userEvent.type(screen.getByLabelText(/your name/i), "Edwin");
+    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+
+    expect(await screen.findByText(/origin not allowed/i)).toBeInTheDocument();
+    // Unlike a network blip, a server-reported rejection is a firm "no" — the
+    // wizard doesn't creep forward on a step that it knows didn't persist.
+    expect(container.querySelector('[data-step="name"]')).not.toBeNull();
+  });
 });

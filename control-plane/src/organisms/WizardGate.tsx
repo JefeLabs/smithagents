@@ -104,9 +104,17 @@ function WizardComingSoon() {
  * A *rejected* save is a different failure mode from that reload case — a
  * down broker fails every step's save, not just one, so the whole wizard's
  * worth of work would go unpersisted with nothing ever telling the user.
- * Still never blocks the transition (worse than the silent case it replaces),
- * but the rejection is caught and surfaced rather than left to become an
- * unhandled promise rejection.
+ * Still never blocks the transition on a network-level rejection (worse than
+ * the silent case it replaces) — but `updateMe` mostly does NOT reject on
+ * failure. `brokerFetch` never throws on a non-2xx, so a credential failure,
+ * an origin block, or a swarm-side validation error all *resolve* with
+ * `{error}` JSON rather than rejecting. Those are a firm "no" from the
+ * server, not an ambiguous blip, so unlike the reject case the optimistic
+ * step change is rolled back rather than kept: advancing past a write the
+ * server just refused would let the gate loop forever (it reopens on any
+ * incomplete setup, and a step that never actually persisted never becomes
+ * complete) with no explanation, and it would throw away exactly the
+ * validation text the swarm side writes for a human to read here.
  */
 function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRecord }) {
   const [step, setStep] = useState(initialStep);
@@ -114,11 +122,17 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
   const qc = useQueryClient();
 
   const advance = (patch: { name?: string; setup?: MeRecord["setup"] }) => {
-    const next = nextStep(step);
+    const current = step;
+    const next = nextStep(current);
     setError(null);
     api
       .updateMe({ ...patch, setup: { ...patch.setup, step: next ?? SETUP_DONE } })
-      .then(() => {
+      .then((result) => {
+        if (result.error) {
+          setStep(current);
+          setError(result.error);
+          return;
+        }
         void qc.invalidateQueries({ queryKey: qk.me });
       })
       .catch((err: unknown) => {
