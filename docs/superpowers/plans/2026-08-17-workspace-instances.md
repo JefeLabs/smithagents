@@ -129,11 +129,19 @@ export function instanceDir(workspaceDir: string, workId: string): string {
  * leading `-` would be read by git as a flag rather than a value.
  */
 export function workIdProblem(workId: string): string | null {
-  const trimmed = workId.trim();
-  if (!trimmed) return "a work id cannot be blank";
-  if (trimmed === "." || trimmed === "..") return `"${workId}" is not a usable work id`;
-  if (/[/\\]/.test(trimmed)) return `"${workId}" contains a path separator, which would escape the instances directory`;
-  if (trimmed.startsWith("-")) return `"${workId}" starts with "-", which git would read as a flag`;
+  if (!workId?.trim()) return "a work id cannot be blank";
+  // Surrounding whitespace is REJECTED rather than trimmed away, so the
+  // validated string is identical to the raw one. Returning a canonical form
+  // instead would leave every later caller free to join the unvalidated value.
+  if (workId !== workId.trim()) return `"${workId}" has surrounding whitespace, which must be removed`;
+  if (workId === "." || workId === "..") return `"${workId}" would resolve to the current or parent directory`;
+  if (/[/\\]/.test(workId)) return `"${workId}" contains a path separator, which would escape the instances directory`;
+  if (workId.startsWith("-")) return `"${workId}" starts with "-", which git would read as a flag`;
+  // Final allow-list: control characters are legal in a directory name but
+  // illegal in a git ref, so without this they surface as a confusing
+  // `git worktree add` failure instead of a message from the validator.
+  // The specific checks above run first so each says WHAT is wrong.
+  if (!/^[\w.-]+$/.test(workId)) return `"${workId}" contains control characters or other forbidden characters`;
   return null;
 }
 ```
@@ -368,7 +376,7 @@ export async function createInstance(
   if (problem) throw new Error(`Invalid work id: ${problem}`);
 
   const dir = instanceDir(workspaceDir, workId);
-  const branch = `smith/${workId.trim()}`;
+  const branch = `smith/${workId}`;
 
   const sources: Array<{ name: string; source: string }> = [{ name: "config", source: join(workspaceDir, "config") }];
   for (const name of repoNames) {
@@ -584,7 +592,7 @@ export async function destroyInstance(
   const members: InstanceMember[] = sources.map(({ name, source }) => ({ name, path: join(dir, name), source }));
 
   if (!opts.force) {
-    const dirty = await instanceIsDirty({ workId, dir, branch: `smith/${workId.trim()}`, members });
+    const dirty = await instanceIsDirty({ workId, dir, branch: `smith/${workId}`, members });
     if (dirty.length > 0) {
       throw new Error(
         `Instance "${workId}" has uncommitted changes in ${dirty.join(", ")} — commit them, or destroy with force to discard`,
