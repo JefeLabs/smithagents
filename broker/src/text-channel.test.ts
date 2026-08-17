@@ -1228,6 +1228,28 @@ test("proxy broadcasts capability-updated to connected WS clients on mutating ca
   }
 });
 
+test("GET /work-kinds proxies to the swarm and refuses a disallowed origin", async () => {
+  const channel = channelWith({
+    workBoards: {
+      proxy: async () => ({ status: 200, payload: { kinds: [{ id: "product", label: "Product" }] } }),
+      delegate: async () => ({ taskId: "t" }),
+    },
+  });
+  const port = await channel.start(0);
+  try {
+    const got = await fetch(`http://127.0.0.1:${port}/work-kinds`);
+    assert.equal(got.status, 200);
+    assert.deepEqual(await got.json(), { kinds: [{ id: "product", label: "Product" }] });
+
+    const badOrigin = await fetch(`http://127.0.0.1:${port}/work-kinds`, {
+      headers: { origin: "https://evil.example" },
+    });
+    assert.equal(badOrigin.status, 403);
+  } finally {
+    await channel.stop();
+  }
+});
+
 const voiceDep = {
   status: () => ({ stt: true, tts: false }),
   get: async () => ({ stt: null, tts: null, hideInactive: false }),

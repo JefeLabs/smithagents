@@ -1721,6 +1721,25 @@ export class TextChannel {
       if (this.workBoards) {
         const workBoards = this.workBoards;
         const url2 = new URL(req.url ?? "/", "http://localhost");
+        // GET /work-kinds sits outside the "/work/" prefix match below (no trailing
+        // segment), so it needs its own passthrough. Shape follows /execution-modes
+        // exactly — named-origin CORS via credJson/credFail/originBlocked, not the
+        // open policy the generic /work/* proxy uses below.
+        if (req.method === "GET" && url2.pathname === "/work-kinds") {
+          const credJson = (status: number, payload: unknown) =>
+            res
+              .writeHead(status, { ...credentialCors(req), "content-type": "application/json" })
+              .end(JSON.stringify(payload));
+          const credFail = (err: unknown) => credJson(500, { error: String((err as Error).message ?? err) });
+          const originBlocked = (): boolean => {
+            if (isAllowedOrigin(req)) return false;
+            credJson(403, { error: "origin not allowed" });
+            return true;
+          };
+          if (originBlocked()) return;
+          void workBoards.proxy("GET", "/work-kinds").then((r) => credJson(r.status, r.payload), credFail);
+          return;
+        }
         if (req.method === "POST" && url2.pathname === "/work/delegate") {
           // Dispatch binds a task to an agent — same origin guard as /me and /me/connectors;
           // the generic /work/* proxy below stays on the open CORS policy.
