@@ -317,7 +317,11 @@ export async function migrateWorkspaceRecords(
 
       if (before.kind === "corrupt") {
         skipped.push(ws.name);
-        notes.push(`[workspace-migration] ${settings} exists but is not a valid record — leaving ${flatFile} in place`);
+        notes.push(
+          `[workspace-migration] ${settings} exists but is not a valid record — leaving ${flatFile} in place; ` +
+            `fix or delete ${settings} so this migration can regenerate it from ${flatFile}; ` +
+            `until then this warns on every boot`,
+        );
         continue;
       }
 
@@ -338,7 +342,8 @@ export async function migrateWorkspaceRecords(
         skipped.push(ws.name);
         notes.push(
           `[workspace-migration] ${settings} already holds workspace "${before.value.name}" — ` +
-            `refusing to remove ${flatFile} for "${ws.name}" (both slug to ${dir})`,
+            `refusing to remove ${flatFile} for "${ws.name}" (both slug to ${dir}); ` +
+            `rename one of them so they no longer collide; until then this warns on every boot`,
         );
         continue;
       } else if (!isDeepStrictEqual(before.value, ws)) {
@@ -346,8 +351,8 @@ export async function migrateWorkspaceRecords(
         // shares a name with whatever migrated here first.
         skipped.push(ws.name);
         notes.push(
-          `[workspace-migration] ${settings} holds a different "${ws.name}" record than ${flatFile} — ` +
-            `leaving ${flatFile} in place`,
+          `[workspace-migration] two different records are both named "${ws.name}": ${settings} and ${flatFile} — ` +
+            `compare them and delete the stale one; until then this warns on every boot`,
         );
         continue;
       } else {
@@ -362,7 +367,10 @@ export async function migrateWorkspaceRecords(
       await rm(flatFile, { force: true });
     } catch (err) {
       skipped.push(ws.name);
-      notes.push(`[workspace-migration] skipping "${ws.name}" (${flatFile}) — ${(err as Error).message}`);
+      notes.push(
+        `[workspace-migration] skipping "${ws.name}" (${flatFile}) — ${(err as Error).message}; ` +
+          `fix the underlying problem and this will resolve on the next boot`,
+      );
     }
   }
   return { moved, skipped, notes };

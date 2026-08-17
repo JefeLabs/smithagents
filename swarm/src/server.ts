@@ -467,7 +467,10 @@ export class OrchestratorServer {
     // loadAllContexts, which is dual-source and sees workspaces whether or
     // not they've moved yet.
     {
-      const { notes } = await migrateWorkspaceRecords(this.paths);
+      const { moved, notes } = await migrateWorkspaceRecords(this.paths);
+      if (moved.length > 0) {
+        this.app.log.info(`[workspace-migration] moved: ${moved.join(", ")}`);
+      }
       for (const note of notes) {
         this.app.log.warn(note);
       }
