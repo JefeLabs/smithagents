@@ -10,6 +10,30 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-16-workspace-instances-and-assignment-design.md` — §2.1 (the instance), §2.2 (lifecycle), §4.2 step 4.
 
+## ⚠️ Shipped code diverges from this plan — read the code, not these snippets
+
+This plan was executed on `feat/workspace-instances` and merged. Four fix rounds
+changed things the task snippets below still show in their original form. **Do not
+reimplement from these code blocks** — two of the divergences are the branch's
+entire risk story:
+
+- **`git worktree add -b X -- <base>` is unsafe when `<base>` exists only as a
+  remote-tracking ref.** Git does *not* error: it silently discards `-b`'s name and
+  creates a branch named after the base instead (exit 0, no warning, `X` never
+  created — reproduced on git 2.55, and contrary to git's own documentation, which
+  claims the remote-DWIM is skipped when `-b` is given). `resolveStartPoint` in
+  `workspace-instances.ts` resolves a remote-only base to `origin/<base>`, which
+  sidesteps the DWIM path entirely. Both the instance and the legacy dispatcher
+  paths share it.
+- **`git status --porcelain` omits ignored files.** `instanceIsDirty` uses
+  `--ignored`, because a gitignored `.env` inside a member worktree exists nowhere
+  else and was being deleted silently.
+- `createInstance` takes an optional `opts.base` start-point (repo members only —
+  `config/` is cut from its own HEAD), reattaches to a surviving branch rather than
+  failing on `-b`, and validates repo names via `repoNameProblem`.
+- `workIdProblem` rejects surrounding whitespace outright so the validated id is
+  byte-identical to the raw one, and ends with an allow-list.
+
 ## Global Constraints
 
 - Node >= 24; TypeScript ~6.0.0; ESM with `.js` import specifiers on every relative import.
