@@ -516,3 +516,39 @@ test("addMemberWorktrees: refuses a member name that would escape", async () => 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("destroyInstance: refuses when a MEMBER worktree holds uncommitted work", async () => {
+  const { dir, ws } = makeWorkspace("mem-dirty", ["app"]);
+  try {
+    const inst = await createInstance(dir, ws as never, "w-6", ["app"]);
+    const repo = inst.members.find((m) => m.name === "app");
+    const [fabian] = await addMemberWorktrees(inst.dir, repo!.source, "w-6", ["fabian"]);
+    writeFileSync(join(fabian.path, "PRECIOUS.md"), "work that exists nowhere else\n");
+
+    await assert.rejects(
+      () => destroyInstance(dir, ws as never, "w-6", ["app"]),
+      /fabian/i,
+      "the refusal names the member holding the work",
+    );
+    assert.ok(statSync(join(fabian.path, "PRECIOUS.md")).isFile(), "the work survives the refusal");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("destroyInstance: force removes member worktrees and leaves no stale registration", async () => {
+  const { dir, ws } = makeWorkspace("mem-force", ["app"]);
+  try {
+    const inst = await createInstance(dir, ws as never, "w-7", ["app"]);
+    const repo = inst.members.find((m) => m.name === "app");
+    await addMemberWorktrees(inst.dir, repo!.source, "w-7", ["fabian"]);
+
+    await destroyInstance(dir, ws as never, "w-7", ["app"], { force: true });
+
+    assert.throws(() => statSync(inst.dir), "the instance directory is gone");
+    const list = execFileSync("git", ["worktree", "list"], { cwd: repo!.source }).toString();
+    assert.doesNotMatch(list, /members\/fabian/, "no stale worktree registration is left behind");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

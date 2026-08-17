@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import type { Dirent } from "node:fs";
 import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -342,10 +343,45 @@ export async function listInstances(workspaceDir: string): Promise<string[]> {
   }
 }
 
-/** Members holding uncommitted changes or ignored content that would be discarded on destroy. */
+/**
+ * Squad member worktrees under `<instance>/members/`, as `{name, path}`.
+ *
+ * Discovered from disk rather than taken from a caller, because the teardown
+ * path has no way to know which members were ever added — and a member it does
+ * not know about is exactly the one whose work would be lost silently.
+ */
+async function listMemberWorktrees(instanceDir: string): Promise<Array<{ name: string; path: string }>> {
+  let entries: Dirent[];
+  try {
+    entries = await readdir(membersDir(instanceDir), { withFileTypes: true });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
+  const out: Array<{ name: string; path: string }> = [];
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    const path = join(membersDir(instanceDir), e.name);
+    // Qualified with "members/" so a member and a repo of the same name stay
+    // distinguishable in the refusal message.
+    if (await isWorktree(path)) out.push({ name: `members/${e.name}`, path });
+  }
+  return out;
+}
+
+/**
+ * Members holding uncommitted changes or ignored content that would be
+ * discarded on destroy.
+ *
+ * Covers squad member worktrees as well as the instance's own members: they are
+ * worktrees whose contents exist nowhere else, so leaving them out would let
+ * `destroyInstance` delete a member's uncommitted work without the refusal that
+ * protects everything else.
+ */
 export async function instanceIsDirty(inst: Instance): Promise<string[]> {
   const dirty: string[] = [];
-  for (const m of inst.members) {
+  const all = [...inst.members, ...(await listMemberWorktrees(inst.dir))];
+  for (const m of all) {
     if (!(await isDir(m.path))) continue;
     // Check for both uncommitted changes and ignored files. Ignored files matter because
     // they may contain irreplaceable content like .env, and a worktree's contents exist
@@ -408,12 +444,16 @@ export async function destroyInstance(
   }
   const members: InstanceMember[] = sources.map(({ name, source }) => ({ name, path: join(dir, name), source }));
 
+  // Squad member worktrees are found on disk: they were added after the
+  // instance was built, so `repoNames` says nothing about them.
+  const memberWorktrees = await listMemberWorktrees(dir);
+
   if (!opts.force) {
     const dirty = await instanceIsDirty({ workId, dir, branch: `smith/${workId}`, members });
     if (dirty.length > 0) {
       // Distinguish between uncommitted changes and ignored content for a better message
       const categorized: { changes: string[]; ignored: string[] } = { changes: [], ignored: [] };
-      for (const m of members) {
+      for (const m of [...members, ...memberWorktrees]) {
         if (!dirty.includes(m.name)) continue;
         if (!(await isDir(m.path))) continue;
         const { hasChanges, hasIgnored } = await categorizeMemberDirtiness(m.path);
@@ -442,4 +482,15 @@ export async function destroyInstance(
     await run("git", ["worktree", "remove", "--force", m.path], { cwd: m.source }).catch(() => {});
   }
   await rm(dir, { recursive: true, force: true });
+
+  // Member worktrees are deregistered by pruning rather than by `worktree
+  // remove`: their registrations live in whichever source they were cut from,
+  // which the caller never told us. Once the instance directory is gone their
+  // registrations are stale, and prune is defined as removing exactly those —
+  // so it cannot touch a live worktree even if a member came from elsewhere.
+  if (memberWorktrees.length > 0) {
+    for (const { source } of sources) {
+      await run("git", ["worktree", "prune"], { cwd: source }).catch(() => {});
+    }
+  }
 }
