@@ -363,10 +363,11 @@ export async function ensureWorkspaceBoards(
   dirs: string[],
   resolveDir: (board: WorkBoard) => string,
   workspaceId: string,
+  workKind?: string,
 ): Promise<void> {
   const { boards } = await loadAllBoards(dirs);
   for (const type of ["ideation", "plan", "deliver"] as BoardType[]) {
-    const board = createBoard(type, workspaceId);
+    const board = createBoard(type, workspaceId, workKind);
     if (!boards.some((b) => b.id === board.id)) await saveBoard(resolveDir(board), board);
   }
 }

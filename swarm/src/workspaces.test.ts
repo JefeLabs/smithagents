@@ -11,6 +11,7 @@ import { smithPaths } from "./paths.js";
 import { loadRegistry, saveRegistryEntry } from "./workspace-registry.js";
 import type { Workspace } from "./workspaces.js";
 import {
+  assertContext,
   assertNoWorkspaceDirCollision,
   boardsDirFor,
   collidingWorkspaceDirs,
@@ -718,4 +719,25 @@ test("loadAllContexts: a flat, unmigrated workspace is still visible alongside a
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("assertContext: workKind is optional and passes through", () => {
+  const ws = assertContext("w.json", {
+    name: "acme",
+    repos: [{ name: "app", path: "/tmp/app" }],
+    workKind: "marketing",
+  });
+  assert.equal(ws.workKind, "marketing");
+});
+
+test("assertContext: a workspace with no workKind is still valid", () => {
+  const ws = assertContext("w.json", { name: "acme", repos: [{ name: "app", path: "/tmp/app" }] });
+  assert.equal(ws.workKind, undefined);
+});
+
+test("assertContext: a non-string workKind is refused", () => {
+  assert.throws(
+    () => assertContext("w.json", { name: "acme", repos: [{ name: "app", path: "/tmp/app" }], workKind: 7 }),
+    /workKind/i,
+  );
 });

@@ -102,6 +102,13 @@ export interface Workspace {
    * user keeps code.
    */
   dir?: string;
+  /**
+   * Which vocabulary this workspace's boards are seeded with (see work-kinds.ts).
+   * Absent means product/software, so an install that never answered the
+   * wizard's optional question behaves exactly as it always has. Read at board
+   * seed time only.
+   */
+  workKind?: string;
 }
 
 /** The group attribute, applied: a context with `members` (even []) is a group. */
@@ -134,9 +141,12 @@ export function assertContext(file: string, v: unknown): Workspace {
     typeof o.name === "string" &&
     Array.isArray(o.repos) &&
     o.repos.length > 0 &&
+    (o.workKind === undefined || typeof o.workKind === "string") &&
     o.repos.every((r) => r && typeof r.name === "string" && typeof r.path === "string" && isAbsolute(r.path));
   if (!ok) {
-    throw new Error(`Invalid workspace file ${file}: requires name and repos[]{name, absolute path}`);
+    throw new Error(
+      `Invalid workspace file ${file}: requires name and repos[]{name, absolute path}, and workKind must be a string when present`,
+    );
   }
   return o as Workspace;
 }

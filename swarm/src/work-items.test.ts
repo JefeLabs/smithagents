@@ -1222,3 +1222,42 @@ test("BOARD_ROUTES only ever names columns that exist on both boards", () => {
     }
   }
 });
+
+test("createBoard: a work kind supplies column labels at seed time", () => {
+  const board = createBoard("plan", "acme", "marketing");
+
+  assert.deepEqual(
+    board.columns.map((c) => c.id),
+    ["queue", "define", "design", "breakdown", "ready"],
+    "ids never vary by work kind — they are the contract",
+  );
+  assert.deepEqual(
+    board.columns.map((c) => c.name),
+    ["Queue", "Brief", "Concept", "Assets", "Ready"],
+    "only the words change",
+  );
+});
+
+test("createBoard: no work kind reproduces today's product vocabulary exactly", () => {
+  const implicit = createBoard("deliver", "acme");
+  const explicit = createBoard("deliver", "acme", "product");
+
+  assert.deepEqual(implicit.columns, explicit.columns);
+  assert.equal(implicit.columns.find((c) => c.id === "complete")?.name, "Merged");
+});
+
+test("createBoard: an unknown work kind falls back to product, never an empty board", () => {
+  const board = createBoard("plan", "acme", "astrology");
+
+  assert.equal(board.columns.length, 5);
+  assert.equal(board.columns.find((c) => c.id === "define")?.name, "Spec");
+});
+
+test("createBoard: gatesHuman survives a work kind's relabelling", () => {
+  const board = createBoard("deliver", "acme", "sales");
+
+  // review/verify are not renamed by any vocabulary, and the shared queue depends
+  // on their gate flag surviving the label pass.
+  assert.equal(board.columns.find((c) => c.id === "review")?.gatesHuman, true);
+  assert.equal(board.columns.find((c) => c.id === "verify")?.gatesHuman, true);
+});

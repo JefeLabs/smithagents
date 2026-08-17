@@ -8,6 +8,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { columnLabel, workKindFor } from "./work-kinds.js";
 
 export interface WorkColumn {
   id: string;
@@ -214,18 +215,24 @@ export function boardIdFor(workspaceId: string, type: BoardType): string {
 /**
  * Mint a board from its type. The id comes from the type, never the name, so a
  * later rename via PATCH never has to move a file.
+ *
+ * `workKind` is consulted HERE AND NOWHERE ELSE — labels are a seed-time choice,
+ * and `board.columns` is persisted per board, so changing a vocabulary later
+ * never rewrites a live board. Omitting it reproduces the product/software
+ * vocabulary exactly.
  */
-export function createBoard(type: BoardType, workspaceId?: string): WorkBoard {
+export function createBoard(type: BoardType, workspaceId?: string, workKind?: string): WorkBoard {
   if (!BOARD_TEMPLATES[type]) throw new Error(`Unknown board type: ${type}`);
   if (type === "personal" && workspaceId) throw new Error("The personal board belongs to no workspace");
   if (type !== "personal" && !workspaceId) throw new Error(`Board type "${type}" requires a workspace`);
   const id = type === "personal" ? "personal" : boardIdFor(workspaceId as string, type);
   if (!BOARD_ID_RE.test(id)) throw new Error(`Workspace "${workspaceId}" does not reduce to a usable board id`);
+  const kind = workKindFor(workKind);
   const board: WorkBoard = {
     id,
     name: BOARD_TYPE_LABELS[type],
     type,
-    columns: BOARD_TEMPLATES[type].map((c) => ({ ...c })),
+    columns: BOARD_TEMPLATES[type].map((c) => ({ ...c, name: columnLabel(kind, c) })),
     cards: [],
   };
   if (workspaceId) board.workspaceId = workspaceId;

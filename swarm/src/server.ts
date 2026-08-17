@@ -2008,7 +2008,12 @@ export class OrchestratorServer {
       // directory.
       const newWorkspaceDir = workspaceDir(this.paths, record);
       const newWorkspaceBoardsDir = join(newWorkspaceDir, "config", "boards");
-      await ensureWorkspaceBoards([newWorkspaceBoardsDir], () => newWorkspaceBoardsDir, record.name).catch((err) => {
+      await ensureWorkspaceBoards(
+        [newWorkspaceBoardsDir],
+        () => newWorkspaceBoardsDir,
+        record.name,
+        record.workKind,
+      ).catch((err) => {
         this.app.log.warn(
           `Could not provision boards for workspace "${record.name}": ${String((err as Error).message)}`,
         );
@@ -2899,7 +2904,9 @@ export class OrchestratorServer {
       if (type !== "personal" && !b.workspaceId?.trim())
         return reply.status(400).send({ error: `Board type "${type}" requires a workspaceId` });
       try {
-        const board = createBoard(type, b.workspaceId?.trim());
+        const all = await loadWorkspaces(this.paths);
+        const ws = all.find((w) => w.name === b.workspaceId?.trim());
+        const board = createBoard(type, b.workspaceId?.trim(), ws?.workKind);
         const { boards } = await loadAllBoards(this.boardDirs());
         if (boards.some((x) => x.id === board.id)) {
           return reply.status(409).send({
