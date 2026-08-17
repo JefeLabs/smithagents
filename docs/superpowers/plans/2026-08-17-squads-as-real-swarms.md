@@ -22,7 +22,9 @@ These were settled with Edwin on 2026-08-17 and they override §2.3's two-shape 
 
 **4. Commit is the handoff, and it is cheap.** Members can't see each other's uncommitted work — the one real cost of (3). But every member worktree shares the workspace clone's object store, so a peer's commit is visible via `git show` **instantly**, with no push or fetch. Handoff granularity is "commit", which the feed announces.
 
-**5. A branch per member.** Git refuses to check out one branch in two worktrees, so per-member worktrees require per-member branches: `smith/<taskId>/<member>`. Integration means merging those into the instance's own `smith/<taskId>`. That merge is the only serialized step.
+**5. A branch per member.** Git refuses to check out one branch in two worktrees, so per-member worktrees require per-member branches: `smith/members/<taskId>/<member>`. Integration means merging those into the instance's own `smith/<taskId>`. That merge is the only serialized step.
+
+> **Correction (2026-08-17, during Task 3, ruled by Edwin).** This decision originally read `smith/<taskId>/<member>`, which **cannot exist**: git's ref store holds a loose ref as a literal file under `.git/refs/heads/`, so a branch `smith/<taskId>` and a branch `smith/<taskId>/<member>` would need the same path to be a file and a directory at once. `git branch smith/w-1/fabian` fails with `cannot lock ref 'refs/heads/smith/w-1/fabian': 'refs/heads/smith/w-1' exists` (verified against git 2.55). Because the instance branch `smith/<taskId>` is already shipped, *every* name nested beneath it is unusable. Members therefore live in their own namespace, `smith/members/<taskId>/<member>`, which never collides and keeps every member listable with `git branch --list 'smith/members/*'`. `createInstance` is untouched, so live instances need no migration.
 
 **6. The feed belongs to the swarm, not the broker.** The broker is a host-level singleton with no per-workspace state — the same limitation that blocked artifacts in the previous plan. The swarm owns instances, so it owns the feed, and the feed lives with the work at `<instance>/.runtime/updates.jsonl`.
 
@@ -418,7 +420,8 @@ Git refuses to check out one branch in two worktrees, so per-member isolation re
 
 **Interfaces:**
 - Consumes: `createInstance`, `resolveStartPoint`, `workIdProblem` from the same module.
-- Produces: `addMemberWorktrees(instanceDir: string, repoSource: string, workId: string, memberNames: string[], base?: string): Promise<InstanceMember[]>` — creates `<instanceDir>/members/<name>/` on `smith/<workId>/<name>`, idempotent, reattaching to a surviving branch exactly as `createInstance` does.
+- Produces: `addMemberWorktrees(instanceDir: string, repoSource: string, workId: string, memberNames: string[], base?: string): Promise<InstanceMember[]>` — creates `<instanceDir>/members/<name>/` on `smith/members/<workId>/<name>` (see the correction under design decision 5), idempotent, reattaching to a surviving branch exactly as `createInstance` does.
+- Also produces: `memberBranch(workId, name)` and `membersDir(instanceDir)`, exported so Task 4 names branches through the same one place rather than re-spelling the convention.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -436,7 +439,7 @@ test("addMemberWorktrees: each member gets its own worktree on its own branch", 
     assert.deepEqual(members.map((m) => m.name).sort(), ["fabian", "santiago"]);
     for (const m of members) {
       const branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: m.path }).toString().trim();
-      assert.equal(branch, `smith/w-1/${m.name}`, "a branch per member");
+      assert.equal(branch, `smith/members/w-1/${m.name}`, "a branch per member");
       assert.ok(statSync(join(m.path, "README.md")).isFile(), "real content");
     }
   } finally {
@@ -470,7 +473,7 @@ test("addMemberWorktrees: a peer's COMMIT is instantly visible, with no push", a
     execFileSync("git", ["add", "-A"], { cwd: a.path });
     execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "iface"], { cwd: a.path });
 
-    const seen = execFileSync("git", ["show", "smith/w-3/fabian:IFACE.md"], { cwd: b.path }).toString();
+    const seen = execFileSync("git", ["show", "smith/members/w-3/fabian:IFACE.md"], { cwd: b.path }).toString();
 
     assert.match(seen, /the interface/, "peers share one object store — commit is the handoff");
   } finally {
@@ -525,7 +528,7 @@ Add to `swarm/src/workspace-instances.ts`, reusing the module's existing `isWork
 /**
  * One worktree per squad member, under `<instance>/members/<name>/`.
  *
- * A BRANCH PER MEMBER (`smith/<workId>/<name>`) because git refuses to check
+ * A BRANCH PER MEMBER (`smith/members/<workId>/<name>`) because git refuses to check
  * out one branch in two worktrees. That is also what makes member isolation
  * structural rather than a convention: two members physically cannot edit the
  * same tree, so no turn-taking protocol is needed.
@@ -546,7 +549,7 @@ export async function addMemberWorktrees(
 ): Promise<InstanceMember[]> { … }
 ```
 
-Validate `workId` with `workIdProblem` (same module) and each member name with **`repoNameProblem`** from `./workspace-repos.js` — it is already shipped and tested, and rejects separators, `.`/`..` and blanks, which is exactly the escape surface here. It does not reject a leading dash, and does not need to: a member name reaches git only inside `smith/<workId>/<name>`, never as a bare argument. **Validate every name before creating anything**, so a bad member cannot leave a half-built `members/` directory. Prune before adding, and attach rather than `-b` when the member's branch already exists, exactly as `createInstance` does.
+Validate `workId` with `workIdProblem` (same module) and each member name with **`repoNameProblem`** from `./workspace-repos.js` — it is already shipped and tested, and rejects separators, `.`/`..` and blanks, which is exactly the escape surface here. It does not reject a leading dash, and does not need to: a member name reaches git only inside `smith/members/<workId>/<name>`, never as a bare argument. **Validate every name before creating anything**, so a bad member cannot leave a half-built `members/` directory. Prune before adding, and attach rather than `-b` when the member's branch already exists, exactly as `createInstance` does.
 
 - [ ] **Step 4: Run the file, then the suite**
 
@@ -612,7 +615,7 @@ test("prepareSquadSwarm: every member gets a worktree, a branch, and its own dri
     assert.equal(prepared.members.length, 2);
     for (const m of prepared.members) {
       assert.ok(statSync(m.path).isDirectory(), `${m.name} has a worktree`);
-      assert.equal(m.branch, `smith/t-1/${m.name.toLowerCase()}`);
+      assert.equal(m.branch, `smith/members/t-1/${m.name.toLowerCase()}`);
       assert.ok(m.persona.length > 0, `${m.name} was told who it is`);
     }
   } finally {
@@ -730,7 +733,7 @@ curl -s -m 30 -X POST http://127.0.0.1:7777/squads \
   -d '{"prompt":"probe: prepare only","mode":"squad","agents":2}' | python3 -m json.tool
 ```
 
-Expected: two members, each with a worktree path, a `smith/<taskId>/<name>` branch, and persona files. **A 2-member squad is the point** — it exercises Task 1.
+Expected: two members, each with a worktree path, a `smith/members/<taskId>/<name>` branch, and persona files. **A 2-member squad is the point** — it exercises Task 1.
 
 - [ ] **Step 4: Inspect what was created, and prove isolation on real data**
 
@@ -794,7 +797,7 @@ If Step 4 or 5 fails, the branch does not merge.
 
 **Placeholders.** Three deliberate gaps, each flagged with what to check and what to report: `loadSquadsFromDir`'s existing leader handling (Task 1), `addMemberWorktrees`' body (Task 3 — it reuses module-private helpers I should not guess the shape of), and the `SquadModel`→driver mapping (Task 4), which is the one place a wrong guess would silently defeat the plan's purpose.
 
-**Type consistency.** `SquadUpdate`, `feedPath`, `appendUpdate`, `readFeed`, `addMemberWorktrees`, `prepareSquadSwarm` are spelled identically throughout. `addMemberWorktrees` returns `InstanceMember[]`, the same type `createInstance` returns, so both feed the same consumers. Member branches are `smith/<workId>/<name>` everywhere, distinct from the instance's own `smith/<workId>`.
+**Type consistency.** `SquadUpdate`, `feedPath`, `appendUpdate`, `readFeed`, `addMemberWorktrees`, `prepareSquadSwarm` are spelled identically throughout. `addMemberWorktrees` returns `InstanceMember[]`, the same type `createInstance` returns, so both feed the same consumers. Member branches are `smith/members/<workId>/<name>` everywhere, in their own namespace rather than nested under the instance's own `smith/<workId>` — which git's ref store forbids outright; see the correction under design decision 5.
 
 **Known risks, stated plainly.**
 1. **`destroyInstance` does not know about member worktrees.** It removes the members `createInstance` made, not `members/*`. Task 5 Step 6 surfaces it deliberately rather than letting it be found later; fixing it may belong in this branch or the next, and the review should rule.
