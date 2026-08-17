@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
+  addMemberWorktrees,
   createInstance,
   destroyInstance,
   instanceDir,
@@ -429,6 +430,88 @@ test("destroyInstance: force discards ignored content too", async () => {
     await destroyInstance(dir, ws as never, "work-7", ["app"], { force: true });
 
     assert.throws(() => statSync(inst.dir), "the instance directory is gone");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("addMemberWorktrees: each member gets its own worktree on its own branch", async () => {
+  const { dir, ws } = makeWorkspace("mem", ["app"]);
+  try {
+    const inst = await createInstance(dir, ws as never, "w-1", ["app"]);
+    const repo = inst.members.find((m) => m.name === "app");
+
+    const members = await addMemberWorktrees(inst.dir, repo!.source, "w-1", ["fabian", "santiago"]);
+
+    assert.deepEqual(members.map((m) => m.name).sort(), ["fabian", "santiago"]);
+    for (const m of members) {
+      const branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: m.path }).toString().trim();
+      assert.equal(branch, `smith/members/w-1/${m.name}`, "a branch per member");
+      assert.ok(statSync(join(m.path, "README.md")).isFile(), "real content");
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("addMemberWorktrees: members are isolated — one's edit is invisible to the other", async () => {
+  const { dir, ws } = makeWorkspace("iso", ["app"]);
+  try {
+    const inst = await createInstance(dir, ws as never, "w-2", ["app"]);
+    const repo = inst.members.find((m) => m.name === "app");
+    const [a, b] = await addMemberWorktrees(inst.dir, repo!.source, "w-2", ["fabian", "santiago"]);
+
+    writeFileSync(join(a.path, "DRAFT.md"), "fabian's uncommitted work\n");
+
+    assert.throws(() => statSync(join(b.path, "DRAFT.md")), "uncommitted work does not leak between members");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("addMemberWorktrees: a peer's COMMIT is instantly visible, with no push", async () => {
+  const { dir, ws } = makeWorkspace("share", ["app"]);
+  try {
+    const inst = await createInstance(dir, ws as never, "w-3", ["app"]);
+    const repo = inst.members.find((m) => m.name === "app");
+    const [a, b] = await addMemberWorktrees(inst.dir, repo!.source, "w-3", ["fabian", "santiago"]);
+
+    writeFileSync(join(a.path, "IFACE.md"), "the interface\n");
+    execFileSync("git", ["add", "-A"], { cwd: a.path });
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "iface"], { cwd: a.path });
+
+    const seen = execFileSync("git", ["show", "smith/members/w-3/fabian:IFACE.md"], { cwd: b.path }).toString();
+
+    assert.match(seen, /the interface/, "peers share one object store — commit is the handoff");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("addMemberWorktrees: is idempotent", async () => {
+  const { dir, ws } = makeWorkspace("mem2", ["app"]);
+  try {
+    const inst = await createInstance(dir, ws as never, "w-4", ["app"]);
+    const repo = inst.members.find((m) => m.name === "app");
+    const first = await addMemberWorktrees(inst.dir, repo!.source, "w-4", ["fabian"]);
+    writeFileSync(join(first[0].path, "WIP.md"), "in progress\n");
+
+    const again = await addMemberWorktrees(inst.dir, repo!.source, "w-4", ["fabian"]);
+
+    assert.equal(again[0].path, first[0].path);
+    assert.ok(statSync(join(again[0].path, "WIP.md")).isFile(), "existing work untouched");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("addMemberWorktrees: refuses a member name that would escape", async () => {
+  const { dir, ws } = makeWorkspace("mem-esc", ["app"]);
+  try {
+    const inst = await createInstance(dir, ws as never, "w-5", ["app"]);
+    const repo = inst.members.find((m) => m.name === "app");
+    await assert.rejects(() => addMemberWorktrees(inst.dir, repo!.source, "w-5", ["../evil"]), /name/i);
+    assert.throws(() => statSync(join(inst.dir, "..", "evil")));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

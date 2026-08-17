@@ -223,6 +223,111 @@ export async function createInstance(
   return { workId, dir, branch, members };
 }
 
+/**
+ * A squad member's branch.
+ *
+ * Deliberately NOT `smith/<workId>/<name>`: git's ref store cannot hold both a
+ * branch `a` and a branch `a/b`, because a loose ref is a literal file under
+ * `.git/refs/heads/` and `a` would have to be a file and a directory at once.
+ * The instance's own branch is already `smith/<workId>`, so every name nested
+ * beneath it is unusable — `git branch smith/w-1/fabian` fails with
+ * "cannot lock ref ... 'refs/heads/smith/w-1' exists". Verified against git 2.55.
+ *
+ * `smith/members/` is its own namespace and is never itself a branch, so it
+ * cannot collide, and it keeps every member across every instance listable with
+ * `git branch --list 'smith/members/*'`.
+ */
+export function memberBranch(workId: string, name: string): string {
+  return `smith/members/${workId}/${name}`;
+}
+
+/** Where a squad's member worktrees live inside its instance. */
+export function membersDir(instanceDir: string): string {
+  return join(instanceDir, "members");
+}
+
+/**
+ * One worktree per squad member, under `<instance>/members/<name>/`.
+ *
+ * A BRANCH PER MEMBER because git refuses to check out one branch in two
+ * worktrees. That is also what makes member isolation structural rather than a
+ * convention: two members physically cannot edit the same tree, so no
+ * turn-taking protocol is needed and no member can stomp another's work.
+ *
+ * They still share the workspace clone's object store, so a peer's COMMIT is
+ * visible immediately via `git show <branch>:<path>` with no push or fetch —
+ * commit is the handoff, and the feed announces it. Uncommitted work is
+ * invisible to peers, which is the one real cost of this shape.
+ *
+ * Members are cut from the instance's own `smith/<workId>` by default, not from
+ * the source clone's HEAD: integration merges member branches back into that
+ * branch, and a member that started somewhere else would drag unrelated
+ * divergence into the merge. `base` overrides it for a caller that needs to.
+ *
+ * Idempotent in the same sense as createInstance: an existing member worktree is
+ * left exactly as it is, because it may hold work in progress, and a member
+ * whose worktree was removed but whose branch survives is reattached rather than
+ * recreated — which is what returns committed work after a partial teardown.
+ */
+export async function addMemberWorktrees(
+  instanceDir: string,
+  repoSource: string,
+  workId: string,
+  memberNames: string[],
+  base?: string,
+): Promise<InstanceMember[]> {
+  const problem = workIdProblem(workId);
+  if (problem) throw new Error(`Invalid work id: ${problem}`);
+
+  // Validate EVERY name before creating ANYTHING. A bad name discovered midway
+  // would leave a half-built members/ directory whose partial state the caller
+  // has no way to distinguish from a complete one.
+  for (const name of memberNames) {
+    const nameProblem = repoNameProblem(name);
+    if (nameProblem) throw new Error(`Member "${name}": invalid member name — ${nameProblem}`);
+  }
+
+  const dir = membersDir(instanceDir);
+  await mkdir(dir, { recursive: true });
+
+  const members: InstanceMember[] = [];
+  for (const name of memberNames) {
+    const path = join(dir, name);
+    const branch = memberBranch(workId, name);
+    if (!(await isWorktree(path))) {
+      // Prune stale registrations first: a worktree directory that was removed
+      // but still appears in .git/worktrees/ would make `worktree add` refuse
+      // the path.
+      await run("git", ["worktree", "prune"], { cwd: repoSource });
+
+      let branchExists = false;
+      try {
+        await run("git", ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], { cwd: repoSource });
+        branchExists = true;
+      } catch {
+        // Branch does not exist — create it below.
+      }
+
+      if (branchExists) {
+        // Reattaching to a surviving branch — a start-point would be meaningless.
+        await run("git", ["worktree", "add", "-q", path, branch], { cwd: repoSource });
+      } else {
+        const wanted = base ?? `smith/${workId}`;
+        const startPoint = await resolveStartPoint(repoSource, wanted);
+        try {
+          await run("git", ["worktree", "add", "-q", path, "-b", branch, "--", startPoint], { cwd: repoSource });
+        } catch (err) {
+          throw new Error(
+            `Member "${name}": could not create a worktree from base "${wanted}" — ${(err as Error).message}`,
+          );
+        }
+      }
+    }
+    members.push({ name, path, source: repoSource });
+  }
+  return members;
+}
+
 /** Work ids with an instance directory, sorted. */
 export async function listInstances(workspaceDir: string): Promise<string[]> {
   try {
