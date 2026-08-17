@@ -444,6 +444,25 @@ test("repoDirFor: rejects a repo name that would escape the workspace directory"
   }
 });
 
+test("repoDirFor: rejects a name that would collapse the clone onto the workspace directory itself", () => {
+  const ws = mkdtempSync(join(tmpdir(), "repodir-collapse-"));
+  try {
+    assert.throws(
+      () => repoDirFor(ws, { name: ".", path: "" }),
+      /Repo "\."/,
+      'a bare "." doesn\'t escape but lands ON the workspace directory, merging config/ and .runtime/ into the clone',
+    );
+    assert.throws(() => repoDirFor(ws, { name: "", path: "" }), /Repo ""/, "an empty name is rejected too");
+    assert.throws(
+      () => repoDirFor(ws, { name: "   ", path: "" }),
+      /Repo " {3}"/,
+      "and one that's blank after trimming",
+    );
+  } finally {
+    rmSync(ws, { recursive: true, force: true });
+  }
+});
+
 test("cloneExecOptions: bounds the clone with a timeout and disables interactive credential prompts", () => {
   const opts = cloneExecOptions();
   assert.equal(opts.timeout, CLONE_TIMEOUT_MS, "a hung or unreachable remote must not block boot forever");
@@ -495,5 +514,48 @@ test("migrateReposIntoWorkspace: a clone failure note redacts credentials embedd
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("migrateReposIntoWorkspace: a config-repo failure after a successful save is not a false 'could not save', and retries next boot", async () => {
+  const root = mkdtempSync(join(tmpdir(), "migrepo-cfgfail-"));
+  const origin = makeOrigin("n");
+  try {
+    const paths = smithPaths(root);
+    await saveWorkspace(paths, { name: "pg", repos: [{ name: "app", path: origin, repository: origin }] });
+
+    // Force ensureConfigRepo to fail without any network: pre-seed config/.git
+    // as a plain file, not a real gitdir pointer — git then refuses `git add
+    // -A` with "invalid gitfile format", entirely locally, after the clone
+    // and the save (both of which touch config/settings.json, not .git) have
+    // already succeeded.
+    const dir = join(paths.workspaces, "pg");
+    mkdirSync(join(dir, "config"), { recursive: true });
+    writeFileSync(join(dir, "config", ".git"), "not a real gitdir\n");
+
+    const first = await migrateReposIntoWorkspace(paths);
+
+    assert.ok(first.cloned.includes("pg/app"), "the clone and save succeeded — must be reported cloned, not skipped");
+    assert.ok(!first.skipped.includes("pg/app"), "a config failure must not demote a genuine migration");
+    assert.ok(
+      first.notes.some((n) => n.includes("pg") && /config/i.test(n) && !/could not save/i.test(n)),
+      "the note names the config repo, not a false 'could not save the record'",
+    );
+    const [ws] = await loadWorkspaces(paths);
+    assert.equal(
+      ws.repos[0].path,
+      join(paths.workspaces, "pg", "app"),
+      "the record is repointed despite the config failure",
+    );
+
+    const second = await migrateReposIntoWorkspace(paths);
+
+    assert.ok(
+      second.notes.some((n) => /config/i.test(n)),
+      "a second run still attempts ensureConfigRepo rather than resting silently unhealed",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(origin, { recursive: true, force: true });
   }
 });

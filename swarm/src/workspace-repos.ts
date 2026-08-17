@@ -80,19 +80,36 @@ export async function ensureConfigRepo(workspaceDir: string): Promise<boolean> {
 }
 
 /**
- * Where a project repo lives inside its workspace.
+ * Why a repo name cannot become a directory name inside a workspace, or null
+ * if it's fine. A path separator or ".." would let `join` climb outside the
+ * workspace directory — the repo-name equivalent of the guard `slugForDir`
+ * already gives the *workspace* name (workspaces.ts). "." doesn't escape but
+ * lands ON the workspace directory itself, merging the clone's own `.git`
+ * with its unrelated siblings (config/, .runtime/).
  *
- * Rejects a name containing a path separator, or equal to "..": a bare `join`
- * would let such a name climb outside the workspace directory — the repo-name
- * equivalent of the guard `slugForDir` already gives the *workspace* name
- * (workspaces.ts). Checked here, not at each call site, so every caller
- * (cloneRepoInto, materializeRepos, migrateReposIntoWorkspace) is covered.
+ * Shared by `repoDirFor` below (the boot-time guard — no route validation
+ * runs on that path) and `workspaceProblems` in server.ts (the route-time
+ * guard, so POST/PUT /workspaces 400s on a bad name instead of surfacing an
+ * unhandled 500 from `repoDirFor` further downstream). One predicate, so the
+ * two never drift apart on what counts as invalid.
+ */
+export function repoNameProblem(name: string): string | null {
+  const trimmed = name.trim();
+  if (/[/\\]/.test(name) || name === ".." || trimmed === "" || trimmed === ".") {
+    return `a path separator, "..", or "." would let it escape onto or outside the workspace directory`;
+  }
+  return null;
+}
+
+/**
+ * Where a project repo lives inside its workspace. Checked here, not at each
+ * call site, so every caller (cloneRepoInto, materializeRepos,
+ * migrateReposIntoWorkspace) is covered by one guard.
  */
 export function repoDirFor(workspaceDir: string, repo: WorkspaceRepo): string {
-  if (/[/\\]/.test(repo.name) || repo.name === "..") {
-    throw new Error(
-      `Repo "${repo.name}": invalid repo name — a path separator or ".." would let it escape the workspace directory`,
-    );
+  const problem = repoNameProblem(repo.name);
+  if (problem) {
+    throw new Error(`Repo "${repo.name}": invalid repo name — ${problem}`);
   }
   return join(workspaceDir, repo.name);
 }
@@ -261,25 +278,40 @@ export async function migrateReposIntoWorkspace(
         }
       }
 
-      if (!changed) continue;
+      if (changed) {
+        try {
+          // Save BEFORE the config/ commit below: when config/ is not yet a
+          // repo, its initial commit snapshots whatever is on disk at that
+          // moment. Committing first would capture the pre-migration
+          // settings.json — the external path — instead of the repointed
+          // record this migration exists to produce.
+          await saveWorkspace(paths, { ...ws, repos });
+          // Confirmed here, independent of ensureConfigRepo below: a clone
+          // whose record was saved IS a completed migration, whether or not
+          // config/ separately becomes a git repo. Reporting it under
+          // `skipped` because of an unrelated config failure would be false
+          // — the boot log's "cloned:" line exists so a silent, successful
+          // migration can be confirmed at all, and a false "could not save"
+          // note would point someone at the wrong problem.
+          cloned.push(...justCloned);
+        } catch (err) {
+          skipped.push(...justCloned);
+          notes.push(
+            `[repo-migration] cloned ${ws.name}'s repos but could not save the record — ${(err as Error).message}`,
+          );
+        }
+      }
+
+      // Outside the `changed` gate, and in its own try/catch, deliberately:
+      // this must run every boot, not just the boot that happened to clone
+      // something, so a workspace whose config/ failed to become a repo on
+      // some prior run keeps getting another chance rather than resting
+      // silently unhealed — per ensureConfigRepo's own docstring, a worktree
+      // cut from a repo-less config/ comes out silently empty.
       try {
-        // Save BEFORE the first config/ commit: when config/ is not yet a
-        // repo, ensureConfigRepo's initial commit snapshots whatever is on
-        // disk at that moment. Committing first would capture the
-        // pre-migration settings.json — the external path — instead of the
-        // repointed record this migration exists to produce.
-        await saveWorkspace(paths, { ...ws, repos });
         await ensureConfigRepo(dir);
-        // Only confirmed here: a clone that succeeded but whose record could
-        // not be saved is not a completed migration, and must not be
-        // reported as one — the boot log's "cloned:" line is the one thing
-        // that lets a silent, successful migration be confirmed at all.
-        cloned.push(...justCloned);
       } catch (err) {
-        skipped.push(...justCloned);
-        notes.push(
-          `[repo-migration] cloned ${ws.name}'s repos but could not save the record — ${(err as Error).message}`,
-        );
+        notes.push(`[repo-migration] ${ws.name}'s config/ could not become a git repo — ${(err as Error).message}`);
       }
     } catch (err) {
       for (const repo of ws.repos) skipped.push(`${ws.name}/${repo.name}`);

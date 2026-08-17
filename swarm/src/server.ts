@@ -181,7 +181,7 @@ import {
   type WorkBoard,
   type WorkCard,
 } from "./work-items.js";
-import { materializeRepos, migrateReposIntoWorkspace } from "./workspace-repos.js";
+import { materializeRepos, migrateReposIntoWorkspace, repoNameProblem } from "./workspace-repos.js";
 import {
   activeWorkspaces,
   assertNoWorkspaceDirCollision,
@@ -3615,6 +3615,12 @@ export async function workspaceProblems(
   if (!Array.isArray(b.repos) || b.repos.length === 0) return "A workspace needs at least one repo";
   for (const r of b.repos) {
     if (!r?.name?.trim()) return "Every repo needs a name";
+    // Mirrors repoDirFor's guard (workspace-repos.ts) so a repo name that
+    // would escape or collapse onto the workspace directory 400s here,
+    // instead of surfacing as an unhandled 500 from repoDirFor once
+    // materializeRepos runs.
+    const nameProblem = repoNameProblem(r.name);
+    if (nameProblem) return `Repo "${r.name}": ${nameProblem}`;
     if (opts.requireLocalRepos === false) {
       // Pre-clone: a repo may be a remote URL with no local checkout yet, so an
       // empty path is legitimate here. A path that IS given must still be absolute.

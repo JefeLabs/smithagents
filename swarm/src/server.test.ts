@@ -376,6 +376,26 @@ test("workspaceProblems: relaxed mode still rejects a non-empty relative path", 
   assert.match(result ?? "", /path must be absolute/, "a path that IS given must still be absolute, even relaxed");
 });
 
+test("workspaceProblems: rejects a repo name that would escape or collapse onto the workspace directory", async () => {
+  // Mirrors repoDirFor's own guard (workspace-repos.ts) — this must 400 here,
+  // at the route, rather than reach materializeRepos and surface as an
+  // unhandled 500 from repoDirFor.
+  const escaping: Partial<Workspace> = {
+    name: "pg",
+    repos: [{ name: "../../escaped", path: "", repository: "https://example.com/x.git" }],
+  };
+  const collapsing: Partial<Workspace> = {
+    name: "pg",
+    repos: [{ name: ".", path: "", repository: "https://example.com/x.git" }],
+  };
+
+  const first = await workspaceProblems(escaping, { requireLocalRepos: false });
+  const second = await workspaceProblems(collapsing, { requireLocalRepos: false });
+
+  assert.match(first ?? "", /escape/i, "an escaping repo name 400s instead of surfacing later as a 500");
+  assert.match(second ?? "", /escape/i, "so does a name that collapses onto the workspace directory itself");
+});
+
 // POST /workspaces/:name/verify-atlassian's two new 400-guard branches (no
 // connectorId set; connectorId set but no matching connector in
 // user.connectors) are NOT covered by a route-level test here. Every other
