@@ -29,3 +29,15 @@ test("workIdProblem: the empty case says what is wrong, not something else", () 
   assert.ok(problem);
   assert.doesNotMatch(problem, /separator/, "a blank id is not a separator problem");
 });
+
+test("workIdProblem: rejects surrounding whitespace so the id matches its path", () => {
+  for (const id of ["  work-42", "work-42  ", "  work-42  "]) {
+    assert.ok(workIdProblem(id), `${id} must be rejected`);
+  }
+});
+
+test("workIdProblem: rejects control characters that break git refs", () => {
+  for (const id of ["foo\nbar", "a\tb", "work\x00id"]) {
+    assert.ok(workIdProblem(id), `${id} must be rejected`);
+  }
+});
