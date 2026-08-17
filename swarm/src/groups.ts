@@ -6,7 +6,8 @@
 // Prior art: docs/superpowers/specs/2026-08-11-workspace-groups-design.md
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { isGroupRecord, loadAllContextsFromDir, type Workspace } from "./workspaces.js";
+import type { SmithPaths } from "./paths.js";
+import { isGroupRecord, loadAllContexts, loadAllContextsFromDir, type Workspace } from "./workspaces.js";
 
 export interface WorkspaceGroup {
   name: string;
@@ -119,8 +120,16 @@ export async function removeGroupFile(dir: string, name: string): Promise<void> 
  * existing context renames the migrated group `<name>-group`; the legacy dir
  * is retired as `<dir>.migrated`. Returns human-readable log lines — the
  * caller prints them, because a silent migration is a mystery later.
+ *
+ * `taken` is the ONE NAMESPACE — every context name already in use — so it
+ * must come from loadAllContexts, not loadAllContextsFromDir. A workspace
+ * that has migrated to its own config/settings.json is invisible to the flat
+ * directory alone; missing it here would let a legacy group silently reuse
+ * that workspace's name instead of renaming.
  */
-export async function migrateGroupsDir(groupsDir: string, workspacesDir: string): Promise<string[]> {
+export async function migrateGroupsDir(paths: SmithPaths): Promise<string[]> {
+  const groupsDir = paths.groups;
+  const workspacesDir = paths.workspaces;
   let entries: string[];
   try {
     entries = await readdir(groupsDir);
@@ -128,7 +137,7 @@ export async function migrateGroupsDir(groupsDir: string, workspacesDir: string)
     return []; // nothing to migrate — the common case forever after
   }
   const log: string[] = [];
-  const taken = new Set((await loadAllContextsFromDir(workspacesDir)).map((w) => w.name));
+  const taken = new Set((await loadAllContexts(paths)).map((w) => w.name));
   for (const file of entries.filter((f) => f.endsWith(".json"))) {
     const legacy = assertGroup(file, JSON.parse(await readFile(join(groupsDir, file), "utf8")));
     let name = legacy.name;
@@ -138,7 +147,9 @@ export async function migrateGroupsDir(groupsDir: string, workspacesDir: string)
     }
     await saveGroup(workspacesDir, { ...legacy, name });
     taken.add(name);
-    log.push(`[groups-migration] ${file} → workspaces/${name}.json (members: ${legacy.workspaces.length + legacy.groups.length})`);
+    log.push(
+      `[groups-migration] ${file} → workspaces/${name}.json (members: ${legacy.workspaces.length + legacy.groups.length})`,
+    );
   }
   await rename(groupsDir, `${groupsDir}.migrated`);
   log.push(`[groups-migration] retired ${groupsDir} → ${groupsDir}.migrated`);

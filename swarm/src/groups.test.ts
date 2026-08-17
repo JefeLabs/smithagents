@@ -83,7 +83,16 @@ describe("one context entity (spec 2026-08-13)", () => {
     assert.deepEqual(core?.workspaces, ["acme", "ghost"]); // ghost dangles under workspaces — visible
     assert.deepEqual(core?.groups, ["platform"]);
     // Expansion still resolves through the views exactly as before the merge.
-    assert.deepEqual([...expandGroup("core", views, all.filter((w) => w.members === undefined))], ["acme"]);
+    assert.deepEqual(
+      [
+        ...expandGroup(
+          "core",
+          views,
+          all.filter((w) => w.members === undefined),
+        ),
+      ],
+      ["acme"],
+    );
   });
 
   it("save/load round-trips through the ONE store; an empty group STAYS a group", async () => {
@@ -118,23 +127,61 @@ describe("one context entity (spec 2026-08-13)", () => {
     const { mkdtemp, mkdir, writeFile, readdir } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
+    const { smithPaths } = await import("./paths.js");
     const { migrateGroupsDir, loadGroupsFromDir } = await import("./groups.js");
     const base = await mkdtemp(join(tmpdir(), "one-store-mig-"));
-    const groupsDir = join(base, "groups");
-    const wsDir = join(base, "workspaces");
+    const paths = smithPaths(base);
+    const groupsDir = paths.groups;
+    const wsDir = paths.workspaces;
     await mkdir(groupsDir, { recursive: true });
     await mkdir(wsDir, { recursive: true });
     await writeFile(join(wsDir, "acme.json"), JSON.stringify(ws("acme")));
     await writeFile(join(groupsDir, "core.json"), JSON.stringify({ name: "core", workspaces: ["acme"], groups: [] }));
     // Collides with the existing workspace — must land renamed.
     await writeFile(join(groupsDir, "acme.json"), JSON.stringify({ name: "acme", workspaces: [], groups: ["core"] }));
-    const log = await migrateGroupsDir(groupsDir, wsDir);
+    const log = await migrateGroupsDir(paths);
     assert.ok(log.some((l) => l.includes('renamed to "acme-group"')));
     const views = await loadGroupsFromDir(wsDir);
     assert.deepEqual(views.map((v) => v.name).sort(), ["acme-group", "core"]);
     assert.deepEqual(views.find((v) => v.name === "acme-group")?.groups, ["core"]);
     // The legacy dir is retired; a second run is a clean no-op.
     assert.deepEqual(await readdir(base).then((e) => e.sort()), ["groups.migrated", "workspaces"]);
-    assert.deepEqual(await migrateGroupsDir(groupsDir, wsDir), []);
+    assert.deepEqual(await migrateGroupsDir(paths), []);
+  });
+
+  it("migrateGroupsDir: the collision check sees a workspace that has migrated to config/settings.json, not just flat files", async () => {
+    // Regression for the shape of Plan 5's Critical: taken must be the UNION
+    // of dual-source workspaces and flat groups. loadAllContextsFromDir alone
+    // goes blind to "foo" the moment it lives only in config/settings.json —
+    // the rename would silently stop firing and "foo" (workspace) and
+    // "foo" (renamed-nothing group) would collide in the one namespace.
+    const { mkdtemp, mkdir, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { smithPaths } = await import("./paths.js");
+    const { saveRegistryEntry } = await import("./workspace-registry.js");
+    const { settingsPathFor } = await import("./workspaces.js");
+    const { migrateGroupsDir, loadGroupsFromDir } = await import("./groups.js");
+    const base = await mkdtemp(join(tmpdir(), "one-store-mig-union-"));
+    const paths = smithPaths(base);
+    await mkdir(paths.groups, { recursive: true });
+    // "foo" lives ONLY in its own settings.json + the registry — never a
+    // flat workspaces/foo.json.
+    const fooDir = join(base, "elsewhere", "foo");
+    await mkdir(join(fooDir, "config"), { recursive: true });
+    await writeFile(settingsPathFor(fooDir), JSON.stringify(ws("foo")));
+    await saveRegistryEntry(paths, "foo", fooDir);
+    await writeFile(join(paths.groups, "foo.json"), JSON.stringify({ name: "foo", workspaces: [], groups: [] }));
+
+    const log = await migrateGroupsDir(paths);
+    assert.ok(
+      log.some((l) => l.includes('renamed to "foo-group"')),
+      `expected a rename, got: ${log.join(" | ")}`,
+    );
+    const views = await loadGroupsFromDir(paths.workspaces);
+    assert.deepEqual(
+      views.map((v) => v.name),
+      ["foo-group"],
+    );
   });
 });

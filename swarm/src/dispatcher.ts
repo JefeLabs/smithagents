@@ -20,13 +20,14 @@ import { dirname, join, resolve } from "node:path";
 import { gateReason, loadCliToolsFile, refreshCliTool } from "./cli-tools.js";
 import { ToolLaunchError } from "./drivers/errors.js";
 import { getDriver } from "./drivers/index.js";
+import { smithPaths } from "./paths.js";
 import { QuarantineManager } from "./quarantine.js";
 import type { WorkerPool } from "./remote-runtime.js";
 import type { RuntimeAdapter } from "./runtime.js";
 import { createRuntime } from "./runtime.js";
 import type { DispatcherEvent, OrchestratorConfig, RuntimeType, TaskManifest, TaskResult } from "./types.js";
 import { loadUsersFromDir, resolveCurrentUser } from "./users.js";
-import { loadWorkspacesFromDir } from "./workspaces.js";
+import { loadWorkspaces } from "./workspaces.js";
 
 /**
  * Fire-and-Forget Dispatcher.
@@ -219,7 +220,7 @@ export class Dispatcher extends EventEmitter {
     const env: Record<string, string> = {};
     if (!manifest.context.repoPath) return { env };
 
-    const workspaces = await loadWorkspacesFromDir(resolve(root, "workspaces"));
+    const workspaces = await loadWorkspaces(smithPaths(root));
     const workspace = workspaces.find((w) => w.repos.some((r) => r.path === manifest.context.repoPath));
     // repoPath is server-resolved from the workspace registry (see
     // prepareWorktree), so failing to find a match here means this task

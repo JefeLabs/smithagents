@@ -183,8 +183,9 @@ import {
   initGitRepo,
   isGitRepo,
   isGroupRecord,
+  loadAllContexts,
   loadAllContextsFromDir,
-  loadWorkspacesFromDir,
+  loadWorkspaces,
   normalizeRepoBranch,
   removeWorkspaceFile,
   resolveRepo,
@@ -358,7 +359,7 @@ export class OrchestratorServer {
 
   /** Reread `.smith/workspaces/*.json` — called at boot and after every mutation below. */
   private async reloadWorkspaces(): Promise<void> {
-    this.workspaces = await loadWorkspacesFromDir(this.paths.workspaces);
+    this.workspaces = await loadWorkspaces(this.paths);
   }
 
   /** Group VIEWS over the one context store (spec 2026-08-13) — boot and after every /groups mutation. */
@@ -449,7 +450,7 @@ export class OrchestratorServer {
 
     // ONE-WAY legacy migration (spec 2026-08-13, one-context-entity): fold
     // .smith/groups/*.json into the one store before anything reads it.
-    for (const line of await migrateGroupsDir(this.paths.groups, this.paths.workspaces)) {
+    for (const line of await migrateGroupsDir(this.paths)) {
       this.app.log.info(line);
     }
 
@@ -470,7 +471,7 @@ export class OrchestratorServer {
         (await loadAllBoards(this.boardDirs())).boards,
       );
       for (const ws of migration.workspaceWrites) {
-        await saveWorkspace(this.paths.workspaces, ws);
+        await saveWorkspace(this.paths, ws);
         this.app.log.info(`[source-migration] seeded sources on ${ws.name}`);
       }
       for (const b of migration.boardWrites) {
@@ -1787,16 +1788,15 @@ export class OrchestratorServer {
       if (!submittedName?.trim() || !submittedRepos?.length) {
         return reply.status(400).send({ error: "Invalid workspace payload" });
       }
-      const dir = this.paths.workspaces;
       const name = submittedName
         .trim()
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/^-|-$/g, "");
-      const all = await loadWorkspacesFromDir(dir);
+      const all = await loadWorkspaces(this.paths);
       // Collision across the ONE namespace (spec 2026-08-13): groupish
       // contexts hold names too.
-      const collider = (await loadAllContextsFromDir(dir)).find((w) => w.name === name);
+      const collider = (await loadAllContexts(this.paths)).find((w) => w.name === name);
       if (collider) {
         return reply.status(409).send({
           error: isGroupRecord(collider)
@@ -1828,8 +1828,9 @@ export class OrchestratorServer {
         // with nothing written — no demoted default, no saved record.
         await ensureWorkspaceDir(this.paths, ws);
         if (ws.default)
-          for (const other of all.filter((w) => w.default)) await saveWorkspace(dir, { ...other, default: undefined });
-        await saveWorkspace(dir, ws);
+          for (const other of all.filter((w) => w.default))
+            await saveWorkspace(this.paths, { ...other, default: undefined });
+        await saveWorkspace(this.paths, ws);
       } catch (err) {
         return reply.status(400).send({ error: String((err as Error).message) });
       }
@@ -1855,8 +1856,7 @@ export class OrchestratorServer {
 
     this.app.put<{ Params: { name: string } }>("/workspaces/:name", async (req, reply) => {
       const b = req.body as Partial<Workspace>;
-      const dir = this.paths.workspaces;
-      const all = await loadWorkspacesFromDir(dir);
+      const all = await loadWorkspaces(this.paths);
       const existing = all.find((w) => w.name === req.params.name);
       if (!existing) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
       const merged: Workspace = {
@@ -1887,7 +1887,7 @@ export class OrchestratorServer {
       if (problem) return reply.status(400).send({ error: problem });
       if (merged.default && !existing.default) {
         for (const other of all.filter((w) => w.default && w.name !== merged.name)) {
-          await saveWorkspace(dir, { ...other, default: undefined });
+          await saveWorkspace(this.paths, { ...other, default: undefined });
         }
       }
       if (existing.default && b.default === false && activeWorkspaces(all).length > 1) {
@@ -1895,26 +1895,24 @@ export class OrchestratorServer {
           .status(409)
           .send({ error: `"${existing.name}" is the default workspace — set another default first` });
       }
-      await saveWorkspace(dir, merged);
+      await saveWorkspace(this.paths, merged);
       await this.reloadWorkspaces();
       return merged;
     });
 
     this.app.post<{ Params: { name: string } }>("/workspaces/:name/archive", async (req, reply) => {
-      const dir = this.paths.workspaces;
-      const all = await loadWorkspacesFromDir(dir);
+      const all = await loadWorkspaces(this.paths);
       const ws = all.find((w) => w.name === req.params.name);
       if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
       const violation = defaultViolation(all, ws.name);
       if (violation) return reply.status(409).send({ error: violation });
-      await saveWorkspace(dir, { ...ws, archived: true, default: undefined });
+      await saveWorkspace(this.paths, { ...ws, archived: true, default: undefined });
       await this.reloadWorkspaces();
       return { ok: true, archived: ws.name };
     });
 
     this.app.delete<{ Params: { name: string } }>("/workspaces/:name", async (req, reply) => {
-      const dir = this.paths.workspaces;
-      const all = await loadWorkspacesFromDir(dir);
+      const all = await loadWorkspaces(this.paths);
       const ws = all.find((w) => w.name === req.params.name);
       if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
       const violation = defaultViolation(all, ws.name);
@@ -1935,13 +1933,13 @@ export class OrchestratorServer {
       // silently adopts the survivor with its contents intact — harmless
       // while the directory is empty, a real provenance bug once it holds
       // config/settings.json or boards.
-      await removeWorkspaceFile(dir, ws.name);
+      await removeWorkspaceFile(this.paths, ws.name);
       await this.reloadWorkspaces();
       return { ok: true, deleted: ws.name };
     });
 
     this.app.get<{ Params: { name: string } }>("/workspaces/:name/usage", async (req, reply) => {
-      const all = await loadWorkspacesFromDir(this.paths.workspaces);
+      const all = await loadWorkspaces(this.paths);
       const ws = all.find((w) => w.name === req.params.name);
       if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
       const repoPaths = new Set(ws.repos.map((r) => r.path));
@@ -2004,7 +2002,7 @@ export class OrchestratorServer {
       const all = await loadGroupsFromDir(dir);
       // ONE NAMESPACE (spec 2026-08-13): a context name is unique across
       // kinds — a group may not shadow a workspace or vice versa.
-      const collider = (await loadAllContextsFromDir(dir)).find((c) => c.name === name);
+      const collider = (await loadAllContexts(this.paths)).find((c) => c.name === name);
       if (collider) {
         return reply.status(409).send({
           error: isGroupRecord(collider)
@@ -3101,7 +3099,7 @@ export class OrchestratorServer {
         const slice = cap.slices.find((s) => s.id === req.params.sliceId);
         if (!slice) return reply.status(404).send({ error: `Unknown slice: ${req.params.sliceId}` });
         if (slice.specPath) return reply.status(409).send({ error: `Slice already has a spec: ${slice.specPath}` });
-        const workspaces = await loadWorkspacesFromDir(this.paths.workspaces);
+        const workspaces = await loadWorkspaces(this.paths);
         const resolved = resolveRepo(workspaces, cap.workspaceId);
         if (!resolved) return reply.status(400).send({ error: `No active workspace/repo for: ${cap.workspaceId}` });
         try {

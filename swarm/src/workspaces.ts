@@ -7,6 +7,7 @@ import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { SmithPaths } from "./paths.js";
+import { loadRegistry, removeRegistryEntry, saveRegistryEntry } from "./workspace-registry.js";
 
 export interface WorkspaceRepo {
   name: string;
@@ -156,6 +157,60 @@ export async function loadWorkspacesFromDir(dir: string): Promise<Workspace[]> {
   return (await loadAllContextsFromDir(dir)).filter((w) => !isGroupRecord(w));
 }
 
+/** A workspace's own record, inside its directory. */
+export function settingsPathFor(dir: string): string {
+  return join(dir, "config", "settings.json");
+}
+
+/**
+ * Every workspace: those registered with their own settings.json, plus any flat
+ * record under paths.workspaces that has not migrated yet. Reading both is what
+ * lets the relocation happen separately — an unmigrated workspace still loads.
+ *
+ * On a duplicate name the settings.json copy wins: it is where writes go, so it
+ * is the newer of the two.
+ */
+export async function loadWorkspaces(paths: SmithPaths): Promise<Workspace[]> {
+  const out: Workspace[] = [];
+  const seen = new Set<string>();
+
+  const registry = await loadRegistry(paths);
+  for (const [, dir] of Object.entries(registry)) {
+    try {
+      const raw = await readFile(settingsPathFor(dir), "utf8");
+      const ws = assertContext(settingsPathFor(dir), JSON.parse(raw));
+      seen.add(ws.name);
+      out.push(ws);
+    } catch (err) {
+      // A registered workspace whose settings file is missing is not fatal —
+      // the flat record below may still cover it during the transition.
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
+  }
+
+  for (const ws of await loadWorkspacesFromDir(paths.workspaces)) {
+    if (seen.has(ws.name)) continue;
+    seen.add(ws.name);
+    out.push(ws);
+  }
+  return out;
+}
+
+/**
+ * Every context name in the ONE namespace (spec 2026-08-13): dual-source
+ * plain workspaces plus groupish records. Groups never migrate out of the
+ * flat directory — a group owns no repos and no directory of its own — so
+ * they are read straight off loadAllContextsFromDir; only the workspace half
+ * needs the dual-source read. Namespace-collision checks (workspace/group
+ * creation, migrateGroupsDir's rename-on-collision) need this union:
+ * loadAllContextsFromDir alone goes blind to a workspace the moment it
+ * migrates to config/settings.json.
+ */
+export async function loadAllContexts(paths: SmithPaths): Promise<Workspace[]> {
+  const groups = (await loadAllContextsFromDir(paths.workspaces)).filter(isGroupRecord);
+  return [...(await loadWorkspaces(paths)), ...groups];
+}
+
 /** Workspaces visible to the roster, catalog, and delegation. */
 export function activeWorkspaces(workspaces: Workspace[]): Workspace[] {
   return workspaces.filter((w) => !w.archived);
@@ -192,24 +247,27 @@ export function resolveRepo(
   return repo ? { workspace, repo } : null;
 }
 
-/** Write one workspace to `dir`. Mirror of agents.saveAgent. */
-export async function saveWorkspace(dir: string, ws: Workspace): Promise<void> {
+/** Write one workspace to its own directory and register it. Mirror of agents.saveAgent. */
+export async function saveWorkspace(paths: SmithPaths, ws: Workspace): Promise<void> {
   if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(ws.name)) {
     throw new Error(`Invalid workspace name "${ws.name}": use lowercase letters, digits and dashes`);
   }
-  await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, `${ws.name}.json`), `${JSON.stringify(ws, null, 2)}\n`);
+  const dir = await ensureWorkspaceDir(paths, ws);
+  await writeFile(settingsPathFor(dir), `${JSON.stringify(ws, null, 2)}\n`);
+  await saveRegistryEntry(paths, ws.name, dir);
 }
 
-export async function removeWorkspaceFile(dir: string, name: string): Promise<void> {
-  try {
-    await rm(join(dir, `${name}.json`));
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      throw new Error(`Workspace "${name}" not found`);
-    }
-    throw error;
-  }
+/**
+ * Deregister a workspace and remove its flat record, if any. The workspace's
+ * directory (and any config/settings.json inside it) is deliberately left —
+ * this deletes no data. A missing registry entry or flat file is a no-op
+ * rather than an error, matching removeRegistryEntry's contract: the caller
+ * (the DELETE /workspaces route) already checks existence and 404s before
+ * calling this, so this function's own job is just to be idempotent.
+ */
+export async function removeWorkspaceFile(paths: SmithPaths, name: string): Promise<void> {
+  await removeRegistryEntry(paths, name);
+  await rm(join(paths.workspaces, `${name}.json`), { force: true });
 }
 
 /** True when `path` is inside a git repository (worktrees are cut from here). */

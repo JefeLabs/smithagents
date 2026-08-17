@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
 import { smithPaths } from "./paths.js";
+import { loadRegistry, saveRegistryEntry } from "./workspace-registry.js";
 import type { Workspace } from "./workspaces.js";
 import {
   boardsDirFor,
@@ -15,11 +16,13 @@ import {
   ensureWorkspaceDir,
   initGitRepo,
   isGitRepo,
-  loadWorkspacesFromDir,
+  loadAllContexts,
+  loadWorkspaces,
   normalizeRepoBranch,
   removeWorkspaceFile,
   resolveRepo,
   saveWorkspace,
+  settingsPathFor,
   slugForDir,
   validSources,
   workspaceDir,
@@ -37,10 +40,11 @@ test("resolveRepo never resolves into an archived workspace", () => {
 });
 
 test("saveWorkspace rejects a bad slug and round-trips a good one", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "ws-"));
-  await assert.rejects(() => saveWorkspace(dir, { name: "Bad Name", repos: [{ name: "r", path: "/tmp" }] }));
-  await saveWorkspace(dir, { name: "good", repos: [{ name: "r", path: "/tmp" }] });
-  assert.equal((await loadWorkspacesFromDir(dir))[0]?.name, "good");
+  const root = await mkdtemp(join(tmpdir(), "ws-"));
+  const paths = smithPaths(root);
+  await assert.rejects(() => saveWorkspace(paths, { name: "Bad Name", repos: [{ name: "r", path: "/tmp" }] }));
+  await saveWorkspace(paths, { name: "good", repos: [{ name: "r", path: "/tmp" }] });
+  assert.equal((await loadWorkspaces(paths))[0]?.name, "good");
 });
 
 test("isGitRepo: true for a real repo, false for a plain dir", async () => {
@@ -78,30 +82,36 @@ test("normalizeRepoBranch: drops the transient initGit flag so PUT can't persist
   assert.equal("initGit" in normalizeRepoBranch([{ name: "web", path: "/x", initGit: true } as never])[0]!, false);
 });
 
-test("removeWorkspaceFile: rejects missing workspace with readable error, succeeds on existing file", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "rm-"));
-  await assert.rejects(() => removeWorkspaceFile(dir, "nope"), /Workspace "nope" not found/);
-  await saveWorkspace(dir, { name: "exist", repos: [{ name: "r", path: "/tmp" }] });
-  await removeWorkspaceFile(dir, "exist");
-  assert.equal((await loadWorkspacesFromDir(dir)).length, 0);
+// A missing workspace is a no-op, not an error — mirrors removeRegistryEntry's
+// contract (Task 1) and rm's { force: true }. The DELETE /workspaces route is
+// what checks existence and 404s; this function's job is just to be idempotent.
+test("removeWorkspaceFile: a missing name is a no-op, an existing one is removed", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rm-"));
+  const paths = smithPaths(root);
+  await removeWorkspaceFile(paths, "nope"); // does not throw
+  await saveWorkspace(paths, { name: "exist", repos: [{ name: "r", path: "/tmp" }] });
+  await removeWorkspaceFile(paths, "exist");
+  assert.equal((await loadWorkspaces(paths)).length, 0);
 });
 
 test("atlassian and github config round-trip through save/load", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "ws-"));
+  const root = await mkdtemp(join(tmpdir(), "ws-"));
+  const paths = smithPaths(root);
   const ws: Workspace = {
     name: "acme",
     repos: [{ name: "web", path: "/tmp", branch: "main", github: { owner: "acme", repo: "web" } }],
     atlassian: { siteUrl: "https://acme.atlassian.net", jiraProjectKeys: ["ACME"], confluenceSpaceKeys: ["DOCS"] },
   };
-  await saveWorkspace(dir, ws);
-  const [loaded] = await loadWorkspacesFromDir(dir);
+  await saveWorkspace(paths, ws);
+  const [loaded] = await loadWorkspaces(paths);
   assert.deepEqual(loaded?.atlassian, ws.atlassian);
   assert.deepEqual(loaded?.repos[0]?.github, { owner: "acme", repo: "web" });
 });
 
 test("a workspace atlassian block with connectorId round-trips through save/load unchanged", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "workspaces-connectorid-"));
-  const repoDir = join(dir, "repo");
+  const root = await mkdtemp(join(tmpdir(), "workspaces-connectorid-"));
+  const paths = smithPaths(root);
+  const repoDir = join(root, "repo");
   await mkdir(repoDir, { recursive: true });
   await execFileAsync("git", ["init", "-q"], { cwd: repoDir });
   const ws: Workspace = {
@@ -109,51 +119,54 @@ test("a workspace atlassian block with connectorId round-trips through save/load
     repos: [{ name: "web", path: repoDir }],
     atlassian: { siteUrl: "https://acme.atlassian.net", connectorId: "conn-1" },
   };
-  await saveWorkspace(dir, ws);
-  const [reloaded] = await loadWorkspacesFromDir(dir);
+  await saveWorkspace(paths, ws);
+  const [reloaded] = await loadWorkspaces(paths);
   assert.equal(reloaded!.atlassian?.connectorId, "conn-1");
 });
 
 test("a repo github block with connectorId round-trips through save/load unchanged", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "workspaces-repo-connectorid-"));
-  const repoDir = join(dir, "repo");
+  const root = await mkdtemp(join(tmpdir(), "workspaces-repo-connectorid-"));
+  const paths = smithPaths(root);
+  const repoDir = join(root, "repo");
   await mkdir(repoDir, { recursive: true });
   await execFileAsync("git", ["init", "-q"], { cwd: repoDir });
   const ws: Workspace = {
     name: "acme",
     repos: [{ name: "web", path: repoDir, github: { owner: "acme", repo: "web", connectorId: "conn-2" } }],
   };
-  await saveWorkspace(dir, ws);
-  const [reloaded] = await loadWorkspacesFromDir(dir);
+  await saveWorkspace(paths, ws);
+  const [reloaded] = await loadWorkspaces(paths);
   assert.equal(reloaded!.repos[0]!.github?.connectorId, "conn-2");
 });
 
 test("workspaceProblems does not require or validate connectorId — an unset one is fine", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "workspaces-noconnid-"));
-  const repoDir = join(dir, "repo");
+  const root = await mkdtemp(join(tmpdir(), "workspaces-noconnid-"));
+  const paths = smithPaths(root);
+  const repoDir = join(root, "repo");
   await mkdir(repoDir, { recursive: true });
   await execFileAsync("git", ["init", "-q"], { cwd: repoDir });
   const ws: Workspace = {
     name: "acme",
     repos: [{ name: "web", path: repoDir, github: { owner: "acme", repo: "web" } }],
   };
-  await saveWorkspace(dir, ws);
-  const [reloaded] = await loadWorkspacesFromDir(dir);
+  await saveWorkspace(paths, ws);
+  const [reloaded] = await loadWorkspaces(paths);
   assert.equal(reloaded?.atlassian?.connectorId, undefined);
   assert.equal(reloaded?.repos[0]?.github?.connectorId, undefined);
 });
 
-test("saveWorkspace/loadWorkspacesFromDir round-trips the optional links field", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "ws-links-"));
-  await saveWorkspace(dir, {
+test("saveWorkspace/loadWorkspaces round-trips the optional links field", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ws-links-"));
+  const paths = smithPaths(root);
+  await saveWorkspace(paths, {
     name: "acme",
-    repos: [{ name: "web", path: dir }],
+    repos: [{ name: "web", path: root }],
     links: ["https://acme.example/runbook"],
   });
-  const [ws] = await loadWorkspacesFromDir(dir);
+  const [ws] = await loadWorkspaces(paths);
   assert.deepEqual(ws!.links, ["https://acme.example/runbook"]);
-  await saveWorkspace(dir, { name: "plain", repos: [{ name: "web", path: dir }] });
-  const plain = (await loadWorkspacesFromDir(dir)).find((w) => w.name === "plain");
+  await saveWorkspace(paths, { name: "plain", repos: [{ name: "web", path: root }] });
+  const plain = (await loadWorkspaces(paths)).find((w) => w.name === "plain");
   assert.equal(plain!.links, undefined);
 });
 
@@ -165,7 +178,8 @@ test("initGitRepo: turns a plain directory into a git repository", async () => {
 });
 
 test("a workspace record with sources round-trips through save and load untouched", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "ws-"));
+  const root = await mkdtemp(join(tmpdir(), "ws-"));
+  const paths = smithPaths(root);
   const ws: Workspace = {
     name: "acme",
     repos: [{ name: "app", path: "/tmp/app" }],
@@ -181,8 +195,8 @@ test("a workspace record with sources round-trips through save and load untouche
       },
     ],
   };
-  await saveWorkspace(dir, ws);
-  const [loaded] = await loadWorkspacesFromDir(dir);
+  await saveWorkspace(paths, ws);
+  const [loaded] = await loadWorkspaces(paths);
   assert.deepEqual(loaded.sources, ws.sources);
 });
 
@@ -360,4 +374,146 @@ test("collidingWorkspaceDirs: silent when every workspace resolves uniquely", ()
     ]),
     [],
   );
+});
+
+test("loadWorkspaces: reads a record from the workspace's own settings.json", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ws-settings-"));
+  try {
+    const paths = smithPaths(root);
+    const dir = join(root, "elsewhere", "pg");
+    mkdirSync(join(dir, "config"), { recursive: true });
+    writeFileSync(settingsPathFor(dir), JSON.stringify({ name: "pg", repos: [{ name: "r", path: "/abs/r" }] }));
+    await saveRegistryEntry(paths, "pg", dir);
+
+    const all = await loadWorkspaces(paths);
+    assert.deepEqual(
+      all.map((w) => w.name),
+      ["pg"],
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("loadWorkspaces: still reads a flat record that has not been migrated", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ws-flat-"));
+  try {
+    const paths = smithPaths(root);
+    mkdirSync(paths.workspaces, { recursive: true });
+    writeFileSync(
+      join(paths.workspaces, "legacy.json"),
+      JSON.stringify({ name: "legacy", repos: [{ name: "r", path: "/abs/r" }] }),
+    );
+
+    const all = await loadWorkspaces(paths);
+    assert.deepEqual(
+      all.map((w) => w.name),
+      ["legacy"],
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("loadWorkspaces: when a record exists in both places, settings.json wins", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ws-both-"));
+  try {
+    const paths = smithPaths(root);
+    const dir = join(root, "workspaces", "dup");
+    mkdirSync(join(dir, "config"), { recursive: true });
+    mkdirSync(paths.workspaces, { recursive: true });
+    writeFileSync(
+      settingsPathFor(dir),
+      JSON.stringify({ name: "dup", description: "NEW", repos: [{ name: "r", path: "/abs/r" }] }),
+    );
+    writeFileSync(
+      join(paths.workspaces, "dup.json"),
+      JSON.stringify({ name: "dup", description: "STALE", repos: [{ name: "r", path: "/abs/r" }] }),
+    );
+    await saveRegistryEntry(paths, "dup", dir);
+
+    const all = await loadWorkspaces(paths);
+    assert.equal(all.length, 1, "one workspace, not two");
+    assert.equal(all[0].description, "NEW", "the settings.json copy is authoritative");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("saveWorkspace: writes settings.json and registers the directory", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ws-save-"));
+  try {
+    const paths = smithPaths(root);
+    const ws = { name: "fresh", repos: [{ name: "r", path: "/abs/r" }] } as Workspace;
+
+    await saveWorkspace(paths, ws);
+
+    const dir = workspaceDir(paths, ws);
+    assert.ok(statSync(settingsPathFor(dir)).isFile(), "settings.json written");
+    assert.deepEqual(await loadRegistry(paths), { fresh: dir }, "and registered");
+    assert.deepEqual(
+      (await loadWorkspaces(paths)).map((w) => w.name),
+      ["fresh"],
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("removeWorkspaceFile: deregisters and removes the flat record, leaving the directory", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ws-del-"));
+  try {
+    const paths = smithPaths(root);
+    const ws = { name: "gone", repos: [{ name: "r", path: "/abs/r" }] } as Workspace;
+    await saveWorkspace(paths, ws);
+
+    await removeWorkspaceFile(paths, "gone");
+
+    assert.deepEqual(await loadRegistry(paths), {}, "deregistered");
+    assert.deepEqual(await loadWorkspaces(paths), [], "no longer loaded");
+    // The directory itself is deliberately left — this plan deletes no data.
+    assert.ok(statSync(workspaceDir(paths, ws)).isDirectory(), "directory remains");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("loadAllContexts: the ONE namespace across a settings.json-based workspace and a flat group", async () => {
+  // The name-collision checks (POST /workspaces, POST /groups, and
+  // migrateGroupsDir's `taken` set) need to see BOTH kinds together —
+  // loadAllContextsFromDir alone goes blind to a workspace the moment it
+  // moves to config/settings.json.
+  const root = mkdtempSync(join(tmpdir(), "ws-allctx-"));
+  try {
+    const paths = smithPaths(root);
+    const dir = join(paths.workspaces, "pg");
+    mkdirSync(join(dir, "config"), { recursive: true });
+    writeFileSync(settingsPathFor(dir), JSON.stringify({ name: "pg", repos: [{ name: "r", path: "/abs/r" }] }));
+    await saveRegistryEntry(paths, "pg", dir);
+    mkdirSync(paths.workspaces, { recursive: true });
+    writeFileSync(join(paths.workspaces, "a-group.json"), JSON.stringify({ name: "a-group", members: ["pg"] }));
+
+    const all = await loadAllContexts(paths);
+    assert.deepEqual(all.map((c) => c.name).sort(), ["a-group", "pg"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("loadAllContexts: a flat, unmigrated workspace is still visible alongside a group", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ws-allctx-flat-"));
+  try {
+    const paths = smithPaths(root);
+    mkdirSync(paths.workspaces, { recursive: true });
+    writeFileSync(
+      join(paths.workspaces, "legacy.json"),
+      JSON.stringify({ name: "legacy", repos: [{ name: "r", path: "/abs/r" }] }),
+    );
+    writeFileSync(join(paths.workspaces, "a-group.json"), JSON.stringify({ name: "a-group", members: [] }));
+
+    const all = await loadAllContexts(paths);
+    assert.deepEqual(all.map((c) => c.name).sort(), ["a-group", "legacy"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
