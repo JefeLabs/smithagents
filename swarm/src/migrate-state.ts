@@ -3,8 +3,11 @@
 // COPY, never move. The source stays intact so rollback is "point the root
 // back" rather than "restore from a backup you may not have" — this install
 // lost boards and documents to an irreversible reset once already.
-import { cp, mkdir, readdir, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import type { SmithPaths } from "./paths.js";
+import { loadBoards } from "./work-items.js";
+import { type Workspace, workspaceDir } from "./workspaces.js";
 
 /**
  * Never migrated. `worktrees` holds live session working directories: tmux
@@ -149,4 +152,54 @@ export async function migrateState(from: string, to: string): Promise<{ copied: 
     await cp(join(from, entry), join(to, entry), { recursive: true, preserveTimestamps: true });
   }
   return { copied: migratable, skipped };
+}
+
+/**
+ * Relocate each workspace-owned board out of the flat host directory and into
+ * its workspace's config/boards. Copy first, verify, then remove the source —
+ * a board is never in neither place.
+ *
+ * Two kinds of board deliberately stay put: the workspace-less `personal`
+ * board, and any board whose workspace record no longer exists. Dropping an
+ * orphan would destroy the only copy of work that a later recreate might want.
+ *
+ * A workspace copy that already exists at the target is never overwritten.
+ * Since board reads went workspace-first, an edit made after that change
+ * lands only in the workspace copy while the host original goes stale — so
+ * the target, when present, is the authoritative one, and copying the host
+ * version over it would silently destroy the newer edit. The stale host
+ * source is still removed and the board still reported as moved.
+ */
+export async function migrateBoards(
+  paths: SmithPaths,
+  workspaces: Workspace[],
+): Promise<{ moved: Array<{ id: string; to: string }>; kept: string[] }> {
+  const { boards } = await loadBoards(paths.work);
+  const moved: Array<{ id: string; to: string }> = [];
+  const kept: string[] = [];
+
+  for (const board of boards) {
+    const ws = board.workspaceId ? workspaces.find((w) => w.name === board.workspaceId) : undefined;
+    if (!ws) {
+      kept.push(board.id);
+      continue;
+    }
+    const targetDir = join(workspaceDir(paths, ws), "config", "boards");
+    await mkdir(targetDir, { recursive: true });
+    const from = join(paths.work, `${board.id}.json`);
+    const to = join(targetDir, `${board.id}.json`);
+    if (await exists(to)) {
+      // The workspace copy is already authoritative — do not touch it, just
+      // clear away the stale duplicate left behind in the host directory.
+      await rm(from);
+      moved.push({ id: board.id, to });
+      continue;
+    }
+    await cp(from, to, { preserveTimestamps: true });
+    // Only once the copy is on disk does the source go.
+    await stat(to);
+    await rm(from);
+    moved.push({ id: board.id, to });
+  }
+  return { moved, kept };
 }

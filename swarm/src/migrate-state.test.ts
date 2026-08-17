@@ -1,10 +1,20 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { loadConfig } from "./config.js";
-import { isInitialized, markInitialized, migrateState, needsMigration, SKIPPED_ENTRIES } from "./migrate-state.js";
+import {
+  isInitialized,
+  markInitialized,
+  migrateBoards,
+  migrateState,
+  needsMigration,
+  SKIPPED_ENTRIES,
+} from "./migrate-state.js";
+import { smithPaths } from "./paths.js";
+import { createBoard, saveBoard } from "./work-items.js";
+import { type Workspace, workspaceDir } from "./workspaces.js";
 
 function fixture(): string {
   const dir = mkdtempSync(join(tmpdir(), "smith-mig-"));
@@ -229,5 +239,101 @@ test("needsMigration: an unreadable target must not be mistaken for an absent on
   } finally {
     chmodSync(locked, 0o700); // restore so rmSync below can traverse and remove it
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("migrateBoards: moves a workspace's board into its config, leaves personal alone", async () => {
+  const root = mkdtempSync(join(tmpdir(), "mig-boards-"));
+  try {
+    const paths = smithPaths(root);
+    const ws = { name: "pg", repos: [] } as Workspace;
+    mkdirSync(paths.work, { recursive: true });
+    await saveBoard(paths.work, createBoard("deliver", "pg"));
+    await saveBoard(paths.work, createBoard("personal"));
+
+    const result = await migrateBoards(paths, [ws]);
+
+    const target = join(workspaceDir(paths, ws), "config", "boards", "pg-deliver.json");
+    assert.ok(statSync(target).isFile(), "the workspace board moved into its config");
+    assert.throws(() => statSync(join(paths.work, "pg-deliver.json")), "and is gone from the host dir");
+    assert.ok(statSync(join(paths.work, "personal.json")).isFile(), "personal stayed at host level");
+    assert.deepEqual(
+      result.moved.map((m) => m.id),
+      ["pg-deliver"],
+    );
+    assert.deepEqual(result.kept, ["personal"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("migrateBoards: a board whose workspace no longer exists is kept, never dropped", async () => {
+  const root = mkdtempSync(join(tmpdir(), "mig-orphan-"));
+  try {
+    const paths = smithPaths(root);
+    mkdirSync(paths.work, { recursive: true });
+    await saveBoard(paths.work, createBoard("deliver", "deleted-ws"));
+
+    const result = await migrateBoards(paths, []);
+
+    assert.ok(statSync(join(paths.work, "deleted-ws-deliver.json")).isFile(), "the orphan stays put");
+    assert.deepEqual(result.moved, []);
+    assert.deepEqual(result.kept, ["deleted-ws-deliver"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("migrateBoards: is idempotent — a second run moves nothing and loses nothing", async () => {
+  const root = mkdtempSync(join(tmpdir(), "mig-twice-"));
+  try {
+    const paths = smithPaths(root);
+    const ws = { name: "pg", repos: [] } as Workspace;
+    mkdirSync(paths.work, { recursive: true });
+    await saveBoard(paths.work, createBoard("deliver", "pg"));
+
+    await migrateBoards(paths, [ws]);
+    const second = await migrateBoards(paths, [ws]);
+
+    assert.deepEqual(second.moved, [], "nothing left to move");
+    const target = join(workspaceDir(paths, ws), "config", "boards", "pg-deliver.json");
+    assert.ok(statSync(target).isFile(), "and the moved board is still there");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("migrateBoards: a workspace copy already on disk is authoritative — never overwritten by a stale host copy", async () => {
+  const root = mkdtempSync(join(tmpdir(), "mig-newer-"));
+  try {
+    const paths = smithPaths(root);
+    const ws = { name: "pg", repos: [] } as Workspace;
+    mkdirSync(paths.work, { recursive: true });
+
+    // The stale original: still sitting in the host dir, never edited since Task 2 landed.
+    const staleHost = createBoard("deliver", "pg");
+    staleHost.name = "STALE";
+    await saveBoard(paths.work, staleHost);
+
+    // The live copy: written into the workspace dir by a post-Task-2 edit, and
+    // therefore the one actually being served by loadAllBoards' workspace-first order.
+    const targetDir = join(workspaceDir(paths, ws), "config", "boards");
+    mkdirSync(targetDir, { recursive: true });
+    const newerWorkspace = createBoard("deliver", "pg");
+    newerWorkspace.name = "NEWER";
+    await saveBoard(targetDir, newerWorkspace);
+
+    const result = await migrateBoards(paths, [ws]);
+
+    const onDisk = JSON.parse(readFileSync(join(targetDir, "pg-deliver.json"), "utf8"));
+    assert.equal(onDisk.name, "NEWER", "the workspace copy must survive untouched — it is the authoritative one");
+    assert.throws(() => statSync(join(paths.work, "pg-deliver.json")), "the stale host copy is removed");
+    assert.deepEqual(
+      result.moved.map((m) => m.id),
+      ["pg-deliver"],
+      "still reported as moved, even though nothing was copied",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
