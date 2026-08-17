@@ -15,7 +15,7 @@ import {
 } from "./migrate-state.js";
 import { smithPaths } from "./paths.js";
 import { createBoard, saveBoard } from "./work-items.js";
-import { loadRegistry } from "./workspace-registry.js";
+import { loadRegistry, registryPath } from "./workspace-registry.js";
 import { loadWorkspaces, settingsPathFor, type Workspace, workspaceDir } from "./workspaces.js";
 
 function fixture(): string {
@@ -666,6 +666,38 @@ test("migrateWorkspaceRecords: a settings.json that parses but fails validation 
       all.some((w) => w.name === "pg"),
       "the workspace still loads, via the surviving flat record",
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("migrateWorkspaceRecords: a malformed registry file is blamed correctly — never the flat record, and never double-reported", async () => {
+  const root = mkdtempSync(join(tmpdir(), "mig-badregistry-"));
+  try {
+    const paths = smithPaths(root);
+    mkdirSync(paths.workspaces, { recursive: true });
+    writeFileSync(
+      join(paths.workspaces, "pg.json"),
+      JSON.stringify({ name: "pg", repos: [{ name: "r", path: "/abs/r" }] }),
+    );
+    // The file that's actually broken here is the registry (workspaces.json,
+    // at paths.root) — a completely different file from the flat record.
+    writeFileSync(registryPath(paths), "{not json");
+
+    const result = await migrateWorkspaceRecords(paths);
+
+    assert.ok(
+      !(result.moved.includes("pg") && result.skipped.includes("pg")),
+      "never reported as both moved and skipped — server.ts's boot log treats moved as a completed relocation",
+    );
+    assert.ok(result.skipped.includes("pg"), "the failed registration lands in skipped");
+    assert.ok(!result.moved.includes("pg"), "and never in moved — that would lie about a completed relocation");
+    assert.ok(
+      result.notes.some((n) => n.includes(registryPath(paths)) && !n.includes("pg.json")),
+      "the note names the file that actually failed — the registry — not the flat record",
+    );
+    // The write to settings.json itself succeeded; only registration failed.
+    assert.ok(statSync(settingsPathFor(join(paths.workspaces, "pg"))).isFile());
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

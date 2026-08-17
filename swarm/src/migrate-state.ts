@@ -1,18 +1,22 @@
-// One-time copy of a legacy state root into the current one.
+// Two kinds of one-time migration into the current state root.
 //
-// COPY, never move. The source stays intact so rollback is "point the root
-// back" rather than "restore from a backup you may not have" — this install
-// lost boards and documents to an irreversible reset once already.
-import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+// migrateState() COPIES a legacy root wholesale — the source stays intact so
+// rollback is "point the root back" rather than "restore from a backup you
+// may not have" (this install lost boards and documents to an irreversible
+// reset once already). migrateBoards() and migrateWorkspaceRecords() below
+// instead MOVE individual records within the current root — copy/write,
+// verify, then remove the source — since there is no second root to roll
+// back to for those.
+import { cp, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type { SmithPaths } from "./paths.js";
 import { loadBoards } from "./work-items.js";
-import { saveRegistryEntry } from "./workspace-registry.js";
+import { registryPath, saveRegistryEntry } from "./workspace-registry.js";
 import {
-  assertContext,
   ensureWorkspaceDir,
   loadWorkspaceFilesFromDir,
+  probeSettings,
   settingsPathFor,
   type Workspace,
   workspaceDir,
@@ -213,45 +217,6 @@ export async function migrateBoards(
   return { moved, kept };
 }
 
-type SettingsProbe = { kind: "missing" } | { kind: "corrupt" } | { kind: "parsed"; value: Workspace };
-
-/**
- * `stat` proves a file exists, not that it holds a complete record —
- * `saveWorkspace`'s `writeFile` is not atomic, so a crash mid-write leaves a
- * settings.json that exists but is truncated garbage. Distinguish "nothing
- * written yet" from "something unreadable was written" so callers can decide
- * per case instead of treating both as "already migrated".
- *
- * "Unreadable" includes parses-as-JSON-but-fails-validation, not just
- * malformed JSON: `assertContext` is what actually decides whether a record
- * is usable, so a bare `JSON.parse` alone would let something like
- * `{"name":"pg"}` (missing `repos`) through as "parsed" — trusting that is
- * how one hand-edited settings.json turns into `loadWorkspaces()` throwing
- * for the whole install on the next boot, after the flat backup that could
- * have fixed it is already gone.
- *
- * The validated value is returned too, so a caller can confirm the record
- * belongs to the workspace it thinks it does — two names can slug to the
- * same directory (`assertContext` does not enforce `saveWorkspace`'s name
- * format, so legacy data can carry names like "Foo" and "foo" that only
- * differ by case), and a settings.json that merely validates is not proof it
- * is *this* workspace's.
- */
-async function probeSettings(settings: string): Promise<SettingsProbe> {
-  let raw: string;
-  try {
-    raw = await readFile(settings, "utf8");
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-    return { kind: "missing" };
-  }
-  try {
-    return { kind: "parsed", value: assertContext(settings, JSON.parse(raw)) };
-  } catch {
-    return { kind: "corrupt" };
-  }
-}
-
 /**
  * Move each flat workspace record into its own directory as config/settings.json
  * and register the directory. Write first, verify it reads back and validates,
@@ -325,6 +290,15 @@ export async function migrateWorkspaceRecords(
         continue;
       }
 
+      // Only the WRITE case (settings.json created fresh from this flat
+      // record) is a genuine relocation; the byte-identical-duplicate case
+      // is a no-op consumption of a stale copy. Neither is reported until
+      // registration and removal below actually succeed — pushing here and
+      // pushing again from the catch block on a later failure would land
+      // the same name in both `moved` and `skipped`, and server.ts's boot
+      // log treats `moved` as the positive signal a completed relocation
+      // actually happened.
+      let wasWritten: boolean;
       if (before.kind === "missing") {
         await writeFile(settings, `${JSON.stringify(ws, null, 2)}\n`);
         const after = await probeSettings(settings);
@@ -335,7 +309,7 @@ export async function migrateWorkspaceRecords(
           notes.push(`[workspace-migration] ${settings} did not verify after writing — leaving ${flatFile} in place`);
           continue;
         }
-        moved.push(ws.name);
+        wasWritten = true;
       } else if (before.value.name !== ws.name) {
         // Validates fine, but it is someone else's record — two names
         // slugged to this same directory and the other one got here first.
@@ -358,13 +332,27 @@ export async function migrateWorkspaceRecords(
       } else {
         // Same name, identical content — a byte-for-byte duplicate of what's
         // already migrated. Safe to drop.
-        skipped.push(ws.name);
+        wasWritten = false;
       }
 
       // A valid settings.json for this exact record is confirmed on disk —
       // safe to register the directory and drop the now-stale flat copy.
-      await saveRegistryEntry(paths, ws.name, dir);
+      // The registry file (workspaces.json) is a SEPARATE file from anything
+      // named above; if it is what fails to parse or write, the error must
+      // say so — blaming ${flatFile} would send a human fixing the wrong file.
+      try {
+        await saveRegistryEntry(paths, ws.name, dir);
+      } catch (err) {
+        skipped.push(ws.name);
+        notes.push(
+          `[workspace-migration] could not register "${ws.name}" — ${registryPath(paths)}: ${(err as Error).message}; ` +
+            `fix ${registryPath(paths)} (or the underlying I/O problem) and this will resolve on the next boot`,
+        );
+        continue;
+      }
       await rm(flatFile, { force: true });
+      if (wasWritten) moved.push(ws.name);
+      else skipped.push(ws.name);
     } catch (err) {
       skipped.push(ws.name);
       notes.push(
