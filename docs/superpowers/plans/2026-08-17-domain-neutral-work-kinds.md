@@ -848,7 +848,7 @@ cd swarm && SMITH_STATE_ROOT=$(mktemp -d) node --import tsx --test --test-timeou
 sed 's/\x1b\[[0-9;]*m//g' /tmp/t2-suite.txt | grep -E "^ℹ (tests|pass|fail)"
 ```
 
-Expected: **616 pass / 0 fail** (600 + 6 work-kinds + 4 createBoard + 3 assertContext, plus the 3 already counted in Task 1's file).
+Expected: **613 pass / 0 fail** — 600 from Task 1, plus 6 in `work-kinds.test.ts`, 4 appended to `work-items.test.ts`, and 3 appended to `workspaces.test.ts`.
 
 If the count differs, count the tests you actually added rather than assuming — the arithmetic here is a guide, the `fail 0` is the gate.
 
@@ -969,7 +969,7 @@ cd swarm && SMITH_STATE_ROOT=$(mktemp -d) node --import tsx --test --test-timeou
 sed 's/\x1b\[[0-9;]*m//g' /tmp/t3-suite.txt | grep -E "^ℹ (tests|pass|fail)"
 ```
 
-Expected: **619 pass / 0 fail**. A pre-existing test asserting that `observability` or `jira` is valid must still pass — those are product presets and remain in the union. **If one now fails, the union is missing a preset the old set had: add it to the product kind rather than special-casing the validator.**
+Expected: **616 pass / 0 fail** (613 + 3). A pre-existing test asserting that `observability` or `jira` is valid must still pass — those are product presets and remain in the union. **If one now fails, the union is missing a preset the old set had: add it to the product kind rather than special-casing the validator.**
 
 - [ ] **Step 5: Typecheck, lint, commit**
 
@@ -1146,7 +1146,7 @@ grep -E "Test Files|Tests " /tmp/t4-cp.txt | tail -3
 cd control-plane && npx tsc --noEmit 2>&1 | tail -3
 ```
 
-Expected: swarm **620 pass / 0 fail**, `errors=12`; control-plane **927 passing, 2 failing** — and those 2 are still only `HomePage` and `MapStage`. Confirm by name, not by count.
+Expected: swarm **617 pass / 0 fail** (616 + 1), `errors=12`; control-plane **927 passing, 2 failing** — and those 2 are still only `HomePage` and `MapStage`. Confirm by name, not by count.
 
 - [ ] **Step 8: Commit**
 
