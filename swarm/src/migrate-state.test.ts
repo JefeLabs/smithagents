@@ -457,6 +457,50 @@ test("migrateWorkspaceRecords: one record whose name has no directory-safe chara
   }
 });
 
+test("migrateWorkspaceRecords: two different names that slug to the same directory never destroy the loser's flat record", async () => {
+  const root = mkdtempSync(join(tmpdir(), "mig-collide-"));
+  try {
+    const paths = smithPaths(root);
+    mkdirSync(paths.workspaces, { recursive: true });
+    // slugForDir collapses any run of non-alphanumerics to one dash, so "foo bar"
+    // and "foo_bar" both resolve to .../workspaces/foo-bar — assertContext does not
+    // enforce saveWorkspace's name format, so legacy data can carry either.
+    //
+    // A literal case-only pair ("Foo"/"foo", the example this guard was written
+    // for) can't be used as a fixture here: this machine's default filesystem
+    // (APFS, case-insensitive) treats "Foo.json" and "foo.json" as the same
+    // directory entry, so the second write silently clobbers the first before
+    // migrateWorkspaceRecords ever runs — verified directly, see task-3-report.md.
+    // This pair exercises the identical guard (settings.json parses but names a
+    // different workspace) without depending on filesystem case-sensitivity.
+    writeFileSync(
+      join(paths.workspaces, "foo bar.json"),
+      JSON.stringify({ name: "foo bar", repos: [{ name: "r", path: "/abs/r" }] }),
+    );
+    writeFileSync(
+      join(paths.workspaces, "foo_bar.json"),
+      JSON.stringify({ name: "foo_bar", repos: [{ name: "r", path: "/abs/r" }] }),
+    );
+
+    const result = await migrateWorkspaceRecords(paths);
+
+    assert.equal(result.moved.length, 1, "only whichever name claims the directory first migrates");
+    assert.equal(result.skipped.length, 1, "the other is skipped, not silently merged away");
+    const winner = result.moved[0] as string;
+    const loser = winner === "foo bar" ? "foo_bar" : "foo bar";
+    assert.ok(result.skipped.includes(loser));
+
+    // The property under test: the loser's flat record must survive.
+    assert.ok(statSync(join(paths.workspaces, `${loser}.json`)).isFile(), "the loser's flat record survives");
+
+    // And the directory holds only whichever workspace actually claimed it.
+    const onDisk = JSON.parse(readFileSync(settingsPathFor(join(paths.workspaces, "foo-bar")), "utf8"));
+    assert.equal(onDisk.name, winner);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("migrateWorkspaceRecords: a flat group record is never touched — no directory, no registry entry", async () => {
   const root = mkdtempSync(join(tmpdir(), "mig-group-"));
   try {

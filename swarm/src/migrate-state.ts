@@ -211,14 +211,19 @@ export async function migrateBoards(
   return { moved, kept };
 }
 
-type SettingsProbe = { kind: "missing" } | { kind: "corrupt" } | { kind: "parsed" };
+type SettingsProbe = { kind: "missing" } | { kind: "corrupt" } | { kind: "parsed"; value: unknown };
 
 /**
  * `stat` proves a file exists, not that it holds a complete record —
  * `saveWorkspace`'s `writeFile` is not atomic, so a crash mid-write leaves a
  * settings.json that exists but is truncated garbage. Distinguish "nothing
  * written yet" from "something unreadable was written" so callers can decide
- * per case instead of treating both as "already migrated".
+ * per case instead of treating both as "already migrated". The parsed value
+ * is returned too, so a caller can confirm the record belongs to the
+ * workspace it thinks it does — two names can slug to the same directory
+ * (`assertContext` does not enforce `saveWorkspace`'s name format, so legacy
+ * data can carry names like "Foo" and "foo" that only differ by case), and a
+ * settings.json that merely parses is not proof it is *this* workspace's.
  */
 async function probeSettings(settings: string): Promise<SettingsProbe> {
   let raw: string;
@@ -229,8 +234,7 @@ async function probeSettings(settings: string): Promise<SettingsProbe> {
     return { kind: "missing" };
   }
   try {
-    JSON.parse(raw);
-    return { kind: "parsed" };
+    return { kind: "parsed", value: JSON.parse(raw) };
   } catch {
     return { kind: "corrupt" };
   }
@@ -252,6 +256,17 @@ async function probeSettings(settings: string): Promise<SettingsProbe> {
  * earlier crash — is left alone rather than silently overwritten: the flat
  * record may be the only good copy left, so nothing is deleted and the
  * workspace is retried on the next run.
+ *
+ * A parseable settings.json is also not proof it belongs to the workspace
+ * being migrated: `slugForDir` is identity only for names that already pass
+ * `saveWorkspace`'s `^[a-z0-9][a-z0-9-]{0,63}$` check, but `assertContext`
+ * (what the loader behind this function uses) does not enforce that format —
+ * legacy flat records can carry names like "Foo" and "foo" that differ only
+ * by case and slug to the same directory. Whichever name claims
+ * the directory first wins it; the second sees a settings.json that parses
+ * fine but names someone else, and must not delete its own flat record on
+ * the strength of that — it is left in place, unregistered, for a human (or
+ * a rename) to resolve.
  *
  * Group records (`members`, no `repos`) are never touched: `loadWorkspacesFromDir`
  * filters them out before this loop ever sees them. Groups deliberately stay flat.
@@ -287,7 +302,23 @@ export async function migrateWorkspaceRecords(paths: SmithPaths): Promise<{ move
         }
         moved.push(ws.name);
       } else {
-        // Already present and parses — the authoritative copy. Untouched.
+        const claimedBy =
+          before.value && typeof before.value === "object" ? (before.value as { name?: unknown }).name : undefined;
+        if (claimedBy !== ws.name) {
+          // Parses fine, but it is someone else's record — two names slugged
+          // to this same directory and the other one got here first. Never
+          // delete the flat record on the strength of a file that merely
+          // parses; leave both the flat file and the directory's registration
+          // as they are for a human to resolve the collision.
+          skipped.push(ws.name);
+          console.error(
+            `migrateWorkspaceRecords: ${settings} already holds workspace "${String(claimedBy)}" — ` +
+              `refusing to remove ${flatFile} for "${ws.name}" (both slug to ${dir})`,
+          );
+          continue;
+        }
+        // Already present and parses as this workspace's own record — the
+        // authoritative copy. Untouched.
         skipped.push(ws.name);
       }
 
