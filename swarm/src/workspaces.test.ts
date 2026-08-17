@@ -848,3 +848,17 @@ test("repoLessRefusal: falls back to the default workspace when none is named", 
   ] as never;
   assert.ok(repoLessRefusal(wss, undefined), "the default workspace is the one a nameless request means");
 });
+
+test("resolveRepo and repoLessRefusal agree on which workspace a nameless request means", () => {
+  // Both must pick the same workspace for the same input, or a nameless
+  // request could be refused for a workspace resolveRepo never tried — or
+  // fall through to the process.cwd() path the refusal exists to close.
+  const wss = [
+    { name: "coding", repos: [{ name: "app", path: "/tmp/app" }] },
+    { name: "design", repos: [], default: true },
+  ] as never;
+
+  assert.equal(resolveRepo(wss, undefined), null, "resolveRepo finds no repo in the repo-less default");
+  const refusal = repoLessRefusal(wss, undefined);
+  assert.match(refusal as string, /"design"/, "repoLessRefusal must name that same default workspace, not another");
+});

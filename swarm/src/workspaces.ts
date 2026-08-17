@@ -352,6 +352,20 @@ export function normalizeRepoBranch(repos: Array<WorkspaceRepo & { initGit?: boo
 }
 
 /**
+ * Which workspace a name (or its absence) means, among the active ones.
+ * Omitted -> the default (flagged, else first).
+ *
+ * Shared by `resolveRepo` and `repoLessRefusal` so the two can never
+ * disagree about which workspace a nameless request targets — duplicating
+ * this expression in both is exactly how that drift would happen.
+ */
+function selectWorkspace(live: Workspace[], workspaceName?: string): Workspace | undefined {
+  return workspaceName
+    ? live.find((w) => w.name.toLowerCase() === workspaceName.toLowerCase())
+    : (live.find((w) => w.default) ?? live[0]);
+}
+
+/**
  * Resolve a delegation's workspace/repo names to a concrete repo.
  * Omitted workspace -> the default (flagged, else first). Omitted repo -> the
  * workspace's first repo. Returns null when nothing matches.
@@ -361,10 +375,7 @@ export function resolveRepo(
   workspaceName?: string,
   repoName?: string,
 ): { workspace: Workspace; repo: WorkspaceRepo } | null {
-  const live = activeWorkspaces(workspaces);
-  const workspace = workspaceName
-    ? live.find((w) => w.name.toLowerCase() === workspaceName.toLowerCase())
-    : (live.find((w) => w.default) ?? live[0]);
+  const workspace = selectWorkspace(activeWorkspaces(workspaces), workspaceName);
   if (!workspace) return null;
   const repo = repoName
     ? workspace.repos.find((r) => r.name.toLowerCase() === repoName.toLowerCase())
@@ -386,10 +397,7 @@ export function resolveRepo(
  * nothing to refuse.
  */
 export function repoLessRefusal(workspaces: Workspace[], workspaceName?: string): string | null {
-  const live = activeWorkspaces(workspaces);
-  const workspace = workspaceName
-    ? live.find((w) => w.name.toLowerCase() === workspaceName.toLowerCase())
-    : (live.find((w) => w.default) ?? live[0]);
+  const workspace = selectWorkspace(activeWorkspaces(workspaces), workspaceName);
   if (!workspace) return null;
   if (workspace.repos.length > 0) return null;
   return `Context "${workspace.name}" has no repo — add one to run agents.`;
