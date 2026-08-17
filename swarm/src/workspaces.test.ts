@@ -9,6 +9,8 @@ import { promisify } from "node:util";
 import { smithPaths } from "./paths.js";
 import type { Workspace } from "./workspaces.js";
 import {
+  boardsDirFor,
+  collidingWorkspaceDirs,
   defaultViolation,
   ensureWorkspaceDir,
   initGitRepo,
@@ -305,4 +307,57 @@ test("ensureWorkspaceDir: refuses a name that slugs to empty rather than writing
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("boardsDirFor: a workspace's boards live under its own config/", () => {
+  const paths = smithPaths("/state");
+  const ws = { name: "proving-ground", repos: [] } as Workspace;
+  assert.equal(
+    boardsDirFor(paths, [ws], "proving-ground"),
+    join("/state", "workspaces", "proving-ground", "config", "boards"),
+  );
+});
+
+test("boardsDirFor: a board with no workspace stays in the host work dir", () => {
+  const paths = smithPaths("/state");
+  // The `personal` board is workspace-less by design (capabilities.ts:359).
+  assert.equal(boardsDirFor(paths, [], undefined), paths.work);
+});
+
+test("boardsDirFor: an unknown workspace id falls back to the host work dir", () => {
+  const paths = smithPaths("/state");
+  // An orphaned board — its workspace record was deleted — must remain
+  // loadable rather than resolving to a directory that does not exist.
+  assert.equal(boardsDirFor(paths, [], "deleted-workspace"), paths.work);
+});
+
+test("boardsDirFor: honours an explicit workspace dir", () => {
+  const paths = smithPaths("/state");
+  const ws = { name: "pg", dir: "/elsewhere/pg", repos: [] } as Workspace;
+  assert.equal(boardsDirFor(paths, [ws], "pg"), join("/elsewhere/pg", "config", "boards"));
+});
+
+test("collidingWorkspaceDirs: reports two workspaces that would share one directory", () => {
+  const paths = smithPaths("/state");
+  // slugForDir is lossier than the name validator: "ab" and "ab-" are both
+  // valid workspace names and both slug to "ab".
+  const collisions = collidingWorkspaceDirs(paths, [
+    { name: "ab", repos: [] } as Workspace,
+    { name: "ab-", repos: [] } as Workspace,
+    { name: "unique", repos: [] } as Workspace,
+  ]);
+  assert.equal(collisions.length, 1);
+  assert.deepEqual(collisions[0].names.sort(), ["ab", "ab-"]);
+  assert.equal(collisions[0].dir, join("/state", "workspaces", "ab"));
+});
+
+test("collidingWorkspaceDirs: silent when every workspace resolves uniquely", () => {
+  const paths = smithPaths("/state");
+  assert.deepEqual(
+    collidingWorkspaceDirs(paths, [
+      { name: "alpha", repos: [] } as Workspace,
+      { name: "beta", repos: [] } as Workspace,
+    ]),
+    [],
+  );
 });

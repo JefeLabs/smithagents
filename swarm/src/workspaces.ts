@@ -296,3 +296,35 @@ export async function ensureWorkspaceDir(paths: SmithPaths, ws: Workspace): Prom
   await mkdir(join(dir, ".runtime"), { recursive: true });
   return dir;
 }
+
+/**
+ * Where a board's file lives. A board carrying a known `workspaceId` belongs to
+ * that workspace's config; everything else — the workspace-less `personal`
+ * board, and any board whose workspace record has been deleted — stays in the
+ * host work directory, so an orphan remains loadable instead of pointing at a
+ * directory that does not exist.
+ */
+export function boardsDirFor(paths: SmithPaths, workspaces: Workspace[], workspaceId: string | undefined): string {
+  if (!workspaceId) return paths.work;
+  const ws = workspaces.find((w) => w.name === workspaceId);
+  return ws ? join(workspaceDir(paths, ws), "config", "boards") : paths.work;
+}
+
+/**
+ * Workspaces whose directories collide. `slugForDir` is lossier than the name
+ * validator — "ab" and "ab-" are both valid names and both slug to "ab" — so two
+ * records can resolve to one directory and silently share its contents. Nothing
+ * creates such a pair through the API today, because POST slugifies before
+ * saving, but that invariant lives in the handler rather than in the type.
+ */
+export function collidingWorkspaceDirs(
+  paths: SmithPaths,
+  workspaces: Workspace[],
+): Array<{ dir: string; names: string[] }> {
+  const byDir = new Map<string, string[]>();
+  for (const ws of workspaces) {
+    const dir = workspaceDir(paths, ws);
+    byDir.set(dir, [...(byDir.get(dir) ?? []), ws.name]);
+  }
+  return [...byDir.entries()].filter(([, names]) => names.length > 1).map(([dir, names]) => ({ dir, names }));
+}
