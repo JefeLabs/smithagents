@@ -64,14 +64,14 @@ These were settled with Edwin on 2026-08-17 and they override §2.3's two-shape 
 
 **Files:**
 - Modify: `swarm/src/squads.ts`
-- Test: `swarm/src/squads.test.ts`
+- Create: `swarm/src/squads.test.ts` — **this file does not exist yet**; these are its first contents, so write its imports too
 
 **Interfaces:**
 - Produces: `SquadDefinition.members: SquadMember[]` (was a fixed 4-tuple). `defaultSquad` accepts any non-empty roster with a leader.
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `swarm/src/squads.test.ts`:
+Create `swarm/src/squads.test.ts` (there is no squad test file today — write the imports it needs: `mkdtempSync`/`rmSync`/`writeFileSync` from `node:fs`, `tmpdir`, `join`, `assert`, `test`, and the squad symbols under test):
 
 ```ts
 test("defaultSquad-shaped definitions accept 2 and 3 members, not only 4", () => {
@@ -546,7 +546,7 @@ export async function addMemberWorktrees(
 ): Promise<InstanceMember[]> { … }
 ```
 
-Validate `workId` with `workIdProblem` and each member name the same way `memberFileName`-style validation does — reject separators, `..`/`.`, blanks, and a leading `-`. **Validate every name before creating anything**, so a bad member cannot leave a half-built `members/` directory. Prune before adding, and attach rather than `-b` when the member's branch already exists, exactly as `createInstance` does.
+Validate `workId` with `workIdProblem` (same module) and each member name with **`repoNameProblem`** from `./workspace-repos.js` — it is already shipped and tested, and rejects separators, `.`/`..` and blanks, which is exactly the escape surface here. It does not reject a leading dash, and does not need to: a member name reaches git only inside `smith/<workId>/<name>`, never as a bare argument. **Validate every name before creating anything**, so a bad member cannot leave a half-built `members/` directory. Prune before adding, and attach rather than `-b` when the member's branch already exists, exactly as `createInstance` does.
 
 - [ ] **Step 4: Run the file, then the suite**
 
@@ -600,7 +600,7 @@ test("prepareSquadSwarm: every member gets a worktree, a branch, and its own dri
   const root = mkdtempSync(join(tmpdir(), "psq-"));
   try {
     const paths = smithPaths(root);
-    const origin = makeGitOrigin(join(root, "origin"));
+    const origin = makeGitOrigin(join(root, "origin"));   // local fixture — see Step 1b
     const ws = { name: "pg", repos: [{ name: "app", path: origin, branch: "main" }] };
     await saveWorkspace(paths, ws as never);
 
@@ -624,7 +624,7 @@ test("prepareSquadSwarm: the feed is ready before any member starts", async () =
   const root = mkdtempSync(join(tmpdir(), "psq-feed-"));
   try {
     const paths = smithPaths(root);
-    const origin = makeGitOrigin(join(root, "origin"));
+    const origin = makeGitOrigin(join(root, "origin"));   // local fixture — see Step 1b
     const ws = { name: "pg", repos: [{ name: "app", path: origin, branch: "main" }] };
     await saveWorkspace(paths, ws as never);
 
@@ -640,6 +640,10 @@ test("prepareSquadSwarm: the feed is ready before any member starts", async () =
   }
 });
 ```
+
+- [ ] **Step 1b: Build the fixture this test needs**
+
+`makeGitOrigin` does **not** exist. Write a local one in `server.test.ts` that `git init`s a repo, writes a file, and commits — copy the shape of `makeWorkspace` in `workspace-instances.test.ts:57`. **Do not import a helper across test files**: fixtures are not a shared API here, and coupling two suites through one makes either harder to change.
 
 - [ ] **Step 2: Run them to verify they fail**
 
