@@ -137,6 +137,12 @@ export function isGroupRecord(w: Workspace): boolean {
  * a bare `JSON.parse`: a file that merely parses (`{"name":"pg"}`, missing `repos`)
  * is not a valid record, and `loadWorkspaces` throws on exactly that shape once it
  * is registered — trusting it earlier just moves the crash from "load" to "boot".
+ *
+ * An empty `repos` is a valid, complete workspace — the design half (documents,
+ * diagrams, dashboards, boards, the council) needs no git (spec: repo-less
+ * contexts). Only running coding agents needs a repo, and that's refused at
+ * dispatch time, not here. Groups remain distinguished by `members`, never by
+ * an empty repo list — the branch above still catches them first.
  */
 export function assertContext(file: string, v: unknown): Workspace {
   const o = v as Partial<Workspace>;
@@ -154,7 +160,6 @@ export function assertContext(file: string, v: unknown): Workspace {
     o &&
     typeof o.name === "string" &&
     Array.isArray(o.repos) &&
-    o.repos.length > 0 &&
     (o.workKind === undefined || typeof o.workKind === "string") &&
     o.repos.every((r) => r && typeof r.name === "string" && typeof r.path === "string" && isAbsolute(r.path));
   if (!ok) {

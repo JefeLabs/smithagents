@@ -967,3 +967,16 @@ test("workKindsPayload: every kind ships its labels and presets", () => {
     "presets carry their default cadence, which the sheet needs",
   );
 });
+
+test("workspaceProblems: a repo-less workspace is accepted", async () => {
+  const problem = await workspaceProblems({ name: "acme", repos: [] });
+  assert.equal(problem, null, "the design half needs no git");
+});
+
+test("workspaceProblems: a malformed repo is still refused", async () => {
+  assert.match((await workspaceProblems({ name: "acme", repos: [{ name: "" } as never] })) ?? "", /name/i);
+});
+
+test("workspaceProblems: a missing name is still refused", async () => {
+  assert.match((await workspaceProblems({ repos: [] })) ?? "", /name/i);
+});

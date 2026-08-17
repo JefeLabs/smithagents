@@ -3834,7 +3834,10 @@ export async function workspaceProblems(
   opts: { requireLocalRepos?: boolean } = {},
 ): Promise<string | null> {
   if (!b.name?.trim()) return "Missing required field: name";
-  if (!Array.isArray(b.repos) || b.repos.length === 0) return "A workspace needs at least one repo";
+  // A repo-less context is a COMPLETE workspace for everything except running
+  // coding agents (spec: repo-less contexts). Dispatch refuses with a reason;
+  // the record itself is valid.
+  if (!Array.isArray(b.repos)) return "A workspace needs a repos array (it may be empty)";
   for (const r of b.repos) {
     if (!r?.name?.trim()) return "Every repo needs a name";
     // Mirrors repoDirFor's guard (workspace-repos.ts) so a repo name that
