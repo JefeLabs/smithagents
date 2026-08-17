@@ -379,6 +379,19 @@ test("ensureWorkspaceBoards: creates the standing three once, idempotent, never 
   assert.deepEqual(boards.find((b) => b.id === "skoolscout-plan")?.columns.map((c) => c.id)[0], "queue");
 });
 
+test("ensureWorkspaceBoards: a work kind reaches the seeded boards' column labels — the seed path a capability's routes depend on", async () => {
+  // Empty dirs: the absent-boards state is load-bearing. If a board already
+  // existed, ensureWorkspaceBoards would no-op and this would prove nothing.
+  const dir = await mkdtemp(join(tmpdir(), "work-"));
+  await ensureWorkspaceBoards([dir], () => dir, "acme", "marketing");
+  const { boards } = await loadBoards(dir);
+  assert.equal(
+    boards.find((b) => b.id === "acme-plan")?.columns.find((c) => c.id === "define")?.name,
+    "Brief",
+    "marketing's vocabulary reached the seeded board, not product's \"Spec\"",
+  );
+});
+
 test("ensureWorkspaceBoards: rejects a name too long to fit a board id — why POST /workspaces provisions best-effort", async () => {
   const dir = await mkdtemp(join(tmpdir(), "work-"));
   // Workspace names are already slugged by the route, so the only reachable
