@@ -35,6 +35,7 @@ import {
   resolveTaskRuntime,
   resolveVoiceKeys,
   runJiraSearch,
+  workKindForCapability,
   workspaceProblems,
 } from "./server.js";
 import { appendUpdate, feedPath, readFeed } from "./squad-feed.js";
@@ -397,6 +398,21 @@ test("workspaceProblems: rejects a repo name that would escape or collapse onto 
 
   assert.match(first ?? "", /escape/i, "an escaping repo name 400s instead of surfacing later as a 500");
   assert.match(second ?? "", /escape/i, "so does a name that collapses onto the workspace directory itself");
+});
+
+test("workKindForCapability: resolves the workspace's own vocabulary — the lookup POST /work/capabilities and its slices/send sibling now share, so a capability-seeded board no longer falls back to product/software regardless of the workspace's choice", () => {
+  const workspaces: Workspace[] = [
+    { name: "acme", workKind: "marketing", repos: [{ name: "app", path: "/tmp/app" }] },
+    { name: "other", repos: [{ name: "app", path: "/tmp/app2" }] },
+  ];
+
+  assert.equal(workKindForCapability(workspaces, "acme"), "marketing");
+  assert.equal(workKindForCapability(workspaces, "other"), undefined, "no workKind set — falls through to product");
+  assert.equal(
+    workKindForCapability(workspaces, "no-such-workspace"),
+    undefined,
+    "an unresolved workspace degrades to product rather than throwing",
+  );
 });
 
 // POST /workspaces/:name/verify-atlassian's two new 400-guard branches (no

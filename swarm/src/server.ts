@@ -3268,7 +3268,13 @@ export class OrchestratorServer {
         if (capabilities.some((c) => c.id === cap.id))
           return reply.status(409).send({ error: `Capability "${cap.id}" already exists` });
         await saveCapability(this.paths.workCapabilities, cap);
-        await ensureWorkspaceBoards(this.boardDirs(), (b) => this.boardDir(b), cap.workspaceId);
+        const workspaces = await loadWorkspaces(this.paths);
+        await ensureWorkspaceBoards(
+          this.boardDirs(),
+          (b) => this.boardDir(b),
+          cap.workspaceId,
+          workKindForCapability(workspaces, cap.workspaceId),
+        );
         return reply.status(201).send(cap);
       } catch (err) {
         return reply.status(400).send({ error: String((err as Error).message) });
@@ -3350,7 +3356,13 @@ export class OrchestratorServer {
         if (slice[refKey]) return reply.status(409).send({ error: `Slice already sent to ${target}` });
         if (target === "delivery" && !slice.specPath)
           return reply.status(409).send({ error: "Generate the spec before sending to delivery" });
-        await ensureWorkspaceBoards(this.boardDirs(), (b) => this.boardDir(b), cap.workspaceId);
+        const workspaces = await loadWorkspaces(this.paths);
+        await ensureWorkspaceBoards(
+          this.boardDirs(),
+          (b) => this.boardDir(b),
+          cap.workspaceId,
+          workKindForCapability(workspaces, cap.workspaceId),
+        );
         const { boards } = await loadAllBoards(this.boardDirs());
         // The wire values and the capCardRef/deliveryCardRef keys are persisted
         // on every capability file; only the board types behind them moved.
@@ -3878,6 +3890,21 @@ export async function workspaceProblems(
     }
   }
   return null;
+}
+
+/**
+ * The work-vocabulary a capability's boards should be seeded with — its
+ * workspace's own choice, or undefined (product/software) if the workspace
+ * record can't be found. Shared by POST /work/capabilities and its
+ * .../slices/:sliceId/send sibling, both of which call ensureWorkspaceBoards
+ * before the capability's boards are guaranteed to exist — without this,
+ * whichever route seeds a workspace's boards first silently decides the
+ * vocabulary for good, since ensureWorkspaceBoards never reseeds an existing
+ * board. Pulled out of the route handlers so it's unit-testable without
+ * booting the server, matching workspaceProblems/redactConnector's convention.
+ */
+export function workKindForCapability(workspaces: Workspace[], workspaceId: string): string | undefined {
+  return workspaces.find((w) => w.name === workspaceId)?.workKind;
 }
 
 /** Trim, drop empties/non-strings; undefined when nothing survives. */
