@@ -13,8 +13,10 @@ export interface SquadMember {
 
 export interface SquadDefinition {
   id: SquadId;
-  members: [SquadMember, SquadMember, SquadMember, SquadMember]; // exactly 4
-  leader: SquadMember; // convenience ref to pane 1
+  /** One or more members. A squad is 2-4 in practice, but the shape does not
+   *  enforce a count — only that there is at least one, and a leader. */
+  members: SquadMember[];
+  leader: SquadMember; // convenience ref to the leader member
 }
 
 export interface SquadManifest {
@@ -313,12 +315,10 @@ export const SQUAD_MEMBERS: SquadMember[] = [
 function defaultSquad(id: SquadId): SquadDefinition {
   const members = SQUAD_MEMBERS.filter((m) => m.squad === id);
   const leader = members.find((m) => m.role === "leader");
-  if (members.length !== 4 || !leader) {
-    throw new Error(
-      `SQUAD_MEMBERS is malformed for squad "${id}": ${members.length} members (expected 4), leader ${leader ? "present" : "missing"}`,
-    );
+  if (members.length === 0 || !leader) {
+    throw new Error(`SQUAD_MEMBERS is malformed for squad "${id}": no members (expected at least one with a leader)`);
   }
-  return { id, members: members as [SquadMember, SquadMember, SquadMember, SquadMember], leader };
+  return { id, members, leader };
 }
 
 export const SQUAD_ROSTER: SquadDefinition[] = [defaultSquad("alpha"), defaultSquad("beta"), defaultSquad("gamma")];
