@@ -491,6 +491,32 @@ export async function loadBoards(
   return { boards, errors };
 }
 
+/**
+ * Every board across several directories — the host work dir plus each
+ * workspace's config/boards. Reading both is what lets boards move gradually:
+ * a board that has not been migrated yet still loads from where it is.
+ *
+ * On a duplicate id the FIRST directory wins, so a board that exists in both
+ * places during a migration resolves to one board rather than two.
+ */
+export async function loadAllBoards(
+  dirs: string[],
+): Promise<{ boards: WorkBoard[]; errors: Array<{ file: string; error: string }> }> {
+  const boards: WorkBoard[] = [];
+  const errors: Array<{ file: string; error: string }> = [];
+  const seen = new Set<string>();
+  for (const dir of dirs) {
+    const result = await loadBoards(dir);
+    errors.push(...result.errors);
+    for (const board of result.boards) {
+      if (seen.has(board.id)) continue;
+      seen.add(board.id);
+      boards.push(board);
+    }
+  }
+  return { boards, errors };
+}
+
 export async function saveBoard(dir: string, board: WorkBoard): Promise<void> {
   if (!BOARD_ID_RE.test(board.id)) throw new Error(`Invalid board id "${board.id}"`);
   await mkdir(dir, { recursive: true });

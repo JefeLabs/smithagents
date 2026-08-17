@@ -16,7 +16,7 @@ import { execFile } from "node:child_process";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { createSocket, type Socket as DgramSocket } from "node:dgram";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import websocket from "@fastify/websocket";
 import Fastify from "fastify";
@@ -160,7 +160,7 @@ import {
   findCardByRef,
   findRouteDestination,
   grabCard,
-  loadBoards,
+  loadAllBoards,
   localDayStamp,
   msUntilNextMidnight,
   patchCard,
@@ -177,6 +177,7 @@ import {
 } from "./work-items.js";
 import {
   activeWorkspaces,
+  boardsDirFor,
   defaultViolation,
   ensureWorkspaceDir,
   initGitRepo,
@@ -466,14 +467,14 @@ export class OrchestratorServer {
     {
       const migration = seedSourceMigration(
         await loadAllContextsFromDir(this.paths.workspaces),
-        (await loadBoards(this.workDir())).boards,
+        (await loadAllBoards(this.boardDirs())).boards,
       );
       for (const ws of migration.workspaceWrites) {
         await saveWorkspace(this.paths.workspaces, ws);
         this.app.log.info(`[source-migration] seeded sources on ${ws.name}`);
       }
       for (const b of migration.boardWrites) {
-        await saveBoard(this.workDir(), b);
+        await saveBoard(this.boardDir(b), b);
         this.app.log.info(`[source-migration] bound queue on ${b.id}`);
       }
       if (migration.workspaceWrites.length > 0) await this.reloadWorkspaces();
@@ -568,12 +569,12 @@ export class OrchestratorServer {
       try {
         const today = localDayStamp(new Date());
         const now = new Date().toISOString();
-        const { boards } = await loadBoards(this.workDir());
+        const { boards } = await loadAllBoards(this.boardDirs());
         const dir = this.paths.users;
         const user = resolveCurrentUser(await loadUsersFromDir(dir));
         if (user && user.agendaSweptDay !== today) {
           for (const board of sweepUserAgenda(boards, user.id, now)) {
-            await saveBoard(this.workDir(), board);
+            await saveBoard(this.boardDir(board), board);
           }
           await saveUser(dir, { ...user, agendaSweptDay: today });
           this.app.log.info(`Swept agenda for ${user.id}`);
@@ -650,6 +651,16 @@ export class OrchestratorServer {
     return this.paths.work;
   }
 
+  /** Every directory boards can live in: the host dir first, then each workspace's. */
+  private boardDirs(): string[] {
+    return [this.paths.work, ...this.workspaces.map((w) => join(workspaceDir(this.paths, w), "config", "boards"))];
+  }
+
+  /** Where THIS board's file belongs, from its own workspaceId. */
+  private boardDir(board: { workspaceId?: string }): string {
+    return boardsDirFor(this.paths, this.workspaces, board.workspaceId);
+  }
+
   /**
    * A finishing task that was dispatched from a board card writes its
    * outcome back onto the card — state only, never the column; columns
@@ -663,12 +674,12 @@ export class OrchestratorServer {
    * "working" badge forever with no PR link.
    */
   private async patchWorkCard(ref: WorkCardRef, state: "completed" | "failed", prUrl?: string): Promise<void> {
-    const { boards } = await loadBoards(this.workDir());
+    const { boards } = await loadAllBoards(this.boardDirs());
     const found = findCardByRef(boards, ref);
     const delegation = found?.card.delegation;
     if (!found || !delegation) return;
     patchCard(found.board, found.card.id, { delegation: { ...delegation, state, prUrl: prUrl ?? delegation.prUrl } });
-    await saveBoard(this.workDir(), found.board);
+    await saveBoard(this.boardDir(found.board), found.board);
   }
 
   // -------------------------------------------------------------------------
@@ -1803,7 +1814,12 @@ export class OrchestratorServer {
       // until the user creates a capability or hand-adds every board.
       // Best-effort: a name too long to fit a board id (createBoard throws)
       // or a disk hiccup must not fail a workspace that already saved.
-      await ensureWorkspaceBoards(this.workDir(), ws.name).catch((err) => {
+      //
+      // Computed directly from `ws` rather than boardsDirFor(this.paths,
+      // this.workspaces, ws.name): this.workspaces has not been reloaded yet
+      // (that happens below), so a lookup by name would miss the workspace
+      // just saved and silently fall back to the host directory.
+      await ensureWorkspaceBoards(join(workspaceDir(this.paths, ws), "config", "boards"), ws.name).catch((err) => {
         this.app.log.warn(`Could not provision boards for workspace "${ws.name}": ${String((err as Error).message)}`);
       });
       await this.reloadWorkspaces();
@@ -2628,7 +2644,7 @@ export class OrchestratorServer {
       id: string,
       reply: { status: (n: number) => { send: (b: unknown) => unknown } },
     ): Promise<WorkBoard | null> => {
-      const { boards } = await loadBoards(this.workDir());
+      const { boards } = await loadAllBoards(this.boardDirs());
       const board = boards.find((b) => b.id === id) ?? null;
       if (!board) reply.status(404).send({ error: `Unknown board: ${id}` });
       return board;
@@ -2639,7 +2655,7 @@ export class OrchestratorServer {
     // deliberately does not offer `personal`.
     this.app.get("/work/boards", async () => {
       await ensurePersonalBoard(this.workDir());
-      return loadBoards(this.workDir());
+      return loadAllBoards(this.boardDirs());
     });
 
     this.app.post("/work/boards", async (req, reply) => {
@@ -2653,7 +2669,7 @@ export class OrchestratorServer {
         return reply.status(400).send({ error: `Board type "${type}" requires a workspaceId` });
       try {
         const board = createBoard(type, b.workspaceId?.trim());
-        const { boards } = await loadBoards(this.workDir());
+        const { boards } = await loadAllBoards(this.boardDirs());
         if (boards.some((x) => x.id === board.id)) {
           return reply.status(409).send({
             error:
@@ -2662,7 +2678,7 @@ export class OrchestratorServer {
                 : `Workspace "${b.workspaceId}" already has a ${BOARD_TYPE_LABELS[type]} board`,
           });
         }
-        await saveBoard(this.workDir(), board);
+        await saveBoard(this.boardDir(board), board);
         return reply.status(201).send(board);
       } catch (err) {
         return reply.status(400).send({ error: String((err as Error).message) });
@@ -2690,14 +2706,14 @@ export class OrchestratorServer {
       }
       if (b.queue !== undefined) board.queue = b.queue ?? undefined;
       if (b.terminal !== undefined) board.terminal = b.terminal ?? undefined;
-      await saveBoard(this.workDir(), board);
+      await saveBoard(this.boardDir(board), board);
       return board;
     });
 
     this.app.delete<{ Params: { id: string } }>("/work/boards/:id", async (req, reply) => {
       const board = await boardOr404(req.params.id, reply);
       if (!board) return;
-      await deleteBoardFile(this.workDir(), board.id);
+      await deleteBoardFile(this.boardDir(board), board.id);
       return { ok: true };
     });
 
@@ -2714,7 +2730,7 @@ export class OrchestratorServer {
             sourceRef?: { sourceId: string; itemKey: string };
           },
         );
-        await saveBoard(this.workDir(), board);
+        await saveBoard(this.boardDir(board), board);
         return reply.status(201).send(card);
       } catch (err) {
         return reply.status(400).send({ error: String((err as Error).message) });
@@ -2752,7 +2768,7 @@ export class OrchestratorServer {
           const slice = cap.slices.find((s) => s.id === targetCard.capabilityRef?.sliceId);
           const sibling = [slice?.capCardRef, slice?.deliveryCardRef].find((r) => r && r.cardId !== targetCard.id);
           if (sibling && sibling.boardId !== board.id) {
-            const { boards: all } = await loadBoards(this.workDir());
+            const { boards: all } = await loadAllBoards(this.boardDirs());
             const other = all.find((b) => b.id === sibling.boardId);
             const otherCard = other?.cards.find((c) => c.id === sibling.cardId);
             if (other && otherCard) {
@@ -2835,7 +2851,7 @@ export class OrchestratorServer {
         // board is saved by the existing persistence below.
         if (shouldFireTerminal(board, movedTo)) {
           const ws = this.workspaces.find((w) => w.name === board.workspaceId);
-          const { boards: allBoards } = await loadBoards(this.workDir());
+          const { boards: allBoards } = await loadAllBoards(this.boardDirs());
           const { changed, errors } = await applyTerminalEffects(board, card, allBoards, {
             createIssue: async (connectorId, projectKey, summary, description) => {
               const users = await loadUsersFromDir(this.paths.users);
@@ -2861,7 +2877,7 @@ export class OrchestratorServer {
             now: () => new Date().toISOString(),
           });
           for (const b of changed) {
-            if (b.id !== board.id) await saveBoard(this.workDir(), b);
+            if (b.id !== board.id) await saveBoard(this.boardDir(b), b);
           }
           for (const e of errors) this.app.log.warn(`[terminal-effects] ${e}`);
         }
@@ -2870,8 +2886,8 @@ export class OrchestratorServer {
         // writes computed above actually hit disk, alongside the board's own
         // save, so a failed patch (e.g. bad columnId) leaves nothing behind.
         if (capToPersist) await saveCapability(this.paths.workCapabilities, capToPersist);
-        if (crossBoardSibling) await saveBoard(this.workDir(), crossBoardSibling);
-        await saveBoard(this.workDir(), board);
+        if (crossBoardSibling) await saveBoard(this.boardDir(crossBoardSibling), crossBoardSibling);
+        await saveBoard(this.boardDir(board), board);
         return card;
       } catch (err) {
         return reply.status(400).send({ error: String((err as Error).message) });
@@ -2886,7 +2902,7 @@ export class OrchestratorServer {
         const capRef = board.cards.find((c) => c.id === req.params.cardId)?.capabilityRef;
         try {
           removeCard(board, req.params.cardId);
-          await saveBoard(this.workDir(), board);
+          await saveBoard(this.boardDir(board), board);
         } catch (err) {
           return reply.status(400).send({ error: String((err as Error).message) });
         }
@@ -2923,7 +2939,7 @@ export class OrchestratorServer {
             error: `No route from ${source.name}/${card.columnId} to "${String(toType)}"`,
           });
         }
-        const { boards } = await loadBoards(this.workDir());
+        const { boards } = await loadAllBoards(this.boardDirs());
         const dest = findRouteDestination(boards, source, exit);
         if (!dest) {
           return reply.status(404).send({
@@ -2933,8 +2949,8 @@ export class OrchestratorServer {
         const plan = routeCard(source, dest, card.id, exit, new Date().toISOString());
         // Destination first: a crash between these two writes duplicates the
         // card (recoverable) rather than losing it (not).
-        await saveBoard(this.workDir(), plan.writeFirst);
-        await saveBoard(this.workDir(), plan.writeSecond);
+        await saveBoard(this.boardDir(plan.writeFirst), plan.writeFirst);
+        await saveBoard(this.boardDir(plan.writeSecond), plan.writeSecond);
         if (plan.card.capabilityRef) {
           // The card just changed board file; its slice's ref still names the
           // one it left. Repoint so the ref stays accurate rather than merely
@@ -2975,7 +2991,7 @@ export class OrchestratorServer {
           jql,
         );
         const summary = importIssues(board, issues);
-        await saveBoard(this.workDir(), board);
+        await saveBoard(this.boardDir(board), board);
         return summary;
       } catch (err) {
         return reply.status(400).send({ error: String((err as Error).message) });
@@ -3044,8 +3060,8 @@ export class OrchestratorServer {
       const cap = await capOr404(req.params.id, reply);
       if (!cap) return;
       // Unlink, never orphan: linked cards keep their story copies as local checklists.
-      const { boards } = await loadBoards(this.workDir());
-      for (const board of unlinkCapabilityCards(boards, cap)) await saveBoard(this.workDir(), board);
+      const { boards } = await loadAllBoards(this.boardDirs());
+      for (const board of unlinkCapabilityCards(boards, cap)) await saveBoard(this.boardDir(board), board);
       await deleteCapabilityFile(this.paths.workCapabilities, cap.id);
       return { ok: true };
     });
@@ -3097,7 +3113,7 @@ export class OrchestratorServer {
         if (target === "delivery" && !slice.specPath)
           return reply.status(409).send({ error: "Generate the spec before sending to delivery" });
         await ensureWorkspaceBoards(this.workDir(), cap.workspaceId);
-        const { boards } = await loadBoards(this.workDir());
+        const { boards } = await loadAllBoards(this.boardDirs());
         // The wire values and the capCardRef/deliveryCardRef keys are persisted
         // on every capability file; only the board types behind them moved.
         const board = boards.find(
@@ -3106,7 +3122,7 @@ export class OrchestratorServer {
         if (!board) return reply.status(400).send({ error: `Workspace board missing: ${cap.workspaceId} ${target}` });
         try {
           const card = sendSliceToBoard(cap, slice, board);
-          await saveBoard(this.workDir(), board);
+          await saveBoard(this.boardDir(board), board);
           slice[refKey] = { boardId: board.id, cardId: card.id };
           // Linking is slice activity — this write bypasses patchCapability's
           // diff stamps, so stamp here (date-range spec 2026-08-12).

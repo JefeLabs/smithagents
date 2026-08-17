@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +21,7 @@ import {
   grabCard,
   hasSourceRef,
   intakeColumnId,
+  loadAllBoards,
   loadBoards,
   localDayStamp,
   msUntilNextMidnight,
@@ -990,4 +992,62 @@ test("templates gate exactly the four columns that wait on a person", () => {
   assert.equal(gated("maintenance", "triage"), true);
   assert.equal(gated("release", "sign-off"), false, "Release is not a source — Edwin named three boards");
   assert.equal(gated("deliver", "in-progress"), false);
+});
+
+test("loadAllBoards: merges boards across directories and reports each file's errors", async () => {
+  const root = mkdtempSync(join(tmpdir(), "boards-merge-"));
+  try {
+    const hostDir = join(root, "work");
+    const wsDir = join(root, "ws", "config", "boards");
+    mkdirSync(hostDir, { recursive: true });
+    mkdirSync(wsDir, { recursive: true });
+
+    await saveBoard(hostDir, createBoard("personal"));
+    await saveBoard(wsDir, createBoard("deliver", "proving-ground"));
+    writeFileSync(join(wsDir, "broken.json"), "{not json");
+
+    const { boards, errors } = await loadAllBoards([hostDir, wsDir]);
+
+    const ids = boards.map((b) => b.id).sort();
+    assert.ok(ids.includes("proving-ground-deliver"), `expected the workspace board, got ${ids.join(",")}`);
+    assert.equal(boards.length, 2, `expected both boards, got ${ids.join(",")}`);
+    assert.equal(errors.length, 1, "the malformed file is reported, not swallowed");
+    assert.match(errors[0].file, /broken\.json/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("loadAllBoards: a duplicate id keeps the first directory's copy", async () => {
+  const root = mkdtempSync(join(tmpdir(), "boards-dup-"));
+  try {
+    const a = join(root, "a");
+    const b = join(root, "b");
+    mkdirSync(a, { recursive: true });
+    mkdirSync(b, { recursive: true });
+
+    const first = createBoard("deliver", "pg");
+    first.name = "FIRST";
+    const second = createBoard("deliver", "pg");
+    second.name = "SECOND";
+    await saveBoard(a, first);
+    await saveBoard(b, second);
+
+    const { boards } = await loadAllBoards([a, b]);
+    assert.equal(boards.length, 1, "a duplicate id yields one board, not two");
+    assert.equal(boards[0].name, "FIRST", "the first directory wins");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("loadAllBoards: a missing directory contributes nothing and is not an error", async () => {
+  const root = mkdtempSync(join(tmpdir(), "boards-missing-"));
+  try {
+    const { boards, errors } = await loadAllBoards([join(root, "nope")]);
+    assert.deepEqual(boards, []);
+    assert.deepEqual(errors, []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
