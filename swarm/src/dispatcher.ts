@@ -27,7 +27,7 @@ import type { RuntimeAdapter } from "./runtime.js";
 import { createRuntime } from "./runtime.js";
 import type { DispatcherEvent, OrchestratorConfig, RuntimeType, TaskManifest, TaskResult } from "./types.js";
 import { loadUsersFromDir, resolveCurrentUser } from "./users.js";
-import { createInstance } from "./workspace-instances.js";
+import { createInstance, resolveStartPoint } from "./workspace-instances.js";
 import { loadWorkspaces, workspaceDir } from "./workspaces.js";
 
 /**
@@ -85,6 +85,35 @@ export async function resolveTaskWorktree(
     ? resolve(repoPath, config.worktreeDir, manifest.taskId)
     : resolve(config.worktreeDir, manifest.taskId);
   return { path, created: false };
+}
+
+/**
+ * Create the legacy detached worktree, on a dedicated branch cut from the
+ * task's base branch.
+ *
+ * `baseBranch` gets the same DWIM-avoidance workspace-instances.ts's
+ * `resolveStartPoint` gives an instance's repo member (see its doc comment
+ * there): threading a bare branch name straight into
+ * `git worktree add -b <new> -- <base>` silently discards `<new>` and creates
+ * a branch named after `<base>` itself when `<base>` exists only as a
+ * remote-tracking ref in `repoPath` — this bug predates workspace-instances
+ * and was only found once the DWIM behaviour was characterized there; it is
+ * fixed here opportunistically rather than left in place now that it's known.
+ *
+ * `resolveStartPoint` needs a source repo to check refs against — a legacy
+ * task can have NO `repoPath` at all (worktreeDir-only tasks, no cwd for the
+ * `git` call either). That case passes `baseBranch` through unchanged,
+ * exactly as before this fix; there is no clone to resolve it against.
+ */
+export async function createLegacyWorktree(
+  worktreePath: string,
+  branchName: string,
+  repoPath: string | undefined,
+  baseBranch: string,
+  git: (args: string[], cwd?: string) => Promise<string>,
+): Promise<void> {
+  const startPoint = repoPath ? await resolveStartPoint(repoPath, baseBranch) : baseBranch;
+  await git(["worktree", "add", worktreePath, "-b", branchName, "--", startPoint], repoPath);
 }
 
 /**
@@ -345,7 +374,9 @@ export class Dispatcher extends EventEmitter {
       // branchName is derived from a server-issued UUID taskId, so it can't
       // begin with `-`.
       const branchName = `smith/${manifest.taskId}`;
-      await this.git(["worktree", "add", worktreePath, "-b", branchName, "--", baseBranch], manifest.context.repoPath);
+      await createLegacyWorktree(worktreePath, branchName, manifest.context.repoPath, baseBranch, (args, cwd) =>
+        this.git(args, cwd),
+      );
     }
 
     // Inject the smith-delegate tool into the worktree's bin/ directory

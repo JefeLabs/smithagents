@@ -103,8 +103,12 @@ async function isWorktree(path: string): Promise<boolean> {
  * used as-is. When `base` is neither, the bare name is returned unchanged so
  * `worktree add` fails with its own "invalid reference" error, for the caller
  * to wrap.
+ *
+ * Exported: dispatcher.ts's legacy (non-workspace) worktree creation hits the
+ * exact same `git worktree add -b <new> -- <base>` shape and needs the same
+ * protection — this is the one place the fix lives, not duplicated.
  */
-async function resolveStartPoint(source: string, base: string): Promise<string> {
+export async function resolveStartPoint(source: string, base: string): Promise<string> {
   try {
     await run("git", ["rev-parse", "--verify", "--quiet", `refs/heads/${base}`], { cwd: source });
     return base;

@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { emptyCliToolsFile, saveCliToolsFile } from "./cli-tools.js";
 import { loadConfig } from "./config.js";
-import { Dispatcher, resolveTaskWorktree } from "./dispatcher.js";
+import { createLegacyWorktree, Dispatcher, resolveTaskWorktree } from "./dispatcher.js";
 import { ToolLaunchError } from "./drivers/errors.js";
 import { smithPaths } from "./paths.js";
 import type { OrchestratorConfig, TaskManifest } from "./types.js";
@@ -461,4 +461,65 @@ test("resolveTaskWorktree: an unknown workspace name falls back to legacy", asyn
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------------------
+// createLegacyWorktree(): the same DWIM-avoidance workspace-instances.ts's
+// resolveStartPoint gives an instance's repo member, applied to the legacy
+// (non-workspace) path — a pre-existing bug, fixed opportunistically once the
+// DWIM behaviour was characterized (see workspace-instances.ts's doc comment).
+// ---------------------------------------------------------------------------
+
+test("createLegacyWorktree: a base that exists only as a remote-tracking ref still lands on the requested branch, not one named after the base", async () => {
+  const root = mkdtempSync(join(tmpdir(), "disp-legacy-dwim-"));
+  try {
+    const origin = join(root, "origin.git");
+    execFileSync("git", ["init", "-q", "-b", "main", origin]);
+    writeFileSync(join(origin, "README.md"), "hi\n");
+    execFileSync("git", ["add", "-A"], { cwd: origin });
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init"], { cwd: origin });
+
+    const clone = join(root, "clone");
+    execFileSync("git", ["clone", "-q", origin, clone]);
+    // Move off main and delete the local branch — only origin/main remains,
+    // exactly the scenario that trips git's DWIM (see workspace-instances.ts).
+    execFileSync("git", ["checkout", "-q", "-b", "feature"], { cwd: clone });
+    execFileSync("git", ["branch", "-D", "main"], { cwd: clone });
+
+    const worktreePath = join(root, "wt");
+    const git = async (args: string[], cwd?: string): Promise<string> => execFileSync("git", args, { cwd }).toString();
+
+    await createLegacyWorktree(worktreePath, "smith/t-legacy-dwim", clone, "main", git);
+
+    const branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: worktreePath }).toString().trim();
+    assert.equal(branch, "smith/t-legacy-dwim", "the requested branch name is honored, not overridden by git's DWIM");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("createLegacyWorktree: no repoPath passes the base through unchanged — no source clone to resolve against", async () => {
+  const calls: Array<{ args: string[]; cwd: string | undefined }> = [];
+  const git = async (args: string[], cwd?: string): Promise<string> => {
+    calls.push({ args, cwd });
+    return "";
+  };
+
+  await createLegacyWorktree("/tmp/wt-unused", "smith/t-legacy-norepo", undefined, "release/only-remote", git);
+
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0]?.args, [
+    "worktree",
+    "add",
+    "/tmp/wt-unused",
+    "-b",
+    "smith/t-legacy-norepo",
+    "--",
+    "release/only-remote",
+  ]);
+  assert.equal(
+    calls[0]?.cwd,
+    undefined,
+    "no cwd, and the base is untouched — matches the pre-fix legacy call exactly for this case",
+  );
 });
