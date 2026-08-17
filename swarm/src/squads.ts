@@ -9,6 +9,16 @@ export interface SquadMember {
   model: SquadModel;
   role: SquadRole;
   squad: SquadId;
+  /**
+   * Which CLI runs this member — any driver id (`claude`, `codex`, `opencode`,
+   * `copilot`, `agy`). An agent is not bound to one CLI, so this is deliberately
+   * open rather than derived from `model`.
+   *
+   * Omitted means "use the default for `model`", which is why the seeded roster
+   * carries no tool field. That default is a convention, not an invariant: a
+   * squad file may put any member on any CLI.
+   */
+  tool?: string;
 }
 
 export interface SquadDefinition {
@@ -29,6 +39,13 @@ export interface SquadManifest {
   containerName?: string; // docker container name
   createdAt: string;
   status: "queued" | "dispatched" | "running" | "completed" | "failed";
+  /**
+   * The workspace-instance holding this squad's member worktrees and its update
+   * feed, once the swarm has been prepared. Recorded here so the feed routes can
+   * resolve the instance from the task itself rather than from a caller-supplied
+   * path — a caller must never be able to name an arbitrary directory.
+   */
+  instanceDir?: string;
 }
 
 // JSON output contract - what sub-agents write to disk
@@ -334,7 +351,7 @@ export function setSquadRoster(defs: SquadDefinition[]): void {
 /** Serializable form of a squad — what a .smith/squads/*.json file holds. */
 export interface SquadFile {
   id: string;
-  members: Array<{ name: string; pane: number; model: SquadModel; role: SquadRole }>;
+  members: Array<{ name: string; pane: number; model: SquadModel; role: SquadRole; tool?: string }>;
 }
 
 function toDefinition(file: SquadFile): SquadDefinition {

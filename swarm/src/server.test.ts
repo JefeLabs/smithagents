@@ -5,7 +5,7 @@
 
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -25,6 +25,7 @@ import {
   buildVoiceUpdate,
   clearVoiceReferences,
   gitInitRequestedRepos,
+  prepareSquadSwarm,
   redactBrainEngine,
   redactConnector,
   redactResearchEngine,
@@ -36,11 +37,13 @@ import {
   runJiraSearch,
   workspaceProblems,
 } from "./server.js";
+import { appendUpdate, feedPath, readFeed } from "./squad-feed.js";
 import type { ConnectorInstance, User } from "./users.js";
 import { loadUsersFromDir, saveUser } from "./users.js";
 import { addCard, createBoard } from "./work-items.js";
+import { ensureConfigRepo } from "./workspace-repos.js";
 import type { Workspace } from "./workspaces.js";
-import { isGitRepo, workspaceDir } from "./workspaces.js";
+import { isGitRepo, saveWorkspace, workspaceDir } from "./workspaces.js";
 
 const git = promisify(execFile);
 
@@ -742,4 +745,155 @@ test("redactBrainEngine hides a cli whose gate now fails", () => {
     redactBrainEngine(u, () => "not installed"),
     null,
   );
+});
+
+// ── prepareSquadSwarm ────────────────────────────────────────────────
+//
+// A local fixture rather than one imported from workspace-instances.test.ts:
+// fixtures are not a shared API here, and coupling two suites through one
+// makes either harder to change.
+
+/** A real git repo with one commit, standing in for a workspace's project repo. */
+async function makeGitOrigin(path: string): Promise<string> {
+  await mkdir(path, { recursive: true });
+  await git("git", ["init", "-q", "-b", "main", path]);
+  await writeFile(join(path, "README.md"), "app\n");
+  await git("git", ["add", "-A"], { cwd: path });
+  await git("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init"], { cwd: path });
+  return path;
+}
+
+/** A saved workspace whose config/ is a real repo, ready for createInstance. */
+async function makeSquadWorkspace(root: string): Promise<Workspace> {
+  const paths = smithPaths(root);
+  const origin = await makeGitOrigin(join(root, "origin"));
+  const ws = { name: "pg", repos: [{ name: "app", path: origin, branch: "main" }] } as Workspace;
+  await saveWorkspace(paths, ws);
+  await ensureConfigRepo(workspaceDir(paths, ws));
+  return ws;
+}
+
+test("prepareSquadSwarm: every member gets a worktree, a branch, and its own driver's persona", async () => {
+  const root = await mkdtemp(join(tmpdir(), "psq-"));
+  try {
+    const paths = smithPaths(root);
+    const ws = await makeSquadWorkspace(root);
+
+    const prepared = await prepareSquadSwarm(paths, ws, "t-1", [
+      { name: "Gabriel", pane: 1, model: "gemini-pro", role: "leader", squad: "alpha" },
+      { name: "Santiago", pane: 2, model: "claude-sonnet", role: "developer", squad: "alpha" },
+    ]);
+
+    assert.equal(prepared.members.length, 2);
+    for (const m of prepared.members) {
+      assert.ok((await stat(m.path)).isDirectory(), `${m.name} has a worktree`);
+      assert.equal(m.branch, `smith/members/t-1/${m.name.toLowerCase()}`);
+      assert.ok(m.persona.length > 0, `${m.name} was told who it is`);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("prepareSquadSwarm: each member is told who it is in ITS OWN cli's dialect", async () => {
+  const root = await mkdtemp(join(tmpdir(), "psq-dialect-"));
+  try {
+    const paths = smithPaths(root);
+    const ws = await makeSquadWorkspace(root);
+
+    const prepared = await prepareSquadSwarm(paths, ws, "t-6", [
+      { name: "Gabriel", pane: 1, model: "gemini-pro", role: "leader", squad: "alpha" },
+      { name: "Santiago", pane: 2, model: "claude-sonnet", role: "developer", squad: "alpha" },
+    ]);
+
+    const leader = prepared.members.find((m) => m.name === "Gabriel");
+    const member = prepared.members.find((m) => m.name === "Santiago");
+
+    // The whole point of a mixed-vendor squad: a gemini leader must NOT be
+    // handed CLAUDE.md, which its CLI would never read.
+    assert.deepEqual(leader?.persona, ["AGENTS.md"], "the agy-backed leader gets AGENTS.md");
+    assert.deepEqual(member?.persona, ["CLAUDE.md"], "the claude member gets CLAUDE.md");
+    assert.ok((await stat(join(leader!.path, "AGENTS.md"))).isFile(), "written into the leader's own worktree");
+    assert.ok((await stat(join(member!.path, "CLAUDE.md"))).isFile(), "written into the member's own worktree");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("prepareSquadSwarm: an explicit tool overrides the model's default cli", async () => {
+  const root = await mkdtemp(join(tmpdir(), "psq-tool-"));
+  try {
+    const paths = smithPaths(root);
+    const ws = await makeSquadWorkspace(root);
+
+    const prepared = await prepareSquadSwarm(paths, ws, "t-7", [
+      // A claude model deliberately run on copilot — an agent is not bound to
+      // one CLI, so the explicit tool wins over the model's default.
+      { name: "Gabriel", pane: 1, model: "claude-sonnet", role: "leader", squad: "alpha", tool: "copilot" },
+    ]);
+
+    assert.deepEqual(prepared.members[0].persona, [".github/copilot-instructions.md"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("prepareSquadSwarm: a tool with no driver is refused by name, never silently defaulted", async () => {
+  const root = await mkdtemp(join(tmpdir(), "psq-nodriver-"));
+  try {
+    const paths = smithPaths(root);
+    const ws = await makeSquadWorkspace(root);
+
+    await assert.rejects(
+      () =>
+        prepareSquadSwarm(paths, ws, "t-8", [
+          { name: "Gabriel", pane: 1, model: "claude-sonnet", role: "leader", squad: "alpha", tool: "nosuchcli" },
+        ]),
+      /Gabriel.*nosuchcli/s,
+      "the error names the member and the tool",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("prepareSquadSwarm: the feed is ready before any member starts", async () => {
+  const root = await mkdtemp(join(tmpdir(), "psq-feed-"));
+  try {
+    const paths = smithPaths(root);
+    const ws = await makeSquadWorkspace(root);
+
+    const prepared = await prepareSquadSwarm(paths, ws, "t-2", [
+      { name: "Gabriel", pane: 1, model: "gemini-pro", role: "leader", squad: "alpha" },
+    ]);
+
+    await appendUpdate(prepared.instanceDir, "Gabriel", "starting");
+    assert.deepEqual(
+      (await readFeed(prepared.instanceDir)).map((u) => u.agentName),
+      ["Gabriel"],
+    );
+    assert.equal(prepared.feed, feedPath(prepared.instanceDir));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("prepareSquadSwarm: members are isolated from each other on real workspace repos", async () => {
+  const root = await mkdtemp(join(tmpdir(), "psq-iso-"));
+  try {
+    const paths = smithPaths(root);
+    const ws = await makeSquadWorkspace(root);
+
+    const prepared = await prepareSquadSwarm(paths, ws, "t-3", [
+      { name: "Gabriel", pane: 1, model: "gemini-pro", role: "leader", squad: "alpha" },
+      { name: "Santiago", pane: 2, model: "claude-sonnet", role: "developer", squad: "alpha" },
+    ]);
+    const [a, b] = prepared.members;
+
+    await writeFile(join(a.path, "DRAFT.md"), "uncommitted\n");
+
+    await assert.rejects(() => stat(join(b.path, "DRAFT.md")), "uncommitted work does not leak between members");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

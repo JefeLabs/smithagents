@@ -72,6 +72,7 @@ import { loadLiveKitConfig } from "./config.js";
 import { findVendor, VENDORS, verifyBeforeSave } from "./connectors.js";
 import { buildExecutionModes, loadContainersFile, probeDocker, saveContainersFile } from "./containers.js";
 import { DeviceRegistry } from "./device-registry.js";
+import { driverIds, getDriver } from "./drivers/index.js";
 import { isValidModelId } from "./drivers/model-flag.js";
 import {
   assertGroup,
@@ -131,12 +132,15 @@ import type { ConnectedWorker, RegisteredMessage, WorkerMessage, WorkerRegisterM
 import { isEncrypted } from "./secretbox.js";
 import { SessionStore } from "./session-store.js";
 import { seedSourceMigration } from "./source-migration.js";
+import { appendUpdate, feedPath, readFeed } from "./squad-feed.js";
 import {
   loadSquadsFromDir,
   SQUAD_ROSTER,
   type SquadId,
   type SquadManifest,
+  type SquadMember,
   type SquadMode,
+  type SquadModel,
   SquadPool,
   setSquadRoster,
 } from "./squads.js";
@@ -181,6 +185,7 @@ import {
   type WorkBoard,
   type WorkCard,
 } from "./work-items.js";
+import { addMemberWorktrees, createInstance, memberBranch } from "./workspace-instances.js";
 import { commitConfigFiles, materializeRepos, migrateReposIntoWorkspace, repoNameProblem } from "./workspace-repos.js";
 import { loadRoster } from "./workspace-roster.js";
 import {
@@ -1283,7 +1288,13 @@ export class OrchestratorServer {
     // ── Squads ────────────────────────────────────────────────────────
 
     this.app.post("/squads", async (req, reply) => {
-      const body = req.body as { prompt: string; squadId?: SquadId; mode?: SquadMode; agents?: number };
+      const body = req.body as {
+        prompt: string;
+        squadId?: SquadId;
+        mode?: SquadMode;
+        agents?: number;
+        workspace?: string;
+      };
 
       if (!body.prompt) {
         return reply.status(400).send({ error: "Missing required field: prompt" });
@@ -1330,14 +1341,75 @@ export class OrchestratorServer {
 
       this.activeSquads.set(squadId, manifest);
 
+      // A squad claimed but never prepared would stay active forever and 409
+      // every later request for it, so every failure path below releases it.
+      const abandon = () => {
+        this.activeSquads.delete(squadId);
+        this.squadPool.release(squadId);
+      };
+
+      let prepared: PreparedSquadSwarm;
+      try {
+        const all = await loadWorkspaces(this.paths);
+        const ws = body.workspace ? all.find((w) => w.name === body.workspace) : (all.find((w) => w.default) ?? all[0]);
+        if (!ws) {
+          abandon();
+          return reply.status(400).send({
+            error: body.workspace ? `Unknown workspace "${body.workspace}"` : "No workspace is configured",
+          });
+        }
+        prepared = await prepareSquadSwarm(this.paths, ws, taskId, activeAgents);
+      } catch (err) {
+        abandon();
+        return reply.status(500).send({ error: `Could not prepare the squad swarm — ${(err as Error).message}` });
+      }
+
+      manifest.instanceDir = prepared.instanceDir;
+
+      // status stays "queued": this prepared the swarm, it did not launch the
+      // CLIs. Saying "running" would be false.
       return {
         squadId,
         taskId,
         leader: squadDef.leader.name,
-        members: activeAgents.map((m) => m.name),
+        members: prepared.members,
+        instanceDir: prepared.instanceDir,
+        feed: prepared.feed,
         status: "queued",
       };
     });
+
+    /** The active squad running `taskId`, if any. */
+    const squadByTaskId = (taskId: string): SquadManifest | undefined => {
+      for (const m of this.activeSquads.values()) if (m.taskId === taskId) return m;
+      return undefined;
+    };
+
+    this.app.post<{ Params: { taskId: string }; Body: { agentName?: string; update?: unknown } }>(
+      "/squads/:taskId/updates",
+      async (req, reply) => {
+        const manifest = squadByTaskId(req.params.taskId);
+        if (!manifest?.instanceDir) {
+          return reply.status(404).send({ error: `No prepared squad for task ${req.params.taskId}` });
+        }
+        const { agentName, update } = req.body ?? {};
+        if (!agentName) return reply.status(400).send({ error: "Missing required field: agentName" });
+        if (update === undefined) return reply.status(400).send({ error: "Missing required field: update" });
+        return await appendUpdate(manifest.instanceDir, agentName, update);
+      },
+    );
+
+    this.app.get<{ Params: { taskId: string }; Querystring: { since?: string } }>(
+      "/squads/:taskId/updates",
+      async (req, reply) => {
+        const manifest = squadByTaskId(req.params.taskId);
+        if (!manifest?.instanceDir) {
+          return reply.status(404).send({ error: `No prepared squad for task ${req.params.taskId}` });
+        }
+        const updates = await readFeed(manifest.instanceDir, { since: req.query.since });
+        return { taskId: req.params.taskId, updates };
+      },
+    );
 
     // ── Agent creation catalog + registry writes ───────────────────────
     this.app.get("/agents/catalog", async () => {
@@ -3605,6 +3677,124 @@ export async function gitInitRequestedRepos(
     }
   }
   return null;
+}
+
+/**
+ * The CLI a squad member runs on when its roster entry names none.
+ *
+ * A DEFAULT, not a rule: `SquadMember.tool` overrides it, and any member may
+ * run on any CLI. This table only answers "if nobody said, what fits this
+ * model?" — `gemini-pro` leaders land on agy, and the claude models on claude.
+ *
+ * Kept explicit rather than falling back to claude for anything unrecognized:
+ * silently handing a non-Claude model a Claude CLI is precisely the failure
+ * that would make a mixed-vendor squad look prepared while being unrunnable.
+ */
+const DEFAULT_TOOL_FOR_MODEL: Record<SquadModel, string> = {
+  "gemini-pro": "agy",
+  "claude-fable": "claude",
+  "claude-opus": "claude",
+  "claude-sonnet": "claude",
+};
+
+/** Resolve a member's driver, preferring its explicit tool over the model default. */
+function driverForMember(member: SquadMember) {
+  const toolId = member.tool ?? DEFAULT_TOOL_FOR_MODEL[member.model];
+  if (!toolId) {
+    throw new Error(
+      `Squad member "${member.name}": model "${member.model}" has no default CLI — ` +
+        `set "tool" on the member to one of ${driverIds().join(", ")}`,
+    );
+  }
+  const driver = getDriver(toolId);
+  if (!driver) {
+    throw new Error(
+      `Squad member "${member.name}": no driver for CLI "${toolId}" — ` + `expected one of ${driverIds().join(", ")}`,
+    );
+  }
+  return driver;
+}
+
+/** What `prepareSquadSwarm` hands back: where the swarm lives and who is in it. */
+export interface PreparedSquadSwarm {
+  instanceDir: string;
+  /** The append-only update feed, already reachable before anyone starts. */
+  feed: string;
+  members: Array<{ name: string; path: string; branch: string; tool: string; persona: string[] }>;
+}
+
+/**
+ * Prepare — not launch — a real swarm for `taskId`: one workspace-instance, a
+ * worktree and branch per member, and a feed, with every member told who it is
+ * in the dialect ITS OWN CLI reads.
+ *
+ * That last part is what makes a mixed-vendor squad work. claude reads
+ * CLAUDE.md, codex/agy/opencode read AGENTS.md, copilot reads
+ * .github/copilot-instructions.md — so each member's persona is materialized by
+ * its own driver, into its own worktree. Handing a gemini-backed leader a
+ * CLAUDE.md would leave it with no instructions at all while everything still
+ * looked correctly prepared.
+ *
+ * Deliberately does NOT start any CLI, and the caller leaves the manifest
+ * `status: "queued"` — claiming "running" would be false.
+ */
+export async function prepareSquadSwarm(
+  paths: SmithPaths,
+  ws: Workspace,
+  taskId: string,
+  members: SquadMember[],
+): Promise<PreparedSquadSwarm> {
+  if (members.length === 0) {
+    throw new Error(`Squad task "${taskId}": cannot prepare a swarm with no members`);
+  }
+  const repo = ws.repos[0];
+  if (!repo) {
+    throw new Error(
+      `Workspace "${ws.name}" has no repos — a squad needs one to cut member worktrees from; add a repo first`,
+    );
+  }
+
+  // Resolve every driver BEFORE creating anything: a member with an unusable
+  // tool should fail while the instance is still nothing, not halfway through
+  // a set of worktrees the caller then has to reason about.
+  const resolved = members.map((m) => ({ member: m, driver: driverForMember(m) }));
+
+  const dir = workspaceDir(paths, ws);
+  const instance = await createInstance(dir, ws, taskId, [repo.name], { base: repo.branch });
+  const names = resolved.map((r) => r.member.name.toLowerCase());
+  const worktrees = await addMemberWorktrees(instance.dir, repo.path, taskId, names);
+
+  const out: PreparedSquadSwarm["members"] = [];
+  for (const { member, driver } of resolved) {
+    const slug = member.name.toLowerCase();
+    const worktree = worktrees.find((w) => w.name === slug);
+    if (!worktree) throw new Error(`Squad member "${member.name}": worktree "${slug}" was not created`);
+    const persona = await driver.materialize(
+      { name: member.name, role: member.role, directives: squadMemberDirectives(member, members) },
+      worktree.path,
+    );
+    out.push({ name: member.name, path: worktree.path, branch: memberBranch(taskId, slug), tool: driver.id, persona });
+  }
+
+  return { instanceDir: instance.dir, feed: feedPath(instance.dir), members: out };
+}
+
+/** What a member is told about itself, its squad, and how to coordinate. */
+function squadMemberDirectives(member: SquadMember, all: SquadMember[]): string {
+  const peers = all.filter((m) => m.name !== member.name).map((m) => `${m.name} (${m.role})`);
+  return [
+    `You are ${member.name}, the ${member.role} of squad ${member.squad}.`,
+    peers.length ? `Your squad: ${peers.join(", ")}.` : "You are working alone on this task.",
+    "",
+    "You have your OWN git worktree on your OWN branch. No other member can edit it,",
+    "and you cannot edit theirs — so work freely without coordinating file access.",
+    "",
+    "Your peers cannot see your uncommitted work. COMMIT to hand something off:",
+    "every member shares one object store, so your commit is visible to them",
+    "immediately via `git show <their-branch>:<path>` with no push or fetch.",
+    "",
+    "Post progress to the squad feed so the others know what changed and when.",
+  ].join("\n");
 }
 
 /**
