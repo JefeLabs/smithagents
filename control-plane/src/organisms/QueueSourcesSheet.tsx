@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
+import * as api from "../api/broker";
 import type { ContextSourceT } from "../api/types";
 import { BOARD_ROUTES_UI } from "../lib/board-aggregate";
 import { FormTextField, ModalShell } from "../molecules/form";
@@ -13,13 +14,16 @@ interface QueueSourcesSheetProps {
   onClose: () => void;
 }
 
-const PRESETS: Array<{ id: ContextSourceT["preset"]; label: string }> = [
-  { id: "jira", label: "Jira" },
-  { id: "releases", label: "Releases" },
-  { id: "topic", label: "Topic" },
-  { id: "observability", label: "Observability" },
-  { id: "support", label: "Support" },
-  { id: "custom", label: "Custom" },
+// The product presets, used only until /work-kinds answers (and if it never
+// does). Without a fallback a failed fetch would render an empty select,
+// which reads as "this workspace has no sources" rather than "the server is
+// down".
+const FALLBACK_PRESETS: Array<{ id: string; label: string; cadence: ContextSourceT["cadence"] }> = [
+  { id: "jira", label: "Jira", cadence: "nightly" },
+  { id: "releases", label: "Releases", cadence: "nightly" },
+  { id: "observability", label: "Observability", cadence: "hourly" },
+  { id: "support", label: "Support", cadence: "6h" },
+  { id: "custom", label: "Custom", cadence: "nightly" },
 ];
 
 const CADENCES: Array<{ id: ContextSourceT["cadence"]; label: string }> = [
@@ -27,16 +31,6 @@ const CADENCES: Array<{ id: ContextSourceT["cadence"]; label: string }> = [
   { id: "6h", label: "Every 6 hours" },
   { id: "nightly", label: "Nightly" },
 ];
-
-/** The preset picker's cadence prefill — a reasonable per-source-kind default, still freely editable after. */
-const CADENCE_DEFAULTS: Record<ContextSourceT["preset"], ContextSourceT["cadence"]> = {
-  jira: "nightly",
-  releases: "nightly",
-  topic: "nightly",
-  observability: "hourly",
-  support: "6h",
-  custom: "nightly",
-};
 
 interface AddSourceFormValues {
   preset: ContextSourceT["preset"];
@@ -90,6 +84,26 @@ export function QueueSourcesSheet({ board, open, onClose }: QueueSourcesSheetPro
   const save = useSaveWorkspace();
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [presets, setPresets] = useState(FALLBACK_PRESETS);
+
+  useEffect(() => {
+    let live = true;
+    api
+      .getWorkKinds()
+      .then((r) => {
+        if (!live) return;
+        const byId = new Map<string, { id: string; label: string; cadence: ContextSourceT["cadence"] }>();
+        for (const kind of r.kinds) for (const p of kind.presets) byId.set(p.id, p);
+        byId.set("custom", { id: "custom", label: "Custom", cadence: "nightly" });
+        setPresets([...byId.values()]);
+      })
+      .catch(() => {
+        /* keep the fallback — an unreachable server must not empty the select */
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const {
     control,
@@ -179,10 +193,10 @@ export function QueueSourcesSheet({ board, open, onClose }: QueueSourcesSheetPro
                   onBlur={presetField.onBlur}
                   onChange={(e) => {
                     void presetField.onChange(e);
-                    setValue("cadence", CADENCE_DEFAULTS[e.target.value as ContextSourceT["preset"]]);
+                    setValue("cadence", presets.find((p) => p.id === e.target.value)?.cadence ?? "nightly");
                   }}
                 >
-                  {PRESETS.map((p) => (
+                  {presets.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.label}
                     </option>

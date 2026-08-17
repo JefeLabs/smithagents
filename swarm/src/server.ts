@@ -185,6 +185,7 @@ import {
   type WorkBoard,
   type WorkCard,
 } from "./work-items.js";
+import { WORK_KINDS } from "./work-kinds.js";
 import { addMemberWorktrees, createInstance, memberBranch } from "./workspace-instances.js";
 import { commitConfigFiles, materializeRepos, migrateReposIntoWorkspace, repoNameProblem } from "./workspace-repos.js";
 import { loadRoster } from "./workspace-roster.js";
@@ -1437,6 +1438,9 @@ export class OrchestratorServer {
         presets: PRESET_AGENTS,
       };
     });
+
+    // ── Work-kind catalog (domain-neutral work kinds) ───────────────────
+    this.app.get("/work-kinds", async () => workKindsPayload());
 
     // ── Api-kind agent turns (api-runtime spec 2026-08-13) ─────────────
     // The seam later phases (elections, crew sends, discovery) will call.
@@ -3905,6 +3909,16 @@ export async function workspaceProblems(
  */
 export function workKindForCapability(workspaces: Workspace[], workspaceId: string): string | undefined {
   return workspaces.find((w) => w.name === workspaceId)?.workKind;
+}
+
+/**
+ * The work-kind catalog, for the wizard's one question and the sources sheet.
+ *
+ * Exported and pure so it is testable without booting the server, matching every
+ * other route helper in this file.
+ */
+export function workKindsPayload(): { kinds: Array<(typeof WORK_KINDS)[string]> } {
+  return { kinds: Object.values(WORK_KINDS) };
 }
 
 /** Trim, drop empties/non-strings; undefined when nothing survives. */

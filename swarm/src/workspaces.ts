@@ -32,7 +32,10 @@ export interface WorkspaceRepo {
 export interface ContextSource {
   id: string;
   name: string;
-  preset: "jira" | "releases" | "topic" | "observability" | "support" | "custom";
+  /** UI sugar over origin/transform. Open by design: the work kinds supply
+      these, so a new kind needs no type change here — the closed-set
+      guarantee lives in `validSources`/`allPresetIds`, not in this type. */
+  preset: string;
   origin: { connectorId?: string; url?: string; query?: string };
   cadence: "hourly" | "6h" | "nightly";
   transform: { mode: "map" } | { mode: "analyze"; prompt?: string };

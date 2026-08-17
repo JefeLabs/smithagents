@@ -229,11 +229,27 @@ export interface ConnectorInstanceRecord {
 export interface ContextSourceT {
   id: string;
   name: string;
-  preset: "jira" | "releases" | "topic" | "observability" | "support" | "custom";
+  /** UI sugar over origin/transform. Open by design: the work kinds supply these, so a new kind needs no client change. */
+  preset: string;
   origin: { connectorId?: string; url?: string; query?: string };
   cadence: "hourly" | "6h" | "nightly";
   transform: { mode: "map" } | { mode: "analyze"; prompt?: string };
   enabled: boolean;
+}
+
+/** A source preset a work kind offers — mirrors swarm's WorkKindPreset (work-kinds.ts) field-for-field. */
+export interface WorkKindPresetT {
+  id: string;
+  label: string;
+  cadence: "hourly" | "6h" | "nightly";
+}
+
+/** GET /work-kinds' catalog entry — mirrors swarm's WorkKind (work-kinds.ts) field-for-field. */
+export interface WorkKindT {
+  id: string;
+  label: string;
+  columns: Record<string, string>;
+  presets: WorkKindPresetT[];
 }
 
 /** Terminal side-effect config (spec 2026-08-13 queue-sources) — mirrors

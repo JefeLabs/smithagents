@@ -36,6 +36,7 @@ import {
   resolveVoiceKeys,
   runJiraSearch,
   workKindForCapability,
+  workKindsPayload,
   workspaceProblems,
 } from "./server.js";
 import { appendUpdate, feedPath, readFeed } from "./squad-feed.js";
@@ -912,4 +913,19 @@ test("prepareSquadSwarm: members are isolated from each other on real workspace 
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("workKindsPayload: every kind ships its labels and presets", () => {
+  const payload = workKindsPayload();
+
+  const ids = payload.kinds.map((k) => k.id);
+  assert.ok(ids.includes("product"), "product is offered");
+  assert.ok(ids.includes("creator"), "so is a non-software kind");
+
+  const creator = payload.kinds.find((k) => k.id === "creator");
+  assert.equal(creator?.columns.complete, "Posted");
+  assert.ok(
+    creator?.presets.some((p) => p.id === "tiktok" && p.cadence === "hourly"),
+    "presets carry their default cadence, which the sheet needs",
+  );
 });

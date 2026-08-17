@@ -19,6 +19,7 @@ import type {
   MeRecord,
   Target,
   VoiceSettingsRecord,
+  WorkKindT,
   WorkspaceRecord,
 } from "./types";
 
@@ -64,6 +65,13 @@ export async function getExecutionModes(base: string = BROKER_BASE): Promise<Rec
   const res = await brokerFetch(`/execution-modes`, base);
   const body = (await res.json()) as { modes?: Record<ExecutionMode, boolean> };
   return body.modes ?? DEFAULT_EXECUTION_MODES;
+}
+
+/** GET /work-kinds — the work-kind catalog, for the wizard's one question and the queue-sources sheet. */
+export async function getWorkKinds(base: string = BROKER_BASE): Promise<{ kinds: WorkKindT[] }> {
+  const res = await brokerFetch(`/work-kinds`, base);
+  const body = (await res.json()) as { kinds?: WorkKindT[] };
+  return { kinds: body.kinds ?? [] };
 }
 
 /**

@@ -1,4 +1,4 @@
-import { cleanup, screen, waitFor } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders } from "../test/renderWithProviders";
@@ -39,11 +39,30 @@ const BOARD = {
   queue: { sourceIds: ["jira-plan"] },
 };
 
+// A slice of the real work-kind catalog, just enough to prove a non-software
+// preset (tiktok, from the creator kind) reaches the select alongside the
+// product ones.
+const WORK_KINDS = [
+  {
+    id: "product",
+    label: "Product / software",
+    columns: {},
+    presets: [{ id: "jira", label: "Jira", cadence: "nightly" }],
+  },
+  {
+    id: "creator",
+    label: "Influencer / creator",
+    columns: {},
+    presets: [{ id: "tiktok", label: "TikTok", cadence: "hourly" }],
+  },
+];
+
 /**
  * Local copy of the BoardStage.test.tsx pattern (:53-79), extended with the
  * `workspaces` GET/PATCH-board/PUT-workspace routes this sheet needs — it
  * calls neither `/work/boards` (list) nor `/cards`, so those branches are
- * dropped rather than carried over unused.
+ * dropped rather than carried over unused. Also answers `/work-kinds`, since
+ * the preset select now fetches its options rather than hardcoding them.
  */
 function stubFetch(overrides: Record<string, unknown> = {}) {
   const calls: Array<{ url: string; method: string; body?: unknown }> = [];
@@ -55,6 +74,10 @@ function stubFetch(overrides: Record<string, unknown> = {}) {
     if (url.endsWith("/workspaces") && method === "GET") return respond({ workspaces: overrides.workspaces ?? [] });
     if (url.includes("/work/boards/") && method === "PATCH") return respond(overrides.patched ?? {});
     if (url.includes("/workspaces/") && method === "PUT") return respond(overrides.saved ?? {});
+    if (url.endsWith("/work-kinds") && method === "GET") {
+      if (overrides.workKindsFail) throw new Error("broker unreachable");
+      return respond({ kinds: overrides.workKinds ?? WORK_KINDS });
+    }
     return respond({});
   });
   vi.stubGlobal("fetch", fn);
@@ -119,5 +142,27 @@ describe("QueueSourcesSheet", () => {
     );
     expect(await screen.findByText(/personal boards have no context sources/i)).toBeDefined();
     expect(screen.queryByRole("button", { name: /add source/i })).toBeNull();
+  });
+
+  it("offers presets from every work kind, not just the software ones", async () => {
+    stubFetch({ workspaces: [RECORD] });
+    renderWithProviders(<QueueSourcesSheet board={BOARD as never} open onClose={() => {}} />);
+    await userEvent.click(await screen.findByRole("button", { name: /add source/i }));
+
+    const select = await screen.findByLabelText(/preset/i);
+    await waitFor(() => {
+      expect(within(select).getByRole("option", { name: /tiktok/i })).toBeInTheDocument();
+    });
+    expect(within(select).getByRole("option", { name: /custom/i })).toBeInTheDocument();
+  });
+
+  it("falls back to the product presets when /work-kinds cannot be reached", async () => {
+    // An unreachable server must leave a usable select, not an empty one.
+    stubFetch({ workspaces: [RECORD], workKindsFail: true });
+    renderWithProviders(<QueueSourcesSheet board={BOARD as never} open onClose={() => {}} />);
+    await userEvent.click(await screen.findByRole("button", { name: /add source/i }));
+
+    const select = await screen.findByLabelText(/preset/i);
+    expect(within(select).getByRole("option", { name: /jira/i })).toBeInTheDocument();
   });
 });
