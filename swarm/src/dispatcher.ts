@@ -35,8 +35,12 @@ import { loadWorkspaces, workspaceDir } from "./workspaces.js";
  *
  * A workspace-routed task gets a workspace-instance (spec §2.1): worktrees of
  * config/ and the routed repo, on one branch, inside the workspace. The agent
- * starts in the repo's worktree, with config/ alongside it. `createInstance`
- * already creates that worktree, so `created: true` tells `prepareWorktree`
+ * starts in the repo's worktree, with config/ alongside it — true under tmux,
+ * where the runtime's cwd is the filesystem the agent sees. Under docker,
+ * DockerRuntime currently mounts only that cwd (runtime.ts), so config/ and
+ * any sibling repos are NOT visible inside the container yet; extending the
+ * mount to the instance directory is deferred, separate work. `createInstance`
+ * already creates the repo worktree, so `created: true` tells `prepareWorktree`
  * not to `git worktree add` it a second time.
  *
  * Everything else keeps the legacy detached worktree under the state root.
@@ -54,11 +58,25 @@ export async function resolveTaskWorktree(
 
   if (workspaceName && repoName) {
     const paths = smithPaths(config.smithRoot);
-    const ws = (await loadWorkspaces(paths)).find((w) => w.name === workspaceName);
+    // Case-insensitive, matching resolveRepo's own workspace-name matching —
+    // a case-mismatched workspace name should route to the same instance a
+    // client-facing lookup would find, not silently fall through to legacy.
+    const ws = (await loadWorkspaces(paths)).find((w) => w.name.toLowerCase() === workspaceName.toLowerCase());
     if (ws) {
-      const inst = await createInstance(workspaceDir(paths, ws), ws, manifest.taskId, [repoName]);
+      const inst = await createInstance(workspaceDir(paths, ws), ws, manifest.taskId, [repoName], {
+        base: manifest.context.branch,
+      });
       const member = inst.members.find((m) => m.name === repoName);
       if (member) return { path: member.path, created: true };
+      // Unreachable in practice — createInstance either throws for an unknown
+      // repo name or returns a member for every name it was given. Falling
+      // back to legacy here would be actively unsafe: createInstance has
+      // already created `smith/<taskId>` in the source clone, so the legacy
+      // `worktree add -b smith/<taskId>` below would fatal with "already
+      // exists" instead of silently misrouting.
+      throw new Error(
+        `Workspace "${workspaceName}" instance for task ${manifest.taskId} has no member named "${repoName}"`,
+      );
     }
   }
 
@@ -307,6 +325,16 @@ export class Dispatcher extends EventEmitter {
     manifest: TaskManifest,
     connections: { atlassian?: { siteUrl: string; jiraProjectKeys?: string[]; confluenceSpaceKeys?: string[] } },
   ): Promise<string> {
+    // The base branch comes from the (untrusted) task manifest: validate it before
+    // it's used as a git argument ANYWHERE — the legacy worktree-add below, and
+    // (via resolveTaskWorktree -> createInstance) the instance path's repo-member
+    // start-point. Both pass it after `--` so a value like `--upload-pack=…`
+    // can't be parsed as a git flag (argument injection).
+    const baseBranch = manifest.context.branch;
+    if (!/^[A-Za-z0-9._/-]+$/.test(baseBranch) || baseBranch.startsWith("-")) {
+      throw new Error(`Invalid base branch: ${baseBranch}`);
+    }
+
     // Workspace-routed tasks run inside a workspace-instance — resolveTaskWorktree
     // has already created that worktree (`created: true`). Everything else worktrees
     // from the repo's own clone as before (legacy behavior); repoPath is
@@ -314,15 +342,8 @@ export class Dispatcher extends EventEmitter {
     const { path: worktreePath, created } = await resolveTaskWorktree(manifest, this.config);
 
     if (!created) {
-      // Create the git worktree on a dedicated branch.
-      // The base branch comes from the (untrusted) task manifest: validate it and
-      // pass it after `--` so a value like `--upload-pack=…` can't be parsed as a
-      // git flag (argument injection). branchName is derived from a server-issued
-      // UUID taskId, so it can't begin with `-`.
-      const baseBranch = manifest.context.branch;
-      if (!/^[A-Za-z0-9._/-]+$/.test(baseBranch) || baseBranch.startsWith("-")) {
-        throw new Error(`Invalid base branch: ${baseBranch}`);
-      }
+      // branchName is derived from a server-issued UUID taskId, so it can't
+      // begin with `-`.
       const branchName = `smith/${manifest.taskId}`;
       await this.git(["worktree", "add", worktreePath, "-b", branchName, "--", baseBranch], manifest.context.repoPath);
     }

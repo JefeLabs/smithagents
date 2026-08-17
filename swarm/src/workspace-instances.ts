@@ -85,6 +85,42 @@ async function isWorktree(path: string): Promise<boolean> {
 }
 
 /**
+ * Resolve `base` to an unambiguous start-point for `git worktree add -b` in
+ * `source`.
+ *
+ * A bare branch name that exists ONLY as a remote-tracking ref in `source` —
+ * entirely normal: the task's base branch need not be the one this particular
+ * clone happened to check out — hits a git worktree-add quirk: with
+ * `-b <newBranch> -- <base>`, once `<base>` requires the remote-DWIM
+ * resolution, git silently creates a branch named after `<base>` itself
+ * (e.g. "main") and discards the requested `-b` name entirely — no error, no
+ * warning, wrong branch. Verified empirically against git 2.55: reproduced
+ * with `-b` on either side of the path, with and without `--`, 100% of runs.
+ *
+ * Resolving to the fully-qualified `origin/<base>` sidesteps the DWIM path
+ * (git only takes that shortcut for a *bare* name), so `-b` is honored. A
+ * local branch, when one already exists, is unambiguous on its own and is
+ * used as-is. When `base` is neither, the bare name is returned unchanged so
+ * `worktree add` fails with its own "invalid reference" error, for the caller
+ * to wrap.
+ */
+async function resolveStartPoint(source: string, base: string): Promise<string> {
+  try {
+    await run("git", ["rev-parse", "--verify", "--quiet", `refs/heads/${base}`], { cwd: source });
+    return base;
+  } catch {
+    // Not a local branch in this clone — fall through to the remote check.
+  }
+  try {
+    await run("git", ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${base}`], { cwd: source });
+    return `origin/${base}`;
+  } catch {
+    // Neither local nor remote-tracking — let worktree add's own error surface.
+    return base;
+  }
+}
+
+/**
  * Create the workspace-instance for `workId`: a worktree of `config/` plus one
  * of each named repo, all on the SAME branch (spec §2.1). One branch across
  * every member is what makes a coordinated cross-repo change the default rather
@@ -97,12 +133,21 @@ async function isWorktree(path: string): Promise<boolean> {
  * may hold work in progress. Only missing members are added, so an instance
  * that gained a repo mid-flight can be completed by calling again. A removed
  * worktree whose branch still exists is reattached, returning the committed work.
+ *
+ * `opts.base`, when given, is the start-point for each REPO member (the task's
+ * base branch — not necessarily wherever that repo's clone currently sits;
+ * see `resolveStartPoint`). `config/` never takes a start-point: it is the
+ * workspace's own clone and has no base-branch concept, so it is always cut
+ * from its own current HEAD. Omitting `opts.base` keeps the pre-existing
+ * behavior (every member, including repos, cut from the source's own HEAD) —
+ * unchanged for existing callers.
  */
 export async function createInstance(
   workspaceDir: string,
   ws: Workspace,
   workId: string,
   repoNames: string[],
+  opts: { base?: string } = {},
 ): Promise<Instance> {
   const problem = workIdProblem(workId);
   if (problem) throw new Error(`Invalid work id: ${problem}`);
@@ -137,7 +182,7 @@ export async function createInstance(
       // Check if the branch already exists (e.g., the worktree was removed but
       // the branch commits remain). If so, attach to it; if not, create it.
       // `workIdProblem` already refused a leading dash, so `branch` cannot be
-      // read as a flag. The base is this source's current HEAD.
+      // read as a flag.
       let branchExists = false;
       try {
         await run("git", ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], { cwd: source });
@@ -147,8 +192,25 @@ export async function createInstance(
       }
 
       if (branchExists) {
+        // Reattaching to an existing branch — a start-point would be meaningless.
         await run("git", ["worktree", "add", "-q", path, branch], { cwd: source });
+      } else if (name !== "config" && opts.base) {
+        // A repo member starts from the task's base branch, not wherever this
+        // clone's HEAD happens to sit (see the doc comment above). `--` guards
+        // against the base being read as a flag; the caller has already
+        // validated it as a well-formed branch name.
+        const startPoint = await resolveStartPoint(source, opts.base);
+        try {
+          await run("git", ["worktree", "add", "-q", path, "-b", branch, "--", startPoint], { cwd: source });
+        } catch (err) {
+          throw new Error(
+            `Repo "${name}": could not create a worktree from base "${opts.base}" — ${(err as Error).message}`,
+          );
+        }
       } else {
+        // config/ has no base-branch concept — cut from its own current HEAD.
+        // A repo member with no base (legacy callers, or opts omitted) falls
+        // back the same way.
         await run("git", ["worktree", "add", "-q", path, "-b", branch], { cwd: source });
       }
     }

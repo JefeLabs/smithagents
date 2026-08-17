@@ -419,3 +419,46 @@ test("resolveTaskWorktree: a non-workspace task keeps the legacy detached worktr
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("resolveTaskWorktree: workspace set but repo unset falls back to legacy", async () => {
+  const root = mkdtempSync(join(tmpdir(), "disp-norepo-"));
+  try {
+    const paths = smithPaths(root);
+    const { ws } = makeWorkspaceFixture(root, "app");
+    await saveWorkspace(paths, ws);
+
+    const manifest = makeManifest({
+      taskId: "t-3",
+      context: { workspace: ws.name, repoPath: ws.repos[0].path, branch: "main", files: [], repository: "" },
+    });
+
+    const { created } = await resolveTaskWorktree(manifest, {
+      worktreeDir: join(root, "worktrees"),
+      smithRoot: root,
+    });
+
+    assert.equal(created, false, "repo unset means nothing to route to an instance — legacy path");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("resolveTaskWorktree: an unknown workspace name falls back to legacy", async () => {
+  const root = mkdtempSync(join(tmpdir(), "disp-unknown-"));
+  try {
+    const repo = makeGitRepo(join(root, "solo"));
+    const manifest = makeManifest({
+      taskId: "t-4",
+      context: { workspace: "does-not-exist", repo: "app", repoPath: repo, branch: "main", files: [], repository: "" },
+    });
+
+    const { created } = await resolveTaskWorktree(manifest, {
+      worktreeDir: join(root, "worktrees"),
+      smithRoot: root,
+    });
+
+    assert.equal(created, false, "an unresolvable workspace name falls back to legacy, not a crash");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

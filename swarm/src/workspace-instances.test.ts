@@ -187,6 +187,79 @@ test("createInstance: reattaches a worktree whose directory was removed but bran
   }
 });
 
+test("createInstance: a repo member starts from opts.base, not wherever the clone's HEAD sits", async () => {
+  const { dir, ws } = makeWorkspace("base", ["app"]);
+  try {
+    const repoPath = ws.repos[0].path;
+    // The user's real clone is mid-work on a feature branch, ahead of main —
+    // entirely normal, and exactly what an instance must NOT inherit.
+    execFileSync("git", ["checkout", "-q", "-b", "feature"], { cwd: repoPath });
+    writeFileSync(join(repoPath, "FEATURE.md"), "wip\n");
+    execFileSync("git", ["add", "-A"], { cwd: repoPath });
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "feature work"], {
+      cwd: repoPath,
+    });
+
+    const inst = await createInstance(dir, ws as never, "work-base", ["app"], { base: "main" });
+    const member = inst.members.find((m) => m.name === "app");
+    assert.ok(member);
+
+    const ahead = execFileSync("git", ["rev-list", "--count", "main..HEAD"], { cwd: member?.path }).toString().trim();
+    assert.equal(ahead, "0", "the member is cut from the task's base branch, not the clone's current HEAD");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("createInstance: config/ ignores opts.base — no base-branch concept, always cut from its own HEAD", async () => {
+  const { dir, ws } = makeWorkspace("base-config", ["app"]);
+  try {
+    const inst = await createInstance(dir, ws as never, "work-base-cfg", ["app"], { base: "main" });
+    const config = inst.members.find((m) => m.name === "config");
+    assert.ok(config);
+    assert.ok(statSync(join(config?.path ?? "", "settings.json")).isFile());
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("createInstance: a base branch that exists only as a remote-tracking ref still gets the requested branch name (git worktree-add's DWIM otherwise discards -b)", async () => {
+  const root = mkdtempSync(join(tmpdir(), "wsinst-dwim-"));
+  try {
+    // A real remote + clone, so "main" can exist ONLY as origin/main in the clone —
+    // the scenario that trips git's DWIM (see resolveStartPoint's doc comment).
+    const origin = join(root, "origin.git");
+    execFileSync("git", ["init", "-q", "-b", "main", origin]);
+    writeFileSync(join(origin, "README.md"), "hi\n");
+    execFileSync("git", ["add", "-A"], { cwd: origin });
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init"], { cwd: origin });
+
+    const clone = join(root, "clone");
+    execFileSync("git", ["clone", "-q", origin, clone]);
+    // Move off main and delete the local branch — only origin/main remains.
+    execFileSync("git", ["checkout", "-q", "-b", "feature"], { cwd: clone });
+    execFileSync("git", ["branch", "-D", "main"], { cwd: clone });
+
+    const cfg = join(root, "config");
+    execFileSync("git", ["init", "-q", "-b", "main", cfg]);
+    writeFileSync(join(cfg, "settings.json"), "{}\n");
+    execFileSync("git", ["add", "-A"], { cwd: cfg });
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "config"], { cwd: cfg });
+
+    const ws = { name: "pg", repos: [{ name: "app", path: clone }] };
+    const inst = await createInstance(root, ws as never, "work-dwim", ["app"], { base: "main" });
+    const member = inst.members.find((m) => m.name === "app");
+    assert.ok(member);
+
+    const actualBranch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: member?.path })
+      .toString()
+      .trim();
+    assert.equal(actualBranch, "smith/work-dwim", "the requested branch name is honored, not overridden by git's DWIM");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("createInstance: rejects a repo named 'config' because it collides with the workspace config member", async () => {
   const { dir, ws } = makeWorkspace("config-collision", ["app", "config"]);
   try {
