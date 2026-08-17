@@ -22,6 +22,17 @@ const run = promisify(execFile);
  */
 const AUTHOR = ["-c", "user.name=smithagents", "-c", "user.email=smithagents@localhost"];
 
+/**
+ * Strip `user:token@` credentials from a URL embedded in a git error message
+ * before it reaches a note — and, through server.ts, the boot log at warn. A
+ * private repo's URL of that shape is echoed verbatim into both execFile's
+ * "Command failed" line and git's own stderr; this is the one place that
+ * text is persisted, so a live credential must never survive into it.
+ */
+function redactCredentials(message: string): string {
+  return message.replace(/:\/\/[^/@\s]+@/g, "://***@");
+}
+
 async function exists(path: string): Promise<boolean> {
   try {
     await stat(path);
@@ -68,9 +79,40 @@ export async function ensureConfigRepo(workspaceDir: string): Promise<boolean> {
   return true;
 }
 
-/** Where a project repo lives inside its workspace. */
+/**
+ * Where a project repo lives inside its workspace.
+ *
+ * Rejects a name containing a path separator, or equal to "..": a bare `join`
+ * would let such a name climb outside the workspace directory — the repo-name
+ * equivalent of the guard `slugForDir` already gives the *workspace* name
+ * (workspaces.ts). Checked here, not at each call site, so every caller
+ * (cloneRepoInto, materializeRepos, migrateReposIntoWorkspace) is covered.
+ */
 export function repoDirFor(workspaceDir: string, repo: WorkspaceRepo): string {
+  if (/[/\\]/.test(repo.name) || repo.name === "..") {
+    throw new Error(
+      `Repo "${repo.name}": invalid repo name — a path separator or ".." would let it escape the workspace directory`,
+    );
+  }
   return join(workspaceDir, repo.name);
+}
+
+/**
+ * git clone runs against a possibly slow or unreachable remote, at boot,
+ * before the server can start listening — it must not be allowed to hang
+ * forever. Bounded to 10 minutes: generous for a real clone of a large repo,
+ * but finite, so an unreachable remote can never keep the process from ever
+ * reaching app.listen(). GIT_TERMINAL_PROMPT=0 means a repo needing
+ * credentials git does not have fails immediately instead of blocking on an
+ * interactive prompt nothing at boot time can answer.
+ *
+ * Split out as its own pure function (and exported) so a test can assert
+ * what gets passed to git without needing a fixture that actually hangs.
+ */
+export const CLONE_TIMEOUT_MS = 10 * 60 * 1000;
+
+export function cloneExecOptions(): { timeout: number; env: NodeJS.ProcessEnv } {
+  return { timeout: CLONE_TIMEOUT_MS, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } };
 }
 
 /**
@@ -119,7 +161,7 @@ export async function cloneRepoInto(workspaceDir: string, repo: WorkspaceRepo): 
   await mkdir(workspaceDir, { recursive: true });
   const branch = repo.branch ? ["--branch", repo.branch] : [];
   try {
-    await run("git", ["clone", "-q", ...branch, "--", repo.repository, dir]);
+    await run("git", ["clone", "-q", ...branch, "--", repo.repository, dir], cloneExecOptions());
   } catch (err) {
     throw new Error(`Repo "${repo.name}": clone failed — ${(err as Error).message}`);
   }
@@ -174,46 +216,74 @@ export async function migrateReposIntoWorkspace(
   const notes: string[] = [];
 
   for (const ws of await loadWorkspaces(paths)) {
-    const dir = workspaceDir(paths, ws);
-    const repos: WorkspaceRepo[] = [];
-    let changed = false;
-
-    for (const repo of ws.repos) {
-      const label = `${ws.name}/${repo.name}`;
-      const inside = repoDirFor(dir, repo);
-      if (repo.path === inside) {
-        repos.push(repo);
-        continue;
-      }
-      if (!repo.repository) {
-        skipped.push(label);
-        notes.push(
-          `[repo-migration] ${label} lives outside its workspace at ${repo.path} and has no repository URL to ` +
-            `clone from — add a remote to the workspace record, or leave it where it is; until then this ` +
-            `workspace cannot host an instance`,
-        );
-        repos.push(repo);
-        continue;
-      }
-      try {
-        repos.push({ ...repo, path: await cloneRepoInto(dir, repo) });
-        cloned.push(label);
-        changed = true;
-      } catch (err) {
-        skipped.push(label);
-        notes.push(`[repo-migration] ${label} could not be cloned into ${dir} — ${(err as Error).message}`);
-        repos.push(repo);
-      }
-    }
-
-    if (!changed) continue;
     try {
-      await ensureConfigRepo(dir);
-      await saveWorkspace(paths, { ...ws, repos });
+      // workspaceDir() can throw — a malformed `dir` field (assertContext
+      // never type-checks it) reaches resolve() and blows up here, before any
+      // repo is even looked at. This whole per-workspace body is inside the
+      // try below for exactly that reason: one bad record must not brick
+      // every subsequent boot.
+      const dir = workspaceDir(paths, ws);
+      const repos: WorkspaceRepo[] = [];
+      const justCloned: string[] = [];
+      let changed = false;
+
+      for (const repo of ws.repos) {
+        const label = `${ws.name}/${repo.name}`;
+        try {
+          // repoDirFor() also throws (an escaping repo name) — caught here,
+          // per repo, so one bad repo in a workspace doesn't take down its
+          // siblings the way a bad workspace-level failure takes down this
+          // workspace's own repos.
+          const inside = repoDirFor(dir, repo);
+          if (repo.path === inside) {
+            repos.push(repo);
+            continue;
+          }
+          if (!repo.repository) {
+            skipped.push(label);
+            notes.push(
+              `[repo-migration] ${label} lives outside its workspace at ${repo.path} and has no repository URL to ` +
+                `clone from — add a remote to the workspace record, or leave it where it is; until then this ` +
+                `workspace cannot host an instance`,
+            );
+            repos.push(repo);
+            continue;
+          }
+          repos.push({ ...repo, path: await cloneRepoInto(dir, repo) });
+          justCloned.push(label);
+          changed = true;
+        } catch (err) {
+          skipped.push(label);
+          notes.push(
+            `[repo-migration] ${label} could not be cloned into ${dir} — ${redactCredentials((err as Error).message)}`,
+          );
+          repos.push(repo);
+        }
+      }
+
+      if (!changed) continue;
+      try {
+        // Save BEFORE the first config/ commit: when config/ is not yet a
+        // repo, ensureConfigRepo's initial commit snapshots whatever is on
+        // disk at that moment. Committing first would capture the
+        // pre-migration settings.json — the external path — instead of the
+        // repointed record this migration exists to produce.
+        await saveWorkspace(paths, { ...ws, repos });
+        await ensureConfigRepo(dir);
+        // Only confirmed here: a clone that succeeded but whose record could
+        // not be saved is not a completed migration, and must not be
+        // reported as one — the boot log's "cloned:" line is the one thing
+        // that lets a silent, successful migration be confirmed at all.
+        cloned.push(...justCloned);
+      } catch (err) {
+        skipped.push(...justCloned);
+        notes.push(
+          `[repo-migration] cloned ${ws.name}'s repos but could not save the record — ${(err as Error).message}`,
+        );
+      }
     } catch (err) {
-      notes.push(
-        `[repo-migration] cloned ${ws.name}'s repos but could not save the record — ${(err as Error).message}`,
-      );
+      for (const repo of ws.repos) skipped.push(`${ws.name}/${repo.name}`);
+      notes.push(`[repo-migration] workspace "${ws.name}" could not be migrated — ${(err as Error).message}`);
     }
   }
   return { cloned, skipped, notes };

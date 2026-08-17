@@ -5,7 +5,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { smithPaths } from "./paths.js";
-import { cloneRepoInto, ensureConfigRepo, materializeRepos, migrateReposIntoWorkspace } from "./workspace-repos.js";
+import {
+  CLONE_TIMEOUT_MS,
+  cloneExecOptions,
+  cloneRepoInto,
+  ensureConfigRepo,
+  materializeRepos,
+  migrateReposIntoWorkspace,
+  repoDirFor,
+} from "./workspace-repos.js";
 import { loadWorkspaces, saveWorkspace } from "./workspaces.js";
 
 test("ensureConfigRepo: turns config/ into a git repo with the settings file committed", async () => {
@@ -364,5 +372,128 @@ test("migrateReposIntoWorkspace: one bad workspace does not stop the others", as
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(origin, { recursive: true, force: true });
+  }
+});
+
+// --- fix round (review 1) -------------------------------------------------
+
+test("migrateReposIntoWorkspace: a workspace with a malformed dir field is isolated, not fatal to boot", async () => {
+  const root = mkdtempSync(join(tmpdir(), "migrepo-baddir-"));
+  const origin = makeOrigin("k");
+  try {
+    const paths = smithPaths(root);
+    mkdirSync(paths.workspaces, { recursive: true });
+    // assertContext never type-checks `dir` (workspaces.ts), so a raw flat
+    // record with a non-string `dir` loads fine even though workspaceDir()'s
+    // resolve(ws.dir) cannot handle it — this must not escape the loop.
+    writeFileSync(
+      join(paths.workspaces, "bad.json"),
+      JSON.stringify({ name: "bad", repos: [{ name: "app", path: "/nope", repository: "/does/not/exist" }], dir: 123 }),
+    );
+    await saveWorkspace(paths, { name: "good", repos: [{ name: "app", path: origin, repository: origin }] });
+
+    const result = await migrateReposIntoWorkspace(paths);
+
+    assert.ok(result.cloned.includes("good/app"), "the healthy workspace still migrated despite the bad one");
+    assert.ok(result.skipped.includes("bad/app"), "the malformed workspace is reported, not thrown");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(origin, { recursive: true, force: true });
+  }
+});
+
+test("migrateReposIntoWorkspace: a clone that succeeds but fails to save is reported skipped, never cloned", async () => {
+  const root = mkdtempSync(join(tmpdir(), "migrepo-badsave-"));
+  const origin = makeOrigin("l");
+  try {
+    const paths = smithPaths(root);
+    mkdirSync(paths.workspaces, { recursive: true });
+    // A name saveWorkspace's regex rejects (assertContext never enforces
+    // it) — the clone itself succeeds, but the write-back that repoints the
+    // record cannot.
+    writeFileSync(
+      join(paths.workspaces, "badname.json"),
+      JSON.stringify({ name: "Bad Name", repos: [{ name: "app", path: origin, repository: origin }] }),
+    );
+
+    const result = await migrateReposIntoWorkspace(paths);
+
+    assert.ok(!result.cloned.includes("Bad Name/app"), "a clone that could not be saved must not be reported cloned");
+    assert.ok(result.skipped.includes("Bad Name/app"), "it is reported skipped instead");
+    assert.ok(
+      result.notes.some((n) => n.includes("Bad Name") && /could not save/i.test(n)),
+      "the note explains the save failure",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(origin, { recursive: true, force: true });
+  }
+});
+
+test("repoDirFor: rejects a repo name that would escape the workspace directory", () => {
+  const ws = mkdtempSync(join(tmpdir(), "repodir-escape-"));
+  try {
+    assert.throws(
+      () => repoDirFor(ws, { name: "../../escaped", path: "" }),
+      /Repo "\.\.\/\.\.\/escaped"/,
+      "rejects a name that would climb out of the workspace directory",
+    );
+    assert.throws(() => repoDirFor(ws, { name: "..", path: "" }), /Repo "\.\."/, 'also rejects a bare ".."');
+  } finally {
+    rmSync(ws, { recursive: true, force: true });
+  }
+});
+
+test("cloneExecOptions: bounds the clone with a timeout and disables interactive credential prompts", () => {
+  const opts = cloneExecOptions();
+  assert.equal(opts.timeout, CLONE_TIMEOUT_MS, "a hung or unreachable remote must not block boot forever");
+  assert.ok(CLONE_TIMEOUT_MS > 0 && CLONE_TIMEOUT_MS <= 20 * 60 * 1000, "bounded to a sane worst case");
+  assert.equal(opts.env.GIT_TERMINAL_PROMPT, "0", "a repo needing credentials fails fast instead of prompting");
+});
+
+test("migrateReposIntoWorkspace: the first config commit captures the repointed record, not the stale one", async () => {
+  const root = mkdtempSync(join(tmpdir(), "migrepo-commit-order-"));
+  const origin = makeOrigin("m");
+  try {
+    const paths = smithPaths(root);
+    await saveWorkspace(paths, { name: "pg", repos: [{ name: "app", path: origin, repository: origin }] });
+
+    await migrateReposIntoWorkspace(paths);
+
+    const cfg = join(paths.workspaces, "pg", "config");
+    const committed = execFileSync("git", ["show", "HEAD:settings.json"], { cwd: cfg }).toString();
+    assert.equal(
+      JSON.parse(committed).repos[0].path,
+      join(paths.workspaces, "pg", "app"),
+      "the first commit already has the repointed path, not the external one",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(origin, { recursive: true, force: true });
+  }
+});
+
+test("migrateReposIntoWorkspace: a clone failure note redacts credentials embedded in the repository URL", async () => {
+  const root = mkdtempSync(join(tmpdir(), "migrepo-redact-"));
+  try {
+    const paths = smithPaths(root);
+    // An unsupported transport fails instantly, with no network I/O — the
+    // credentialed URL still lands verbatim in execFile's "Command failed"
+    // line, which is what must be redacted before it reaches a note.
+    const credentialed = "bogus://user:s3cr3t-token@nowhere.invalid/repo";
+    await saveWorkspace(paths, { name: "pg", repos: [{ name: "app", path: "/nope", repository: credentialed }] });
+
+    const result = await migrateReposIntoWorkspace(paths);
+
+    assert.ok(result.skipped.includes("pg/app"));
+    for (const note of result.notes) {
+      assert.ok(!note.includes("s3cr3t-token"), "the credential must never reach the boot log");
+    }
+    assert.ok(
+      result.notes.some((n) => n.includes("pg/app") && n.includes("***@")),
+      "the note still shows a redacted marker in place of the credential",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
