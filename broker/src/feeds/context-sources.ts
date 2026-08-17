@@ -9,7 +9,12 @@ import type { FeedSource } from "./types.ts";
 export interface ContextSourceWire {
   id: string;
   name: string;
-  preset: "jira" | "releases" | "topic" | "observability" | "support" | "custom";
+  // Not a closed union: the swarm's workspaces.ts derives the real closed set
+  // (allPresetIds/validSources) from WORK_KINDS, which now includes kind-specific
+  // presets (tiktok, crm, tickers, …) this file never needs to know by name. Here
+  // `preset` is presentational — only "jira"/"releases"/"topic" get behavioral
+  // dispatch below, everything else falls through to a plain http-kind row.
+  preset: string;
   origin: { connectorId?: string; url?: string; query?: string };
   cadence: "hourly" | "6h" | "nightly";
   transform: { mode: "map" } | { mode: "analyze"; prompt?: string };
