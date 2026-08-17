@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { mkdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { repoNameProblem } from "./workspace-repos.js";
 import type { Workspace } from "./workspaces.js";
 
 const run = promisify(execFile);
@@ -95,7 +96,8 @@ async function isWorktree(path: string): Promise<boolean> {
  *
  * Idempotent — an existing member worktree is left exactly as it is, because it
  * may hold work in progress. Only missing members are added, so an instance
- * that gained a repo mid-flight can be completed by calling again.
+ * that gained a repo mid-flight can be completed by calling again. A removed
+ * worktree whose branch still exists is reattached, returning the committed work.
  */
 export async function createInstance(
   workspaceDir: string,
@@ -111,6 +113,13 @@ export async function createInstance(
 
   const sources: Array<{ name: string; source: string }> = [{ name: "config", source: join(workspaceDir, "config") }];
   for (const name of repoNames) {
+    // Validate repo name before touching the filesystem.
+    if (name === "config") {
+      throw new Error(`Repo name "config" collides with the workspace's reserved config member`);
+    }
+    const nameProblem = repoNameProblem(name);
+    if (nameProblem) throw new Error(`Repo "${name}": invalid repo name — ${nameProblem}`);
+
     const repo = ws.repos.find((r) => r.name === name);
     if (!repo) throw new Error(`Repo "${name}" is not in workspace "${ws.name}"`);
     sources.push({ name, source: repo.path });
@@ -121,9 +130,28 @@ export async function createInstance(
   for (const { name, source } of sources) {
     const path = join(dir, name);
     if (!(await isWorktree(path))) {
+      // Prune stale worktree registrations in the source repo; a removed worktree
+      // directory that still appears in .git/worktrees/ would make `worktree add`
+      // refuse the path.
+      await run("git", ["worktree", "prune"], { cwd: source });
+
+      // Check if the branch already exists (e.g., the worktree was removed but
+      // the branch commits remain). If so, attach to it; if not, create it.
       // `workIdProblem` already refused a leading dash, so `branch` cannot be
       // read as a flag. The base is this source's current HEAD.
-      await run("git", ["worktree", "add", "-q", path, "-b", branch], { cwd: source });
+      let branchExists = false;
+      try {
+        await run("git", ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], { cwd: source });
+        branchExists = true;
+      } catch {
+        // Branch does not exist.
+      }
+
+      if (branchExists) {
+        await run("git", ["worktree", "add", "-q", path, branch], { cwd: source });
+      } else {
+        await run("git", ["worktree", "add", "-q", path, "-b", branch], { cwd: source });
+      }
     }
     members.push({ name, path, source });
   }

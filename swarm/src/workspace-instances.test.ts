@@ -151,3 +151,56 @@ test("createInstance: names a repo that is not in the workspace", async () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("createInstance: reattaches a worktree whose directory was removed but branch remains", async () => {
+  const { dir, ws } = makeWorkspace("reattach", ["app"]);
+  try {
+    const first = await createInstance(dir, ws as never, "work-11", ["app"]);
+    writeFileSync(join(first.dir, "app", "WORK.md"), "committed work\n");
+    execFileSync("git", ["add", "WORK.md"], { cwd: join(first.dir, "app") });
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "work"], {
+      cwd: join(first.dir, "app"),
+    });
+
+    // Remove the worktree directory while leaving the branch in the source repo.
+    rmSync(join(first.dir, "app"), { recursive: true, force: true });
+
+    // Call again — should reattach and restore the committed work.
+    const second = await createInstance(dir, ws as never, "work-11", ["app"]);
+
+    assert.equal(second.dir, first.dir);
+    assert.ok(statSync(join(second.dir, "app", "WORK.md")).isFile(), "committed work is back");
+    const branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: join(second.dir, "app") })
+      .toString()
+      .trim();
+    assert.equal(branch, "smith/work-11", "reattached worktree is on the right branch");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("createInstance: rejects a repo named 'config' because it collides with the workspace config member", async () => {
+  const { dir, ws } = makeWorkspace("config-collision", ["app", "config"]);
+  try {
+    await assert.rejects(() => createInstance(dir, ws as never, "work-12", ["app", "config"]), /config.*collides/i);
+    assert.throws(() => statSync(join(dir, ".runtime")), "nothing created under the instance directory");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("createInstance: rejects a repo whose name would escape the instance directory", async () => {
+  const { dir, ws } = makeWorkspace("path-escape", ["app"]);
+  try {
+    // Create a bogus workspace record with an invalid repo name (it won't exist on disk).
+    const evilWs = { ...ws, repos: [...ws.repos, { name: "../sibling", path: join(dir, "../sibling") }] };
+    await assert.rejects(
+      () => createInstance(dir, evilWs as never, "work-13", ["app", "../sibling"]),
+      /sibling.*escape/i,
+    );
+    // Verify the instance directory was not created.
+    assert.throws(() => statSync(join(dir, ".runtime")), "instance directory was not created on validation error");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
