@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
+import { migrateWorkspaceRecords } from "./migrate-state.js";
 import { smithPaths } from "./paths.js";
 import { loadRegistry, saveRegistryEntry } from "./workspace-registry.js";
 import type { Workspace } from "./workspaces.js";
@@ -25,6 +26,7 @@ import {
   settingsPathFor,
   slugForDir,
   validSources,
+  WorkspaceDirCollisionError,
   workspaceDir,
 } from "./workspaces.js";
 
@@ -440,6 +442,48 @@ test("loadWorkspaces: when a record exists in both places, settings.json wins", 
   }
 });
 
+test("loadWorkspaces: a registered settings.json that validates as a GROUP record is never returned as a phantom workspace", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ws-reg-group-"));
+  try {
+    const paths = smithPaths(root);
+    // A hand-editable settings.json can validate as a group (members, no
+    // repos) just as easily as a workspace — its registry entry surviving
+    // that edit is exactly the mechanism the flat loop below already guards
+    // against via loadWorkspacesFromDir's own filter.
+    const dir = join(paths.workspaces, "squad");
+    mkdirSync(join(dir, "config"), { recursive: true });
+    writeFileSync(settingsPathFor(dir), JSON.stringify({ name: "squad", members: ["a", "b"], repos: [] }));
+    await saveRegistryEntry(paths, "squad", dir);
+
+    const all = await loadWorkspaces(paths);
+    assert.deepEqual(all, [], "a group reached through the registry must never surface as a workspace");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("loadWorkspaces: two registry keys pointing at the same directory return the workspace once, not twice", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ws-reg-dedup-"));
+  try {
+    const paths = smithPaths(root);
+    const dir = join(paths.workspaces, "ab");
+    mkdirSync(join(dir, "config"), { recursive: true });
+    writeFileSync(settingsPathFor(dir), JSON.stringify({ name: "ab", repos: [{ name: "r", path: "/abs/r" }] }));
+    // A registry can end up with two keys resolving to one directory —
+    // saveWorkspace's new guard prevents new writes from creating this
+    // going forward, but a reader must not double-count a registry that is
+    // already in this shape (e.g. hand-edited).
+    await saveRegistryEntry(paths, "ab", dir);
+    await saveRegistryEntry(paths, "ab-stale-alias", dir);
+
+    const all = await loadWorkspaces(paths);
+    assert.equal(all.length, 1, "the same settings.json must not be read and pushed twice");
+    assert.equal(all[0]?.name, "ab");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("saveWorkspace: writes settings.json and registers the directory", async () => {
   const root = mkdtempSync(join(tmpdir(), "ws-save-"));
   try {
@@ -455,6 +499,124 @@ test("saveWorkspace: writes settings.json and registers the directory", async ()
       (await loadWorkspaces(paths)).map((w) => w.name),
       ["fresh"],
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("saveWorkspace: refuses to overwrite a DIFFERENT workspace's settings.json — 'ab' and 'ab-' both slug to 'ab'", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ws-collide-"));
+  try {
+    const paths = smithPaths(root);
+    // "ab-" already owns the directory (an ordinary earlier save).
+    await saveWorkspace(paths, { name: "ab-", repos: [{ name: "r", path: "/abs/r" }] });
+
+    // An edit to "ab" — a DIFFERENT workspace that happens to slug to the
+    // same directory — must be refused, not silently adopt "ab-"'s record.
+    await assert.rejects(
+      () => saveWorkspace(paths, { name: "ab", repos: [{ name: "r", path: "/abs/r" }] }),
+      (err: unknown) => {
+        assert.ok(err instanceof WorkspaceDirCollisionError);
+        assert.equal(err.requestedName, "ab");
+        assert.equal(err.existingName, "ab-");
+        assert.match(err.message, /"ab"/);
+        assert.match(err.message, /"ab-"/);
+        return true;
+      },
+    );
+
+    const dir = workspaceDir(paths, { name: "ab", repos: [] } as Workspace);
+    const onDisk = JSON.parse(readFileSync(settingsPathFor(dir), "utf8"));
+    assert.equal(onDisk.name, "ab-", "the existing workspace's record must survive completely untouched");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("saveWorkspace: a missing or corrupt destination is not a collision — an edit may still write (and self-heal) its own record", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ws-selfheal-"));
+  try {
+    const paths = smithPaths(root);
+    const dir = workspaceDir(paths, { name: "pg", repos: [] } as Workspace);
+    mkdirSync(join(dir, "config"), { recursive: true });
+    writeFileSync(settingsPathFor(dir), "{not json"); // corrupt — but nobody's identity to protect
+
+    await saveWorkspace(paths, { name: "pg", description: "healed", repos: [{ name: "r", path: "/abs/r" }] });
+
+    const onDisk = JSON.parse(readFileSync(settingsPathFor(dir), "utf8"));
+    assert.equal(
+      onDisk.description,
+      "healed",
+      "an edit to the SAME workspace can repair its own corrupt settings.json",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("saveWorkspace: the full ab/ab- sequence — migration then an ordinary edit never destroys the loser's record", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ws-ab-seq-"));
+  try {
+    const paths = smithPaths(root);
+    mkdirSync(paths.workspaces, { recursive: true });
+    writeFileSync(
+      join(paths.workspaces, "ab.json"),
+      JSON.stringify({ name: "ab", repos: [{ name: "r", path: "/abs/r" }] }),
+    );
+    writeFileSync(
+      join(paths.workspaces, "ab-.json"),
+      JSON.stringify({ name: "ab-", repos: [{ name: "r", path: "/abs/r" }] }),
+    );
+
+    const migrated = await migrateWorkspaceRecords(paths);
+    assert.equal(migrated.moved.length, 1, "only one of the two claims the directory during migration");
+    assert.equal(migrated.skipped.length, 1, "the other survives flat — migrateWorkspaceRecords' own collision guard");
+
+    const winner = migrated.moved[0] as string;
+    const loser = winner === "ab" ? "ab-" : "ab";
+
+    // The PUT-equivalent write: an ordinary edit to the loser, still
+    // findable and editable via loadWorkspaces' flat-record fallback.
+    await assert.rejects(
+      () => saveWorkspace(paths, { name: loser, description: "edited", repos: [{ name: "r", path: "/abs/r" }] }),
+      WorkspaceDirCollisionError,
+    );
+
+    const dir = workspaceDir(paths, { name: "ab", repos: [] } as Workspace);
+    const onDisk = JSON.parse(readFileSync(settingsPathFor(dir), "utf8"));
+    assert.equal(onDisk.name, winner, "the winner's record must survive completely untouched by the loser's edit");
+    assert.equal(onDisk.description, undefined, "not overwritten by the loser's edit");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("saveWorkspace: a slugified submission collides with the legacy record it slugifies to, just like two different names would", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ws-foo-"));
+  try {
+    const paths = smithPaths(root);
+    // A legacy record whose name pre-dates saveWorkspace's lowercase-only
+    // name regex — reachable through migrateWorkspaceRecords (assertContext
+    // does not enforce that format), not through saveWorkspace itself.
+    mkdirSync(paths.workspaces, { recursive: true });
+    writeFileSync(
+      join(paths.workspaces, "Foo.json"),
+      JSON.stringify({ name: "Foo", repos: [{ name: "r", path: "/abs/r" }] }),
+    );
+    await migrateWorkspaceRecords(paths);
+
+    // POST /workspaces lowercases and slugifies the submitted name before
+    // ever calling saveWorkspace (server.ts's inline slugify ahead of the
+    // route's own collision check) — "Foo" submitted through the API
+    // reaches saveWorkspace as "foo".
+    await assert.rejects(
+      () => saveWorkspace(paths, { name: "foo", repos: [{ name: "r", path: "/abs/r" }] }),
+      WorkspaceDirCollisionError,
+    );
+
+    const dir = workspaceDir(paths, { name: "foo", repos: [] } as Workspace);
+    const onDisk = JSON.parse(readFileSync(settingsPathFor(dir), "utf8"));
+    assert.equal(onDisk.name, "Foo", "the legacy workspace's config and boards are never silently adopted");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

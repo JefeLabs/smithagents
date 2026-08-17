@@ -197,6 +197,7 @@ import {
   saveWorkspace,
   validSources,
   type Workspace,
+  WorkspaceDirCollisionError,
   type WorkspaceRepo,
   workspaceDir,
 } from "./workspaces.js";
@@ -362,7 +363,11 @@ export class OrchestratorServer {
     this.broadcast((workCardRef ? { ...e, workCardRef } : e) as unknown as DispatcherEvent);
   }
 
-  /** Reread `.smith/workspaces/*.json` — called at boot and after every mutation below. */
+  /**
+   * Reload every workspace: each registered directory's config/settings.json,
+   * plus any flat `.smith/workspaces/*.json` record not yet migrated there —
+   * called at boot and after every mutation below.
+   */
   private async reloadWorkspaces(): Promise<void> {
     this.workspaces = await loadWorkspaces(this.paths);
   }
@@ -493,8 +498,20 @@ export class OrchestratorServer {
         (await loadAllBoards(this.boardDirs())).boards,
       );
       for (const ws of migration.workspaceWrites) {
-        await saveWorkspace(this.paths, ws);
-        this.app.log.info(`[source-migration] seeded sources on ${ws.name}`);
+        try {
+          await saveWorkspace(this.paths, ws);
+          this.app.log.info(`[source-migration] seeded sources on ${ws.name}`);
+        } catch (err) {
+          // saveWorkspace can now refuse a write that would overwrite a
+          // different, slug-colliding workspace's record — a boot-time seed
+          // must skip that one workspace and keep going rather than take the
+          // whole boot down over it.
+          if (err instanceof WorkspaceDirCollisionError) {
+            this.app.log.warn(`[source-migration] skipping "${ws.name}" — ${err.message}`);
+            continue;
+          }
+          throw err;
+        }
       }
       for (const b of migration.boardWrites) {
         await saveBoard(this.boardDir(b), b);
@@ -1854,6 +1871,9 @@ export class OrchestratorServer {
             await saveWorkspace(this.paths, { ...other, default: undefined });
         await saveWorkspace(this.paths, ws);
       } catch (err) {
+        if (err instanceof WorkspaceDirCollisionError) {
+          return reply.status(409).send({ error: err.message });
+        }
         return reply.status(400).send({ error: String((err as Error).message) });
       }
       // A new workspace gets Ideation + Plan + Deliver; the other three via
@@ -1907,17 +1927,24 @@ export class OrchestratorServer {
       }
       const problem = await workspaceProblems(merged);
       if (problem) return reply.status(400).send({ error: problem });
-      if (merged.default && !existing.default) {
-        for (const other of all.filter((w) => w.default && w.name !== merged.name)) {
-          await saveWorkspace(this.paths, { ...other, default: undefined });
+      try {
+        if (merged.default && !existing.default) {
+          for (const other of all.filter((w) => w.default && w.name !== merged.name)) {
+            await saveWorkspace(this.paths, { ...other, default: undefined });
+          }
         }
+        if (existing.default && b.default === false && activeWorkspaces(all).length > 1) {
+          return reply
+            .status(409)
+            .send({ error: `"${existing.name}" is the default workspace — set another default first` });
+        }
+        await saveWorkspace(this.paths, merged);
+      } catch (err) {
+        if (err instanceof WorkspaceDirCollisionError) {
+          return reply.status(409).send({ error: err.message });
+        }
+        throw err;
       }
-      if (existing.default && b.default === false && activeWorkspaces(all).length > 1) {
-        return reply
-          .status(409)
-          .send({ error: `"${existing.name}" is the default workspace — set another default first` });
-      }
-      await saveWorkspace(this.paths, merged);
       await this.reloadWorkspaces();
       return merged;
     });
@@ -1928,7 +1955,14 @@ export class OrchestratorServer {
       if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
       const violation = defaultViolation(all, ws.name);
       if (violation) return reply.status(409).send({ error: violation });
-      await saveWorkspace(this.paths, { ...ws, archived: true, default: undefined });
+      try {
+        await saveWorkspace(this.paths, { ...ws, archived: true, default: undefined });
+      } catch (err) {
+        if (err instanceof WorkspaceDirCollisionError) {
+          return reply.status(409).send({ error: err.message });
+        }
+        throw err;
+      }
       await this.reloadWorkspaces();
       return { ok: true, archived: ws.name };
     });
@@ -1952,9 +1986,12 @@ export class OrchestratorServer {
       // This deletes no data: the record is removed but ws's directory is
       // deliberately left on disk. Recreating "ws.name" later passes the
       // collision check (records-only) and ensureWorkspaceDir's mkdir -p
-      // silently adopts the survivor with its contents intact — harmless
-      // while the directory is empty, a real provenance bug once it holds
-      // config/settings.json or boards.
+      // silently adopts the survivor with its contents intact — every
+      // workspace now owns a config/settings.json (and often config/boards)
+      // by the time this could run, so this is a live provenance hazard, not
+      // a hypothetical one. Not addressed here — parked as a follow-up,
+      // same as loadWorkspaces() throwing on an invalid registered record
+      // (see task-3-report.md, "NOT in this wave").
       await removeWorkspaceFile(this.paths, ws.name);
       await this.reloadWorkspaces();
       return { ok: true, deleted: ws.name };

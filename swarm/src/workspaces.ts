@@ -1,6 +1,10 @@
 // Workspaces — named groupings of one or more repos the crew can work in.
-// One JSON file per workspace under .smith/workspaces/. Delegations name a
-// workspace/repo; the dispatcher cuts the task's worktree from that repo.
+// Each workspace owns a directory under .smith/workspaces/ holding its own
+// config/settings.json, found via a name -> directory registry
+// (workspace-registry.ts); a flat <name>.json record under .smith/workspaces/
+// directly is the pre-migration legacy shape, still read as a fallback until
+// migrateWorkspaceRecords relocates it. Delegations name a workspace/repo;
+// the dispatcher cuts the task's worktree from that repo.
 
 import { execFile } from "node:child_process";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -138,6 +142,54 @@ export function assertContext(file: string, v: unknown): Workspace {
 }
 
 /**
+ * What's currently at a settings.json path: nothing yet, something that exists
+ * but doesn't validate, or a validated record — and if a record, which one.
+ * Shared by `saveWorkspace` (an ordinary edit) and `migrateWorkspaceRecords`
+ * (relocating a legacy record): both write to a directory computed from
+ * `slugForDir`, which is lossier than the name regex — "ab" and "ab-" both
+ * pass `^[a-z0-9][a-z0-9-]{0,63}$` and both slug to "ab" — so two different
+ * workspaces can resolve to the same settings.json path, and neither caller
+ * may treat "something parses here" as proof it's theirs to write over.
+ */
+export type SettingsProbe = { kind: "missing" } | { kind: "corrupt" } | { kind: "parsed"; value: Workspace };
+
+/** Read and validate whatever is at `settings`, without throwing for the two expected non-error states (absent, unreadable). */
+export async function probeSettings(settings: string): Promise<SettingsProbe> {
+  let raw: string;
+  try {
+    raw = await readFile(settings, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    return { kind: "missing" };
+  }
+  try {
+    return { kind: "parsed", value: assertContext(settings, JSON.parse(raw)) };
+  } catch {
+    return { kind: "corrupt" };
+  }
+}
+
+/**
+ * Thrown by `saveWorkspace` when writing would overwrite a DIFFERENT
+ * workspace's settings.json — two names slugged to the same directory. The
+ * API layer maps this to a 409 naming both workspaces and the shared
+ * directory; it must never reach a client as a silent overwrite or a 500.
+ */
+export class WorkspaceDirCollisionError extends Error {
+  constructor(
+    public readonly requestedName: string,
+    public readonly existingName: string,
+    public readonly dir: string,
+  ) {
+    super(
+      `"${requestedName}" and "${existingName}" both resolve to the same directory (${dir}) — ` +
+        `refusing to overwrite "${existingName}"'s record with "${requestedName}"'s`,
+    );
+    this.name = "WorkspaceDirCollisionError";
+  }
+}
+
+/**
  * Every context record in `dir` — plain workspaces AND groupish ones — paired
  * with the exact file it was read from. The store's raw read; every other
  * loader below builds on this one.
@@ -212,6 +264,17 @@ export async function loadWorkspaces(paths: SmithPaths): Promise<Workspace[]> {
     try {
       const raw = await readFile(settingsPathFor(dir), "utf8");
       const ws = assertContext(settingsPathFor(dir), JSON.parse(raw));
+      // A hand-editable settings.json can validate as a GROUP record
+      // (members, no repos) just as easily as a workspace one — this is the
+      // same filter loadWorkspacesFromDir already applies to the flat loop
+      // below, so a group never reaches callers of this function as a
+      // phantom repo-less workspace.
+      if (isGroupRecord(ws)) continue;
+      // Two registry keys can point at the same directory (the exact
+      // collision saveWorkspace now refuses to create, plus any pre-existing
+      // one) — without this check the same settings.json would be read and
+      // pushed twice.
+      if (seen.has(ws.name)) continue;
       seen.add(ws.name);
       out.push(ws);
     } catch (err) {
@@ -280,13 +343,30 @@ export function resolveRepo(
   return repo ? { workspace, repo } : null;
 }
 
-/** Write one workspace to its own directory and register it. Mirror of agents.saveAgent. */
+/**
+ * Write one workspace to its own directory and register it. Mirror of agents.saveAgent.
+ *
+ * `slugForDir` is lossier than the name regex above — "ab" and "ab-" both
+ * pass it and both slug to directory "ab" — so an ordinary edit to one can
+ * resolve to a directory that already holds a DIFFERENT workspace's
+ * settings.json. Reading before writing is what tells them apart: a
+ * validated record whose `name` doesn't match `ws.name` is refused rather
+ * than silently overwritten. A missing or corrupt destination is not a
+ * collision — nobody's record is there to protect, and a corrupt one may be
+ * this very workspace's own settings.json, which an edit should be able to
+ * repair rather than being permanently blocked by.
+ */
 export async function saveWorkspace(paths: SmithPaths, ws: Workspace): Promise<void> {
   if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(ws.name)) {
     throw new Error(`Invalid workspace name "${ws.name}": use lowercase letters, digits and dashes`);
   }
   const dir = await ensureWorkspaceDir(paths, ws);
-  await writeFile(settingsPathFor(dir), `${JSON.stringify(ws, null, 2)}\n`);
+  const settings = settingsPathFor(dir);
+  const existing = await probeSettings(settings);
+  if (existing.kind === "parsed" && existing.value.name !== ws.name) {
+    throw new WorkspaceDirCollisionError(ws.name, existing.value.name, dir);
+  }
+  await writeFile(settings, `${JSON.stringify(ws, null, 2)}\n`);
   await saveRegistryEntry(paths, ws.name, dir);
 }
 
@@ -404,9 +484,12 @@ export function boardsDirFor(paths: SmithPaths, workspaces: Workspace[], workspa
 /**
  * Workspaces whose directories collide. `slugForDir` is lossier than the name
  * validator — "ab" and "ab-" are both valid names and both slug to "ab" — so two
- * records can resolve to one directory and silently share its contents. Nothing
- * creates such a pair through the API today, because POST slugifies before
- * saving, but that invariant lives in the handler rather than in the type.
+ * records can resolve to one directory and silently share its contents. POST's
+ * own collision check is an exact name match, not slug-aware, so it does not
+ * by itself prevent this pair from being created; `saveWorkspace`'s destination
+ * probe (`probeSettings`) is what actually refuses the second write. This
+ * function is a fleet-wide sweep for auditing already-created collisions
+ * (e.g. ones left over from before that guard existed), not the write-time gate.
  */
 export function collidingWorkspaceDirs(
   paths: SmithPaths,
