@@ -184,7 +184,6 @@ import {
   isGitRepo,
   isGroupRecord,
   loadAllContexts,
-  loadAllContextsFromDir,
   loadWorkspaces,
   normalizeRepoBranch,
   removeWorkspaceFile,
@@ -467,7 +466,7 @@ export class OrchestratorServer {
     // Idempotent — a second boot against the seeded state writes nothing.
     {
       const migration = seedSourceMigration(
-        await loadAllContextsFromDir(this.paths.workspaces),
+        await loadWorkspaces(this.paths),
         (await loadAllBoards(this.boardDirs())).boards,
       );
       for (const ws of migration.workspaceWrites) {
