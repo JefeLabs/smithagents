@@ -492,12 +492,20 @@ export async function loadBoards(
 }
 
 /**
- * Every board across several directories — the host work dir plus each
- * workspace's config/boards. Reading both is what lets boards move gradually:
- * a board that has not been migrated yet still loads from where it is.
+ * Every board across several directories — normally each workspace's
+ * config/boards plus the host work dir. Reading all of them is what lets
+ * boards move gradually: a board that has not been migrated yet still loads
+ * from wherever it currently sits.
  *
- * On a duplicate id the FIRST directory wins, so a board that exists in both
- * places during a migration resolves to one board rather than two.
+ * On a duplicate id the FIRST directory in `dirs` wins. This ordering is
+ * LOAD-BEARING, not arbitrary: a board write always resolves to its
+ * workspace directory once the workspace is known (see boardsDirFor), even
+ * before that board's file has actually been moved there. If the host
+ * directory were listed before the workspace directories, a fresh write to
+ * the workspace copy would be shadowed forever by the stale original still
+ * sitting in the host dir — the edit would look like it never happened.
+ * Callers MUST list workspace directories before the host directory so a
+ * real write is always the copy that wins.
  */
 export async function loadAllBoards(
   dirs: string[],

@@ -1041,6 +1041,33 @@ test("loadAllBoards: a duplicate id keeps the first directory's copy", async () 
   }
 });
 
+test("loadAllBoards: a workspace copy wins over a stale host copy", async () => {
+  const root = mkdtempSync(join(tmpdir(), "boards-precedence-"));
+  try {
+    const hostDir = join(root, "work");
+    const wsDir = join(root, "ws", "config", "boards");
+    mkdirSync(hostDir, { recursive: true });
+    mkdirSync(wsDir, { recursive: true });
+
+    const staleHostCopy = createBoard("deliver", "pg");
+    staleHostCopy.name = "STALE HOST COPY";
+    const freshWorkspaceCopy = createBoard("deliver", "pg");
+    freshWorkspaceCopy.name = "FRESH WORKSPACE COPY";
+    await saveBoard(hostDir, staleHostCopy);
+    await saveBoard(wsDir, freshWorkspaceCopy);
+
+    // Workspace directories FIRST, host LAST — this is the order server.ts's
+    // boardDirs() must produce. A save always resolves to the workspace
+    // directory once the workspace is known, even before that board's file
+    // has actually moved there, so a stale host copy must never shadow it.
+    const { boards } = await loadAllBoards([wsDir, hostDir]);
+    assert.equal(boards.length, 1);
+    assert.equal(boards[0].name, "FRESH WORKSPACE COPY", "a workspace copy must beat a stale host copy");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("loadAllBoards: a missing directory contributes nothing and is not an error", async () => {
   const root = mkdtempSync(join(tmpdir(), "boards-missing-"));
   try {

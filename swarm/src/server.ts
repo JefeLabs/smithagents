@@ -651,14 +651,34 @@ export class OrchestratorServer {
     return this.paths.work;
   }
 
-  /** Every directory boards can live in: the host dir first, then each workspace's. */
+  /** Every directory boards can live in: each workspace's first, the host dir LAST —
+      see loadAllBoards's docblock for why this order is load-bearing, not arbitrary. */
   private boardDirs(): string[] {
-    return [this.paths.work, ...this.workspaces.map((w) => join(workspaceDir(this.paths, w), "config", "boards"))];
+    return [...this.workspaces.map((w) => join(workspaceDir(this.paths, w), "config", "boards")), this.paths.work];
   }
 
   /** Where THIS board's file belongs, from its own workspaceId. */
   private boardDir(board: { workspaceId?: string }): string {
     return boardsDirFor(this.paths, this.workspaces, board.workspaceId);
+  }
+
+  /**
+   * Delete a board's file from every directory it could be sitting in: its
+   * resolved workspace directory AND the host directory. A board mid-migration
+   * (Task 3) can have a copy in both — deleting only the resolved one would
+   * leave the other behind to resurface as "the board" on the very next load.
+   * A missing file in either location is not an error; most boards only ever
+   * have one copy.
+   */
+  private async deleteBoardEverywhere(board: WorkBoard): Promise<void> {
+    const dirs = new Set([this.boardDir(board), this.paths.work]);
+    for (const dir of dirs) {
+      try {
+        await deleteBoardFile(dir, board.id);
+      } catch (err) {
+        if (!(err instanceof Error && "code" in err && err.code === "ENOENT")) throw err;
+      }
+    }
   }
 
   /**
@@ -2713,7 +2733,7 @@ export class OrchestratorServer {
     this.app.delete<{ Params: { id: string } }>("/work/boards/:id", async (req, reply) => {
       const board = await boardOr404(req.params.id, reply);
       if (!board) return;
-      await deleteBoardFile(this.boardDir(board), board.id);
+      await this.deleteBoardEverywhere(board);
       return { ok: true };
     });
 
