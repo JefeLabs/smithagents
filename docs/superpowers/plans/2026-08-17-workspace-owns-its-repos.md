@@ -150,26 +150,68 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
+/** Whether this directory is a git repo with at least one commit. */
+async function hasCommit(dir: string): Promise<boolean> {
+  try {
+    await run("git", ["rev-parse", "--verify", "HEAD"], { cwd: dir });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Make `<workspaceDir>/config` a git repo, committing whatever is already in it
- * (settings.json, boards/). Returns true if it initialised one, false if a repo
- * was already there.
+ * (settings.json, boards/). Returns true if it made the repo usable, false if it
+ * already was.
  *
- * Idempotent in the strong sense: an existing repo is never re-initialised and
- * never gets a new commit, so uncommitted edits the user is holding stay
- * uncommitted. Committing on their behalf would put half-finished work into
- * history they did not ask for.
+ * "Already a repo" means HEAD RESOLVES, not that `.git` exists. The three git
+ * calls below have no rollback, so a failure after `init` leaves a `.git` with
+ * zero commits — and a `.git`-exists check would then return false forever, with
+ * no recovery. Worse, `git worktree add` against a commit-less repo does not
+ * error: git infers `--orphan` and hands back an EMPTY worktree, so an instance
+ * cut from it would silently have no settings.json and no boards/. Checking HEAD
+ * makes the function self-healing instead.
+ *
+ * Idempotent in the strong sense: a repo that already has a commit is never
+ * re-initialised and never gets a new one, so uncommitted edits the user is
+ * holding stay uncommitted. Committing on their behalf would put half-finished
+ * work into history they did not ask for.
  */
 export async function ensureConfigRepo(workspaceDir: string): Promise<boolean> {
   const dir = join(workspaceDir, "config");
   await mkdir(dir, { recursive: true });
-  if (await exists(join(dir, ".git"))) return false;
+  if (await hasCommit(dir)) return false;
 
-  await run("git", ["init", "-q", "-b", "main"], { cwd: dir });
+  if (!(await exists(join(dir, ".git")))) {
+    await run("git", ["init", "-q", "-b", "main"], { cwd: dir });
+  }
   await run("git", ["add", "-A"], { cwd: dir });
   await run("git", [...AUTHOR, "commit", "-q", "--allow-empty", "-m", "Workspace config"], { cwd: dir });
   return true;
 }
+```
+
+A fourth test covers the recovery path — a `config/` where `git init` ran but no commit exists:
+
+```ts
+test("ensureConfigRepo: completes a repo that was initialised but never committed", async () => {
+  const ws = mkdtempSync(join(tmpdir(), "cfgrepo-halfinit-"));
+  try {
+    mkdirSync(join(ws, "config"), { recursive: true });
+    writeFileSync(join(ws, "config", "settings.json"), '{"name":"pg","repos":[]}\n');
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: join(ws, "config") });
+
+    const created = await ensureConfigRepo(ws);
+
+    assert.equal(created, true, "a commit-less repo is not 'already there'");
+    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: join(ws, "config") }).toString().trim();
+    assert.ok(head.length > 0, "HEAD resolves — a worktree cut from this will not be an empty orphan");
+    assert.match(execFileSync("git", ["ls-files"], { cwd: join(ws, "config") }).toString(), /settings\.json/);
+  } finally {
+    rmSync(ws, { recursive: true, force: true });
+  }
+});
 ```
 
 - [ ] **Step 4: Run them to verify they pass**
