@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { instanceDir, instancesDir, workIdProblem } from "./workspace-instances.js";
+import { createInstance, instanceDir, instancesDir, workIdProblem } from "./workspace-instances.js";
 
 test("instancesDir/instanceDir: instances live in the unversioned half", () => {
   assert.equal(instancesDir("/ws"), join("/ws", ".runtime", "instances"));
@@ -39,5 +42,112 @@ test("workIdProblem: rejects surrounding whitespace so the id matches its path",
 test("workIdProblem: rejects control characters that break git refs", () => {
   for (const id of ["foo\nbar", "a\tb", "work\x00id"]) {
     assert.ok(workIdProblem(id), `${id} must be rejected`);
+  }
+});
+
+/** A workspace directory whose config/ and one repo are real git repos. */
+function makeWorkspace(
+  label: string,
+  repos: string[],
+): { dir: string; ws: { name: string; repos: Array<{ name: string; path: string }> } } {
+  const dir = mkdtempSync(join(tmpdir(), `wsinst-${label}-`));
+  const commit = (cwd: string, msg: string) => {
+    execFileSync("git", ["add", "-A"], { cwd });
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", msg], { cwd });
+  };
+  const cfg = join(dir, "config");
+  execFileSync("git", ["init", "-q", "-b", "main", cfg]);
+  writeFileSync(join(cfg, "settings.json"), '{"name":"pg","repos":[]}\n');
+  commit(cfg, "config");
+  const made: Array<{ name: string; path: string }> = [];
+  for (const name of repos) {
+    const p = join(dir, name);
+    execFileSync("git", ["init", "-q", "-b", "main", p]);
+    writeFileSync(join(p, "README.md"), `${name}\n`);
+    commit(p, "init");
+    made.push({ name, path: p });
+  }
+  return { dir, ws: { name: "pg", repos: made } };
+}
+
+test("createInstance: worktrees config/ and the named repo on one branch", async () => {
+  const { dir, ws } = makeWorkspace("one", ["app"]);
+  try {
+    const inst = await createInstance(dir, ws as never, "work-42", ["app"]);
+
+    assert.equal(inst.branch, "smith/work-42");
+    assert.deepEqual(inst.members.map((m) => m.name).sort(), ["app", "config"]);
+    assert.ok(statSync(join(inst.dir, "config", "settings.json")).isFile(), "config content is present");
+    assert.ok(statSync(join(inst.dir, "app", "README.md")).isFile(), "repo content is present");
+    for (const m of inst.members) {
+      const branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: m.path }).toString().trim();
+      assert.equal(branch, "smith/work-42", `${m.name} is on the shared branch`);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("createInstance: two repos get the SAME branch name, so cross-repo work is one branch", async () => {
+  const { dir, ws } = makeWorkspace("two", ["api", "web"]);
+  try {
+    const inst = await createInstance(dir, ws as never, "work-7", ["api", "web"]);
+
+    const branches = inst.members.map((m) =>
+      execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: m.path }).toString().trim(),
+    );
+    assert.deepEqual(new Set(branches), new Set(["smith/work-7"]), "one branch across every member");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("createInstance: only the named repos are worktreed", async () => {
+  const { dir, ws } = makeWorkspace("subset", ["api", "web"]);
+  try {
+    const inst = await createInstance(dir, ws as never, "work-8", ["api"]);
+
+    assert.deepEqual(inst.members.map((m) => m.name).sort(), ["api", "config"]);
+    assert.throws(() => statSync(join(inst.dir, "web")), "an untouched repo gets no worktree");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("createInstance: is idempotent — a second call returns the same instance", async () => {
+  const { dir, ws } = makeWorkspace("twice", ["app"]);
+  try {
+    const first = await createInstance(dir, ws as never, "work-9", ["app"]);
+    writeFileSync(join(first.dir, "app", "LOCAL.md"), "work in progress\n");
+
+    const second = await createInstance(dir, ws as never, "work-9", ["app"]);
+
+    assert.equal(second.dir, first.dir);
+    assert.equal(
+      readFileSync(join(second.dir, "app", "LOCAL.md"), "utf8"),
+      "work in progress\n",
+      "an existing instance is reused, not recreated over",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("createInstance: refuses a work id that would escape", async () => {
+  const { dir, ws } = makeWorkspace("escape", ["app"]);
+  try {
+    await assert.rejects(() => createInstance(dir, ws as never, "../../pwned", ["app"]), /work id/i);
+    assert.throws(() => statSync(join(dir, "..", "..", "pwned")), "nothing created outside the workspace");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("createInstance: names a repo that is not in the workspace", async () => {
+  const { dir, ws } = makeWorkspace("missing", ["app"]);
+  try {
+    await assert.rejects(() => createInstance(dir, ws as never, "work-10", ["nope"]), /nope/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });

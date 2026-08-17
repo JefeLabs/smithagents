@@ -1,4 +1,10 @@
+import { execFile } from "node:child_process";
+import { mkdir, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { promisify } from "node:util";
+import type { Workspace } from "./workspaces.js";
+
+const run = promisify(execFile);
 
 /** Ephemeral instances live in the workspace's unversioned half (spec §1.2). */
 export function instancesDir(workspaceDir: string): string {
@@ -30,4 +36,96 @@ export function workIdProblem(workId: string): string | null {
   if (workId.startsWith("-")) return `"${workId}" starts with "-", which git would read as a flag`;
   if (!/^[\w.-]+$/.test(workId)) return `"${workId}" contains control characters or other forbidden characters`;
   return null;
+}
+
+export interface InstanceMember {
+  /** "config", or the repo's name in the workspace record. */
+  name: string;
+  /** The worktree, inside the instance. */
+  path: string;
+  /** The workspace's own clone this worktree was cut from. */
+  source: string;
+}
+
+export interface Instance {
+  workId: string;
+  dir: string;
+  branch: string;
+  members: InstanceMember[];
+}
+
+// biome-ignore lint/correctness/noUnusedVariables: used by Task 3 (destroyInstance)
+async function isDir(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isDirectory();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw err;
+  }
+}
+
+/**
+ * Whether this path is already a git worktree.
+ *
+ * A worktree's `.git` is a FILE (it points into the parent's `.git/worktrees/`),
+ * a plain clone's is a directory — so this tests for either, and only for the
+ * marker itself. Testing that the DIRECTORY exists instead would read an empty
+ * leftover from a partial teardown as an existing member and skip creating its
+ * worktree. Testing with `git rev-parse` would be worse still: from an empty
+ * directory git walks UP and can answer about an enclosing repo.
+ */
+async function isWorktree(path: string): Promise<boolean> {
+  try {
+    await stat(join(path, ".git"));
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw err;
+  }
+}
+
+/**
+ * Create the workspace-instance for `workId`: a worktree of `config/` plus one
+ * of each named repo, all on the SAME branch (spec §2.1). One branch across
+ * every member is what makes a coordinated cross-repo change the default rather
+ * than a special case.
+ *
+ * Worktrees rather than clones: instances are disposable and share the
+ * workspace's object store, which is also what makes the eventual rebase local.
+ *
+ * Idempotent — an existing member worktree is left exactly as it is, because it
+ * may hold work in progress. Only missing members are added, so an instance
+ * that gained a repo mid-flight can be completed by calling again.
+ */
+export async function createInstance(
+  workspaceDir: string,
+  ws: Workspace,
+  workId: string,
+  repoNames: string[],
+): Promise<Instance> {
+  const problem = workIdProblem(workId);
+  if (problem) throw new Error(`Invalid work id: ${problem}`);
+
+  const dir = instanceDir(workspaceDir, workId);
+  const branch = `smith/${workId}`;
+
+  const sources: Array<{ name: string; source: string }> = [{ name: "config", source: join(workspaceDir, "config") }];
+  for (const name of repoNames) {
+    const repo = ws.repos.find((r) => r.name === name);
+    if (!repo) throw new Error(`Repo "${name}" is not in workspace "${ws.name}"`);
+    sources.push({ name, source: repo.path });
+  }
+
+  await mkdir(dir, { recursive: true });
+  const members: InstanceMember[] = [];
+  for (const { name, source } of sources) {
+    const path = join(dir, name);
+    if (!(await isWorktree(path))) {
+      // `workIdProblem` already refused a leading dash, so `branch` cannot be
+      // read as a flag. The base is this source's current HEAD.
+      await run("git", ["worktree", "add", "-q", path, "-b", branch], { cwd: source });
+    }
+    members.push({ name, path, source });
+  }
+  return { workId, dir, branch, members };
 }
