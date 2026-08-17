@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { emptyCliToolsFile, saveCliToolsFile } from "./cli-tools.js";
 import { loadConfig } from "./config.js";
-import { Dispatcher } from "./dispatcher.js";
+import { Dispatcher, resolveTaskWorktree } from "./dispatcher.js";
 import { ToolLaunchError } from "./drivers/errors.js";
+import { smithPaths } from "./paths.js";
 import type { OrchestratorConfig, TaskManifest } from "./types.js";
+import { saveWorkspace, type Workspace } from "./workspaces.js";
 
 // A binary guaranteed not to resolve on PATH, so refreshCliTool's re-probe
 // (fired fire-and-forget by both the gate and the catch block) fails fast on
@@ -310,3 +314,108 @@ test("dispatch: rejects with a subscription-inactive ToolLaunchError when the re
 // level in cli-tools.test.ts (gateReason/isActive), and the gate's wiring is
 // proven by the confirmed-negative test above, which throws before the try
 // block so teardown never runs.
+
+// ---------------------------------------------------------------------------
+// resolveTaskWorktree(): where a task's agent runs — a workspace-instance for
+// workspace-routed tasks, the legacy detached worktree for everything else.
+// ---------------------------------------------------------------------------
+
+function makeManifest(overrides: { taskId: string; context: TaskManifest["context"] }): TaskManifest {
+  return {
+    taskId: overrides.taskId,
+    prompt: "irrelevant to worktree resolution",
+    context: overrides.context,
+    agent: "claude",
+    createdAt: new Date().toISOString(),
+    priority: "normal",
+  };
+}
+
+function commit(cwd: string, msg: string): void {
+  execFileSync("git", ["add", "-A"], { cwd });
+  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", msg], { cwd });
+}
+
+/** A plain git repo at `path`, with one commit. */
+function makeGitRepo(path: string): string {
+  execFileSync("git", ["init", "-q", "-b", "main", path]);
+  writeFileSync(join(path, "README.md"), "hi\n");
+  commit(path, "init");
+  return path;
+}
+
+/**
+ * A workspace directory whose config/ and named repo are real git repos —
+ * same shape as workspace-instances.test.ts's fixture. `ws.dir` is pinned to
+ * `dir` explicitly so workspaceDir() resolves to it directly rather than the
+ * default under the state root.
+ */
+function makeWorkspaceFixture(root: string, repoName: string): { dir: string; ws: Workspace } {
+  const dir = mkdtempSync(join(root, "ws-"));
+  const cfg = join(dir, "config");
+  execFileSync("git", ["init", "-q", "-b", "main", cfg]);
+  writeFileSync(join(cfg, "settings.json"), "{}\n");
+  commit(cfg, "config");
+
+  const repoPath = join(dir, repoName);
+  execFileSync("git", ["init", "-q", "-b", "main", repoPath]);
+  writeFileSync(join(repoPath, "README.md"), `${repoName}\n`);
+  commit(repoPath, "init");
+
+  const ws: Workspace = { name: "proj", repos: [{ name: repoName, path: repoPath }], dir };
+  return { dir, ws };
+}
+
+test("resolveTaskWorktree: a workspace-routed task runs inside a workspace-instance", async () => {
+  const root = mkdtempSync(join(tmpdir(), "disp-inst-"));
+  try {
+    const paths = smithPaths(root);
+    const { dir, ws } = makeWorkspaceFixture(root, "app");
+    await saveWorkspace(paths, ws);
+
+    const manifest = makeManifest({
+      taskId: "t-1",
+      context: {
+        workspace: ws.name,
+        repo: "app",
+        repoPath: ws.repos[0].path,
+        branch: "main",
+        files: [],
+        repository: "",
+      },
+    });
+
+    const { path: worktree, created } = await resolveTaskWorktree(manifest, {
+      worktreeDir: join(root, "worktrees"),
+      smithRoot: root,
+    });
+
+    assert.equal(worktree, join(dir, ".runtime", "instances", "t-1", "app"), "runs in the instance's repo worktree");
+    assert.ok(created, "createInstance already created this worktree");
+    assert.ok(statSync(join(dir, ".runtime", "instances", "t-1", "config")).isDirectory(), "config/ is alongside it");
+    assert.ok(!worktree.startsWith(join(root, "worktrees")), "NOT in the detached worktrees directory");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("resolveTaskWorktree: a non-workspace task keeps the legacy detached worktree", async () => {
+  const root = mkdtempSync(join(tmpdir(), "disp-legacy-"));
+  try {
+    const repo = makeGitRepo(join(root, "solo"));
+    const manifest = makeManifest({
+      taskId: "t-2",
+      context: { repoPath: repo, branch: "main", files: [], repository: "" },
+    });
+
+    const { path: worktree, created } = await resolveTaskWorktree(manifest, {
+      worktreeDir: join(root, "worktrees"),
+      smithRoot: root,
+    });
+
+    assert.match(worktree, /worktrees[/\\]t-2$/, "legacy path unchanged");
+    assert.equal(created, false, "prepareWorktree still owns `git worktree add` for the legacy path");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
