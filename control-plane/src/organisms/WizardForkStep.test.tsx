@@ -50,4 +50,33 @@ describe("WizardForkStep", () => {
 
     expect(onDone).not.toHaveBeenCalled();
   });
+
+  it("hosted cannot be reached or selected with arrow-key navigation", async () => {
+    // react-aria's own roving-focus walker (useRadioGroup's getNextElement)
+    // accepts ANY `<input type="radio">` descendant of the group, keyed off
+    // react-aria's `isFocusable` check — which excludes native `[disabled]`,
+    // never `aria-disabled` (verified against the installed source, not
+    // guessed). aria-disabled alone is advisory to that walker: pressing
+    // ArrowDown from "local" would land it on "hosted" and read its `.value`
+    // straight off the DOM — and an input with no `value` attribute defaults
+    // to "on", which is exactly the off-type corruption this guards against.
+    const onDone = vi.fn();
+    render(<WizardForkStep onDone={onDone} />);
+
+    const local = screen.getByRole("radio", { name: /local/i });
+    const hosted = screen.getByRole("radio", { name: /hosted/i });
+
+    local.focus();
+    await userEvent.keyboard("{ArrowDown}");
+
+    expect(document.activeElement).not.toBe(hosted);
+
+    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+
+    // Read the actual call directly rather than another matcher — the point
+    // is to rule out ANY off-type value (like the DOM-default "on" the walker
+    // would have read off a value-less radio), not just the literal "hosted".
+    expect(onDone).toHaveBeenCalledOnce();
+    expect(onDone.mock.calls[0][0].setup.mode).toBe("local");
+  });
 });

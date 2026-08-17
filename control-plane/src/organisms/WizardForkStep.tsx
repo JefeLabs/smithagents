@@ -27,15 +27,24 @@ export interface WizardForkStepProps {
  * `aria-disabled` (not `disabled`), there is no prop combination on the real
  * component that produces the disabled hosted option the spec wants. So
  * "hosted" is a plain native `<input type="radio">` I author directly (its
- * implicit role needs no `role` attribute, and `aria-disabled` is mine to
- * set), wrapped in its own `<label>` the same way HeroUI's own Radio does —
- * as a sibling inside the same group. `RadioGroup` renders whatever children
- * it's given, so a hand-authored radio can sit right alongside the real
- * `RadioButtonGroup.Item` without a second, nested radiogroup. `onClick`
- * calls `preventDefault` as a backstop against ever toggling it — the same
- * guard react-aria's own `useRadio` puts on its label for exactly this
- * reason (see its `labelProps.onClick`) — pointer-events:none is the real
- * defense; this only covers a browser that ignores it.
+ * implicit role needs no `role` attribute, and both attributes below are
+ * mine to set), wrapped in its own `<label>` the same way HeroUI's own Radio
+ * does — as a sibling inside the same group. `RadioGroup` renders whatever
+ * children it's given, so a hand-authored radio can sit right alongside the
+ * real `RadioButtonGroup.Item` without a second, nested radiogroup.
+ *
+ * It carries BOTH `disabled` and `aria-disabled`, and this is not
+ * redundant. `aria-disabled` alone is advisory: react-aria's own arrow-key
+ * navigation (`useRadioGroup`'s `getNextElement`) walks the DOM for ANY
+ * `<input type="radio">` inside the group and accepts it if react-aria's
+ * `isFocusable()` says so — and that check's selector is literally
+ * `input:not([disabled])`, `aria-disabled` never enters it (verified against
+ * the installed source, not guessed). Without native `disabled`, ArrowDown
+ * from "local" lands right here, and react-aria reads the focused input's
+ * `.value` to select it — an input with no `value` attribute defaults to
+ * `"on"`, corrupting `mode` to an off-type value. `disabled` closes that;
+ * `aria-disabled` is kept for the CSS hook and for AT that renders the two
+ * differently.
  *
  * The `notify me` link is a sibling of the whole group, never a descendant
  * of the hosted node — nesting it there would put it under the same
@@ -59,7 +68,13 @@ export function WizardForkStep({ onDone }: WizardForkStepProps) {
       <RadioButtonGroup
         aria-labelledby="wizard-fork-prompt"
         value={mode}
-        onChange={(value) => setMode(value as Mode)}
+        // Narrowed, not cast: `disabled` on the hosted input is the real
+        // defense against ever getting here with an off-type value, but the
+        // cast this replaced was the seam that let one slip past `mode`'s own
+        // type — an unrecognized value is dropped rather than trusted.
+        onChange={(value) => {
+          if (value === "local" || value === "hosted") setMode(value);
+        }}
         orientation="vertical"
       >
         <RadioButtonGroup.Item value="local">
@@ -76,13 +91,7 @@ export function WizardForkStep({ onDone }: WizardForkStepProps) {
             not just the tiny input. It adds no role of its own — a <label>
             has none — so the input stays the only "radio" in the group. */}
         <label className="wizard-fork-step__hosted" aria-disabled="true">
-          <input
-            type="radio"
-            aria-disabled="true"
-            tabIndex={-1}
-            onClick={(e) => e.preventDefault()}
-            className="wizard-fork-step__hosted-input"
-          />
+          <input type="radio" disabled aria-disabled="true" tabIndex={-1} className="wizard-fork-step__hosted-input" />
           <span className="wizard-fork-step__label">
             Hosted <span className="wizard-fork-step__badge">Coming soon</span>
           </span>
