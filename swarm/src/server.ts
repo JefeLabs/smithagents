@@ -1953,23 +1953,7 @@ export class OrchestratorServer {
               : `Workspace "${name}" already exists`,
         });
       }
-      const ws: Workspace = {
-        name,
-        description: b.description?.trim() || undefined,
-        repos: submittedRepos.map((r) => ({
-          name: r.name.trim(),
-          path: r.path,
-          repository: r.repository,
-          branch: r.branch || "main",
-          github: r.github,
-        })),
-        default: Boolean(b.default) || activeWorkspaces(all).length === 0,
-        atlassian: b.atlassian,
-        links: sanitizeLinks(b.links),
-        color: b.color?.trim() || undefined,
-        sprint: b.sprint,
-        sources: b.sources,
-      };
+      const ws: Workspace = buildWorkspaceCreate(name, submittedRepos, b, all);
       let record = ws;
       try {
         // Clone first: the strict validation below is the invariant every
@@ -2041,21 +2025,7 @@ export class OrchestratorServer {
       const all = await loadWorkspaces(this.paths);
       const existing = all.find((w) => w.name === req.params.name);
       if (!existing) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
-      const merged: Workspace = {
-        ...existing,
-        // The name is the file key and what sessions point at — immutable.
-        name: existing.name,
-        description: b.description !== undefined ? b.description.trim() || undefined : existing.description,
-        repos: b.repos ? normalizeRepoBranch(b.repos) : existing.repos,
-        default: b.default ?? existing.default,
-        archived: b.archived === false ? undefined : existing.archived,
-        atlassian: b.atlassian !== undefined ? b.atlassian : existing.atlassian,
-        links: b.links !== undefined ? sanitizeLinks(b.links) : existing.links,
-        color: b.color !== undefined ? b.color.trim() || undefined : existing.color,
-        // Opt-in sprint: undefined keeps, explicit null clears, a value validates below.
-        sprint: b.sprint !== undefined ? (b.sprint ?? undefined) : existing.sprint,
-        sources: b.sources ?? existing.sources,
-      };
+      const merged: Workspace = buildWorkspaceUpdate(existing, b);
       if (merged.sprint !== undefined && !validSprint(merged.sprint)) {
         return reply.status(400).send({ error: "sprint needs an anchor date and a positive integer lengthDays" });
       }
@@ -3919,6 +3889,64 @@ export function workKindForCapability(workspaces: Workspace[], workspaceId: stri
  */
 export function workKindsPayload(): { kinds: Array<(typeof WORK_KINDS)[string]> } {
   return { kinds: Object.values(WORK_KINDS) };
+}
+
+/**
+ * The Workspace record POST /workspaces saves — an explicit field list, not a
+ * spread of the body, so an unschema-ed field can never ride along. Pulled out
+ * of the route handler so a field being silently dropped from this list (as
+ * `workKind` was) is a unit-test failure, not a live-install regression found
+ * by review, matching workspaceProblems/redactConnector's convention.
+ */
+export function buildWorkspaceCreate(
+  name: string,
+  submittedRepos: Array<WorkspaceRepo & { initGit?: boolean }>,
+  b: Partial<Workspace>,
+  all: Workspace[],
+): Workspace {
+  return {
+    name,
+    description: b.description?.trim() || undefined,
+    repos: submittedRepos.map((r) => ({
+      name: r.name.trim(),
+      path: r.path,
+      repository: r.repository,
+      branch: r.branch || "main",
+      github: r.github,
+    })),
+    default: Boolean(b.default) || activeWorkspaces(all).length === 0,
+    atlassian: b.atlassian,
+    links: sanitizeLinks(b.links),
+    color: b.color?.trim() || undefined,
+    sprint: b.sprint,
+    sources: b.sources,
+    workKind: b.workKind?.trim() || undefined,
+  };
+}
+
+/**
+ * The merged Workspace record PUT /workspaces/:name saves — same "explicit
+ * field list, not a body spread" reasoning as buildWorkspaceCreate above, and
+ * the same failure mode it guards against: an omitted field here silently
+ * makes that field impossible to change over the API, forever.
+ */
+export function buildWorkspaceUpdate(existing: Workspace, b: Partial<Workspace>): Workspace {
+  return {
+    ...existing,
+    // The name is the file key and what sessions point at — immutable.
+    name: existing.name,
+    description: b.description !== undefined ? b.description.trim() || undefined : existing.description,
+    repos: b.repos ? normalizeRepoBranch(b.repos) : existing.repos,
+    default: b.default ?? existing.default,
+    archived: b.archived === false ? undefined : existing.archived,
+    atlassian: b.atlassian !== undefined ? b.atlassian : existing.atlassian,
+    links: b.links !== undefined ? sanitizeLinks(b.links) : existing.links,
+    color: b.color !== undefined ? b.color.trim() || undefined : existing.color,
+    // Opt-in sprint: undefined keeps, explicit null clears, a value validates in the route.
+    sprint: b.sprint !== undefined ? (b.sprint ?? undefined) : existing.sprint,
+    sources: b.sources ?? existing.sources,
+    workKind: b.workKind !== undefined ? b.workKind?.trim() || undefined : existing.workKind,
+  };
 }
 
 /** Trim, drop empties/non-strings; undefined when nothing survives. */

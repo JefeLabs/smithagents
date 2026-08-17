@@ -280,6 +280,8 @@ export interface WorkspaceRecord {
   sprint?: { anchor: string; lengthDays: number };
   /** Pollable external origins owned by this workspace (spec 2026-08-13 queue-sources) — absent means none configured. */
   sources?: ContextSourceT[];
+  /** Which WORK_KINDS entry supplies this workspace's seeded board column labels (spec 2026-08-15 domain-neutral boards) — absent means "product". */
+  workKind?: string;
 }
 
 /** The operator's own profile — connector credentials read back redacted, never the secret itself. */

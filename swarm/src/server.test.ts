@@ -23,6 +23,8 @@ import {
   buildResearchEngineUpdate,
   buildUserUpdate,
   buildVoiceUpdate,
+  buildWorkspaceCreate,
+  buildWorkspaceUpdate,
   clearVoiceReferences,
   gitInitRequestedRepos,
   prepareSquadSwarm,
@@ -413,6 +415,42 @@ test("workKindForCapability: resolves the workspace's own vocabulary — the loo
     workKindForCapability(workspaces, "no-such-workspace"),
     undefined,
     "an unresolved workspace degrades to product rather than throwing",
+  );
+});
+
+// buildWorkspaceCreate/buildWorkspaceUpdate are POST/PUT /workspaces' explicit
+// field lists, pulled out so a field silently missing from the list (as
+// workKind was, final review round Important #3) is a unit-test failure
+// rather than a live-install regression: with workKind omitted from the
+// literal, every path below asserting it fails, since the built record never
+// carries it regardless of what the caller submitted.
+test("buildWorkspaceCreate: a submitted workKind is trimmed onto the record; omitting it leaves the field absent", () => {
+  const repos = [{ name: "app", path: "/tmp/app" }];
+
+  const withKind = buildWorkspaceCreate("acme", repos, { workKind: "  marketing  " }, []);
+  assert.equal(withKind.workKind, "marketing");
+
+  const withoutKind = buildWorkspaceCreate("acme", repos, {}, []);
+  assert.equal(withoutKind.workKind, undefined);
+});
+
+test("buildWorkspaceUpdate: workKind follows the same undefined-keeps/blank-clears/value-sets rule as description and color", () => {
+  const existing: Workspace = {
+    name: "acme",
+    workKind: "marketing",
+    repos: [{ name: "app", path: "/tmp/app" }],
+  };
+
+  assert.equal(buildWorkspaceUpdate(existing, {}).workKind, "marketing", "an absent field in the body keeps it");
+  assert.equal(
+    buildWorkspaceUpdate(existing, { workKind: "  consulting  " }).workKind,
+    "consulting",
+    "a submitted value is trimmed and replaces it",
+  );
+  assert.equal(
+    buildWorkspaceUpdate(existing, { workKind: "" }).workKind,
+    undefined,
+    "an explicit blank clears it, same as description/color",
   );
 });
 
