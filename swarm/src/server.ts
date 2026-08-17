@@ -182,6 +182,7 @@ import {
   type WorkCard,
 } from "./work-items.js";
 import { materializeRepos, migrateReposIntoWorkspace, repoNameProblem } from "./workspace-repos.js";
+import { loadRoster } from "./workspace-roster.js";
 import {
   activeWorkspaces,
   assertNoWorkspaceDirCollision,
@@ -488,7 +489,9 @@ export class OrchestratorServer {
     // inside it. Must run after workspace records have reached their final
     // location above, and before reloadWorkspaces() resolves repos from them.
     {
-      const repos = await migrateReposIntoWorkspace(this.paths);
+      const globalAgentIds = (await loadAgents(this.paths.agents)).map((a) => a.id);
+      const globalSquadIds = SQUAD_ROSTER.map((s) => s.id);
+      const repos = await migrateReposIntoWorkspace(this.paths, globalAgentIds, globalSquadIds);
       if (repos.cloned.length > 0) this.app.log.info(`[repo-migration] cloned: ${repos.cloned.join(", ")}`);
       for (const note of repos.notes) this.app.log.warn(note);
     }
@@ -2043,6 +2046,17 @@ export class OrchestratorServer {
         return repoPath !== undefined && repoPaths.has(repoPath);
       }).length;
       return { activeTasks };
+    });
+
+    this.app.get<{ Params: { name: string } }>("/workspaces/:name/roster", async (req, reply) => {
+      const all = await loadWorkspaces(this.paths);
+      const ws = all.find((w) => w.name === req.params.name);
+      if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
+      const roster = await loadRoster(workspaceDir(this.paths, ws));
+      // `recorded: false` is the honest answer for a workspace that has never
+      // had a roster: every global agent applies, which is today's behaviour.
+      // Returning empty arrays would claim it was assigned nothing.
+      return roster ? { recorded: true, ...roster } : { recorded: false, agents: [], squads: [] };
     });
 
     this.app.get("/workspaces", async () => {

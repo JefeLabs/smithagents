@@ -305,7 +305,7 @@ test("migrateReposIntoWorkspace: clones an external repo inside and repoints the
     const paths = smithPaths(root);
     await saveWorkspace(paths, { name: "pg", repos: [{ name: "app", path: origin, repository: origin }] });
 
-    const result = await migrateReposIntoWorkspace(paths);
+    const result = await migrateReposIntoWorkspace(paths, [], []);
 
     assert.deepEqual(result.cloned, ["pg/app"]);
     const [ws] = await loadWorkspaces(paths);
@@ -324,7 +324,7 @@ test("migrateReposIntoWorkspace: an external repo with no remote is left alone, 
     const paths = smithPaths(root);
     await saveWorkspace(paths, { name: "pg", repos: [{ name: "app", path: origin }] });
 
-    const result = await migrateReposIntoWorkspace(paths);
+    const result = await migrateReposIntoWorkspace(paths, [], []);
 
     assert.deepEqual(result.cloned, []);
     assert.deepEqual(result.skipped, ["pg/app"]);
@@ -345,9 +345,9 @@ test("migrateReposIntoWorkspace: is idempotent — a second run moves nothing", 
   try {
     const paths = smithPaths(root);
     await saveWorkspace(paths, { name: "pg", repos: [{ name: "app", path: origin, repository: origin }] });
-    await migrateReposIntoWorkspace(paths);
+    await migrateReposIntoWorkspace(paths, [], []);
 
-    const second = await migrateReposIntoWorkspace(paths);
+    const second = await migrateReposIntoWorkspace(paths, [], []);
 
     assert.deepEqual(second.cloned, [], "nothing left to clone");
     assert.deepEqual(second.skipped, [], "and nothing is reported as a problem");
@@ -365,7 +365,7 @@ test("migrateReposIntoWorkspace: one bad workspace does not stop the others", as
     await saveWorkspace(paths, { name: "bad", repos: [{ name: "app", path: "/nope", repository: "/does/not/exist" }] });
     await saveWorkspace(paths, { name: "good", repos: [{ name: "app", path: origin, repository: origin }] });
 
-    const result = await migrateReposIntoWorkspace(paths);
+    const result = await migrateReposIntoWorkspace(paths, [], []);
 
     assert.ok(result.cloned.includes("good/app"), "the healthy workspace still migrated");
     assert.ok(result.skipped.includes("bad/app"), "the broken one is reported, not thrown");
@@ -392,7 +392,7 @@ test("migrateReposIntoWorkspace: a workspace with a malformed dir field is isola
     );
     await saveWorkspace(paths, { name: "good", repos: [{ name: "app", path: origin, repository: origin }] });
 
-    const result = await migrateReposIntoWorkspace(paths);
+    const result = await migrateReposIntoWorkspace(paths, [], []);
 
     assert.ok(result.cloned.includes("good/app"), "the healthy workspace still migrated despite the bad one");
     assert.ok(result.skipped.includes("bad/app"), "the malformed workspace is reported, not thrown");
@@ -416,7 +416,7 @@ test("migrateReposIntoWorkspace: a clone that succeeds but fails to save is repo
       JSON.stringify({ name: "Bad Name", repos: [{ name: "app", path: origin, repository: origin }] }),
     );
 
-    const result = await migrateReposIntoWorkspace(paths);
+    const result = await migrateReposIntoWorkspace(paths, [], []);
 
     assert.ok(!result.cloned.includes("Bad Name/app"), "a clone that could not be saved must not be reported cloned");
     assert.ok(result.skipped.includes("Bad Name/app"), "it is reported skipped instead");
@@ -477,7 +477,7 @@ test("migrateReposIntoWorkspace: the first config commit captures the repointed 
     const paths = smithPaths(root);
     await saveWorkspace(paths, { name: "pg", repos: [{ name: "app", path: origin, repository: origin }] });
 
-    await migrateReposIntoWorkspace(paths);
+    await migrateReposIntoWorkspace(paths, [], []);
 
     const cfg = join(paths.workspaces, "pg", "config");
     const committed = execFileSync("git", ["show", "HEAD:settings.json"], { cwd: cfg }).toString();
@@ -502,7 +502,7 @@ test("migrateReposIntoWorkspace: a clone failure note redacts credentials embedd
     const credentialed = "bogus://user:s3cr3t-token@nowhere.invalid/repo";
     await saveWorkspace(paths, { name: "pg", repos: [{ name: "app", path: "/nope", repository: credentialed }] });
 
-    const result = await migrateReposIntoWorkspace(paths);
+    const result = await migrateReposIntoWorkspace(paths, [], []);
 
     assert.ok(result.skipped.includes("pg/app"));
     for (const note of result.notes) {
@@ -533,7 +533,7 @@ test("migrateReposIntoWorkspace: a config-repo failure after a successful save i
     mkdirSync(join(dir, "config"), { recursive: true });
     writeFileSync(join(dir, "config", ".git"), "not a real gitdir\n");
 
-    const first = await migrateReposIntoWorkspace(paths);
+    const first = await migrateReposIntoWorkspace(paths, [], []);
 
     assert.ok(first.cloned.includes("pg/app"), "the clone and save succeeded — must be reported cloned, not skipped");
     assert.ok(!first.skipped.includes("pg/app"), "a config failure must not demote a genuine migration");
@@ -548,7 +548,7 @@ test("migrateReposIntoWorkspace: a config-repo failure after a successful save i
       "the record is repointed despite the config failure",
     );
 
-    const second = await migrateReposIntoWorkspace(paths);
+    const second = await migrateReposIntoWorkspace(paths, [], []);
 
     assert.ok(
       second.notes.some((n) => /config/i.test(n)),

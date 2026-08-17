@@ -3,6 +3,7 @@ import { mkdir, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { SmithPaths } from "./paths.js";
+import { loadRoster, saveRoster } from "./workspace-roster.js";
 import {
   ensureWorkspaceDir,
   isGitRepo,
@@ -224,9 +225,16 @@ export async function materializeRepos(paths: SmithPaths, ws: Workspace): Promis
  *
  * Runs at boot. One bad workspace is isolated, never fatal: a throw here would
  * brick every subsequent start.
+ *
+ * `globalAgentIds` and `globalSquadIds` are today's full roster of definitions
+ * at the host root (§4.1) — passed in, not loaded here, so this stays a pure
+ * function of its arguments and the caller (server.ts, which already has the
+ * agent registry and SQUAD_ROSTER in hand at boot) owns sourcing them.
  */
 export async function migrateReposIntoWorkspace(
   paths: SmithPaths,
+  globalAgentIds: string[],
+  globalSquadIds: string[],
 ): Promise<{ cloned: string[]; skipped: string[]; notes: string[] }> {
   const cloned: string[] = [];
   const skipped: string[] = [];
@@ -312,6 +320,20 @@ export async function migrateReposIntoWorkspace(
         await ensureConfigRepo(dir);
       } catch (err) {
         notes.push(`[repo-migration] ${ws.name}'s config/ could not become a git repo — ${(err as Error).message}`);
+      }
+
+      // Record today's assignment — every global agent and squad — so the file
+      // exists and is committed with the config repo. This preserves current
+      // behaviour exactly; it does not start gating on the roster. Also
+      // outside the `changed` gate and in its own try/catch, for the same
+      // reason as ensureConfigRepo above: a workspace whose roster failed to
+      // save on some prior run keeps getting another chance.
+      try {
+        if ((await loadRoster(dir)) === null) {
+          await saveRoster(dir, { agents: globalAgentIds, squads: globalSquadIds });
+        }
+      } catch (err) {
+        notes.push(`[repo-migration] ${ws.name}'s roster could not be recorded — ${(err as Error).message}`);
       }
     } catch (err) {
       for (const repo of ws.repos) skipped.push(`${ws.name}/${repo.name}`);
