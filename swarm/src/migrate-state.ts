@@ -3,11 +3,18 @@
 // COPY, never move. The source stays intact so rollback is "point the root
 // back" rather than "restore from a backup you may not have" — this install
 // lost boards and documents to an irreversible reset once already.
-import { cp, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { SmithPaths } from "./paths.js";
 import { loadBoards } from "./work-items.js";
-import { type Workspace, workspaceDir } from "./workspaces.js";
+import { saveRegistryEntry } from "./workspace-registry.js";
+import {
+  ensureWorkspaceDir,
+  loadWorkspacesFromDir,
+  settingsPathFor,
+  type Workspace,
+  workspaceDir,
+} from "./workspaces.js";
 
 /**
  * Never migrated. `worktrees` holds live session working directories: tmux
@@ -202,4 +209,96 @@ export async function migrateBoards(
     moved.push({ id: board.id, to });
   }
   return { moved, kept };
+}
+
+type SettingsProbe = { kind: "missing" } | { kind: "corrupt" } | { kind: "parsed" };
+
+/**
+ * `stat` proves a file exists, not that it holds a complete record —
+ * `saveWorkspace`'s `writeFile` is not atomic, so a crash mid-write leaves a
+ * settings.json that exists but is truncated garbage. Distinguish "nothing
+ * written yet" from "something unreadable was written" so callers can decide
+ * per case instead of treating both as "already migrated".
+ */
+async function probeSettings(settings: string): Promise<SettingsProbe> {
+  let raw: string;
+  try {
+    raw = await readFile(settings, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    return { kind: "missing" };
+  }
+  try {
+    JSON.parse(raw);
+    return { kind: "parsed" };
+  } catch {
+    return { kind: "corrupt" };
+  }
+}
+
+/**
+ * Move each flat workspace record into its own directory as config/settings.json
+ * and register the directory. Write first, verify it reads back and parses,
+ * then remove the flat file — a record is never in neither place, and the
+ * flat copy is never deleted on the strength of a destination that merely
+ * *exists*. Every workspace is isolated in its own try/catch: this runs at
+ * boot, so one bad record (an unslugable name, a permissions failure) must
+ * never abort the whole migration and brick every subsequent boot.
+ *
+ * An existing, parseable settings.json is NEVER overwritten. Since writes
+ * have been going there since the registry landed, it is the newer copy; the
+ * flat file is a stale leftover and is removed either way. A settings.json
+ * that exists but does NOT parse — most likely a truncated write from an
+ * earlier crash — is left alone rather than silently overwritten: the flat
+ * record may be the only good copy left, so nothing is deleted and the
+ * workspace is retried on the next run.
+ *
+ * Group records (`members`, no `repos`) are never touched: `loadWorkspacesFromDir`
+ * filters them out before this loop ever sees them. Groups deliberately stay flat.
+ */
+export async function migrateWorkspaceRecords(paths: SmithPaths): Promise<{ moved: string[]; skipped: string[] }> {
+  const moved: string[] = [];
+  const skipped: string[] = [];
+
+  for (const ws of await loadWorkspacesFromDir(paths.workspaces)) {
+    const flatFile = join(paths.workspaces, `${ws.name}.json`);
+    try {
+      const dir = await ensureWorkspaceDir(paths, ws);
+      const settings = settingsPathFor(dir);
+      const before = await probeSettings(settings);
+
+      if (before.kind === "corrupt") {
+        skipped.push(ws.name);
+        console.error(`migrateWorkspaceRecords: ${settings} exists but does not parse — leaving ${flatFile} in place`);
+        continue;
+      }
+
+      if (before.kind === "missing") {
+        await writeFile(settings, `${JSON.stringify(ws, null, 2)}\n`);
+        const after = await probeSettings(settings);
+        if (after.kind !== "parsed") {
+          // The write didn't take, or produced something unreadable — same
+          // rule applies: no confirmed replacement on disk, no deletion.
+          skipped.push(ws.name);
+          console.error(
+            `migrateWorkspaceRecords: ${settings} did not verify after writing — leaving ${flatFile} in place`,
+          );
+          continue;
+        }
+        moved.push(ws.name);
+      } else {
+        // Already present and parses — the authoritative copy. Untouched.
+        skipped.push(ws.name);
+      }
+
+      // A parseable settings.json is confirmed on disk — safe to register
+      // the directory and drop the now-stale flat copy.
+      await saveRegistryEntry(paths, ws.name, dir);
+      await rm(flatFile, { force: true });
+    } catch (err) {
+      skipped.push(ws.name);
+      console.error(`migrateWorkspaceRecords: skipping "${ws.name}" — ${(err as Error).message}`);
+    }
+  }
+  return { moved, skipped };
 }
