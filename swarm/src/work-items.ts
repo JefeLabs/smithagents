@@ -144,9 +144,9 @@ export const BOARD_TEMPLATES: Record<BoardType, WorkColumn[]> = {
   ],
   plan: [
     { id: "queue", name: "Queue" },
-    { id: "spec", name: "Spec" },
-    { id: "tech-design", name: "Tech design" },
-    { id: "decomposed", name: "Decomposed" },
+    { id: "define", name: "Spec" },
+    { id: "design", name: "Tech design" },
+    { id: "breakdown", name: "Decomposed" },
     { id: "ready", name: "Ready" },
   ],
   deliver: [
@@ -155,12 +155,12 @@ export const BOARD_TEMPLATES: Record<BoardType, WorkColumn[]> = {
     { id: "in-progress", name: "In progress" },
     { id: "review", name: "Review", gatesHuman: true },
     { id: "verify", name: "Verify", gatesHuman: true },
-    { id: "merged", name: "Merged" },
+    { id: "complete", name: "Merged" },
   ],
   release: [
     { id: "queue", name: "Queue" },
-    { id: "cut", name: "Cut" },
-    { id: "regression", name: "Regression" },
+    { id: "prepare", name: "Cut" },
+    { id: "validate", name: "Regression" },
     { id: "sign-off", name: "Sign-off" },
     { id: "ship", name: "Ship" },
     { id: "rollback", name: "Rollback" },
@@ -180,6 +180,22 @@ export const BOARD_TEMPLATES: Record<BoardType, WorkColumn[]> = {
     { id: "done", name: "Done" },
     { id: "wont-do", name: "Won't do" },
   ],
+};
+
+/**
+ * 2026-08-17: six product-development column ids became domain-neutral, so the
+ * same board reads correctly for marketing, sales, consulting, content,
+ * creators and trading. Ids are the contract — BOARD_ROUTES matches on them and
+ * every card stores one — so a rename must rewrite columns and cards together.
+ *
+ * Ids only. A column's displayed NAME is deliberately left alone: labels are
+ * chosen at seed time and a live board is never retitled, and "Merged" is in any
+ * case the correct product/software label for `complete`.
+ */
+export const NEUTRAL_COLUMN_IDS: Partial<Record<BoardType, Record<string, string>>> = {
+  plan: { spec: "define", "tech-design": "design", decomposed: "breakdown" },
+  deliver: { merged: "complete" },
+  release: { cut: "prepare", regression: "validate" },
 };
 
 function slug(v: string): string {
@@ -233,12 +249,12 @@ export interface RouteExit {
  */
 export const BOARD_ROUTES: Record<BoardType, RouteExit[]> = {
   plan: [
-    { from: "tech-design", toType: "ideation", toColumn: "scoping", label: "Back to ideation" },
+    { from: "design", toType: "ideation", toColumn: "scoping", label: "Back to ideation" },
     { from: "ready", toType: "deliver", toColumn: "ready", label: "Send to deliver" },
   ],
-  deliver: [{ from: "in-progress", toType: "plan", toColumn: "tech-design", label: "Back to plan" }],
+  deliver: [{ from: "in-progress", toType: "plan", toColumn: "design", label: "Back to plan" }],
   release: [
-    { from: "regression", toType: "deliver", toColumn: "in-progress", label: "Drop change to deliver" },
+    { from: "validate", toType: "deliver", toColumn: "in-progress", label: "Drop change to deliver" },
     { from: "rollback", toType: "maintenance", toColumn: "triage", label: "To maintenance" },
   ],
   reactive: [
@@ -410,6 +426,27 @@ export function normalizeBoard(board: WorkBoard): WorkBoard {
       board.columns = BOARD_TEMPLATES.personal.map((c) => ({ ...c }));
       renumberAll(board);
     }
+  }
+  const renames = NEUTRAL_COLUMN_IDS[board.type];
+  if (renames) {
+    for (const column of board.columns) {
+      const to = renames[column.id];
+      if (to) column.id = to;
+    }
+    for (const card of board.cards) {
+      const to = renames[card.columnId];
+      if (to) card.columnId = to;
+    }
+  }
+  // A card pointing at no column would vanish from every lane while still
+  // occupying the file — a defect, not a tolerable orphan. loadBoards wraps this
+  // per file, so the board is reported rather than the boot being killed.
+  const ids = new Set(board.columns.map((c) => c.id));
+  const orphan = board.cards.find((c) => !ids.has(c.columnId));
+  if (orphan) {
+    throw new Error(
+      `Board "${board.id}": card "${orphan.id}" is in column "${orphan.columnId}", which does not exist on this board`,
+    );
   }
   // Driven off the template rather than a second hardcoded list, so the two can't drift:
   // a column persisted before `gatesHuman` existed otherwise never gets it, and its

@@ -529,7 +529,7 @@ test("normalizeBoard prepends queue on legacy release and plan boards; fresh rel
   normalizeBoard(legacyRelease);
   assert.deepEqual(
     legacyRelease.columns.map((c) => c.id),
-    ["queue", "cut", "ship"],
+    ["queue", "prepare", "ship"], // "cut" migrates to "prepare" in the same pass
   );
   const legacyPlan: WorkBoard = {
     id: "acme-plan",
@@ -545,7 +545,7 @@ test("normalizeBoard prepends queue on legacy release and plan boards; fresh rel
   normalizeBoard(legacyPlan);
   assert.deepEqual(
     legacyPlan.columns.map((c) => c.id),
-    ["queue", "spec", "ready"],
+    ["queue", "define", "ready"], // "spec" migrates to "define" in the same pass
   );
 });
 
@@ -666,10 +666,10 @@ test("routes: exits are per-column and the forward plan handoff exists", () => {
     ["Send to deliver"],
   );
   assert.deepEqual(
-    exitsFor(plan, "tech-design").map((e) => e.label),
+    exitsFor(plan, "design").map((e) => e.label),
     ["Back to ideation"],
   );
-  assert.deepEqual(exitsFor(plan, "spec"), []);
+  assert.deepEqual(exitsFor(plan, "define"), []);
   const reactive = createBoard("reactive", "acme");
   assert.deepEqual(
     exitsFor(reactive, "triage").map((e) => e.toType),
@@ -682,7 +682,7 @@ test("resolveExit matches on column and destination type", () => {
   const plan = createBoard("plan", "acme");
   assert.equal(resolveExit(plan, "ready", "deliver")?.toColumn, "ready");
   assert.equal(resolveExit(plan, "ready", "ideation"), undefined); // wrong destination
-  assert.equal(resolveExit(plan, "spec", "deliver"), undefined); // wrong column
+  assert.equal(resolveExit(plan, "define", "deliver"), undefined); // wrong column
 });
 
 test("every route points at a column that exists on its destination template", () => {
@@ -742,8 +742,8 @@ test("routeCard chains across two real hops: delegation, stories, jira, capabili
   const release = createBoard("release", "acme");
   const deliver = createBoard("deliver", "acme");
   const plan = createBoard("plan", "acme");
-  addCard(plan, { title: "sitting there", columnId: "tech-design" });
-  const card = addCard(release, { title: "Hotfix", columnId: "regression" });
+  addCard(plan, { title: "sitting there", columnId: "design" });
+  const card = addCard(release, { title: "Hotfix", columnId: "validate" });
   patchCard(release, card.id, {
     stories: [{ id: "s1", text: "no regressions", done: true }],
     jira: { key: "R-1", url: "https://a/browse/R-1" },
@@ -751,7 +751,7 @@ test("routeCard chains across two real hops: delegation, stories, jira, capabili
     delegation: { agentId: "minerva", taskId: "t1", state: "working" },
   });
 
-  const exit1 = resolveExit(release, "regression", "deliver");
+  const exit1 = resolveExit(release, "validate", "deliver");
   assert.ok(exit1);
   const hop1 = routeCard(release, deliver, card.id, exit1, "2026-08-07T10:00:00.000Z");
   assert.equal(hop1.card.columnId, "in-progress");
@@ -761,14 +761,14 @@ test("routeCard chains across two real hops: delegation, stories, jira, capabili
   const hop2 = routeCard(deliver, plan, hop1.card.id, exit2, "2026-08-07T11:00:00.000Z");
 
   assert.equal(hop2.card.id, card.id);
-  assert.equal(hop2.card.columnId, "tech-design");
+  assert.equal(hop2.card.columnId, "design");
   assert.equal(hop2.card.order, 1); // behind the card already there
   assert.deepEqual(hop2.card.delegation, { agentId: "minerva", taskId: "t1", state: "working" });
   assert.equal(hop2.card.jira?.key, "R-1");
   assert.equal(hop2.card.stories?.length, 1);
   assert.deepEqual(hop2.card.capabilityRef, { capabilityId: "acme-store", sliceId: "sl1" });
   assert.deepEqual(hop2.card.routedFrom, [
-    { boardId: "acme-release", boardType: "release", columnId: "regression", at: "2026-08-07T10:00:00.000Z" },
+    { boardId: "acme-release", boardType: "release", columnId: "validate", at: "2026-08-07T10:00:00.000Z" },
     { boardId: "acme-deliver", boardType: "deliver", columnId: "in-progress", at: "2026-08-07T11:00:00.000Z" },
   ]);
   assert.throws(() => routeCard(deliver, plan, "ghost", exit2, "2026-08-07T11:00:00.000Z"), /card/i);
@@ -1076,5 +1076,149 @@ test("loadAllBoards: a missing directory contributes nothing and is not an error
     assert.deepEqual(errors, []);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("normalizeBoard migrates software column ids to neutral ones, with a positive control", () => {
+  const legacy = {
+    id: "acme-plan",
+    name: "Plan",
+    type: "plan" as const,
+    workspaceId: "acme",
+    columns: [
+      { id: "queue", name: "Queue" },
+      { id: "spec", name: "Spec" },
+      { id: "tech-design", name: "Tech design" },
+      { id: "decomposed", name: "Decomposed" },
+      { id: "ready", name: "Ready" },
+    ],
+    cards: [
+      { id: "c1", title: "one", columnId: "spec", order: 0 },
+      { id: "c2", title: "two", columnId: "tech-design", order: 1 },
+      { id: "c3", title: "three", columnId: "decomposed", order: 2 },
+    ],
+  } as unknown as WorkBoard;
+
+  // POSITIVE CONTROL: the fixture really is pre-migration. If this ever passes
+  // trivially, the assertions below prove nothing.
+  assert.ok(
+    legacy.columns.some((c) => c.id === "tech-design"),
+    "fixture must start on the OLD ids",
+  );
+  assert.ok(!legacy.columns.some((c) => c.id === "design"), "fixture must not already be migrated");
+
+  normalizeBoard(legacy);
+
+  assert.deepEqual(
+    legacy.columns.map((c) => c.id),
+    ["queue", "define", "design", "breakdown", "ready"],
+    "column ids are neutral",
+  );
+  assert.deepEqual(
+    legacy.cards.map((c) => c.columnId),
+    ["define", "design", "breakdown"],
+    "every card followed its column",
+  );
+});
+
+test("normalizeBoard keeps a column's displayed name when migrating its id", () => {
+  const legacy = {
+    id: "acme-deliver",
+    name: "Deliver",
+    type: "deliver" as const,
+    workspaceId: "acme",
+    columns: [
+      { id: "queue", name: "Queue" },
+      { id: "merged", name: "Merged" },
+    ],
+    cards: [],
+  } as unknown as WorkBoard;
+
+  normalizeBoard(legacy);
+
+  const complete = legacy.columns.find((c) => c.id === "complete");
+  assert.ok(complete, "merged became complete");
+  // Labels are chosen at seed time; a live board is never retitled. "Merged" IS
+  // the product/software label for `complete`, so keeping it is correct, not lazy.
+  assert.equal(complete.name, "Merged", "the displayed name is untouched");
+});
+
+test("normalizeBoard migrates release ids too", () => {
+  const legacy = {
+    id: "acme-release",
+    name: "Release",
+    type: "release" as const,
+    workspaceId: "acme",
+    columns: [
+      // "queue" must be present up front: `release` is a QUEUE_TYPES board, and the
+      // pre-existing queue-prepend step (which this task does not change) runs before
+      // the id migration — a fixture missing it would gain a "queue" column and fail
+      // this assertion on an axis unrelated to the rename under test.
+      { id: "queue", name: "Queue" },
+      { id: "cut", name: "Cut" },
+      { id: "regression", name: "Regression" },
+    ],
+    cards: [{ id: "c1", title: "one", columnId: "regression", order: 0 }],
+  } as unknown as WorkBoard;
+
+  normalizeBoard(legacy);
+
+  assert.deepEqual(
+    legacy.columns.map((c) => c.id),
+    ["queue", "prepare", "validate"],
+  );
+  assert.equal(legacy.cards[0].columnId, "validate");
+});
+
+test("normalizeBoard is idempotent on already-migrated ids", () => {
+  const current = {
+    id: "acme-plan",
+    name: "Plan",
+    type: "plan" as const,
+    workspaceId: "acme",
+    columns: [
+      { id: "queue", name: "Queue" },
+      { id: "define", name: "Brief" },
+      { id: "ready", name: "Ready" },
+    ],
+    cards: [{ id: "c1", title: "one", columnId: "define", order: 0 }],
+  } as unknown as WorkBoard;
+
+  normalizeBoard(current);
+  normalizeBoard(current);
+
+  assert.deepEqual(
+    current.columns.map((c) => c.id),
+    ["queue", "define", "ready"],
+  );
+  assert.equal(current.columns[1].name, "Brief", "a custom label survives");
+  assert.equal(current.cards[0].columnId, "define");
+});
+
+test("normalizeBoard refuses to leave an orphaned card behind", () => {
+  const broken = {
+    id: "acme-plan",
+    name: "Plan",
+    type: "plan" as const,
+    workspaceId: "acme",
+    columns: [
+      { id: "queue", name: "Queue" },
+      { id: "tech-design", name: "Tech design" },
+    ],
+    // References a column that does not exist even before migration.
+    cards: [{ id: "c1", title: "one", columnId: "nowhere", order: 0 }],
+  } as unknown as WorkBoard;
+
+  assert.throws(() => normalizeBoard(broken), /nowhere/, "an orphan is a defect, not a tolerable state");
+});
+
+test("BOARD_ROUTES only ever names columns that exist on both boards", () => {
+  for (const [type, exits] of Object.entries(BOARD_ROUTES)) {
+    const fromIds = new Set(BOARD_TEMPLATES[type as BoardType].map((c) => c.id));
+    for (const exit of exits) {
+      assert.ok(fromIds.has(exit.from), `${type}: route leaves from unknown column "${exit.from}"`);
+      const toIds = new Set(BOARD_TEMPLATES[exit.toType].map((c) => c.id));
+      assert.ok(toIds.has(exit.toColumn), `${type}: route lands in unknown column "${exit.toColumn}"`);
+    }
   }
 });

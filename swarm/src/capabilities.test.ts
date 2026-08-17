@@ -415,7 +415,7 @@ test("sendSliceToBoard: first working column (Queue is system intake), story cop
   assert.equal(card.title, "tour scheduling v1");
   // A slice send is the USER's move, so it lands in Spec — the first working
   // column — not the Queue intake lane.
-  assert.equal(card.columnId, "spec");
+  assert.equal(card.columnId, "define");
   assert.deepEqual(card.capabilityRef, { capabilityId: "skoolscout-school-feature-set", sliceId: "sl1" });
   assert.deepEqual(
     card.stories?.map((s) => s.text),

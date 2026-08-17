@@ -196,12 +196,12 @@ export interface RouteExitT {
  */
 export const BOARD_ROUTES_UI: Record<BoardTypeT, RouteExitT[]> = {
   plan: [
-    { from: "tech-design", toType: "ideation", toColumn: "scoping", label: "Back to ideation" },
+    { from: "design", toType: "ideation", toColumn: "scoping", label: "Back to ideation" },
     { from: "ready", toType: "deliver", toColumn: "ready", label: "Send to deliver" },
   ],
-  deliver: [{ from: "in-progress", toType: "plan", toColumn: "tech-design", label: "Back to plan" }],
+  deliver: [{ from: "in-progress", toType: "plan", toColumn: "design", label: "Back to plan" }],
   release: [
-    { from: "regression", toType: "deliver", toColumn: "in-progress", label: "Drop change to deliver" },
+    { from: "validate", toType: "deliver", toColumn: "in-progress", label: "Drop change to deliver" },
     { from: "rollback", toType: "maintenance", toColumn: "triage", label: "To maintenance" },
   ],
   reactive: [

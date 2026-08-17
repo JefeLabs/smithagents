@@ -3,6 +3,7 @@ import type { WorkBoardT } from "../organisms/BoardStage";
 import {
   ALL_WORKSPACES,
   addableTypes,
+  BOARD_ROUTES_UI,
   BOARD_TYPE_ORDER_UI,
   clusterByWorkspace,
   collectAgendaCards,
@@ -124,6 +125,21 @@ describe("collectCards + clusterByWorkspace", () => {
       { id: "y", title: "y", columnId: "spec", order: 0 },
     ]);
     expect(clusterByWorkspace(collectCards([b], "spec"), false)[0].cards.map((c) => c.id)).toEqual(["y", "x"]);
+  });
+});
+
+describe("BOARD_ROUTES_UI", () => {
+  it("uses the neutral column ids the swarm migrated to", () => {
+    // Hand-synced with swarm/src/work-items.ts BOARD_ROUTES. Drift does not corrupt
+    // data — the server re-validates — it offers a pill that 400s on click.
+    const froms = Object.values(BOARD_ROUTES_UI).flatMap((exits) => exits.map((e) => e.from));
+    const tos = Object.values(BOARD_ROUTES_UI).flatMap((exits) => exits.map((e) => e.toColumn));
+    for (const dead of ["spec", "tech-design", "decomposed", "merged", "cut", "regression"]) {
+      expect(froms).not.toContain(dead);
+      expect(tos).not.toContain(dead);
+    }
+    expect(froms).toContain("design");
+    expect(froms).toContain("validate");
   });
 });
 
