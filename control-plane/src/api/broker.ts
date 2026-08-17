@@ -310,7 +310,7 @@ export async function getMe(base: string = BROKER_BASE): Promise<MeRecord> {
 
 /** PUT /me */
 export async function updateMe(
-  body: { name?: string },
+  body: { name?: string; setup?: MeRecord["setup"] },
   base: string = BROKER_BASE,
 ): Promise<MeRecord & { error?: string }> {
   const res = await brokerFetch(`/me`, base, {
