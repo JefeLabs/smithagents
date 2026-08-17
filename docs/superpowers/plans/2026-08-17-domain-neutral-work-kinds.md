@@ -30,6 +30,7 @@
 - Baselines, measured 2026-08-17 on `main` @ `9418fa4`:
   - swarm: **594 tests passing, 0 failing**; `tsc` **12 errors** (pre-existing, in `agent-sessions.ts` ×10, `jira-sync.test.ts`, `server.ts`).
   - control-plane: **924 passing, 2 FAILING** — `HomePage.test.tsx > picking another session backs out of an explicitly-opened composer` and `MapStage.test.tsx > offers a pan-mode toggle in the zoom controls cluster`. Both reproduce deterministically in isolation, both are unrelated to boards. **They are the baseline, not your regression.** Do not fix them here; do not let them mask a real one.
+  - control-plane `tsc --noEmit`: **10 pre-existing errors**, in `organisms/map/nodes.test.tsx`, `organisms/NewContextModal.test.tsx` and `organisms/WorkspaceManagerModal.test.tsx` (measured during Task 1 and confirmed by stashing). An earlier draft of this plan said the control-plane typecheck was clean — it is not, and never was. Confirm your touched files carry no errors; do not chase these ten.
 - Measurement traps:
   - Typecheck swarm with `cd swarm && ./node_modules/.bin/tsc --noEmit`. **Never `npx tsc` from the repo root** — decoy placeholder package.
   - tsc ANSI-colorizes. Strip first: `sed 's/\x1b\[[0-9;]*m//g'`. **Count with `grep -c 'error TS'`, NOT `grep -oE 'Found [0-9]+ error'`** — that summary line only exists in `--pretty` mode and returns empty here. A blank count means your measurement broke; cross-check `tsc`'s exit code.
@@ -158,7 +159,12 @@ test("normalizeBoard migrates release ids too", () => {
     name: "Release",
     type: "release" as const,
     workspaceId: "acme",
+    // `queue` is present deliberately: release is in QUEUE_TYPES, and
+    // normalizeBoard's queue-prepend runs BEFORE the rename step, so a fixture
+    // without it would gain one and fail this assertion on an axis that has
+    // nothing to do with the rename.
     columns: [
+      { id: "queue", name: "Queue" },
       { id: "cut", name: "Cut" },
       { id: "regression", name: "Regression" },
     ],
@@ -167,7 +173,7 @@ test("normalizeBoard migrates release ids too", () => {
 
   normalizeBoard(legacy);
 
-  assert.deepEqual(legacy.columns.map((c) => c.id), ["prepare", "validate"]);
+  assert.deepEqual(legacy.columns.map((c) => c.id), ["queue", "prepare", "validate"]);
   assert.equal(legacy.cards[0].columnId, "validate");
 });
 
