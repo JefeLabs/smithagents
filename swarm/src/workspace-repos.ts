@@ -3,7 +3,15 @@ import { mkdir, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { SmithPaths } from "./paths.js";
-import { ensureWorkspaceDir, isGitRepo, type Workspace, type WorkspaceRepo } from "./workspaces.js";
+import {
+  ensureWorkspaceDir,
+  isGitRepo,
+  loadWorkspaces,
+  saveWorkspace,
+  type Workspace,
+  type WorkspaceRepo,
+  workspaceDir,
+} from "./workspaces.js";
 
 const run = promisify(execFile);
 
@@ -140,4 +148,73 @@ export async function materializeRepos(paths: SmithPaths, ws: Workspace): Promis
     repos.push({ ...repo, path: await cloneRepoInto(dir, repo) });
   }
   return { ...ws, repos };
+}
+
+/**
+ * Relocate project repos recorded OUTSIDE their workspace to a clone inside it.
+ *
+ * Non-destructive by decision (Edwin, 2026-08-17): the external checkout is
+ * never moved or deleted, only cloned from its remote. The consequence is real
+ * and worth stating — the fresh clone does NOT carry uncommitted work from the
+ * old checkout, so anything unstaged there stays there, in a directory the
+ * workspace no longer points at.
+ *
+ * A repo with no `repository` cannot be cloned; it keeps its external path and
+ * is reported in `skipped`. That workspace cannot host an instance until it is
+ * given a remote — which is what the note says.
+ *
+ * Runs at boot. One bad workspace is isolated, never fatal: a throw here would
+ * brick every subsequent start.
+ */
+export async function migrateReposIntoWorkspace(
+  paths: SmithPaths,
+): Promise<{ cloned: string[]; skipped: string[]; notes: string[] }> {
+  const cloned: string[] = [];
+  const skipped: string[] = [];
+  const notes: string[] = [];
+
+  for (const ws of await loadWorkspaces(paths)) {
+    const dir = workspaceDir(paths, ws);
+    const repos: WorkspaceRepo[] = [];
+    let changed = false;
+
+    for (const repo of ws.repos) {
+      const label = `${ws.name}/${repo.name}`;
+      const inside = repoDirFor(dir, repo);
+      if (repo.path === inside) {
+        repos.push(repo);
+        continue;
+      }
+      if (!repo.repository) {
+        skipped.push(label);
+        notes.push(
+          `[repo-migration] ${label} lives outside its workspace at ${repo.path} and has no repository URL to ` +
+            `clone from — add a remote to the workspace record, or leave it where it is; until then this ` +
+            `workspace cannot host an instance`,
+        );
+        repos.push(repo);
+        continue;
+      }
+      try {
+        repos.push({ ...repo, path: await cloneRepoInto(dir, repo) });
+        cloned.push(label);
+        changed = true;
+      } catch (err) {
+        skipped.push(label);
+        notes.push(`[repo-migration] ${label} could not be cloned into ${dir} — ${(err as Error).message}`);
+        repos.push(repo);
+      }
+    }
+
+    if (!changed) continue;
+    try {
+      await ensureConfigRepo(dir);
+      await saveWorkspace(paths, { ...ws, repos });
+    } catch (err) {
+      notes.push(
+        `[repo-migration] cloned ${ws.name}'s repos but could not save the record — ${(err as Error).message}`,
+      );
+    }
+  }
+  return { cloned, skipped, notes };
 }

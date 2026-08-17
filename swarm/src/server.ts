@@ -181,7 +181,7 @@ import {
   type WorkBoard,
   type WorkCard,
 } from "./work-items.js";
-import { materializeRepos } from "./workspace-repos.js";
+import { materializeRepos, migrateReposIntoWorkspace } from "./workspace-repos.js";
 import {
   activeWorkspaces,
   assertNoWorkspaceDirCollision,
@@ -481,6 +481,16 @@ export class OrchestratorServer {
       for (const note of notes) {
         this.app.log.warn(note);
       }
+    }
+
+    // ONE-WAY migration (plan §4, workspace-owns-its-repos): relocate any
+    // project repo still recorded outside its workspace into a fresh clone
+    // inside it. Must run after workspace records have reached their final
+    // location above, and before reloadWorkspaces() resolves repos from them.
+    {
+      const repos = await migrateReposIntoWorkspace(this.paths);
+      if (repos.cloned.length > 0) this.app.log.info(`[repo-migration] cloned: ${repos.cloned.join(", ")}`);
+      for (const note of repos.notes) this.app.log.warn(note);
     }
 
     await this.reloadWorkspaces();

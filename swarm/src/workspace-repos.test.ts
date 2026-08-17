@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { smithPaths } from "./paths.js";
-import { cloneRepoInto, ensureConfigRepo, materializeRepos } from "./workspace-repos.js";
+import { cloneRepoInto, ensureConfigRepo, materializeRepos, migrateReposIntoWorkspace } from "./workspace-repos.js";
+import { loadWorkspaces, saveWorkspace } from "./workspaces.js";
 
 test("ensureConfigRepo: turns config/ into a git repo with the settings file committed", async () => {
   const ws = mkdtempSync(join(tmpdir(), "cfgrepo-"));
@@ -283,6 +284,83 @@ test("materializeRepos: also makes config/ a git repo", async () => {
 
     const cfg = join(paths.workspaces, "pg", "config");
     assert.ok(statSync(join(cfg, ".git")).isDirectory(), "config/ is a repo after creation");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(origin, { recursive: true, force: true });
+  }
+});
+
+test("migrateReposIntoWorkspace: clones an external repo inside and repoints the record", async () => {
+  const root = mkdtempSync(join(tmpdir(), "migrepo-"));
+  const origin = makeOrigin("g");
+  try {
+    const paths = smithPaths(root);
+    await saveWorkspace(paths, { name: "pg", repos: [{ name: "app", path: origin, repository: origin }] });
+
+    const result = await migrateReposIntoWorkspace(paths);
+
+    assert.deepEqual(result.cloned, ["pg/app"]);
+    const [ws] = await loadWorkspaces(paths);
+    assert.equal(ws.repos[0].path, join(paths.workspaces, "pg", "app"), "record points inside the workspace");
+    assert.ok(statSync(join(origin, ".git")).isDirectory(), "THE ORIGINAL CHECKOUT IS UNTOUCHED");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(origin, { recursive: true, force: true });
+  }
+});
+
+test("migrateReposIntoWorkspace: an external repo with no remote is left alone, with a note", async () => {
+  const root = mkdtempSync(join(tmpdir(), "migrepo-nourl-"));
+  const origin = makeOrigin("h");
+  try {
+    const paths = smithPaths(root);
+    await saveWorkspace(paths, { name: "pg", repos: [{ name: "app", path: origin }] });
+
+    const result = await migrateReposIntoWorkspace(paths);
+
+    assert.deepEqual(result.cloned, []);
+    assert.deepEqual(result.skipped, ["pg/app"]);
+    assert.equal((await loadWorkspaces(paths))[0].repos[0].path, origin, "record unchanged");
+    assert.ok(
+      result.notes.some((n) => n.includes("pg/app") && /repository URL/i.test(n)),
+      "the note says what is missing",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(origin, { recursive: true, force: true });
+  }
+});
+
+test("migrateReposIntoWorkspace: is idempotent — a second run moves nothing", async () => {
+  const root = mkdtempSync(join(tmpdir(), "migrepo-twice-"));
+  const origin = makeOrigin("i");
+  try {
+    const paths = smithPaths(root);
+    await saveWorkspace(paths, { name: "pg", repos: [{ name: "app", path: origin, repository: origin }] });
+    await migrateReposIntoWorkspace(paths);
+
+    const second = await migrateReposIntoWorkspace(paths);
+
+    assert.deepEqual(second.cloned, [], "nothing left to clone");
+    assert.deepEqual(second.skipped, [], "and nothing is reported as a problem");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(origin, { recursive: true, force: true });
+  }
+});
+
+test("migrateReposIntoWorkspace: one bad workspace does not stop the others", async () => {
+  const root = mkdtempSync(join(tmpdir(), "migrepo-isolate-"));
+  const origin = makeOrigin("j");
+  try {
+    const paths = smithPaths(root);
+    await saveWorkspace(paths, { name: "bad", repos: [{ name: "app", path: "/nope", repository: "/does/not/exist" }] });
+    await saveWorkspace(paths, { name: "good", repos: [{ name: "app", path: origin, repository: origin }] });
+
+    const result = await migrateReposIntoWorkspace(paths);
+
+    assert.ok(result.cloned.includes("good/app"), "the healthy workspace still migrated");
+    assert.ok(result.skipped.includes("bad/app"), "the broken one is reported, not thrown");
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(origin, { recursive: true, force: true });
