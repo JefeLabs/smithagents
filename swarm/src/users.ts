@@ -39,6 +39,13 @@ export interface User {
   researchEngine?: { cli: string; model?: string };
   /** Which engine backs the conversational brain. Absent = SMITH_BRAIN_PROVIDER, then the no-key default. */
   brainEngine?: BrainEngine;
+  /**
+   * How far through the welcome wizard this user got, and which branch they
+   * chose. Persisted on the record rather than in browser storage because the
+   * spec makes the user record the resume anchor — a fresh browser profile must
+   * still resume where the person left off.
+   */
+  setup?: { mode?: "local" | "hosted"; step?: string };
 }
 
 export interface BrainEngine {

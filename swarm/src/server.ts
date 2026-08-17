@@ -2269,19 +2269,13 @@ export class OrchestratorServer {
       return { ok: true, deleted: existing.name };
     });
 
-    const redactUser = (u: User | null) => ({
-      id: u?.id ?? "me",
-      name: u?.name ?? "You",
-      connectors: (u?.connectors ?? []).map(redactConnector),
-    });
-
     this.app.get("/me", async () => {
       const users = await loadUsersFromDir(this.paths.users);
       return redactUser(resolveCurrentUser(users));
     });
 
     this.app.put("/me", async (req, reply) => {
-      const b = req.body as { name?: string };
+      const b = req.body as { name?: string; setup?: User["setup"] };
       const dir = this.paths.users;
       const users = await loadUsersFromDir(dir);
       const existing = resolveCurrentUser(users);
@@ -3994,10 +3988,10 @@ function sanitizeLinks(links: unknown): string[] | undefined {
 /**
  * Redaction for one saved connector: secret fields become `has<Field>`
  * booleans (never the raw value), non-secret fields pass through as-is.
- * Pulled out to module level (rather than nested in registerRoutes, where
- * the routes above still call it via `redactUser`) so it's unit-testable
- * without booting the server, matching workspaceProblems/buildConnectorUpdate's
- * convention — also the shape Task 7's broker swarm-client.ts mirrors.
+ * Pulled out to module level so it's unit-testable without booting the
+ * server, matching workspaceProblems/buildConnectorUpdate's convention —
+ * also the shape Task 7's broker swarm-client.ts mirrors. `redactUser` below
+ * delegates to it for every connector in the list.
  */
 export function redactConnector(instance: ConnectorInstance): Record<string, unknown> {
   const vendor = findVendor(instance.vendorId);
@@ -4008,6 +4002,23 @@ export function redactConnector(instance: ConnectorInstance): Record<string, unk
     else fields[f.key] = v ?? "";
   }
   return { id: instance.id, vendorId: instance.vendorId, label: instance.label, fields };
+}
+
+/**
+ * The wire shape of the operator. `placeholder` is the first-run sentinel: the
+ * spec detects first run by "the absence of a user record", but this function
+ * fabricates a default when there is none, so absence has to be stated
+ * explicitly or the client cannot see it. A real user named "You" is NOT a
+ * placeholder.
+ */
+export function redactUser(u: User | null) {
+  return {
+    id: u?.id ?? "me",
+    name: u?.name ?? "You",
+    connectors: (u?.connectors ?? []).map(redactConnector),
+    placeholder: u === null,
+    setup: u?.setup,
+  };
 }
 
 /**
@@ -4085,21 +4096,22 @@ export async function runJiraSearch(
 }
 
 /**
- * PUT /me merge: rebuilds field-by-field (id/default are never
- * user-submitted) rather than `{...existing, ...}` — but every field the
- * three connector-writing siblings below carry forward (connectors, voice)
- * must be explicitly threaded here too, or renaming the operator silently
- * wipes it. Final-review caught `voice` missing from this list: an operator
- * rename turned off both voice capabilities and reset voice settings with no
- * error — currently latent (no shipped UI calls this route) but a landmine.
+ * Merge a PUT /me body onto the existing record.
+ *
+ * SPREADS the existing record rather than enumerating fields. The previous
+ * allow-list literal silently dropped brainEngine, researchEngine and
+ * agendaSweptDay on every rename — and the welcome wizard's first step is a
+ * rename, so it would have erased the brain engine the user configured two
+ * steps later. Enumerating fields here has now cost this codebase three
+ * separate bugs; spread and override.
  */
-export function buildUserUpdate(existing: User | null, body: { name?: string }): User {
+export function buildUserUpdate(existing: User | null, body: { name?: string; setup?: User["setup"] }): User {
   return {
+    ...(existing ?? {}),
     id: existing?.id ?? "me",
     name: body.name?.trim() || existing?.name || "You",
     default: true,
-    connectors: existing?.connectors,
-    voice: existing?.voice,
+    ...(body.setup !== undefined ? { setup: { ...existing?.setup, ...body.setup } } : {}),
   };
 }
 

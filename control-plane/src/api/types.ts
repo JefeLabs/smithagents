@@ -289,6 +289,10 @@ export interface MeRecord {
   id: string;
   name: string;
   connectors: ConnectorInstanceRecord[];
+  /** True when no user record is saved yet — the wizard's first-run sentinel. */
+  placeholder?: boolean;
+  /** How far through the welcome wizard this user got. */
+  setup?: { mode?: "local" | "hosted"; step?: string };
 }
 
 /** Per-workspace channel config — Discord token read back as a boolean, never the secret itself. */

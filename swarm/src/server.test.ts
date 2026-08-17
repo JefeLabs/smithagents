@@ -32,6 +32,7 @@ import {
   redactBrainEngine,
   redactConnector,
   redactResearchEngine,
+  redactUser,
   resolveAtlassianConnector,
   resolveCloseBy,
   resolveConnector,
@@ -52,18 +53,15 @@ import { isGitRepo, repoLessRefusal, saveWorkspace, workspaceDir } from "./works
 
 const git = promisify(execFile);
 
-// redactUser (the /me and /me/connectors response shaper) is a closure
-// nested inside OrchestratorServer.registerRoutes, which is only ever called
-// from start() right before app.listen() — this file's own header comment
-// explains why it avoids booting the full OrchestratorServer (real
-// filesystem/tmux/dispatcher side effects), and no lighter route-boot
-// harness exists anywhere in this package's test suite (confirmed: no
-// test file constructs OrchestratorServer or calls app.inject). So this
-// exercises redactUser's actual behavior through redactConnector — the
-// exported, module-level piece it delegates to for every connector in the
-// list — which is the closest faithful substitute available without
-// inventing a new harness. The route wiring (GET /me, GET /me/connectors)
-// was verified by direct code inspection against the brief's spec instead.
+// redactConnector is the piece redactUser (below, exported module-level like
+// this one) delegates to for every connector in the list — covered here in
+// isolation. The route wiring itself (GET /me, GET /me/connectors) is not
+// exercised: this file's own header comment explains why it avoids booting
+// the full OrchestratorServer (real filesystem/tmux/dispatcher side
+// effects), and no lighter route-boot harness exists anywhere in this
+// package's test suite (confirmed: no test file constructs OrchestratorServer
+// or calls app.inject). That wiring was verified by direct code inspection
+// against the brief's spec instead.
 test("redactConnector: secret fields become has<Field> booleans, non-secret fields keep their real value, never the raw secret", async () => {
   const dir = await mkdtemp(join(tmpdir(), "users-"));
   const instance: ConnectorInstance = {
@@ -545,12 +543,16 @@ test("buildUserUpdate: renaming the operator carries connectors and voice forwar
 });
 
 test('buildUserUpdate: no existing user → defaults id "me"/name "You", no voice', () => {
+  // Was a `deepEqual` against a literal listing `connectors: undefined,
+  // voice: undefined` — an artifact of the old allow-list building the object
+  // field-by-field. The spread-based rewrite (this task) carries forward only
+  // what `existing` actually has, so those keys are simply absent, not
+  // present-with-undefined. Node's assert.deepEqual (strict) distinguishes
+  // the two, so this pins the new, correct shape instead.
   assert.deepEqual(buildUserUpdate(null, {}), {
     id: "me",
     name: "You",
     default: true,
-    connectors: undefined,
-    voice: undefined,
   });
 });
 
@@ -1010,4 +1012,67 @@ test("the repo-less refusal is a refusal, not an unknown-workspace error", () =>
   const refusal = repoLessRefusal(wss, "design");
   assert.ok(refusal);
   assert.doesNotMatch(refusal as string, /unknown/i);
+});
+
+test("buildUserUpdate: PRESERVES fields it does not set — the brain engine survives a rename", () => {
+  // This is the third instance of this bug class in this codebase
+  // (buildWorkspaceCreate dropped workKind; doc-edit dropped unschema-ed
+  // fields). An allow-list literal silently erases everything not listed, and
+  // the wizard's very first step calls PUT /me.
+  const existing = {
+    id: "me",
+    name: "Edwin",
+    default: true,
+    brainEngine: { kind: "api" as const, provider: "gemini" },
+    researchEngine: { cli: "claude" },
+    agendaSweptDay: "2026-08-17",
+  };
+
+  const merged = buildUserUpdate(existing as never, { name: "Edwina" });
+
+  assert.equal(merged.name, "Edwina", "the rename applies");
+  assert.deepEqual(merged.brainEngine, { kind: "api", provider: "gemini" }, "brainEngine survives");
+  assert.deepEqual(merged.researchEngine, { cli: "claude" }, "researchEngine survives");
+  assert.equal(merged.agendaSweptDay, "2026-08-17", "agendaSweptDay survives");
+});
+
+test("buildUserUpdate: creates a usable record when there is no existing user", () => {
+  const created = buildUserUpdate(null, { name: "Edwin" });
+  assert.equal(created.id, "me");
+  assert.equal(created.name, "Edwin");
+  assert.equal(created.default, true);
+});
+
+test("buildUserUpdate: records wizard progress, and omitting it preserves what was there", () => {
+  const first = buildUserUpdate(null, { name: "Edwin", setup: { mode: "local", step: "fork" } });
+  assert.deepEqual(first.setup, { mode: "local", step: "fork" });
+
+  const renamed = buildUserUpdate(first, { name: "Edwina" });
+  assert.deepEqual(renamed.setup, { mode: "local", step: "fork" }, "progress is not lost by an unrelated update");
+});
+
+test("redactUser: says PLAINLY whether a real user record exists", () => {
+  // The spec detects first run by "the absence of a user record", but the old
+  // payload fabricated {name:"You"} for null — indistinguishable from a real
+  // user named You. The client could not detect first run at all.
+  const fresh = redactUser(null);
+  assert.equal(fresh.placeholder, true, "no saved user yet");
+
+  const real = redactUser({ id: "me", name: "You", default: true } as never);
+  assert.equal(real.placeholder, false, "a REAL user named 'You' is not a placeholder");
+  assert.equal(real.name, "You");
+});
+
+test("redactUser: exposes setup progress so the wizard can resume", () => {
+  const u = redactUser({ id: "me", name: "Edwin", setup: { mode: "local", step: "fork" } } as never);
+  assert.deepEqual(u.setup, { mode: "local", step: "fork" });
+});
+
+test("redactUser: still never leaks a connector secret", () => {
+  const u = redactUser({
+    id: "me",
+    name: "Edwin",
+    connectors: [{ id: "c1", vendorId: "atlassian", label: "acme", fields: { email: "e@x.com", apiToken: "SECRET" } }],
+  } as never);
+  assert.equal(JSON.stringify(u).includes("SECRET"), false, "redaction is not weakened by the new fields");
 });
