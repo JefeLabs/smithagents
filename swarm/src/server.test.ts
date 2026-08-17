@@ -345,6 +345,37 @@ test("workspaceProblems: links must be an array of strings when present", async 
   assert.match((await workspaceProblems({ ...base, links: "nope" as never })) ?? "", /links/);
 });
 
+test("workspaceProblems: relaxed mode accepts a URL-only repo submitted with an empty path", async () => {
+  const origin = await mkdtemp(join(tmpdir(), "ws-origin-"));
+  await git("git", ["init", "-q"], { cwd: origin });
+  const b: Partial<Workspace> = { name: "pg", repos: [{ name: "app", path: "", repository: origin }] };
+
+  const result = await workspaceProblems(b, { requireLocalRepos: false });
+
+  assert.equal(result, null, "an empty path is legitimate pre-clone, when a repository URL is given");
+});
+
+test("workspaceProblems: strict mode still rejects that same URL-only repo — the relaxed pass does not widen the saved-record contract", async () => {
+  const origin = await mkdtemp(join(tmpdir(), "ws-origin-strict-"));
+  await git("git", ["init", "-q"], { cwd: origin });
+  const b: Partial<Workspace> = { name: "pg", repos: [{ name: "app", path: "", repository: origin }] };
+
+  const result = await workspaceProblems(b);
+
+  assert.match(result ?? "", /path must be absolute/, "default (strict) mode is unchanged");
+});
+
+test("workspaceProblems: relaxed mode still rejects a non-empty relative path", async () => {
+  const b: Partial<Workspace> = {
+    name: "pg",
+    repos: [{ name: "app", path: "relative/path", repository: "https://example.com/x.git" }],
+  };
+
+  const result = await workspaceProblems(b, { requireLocalRepos: false });
+
+  assert.match(result ?? "", /path must be absolute/, "a path that IS given must still be absolute, even relaxed");
+});
+
 // POST /workspaces/:name/verify-atlassian's two new 400-guard branches (no
 // connectorId set; connectorId set but no matching connector in
 // user.connectors) are NOT covered by a route-level test here. Every other
