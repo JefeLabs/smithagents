@@ -4,7 +4,15 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { createInstance, instanceDir, instancesDir, workIdProblem } from "./workspace-instances.js";
+import {
+  createInstance,
+  destroyInstance,
+  instanceDir,
+  instanceIsDirty,
+  instancesDir,
+  listInstances,
+  workIdProblem,
+} from "./workspace-instances.js";
 
 test("instancesDir/instanceDir: instances live in the unversioned half", () => {
   assert.equal(instancesDir("/ws"), join("/ws", ".runtime", "instances"));
@@ -200,6 +208,84 @@ test("createInstance: rejects a repo whose name would escape the instance direct
     );
     // Verify the instance directory was not created.
     assert.throws(() => statSync(join(dir, ".runtime")), "instance directory was not created on validation error");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("listInstances: empty when there are none, sorted when there are", async () => {
+  const { dir, ws } = makeWorkspace("list", ["app"]);
+  try {
+    assert.deepEqual(await listInstances(dir), []);
+    await createInstance(dir, ws as never, "b-2", ["app"]);
+    await createInstance(dir, ws as never, "a-1", ["app"]);
+    assert.deepEqual(await listInstances(dir), ["a-1", "b-2"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("instanceIsDirty: names the members holding uncommitted work", async () => {
+  const { dir, ws } = makeWorkspace("dirty", ["app"]);
+  try {
+    const inst = await createInstance(dir, ws as never, "work-1", ["app"]);
+    assert.deepEqual(await instanceIsDirty(inst), [], "a fresh instance is clean");
+
+    writeFileSync(join(inst.dir, "app", "NEW.md"), "unsaved\n");
+    assert.deepEqual(await instanceIsDirty(inst), ["app"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("destroyInstance: REFUSES to discard uncommitted work", async () => {
+  const { dir, ws } = makeWorkspace("refuse", ["app"]);
+  try {
+    const inst = await createInstance(dir, ws as never, "work-2", ["app"]);
+    writeFileSync(join(inst.dir, "app", "PRECIOUS.md"), "not committed\n");
+
+    await assert.rejects(() => destroyInstance(dir, ws as never, "work-2", ["app"]), /uncommitted/i);
+
+    assert.ok(statSync(join(inst.dir, "app", "PRECIOUS.md")).isFile(), "THE WORK SURVIVES");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("destroyInstance: removes a clean instance and deregisters its worktrees", async () => {
+  const { dir, ws } = makeWorkspace("clean", ["app"]);
+  try {
+    const inst = await createInstance(dir, ws as never, "work-3", ["app"]);
+
+    await destroyInstance(dir, ws as never, "work-3", ["app"]);
+
+    assert.throws(() => statSync(inst.dir), "the instance directory is gone");
+    const listed = execFileSync("git", ["worktree", "list"], { cwd: ws.repos[0].path }).toString();
+    assert.doesNotMatch(listed, /work-3/, "git no longer lists the worktree");
+    assert.deepEqual(await listInstances(dir), []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("destroyInstance: force discards, but only when asked", async () => {
+  const { dir, ws } = makeWorkspace("force", ["app"]);
+  try {
+    const inst = await createInstance(dir, ws as never, "work-4", ["app"]);
+    writeFileSync(join(inst.dir, "app", "SCRATCH.md"), "throwaway\n");
+
+    await destroyInstance(dir, ws as never, "work-4", ["app"], { force: true });
+
+    assert.throws(() => statSync(inst.dir));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("destroyInstance: an absent instance is a no-op, not an error", async () => {
+  const { dir, ws } = makeWorkspace("absent", ["app"]);
+  try {
+    await destroyInstance(dir, ws as never, "never-existed", ["app"]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

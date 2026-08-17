@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, stat } from "node:fs/promises";
+import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { repoNameProblem } from "./workspace-repos.js";
@@ -55,7 +55,6 @@ export interface Instance {
   members: InstanceMember[];
 }
 
-// biome-ignore lint/correctness/noUnusedVariables: used by Task 3 (destroyInstance)
 async function isDir(path: string): Promise<boolean> {
   try {
     return (await stat(path)).isDirectory();
@@ -156,4 +155,79 @@ export async function createInstance(
     members.push({ name, path, source });
   }
   return { workId, dir, branch, members };
+}
+
+/** Work ids with an instance directory, sorted. */
+export async function listInstances(workspaceDir: string): Promise<string[]> {
+  try {
+    const entries = await readdir(instancesDir(workspaceDir), { withFileTypes: true });
+    return entries
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name)
+      .sort();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
+}
+
+/** Members holding uncommitted changes, by name. */
+export async function instanceIsDirty(inst: Instance): Promise<string[]> {
+  const dirty: string[] = [];
+  for (const m of inst.members) {
+    if (!(await isDir(m.path))) continue;
+    const { stdout } = await run("git", ["status", "--porcelain"], { cwd: m.path });
+    if (stdout.trim()) dirty.push(m.name);
+  }
+  return dirty;
+}
+
+/**
+ * Remove an instance and deregister its worktrees.
+ *
+ * REFUSES when any member holds uncommitted changes. §2.2 destroys an instance
+ * only after the workspace clone has been fast-forwarded, so a dirty member
+ * means the caller is destroying too early — and a worktree's contents exist
+ * nowhere else. `force` is for a caller that has already preserved the work.
+ *
+ * An absent instance is a no-op: this is the tail of a lifecycle, and making it
+ * idempotent is what lets a retry finish a partial teardown.
+ */
+export async function destroyInstance(
+  workspaceDir: string,
+  ws: Workspace,
+  workId: string,
+  repoNames: string[],
+  opts: { force?: boolean } = {},
+): Promise<void> {
+  const problem = workIdProblem(workId);
+  if (problem) throw new Error(`Invalid work id: ${problem}`);
+
+  const dir = instanceDir(workspaceDir, workId);
+  if (!(await isDir(dir))) return;
+
+  const sources: Array<{ name: string; source: string }> = [{ name: "config", source: join(workspaceDir, "config") }];
+  for (const name of repoNames) {
+    const repo = ws.repos.find((r) => r.name === name);
+    if (repo) sources.push({ name, source: repo.path });
+  }
+  const members: InstanceMember[] = sources.map(({ name, source }) => ({ name, path: join(dir, name), source }));
+
+  if (!opts.force) {
+    const dirty = await instanceIsDirty({ workId, dir, branch: `smith/${workId}`, members });
+    if (dirty.length > 0) {
+      throw new Error(
+        `Instance "${workId}" has uncommitted changes in ${dirty.join(", ")} — commit them, or destroy with force to discard`,
+      );
+    }
+  }
+
+  for (const m of members) {
+    if (!(await isDir(m.path))) continue;
+    // --force here removes the worktree registration; the dirty check above is
+    // what protects the contents, and it has already run unless the caller
+    // deliberately opted out.
+    await run("git", ["worktree", "remove", "--force", m.path], { cwd: m.source }).catch(() => {});
+  }
+  await rm(dir, { recursive: true, force: true });
 }
