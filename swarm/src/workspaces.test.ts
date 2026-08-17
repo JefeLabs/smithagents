@@ -11,6 +11,7 @@ import { smithPaths } from "./paths.js";
 import { loadRegistry, saveRegistryEntry } from "./workspace-registry.js";
 import type { Workspace } from "./workspaces.js";
 import {
+  assertNoWorkspaceDirCollision,
   boardsDirFor,
   collidingWorkspaceDirs,
   defaultViolation,
@@ -586,6 +587,45 @@ test("saveWorkspace: the full ab/ab- sequence — migration then an ordinary edi
     const onDisk = JSON.parse(readFileSync(settingsPathFor(dir), "utf8"));
     assert.equal(onDisk.name, winner, "the winner's record must survive completely untouched by the loser's edit");
     assert.equal(onDisk.description, undefined, "not overwritten by the loser's edit");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("assertNoWorkspaceDirCollision: run before a demote loop, a collision leaves the demoted workspace untouched — the ordering POST/PUT rely on", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ws-demote-collide-"));
+  try {
+    const paths = smithPaths(root);
+    await saveWorkspace(paths, { name: "keeper", default: true, repos: [{ name: "r", path: "/abs/r" }] });
+    mkdirSync(paths.workspaces, { recursive: true });
+    writeFileSync(
+      join(paths.workspaces, "Foo.json"),
+      JSON.stringify({ name: "Foo", repos: [{ name: "r", path: "/abs/r" }] }),
+    );
+    await migrateWorkspaceRecords(paths); // "Foo" now owns directory "foo"
+
+    const incoming: Workspace = { name: "foo", default: true, repos: [{ name: "r", path: "/abs/r" }] };
+
+    // What POST and PUT /workspaces now do, in order: check the collision
+    // BEFORE anything else is touched — no demoted default, no saved record,
+    // same guarantee ensureWorkspaceDir's own mkdir-failure ordering gives.
+    await assert.rejects(() => assertNoWorkspaceDirCollision(paths, incoming), WorkspaceDirCollisionError);
+    let [keeper] = (await loadWorkspaces(paths)).filter((w) => w.name === "keeper");
+    assert.equal(keeper?.default, true, "the pre-flight check throws before any demote loop could run");
+
+    // Characterizes the bug this ordering fixes: demoting the previous
+    // default FIRST — the sequence the routes used before this fix, when
+    // the collision was only discovered inside the final saveWorkspace(ws)
+    // call — leaves "keeper" un-defaulted even though the incoming save is
+    // then correctly refused. Nothing left flagged default.
+    await saveWorkspace(paths, { ...keeper!, default: undefined });
+    await assert.rejects(() => saveWorkspace(paths, incoming), WorkspaceDirCollisionError);
+    [keeper] = (await loadWorkspaces(paths)).filter((w) => w.name === "keeper");
+    assert.equal(
+      keeper?.default,
+      undefined,
+      "demoting before the collision is caught leaves no workspace default — the exact bug",
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

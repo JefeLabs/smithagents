@@ -183,6 +183,7 @@ import {
 } from "./work-items.js";
 import {
   activeWorkspaces,
+  assertNoWorkspaceDirCollision,
   boardsDirFor,
   defaultViolation,
   ensureWorkspaceDir,
@@ -1863,9 +1864,15 @@ export class OrchestratorServer {
         sources: b.sources,
       };
       try {
-        // First: a mkdir failure (EACCES, ENOSPC, EROFS, ENOTDIR) must abort
-        // with nothing written — no demoted default, no saved record.
+        // First: a mkdir failure (EACCES, ENOSPC, EROFS, ENOTDIR) or a
+        // directory collision with a different workspace must abort with
+        // nothing written — no demoted default, no saved record. The
+        // collision check has to run here, before the demote loop below,
+        // not merely inside the final saveWorkspace(ws) call — otherwise a
+        // collision on `ws` is only discovered after other workspaces have
+        // already been demoted from default.
         await ensureWorkspaceDir(this.paths, ws);
+        await assertNoWorkspaceDirCollision(this.paths, ws);
         if (ws.default)
           for (const other of all.filter((w) => w.default))
             await saveWorkspace(this.paths, { ...other, default: undefined });
@@ -1928,6 +1935,11 @@ export class OrchestratorServer {
       const problem = await workspaceProblems(merged);
       if (problem) return reply.status(400).send({ error: problem });
       try {
+        // Same ordering as POST: the collision check must run before the
+        // demote loop, not merely inside the final saveWorkspace(merged)
+        // call — otherwise a collision on `merged` is only discovered after
+        // another workspace has already been demoted from default.
+        await assertNoWorkspaceDirCollision(this.paths, merged);
         if (merged.default && !existing.default) {
           for (const other of all.filter((w) => w.default && w.name !== merged.name)) {
             await saveWorkspace(this.paths, { ...other, default: undefined });

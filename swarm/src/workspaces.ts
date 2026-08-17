@@ -344,9 +344,17 @@ export function resolveRepo(
 }
 
 /**
- * Write one workspace to its own directory and register it. Mirror of agents.saveAgent.
+ * Pre-flight half of saveWorkspace's collision guard: throws
+ * WorkspaceDirCollisionError without writing anything, for a caller that
+ * needs to know BEFORE it does anything else — not merely before it writes
+ * `ws` itself. POST and PUT /workspaces both demote a previous default
+ * (saving OTHER workspaces) ahead of saving `ws`; running only saveWorkspace's
+ * own check meant a collision on `ws` was discovered only after that demotion
+ * had already landed, leaving no workspace flagged default on a 409. Calling
+ * this first lets a route abort with nothing written at all, the same
+ * guarantee `ensureWorkspaceDir`'s mkdir failure already gives.
  *
- * `slugForDir` is lossier than the name regex above — "ab" and "ab-" both
+ * `slugForDir` is lossier than the name regex below — "ab" and "ab-" both
  * pass it and both slug to directory "ab" — so an ordinary edit to one can
  * resolve to a directory that already holds a DIFFERENT workspace's
  * settings.json. Reading before writing is what tells them apart: a
@@ -355,17 +363,27 @@ export function resolveRepo(
  * collision — nobody's record is there to protect, and a corrupt one may be
  * this very workspace's own settings.json, which an edit should be able to
  * repair rather than being permanently blocked by.
+ *
+ * saveWorkspace still runs this same check itself — the two are independent
+ * defenses, not first-vs-second. A caller that skips the pre-flight call
+ * (or doesn't know to make it) is still protected at the point of the write.
  */
+export async function assertNoWorkspaceDirCollision(paths: SmithPaths, ws: Workspace): Promise<void> {
+  const dir = workspaceDir(paths, ws);
+  const existing = await probeSettings(settingsPathFor(dir));
+  if (existing.kind === "parsed" && existing.value.name !== ws.name) {
+    throw new WorkspaceDirCollisionError(ws.name, existing.value.name, dir);
+  }
+}
+
+/** Write one workspace to its own directory and register it. Mirror of agents.saveAgent. */
 export async function saveWorkspace(paths: SmithPaths, ws: Workspace): Promise<void> {
   if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(ws.name)) {
     throw new Error(`Invalid workspace name "${ws.name}": use lowercase letters, digits and dashes`);
   }
+  await assertNoWorkspaceDirCollision(paths, ws);
   const dir = await ensureWorkspaceDir(paths, ws);
   const settings = settingsPathFor(dir);
-  const existing = await probeSettings(settings);
-  if (existing.kind === "parsed" && existing.value.name !== ws.name) {
-    throw new WorkspaceDirCollisionError(ws.name, existing.value.name, dir);
-  }
   await writeFile(settings, `${JSON.stringify(ws, null, 2)}\n`);
   await saveRegistryEntry(paths, ws.name, dir);
 }
