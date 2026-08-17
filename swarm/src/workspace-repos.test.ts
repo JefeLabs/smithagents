@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { ensureConfigRepo } from "./workspace-repos.js";
+import { cloneRepoInto, ensureConfigRepo } from "./workspace-repos.js";
 
 test("ensureConfigRepo: turns config/ into a git repo with the settings file committed", async () => {
   const ws = mkdtempSync(join(tmpdir(), "cfgrepo-"));
@@ -84,5 +84,87 @@ test("ensureConfigRepo: self-heals a commit-less repo from a partial prior init"
     assert.match(tracked, /settings\.json/, "settings.json is tracked");
   } finally {
     rmSync(ws, { recursive: true, force: true });
+  }
+});
+
+/** A real local git repo to clone from — never the network. */
+function makeOrigin(label: string): string {
+  const origin = mkdtempSync(join(tmpdir(), `origin-${label}-`));
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: origin });
+  writeFileSync(join(origin, "README.md"), "origin content\n");
+  execFileSync("git", ["add", "-A"], { cwd: origin });
+  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init"], { cwd: origin });
+  return origin;
+}
+
+test("cloneRepoInto: clones into <workspace>/<repo name> and returns that path", async () => {
+  const ws = mkdtempSync(join(tmpdir(), "clone-"));
+  const origin = makeOrigin("a");
+  try {
+    const path = await cloneRepoInto(ws, { name: "app", path: "", repository: origin });
+
+    assert.equal(path, join(ws, "app"), "returns the in-workspace path");
+    assert.ok(statSync(join(ws, "app", ".git")).isDirectory(), "it is a real clone");
+    assert.equal(readFileSync(join(ws, "app", "README.md"), "utf8"), "origin content\n");
+  } finally {
+    rmSync(ws, { recursive: true, force: true });
+    rmSync(origin, { recursive: true, force: true });
+  }
+});
+
+test("cloneRepoInto: an existing clone is reused, not re-cloned over", async () => {
+  const ws = mkdtempSync(join(tmpdir(), "clone-twice-"));
+  const origin = makeOrigin("b");
+  try {
+    await cloneRepoInto(ws, { name: "app", path: "", repository: origin });
+    writeFileSync(join(ws, "app", "LOCAL.md"), "local work\n");
+
+    const path = await cloneRepoInto(ws, { name: "app", path: "", repository: origin });
+
+    assert.equal(path, join(ws, "app"));
+    assert.equal(
+      readFileSync(join(ws, "app", "LOCAL.md"), "utf8"),
+      "local work\n",
+      "local work in an existing clone survives — we did not clone over it",
+    );
+  } finally {
+    rmSync(ws, { recursive: true, force: true });
+    rmSync(origin, { recursive: true, force: true });
+  }
+});
+
+test("cloneRepoInto: refuses a repo with no remote to clone from", async () => {
+  const ws = mkdtempSync(join(tmpdir(), "clone-norepo-"));
+  try {
+    await assert.rejects(
+      () => cloneRepoInto(ws, { name: "app", path: "/somewhere/else" }),
+      /no repository URL/i,
+      "says why it cannot be cloned",
+    );
+  } finally {
+    rmSync(ws, { recursive: true, force: true });
+  }
+});
+
+test("cloneRepoInto: checks out the recorded branch", async () => {
+  const ws = mkdtempSync(join(tmpdir(), "clone-branch-"));
+  const origin = makeOrigin("c");
+  try {
+    execFileSync("git", ["checkout", "-q", "-b", "develop"], { cwd: origin });
+    writeFileSync(join(origin, "ON_DEVELOP.md"), "yes\n");
+    execFileSync("git", ["add", "-A"], { cwd: origin });
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "dev"], { cwd: origin });
+    execFileSync("git", ["checkout", "-q", "main"], { cwd: origin });
+
+    await cloneRepoInto(ws, { name: "app", path: "", repository: origin, branch: "develop" });
+
+    const branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: join(ws, "app") })
+      .toString()
+      .trim();
+    assert.equal(branch, "develop");
+    assert.ok(statSync(join(ws, "app", "ON_DEVELOP.md")).isFile());
+  } finally {
+    rmSync(ws, { recursive: true, force: true });
+    rmSync(origin, { recursive: true, force: true });
   }
 });

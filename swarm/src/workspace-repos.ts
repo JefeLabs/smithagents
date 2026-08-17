@@ -2,6 +2,8 @@ import { execFile } from "node:child_process";
 import { mkdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import type { WorkspaceRepo } from "./workspaces.js";
+import { isGitRepo } from "./workspaces.js";
 
 const run = promisify(execFile);
 
@@ -56,4 +58,35 @@ export async function ensureConfigRepo(workspaceDir: string): Promise<boolean> {
   await run("git", ["add", "-A"], { cwd: dir });
   await run("git", [...AUTHOR, "commit", "-q", "--allow-empty", "-m", "Workspace config"], { cwd: dir });
   return true;
+}
+
+/** Where a project repo lives inside its workspace. */
+export function repoDirFor(workspaceDir: string, repo: WorkspaceRepo): string {
+  return join(workspaceDir, repo.name);
+}
+
+/**
+ * Clone a project repo into its workspace and return the absolute path.
+ *
+ * An existing clone is REUSED, never cloned over: it may hold the user's
+ * uncommitted work, and re-cloning would destroy it. Callers that want a fresh
+ * copy delete the directory first, deliberately.
+ *
+ * Requires `repository`. A repo recorded only as a local path has nothing to
+ * clone from, and inventing a remote from its path would silently bind the
+ * workspace to a checkout it does not own.
+ */
+export async function cloneRepoInto(workspaceDir: string, repo: WorkspaceRepo): Promise<string> {
+  const dir = repoDirFor(workspaceDir, repo);
+  if (await isGitRepo(dir)) return dir;
+  if (!repo.repository) {
+    throw new Error(
+      `Repo "${repo.name}" has no repository URL, so it cannot be cloned into ${workspaceDir} — ` +
+        `add a remote to the workspace record, or leave the repo where it is`,
+    );
+  }
+  await mkdir(workspaceDir, { recursive: true });
+  const branch = repo.branch ? ["--branch", repo.branch] : [];
+  await run("git", ["clone", "-q", ...branch, repo.repository, dir]);
+  return dir;
 }
