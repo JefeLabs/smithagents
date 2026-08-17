@@ -1744,8 +1744,12 @@ export class OrchestratorServer {
         }
         // Portraits ride with the roster: archived beside it, never deleted.
         await rename(this.paths.avatars, this.paths.archived("avatars", stamp)).catch(() => {});
-        // Work boards are user data too: archived beside the roster, never deleted.
+        // Work boards are user data too: archived beside the roster, never deleted —
+        // the host directory AND every workspace's own config/boards (boards-into-
+        // workspaces moved most of them there; leaving those out of a reset the user
+        // explicitly asked for would mean most boards silently survive it).
         await rename(this.paths.work, this.paths.archived("work", stamp)).catch(() => {});
+        await archiveWorkspaceBoards(this.paths, this.workspaces, stamp);
         const squadsDir = this.paths.squads;
         killed.squads = SQUAD_ROSTER.length;
         await rename(squadsDir, this.paths.archived("squads", stamp)).catch(() => {});
@@ -1838,8 +1842,11 @@ export class OrchestratorServer {
       // Computed directly from `ws` rather than boardsDirFor(this.paths,
       // this.workspaces, ws.name): this.workspaces has not been reloaded yet
       // (that happens below), so a lookup by name would miss the workspace
-      // just saved and silently fall back to the host directory.
-      await ensureWorkspaceBoards(join(workspaceDir(this.paths, ws), "config", "boards"), ws.name).catch((err) => {
+      // just saved and silently fall back to the host directory. A brand new
+      // workspace cannot yet have boards sitting anywhere else, so the merged
+      // read and the resolved write both collapse to this one directory.
+      const newWorkspaceBoardsDir = join(workspaceDir(this.paths, ws), "config", "boards");
+      await ensureWorkspaceBoards([newWorkspaceBoardsDir], () => newWorkspaceBoardsDir, ws.name).catch((err) => {
         this.app.log.warn(`Could not provision boards for workspace "${ws.name}": ${String((err as Error).message)}`);
       });
       await this.reloadWorkspaces();
@@ -3050,7 +3057,7 @@ export class OrchestratorServer {
         if (capabilities.some((c) => c.id === cap.id))
           return reply.status(409).send({ error: `Capability "${cap.id}" already exists` });
         await saveCapability(this.paths.workCapabilities, cap);
-        await ensureWorkspaceBoards(this.workDir(), cap.workspaceId);
+        await ensureWorkspaceBoards(this.boardDirs(), (b) => this.boardDir(b), cap.workspaceId);
         return reply.status(201).send(cap);
       } catch (err) {
         return reply.status(400).send({ error: String((err as Error).message) });
@@ -3069,7 +3076,7 @@ export class OrchestratorServer {
         // (C1). resyncLinkedCards already skips any ref whose board/card no
         // longer resolves; a raw disk failure here still 400s the request,
         // matching how the sibling write-through PATCH treats its own writes.
-        await resyncLinkedCards(this.workDir(), cap);
+        await resyncLinkedCards(this.boardDirs(), (b) => this.boardDir(b), cap);
         return cap;
       } catch (err) {
         return reply.status(400).send({ error: String((err as Error).message) });
@@ -3132,7 +3139,7 @@ export class OrchestratorServer {
         if (slice[refKey]) return reply.status(409).send({ error: `Slice already sent to ${target}` });
         if (target === "delivery" && !slice.specPath)
           return reply.status(409).send({ error: "Generate the spec before sending to delivery" });
-        await ensureWorkspaceBoards(this.workDir(), cap.workspaceId);
+        await ensureWorkspaceBoards(this.boardDirs(), (b) => this.boardDir(b), cap.workspaceId);
         const { boards } = await loadAllBoards(this.boardDirs());
         // The wire values and the capCardRef/deliveryCardRef keys are persisted
         // on every capability file; only the board types behind them moved.
@@ -3466,6 +3473,21 @@ export async function gitInitRequestedRepos(
     }
   }
   return null;
+}
+
+/**
+ * Archive every workspace's board directory to a timestamped sibling — the
+ * workspace-directory half of POST /reset's scope.agents board archive (see
+ * the sibling `rename(this.paths.work, ...)` in the route handler this backs).
+ * Best-effort per workspace, matching every other archive in that handler: a
+ * workspace with no boards yet (ENOENT) is not an error. Pulled out of the
+ * route handler so it's unit-testable without booting the server.
+ */
+export async function archiveWorkspaceBoards(paths: SmithPaths, workspaces: Workspace[], stamp: string): Promise<void> {
+  for (const ws of workspaces) {
+    const dir = join(workspaceDir(paths, ws), "config", "boards");
+    await rename(dir, `${dir}-archived-${stamp}`).catch(() => {});
+  }
 }
 
 /**

@@ -23,7 +23,7 @@ import {
   unlinkCapabilityCards,
   unlinkSliceCard,
 } from "./capabilities.js";
-import { boardIdFor, loadBoards, resolveExit, routeCard, saveBoard } from "./work-items.js";
+import { addCard, boardIdFor, createBoard, loadBoards, resolveExit, routeCard, saveBoard } from "./work-items.js";
 
 const sl = (id: string, storyIds: string[]): CapSlice => ({ id, name: id, order: 0, storyIds });
 
@@ -309,10 +309,67 @@ test("store round-trip + malformed isolation", async () => {
   await assert.rejects(saveCapability(dir, { ...cap, id: "../evil" }), /id/i);
 });
 
+// boards-into-workspaces final fix wave (2026-08-16): production calls both
+// functions with `this.boardDirs()` (every workspace dir first, host last —
+// loadAllBoards's required order) to READ, and `this.boardDir(board)` to
+// resolve WHERE each board it touches actually belongs. A board already
+// migrated into its workspace directory must be visible to both — a
+// single-directory read (the old signature; still how POST /workspaces'
+// creation-time call below reasons about its own one directory) silently
+// misses it: resyncLinkedCards finds nothing to update, and
+// ensureWorkspaceBoards mints a fresh EMPTY duplicate that shadows the real
+// board once it's written to the wrong (host) directory.
+test("resyncLinkedCards: finds and updates a linked card whose board lives in a WORKSPACE directory, not the host one", async () => {
+  const hostDir = await mkdtemp(join(tmpdir(), "work-host-"));
+  const wsDir = await mkdtemp(join(tmpdir(), "work-ws-"));
+  const board = createBoard("plan", "skoolscout");
+  const cap = fixture();
+  const card = sendSliceToBoard(cap, cap.slices[0], board);
+  await saveBoard(wsDir, board); // migrated: the board lives ONLY in the workspace directory
+  cap.slices[0].capCardRef = { boardId: board.id, cardId: card.id };
+
+  // The edit the map made: drop s2, leaving only s1.
+  patchCapability(cap, { slices: [{ ...cap.slices[0], storyIds: ["s1"] }] });
+  await resyncLinkedCards([wsDir, hostDir], () => wsDir, cap);
+
+  const { boards: after } = await loadBoards(wsDir);
+  const afterCard = after.find((b) => b.id === board.id)!.cards.find((c) => c.id === card.id)!;
+  assert.deepEqual(
+    afterCard.stories?.map((s) => s.id),
+    ["s1"],
+    "the checklist should have followed the edit — a host-dir-only read leaves it frozen on the send-time snapshot",
+  );
+});
+
+test("ensureWorkspaceBoards: does not recreate a duplicate when the board already exists in a WORKSPACE directory", async () => {
+  const hostDir = await mkdtemp(join(tmpdir(), "work-host-"));
+  const wsDir = await mkdtemp(join(tmpdir(), "work-ws-"));
+  const board = createBoard("plan", "acme");
+  addCard(board, { title: "real work already in flight" });
+  await saveBoard(wsDir, board); // migrated: lives in the workspace directory, not the host one
+
+  await ensureWorkspaceBoards([wsDir, hostDir], () => wsDir, "acme");
+
+  const { boards: hostBoards } = await loadBoards(hostDir);
+  assert.deepEqual(hostBoards, [], "nothing should ever be written to the host directory here");
+
+  const { boards: wsBoards } = await loadBoards(wsDir);
+  assert.deepEqual(
+    wsBoards.map((b) => b.id).sort(),
+    ["acme-deliver", "acme-ideation", "acme-plan"],
+    "the two missing boards are created, the existing one is not duplicated",
+  );
+  assert.deepEqual(
+    wsBoards.find((b) => b.id === "acme-plan")?.cards.map((c) => c.title),
+    ["real work already in flight"],
+    "the real board's card must survive untouched — not shadowed by a fresh empty shell",
+  );
+});
+
 test("ensureWorkspaceBoards: creates the standing three once, idempotent, never release/reactive/maintenance", async () => {
   const dir = await mkdtemp(join(tmpdir(), "work-"));
-  await ensureWorkspaceBoards(dir, "skoolscout");
-  await ensureWorkspaceBoards(dir, "skoolscout");
+  await ensureWorkspaceBoards([dir], () => dir, "skoolscout");
+  await ensureWorkspaceBoards([dir], () => dir, "skoolscout");
   const { boards } = await loadBoards(dir);
   assert.deepEqual(boards.map((b) => [b.id, b.workspaceId]).sort(), [
     ["skoolscout-deliver", "skoolscout"],
@@ -327,7 +384,10 @@ test("ensureWorkspaceBoards: rejects a name too long to fit a board id — why P
   // Workspace names are already slugged by the route, so the only reachable
   // failure is length: BOARD_ID_RE caps ids at 64 chars. A workspace that has
   // already saved must not 500 because its boards could not be minted.
-  await assert.rejects(ensureWorkspaceBoards(dir, "a".repeat(60)), /board id/i);
+  await assert.rejects(
+    ensureWorkspaceBoards([dir], () => dir, "a".repeat(60)),
+    /board id/i,
+  );
   assert.deepEqual((await loadBoards(dir)).boards, []);
 });
 
@@ -347,7 +407,7 @@ test("ensurePersonalBoard creates exactly one workspace-less board and is idempo
 
 test("sendSliceToBoard: first working column (Queue is system intake), story copies, capabilityRef", async () => {
   const dir = await mkdtemp(join(tmpdir(), "work-"));
-  await ensureWorkspaceBoards(dir, "skoolscout");
+  await ensureWorkspaceBoards([dir], () => dir, "skoolscout");
   const { boards } = await loadBoards(dir);
   const board = boards.find((b) => b.id === boardIdFor("skoolscout", "plan"));
   const cap = fixture();
@@ -366,7 +426,7 @@ test("sendSliceToBoard: first working column (Queue is system intake), story cop
 
 test("resyncLinkedCards: editing a slice after sending refreshes both linked cards, not just the map (C1)", async () => {
   const dir = await mkdtemp(join(tmpdir(), "work-"));
-  await ensureWorkspaceBoards(dir, "skoolscout");
+  await ensureWorkspaceBoards([dir], () => dir, "skoolscout");
   const { boards } = await loadBoards(dir);
   const capBoard = boards.find((b) => b.id === boardIdFor("skoolscout", "plan"))!;
   const deliveryBoard = boards.find((b) => b.id === boardIdFor("skoolscout", "deliver"))!;
@@ -381,7 +441,7 @@ test("resyncLinkedCards: editing a slice after sending refreshes both linked car
   // Edit the slice in the map: drop s2, leaving only s1 — same edit that
   // used to brick applyStoryToggles on both cards forever.
   patchCapability(cap, { slices: [{ ...cap.slices[0], storyIds: ["s1"] }] });
-  await resyncLinkedCards(dir, cap);
+  await resyncLinkedCards([dir], () => dir, cap);
 
   const { boards: after } = await loadBoards(dir);
   const afterCapCard = after.find((b) => b.id === capBoard.id)!.cards.find((c) => c.id === capCard.id)!;
@@ -407,7 +467,7 @@ test("resyncLinkedCards: editing a slice after sending refreshes both linked car
   // has to keep handling exactly this shape. patchCapability was only ever the
   // convenient way to reach it, and resyncLinkedCards is the unit under test.
   cap.slices = [{ ...cap.slices[0], storyIds: [] }];
-  await resyncLinkedCards(dir, cap);
+  await resyncLinkedCards([dir], () => dir, cap);
   const { boards: emptied } = await loadBoards(dir);
   const emptiedCard = emptied.find((b) => b.id === capBoard.id)!.cards.find((c) => c.id === capCard.id)!;
   assert.deepEqual(emptiedCard.stories, []);
@@ -426,7 +486,7 @@ test("unlinkSliceCard: clears only the matching ref (I1); no-op for an unrelated
 
 test("a ROUTED linked card still resyncs and still unlinks — the ref boardId is a hint, the cardId the key", async () => {
   const dir = await mkdtemp(join(tmpdir(), "work-"));
-  await ensureWorkspaceBoards(dir, "skoolscout");
+  await ensureWorkspaceBoards([dir], () => dir, "skoolscout");
   const { boards } = await loadBoards(dir);
   const plan = boards.find((b) => b.id === boardIdFor("skoolscout", "plan"))!;
   const deliver = boards.find((b) => b.id === boardIdFor("skoolscout", "deliver"))!;
@@ -445,7 +505,7 @@ test("a ROUTED linked card still resyncs and still unlinks — the ref boardId i
 
   // A map edit must still reach the card on its new board.
   patchCapability(cap, { slices: [{ ...cap.slices[0], storyIds: ["s1"] }] });
-  await resyncLinkedCards(dir, cap);
+  await resyncLinkedCards([dir], () => dir, cap);
   const { boards: after } = await loadBoards(dir);
   const onDeliver = after.find((b) => b.id === deliver.id)!.cards.find((c) => c.id === card.id)!;
   assert.deepEqual(
@@ -571,7 +631,7 @@ test("sendSliceToBoard and resyncLinkedCards copy story points onto the card row
   cap.slices[0].capCardRef = { boardId: "b1", cardId: card.id };
   await import("node:fs/promises").then((fs) => fs.mkdir(join(dir, "work"), { recursive: true }));
   await writeFile(join(dir, "work", "b1.json"), JSON.stringify(board));
-  await resyncLinkedCards(join(dir, "work"), cap);
+  await resyncLinkedCards([join(dir, "work")], () => join(dir, "work"), cap);
   const saved = JSON.parse(await import("node:fs/promises").then((fs) => fs.readFile(join(dir, "work", "b1.json"), "utf8")));
   assert.equal(saved.cards[0].stories[0].points, 8);
 });

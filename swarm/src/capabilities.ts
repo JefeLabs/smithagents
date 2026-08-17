@@ -10,6 +10,7 @@ import {
   type BoardType,
   createBoard,
   findCardByRef,
+  loadAllBoards,
   loadBoards,
   saveBoard,
   type WorkBoard,
@@ -347,12 +348,26 @@ export function renderSpecSkeleton(sliceName: string, stories: CapStory[], dateI
   ].join("\n");
 }
 
-/** Create the workspace's standing boards iff missing. Ideation + Plan + Deliver; the rest are on-demand. */
-export async function ensureWorkspaceBoards(workDir: string, workspaceId: string): Promise<void> {
-  const { boards } = await loadBoards(workDir);
+/**
+ * Create the workspace's standing boards iff missing. Ideation + Plan + Deliver; the rest are on-demand.
+ *
+ * Reads the MERGED view across `dirs` — a board already migrated into its workspace
+ * directory must not be invisible to the existence check, or this mints a fresh EMPTY
+ * shell that shadows it (the shell wins on read because loadAllBoards is first-wins,
+ * and whichever directory sits first in the caller's ordering serves the board from
+ * then on). Any board actually missing is created through `resolveDir`, which resolves
+ * per-board where it belongs — the same read-merged/write-resolved shape as
+ * `resyncLinkedCards` and the other board writes throughout server.ts.
+ */
+export async function ensureWorkspaceBoards(
+  dirs: string[],
+  resolveDir: (board: WorkBoard) => string,
+  workspaceId: string,
+): Promise<void> {
+  const { boards } = await loadAllBoards(dirs);
   for (const type of ["ideation", "plan", "deliver"] as BoardType[]) {
     const board = createBoard(type, workspaceId);
-    if (!boards.some((b) => b.id === board.id)) await saveBoard(workDir, board);
+    if (!boards.some((b) => b.id === board.id)) await saveBoard(resolveDir(board), board);
   }
 }
 
@@ -388,9 +403,19 @@ export function sendSliceToBoard(cap: Capability, slice: CapSlice, board: WorkBo
  * Skips only refs whose CARD no longer resolves anywhere: findCardByRef
  * treats ref.boardId as a hint, so a card routed to another board keeps
  * syncing instead of silently freezing into a read-only stale checklist.
+ *
+ * Reads the MERGED view across `dirs` — a linked card's board may already have
+ * migrated into its workspace directory, and a single-directory read misses it
+ * silently (no error, just a checklist that never resyncs again). Each dirty
+ * board is saved through `resolveDir`, which resolves per-board where it
+ * belongs — same read-merged/write-resolved shape as `ensureWorkspaceBoards`.
  */
-export async function resyncLinkedCards(workDir: string, cap: Capability): Promise<void> {
-  const { boards } = await loadBoards(workDir);
+export async function resyncLinkedCards(
+  dirs: string[],
+  resolveDir: (board: WorkBoard) => string,
+  cap: Capability,
+): Promise<void> {
+  const { boards } = await loadAllBoards(dirs);
   const dirty = new Set<WorkBoard>();
   for (const slice of cap.slices) {
     const refs = [slice.capCardRef, slice.deliveryCardRef].filter((r): r is { boardId: string; cardId: string } =>
@@ -417,7 +442,7 @@ export async function resyncLinkedCards(workDir: string, cap: Capability): Promi
       }
     }
   }
-  for (const board of dirty) await saveBoard(workDir, board);
+  for (const board of dirty) await saveBoard(resolveDir(board), board);
 }
 
 /** Clear a slice's ref to a card that no longer exists (e.g. the card was deleted). Returns whether anything changed. */

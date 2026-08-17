@@ -5,14 +5,16 @@
 
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
 import type { WorkspaceChannels } from "./channels.js";
+import { smithPaths } from "./paths.js";
 import { ENGINES } from "./personas.js";
 import {
+  archiveWorkspaceBoards,
   buildBrainEngineUpdate,
   buildCardAgendaPatch,
   buildChannelsUpdate,
@@ -38,7 +40,7 @@ import type { ConnectorInstance, User } from "./users.js";
 import { loadUsersFromDir, saveUser } from "./users.js";
 import { addCard, createBoard } from "./work-items.js";
 import type { Workspace } from "./workspaces.js";
-import { isGitRepo } from "./workspaces.js";
+import { isGitRepo, workspaceDir } from "./workspaces.js";
 
 const git = promisify(execFile);
 
@@ -375,6 +377,34 @@ test("gitInitRequestedRepos: inits only flagged non-repo paths, leaves existing 
   assert.equal(await isGitRepo(existing), true);
   const missing = join(fresh, "no-such-dir", "deeper");
   assert.match((await gitInitRequestedRepos([{ name: "x", path: missing, initGit: true }]))!, /git init failed/);
+});
+
+// RED evidence for the boards-into-workspaces final fix wave (2026-08-16):
+// POST /reset (scope.agents) archives paths.work but never touches any
+// workspace's config/boards, so a reset the user explicitly asked for leaves
+// every workspace's boards sitting there untouched. archiveWorkspaceBoards is
+// the extracted helper that closes this — pulled out of the route handler so
+// it's unit-testable without booting the server, same as workspaceProblems above.
+test("archiveWorkspaceBoards: renames a workspace's config/boards to a timestamped sibling, mirroring the host archive", async () => {
+  const root = await mkdtemp(join(tmpdir(), "reset-boards-"));
+  const paths = smithPaths(root);
+  const ws: Workspace = { name: "acme", repos: [{ name: "web", path: root }] };
+  const boardsDir = join(workspaceDir(paths, ws), "config", "boards");
+  await mkdir(boardsDir, { recursive: true });
+  await writeFile(join(boardsDir, "acme-plan.json"), "{}");
+
+  const stamp = "20260816T000000";
+  await archiveWorkspaceBoards(paths, [ws], stamp);
+
+  await assert.rejects(stat(boardsDir), /ENOENT/);
+  assert.equal(await readFile(join(`${boardsDir}-archived-${stamp}`, "acme-plan.json"), "utf8"), "{}");
+});
+
+test("archiveWorkspaceBoards: a workspace with no boards yet is not an error (best-effort, matches the sibling archives)", async () => {
+  const root = await mkdtemp(join(tmpdir(), "reset-boards-empty-"));
+  const paths = smithPaths(root);
+  const ws: Workspace = { name: "fresh", repos: [{ name: "web", path: root }] };
+  await assert.doesNotReject(archiveWorkspaceBoards(paths, [ws], "20260816T000000"));
 });
 
 test("resolveTaskRuntime: manifest wins, else server default — no workspace clause", () => {
