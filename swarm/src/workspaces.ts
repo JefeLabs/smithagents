@@ -11,6 +11,7 @@ import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { SmithPaths } from "./paths.js";
+import { allPresetIds } from "./work-kinds.js";
 import { loadRegistry, removeRegistryEntry, saveRegistryEntry } from "./workspace-registry.js";
 
 export interface WorkspaceRepo {
@@ -38,7 +39,17 @@ export interface ContextSource {
   enabled: boolean;
 }
 
-const SOURCE_PRESETS = new Set(["jira", "releases", "topic", "observability", "support", "custom"]);
+/**
+ * Presets are DATA, derived from the work kinds rather than hardcoded: every
+ * entry in the old closed set except `topic` and `custom` was a software word,
+ * which is the board-vocabulary problem one layer down.
+ *
+ * Still a closed set, deliberately. `preset` is UI sugar — executors read
+ * origin/transform, so a new preset needs no executor change — but validating
+ * against the union of what the kinds actually declare still catches a typo in a
+ * stored source, which accepting any string would not.
+ */
+const SOURCE_PRESETS = allPresetIds();
 const SOURCE_CADENCES = new Set(["hourly", "6h", "nightly"]);
 
 /** Absent or a valid array — never half-checked, same contract as validSprint. */

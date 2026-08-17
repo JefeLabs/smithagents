@@ -741,3 +741,42 @@ test("assertContext: a non-string workKind is refused", () => {
     /workKind/i,
   );
 });
+
+test("validSources: a preset from a non-software work kind is accepted", () => {
+  const source = {
+    id: "s1",
+    name: "TikTok",
+    preset: "tiktok",
+    origin: { url: "https://example.test" },
+    cadence: "hourly",
+    transform: { mode: "map" },
+    enabled: true,
+  };
+  assert.equal(validSources([source]), true, "a creator preset is as valid as a software one");
+});
+
+test("validSources: custom is always accepted", () => {
+  const source = {
+    id: "s2",
+    name: "Anything",
+    preset: "custom",
+    origin: { url: "https://example.test", query: "q" },
+    cadence: "nightly",
+    transform: { mode: "analyze", prompt: "summarise" },
+    enabled: true,
+  };
+  assert.equal(validSources([source]), true);
+});
+
+test("validSources: a preset no work kind declares is still refused", () => {
+  const source = {
+    id: "s3",
+    name: "Typo",
+    preset: "tikTok",
+    origin: { url: "https://example.test" },
+    cadence: "hourly",
+    transform: { mode: "map" },
+    enabled: true,
+  };
+  assert.equal(validSources([source]), false, "presets are data, but still a closed set — a typo is caught");
+});
