@@ -157,12 +157,18 @@ describe("QueueSourcesSheet", () => {
   });
 
   it("falls back to the product presets when /work-kinds cannot be reached", async () => {
-    // An unreachable server must leave a usable select, not an empty one.
+    // An unreachable server must leave a usable select, not an empty one — and it
+    // must actually be the fallback list, not the success-path stub. "jira" alone
+    // doesn't distinguish the two (it's in both); "tiktok" is kind-only, so its
+    // absence is the assertion that would fail if the rejection weren't honoured.
     stubFetch({ workspaces: [RECORD], workKindsFail: true });
     renderWithProviders(<QueueSourcesSheet board={BOARD as never} open onClose={() => {}} />);
     await userEvent.click(await screen.findByRole("button", { name: /add source/i }));
 
     const select = await screen.findByLabelText(/preset/i);
-    expect(within(select).getByRole("option", { name: /jira/i })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(within(select).getByRole("option", { name: /jira/i })).toBeInTheDocument();
+    });
+    expect(within(select).queryByRole("option", { name: /tiktok/i })).toBeNull();
   });
 });
