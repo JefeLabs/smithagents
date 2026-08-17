@@ -454,7 +454,7 @@ export function WorkspaceManagerModal({
               <button type="button" className="workspace-row__pick" onClick={() => selectWorkspace(ws)}>
                 <span className="workspace-row__name">{ws.name}</span>
                 <span className="workspace-row__meta">
-                  {ws.repos.length} repo{ws.repos.length === 1 ? "" : "s"}
+                  {ws.repos.length === 0 ? "Design only" : `${ws.repos.length} repo${ws.repos.length === 1 ? "" : "s"}`}
                   {ws.default && <span className="sm-chip is-picked">default</span>}
                 </span>
               </button>

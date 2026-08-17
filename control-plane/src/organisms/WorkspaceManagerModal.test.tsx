@@ -464,6 +464,50 @@ describe("WorkspaceManagerModal — colour", () => {
   });
 });
 
+describe("WorkspaceManagerModal — repo count display", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  const props = {
+    open: true as const,
+    onClose: () => {},
+    list: vi.fn(async () => [
+      { name: "design-hub", default: true, repos: [] },
+      {
+        name: "acme",
+        default: false,
+        repos: [
+          { name: "web", path: "/tmp/web", branch: "main" },
+          { name: "api", path: "/tmp/api", branch: "main" },
+        ],
+      },
+    ]),
+    save: vi.fn(),
+    remove: vi.fn(),
+    verifyAtlassian: vi.fn(),
+    verifyRepoGithub: vi.fn(),
+    listMyConnectors: vi.fn(async () => CONNECTORS),
+  };
+
+  it("shows a design-only context as a valid shape, not as '0 repos'", async () => {
+    // A repo-less context is COMPLETE for documents, diagrams, dashboards, boards
+    // and the council. Rendering "0 repos" reads as a broken or half-made
+    // workspace, which is exactly what the spec forbids.
+    render(<WorkspaceManagerModal {...props} />);
+
+    // Matches the workspace's name specifically — a bare /design/i would also match the
+    // "Design only" label itself, making the query ambiguous between the two.
+    expect(await screen.findByText(/design-hub/i)).toBeInTheDocument();
+    expect(screen.queryByText(/0 repos/i)).toBeNull();
+  });
+
+  it("still shows the repo count for a context that has repos", async () => {
+    render(<WorkspaceManagerModal {...props} />);
+    expect(await screen.findByText(/2 repos/i)).toBeInTheDocument();
+  });
+});
+
 describe("WorkspaceManagerModal — removal", () => {
   afterEach(() => {
     cleanup();
