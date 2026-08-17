@@ -326,6 +326,26 @@ async function isDir(path: string): Promise<boolean> {
 }
 
 /**
+ * Whether this path is already a git worktree.
+ *
+ * A worktree's `.git` is a FILE (it points into the parent's `.git/worktrees/`),
+ * a plain clone's is a directory — so this tests for either, and only for the
+ * marker itself. Testing that the DIRECTORY exists instead would read an empty
+ * leftover from a partial teardown as an existing member and skip creating its
+ * worktree. Testing with `git rev-parse` would be worse still: from an empty
+ * directory git walks UP and can answer about an enclosing repo.
+ */
+async function isWorktree(path: string): Promise<boolean> {
+  try {
+    await stat(join(path, ".git"));
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw err;
+  }
+}
+
+/**
  * Create the workspace-instance for `workId`: a worktree of `config/` plus one
  * of each named repo, all on the SAME branch (spec §2.1). One branch across
  * every member is what makes a coordinated cross-repo change the default rather
@@ -361,9 +381,9 @@ export async function createInstance(
   const members: InstanceMember[] = [];
   for (const { name, source } of sources) {
     const path = join(dir, name);
-    if (!(await isDir(join(path, ".git"))) && !(await isDir(path))) {
-      // `--` guards the branch name; `workIdProblem` already refused a leading
-      // dash, and the base is this source's current HEAD.
+    if (!(await isWorktree(path))) {
+      // `workIdProblem` already refused a leading dash, so `branch` cannot be
+      // read as a flag. The base is this source's current HEAD.
       await run("git", ["worktree", "add", "-q", path, "-b", branch], { cwd: source });
     }
     members.push({ name, path, source });
@@ -372,7 +392,7 @@ export async function createInstance(
 }
 ```
 
-Note `.git` inside a worktree is a **file**, not a directory, so the reuse check tests the member directory itself as well.
+Note `isDir` is still used by Task 3; keep it. The reuse check deliberately tests only for the `.git` marker — see `isWorktree`'s docstring for why an empty leftover directory must NOT read as an existing member.
 
 - [ ] **Step 4: Run them to verify they pass**
 
