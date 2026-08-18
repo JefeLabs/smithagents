@@ -4808,14 +4808,20 @@ fieldset.wizard-fork-step > .wizard-fork-step__prompt {
    pointer-events cut on the whole row — not just the hidden input — so a
    click anywhere on the label can never reach it. See WizardForkStep.tsx's
    file comment for why this is hand-authored rather than HeroUI's Radio. */
-.wizard-fork-step__hosted[aria-disabled="true"],
+.wizard-fork-step__hosted[aria-disabled="true"] {
+  opacity: 0.55;
+  pointer-events: none;
+}
 .wizard-voice-step__ondevice[aria-disabled="true"] {
-  /* 0.75, not the 0.55 the gate's Cloud row uses: this row's hint carries the
-     NAMED WAY FORWARD ("needs a small download — coming soon"), which is the
-     entire point of offering the row at all. The walk measured the 0.55
-     composite at 1.8:1 — near-invisible in sand — so the promise the user
-     ruled must be visible was the least legible text on the step. WCAG
-     exempts disabled controls; the product does not exempt this sentence. */
+  /* 0.75, deliberately lighter dimming than the gate's Cloud row above: this
+     row's hint carries the NAMED WAY FORWARD ("needs a small download —
+     coming soon"), which is the entire point of offering the row at all. The
+     walk measured a 0.55 composite at 1.8:1 — near-invisible in sand — so
+     the promise the user ruled must be visible was the least legible text on
+     the step. WCAG exempts disabled controls; the product does not exempt
+     this sentence. (These two rules were once one shared selector, and the
+     first version of this change restyled the gate's row while its comment
+     claimed otherwise — split so each row's treatment is its own.) */
   opacity: 0.75;
   pointer-events: none;
 }
@@ -4831,12 +4837,14 @@ fieldset.wizard-fork-step > .wizard-fork-step__prompt {
   display: grid;
   grid-template-columns: auto 1fr;
   column-gap: 8px;
-  /* The card chrome its HeroUI sibling gets for free. Hand-authored markup
-     (the documented react-aria reason) inherits none of it, and the walk
-     found the bare row read as a CAPTION above the options rather than as
-     the first of two options — different width, different left edge. The
-     border keeps the two readings parallel; the dimming above still marks it
-     disabled. */
+}
+/* The card chrome its HeroUI sibling gets for free — VOICE STEP ONLY. The
+   walk found the bare row read as a CAPTION above the options rather than as
+   the first of two options. The gate's Cloud row deliberately keeps its
+   original bare treatment: it was reviewed and approved as shipped, and
+   restyling it from a rule aimed at a different screen is how this change
+   went wrong the first time. */
+.wizard-voice-step__ondevice {
   border: 1px solid var(--pill-br);
   border-radius: 12px;
   padding: 14px 16px;
