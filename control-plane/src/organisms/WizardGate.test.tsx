@@ -439,6 +439,30 @@ describe("WizardGate", () => {
   });
 
   it("offers no Back on preflight — it is the beginning", async () => {
+    // Kept, and labelled, because it does NOT test what its name suggests.
+    //
+    // It pins a real user-visible contract — the first screen has no way
+    // backwards — but that contract is satisfied by WizardPreflightStep's own
+    // markup (it renders no Back under any props), not by the host's
+    // `prevStep(step, answers) ? goBack : undefined`. So it cannot fail for a
+    // host that computes `onBack` wrongly in the permissive direction.
+    // Measured, not assumed:
+    //
+    //   - const onBack = prevStep(step, answers) ? goBack : undefined;
+    //   + const onBack = goBack;
+    //   → this suite still passes, in full
+    //
+    // No honest test of that gate exists yet, and manufacturing one would mean
+    // manufacturing reachability. `prevStep` returns null ONLY for preflight
+    // (pinned in wizardSteps.test.ts), and preflight is the one step the host
+    // never passes `onBack` to — so the `undefined` branch is computed and
+    // discarded, dead twice over. The gate still belongs there for the reason
+    // its own comment gives; the Voice step is the first thing that can make
+    // it reachable, and it should arrive with the test that discriminates.
+    //
+    // The opposite mutation IS covered: an `onBack` that is always undefined
+    // fails "goes back from the first setup step into preflight, and persists
+    // it", which clicks the real button.
     const { container } = renderGate({ placeholder: true, setup: undefined });
 
     await findHost(container);
@@ -452,6 +476,33 @@ describe("WizardGate", () => {
   // preflight, where the step is swapped out and the question cannot arise.
   // The last step is different — `nextStep` returns null, so nothing swaps and
   // the step stays mounted, inert, behind a write that has already failed.
+
+  it("Back on the first setup step cannot race the write that put the user there", async () => {
+    // The host-side half of the same window, one step before the last one.
+    // `advance` moves the step immediately and lets its PUT run in the
+    // background, so Subscriptions is on screen — with a live Back — while
+    // PUT {mode, step:"subscriptions"} is still unresolved. This write never
+    // settles until the test says so, which is what makes that window
+    // observable rather than a millisecond wide.
+    let settle: (value: unknown) => void = () => {};
+    const { container, updateMe } = renderGate({ placeholder: true, setup: undefined });
+    await findHost(container);
+    updateMe.mockReturnValue(
+      new Promise((resolve) => {
+        settle = resolve;
+      }),
+    );
+
+    await userEvent.type(screen.getByLabelText(/your name/i), "Edwin");
+    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+
+    expect(await findHost(container)).toHaveAttribute("data-step", "subscriptions");
+    expect(screen.getByRole("button", { name: /back/i })).toBeDisabled();
+
+    // A window, not a ban: the moment that write lands, Back is live again.
+    settle({});
+    await waitFor(() => expect(screen.getByRole("button", { name: /back/i })).toBeEnabled());
+  });
 
   it("a refused save on the LAST step leaves the footer something to click", async () => {
     // The refusal shape: `brokerFetch` never throws on a non-2xx, so an origin

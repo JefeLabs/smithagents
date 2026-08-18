@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BROKER_BASE, httpUrl } from "../api/origin";
 import type { ApiKeyListing, BrainEngineRecord, CliToolListing } from "../api/types";
+import type { WizardSaveState } from "../lib/wizardSteps";
 import { qk } from "../queries/keys";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { WizardBrainStep } from "./WizardBrainStep";
@@ -80,10 +81,10 @@ function renderBrainStep(opts: {
 }) {
   stubNoNetwork();
   const onDone = vi.fn();
-  const element = (handoffFailed: boolean) => (
-    <WizardBrainStep onDone={onDone} onBack={opts.onBack} handoffFailed={handoffFailed} />
+  const element = (saveState: WizardSaveState) => (
+    <WizardBrainStep onDone={onDone} onBack={opts.onBack} saveState={saveState} />
   );
-  const result = renderWithProviders(element(false));
+  const result = renderWithProviders(element("idle"));
   result.client.setQueryData<CliToolListing[]>(
     qk.cliTools,
     Object.entries(opts.tools).map(([cli, over]) => toolListing(cli, over)),
@@ -96,8 +97,8 @@ function renderBrainStep(opts: {
   return {
     ...result,
     onDone,
-    /** What the host does when its own `PUT /me` comes back refused or rejected. */
-    reportHandoffFailed: () => result.rerender(element(true)),
+    /** What the host does when its own `PUT /me` settles. */
+    reportSaveState: (saveState: WizardSaveState) => result.rerender(element(saveState)),
   };
 }
 
@@ -272,7 +273,7 @@ describe("WizardBrainStep", () => {
     // the screen shows Subscriptions.
     //
     // This is the state DURING the handoff — the host has not come back yet
-    // (`handoffFailed` is false, its default). It is deliberately not asserted
+    // (`saveState` is still the resting one). It is deliberately not asserted
     // as the resting state: see the next test for what has to happen when the
     // host comes back to say the write failed.
     const onBack = vi.fn();
@@ -296,14 +297,14 @@ describe("WizardBrainStep", () => {
     //
     // The host is the only side that knows; this is it saying so.
     const onBack = vi.fn();
-    const { onDone, reportHandoffFailed } = renderBrainStep({ tools: { claude: { active: true } }, onBack });
+    const { onDone, reportSaveState } = renderBrainStep({ tools: { claude: { active: true } }, onBack });
     stubSave({ kind: "cli", provider: "claude" });
     await userEvent.click(await screen.findByRole("radio", { name: /claude/i }));
     await userEvent.click(screen.getByRole("button", { name: /continue/i }));
     await waitFor(() => expect(onDone).toHaveBeenCalledWith({ setup: {} }));
     expect(screen.getByRole("button", { name: /continue/i })).toBeDisabled();
 
-    reportHandoffFailed();
+    reportSaveState("failed");
 
     expect(screen.getByRole("button", { name: /back/i })).toBeEnabled();
     expect(screen.getByRole("button", { name: /continue/i })).toBeEnabled();

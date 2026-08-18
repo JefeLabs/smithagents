@@ -2,6 +2,7 @@ import { cleanup, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ApiKeyListing, CliToolListing } from "../api/types";
+import type { WizardSaveState } from "../lib/wizardSteps";
 import { qk } from "../queries/keys";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { WizardSubscriptionsStep } from "./WizardSubscriptionsStep";
@@ -63,10 +64,15 @@ function renderStep(opts: {
   /** Passed through so this side of the host's Back prop is covered too — the
       host's own suite covers the other side. */
   onBack?: () => void;
+  /** The host's own write state. Defaults to the resting one. */
+  saveState?: WizardSaveState;
 }) {
   stubNoNetwork();
   const onDone = vi.fn();
-  const result = renderWithProviders(<WizardSubscriptionsStep onDone={onDone} onBack={opts.onBack} />);
+  const element = (saveState: WizardSaveState) => (
+    <WizardSubscriptionsStep onDone={onDone} onBack={opts.onBack} saveState={saveState} />
+  );
+  const result = renderWithProviders(element(opts.saveState ?? "idle"));
   result.client.setQueryData<CliToolListing[]>(
     qk.cliTools,
     Object.entries(opts.tools).map(([cli, over]) => toolListing(cli, over)),
@@ -75,7 +81,12 @@ function renderStep(opts: {
     qk.apiKeys,
     (opts.keys ?? []).map((k) => keyListing(k.provider, { verified: k.verified })),
   );
-  return { ...result, onDone };
+  return {
+    ...result,
+    onDone,
+    /** What the host does when its own write settles. */
+    reportSaveState: (saveState: WizardSaveState) => result.rerender(element(saveState)),
+  };
 }
 
 describe("WizardSubscriptionsStep", () => {
@@ -165,6 +176,48 @@ describe("WizardSubscriptionsStep", () => {
     await userEvent.click(back);
     expect(onBack).toHaveBeenCalledTimes(1);
     expect(onDone).not.toHaveBeenCalled();
+  });
+
+  it("makes Back inert while the host's own write is in flight, so it cannot race it", async () => {
+    // The window: `advance` moves the on-screen step IMMEDIATELY and lets its
+    // PUT run in the background, so this step is on screen and clickable while
+    // the write that brought the user here — PUT {mode, step:"subscriptions"} —
+    // is still unresolved. A Back clicked in it fires PUT {step:"preflight"}
+    // against that write, and if the two land out of order the server holds
+    // `subscriptions` while the screen shows preflight: the next reload
+    // silently undoes the Back. Same window the last step's `handedOff` was
+    // added to close, one step earlier, and the same mechanism closes it.
+    //
+    // Both halves are needed: the first fails for a Back that is never
+    // disabled, the second for one that is simply always disabled.
+    const onBack = vi.fn();
+    const { reportSaveState } = renderStep({
+      tools: { codex: { detected: false, failure: "missing" } },
+      onBack,
+      saveState: "saving",
+    });
+
+    expect(await screen.findByRole("button", { name: /back/i })).toBeDisabled();
+
+    reportSaveState("idle");
+
+    const back = screen.getByRole("button", { name: /back/i });
+    expect(back).toBeEnabled();
+    await userEvent.click(back);
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves Back live when the host's write FAILED — that is the state a retreat is for", async () => {
+    // A refused or rejected write is over: there is nothing left to race, and
+    // this is exactly the moment someone wants out. `"failed"` must not be
+    // lumped in with `"saving"` by a guard that only checks "not idle".
+    const onBack = vi.fn();
+    renderStep({ tools: { codex: { detected: false, failure: "missing" } }, onBack, saveState: "failed" });
+
+    const back = await screen.findByRole("button", { name: /back/i });
+    expect(back).toBeEnabled();
+    await userEvent.click(back);
+    expect(onBack).toHaveBeenCalledTimes(1);
   });
 
   it("offers no Back when the host passes none", async () => {

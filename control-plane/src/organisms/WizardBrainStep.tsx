@@ -1,7 +1,7 @@
 import { Button } from "@heroui/react";
 import { RadioButtonGroup } from "@heroui-pro/react";
 import { useState } from "react";
-import type { Setup } from "../lib/wizardSteps";
+import type { Setup, WizardSaveState } from "../lib/wizardSteps";
 import { useApiKeys, useBrainEngine, useCliTools, useSaveBrainEngine } from "../queries/http";
 
 export interface WizardBrainStepProps {
@@ -9,17 +9,16 @@ export interface WizardBrainStepProps {
   /** Same contract as `WizardSubscriptionsStepProps["onBack"]` — see there. */
   onBack?: () => void;
   /**
-   * The host's own save for the patch this step last handed it came back
-   * refused or rejected.
+   * What became of the host's own save for the patch this step last handed
+   * over. Same prop, same meaning, as `WizardSubscriptionsStepProps["saveState"]`.
    *
-   * Only the host can know this — `onDone` is fire-and-forget, and the write
-   * it triggers is the host's, not this step's. It matters here because this
-   * is the LAST step: nothing swaps this component out when it hands off (see
-   * `finish`), so a failed handoff finds it still on screen and inert behind a
-   * write that is already over. Every other step is gone before its host's
-   * save can fail, which is why no other step takes this prop.
+   * Only the host can know it — `onDone` is fire-and-forget and the write is
+   * the host's, not this step's. It carries more weight here than anywhere
+   * else because this is the LAST step: nothing swaps this component out when
+   * it hands off (see `finish`), so a failed handoff finds it still on screen
+   * and inert behind a write that is already over.
    */
-  handoffFailed?: boolean;
+  saveState?: WizardSaveState;
 }
 
 /**
@@ -56,7 +55,7 @@ interface Candidate {
  * user whose only working tool is refused deserves to know why, not stare at
  * an empty picker.
  */
-export function WizardBrainStep({ onDone, onBack, handoffFailed = false }: WizardBrainStepProps) {
+export function WizardBrainStep({ onDone, onBack, saveState = "idle" }: WizardBrainStepProps) {
   const { data: tools = [] } = useCliTools();
   const { data: keys = [] } = useApiKeys();
   const { data: current } = useBrainEngine();
@@ -72,7 +71,7 @@ export function WizardBrainStep({ onDone, onBack, handoffFailed = false }: Wizar
   const [saveFailed, setSaveFailed] = useState(false);
   // Set the moment the step hands off, and never cleared: a retry that hands
   // off a second time has to be guarded exactly like the first. What re-opens
-  // the footer is `handoffFailed`, below — not un-setting this.
+  // the footer is the host's `saveState`, below — not un-setting this.
   const [handedOff, setHandedOff] = useState(false);
   /**
    * No footer button acts while a save is in flight, or after the handoff for
@@ -80,16 +79,22 @@ export function WizardBrainStep({ onDone, onBack, handoffFailed = false }: Wizar
    *
    * `handedOff` alone is a dead end, not a guard. It exists to stop Back from
    * racing the host's `PUT {step:"done"}` (see `finish`), and that race lasts
-   * exactly as long as the write does. `handoffFailed` is the host telling
-   * this step the write is over and did not land — nothing left to race, and
-   * a footer that stays inert past that point strands the user on the last
+   * exactly as long as the write does. `saveState === "failed"` is the host
+   * saying the write is over and did not land — nothing left to race, and a
+   * footer that stays inert past that point strands the user on the last
    * screen of first-run setup with an error, no Skip (the brain save is the
    * one thing that succeeded), and no way back or forward but a page reload.
    * Continue re-runs `proceed`, which re-runs the handoff; Back retreats into
    * the sequence. Both are safe again precisely because the write has already
    * resolved.
+   *
+   * Note which state is NOT consulted: `"idle"`. A handoff that SUCCEEDED
+   * leaves this footer shut for good — the gate swaps to the app when the
+   * refetched `me` lands, and until then there is a real window in which a
+   * Back would fire `PUT {step:"subscriptions"}` after `{step:"done"}` had
+   * already landed. That is what `handedOff` being sticky buys.
    */
-  const inert = busy || (handedOff && !handoffFailed);
+  const inert = busy || (handedOff && saveState !== "failed");
 
   // cli candidates first — a working subscription CLI beats a pasted key as
   // the "strongest validated option" default, the same route-order
@@ -131,8 +136,8 @@ export function WizardBrainStep({ onDone, onBack, handoffFailed = false }: Wizar
    * out of order the server keeps `done` while the screen shows Subscriptions.
    * The window is narrow and loses no data, but it exists only because Back is
    * new, so it closes here — for the length of that write, and no longer. Once
-   * the host reports the write failed (`handoffFailed`) there is nothing left
-   * to race, and staying inert would be the worse bug: see `inert`.
+   * the host reports the write failed (`saveState`) there is nothing left to
+   * race, and staying inert would be the worse bug: see `inert`.
    */
   const finish = () => {
     setHandedOff(true);

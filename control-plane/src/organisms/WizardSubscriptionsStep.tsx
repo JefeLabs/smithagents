@@ -1,5 +1,5 @@
 import { Button } from "@heroui/react";
-import type { Setup } from "../lib/wizardSteps";
+import type { Setup, WizardSaveState } from "../lib/wizardSteps";
 import { useApiKeys, useCliTools } from "../queries/http";
 import { ApiKeysGroup } from "./settings/ApiKeysGroup";
 import { CliToolsGroup } from "./settings/CliToolsGroup";
@@ -10,6 +10,14 @@ export interface WizardSubscriptionsStepProps {
       machine (`prevStep`) and simply does not pass one, so this component
       never has to know where it sits in a sequence it does not own. */
   onBack?: () => void;
+  /**
+   * What became of the host's own save for the patch it last sent. Same prop,
+   * same meaning, as `WizardBrainStepProps["saveState"]` — one mechanism, not
+   * a second one invented per step. See the type's own comment for the race
+   * it closes; the only thing this step does with it is refuse to retreat
+   * while a write it cannot see is still in flight.
+   */
+  saveState?: WizardSaveState;
 }
 
 /**
@@ -41,7 +49,7 @@ export interface WizardSubscriptionsStepProps {
  * on PROBE validity only. Live-turn validation belongs with whatever plan
  * owns turn execution.
  */
-export function WizardSubscriptionsStep({ onDone, onBack }: WizardSubscriptionsStepProps) {
+export function WizardSubscriptionsStep({ onDone, onBack, saveState = "idle" }: WizardSubscriptionsStepProps) {
   const { data: tools = [] } = useCliTools();
   const { data: keys = [] } = useApiKeys();
 
@@ -73,9 +81,25 @@ export function WizardSubscriptionsStep({ onDone, onBack }: WizardSubscriptionsS
             and a host-rendered one would stack a second sticky bar under it.
             First in DOM and therefore in tab order, the way a wizard footer
             conventionally reads. Never disabled by `canContinue`: retracting an
-            answer is exactly what someone stuck on this gate needs. */}
+            answer is exactly what someone stuck on this gate needs.
+
+            Inert only while the host's own write is in flight. This step is on
+            screen from the instant `advance` moves it, which is BEFORE the
+            `PUT {mode, step:"subscriptions"}` that brought the user here has
+            resolved; a Back clicked in that window fires `PUT {step:"preflight"}`
+            against it, and if the two land out of order the server keeps
+            `subscriptions` while the screen shows preflight — so the next
+            reload silently undoes the Back. `"failed"` deliberately does NOT
+            disable it: a write that is over and did not land is exactly when
+            someone wants out.
+
+            Continue is not guarded the same way, and that is deliberate: the
+            host's contract is that moving FORWARD never waits on the network
+            (see WelcomeWizard's comment), and a forward click unmounts this
+            step anyway, so the worst it can do is what a reload already
+            reconciles. */}
         {onBack && (
-          <Button variant="secondary" onPress={onBack}>
+          <Button variant="secondary" onPress={onBack} isDisabled={saveState === "saving"}>
             Back
           </Button>
         )}

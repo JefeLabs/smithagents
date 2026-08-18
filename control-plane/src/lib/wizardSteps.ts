@@ -23,6 +23,29 @@ export type WizardStep = (typeof WIZARD_STEPS)[number];
 export type Setup = { mode?: SetupMode; voice?: boolean; step?: string } | undefined;
 
 /**
+ * The state of the HOST's own `PUT /me` for the patch a step last handed it.
+ *
+ * Not part of the step machine — it lives here because it is the other half of
+ * the host/step vocabulary `Setup` belongs to, and both directions are needed:
+ * the step says what changed (`onDone`), the host says what became of it.
+ *
+ * Every step's Back can race a write it cannot see. `advance` moves the
+ * on-screen step immediately and lets its PUT run in the background, so the
+ * step that just appeared is live while the write that put it there is still
+ * unresolved; and on the LAST step nothing swaps at all, so the step that just
+ * handed off is live while its own handoff is in flight. A Back clicked in
+ * either window fires a competing `PUT {step}` whose landing order decides what
+ * the server ends up holding — and a reload then contradicts the screen.
+ *
+ * `"saving"` is the window; `"failed"` is a write that is over and did not
+ * land, which is precisely when a retreat or a retry must be possible again.
+ * They are deliberately NOT one boolean: a guard that reads "not idle" would
+ * hold the footer shut after a failure, which is the dead end this type exists
+ * to keep closed.
+ */
+export type WizardSaveState = "idle" | "saving" | "failed";
+
+/**
  * Titles come from the spec's own flow map. Two had drifted and would have
  * collided with steps still to come: the mode question was titled "Location"
  * (which is the geolocation step) and Configure Anderson was titled "Brain".
