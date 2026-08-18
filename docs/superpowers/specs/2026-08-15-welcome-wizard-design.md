@@ -89,24 +89,39 @@ to offer, so they wait for hosted.
 ## Flow
 
 ```
-  ── preflight: one screen, never blocks ──
-  What's your name?     → the greeting; creates the user record
-  Local or Cloud?       → selects which sequence follows
-                          cloud visible but disabled — "coming soon"
+  ── Screen 1: one screen, never blocks ──
+  "Hello! My name is Anderson!"
+    1. What can I call you?
+    2. What mode would you like me to use?
+         - Local
+         - Cloud            (visible, disabled — "coming soon")
 
-  ── setup: the sequence the answers above selected ──
-  Subscriptions         guide and validate; cannot continue until
-                        a subscription or an API key works
-  Set up Anderson       "Anderson needs a brain — choose from your
-                        installed provider tools"
-  Voice mode?           SECONDARY to the brain choice above. If yes,
-                        blocks until deepgram (STT) and elevenlabs
-                        (TTS) are both connected.
-  Share your location?  → if yes, browser geolocation. Needs NO keys.
-                          Then: topics of interest.
-  Local workspace       what is it for — documents and/or coding?
-                        version control and PR publishing?
-                        GitHub required if coding OR version control
+  ── Screens 2..N: the sequence Screen 1's answers selected ──
+  Screen 2 of N — Local Setup
+    "Please select your LLM Providers"
+      1. Subscriptions
+      2. API Keys
+    Gates: cannot continue until a subscription or a key actually works.
+
+  Screen 3
+    "Which LLM Provider should I use for my brain?"
+
+  Screen 4
+    "Would you like to enable Voice mode?"
+    (on yes) "Voice mode requires voice models."
+             Pick a Voice Mode: Hosted
+               - Speech to Text provider
+               - Text to Speech provider
+    Gates only if yes.
+
+  Screen 5
+    "Would you like to enable Small Talk, and Current Events and News
+     Research?"
+
+  Screen 6
+    "Would you like me to be location aware?"
+    (on yes) browser geolocation, then topics of interest. **No API keys** —
+             see the credential table below.
 
   Every setup step can go BACK, including back into preflight.
 
@@ -114,6 +129,48 @@ to offer, so they wait for hosted.
   Integrations    optional
   Build a crew    optional
 ```
+
+### Revision, 2026-08-18: Anderson asks the questions
+
+The flow above is the user's own screen-by-screen wording, and it changes
+something the earlier revisions did not touch: **the wizard is Anderson
+talking, not a form.**
+
+Every screen is first person, and it is his introduction, not the product's:
+*"Hello! My name is Anderson!"* · *"What can I call you?"* · *"What mode would
+you like me to use?"* · *"Which LLM Provider should I use for my brain?"* ·
+*"Would you like me to be location aware?"*
+
+This is not decoration. The product's wedge is a **crew you talk to**, not a
+settings panel with a chat box bolted on. First run is the only moment where
+that claim is made before anything can back it up, so the wizard is where the
+relationship starts or fails to. A form that collects a name and never says it
+is the opposite of the pitch — which is the same defect that produced the
+greeting bug in the 2026-08-17 revision, one level up.
+
+Two consequences for implementation:
+
+- **Copy is first person throughout**, and it asks rather than instructs.
+  "Which LLM Provider should I use for my brain?" — not "Configure Anderson",
+  and not "Brain engine".
+- **The name is asked as "What can I call you?"** — Anderson has already given
+  his, so the exchange is an introduction, not a field.
+
+**Screen 5 is new to this flow:** small talk, current events, and news
+research. It was not in any earlier revision. It maps onto the existing feeds
+pipeline (`broker/src/feeds/`) — RSS, discovery, interests — which needs **no
+credentials** for anything except `x.ts`.
+
+**Screen numbering is "Screen N of M", where M depends on the answers.** A user
+who declines voice sees fewer screens than one who accepts, and the indicator
+must reflect the sequence actually selected rather than a fixed total.
+
+**OPEN — the workspace step.** Earlier revisions had a required "Local
+workspace" step (what is it for; version control; GitHub if coding). The
+six-screen list above does not include it. It is left in this spec below,
+unpositioned, until that is settled: dropping it and merely reordering it are
+materially different, and it is the one step with a hard external dependency
+(GitHub).
 
 ### Revision, 2026-08-17: preflight, and intent before requirements
 
