@@ -62,14 +62,25 @@ function keyListing(provider: string, over: Partial<ApiKeyListing> = {}): ApiKey
   };
 }
 
+/** A save that never settles, so `busy` can be observed while it is in flight. */
+function stubPendingSave() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => new Promise<Response>(() => {})),
+  );
+}
+
 function renderBrainStep(opts: {
   tools: Record<string, Partial<CliToolListing>>;
   keys?: Array<{ provider: string; verified: boolean | "unknown" | null }>;
   current?: BrainEngineRecord | null;
+  /** Passed through so the host's Back can be asserted on this side of the
+      prop too — the host's own suite covers the other side. */
+  onBack?: () => void;
 }) {
   stubNoNetwork();
   const onDone = vi.fn();
-  const result = renderWithProviders(<WizardBrainStep onDone={onDone} />);
+  const result = renderWithProviders(<WizardBrainStep onDone={onDone} onBack={opts.onBack} />);
   result.client.setQueryData<CliToolListing[]>(
     qk.cliTools,
     Object.entries(opts.tools).map(([cli, over]) => toolListing(cli, over)),
@@ -218,5 +229,66 @@ describe("WizardBrainStep", () => {
     renderBrainStep({ tools: { claude: { active: true } } });
     await screen.findByRole("radio", { name: /claude/i });
     expect(screen.queryByRole("button", { name: /skip for now/i })).toBeNull();
+  });
+
+  it("hands Back to the host rather than deciding where 'back' goes", async () => {
+    // This step knows nothing about the sequence it sits in — `prevStep` is
+    // the host's question to answer, so the button only re-emits the callback.
+    const onBack = vi.fn();
+    const { onDone } = renderBrainStep({ tools: { claude: { active: true } }, onBack });
+
+    await userEvent.click(await screen.findByRole("button", { name: /back/i }));
+
+    expect(onBack).toHaveBeenCalledTimes(1);
+    // Back is not a completion: nothing is saved and the host is not advanced.
+    expect(onDone).not.toHaveBeenCalled();
+  });
+
+  it("offers no Back when the host passes none — a step with nothing behind it", async () => {
+    renderBrainStep({ tools: { claude: { active: true } } });
+    await screen.findByRole("radio", { name: /claude/i });
+    expect(screen.queryByRole("button", { name: /back/i })).toBeNull();
+  });
+
+  it("goes inert once it has handed off — the last step's PUT has nobody to race", async () => {
+    // `advance` does not move the on-screen step on the LAST step (there is no
+    // next one), so this component stays mounted while PUT {step:"done"} is in
+    // flight. Left live, a Back click there fires PUT {step:"subscriptions"}
+    // against it, and out-of-order landings leave the server on `done` while
+    // the screen shows Subscriptions.
+    const onBack = vi.fn();
+    const { onDone } = renderBrainStep({ tools: { claude: { active: true } }, onBack });
+    stubSave({ kind: "cli", provider: "claude" });
+    await userEvent.click(await screen.findByRole("radio", { name: /claude/i }));
+    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await waitFor(() => expect(onDone).toHaveBeenCalledWith({ setup: {} }));
+
+    expect(screen.getByRole("button", { name: /back/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /continue/i })).toBeDisabled();
+  });
+
+  it("leads the footer with Back, in DOM and so in tab order", async () => {
+    const onBack = vi.fn();
+    renderBrainStep({ tools: { claude: { active: true } }, onBack });
+    await screen.findByRole("radio", { name: /claude/i });
+
+    const labels = screen.getAllByRole("button").map((b) => b.textContent);
+    expect(labels.indexOf("Back")).toBeLessThan(labels.indexOf("Continue"));
+  });
+
+  it("makes Back inert while a save is in flight, so it cannot race the write", async () => {
+    // The guard is `isDisabled={busy}`. Both assertions are needed: the first
+    // fails for a Back that is simply always disabled, the second for one that
+    // is never disabled — only the real guard satisfies both.
+    const onBack = vi.fn();
+    renderBrainStep({ tools: { claude: { active: true } }, onBack });
+    const back = await screen.findByRole("button", { name: /back/i });
+    expect(back).toBeEnabled();
+
+    stubPendingSave();
+    await userEvent.click(screen.getByRole("radio", { name: /claude/i }));
+    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+
+    await waitFor(() => expect(back).toBeDisabled());
   });
 });

@@ -60,10 +60,13 @@ function keyListing(provider: string, over: Partial<ApiKeyListing> = {}): ApiKey
 function renderStep(opts: {
   tools: Record<string, Partial<NonNullable<CliToolListing["status"]>>>;
   keys?: Array<{ provider: string; verified: boolean | "unknown" | null }>;
+  /** Passed through so this side of the host's Back prop is covered too — the
+      host's own suite covers the other side. */
+  onBack?: () => void;
 }) {
   stubNoNetwork();
   const onDone = vi.fn();
-  const result = renderWithProviders(<WizardSubscriptionsStep onDone={onDone} />);
+  const result = renderWithProviders(<WizardSubscriptionsStep onDone={onDone} onBack={opts.onBack} />);
   result.client.setQueryData<CliToolListing[]>(
     qk.cliTools,
     Object.entries(opts.tools).map(([cli, over]) => toolListing(cli, over)),
@@ -147,5 +150,34 @@ describe("WizardSubscriptionsStep", () => {
     // Edwin's ruling, `missing` names the problem and stops — see
     // CliToolsGroup.tsx's guidanceFor.)
     expect(await screen.findByText(/install codex/i)).toBeInTheDocument();
+  });
+
+  it("hands Back to the host, and never gates it behind Continue's own condition", async () => {
+    // The user this matters for is the one Continue is disabled FOR: nothing
+    // validates, so the only way out of this gate is backwards.
+    const onBack = vi.fn();
+    const { onDone } = renderStep({ tools: { codex: { detected: false, failure: "missing" } }, onBack });
+
+    const back = await screen.findByRole("button", { name: /back/i });
+    expect(screen.getByRole("button", { name: /continue/i })).toBeDisabled();
+    expect(back).toBeEnabled();
+
+    await userEvent.click(back);
+    expect(onBack).toHaveBeenCalledTimes(1);
+    expect(onDone).not.toHaveBeenCalled();
+  });
+
+  it("offers no Back when the host passes none", async () => {
+    renderStep({ tools: { claude: { detected: true, authOk: true, enabled: true } } });
+    await screen.findByRole("button", { name: /continue/i });
+    expect(screen.queryByRole("button", { name: /back/i })).toBeNull();
+  });
+
+  it("leads the footer with Back, in DOM and so in tab order", async () => {
+    renderStep({ tools: { claude: { detected: true, authOk: true, enabled: true } }, onBack: vi.fn() });
+    await screen.findByRole("button", { name: /continue/i });
+
+    const labels = screen.getAllByRole("button").map((b) => b.textContent);
+    expect(labels.indexOf("Back")).toBeLessThan(labels.indexOf("Continue"));
   });
 });

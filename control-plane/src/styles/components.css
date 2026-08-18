@@ -4374,7 +4374,6 @@ button.logo {
 .wizard-gate__footer [data-slot="button"] + [data-slot="button"] {
   margin-top: 10px;
 }
-.wizard-name-step,
 .wizard-fork-step,
 .wizard-brain-step,
 .wizard-subscriptions-step {

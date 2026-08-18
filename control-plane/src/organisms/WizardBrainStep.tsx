@@ -58,6 +58,10 @@ export function WizardBrainStep({ onDone, onBack }: WizardBrainStepProps) {
   // app, and RadioButtonGroup has no deselect. See the escape it unlocks in
   // the footer.
   const [saveFailed, setSaveFailed] = useState(false);
+  // Set the moment the step hands off, and never cleared — see `finish`.
+  const [handedOff, setHandedOff] = useState(false);
+  /** No footer button acts while a save is in flight or after the handoff. */
+  const inert = busy || handedOff;
 
   // cli candidates first — a working subscription CLI beats a pasted key as
   // the "strongest validated option" default, the same route-order
@@ -88,6 +92,23 @@ export function WizardBrainStep({ onDone, onBack }: WizardBrainStepProps) {
   const currentKey = current ? `${current.kind}:${current.provider}` : undefined;
   const checkedKey = selected ?? currentKey ?? candidates[0]?.key;
 
+  /**
+   * Hands the step to the host and leaves the footer inert behind it.
+   *
+   * `advance` does NOT move the on-screen step on the last one — there is no
+   * next step; the invalidated `me` query is what swaps the whole gate to the
+   * app — so this component stays mounted, and until then every footer button
+   * is still live while `PUT {step: "done"}` is in flight. A Back click in that
+   * window fires `PUT {step: "subscriptions"}` against it, and if the two land
+   * out of order the server keeps `done` while the screen shows Subscriptions.
+   * The window is narrow and loses no data, but it exists only because Back is
+   * new, so it closes here.
+   */
+  const finish = () => {
+    setHandedOff(true);
+    onDone({ setup: {} });
+  };
+
   const proceed = async () => {
     const candidate = candidates.find((c) => c.key === checkedKey);
     if (!candidate) {
@@ -95,7 +116,7 @@ export function WizardBrainStep({ onDone, onBack }: WizardBrainStepProps) {
       // resolveBrainFactory (broker/src/brain-engine.ts) already treats as a
       // safe, working state (SMITH_BRAIN_PROVIDER, then the no-key default).
       // This step never needs to block progress the way Subscriptions does.
-      onDone({ setup: {} });
+      finish();
       return;
     }
     setBusy(true);
@@ -123,7 +144,7 @@ export function WizardBrainStep({ onDone, onBack }: WizardBrainStepProps) {
       setSaveFailed(true);
       return;
     }
-    onDone({ setup: {} });
+    finish();
   };
 
   return (
@@ -162,7 +183,15 @@ export function WizardBrainStep({ onDone, onBack }: WizardBrainStepProps) {
         </RadioButtonGroup>
       )}
       <div className="wizard-gate__footer">
-        <Button variant="primary" onPress={() => void proceed()} isDisabled={busy}>
+        {/* First, in DOM and therefore in tab order: a wizard footer leads with
+            Back. Inert while a save is in flight and after the handoff, so it
+            can never race the write it would navigate away from. */}
+        {onBack && (
+          <Button variant="secondary" onPress={onBack} isDisabled={inert}>
+            Back
+          </Button>
+        )}
+        <Button variant="primary" onPress={() => void proceed()} isDisabled={inert}>
           Continue
         </Button>
         {saveFailed && (
@@ -174,17 +203,8 @@ export function WizardBrainStep({ onDone, onBack }: WizardBrainStepProps) {
           // installed CLI the server refuses (codex-only, no verified
           // anthropic/gemini key) can never leave this step, and since it is
           // the LAST step, never reaches the app at all.
-          <Button variant="secondary" onPress={() => onDone({ setup: {} })} isDisabled={busy}>
+          <Button variant="secondary" onPress={finish} isDisabled={inert}>
             Skip for now
-          </Button>
-        )}
-        {/* Last, under the escape hatch: "Skip for now" is the way OUT of a
-            step that refused a save, Back is the way to change an earlier
-            answer. Disabled only while a save is in flight, so it can never
-            race the mutation it would navigate away from. */}
-        {onBack && (
-          <Button variant="secondary" onPress={onBack} isDisabled={busy}>
-            Back
           </Button>
         )}
       </div>

@@ -108,8 +108,8 @@ function WizardComingSoon() {
  * own. `data-step` on the root names which step is showing without depending
  * on that step's own markup, so resume behaviour stays testable across a step
  * swap (the resume test asserts through this attribute, not any step's
- * internal markup; `data-testid` beside it just gives that same root a name to
- * await by).
+ * internal markup — and it is the only hook the suite needs, which is why
+ * there is no `data-testid` here).
  *
  * Advances the on-screen step immediately on `onDone` — the PUT and the cache
  * invalidation run in the background rather than gating the transition, so
@@ -237,7 +237,7 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
   const onBack = prevStep(step, answers) ? goBack : undefined;
 
   return (
-    <div className="wizard-gate__host" data-step={step} data-testid="wizard-host">
+    <div className="wizard-gate__host" data-step={step}>
       <div className="wizard-gate__panel">
         {/* Never over preflight: an indicator there would assert an order that
             preflight's own answers have not chosen yet (its sequence is empty

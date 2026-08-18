@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -58,6 +58,22 @@ function stubViewport({ width }: { width: number }) {
       removeEventListener: () => {},
     })),
   );
+}
+
+/**
+ * The host root, awaited. `[data-step]` is this suite's existing idiom and the
+ * whole reason the attribute sits on the host: a test can name which step is
+ * showing without reaching into that step's own markup. Returned as an element
+ * so a later assertion can re-read the SAME node after a step change — the host
+ * div is never remounted — which is what makes `toHaveAttribute` here a
+ * statement about the host rather than about a selector that happened to match.
+ */
+async function findHost(container: HTMLElement): Promise<HTMLElement> {
+  return await waitFor(() => {
+    const host = container.querySelector<HTMLElement>("[data-step]");
+    if (!host) throw new Error("the wizard host has not rendered");
+    return host;
+  });
 }
 
 /**
@@ -244,9 +260,9 @@ describe("WizardGate", () => {
   });
 
   it("shows no step indicator on a fresh install's preflight", async () => {
-    renderGate({ placeholder: true, setup: undefined });
+    const { container } = renderGate({ placeholder: true, setup: undefined });
 
-    expect(await screen.findByTestId("wizard-host")).toHaveAttribute("data-step", "preflight");
+    expect(await findHost(container)).toHaveAttribute("data-step", "preflight");
     expect(screen.queryByText("Subscriptions")).toBeNull();
   });
 
@@ -256,9 +272,9 @@ describe("WizardGate", () => {
     // recorded the sequence is NON-empty, so the only thing that can keep the
     // indicator off the screen is preflight itself being excluded from it.
     // This is the state someone lands in by pressing Back.
-    renderGate({ name: "Edwin", setup: { mode: "local", step: PREFLIGHT } });
+    const { container } = renderGate({ name: "Edwin", setup: { mode: "local", step: PREFLIGHT } });
 
-    expect(await screen.findByTestId("wizard-host")).toHaveAttribute("data-step", "preflight");
+    expect(await findHost(container)).toHaveAttribute("data-step", "preflight");
     expect(screen.queryByText("Subscriptions")).toBeNull();
     expect(screen.queryByText("Anderson")).toBeNull();
   });
@@ -267,9 +283,9 @@ describe("WizardGate", () => {
     // A record that HAS a name, and awaited: with `placeholder: true` there is
     // no name to greet with in the first place, and an un-awaited query runs
     // while /me is still loading — either one passes without the guard.
-    renderGate({ name: "Edwin", setup: { mode: "local", step: PREFLIGHT } });
+    const { container } = renderGate({ name: "Edwin", setup: { mode: "local", step: PREFLIGHT } });
 
-    expect(await screen.findByTestId("wizard-host")).toHaveAttribute("data-step", "preflight");
+    expect(await findHost(container)).toHaveAttribute("data-step", "preflight");
     expect(screen.queryByText(/Welcome,/)).toBeNull();
   });
 
@@ -290,27 +306,27 @@ describe("WizardGate", () => {
   });
 
   it("enters the sequence the answer just given selects, not the one state still holds", async () => {
-    const { updateMe } = renderGate({ placeholder: true, setup: undefined });
+    const { container, updateMe } = renderGate({ placeholder: true, setup: undefined });
 
-    await screen.findByTestId("wizard-host");
+    const host = await findHost(container);
     await userEvent.type(screen.getByLabelText(/your name/i), "Edwin");
     await userEvent.click(screen.getByRole("button", { name: /continue/i }));
 
     // Read from state instead of from the patch, `mode` is still undefined at
     // this point — `setupStepsFor` returns nothing for it, so the wizard would
     // persist `done` and drop a user who has answered nothing into the app.
-    expect(await screen.findByTestId("wizard-host")).toHaveAttribute("data-step", "subscriptions");
+    expect(host).toHaveAttribute("data-step", "subscriptions");
     expect(updateMe).toHaveBeenCalledWith(
       expect.objectContaining({ setup: expect.objectContaining({ mode: "local", step: "subscriptions" }) }),
     );
   });
 
   it("goes back from the first setup step into preflight, and persists it", async () => {
-    const { updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "subscriptions" } });
+    const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "subscriptions" } });
 
     await userEvent.click(await screen.findByRole("button", { name: /back/i }));
 
-    expect(await screen.findByTestId("wizard-host")).toHaveAttribute("data-step", "preflight");
+    expect(await findHost(container)).toHaveAttribute("data-step", "preflight");
     // Persisted, or a reload would resume at the step they just left.
     expect(updateMe).toHaveBeenCalledWith(
       expect.objectContaining({ setup: expect.objectContaining({ step: "preflight" }) }),
@@ -322,13 +338,13 @@ describe("WizardGate", () => {
     // non-2xx, so this RESOLVES with {error}. Without the resolved-branch
     // check the screen would sit on preflight having persisted nothing, and
     // the next reload would throw the user forward again.
-    const { updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "subscriptions" } });
+    const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "subscriptions" } });
     updateMe.mockResolvedValue({ error: "origin not allowed" });
 
     await userEvent.click(await screen.findByRole("button", { name: /back/i }));
 
     expect(await screen.findByText(/origin not allowed/i)).toBeInTheDocument();
-    expect(screen.getByTestId("wizard-host")).toHaveAttribute("data-step", "subscriptions");
+    expect(await findHost(container)).toHaveAttribute("data-step", "subscriptions");
   });
 
   it("a network-level failure on Back keeps the user where they navigated, and still reports it", async () => {
@@ -336,19 +352,66 @@ describe("WizardGate", () => {
     // is ambiguous — the write may well have landed — so the step change
     // stands, exactly as `advance` treats its own rejections. Reported either
     // way; a whole wizard's worth of unsaved work must never go unmentioned.
-    const { updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "subscriptions" } });
+    const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "subscriptions" } });
     updateMe.mockRejectedValue(new Error("network error"));
 
     await userEvent.click(await screen.findByRole("button", { name: /back/i }));
 
     expect(await screen.findByText(/network error/i)).toBeInTheDocument();
-    expect(screen.getByTestId("wizard-host")).toHaveAttribute("data-step", "preflight");
+    expect(await findHost(container)).toHaveAttribute("data-step", "preflight");
+  });
+
+  it("routes the last step to the Anderson screen", async () => {
+    // The `brain` → `anderson` rename had no regression protection: a route
+    // naming a step id nothing renders leaves the body EMPTY — no Continue, no
+    // "Skip for now", and no Back either, since Back lives inside the step
+    // component — so the user is stranded on a panel with a heading and an
+    // indicator, and the gate reopens on every reload because setup never
+    // completes. Asserted through the step's own prompt, which is the thing
+    // that actually stops existing.
+    const { container } = renderGate({ name: "Edwin", setup: { mode: "local", step: "anderson" } });
+
+    expect(await findHost(container)).toHaveAttribute("data-step", "anderson");
+    expect(await screen.findByText(/what should anderson/i)).toBeInTheDocument();
+  });
+
+  it("goes back from the last step into the one before it, and persists that", async () => {
+    // The other half of "every setup step can go Back". Fails if the host
+    // stops passing `onBack` to the Anderson route, and equally if that step
+    // stops rendering the button — this clicks the real component's own.
+    const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "anderson" } });
+
+    await userEvent.click(await screen.findByRole("button", { name: /back/i }));
+
+    // Into the step BEFORE it, not all the way out to preflight.
+    expect(await findHost(container)).toHaveAttribute("data-step", "subscriptions");
+    expect(updateMe).toHaveBeenCalledWith(
+      expect.objectContaining({ setup: expect.objectContaining({ step: "subscriptions" }) }),
+    );
+  });
+
+  it("backing into preflight shows the answers already given, not a blank form", async () => {
+    // Seeding is half of a guarantee whose other half is WizardPreflightStep
+    // sending `voice`/`mode` EXPLICITLY on every submit. Unseeded, Back lands
+    // on a preflight whose name field is empty (Continue disabled until it is
+    // retyped) and whose voice answer has reset to the `false` default — and
+    // the next Continue then writes that `false` over the user's recorded
+    // `true`. The explicit send exists to stop the server's merge from keeping
+    // a stale answer; without seeding it overwrites a good one instead.
+    renderGate({ name: "Edwin", setup: { mode: "local", voice: true, step: "subscriptions" } });
+
+    await userEvent.click(await screen.findByRole("button", { name: /back/i }));
+
+    expect(await screen.findByLabelText(/your name/i)).toHaveValue("Edwin");
+    expect(screen.getByRole("radio", { name: /^yes$/i })).toBeChecked();
+    // The user-visible consequence of losing the name seed, asserted directly.
+    expect(screen.getByRole("button", { name: /continue/i })).toBeEnabled();
   });
 
   it("offers no Back on preflight — it is the beginning", async () => {
-    renderGate({ placeholder: true, setup: undefined });
+    const { container } = renderGate({ placeholder: true, setup: undefined });
 
-    await screen.findByTestId("wizard-host");
+    await findHost(container);
     expect(screen.queryByRole("button", { name: /back/i })).toBeNull();
   });
 });

@@ -68,19 +68,20 @@ export function WizardSubscriptionsStep({ onDone, onBack }: WizardSubscriptionsS
           step already recorded (e.g. `mode`). Nothing here has data of its
           own to add. */}
       <div className="wizard-gate__footer">
-        <Button variant="primary" onPress={() => onDone({ setup: {} })} isDisabled={!canContinue}>
-          Continue
-        </Button>
         {/* Back lives in the step's own footer, not in a second band of the
             host's — this step owns the only `.wizard-gate__footer` on screen,
             and a host-rendered one would stack a second sticky bar under it.
-            Never disabled by `canContinue`: retracting an answer is exactly
-            what someone stuck on this gate needs. */}
+            First in DOM and therefore in tab order, the way a wizard footer
+            conventionally reads. Never disabled by `canContinue`: retracting an
+            answer is exactly what someone stuck on this gate needs. */}
         {onBack && (
           <Button variant="secondary" onPress={onBack}>
             Back
           </Button>
         )}
+        <Button variant="primary" onPress={() => onDone({ setup: {} })} isDisabled={!canContinue}>
+          Continue
+        </Button>
       </div>
     </div>
   );
