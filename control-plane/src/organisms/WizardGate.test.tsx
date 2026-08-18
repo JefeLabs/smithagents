@@ -14,10 +14,14 @@ vi.mock("../api/broker", () => ({
   getCliTools: vi.fn(),
   getApiKeys: vi.fn(),
   getBrainEngine: vi.fn(),
+  // The Anderson step's own save. Present here because the LAST step's
+  // handoff can only be reached through it — see the two terminal-save tests
+  // at the bottom of this suite.
+  saveBrainEngine: vi.fn(),
 }));
 
-import { getApiKeys, getBrainEngine, getCliTools, getMe, updateMe } from "../api/broker";
-import type { MeRecord } from "../api/types";
+import { getApiKeys, getBrainEngine, getCliTools, getMe, saveBrainEngine, updateMe } from "../api/broker";
+import type { CliToolListing, MeRecord } from "../api/types";
 import { PREFLIGHT } from "../lib/wizardSteps";
 import { WizardGate } from "./WizardGate";
 
@@ -30,11 +34,19 @@ const wrap = (ui: ReactNode) =>
     </QueryClientProvider>,
   );
 
-function stubMe(me: MeRecord) {
+function stubMe(me: MeRecord, tools: CliToolListing[] = []) {
   (getMe as ReturnType<typeof vi.fn>).mockResolvedValue(me);
-  (getCliTools as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+  (getCliTools as ReturnType<typeof vi.fn>).mockResolvedValue(tools);
   (getApiKeys as ReturnType<typeof vi.fn>).mockResolvedValue([]);
   (getBrainEngine as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+  // Succeeds by default: the failure these tests are about is the HOST's own
+  // `PUT /me`, which only happens once the step's own save has gone through.
+  (saveBrainEngine as ReturnType<typeof vi.fn>).mockResolvedValue({ kind: "cli", provider: "claude" });
+}
+
+/** Mirrors WizardBrainStep.test.tsx's toolListing — only `active` matters here. */
+function toolListing(cli: string): CliToolListing {
+  return { cli, label: cli, models: [], warmSessions: true, status: null, active: true };
 }
 
 function stubMeFailure() {
@@ -93,13 +105,16 @@ function renderGate({
   name = "You",
   placeholder = false,
   setup,
+  tools = [],
 }: {
   name?: string;
   placeholder?: boolean;
   setup?: MeRecord["setup"];
+  /** Active CLIs the Anderson step can offer as brain candidates. */
+  tools?: CliToolListing[];
 }) {
   stubViewport({ width: 1440 });
-  stubMe({ id: "me", name, connectors: [], placeholder, setup });
+  stubMe({ id: "me", name, connectors: [], placeholder, setup }, tools);
   const updateMeMock = updateMe as ReturnType<typeof vi.fn>;
   updateMeMock.mockResolvedValue({});
   return {
@@ -402,9 +417,25 @@ describe("WizardGate", () => {
     await userEvent.click(await screen.findByRole("button", { name: /back/i }));
 
     expect(await screen.findByLabelText(/your name/i)).toHaveValue("Edwin");
-    expect(screen.getByRole("radio", { name: /local/i })).toBeChecked();
     // The user-visible consequence of losing the name seed, asserted directly.
     expect(screen.getByRole("button", { name: /continue/i })).toBeEnabled();
+    // The MODE seed is asserted in the test below instead, not here: a record
+    // that reaches this screen by pressing Back necessarily has mode "local"
+    // (no other mode has a step to come back from), and "local" is also
+    // WizardPreflightStep's own default — so `expect(local).toBeChecked()`
+    // here would hold whether or not the seed is passed or read at all.
+  });
+
+  it("hands preflight the mode already recorded, not the step's own default", async () => {
+    // The discriminating half of `initialMode={mode}`. "hosted" is the only
+    // value that differs from the step's default, and it IS reachable here:
+    // `setupStepsFor("hosted")` is empty, so `resumeStep` sends every hosted
+    // record — whatever step it names — back to preflight. Fails both for a
+    // host that stops passing the prop and for a step that stops reading it.
+    const { container } = renderGate({ name: "Edwin", setup: { mode: "hosted", step: "anderson" } });
+
+    expect(await findHost(container)).toHaveAttribute("data-step", "preflight");
+    expect(await screen.findByRole("radio", { name: /local/i })).not.toBeChecked();
   });
 
   it("offers no Back on preflight — it is the beginning", async () => {
@@ -412,5 +443,83 @@ describe("WizardGate", () => {
 
     await findHost(container);
     expect(screen.queryByRole("button", { name: /back/i })).toBeNull();
+  });
+
+  // The two below are the only tests in the repo that span the host and the
+  // LAST step together, and that is the point: neither side can see this
+  // failure alone. WizardBrainStep's own suite mocks `onDone`, so the host's
+  // save never happens there; this suite exercised a refused save only at
+  // preflight, where the step is swapped out and the question cannot arise.
+  // The last step is different — `nextStep` returns null, so nothing swaps and
+  // the step stays mounted, inert, behind a write that has already failed.
+
+  it("a refused save on the LAST step leaves the footer something to click", async () => {
+    // The refusal shape: `brokerFetch` never throws on a non-2xx, so an origin
+    // block, a credential failure, or swarm-side validation all RESOLVE with
+    // `{error}`. The step's own brain save SUCCEEDED here, so "Skip for now"
+    // is (correctly) absent — if Back and Continue are inert too, the last
+    // screen of first-run setup has nothing clickable on it at all, and only a
+    // page reload nothing mentions gets the user out.
+    const { container, updateMe } = renderGate({
+      name: "Edwin",
+      setup: { mode: "local", step: "anderson" },
+      tools: [toolListing("claude")],
+    });
+    await screen.findByRole("radio", { name: /claude/i });
+
+    updateMe.mockResolvedValue({ error: "origin not allowed" });
+    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+
+    expect(await screen.findByText(/origin not allowed/i)).toBeInTheDocument();
+    // Still here — this is what makes the last step unlike every other one.
+    expect(await findHost(container)).toHaveAttribute("data-step", "anderson");
+    expect(screen.getByRole("button", { name: /continue/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /back/i })).toBeEnabled();
+
+    // Enabled is not the same as live: in this codebase a button can read as
+    // enabled and still eat the click (aria-disabled ⇒ pointer-events: none).
+    // The retry has to actually reach the server. This one never settles, so
+    // the state below is the retry's write still in flight.
+    updateMe.mockClear();
+    updateMe.mockReturnValue(new Promise(() => {}));
+    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+
+    await waitFor(() =>
+      expect(updateMe).toHaveBeenCalledWith(
+        expect.objectContaining({ setup: expect.objectContaining({ step: "done" }) }),
+      ),
+    );
+    // And the race the whole inert mechanism exists for is closed AGAIN on the
+    // retry — a fix that simply stops re-inerting after the first failure
+    // passes everything above this line and re-opens exactly the window
+    // `handedOff` was added to close.
+    expect(screen.getByRole("button", { name: /back/i })).toBeDisabled();
+  });
+
+  it("a rejected save on the LAST step leaves the footer something to click too", async () => {
+    // The other shape, and NOT interchangeable with the one above: a network
+    // failure rejects rather than resolving, and it takes `advance`'s `.catch`
+    // branch, which — unlike the resolved branch — never calls `setStep`. A
+    // fix wired only into the resolved branch passes the test above and leaves
+    // this user just as stuck.
+    const { container, updateMe } = renderGate({
+      name: "Edwin",
+      setup: { mode: "local", step: "anderson" },
+      tools: [toolListing("claude")],
+    });
+    await screen.findByRole("radio", { name: /claude/i });
+
+    updateMe.mockRejectedValue(new Error("network error"));
+    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+
+    expect(await screen.findByText(/network error/i)).toBeInTheDocument();
+    expect(await findHost(container)).toHaveAttribute("data-step", "anderson");
+    expect(screen.getByRole("button", { name: /continue/i })).toBeEnabled();
+
+    // Back is the escape that matters on this shape — a rejection is
+    // ambiguous, the write may well have landed, so retrying it is not the
+    // only sensible move — and it has to be live, not merely visible.
+    await userEvent.click(screen.getByRole("button", { name: /back/i }));
+    expect(await findHost(container)).toHaveAttribute("data-step", "subscriptions");
   });
 });

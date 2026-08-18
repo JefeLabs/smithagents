@@ -144,6 +144,17 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
   const [name, setName] = useState(me.placeholder ? "" : me.name);
   const [voice, setVoice] = useState(me.setup?.voice);
   const [mode, setMode] = useState(me.setup?.mode);
+  // Whether the save for the patch a step last handed over failed — either
+  // shape, refused or rejected. Distinct from `error`, which every write here
+  // sets (`goBack`'s included) and which is only ever displayed: this one is
+  // handed BACK to the step that did the handing off, and only the LAST step
+  // has any use for it. Every earlier step is swapped out the moment it hands
+  // off (`next` is a real step, so `setStep` moves on), so its own footer is
+  // already gone by the time the write can fail. The last step is not: `next`
+  // is null there, nothing swaps, and it is sitting inert behind a write it
+  // cannot see the outcome of. Telling it is what keeps a refused final save
+  // from being a dead end. Sole reader: WizardBrainStep's `handoffFailed`.
+  const [handoffFailed, setHandoffFailed] = useState(false);
   const qc = useQueryClient();
 
   // What the SETUP sequence is computed from. Not a step-independent constant:
@@ -163,6 +174,11 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
     // persist `done` and drop the user straight into the app.
     const next = nextStep(current, { mode: patch.setup?.mode ?? mode, voice: patch.setup?.voice ?? voice });
     setError(null);
+    // Cleared as the write goes out, not only when it succeeds: a retry from
+    // the last step hands off again, and until this one resolves that step
+    // must be inert again — otherwise the second write is racing exactly what
+    // the first one raced.
+    setHandoffFailed(false);
     // Only what the patch actually carries: a step with nothing to say about
     // an answer (Subscriptions and Anderson both send `setup: {}`) must not
     // blank one out. Mirrors the server's own merge, which is why omitting a
@@ -180,12 +196,18 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
           // second failure on top of the first.
           setStep(current);
           setError(result.error);
+          setHandoffFailed(true);
           return;
         }
         void qc.invalidateQueries({ queryKey: qk.me });
       })
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : "Could not save — check your connection and try again.");
+        // Both shapes, not just the refusal: a rejection leaves the step just
+        // as stuck, and `brokerFetch` never throws on a non-2xx — so this
+        // branch is the NETWORK failure, and the resolved one above is the
+        // server saying no. Neither may leave the last step inert.
+        setHandoffFailed(true);
       });
     // Only a real next step moves the host's own view — the SETUP_DONE case
     // has no step of its own to show; the invalidated `me` query is what
@@ -275,7 +297,7 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
             <WizardPreflightStep initialName={name} initialMode={mode} onDone={advance} />
           )}
           {step === "subscriptions" && <WizardSubscriptionsStep onDone={advance} onBack={onBack} />}
-          {step === "anderson" && <WizardBrainStep onDone={advance} onBack={onBack} />}
+          {step === "anderson" && <WizardBrainStep onDone={advance} onBack={onBack} handoffFailed={handoffFailed} />}
         </div>
       </div>
     </div>

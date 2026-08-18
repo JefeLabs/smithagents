@@ -80,7 +80,10 @@ function renderBrainStep(opts: {
 }) {
   stubNoNetwork();
   const onDone = vi.fn();
-  const result = renderWithProviders(<WizardBrainStep onDone={onDone} onBack={opts.onBack} />);
+  const element = (handoffFailed: boolean) => (
+    <WizardBrainStep onDone={onDone} onBack={opts.onBack} handoffFailed={handoffFailed} />
+  );
+  const result = renderWithProviders(element(false));
   result.client.setQueryData<CliToolListing[]>(
     qk.cliTools,
     Object.entries(opts.tools).map(([cli, over]) => toolListing(cli, over)),
@@ -90,7 +93,12 @@ function renderBrainStep(opts: {
     (opts.keys ?? []).map((k) => keyListing(k.provider, { verified: k.verified })),
   );
   result.client.setQueryData<BrainEngineRecord | null>(qk.brainEngine, opts.current ?? null);
-  return { ...result, onDone };
+  return {
+    ...result,
+    onDone,
+    /** What the host does when its own `PUT /me` comes back refused or rejected. */
+    reportHandoffFailed: () => result.rerender(element(true)),
+  };
 }
 
 describe("WizardBrainStep", () => {
@@ -256,12 +264,17 @@ describe("WizardBrainStep", () => {
     expect(screen.queryByRole("button", { name: /back/i })).toBeNull();
   });
 
-  it("goes inert once it has handed off — the last step's PUT has nobody to race", async () => {
+  it("goes inert while the handoff is in flight — the last step's PUT has nobody to race", async () => {
     // `advance` does not move the on-screen step on the LAST step (there is no
     // next one), so this component stays mounted while PUT {step:"done"} is in
     // flight. Left live, a Back click there fires PUT {step:"subscriptions"}
     // against it, and out-of-order landings leave the server on `done` while
     // the screen shows Subscriptions.
+    //
+    // This is the state DURING the handoff — the host has not come back yet
+    // (`handoffFailed` is false, its default). It is deliberately not asserted
+    // as the resting state: see the next test for what has to happen when the
+    // host comes back to say the write failed.
     const onBack = vi.fn();
     const { onDone } = renderBrainStep({ tools: { claude: { active: true } }, onBack });
     stubSave({ kind: "cli", provider: "claude" });
@@ -271,6 +284,32 @@ describe("WizardBrainStep", () => {
 
     expect(screen.getByRole("button", { name: /back/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: /continue/i })).toBeDisabled();
+  });
+
+  it("comes back to life when the host reports the handoff never landed", async () => {
+    // The other half of the guard above, and the reason it cannot be the
+    // resting state. On the last step nothing swaps this component out, so a
+    // refused or rejected `PUT {step:"done"}` finds it inert behind a write
+    // that is already over — Back disabled, Continue disabled, and no "Skip
+    // for now" either, because the BRAIN save is the one thing that did
+    // succeed. That is a dead end on the last screen of first-run setup.
+    //
+    // The host is the only side that knows; this is it saying so.
+    const onBack = vi.fn();
+    const { onDone, reportHandoffFailed } = renderBrainStep({ tools: { claude: { active: true } }, onBack });
+    stubSave({ kind: "cli", provider: "claude" });
+    await userEvent.click(await screen.findByRole("radio", { name: /claude/i }));
+    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await waitFor(() => expect(onDone).toHaveBeenCalledWith({ setup: {} }));
+    expect(screen.getByRole("button", { name: /continue/i })).toBeDisabled();
+
+    reportHandoffFailed();
+
+    expect(screen.getByRole("button", { name: /back/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /continue/i })).toBeEnabled();
+    // Live, not merely enabled-looking: Continue really re-runs the handoff.
+    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await waitFor(() => expect(onDone).toHaveBeenCalledTimes(2));
   });
 
   it("leads the footer with Back, in DOM and so in tab order", async () => {

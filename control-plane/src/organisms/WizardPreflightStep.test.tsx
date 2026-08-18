@@ -77,9 +77,27 @@ describe("WizardPreflightStep", () => {
     expect(onDone).toHaveBeenCalledWith({ name: "Edwin", setup: { mode: "local" } });
   });
 
+  // Both seeding tests below pass a mode the DEFAULT IS NOT. Seeded with
+  // "local" — which is `initialMode`'s own default — neither assertion could
+  // fail: replacing `useState(initialMode)` with `useState("local")` left the
+  // whole suite green, so nothing here was guarding the prop at all. "hosted"
+  // is genuinely reachable on this screen (`resumeStep` sends a record whose
+  // mode is hosted back to preflight, since its sequence is empty), and it is
+  // the only value that can tell a seeded state apart from the default one.
   it("seeds from prior answers so going back shows what was chosen", () => {
-    setup({ initialName: "Edwin", initialMode: "local" });
+    setup({ initialName: "Edwin", initialMode: "hosted" });
     expect(screen.getByLabelText(/your name/i)).toHaveValue("Edwin");
-    expect(screen.getByRole("radio", { name: /local/i })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /local/i })).not.toBeChecked();
+  });
+
+  it("re-submits the mode it was seeded with, rather than overwriting it with the default", async () => {
+    // The consequence of dropping the seed, asserted where it does damage:
+    // `onDone` always sends `mode` EXPLICITLY (the server merges setup, so an
+    // omitted field would keep the old value), which means an unseeded screen
+    // does not leave a recorded answer alone — it overwrites it with "local"
+    // the moment the user presses Continue on a form they only backed into.
+    const { onDone, user } = setup({ initialName: "Edwin", initialMode: "hosted" });
+    await user.click(screen.getByRole("button", { name: /continue/i }));
+    expect(onDone).toHaveBeenCalledWith({ name: "Edwin", setup: { mode: "hosted" } });
   });
 });
