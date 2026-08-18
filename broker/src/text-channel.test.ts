@@ -1261,8 +1261,12 @@ const voiceDep = {
   get: async () => ({ stt: null, tts: null, hideInactive: false }),
   save: async (body: unknown) => body as Record<string, unknown>,
   options: async () => ({ options: [{ id: "voice-1", label: "Manuel" }] }),
-  preview: async (voiceId: string, text?: string) =>
-    voiceId === "gated" ? { error: "no voice yet" } : { mime: "audio/mpeg", dataB64: `${voiceId}:${text ?? ""}` },
+  // dataB64 echoes all three arguments so a route that drops one is visible in
+  // the response body rather than silently equivalent.
+  preview: async (voiceId: string, text?: string, ttsInstanceId?: string) =>
+    voiceId === "gated"
+      ? { error: "no voice yet" }
+      : { mime: "audio/mpeg", dataB64: `${voiceId}:${text ?? ""}:${ttsInstanceId ?? ""}` },
 };
 
 test("voice: GET and PUT /me/voice are proxied when the voice dep is wired", async () => {
@@ -1313,7 +1317,7 @@ test("voice: POST /voice/preview passes {voiceId, text} through and answers 200 
       body: JSON.stringify({ voiceId: "voice-1", text: "hola" }),
     });
     assert.equal(res.status, 200);
-    assert.deepEqual(await res.json(), { mime: "audio/mpeg", dataB64: "voice-1:hola" });
+    assert.deepEqual(await res.json(), { mime: "audio/mpeg", dataB64: "voice-1:hola:" });
   } finally {
     await channel.stop();
   }
@@ -1334,6 +1338,45 @@ test("voice: POST /voice/preview answers 200 with a resolved {error} body, never
     });
     assert.equal(res.status, 200);
     assert.deepEqual(await res.json(), { error: "no voice yet" });
+  } finally {
+    await channel.stop();
+  }
+});
+
+// The welcome wizard's in-progress pick. It writes no voice settings until
+// Continue, so a preview that can only read the SAVED slot refuses on every
+// first run — the id travelling on the request is the whole fix, and a route
+// that parses {voiceId, text} and drops ttsInstanceId reinstates the bug
+// exactly. The KEY never travels: only the instance id, which swarm resolves.
+test("voice: POST /voice/preview passes ttsInstanceId through to the dep", async () => {
+  const channel = channelWith({ voice: voiceDep });
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/voice/preview`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ voiceId: "voice-1", text: "hola", ttsInstanceId: "el-1" }),
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { mime: "audio/mpeg", dataB64: "voice-1:hola:el-1" });
+  } finally {
+    await channel.stop();
+  }
+});
+
+// A non-string id is a malformed body, not a lookup — forwarding it would push
+// the type confusion down into swarm's query string.
+test("voice: POST /voice/preview ignores a non-string ttsInstanceId rather than forwarding it", async () => {
+  const channel = channelWith({ voice: voiceDep });
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/voice/preview`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ voiceId: "voice-1", ttsInstanceId: { id: "el-1" } }),
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { mime: "audio/mpeg", dataB64: "voice-1::" });
   } finally {
     await channel.stop();
   }

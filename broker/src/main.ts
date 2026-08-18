@@ -88,7 +88,7 @@ import { parseTarget, resolveTarget } from "./targets.ts";
 import { type ChannelFrame, type RosterEntry, TextChannel } from "./text-channel.ts";
 import { mintRoomToken } from "./token.ts";
 import { VoiceCatalog } from "./voice-catalog.ts";
-import { VOICE_STT_HINT, VOICE_TTS_HINT, VoiceKeyResolver } from "./voice-keys.ts";
+import { VOICE_STT_HINT, VOICE_TTS_CHOICE_HINT, VOICE_TTS_HINT, VoiceKeyResolver } from "./voice-keys.ts";
 import type { VoicePresence } from "./voice-presence.ts";
 import { previewVoice, VOICE_PREVIEW_LINE, voiceOptionsFrom } from "./voice-preview.ts";
 
@@ -245,12 +245,13 @@ void voiceKeys.status();
 // key changes" (spec §4) is a memoized {key, provider, catalog} triple, not a
 // per-call key thread.
 let ttsCache: { key: string; provider: ElevenLabsVoiceProvider; catalog: VoiceCatalog } | null = null;
-async function currentTts(): Promise<{ provider: ElevenLabsVoiceProvider; catalog: VoiceCatalog } | null> {
-  const key = await voiceKeys.ttsKey();
-  if (!key) {
-    ttsCache = null;
-    return null;
-  }
+/**
+ * The memoized triple for ONE key — shared by the saved slot and by the wizard
+ * preview's chosen instance, so at most one pair of clients exists at a time.
+ * A preview with a different key evicts the saved slot's triple; currentTts()
+ * rebuilds on its next call, which is what a rotated key already does.
+ */
+function ttsFor(key: string): { provider: ElevenLabsVoiceProvider; catalog: VoiceCatalog } {
   if (ttsCache?.key !== key) {
     ttsCache = {
       key,
@@ -259,6 +260,35 @@ async function currentTts(): Promise<{ provider: ElevenLabsVoiceProvider; catalo
     };
   }
   return ttsCache;
+}
+async function currentTts(): Promise<{ provider: ElevenLabsVoiceProvider; catalog: VoiceCatalog } | null> {
+  const key = await voiceKeys.ttsKey();
+  if (!key) {
+    ttsCache = null;
+    return null;
+  }
+  return ttsFor(key);
+}
+
+/**
+ * The TTS a PREVIEW should speak with: the caller's named instance when it has
+ * one, the saved slot otherwise.
+ *
+ * The welcome wizard writes its slot assignment only on Continue, so during
+ * setup the saved slot is null and a preview resolved from it always refuses —
+ * telling a user who just added and verified an ElevenLabs key on that very
+ * screen that they have none. The id travels; the key is resolved swarm-side
+ * (which also checks the vendor can actually speak), so no credential moves
+ * toward the browser.
+ *
+ * A refused instance resolves null and never falls back to the saved slot:
+ * speaking with a key other than the one on screen would be worse than
+ * declining.
+ */
+async function previewTts(ttsInstanceId?: string): Promise<{ provider: ElevenLabsVoiceProvider } | null> {
+  if (!ttsInstanceId) return currentTts();
+  const key = await voiceKeys.ttsKeyFor(ttsInstanceId);
+  return key ? ttsFor(key) : null;
 }
 
 // Bound on a single TTS request. speak() runs inside the serialized turn
@@ -1060,10 +1090,10 @@ const voice = {
   // timeout guard, and the same 402 stand-in fallback speak() (below) uses —
   // no second ElevenLabs client — but RESOLVES `{error}` on every failure
   // path instead of throwing, so the route never answers a bare 500.
-  preview: (voiceId: string, text?: string) =>
+  preview: (voiceId: string, text?: string, ttsInstanceId?: string) =>
     previewVoice(voiceId, text?.trim() || VOICE_PREVIEW_LINE, {
       currentTts: async () => {
-        const t = await currentTts();
+        const t = await previewTts(ttsInstanceId);
         return t
           ? {
               synthesize: ({ voiceId: id, text: spokenText, signal }) =>
@@ -1077,10 +1107,19 @@ const voice = {
             }
           : null;
       },
-      noTtsHint: VOICE_TTS_HINT,
+      // Two callers, two sentences. A caller that named an instance is the
+      // wizard, mid-setup: pointing it at Settings → Integrations is a punt to
+      // a screen it has not reached, and this whole step exists to remove that
+      // punt. A caller that named none is Settings itself, where VOICE_TTS_HINT
+      // is exactly right.
+      noTtsHint: ttsInstanceId ? VOICE_TTS_CHOICE_HINT : VOICE_TTS_HINT,
       standInVoiceId: PREMADE_DEFAULT,
       timeoutMs: TTS_TIMEOUT_MS,
       isTimeout: isTtsTimeout,
+      // The raw provider text — HTTP status plus response body — goes here and
+      // nowhere else. previewVoice used to interpolate it into the sentence it
+      // resolves, which put ElevenLabs error payloads on the first-run screen.
+      logDetail: (err: unknown) => console.error("[voice] preview failed:", err),
     }),
 };
 

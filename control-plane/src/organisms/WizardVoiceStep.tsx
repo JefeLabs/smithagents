@@ -43,6 +43,14 @@ const ADD = "add:";
 const CHECK_UNREACHABLE = "I couldn't reach that check — check your connection and try again.";
 const SAVE_UNREACHABLE = "I couldn't tell whether that saved — check your connection and try again.";
 const PREVIEW_UNREACHABLE = "I couldn't reach my voice just then — check your connection and try again.";
+/**
+ * Why ▶ is waiting. Said in terms of the chooser directly above it, never in
+ * terms of Settings: the broker's own VOICE_TTS_HINT is right for Settings and
+ * wrong here twice over — a first-run user has no Settings to go to, and the
+ * preview cannot speak simply because nothing has been picked, not because no
+ * key exists.
+ */
+const PREVIEW_NEEDS_KEY = "Choose a key above and I'll say something.";
 const AUDIO_BLOCKED = "I made the sound, but the browser wouldn't play it — click anywhere and try again.";
 
 /**
@@ -302,13 +310,32 @@ export function WizardVoiceStep({ initialVoice = false, onDone, onBack, saveStat
   };
 
   const chosenVoice = voiceId ?? voices[0]?.id ?? "";
+  /**
+   * What sits under ▶. With voices to pick from and no speaking key chosen, it
+   * says what the button is waiting for; otherwise it is whatever the last
+   * preview came back with (null before the first). An empty voice list has
+   * its own sentence and no ▶ at all, so it never reaches here.
+   */
+  const previewHint = voices.length > 0 && !selected.tts ? PREVIEW_NEEDS_KEY : previewNote;
 
+  /**
+   * The preview speaks with the instance chosen ON THIS SCREEN, sent as an id
+   * the swarm resolves — never the key, which has no business coming back to a
+   * browser to be posted again.
+   *
+   * Without it the broker resolves the SAVED slot, which this step writes only
+   * on Continue: during the whole wizard it is null, so every preview refused
+   * and refused by pointing at Settings — the one punt this step exists to
+   * remove, said to the one user who cannot follow it. The id is checked
+   * swarm-side (it must be this user's, and its vendor must be able to speak),
+   * so nothing here trusts the value on the way through.
+   */
   const sayIt = async () => {
     setPreviewing(true);
     setPreviewNote(null);
     let result: VoicePreviewResult;
     try {
-      result = await previewVoice.mutateAsync({ voiceId: chosenVoice });
+      result = await previewVoice.mutateAsync({ voiceId: chosenVoice, ttsInstanceId: selected.tts });
     } catch {
       setPreviewing(false);
       setPreviewNote(PREVIEW_UNREACHABLE);
@@ -537,21 +564,30 @@ export function WizardVoiceStep({ initialVoice = false, onDone, onBack, saveStat
               {/* The label never changes while a preview is in flight: the
                   button is identified by its words, and swapping them for a
                   spinner renames the control mid-press for anyone listening to
-                  it. Inertness is the `disabled` attribute's job. */}
+                  it. Inertness is the `disabled` attribute's job.
+
+                  It waits on the speaking key — with none chosen there is
+                  nothing to speak with, and the request would come back with
+                  the broker's Settings punt. It does NOT wait on the listening
+                  key, which powers nothing here, nor on either CHECK: a key
+                  the vendor has yet to confirm is still worth hearing, and
+                  that is rather the point of a preview. */}
               <button
                 type="button"
                 className="settings-btn"
                 onClick={() => void sayIt()}
-                disabled={inert || previewing}
+                disabled={inert || previewing || !selected.tts}
               >
                 ▶ Say something
               </button>
             </div>
           )}
-          {/* A hint, never an error: this is the sentence a machine with no
-              ElevenLabs key gets, and it is a statement of fact rather than a
-              failure of the user's. */}
-          {previewNote && <p className="wizard__hint">{previewNote}</p>}
+          {/* A hint, never an error: whether it is ▶ saying what it waits for
+              or the broker saying why it could not speak, it is a statement of
+              fact rather than a failure of the user's, and it gates nothing.
+              Standing hint first — a note left over from a preview of a key
+              that is no longer chosen describes nothing on screen. */}
+          {previewHint && <p className="wizard__hint">{previewHint}</p>}
         </>
       )}
 

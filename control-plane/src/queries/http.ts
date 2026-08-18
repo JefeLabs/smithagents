@@ -414,7 +414,7 @@ export function useVerifyConnector() {
  */
 export function usePreviewVoice() {
   return useMutation({
-    mutationFn: (body: { voiceId: string; text?: string }) => api.previewVoice(body),
+    mutationFn: (body: { voiceId: string; text?: string; ttsInstanceId?: string }) => api.previewVoice(body),
   });
 }
 

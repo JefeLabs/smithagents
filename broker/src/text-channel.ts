@@ -325,8 +325,12 @@ export class TextChannel {
       save(body: unknown): Promise<Record<string, unknown>>;
       /** GET /voice/options — the wizard's curated "How should I sound?" list. Unrestricted, like /voices below: no credential, nothing to CSRF. */
       options(): Promise<{ options: Array<{ id: string; label: string }> }>;
-      /** POST /voice/preview — synthesizes one line. `{error}` is a RESOLVED human sentence (no TTS configured, or a provider failure), never a throw — the route always answers 200. */
-      preview(voiceId: string, text?: string): Promise<{ mime: string; dataB64: string } | { error: string }>;
+      /** POST /voice/preview — synthesizes one line. `{error}` is a RESOLVED human sentence (no TTS configured, or a provider failure), never a throw — the route always answers 200. `ttsInstanceId` names the connector instance to speak with (the welcome wizard's in-progress pick, which is not yet its saved slot); absent = the saved slot, which is what Settings' own callers want. An instance ID, never a key: the credential resolves swarm-side. */
+      preview(
+        voiceId: string,
+        text?: string,
+        ttsInstanceId?: string,
+      ): Promise<{ mime: string; dataB64: string } | { error: string }>;
     },
     /** Execution-mode availability probe (new-session runtime picker): which runtimes this machine can actually run right now, keyed by mode id. Origin-restricted like cliTools. */
     private readonly execModes?: {
@@ -835,18 +839,21 @@ export class TextChannel {
             body += c;
           });
           req.on("end", () => {
-            let parsed: { voiceId?: string; text?: string } = {};
+            let parsed: { voiceId?: string; text?: string; ttsInstanceId?: unknown } = {};
             try {
               parsed = JSON.parse(body || "{}") as typeof parsed;
             } catch {
               /* handled below */
             }
-            if (!parsed.voiceId) return json(400, { error: "body must be {voiceId, text?}" });
+            if (!parsed.voiceId) return json(400, { error: "body must be {voiceId, text?, ttsInstanceId?}" });
+            // Anything but a string is a malformed body, not a lookup —
+            // dropped here rather than pushed down into swarm's query string.
+            const ttsInstanceId = typeof parsed.ttsInstanceId === "string" ? parsed.ttsInstanceId : undefined;
             // Always 200: voice.preview() RESOLVES {error} for both "no TTS
             // configured" and "the provider ultimately failed" — `fail` here
             // is defense in depth for a genuinely unexpected exception, not
             // the path a missing key takes.
-            void voice.preview(parsed.voiceId, parsed.text).then((r) => json(200, r), fail);
+            void voice.preview(parsed.voiceId, parsed.text, ttsInstanceId).then((r) => json(200, r), fail);
           });
           return;
         }

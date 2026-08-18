@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type PreviewDeps, previewVoice, VOICE_PREVIEW_LINE, voiceOptionsFrom } from "./voice-preview.ts";
+import {
+  type PreviewDeps,
+  previewVoice,
+  VOICE_PREVIEW_AUTH_REFUSAL,
+  VOICE_PREVIEW_FAILED,
+  VOICE_PREVIEW_LINE,
+  voiceOptionsFrom,
+} from "./voice-preview.ts";
 
 // A FAKE cast map, never the real PREMADE_STANDINS — proves voiceOptionsFrom
 // actually reads its argument instead of returning a catalog baked into the
@@ -36,9 +43,30 @@ function deps(overrides: Partial<PreviewDeps> = {}): PreviewDeps {
     standInVoiceId: "stand-in-id",
     timeoutMs: 30_000,
     isTimeout: () => false,
+    logDetail: () => {},
     ...overrides,
   };
 }
+
+/** Deps whose synthesize always throws `message`, plus the log it was handed. */
+function throwingDeps(message: string) {
+  const logged: unknown[] = [];
+  return {
+    logged,
+    deps: deps({
+      currentTts: async () => ({
+        synthesize: async () => {
+          throw new Error(message);
+        },
+      }),
+      logDetail: (err: unknown) => logged.push(err),
+    }),
+  };
+}
+
+/** The raw ElevenLabs 401 body, verbatim — the exact string that reached a first-run screen. */
+const RAW_401 =
+  'ElevenLabs TTS failed: 401 {"detail":{"status":"quota_exceeded","message":"You have exceeded your current quota"}}';
 
 // A wrong implementation that skips base64-encoding, or hardcodes the wrong
 // mime string (e.g. "audio/mp3"), fails this exact-shape comparison.
@@ -55,22 +83,43 @@ test("previewVoice: no TTS configured resolves the exact human hint, never throw
   assert.deepEqual(result, { error: "no tts configured hint" });
 });
 
-// A wrong implementation that swallows the underlying message (returns a
-// generic "failed" with no detail) fails the regex match below.
-test("previewVoice: a provider throw resolves {error} with the real reason, never rejects or hangs", async () => {
-  const result = await previewVoice(
-    "voice-1",
-    "hello",
-    deps({
-      currentTts: async () => ({
-        synthesize: async () => {
-          throw new Error("network exploded");
-        },
-      }),
-    }),
-  );
-  assert.ok("error" in result);
-  assert.match((result as { error: string }).error, /network exploded/);
+// A provider throw still RESOLVES (never rejects, never hangs) — but the
+// sentence it resolves is written for a human. The old implementation
+// interpolated the throw verbatim, which is how an ElevenLabs HTTP body
+// reached the first-run screen; a wrong impl that reinstates that
+// interpolation fails on the `RAW_401` substring check below even if it
+// happens to also contain the human sentence.
+test("previewVoice: a provider 401 resolves the human auth sentence — never the raw HTTP body", async () => {
+  const { deps: d } = throwingDeps(RAW_401);
+  const result = await previewVoice("voice-1", "hello", d);
+  assert.deepEqual(result, { error: VOICE_PREVIEW_AUTH_REFUSAL });
+  assert.ok(!(result as { error: string }).error.includes("401"));
+  assert.ok(!(result as { error: string }).error.includes("quota_exceeded"));
+});
+
+// The detail is not discarded — it is the only record of WHY, and an operator
+// reading broker logs needs it. A wrong impl that simply drops the error on
+// the floor (the lazy fix for the leak) leaves `logged` empty.
+test("previewVoice: the raw provider detail is logged server-side, in full", async () => {
+  const { deps: d, logged } = throwingDeps(RAW_401);
+  await previewVoice("voice-1", "hello", d);
+  assert.equal(logged.length, 1);
+  assert.equal((logged[0] as Error).message, RAW_401);
+});
+
+test("previewVoice: a 403 is the same auth sentence", async () => {
+  const { deps: d } = throwingDeps("ElevenLabs TTS failed: 403 forbidden");
+  assert.deepEqual(await previewVoice("voice-1", "hello", d), { error: VOICE_PREVIEW_AUTH_REFUSAL });
+});
+
+// Anything that is not an auth refusal gets ONE generic sentence — a wrong
+// impl that maps every failure to the auth wording would tell a user with a
+// perfectly good key to go check it.
+test("previewVoice: an unrecognized provider failure resolves one generic sentence, not the auth one", async () => {
+  const { deps: d } = throwingDeps("ElevenLabs TTS failed: 500 upstream had a bad day");
+  const result = await previewVoice("voice-1", "hello", d);
+  assert.deepEqual(result, { error: VOICE_PREVIEW_FAILED });
+  assert.ok(!(result as { error: string }).error.includes("upstream had a bad day"));
 });
 
 // A wrong implementation that treats every failure the same (no 402

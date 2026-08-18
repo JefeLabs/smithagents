@@ -317,9 +317,15 @@ export async function getVoiceOptions(base: string = BROKER_BASE): Promise<Voice
  * omitted unless the caller has a line of its own — the broker holds Anderson's
  * default one (`VOICE_PREVIEW_LINE`), so sending a copy from here would be a
  * second place his preview line is written.
+ *
+ * `ttsInstanceId` names the connector instance to speak with, for a caller
+ * holding a choice that is not saved yet — the welcome wizard, whose slot
+ * assignment is written only on Continue. It is an instance ID and never a
+ * key: the credential is resolved swarm-side, behind the broker. Omitted, the
+ * broker uses the saved slot, which is what Settings' own callers want.
  */
 export async function previewVoice(
-  body: { voiceId: string; text?: string },
+  body: { voiceId: string; text?: string; ttsInstanceId?: string },
   base: string = BROKER_BASE,
 ): Promise<VoicePreviewResult> {
   const res = await brokerFetch(`/voice/preview`, base, {

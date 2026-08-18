@@ -114,3 +114,67 @@ test("swarm rejection keeps last-good cache and allows retry", async () => {
   assert.equal(await r.sttKey(), "dg");
   assert.equal(callCount, 3);
 });
+
+// --- ttsKeyFor: one named instance, resolved fresh -------------------------
+//
+// The wizard's ▶ Say something asks to speak with the instance the user just
+// picked on screen, which is NOT the saved slot — the wizard writes that only
+// on Continue. These cases pin the two properties that makes it safe to reuse
+// the resolver for it: the id reaches swarm, and the answer never touches the
+// saved-slot cache in either direction.
+
+function recordingSwarm(answer: (opts?: { ttsInstanceId?: string }) => VoiceKeys | null) {
+  const seen: Array<{ ttsInstanceId?: string } | undefined> = [];
+  return {
+    seen,
+    client: {
+      getVoiceKeys: async (opts?: { ttsInstanceId?: string }) => {
+        seen.push(opts);
+        return answer(opts);
+      },
+    },
+  };
+}
+
+// A wrong impl that resolves the saved slot and ignores its argument answers
+// "el" here (the saved key) instead of "chosen" — which is exactly the shipped
+// bug, one layer down.
+test("ttsKeyFor asks swarm for THAT instance and returns its key", async () => {
+  const swarm = recordingSwarm((opts) =>
+    opts?.ttsInstanceId === "el-chosen" ? { stt: null, tts: { vendorId: "elevenlabs", apiKey: "chosen" } } : KEYS,
+  );
+  const r = new VoiceKeyResolver(swarm.client, () => 0);
+  assert.equal(await r.ttsKeyFor("el-chosen"), "chosen");
+  assert.deepEqual(swarm.seen, [{ ttsInstanceId: "el-chosen" }]);
+});
+
+// The override is one call's business. If it wrote into the TTL cache, the
+// live mic and every subsequent speak() would start using the wizard's
+// unsaved pick — and if it READ from the cache, a preview inside the TTL
+// window would answer with the saved key while the screen showed another.
+test("ttsKeyFor neither reads nor writes the saved-slot cache", async () => {
+  const swarm = recordingSwarm((opts) =>
+    opts?.ttsInstanceId ? { stt: null, tts: { vendorId: "elevenlabs", apiKey: "chosen" } } : KEYS,
+  );
+  const r = new VoiceKeyResolver(swarm.client, () => 0); // time frozen: everything below is inside one TTL window
+  assert.equal(await r.ttsKey(), "el"); // saved slot, cached
+  assert.equal(await r.ttsKeyFor("el-chosen"), "chosen"); // fresh — did not read the cache
+  assert.equal(await r.ttsKey(), "el"); // still the saved slot — did not write the cache
+  // Exactly two calls: the third read above was served by the untouched cache.
+  assert.deepEqual(swarm.seen, [undefined, { ttsInstanceId: "el-chosen" }]);
+});
+
+// Swarm refuses an instance it cannot vouch for (unknown id, or a vendor with
+// no `tts` capability) by answering a null slot — not by erroring. A wrong
+// impl that treated "no tts in the response" as "fall back to the saved key"
+// would speak with a key the user never chose.
+test("ttsKeyFor returns null when swarm refuses the instance, with no fallback to the saved key", async () => {
+  const swarm = recordingSwarm(() => ({ stt: null, tts: null }));
+  const r = new VoiceKeyResolver(swarm.client, () => 0);
+  assert.equal(await r.ttsKeyFor("github-instance"), null);
+});
+
+test("ttsKeyFor returns null when swarm is unreachable", async () => {
+  const r = new VoiceKeyResolver(recordingSwarm(() => null).client, () => 0);
+  assert.equal(await r.ttsKeyFor("el-chosen"), null);
+});

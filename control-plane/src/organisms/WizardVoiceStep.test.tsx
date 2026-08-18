@@ -437,15 +437,78 @@ describe("WizardVoiceStep", () => {
     // first.
     let release: (v: unknown) => void = () => {};
     const { calls } = renderStep({
-      routes: { "POST /voice/preview": () => new Promise((resolve) => (release = resolve)) },
+      routes: { ...BOTH_VERIFY_OK, "POST /voice/preview": () => new Promise((resolve) => (release = resolve)) },
     });
-    await sayYes();
+    await chooseBothKeys();
     await userEvent.selectOptions(screen.getByRole("combobox", { name: /how should i sound/i }), "voice-graciela");
     await userEvent.click(screen.getByRole("button", SAY));
     await waitFor(() => expect(screen.getByRole("button", SAY)).toBeDisabled());
-    expect(calls.find((c) => c.key === "POST /voice/preview")?.body).toEqual({ voiceId: "voice-graciela" });
+    expect(calls.find((c) => c.key === "POST /voice/preview")?.body).toMatchObject({ voiceId: "voice-graciela" });
     release({ error: "no key" });
     await waitFor(() => expect(screen.getByRole("button", SAY)).toBeEnabled());
+  });
+
+  // THE discriminating case for the shipped defect. The wizard writes its slot
+  // assignment only on Continue, so a preview resolved from the SAVED slot
+  // refuses on every first pass — and refuses by sending a first-run user to a
+  // Settings screen they have not reached. The chosen instance id has to
+  // travel on the request for the preview to be able to work at all. Note the
+  // fixture: `/me/voice` is NO_VOICE (both slots null), which is exactly the
+  // state the broken build cannot preview from — a test that seeded a saved
+  // slot would pass on that build.
+  it("▶ Say something names the instance chosen ON THIS SCREEN, not the saved slot", async () => {
+    const { calls } = renderStep({
+      voice: NO_VOICE,
+      routes: { ...BOTH_VERIFY_OK, "POST /voice/preview": () => ({ mime: "audio/mpeg", dataB64: "" }) },
+    });
+    await chooseBothKeys();
+    await userEvent.click(screen.getByRole("button", SAY));
+    await waitFor(() =>
+      expect(calls.find((c) => c.key === "POST /voice/preview")?.body).toEqual({
+        voiceId: "voice-manuel",
+        ttsInstanceId: "el-1",
+      }),
+    );
+  });
+
+  // The key material itself never travels: only the instance id, which the
+  // swarm resolves behind the broker. A wrong impl that read the key from the
+  // connectors list and posted it would satisfy the id assertion above.
+  it("▶ Say something sends an instance id and nothing resembling a key", async () => {
+    const { calls } = renderStep({
+      routes: { ...BOTH_VERIFY_OK, "POST /voice/preview": () => ({ mime: "audio/mpeg", dataB64: "" }) },
+    });
+    await chooseBothKeys();
+    await userEvent.click(screen.getByRole("button", SAY));
+    await waitFor(() => expect(calls.some((c) => c.key === "POST /voice/preview")).toBe(true));
+    const body = calls.find((c) => c.key === "POST /voice/preview")?.body as Record<string, unknown>;
+    expect(Object.keys(body).sort()).toEqual(["ttsInstanceId", "voiceId"]);
+  });
+
+  // With nothing chosen there is no key to speak with, and a request sent
+  // anyway is doomed — it comes back with the broker's Settings punt, which is
+  // the sentence this whole step exists to remove. So ▶ waits, and says what
+  // it is waiting for, in terms of the screen the user is on. A wrong impl
+  // that leaves ▶ live (or that says nothing) fails here.
+  it("▶ Say something waits for a speaking key, and names this screen rather than Settings", async () => {
+    const { calls } = renderStep({ voice: NO_VOICE });
+    await sayYes();
+    expect(screen.getByRole("button", SAY)).toBeDisabled();
+    const hint = screen.getByText(/choose a key above/i);
+    expect(hint).toBeInTheDocument();
+    expect(hint.textContent).not.toMatch(/settings/i);
+    expect(calls.some((c) => c.key === "POST /voice/preview")).toBe(false);
+  });
+
+  it("▶ Say something comes alive the moment a speaking key is chosen", async () => {
+    // The other half of the gate: a disabled control that never enables is
+    // just a broken one. Choosing ONLY the tts slot is what frees it — the
+    // preview does not wait on the listening key, which powers nothing here.
+    renderStep({ routes: BOTH_VERIFY_OK });
+    await sayYes();
+    await userEvent.selectOptions(screen.getByRole("combobox", SPEAK), "el-1");
+    await waitFor(() => expect(screen.getByRole("button", SAY)).toBeEnabled());
+    expect(screen.queryByText(/choose a key above/i)).not.toBeInTheDocument();
   });
 
   it("a preview refusal is rendered inline, in the broker's own words, and blocks nothing", async () => {

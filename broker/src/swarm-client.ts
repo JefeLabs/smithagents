@@ -614,10 +614,17 @@ export class SwarmClient {
    * route itself always 200s with per-slot nulls when keys are unset, so the
    * VoiceKeyResolver can keep its last good keys across a swarm restart
    * instead of flapping voice off.
+   *
+   * `ttsInstanceId` resolves the tts slot from THAT connector instance instead
+   * of the saved assignment — the welcome wizard previewing a key it has not
+   * committed yet. Swarm validates the id (it must exist and its vendor must
+   * declare `tts`); a refused one comes back as a null slot, never the saved
+   * key.
    */
-  async getVoiceKeys(): Promise<VoiceKeys | null> {
+  async getVoiceKeys(opts?: { ttsInstanceId?: string }): Promise<VoiceKeys | null> {
+    const query = opts?.ttsInstanceId ? `?ttsInstanceId=${encodeURIComponent(opts.ttsInstanceId)}` : "";
     try {
-      return (await this.http("GET", "/me/voice/keys")) as unknown as VoiceKeys;
+      return (await this.http("GET", `/me/voice/keys${query}`)) as unknown as VoiceKeys;
     } catch {
       return null;
     }

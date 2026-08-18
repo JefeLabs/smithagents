@@ -664,6 +664,60 @@ test("resolveCloseBy: no close in the patch is a no-op", () => {
   assert.equal(resolveCloseBy(undefined, "edwin"), undefined);
 });
 
+// THE first-run case, and the one the shipped build gets wrong. During the
+// welcome wizard nothing is saved yet — `user.voice` is undefined — so a
+// resolver that can only read the SAVED slot returns null here and the ▶ Say
+// something preview refuses on every first run. Passing the wizard's
+// in-progress choice as an override is the whole fix, and a wrong impl that
+// ignores `overrides` (or that reads the saved slot first) fails this exact
+// assertion while every saved-slot test above still passes.
+test("resolveVoiceKeys: a tts override resolves that instance's key while the SAVED slot is unset", () => {
+  assert.deepEqual(resolveVoiceKeys({ ...voiceUser, voice: undefined }, { tts: "el1" }), {
+    stt: null,
+    tts: { vendorId: "elevenlabs", apiKey: "el-key" },
+  });
+});
+
+// An override that merely agreed with the saved slot would be indistinguishable
+// from ignoring it. Here the saved slot points at a DIFFERENT instance, so only
+// an implementation that actually prefers the override can answer "el-key".
+test("resolveVoiceKeys: a tts override wins over a different saved tts assignment", () => {
+  const twoKeys: User = {
+    ...voiceUser,
+    connectors: [
+      ...(voiceUser.connectors ?? []),
+      { id: "el2", vendorId: "elevenlabs", label: "spare", fields: { apiKey: "el-key-2" } },
+    ],
+    voice: { tts: { instanceId: "el2" } },
+  };
+  assert.deepEqual(resolveVoiceKeys(twoKeys, { tts: "el1" }).tts, { vendorId: "elevenlabs", apiKey: "el-key" });
+});
+
+// Never trust the id blind. The override arrives from a browser, and the save
+// path's own capability gate (buildVoiceUpdate) has not run on it — without
+// this check a GitHub token, or a Deepgram key, would be handed to ElevenLabs
+// as a speaking credential. Refusal is null, NOT a quiet fall back to the
+// saved slot: a preview that spoke with a key other than the one on screen
+// would be worse than one that declines.
+test("resolveVoiceKeys: a tts override whose vendor lacks the tts capability resolves null, and does not fall back to the saved slot", () => {
+  const saved: User = { ...voiceUser, voice: { tts: { instanceId: "el1" } } };
+  for (const instanceId of ["gh1", "dg1"]) {
+    assert.equal(resolveVoiceKeys(saved, { tts: instanceId }).tts, null, `expected null for tts=${instanceId}`);
+  }
+});
+
+test("resolveVoiceKeys: a tts override naming an instance this user does not have resolves null", () => {
+  const saved: User = { ...voiceUser, voice: { tts: { instanceId: "el1" } } };
+  assert.equal(resolveVoiceKeys(saved, { tts: "someone-elses-instance" }).tts, null);
+});
+
+// The override is per-slot: overriding tts must not disturb the stt slot the
+// live mic is already listening through.
+test("resolveVoiceKeys: a tts override leaves the saved stt slot alone", () => {
+  const saved: User = { ...voiceUser, voice: { stt: { instanceId: "dg1" }, tts: { instanceId: "el1" } } };
+  assert.deepEqual(resolveVoiceKeys(saved, { tts: "el1" }).stt, { vendorId: "deepgram", apiKey: "dg-key" });
+});
+
 test("resolveVoiceKeys: a still-encrypted apiKey (lost/rotated master key) resolves null, not the ciphertext", () => {
   const undecryptable: User = {
     ...voiceUser,

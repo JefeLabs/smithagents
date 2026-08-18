@@ -2498,9 +2498,15 @@ export class OrchestratorServer {
     // broker's SwarmClient calls it server-to-server on the same loopback-bound,
     // no-separate-auth trust boundary. In cloud mode this route is the seam where
     // platform-provisioned keys would be resolved instead (spec §7).
-    this.app.get("/me/voice/keys", async () => {
+    // `?ttsInstanceId=` is the welcome wizard's in-progress choice, resolved
+    // for one preview instead of the saved slot (which the wizard only writes
+    // on Continue). resolveVoiceKeys validates it — unknown instance or a
+    // vendor without the `tts` capability comes back null, never the saved
+    // key.
+    this.app.get<{ Querystring: { ttsInstanceId?: string } }>("/me/voice/keys", async (req) => {
       const users = await loadUsersFromDir(this.paths.users);
-      return resolveVoiceKeys(resolveCurrentUser(users));
+      const ttsInstanceId = req.query.ttsInstanceId?.trim();
+      return resolveVoiceKeys(resolveCurrentUser(users), ttsInstanceId ? { tts: ttsInstanceId } : {});
     });
 
     // ── CLI tool registry (machine-level; spec 2026-08-06) ─────────────
@@ -4500,13 +4506,33 @@ export function clearVoiceReferences(voice: VoiceSettings | undefined, instanceI
   return next;
 }
 
-/** GET /me/voice/keys resolution (spec §4). Fields are already decrypted in memory by loadUsersFromDir. */
-export function resolveVoiceKeys(user: User | null): {
+/**
+ * GET /me/voice/keys resolution (spec §4). Fields are already decrypted in
+ * memory by loadUsersFromDir.
+ *
+ * `overrides` names an instance to resolve INSTEAD of the saved slot
+ * assignment, for a caller holding a choice the user has not committed yet —
+ * the welcome wizard's ▶ Say something, whose whole point is hearing a voice
+ * before Continue writes anything. Without it the wizard can only ever read a
+ * slot that is still null, so the preview refuses on every first run.
+ *
+ * The vendor's capability is checked here for BOTH paths. On the saved path
+ * buildVoiceUpdate already enforced it at write time, so this is belt and
+ * braces; on the override path it is the only check there is — the id arrives
+ * from a browser, and without it a GitHub token or a Deepgram key would be
+ * handed back as a speaking credential. A refused override resolves that slot
+ * to null and never falls back to the saved one: speaking with a key other
+ * than the one on screen would be worse than declining.
+ */
+export function resolveVoiceKeys(
+  user: User | null,
+  overrides: Partial<Record<"stt" | "tts", string>> = {},
+): {
   stt: { vendorId: string; apiKey: string } | null;
   tts: { vendorId: string; apiKey: string } | null;
 } {
   const resolveSlot = (slot: "stt" | "tts") => {
-    const instanceId = user?.voice?.[slot]?.instanceId;
+    const instanceId = overrides[slot] ?? user?.voice?.[slot]?.instanceId;
     const instance = user?.connectors?.find((c) => c.id === instanceId);
     const apiKey = instance?.fields.apiKey;
     // A still-`enc:v1:…` value means decryptUser couldn't decrypt it (lost/
@@ -4516,6 +4542,9 @@ export function resolveVoiceKeys(user: User | null): {
     // reject the ciphertext — treat it as absent so the user gets the normal
     // "add a key in Settings" pointer instead of a silent no-op.
     if (!instance || !apiKey || isEncrypted(apiKey)) return null;
+    // The vendor has to be able to do this job — see the note above on why an
+    // override is checked here and not merely at write time.
+    if (!findVendor(instance.vendorId)?.capabilities?.includes(slot)) return null;
     return { vendorId: instance.vendorId, apiKey };
   };
   return { stt: resolveSlot("stt"), tts: resolveSlot("tts") };

@@ -62,13 +62,44 @@ export interface PreviewDeps {
   timeoutMs: number;
   /** Same isTtsTimeout() speak() uses to recognize an aborted signal. */
   isTimeout(err: unknown): boolean;
+  /**
+   * Where the RAW provider failure goes. Injected rather than a `console.warn`
+   * here so this module stays side-effect-free (see the header) — and required
+   * rather than optional, because "the detail is logged, never rendered" is
+   * only a guarantee if every caller has to supply somewhere to put it.
+   */
+  logDetail(err: unknown): void;
 }
 
 const is402 = (err: unknown) => /402|payment_required|paid_plan_required/.test(String(err));
 
-function humanize(err: unknown): string {
-  const msg = (err as { message?: string } | undefined)?.message ?? String(err);
-  return `I couldn't say that — ${msg}`;
+/**
+ * The credential itself was refused. Worth its own sentence because it is the
+ * one provider failure the user can DO something about, and the action is on
+ * the screen they are already looking at — never "go to Settings", which a
+ * first-run user has not reached.
+ */
+export const VOICE_PREVIEW_AUTH_REFUSAL = "That key didn't work for speaking — check it and try again.";
+/** Everything else, in one sentence: a preview gates nothing, so the only useful advice is "try again". */
+export const VOICE_PREVIEW_FAILED = "I couldn't say that just now — try again, or pick a different voice.";
+
+/**
+ * The provider adapter's throw carries the HTTP status AND the raw response
+ * body (`ElevenLabs TTS failed: 401 {"detail":{...}}`) — and this string is
+ * rendered verbatim on the wizard's first-run screen. Interpolating it there
+ * put an ElevenLabs error payload in front of a user setting up their machine.
+ *
+ * So: recognized shapes become written sentences, everything else becomes one
+ * generic sentence, and the raw text goes to `logDetail` — the operator's
+ * copy — instead of to the screen. Matched against `String(err)` rather than
+ * `err.message` because the adapters throw plain Errors today and the status
+ * could just as well arrive on a thrown response object tomorrow.
+ */
+const isAuthRefusal = (err: unknown) => /\b(401|403)\b|unauthor|forbidden|invalid[_ -]?api[_ -]?key/i.test(String(err));
+
+function humanize(err: unknown, logDetail: (err: unknown) => void): string {
+  logDetail(err);
+  return isAuthRefusal(err) ? VOICE_PREVIEW_AUTH_REFUSAL : VOICE_PREVIEW_FAILED;
 }
 
 /**
@@ -87,13 +118,13 @@ export async function previewVoice(voiceId: string, text: string, deps: PreviewD
     return { mime: "audio/mpeg", dataB64: Buffer.from(result.data).toString("base64") };
   } catch (err) {
     if (deps.isTimeout(err)) return { error: `That took too long — try again.` };
-    if (!is402(err) || deps.standInVoiceId === voiceId) return { error: humanize(err) };
+    if (!is402(err) || deps.standInVoiceId === voiceId) return { error: humanize(err, deps.logDetail) };
     try {
       const result = await attempt(deps.standInVoiceId);
       return { mime: "audio/mpeg", dataB64: Buffer.from(result.data).toString("base64") };
     } catch (err2) {
       if (deps.isTimeout(err2)) return { error: `That took too long — try again.` };
-      return { error: humanize(err2) };
+      return { error: humanize(err2, deps.logDetail) };
     }
   }
 }
