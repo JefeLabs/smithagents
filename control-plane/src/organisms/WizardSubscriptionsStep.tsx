@@ -68,9 +68,7 @@ export function WizardSubscriptionsStep({ onDone, onBack, saveState = "idle", na
           `<h1>` here. Anderson asking directly, by name, rather than the old
           unaddressed form hint. */}
       <h2 className="wizard-subscriptions-step__title">Where should I get my thinking from, {name}?</h2>
-      <p className="wizard-subscriptions-step__lede">
-        Pick as many as you like — I'll use whichever suits each job.
-      </p>
+      <p className="wizard-subscriptions-step__lede">Pick as many as you like — I'll use whichever suits each job.</p>
       <p className="wizard__hint">
         Install a CLI or paste an API key — I'll be ready the moment one of them actually works.
       </p>

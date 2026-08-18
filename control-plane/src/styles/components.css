@@ -4497,6 +4497,16 @@ fieldset.wizard-fork-step {
   padding: 0;
   min-width: 0;
 }
+/* A rendered `<legend>` is NOT a flex item — it sits above the fieldset's
+   anonymous content box, so the `gap: 12px` every other row in this column
+   gets skips it entirely and the prompt ends up flush against the first
+   radio card, its descenders crossed by that card's top border. (The `<p>`
+   this legend replaced was an ordinary flex child and did get the gap.)
+   Restores the same 12px as an explicit margin. Browser-only: jsdom has no
+   layout, so no unit test can see either the collision or this fix. */
+fieldset.wizard-fork-step > .wizard-fork-step__prompt {
+  margin-bottom: 12px;
+}
 .wizard-fork-step__label {
   font-weight: 600;
 }
@@ -4523,6 +4533,25 @@ fieldset.wizard-fork-step {
 .wizard-fork-step__hosted[aria-disabled="true"] {
   opacity: 0.55;
   pointer-events: none;
+}
+/* Hand-authored, so it inherits none of the card layout HeroUI gives the
+   option above it: unstyled, the native input butts straight against its own
+   label ("◉In the cloud") and `.wizard-fork-step__hint`'s `display: block`
+   drops the hint underneath the INPUT, 21px left of the enabled option's
+   text. Two columns fix both — the input gets its own, and the 13px input
+   plus this 8px gap put the text column at exactly the 20px+1px inset the
+   card's own label and hint sit at, so the two options read as one group. */
+.wizard-fork-step__hosted {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 8px;
+}
+.wizard-fork-step__hosted .wizard-fork-step__label,
+.wizard-fork-step__hosted .wizard-fork-step__hint {
+  grid-column: 2;
+}
+.wizard-fork-step__hosted-input {
+  align-self: center;
 }
 .wizard-fork-step__notify {
   align-self: flex-start;
@@ -4594,6 +4623,11 @@ fieldset.wizard-fork-step {
   padding-left: 20px;
   font-size: 13px;
   color: var(--foreground);
+  /* The global reset sets `list-style: none` on every `ul`, which left the
+     20px indent above with nothing in it: a one-entry list rendered as a
+     single stray indented word rather than as the itemization the chip's
+     whole "names each one specifically" promise rests on. */
+  list-style: disc;
 }
 .wizard-chip__clears li {
   margin: 2px 0;
