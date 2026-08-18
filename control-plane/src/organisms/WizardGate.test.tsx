@@ -772,6 +772,71 @@ describe("WizardGate", () => {
     await waitFor(() => expect(go()).toBeEnabled());
   });
 
+  it("a REFUSED 'pick sensible things for me' leaves the gate something to click", async () => {
+    // The dead end the guard above must not create, and not a hypothetical
+    // one: this feature has already shipped exactly this bug on the LAST step,
+    // where a refused save found the footer inert behind a write that was
+    // already over. The gate has the same shape for the same reason — `finish`
+    // computes no next step, so nothing swaps this screen out — and it is the
+    // FIRST screen of first-run setup, with no Back and no other control on it
+    // at all. Inert past the refusal means a page reload nothing mentions.
+    //
+    // The refusal shape specifically: `brokerFetch` never throws on a non-2xx,
+    // so an origin block or a swarm-side validation error RESOLVES with
+    // `{error}` rather than rejecting.
+    const { container, updateMe } = renderGate({ placeholder: true, setup: undefined });
+    await findHost(container);
+    updateMe.mockClear();
+    updateMe.mockResolvedValue({ error: "origin not allowed" });
+
+    await userEvent.type(screen.getByLabelText(/what shall i call you/i), "Edwin");
+    await userEvent.click(screen.getByRole("button", { name: /just pick sensible things for me/i }));
+
+    expect(await screen.findByText(/origin not allowed/i)).toBeInTheDocument();
+    expect(await findHost(container)).toHaveAttribute("data-step", PREFLIGHT);
+    expect(screen.getByRole("button", { name: /nice to meet you/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /just pick sensible things for me/i })).toBeEnabled();
+    // Only the step rolls back, never the answer — the name is still there to
+    // retry with rather than typed a second time.
+    expect(screen.getByLabelText(/what shall i call you/i)).toHaveValue("Edwin");
+
+    // Enabled is not the same as live: the retry has to actually reach the
+    // server. This write never settles, so what follows is the retry in flight.
+    updateMe.mockClear();
+    updateMe.mockReturnValue(new Promise(() => {}));
+    await userEvent.click(screen.getByRole("button", { name: /just pick sensible things for me/i }));
+
+    await waitFor(() => expect(updateMe).toHaveBeenCalledTimes(1));
+    // And the race is closed AGAIN on the retry — a guard that simply stops
+    // re-arming after the first failure passes everything above this line and
+    // reopens exactly the window it was added to close.
+    expect(screen.getByRole("button", { name: /nice to meet you/i })).toBeDisabled();
+  });
+
+  it("a REJECTED one does too — the other shape, and not interchangeable", async () => {
+    // `advance`'s two branches are different code: a rejection takes `.catch`,
+    // which never calls `setStep`. A guard wired to re-arm in only one of them
+    // passes the test above and leaves this user just as stuck. Same pairing,
+    // same reason, as the two last-step tests below.
+    const { container, updateMe } = renderGate({ placeholder: true, setup: undefined });
+    await findHost(container);
+    updateMe.mockClear();
+    updateMe.mockRejectedValue(new Error("network error"));
+
+    await userEvent.type(screen.getByLabelText(/what shall i call you/i), "Edwin");
+    await userEvent.click(screen.getByRole("button", { name: /just pick sensible things for me/i }));
+
+    expect(await screen.findByText(/network error/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /just pick sensible things for me/i })).toBeEnabled();
+
+    // The primary is the escape that matters on this shape — a rejection is
+    // ambiguous, the write may well have landed, so walking the setup rather
+    // than retrying the shortcut is the sensible move. Live, not just visible.
+    updateMe.mockResolvedValue({});
+    await userEvent.click(screen.getByRole("button", { name: /nice to meet you/i }));
+    expect(await findHost(container)).toHaveAttribute("data-step", "subscriptions");
+  });
+
   it("the step's own escape records the SAME 'skipped' the progress-row Skip does", async () => {
     // The two Skips on this one screen, side by side after a failed brain
     // save. `brainSkipped` exists so "skipped" and "never asked" stay
