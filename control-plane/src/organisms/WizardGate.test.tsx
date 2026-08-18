@@ -4,10 +4,21 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../api/broker", () => ({ getMe: vi.fn(), updateMe: vi.fn() }));
+vi.mock("../api/broker", () => ({
+  getMe: vi.fn(),
+  updateMe: vi.fn(),
+  // The Subscriptions and Anderson steps render the real Settings groups,
+  // which fetch through this same module. Stubbed so they show their own
+  // empty state rather than a load error sitting in the panel beside the
+  // errors these tests actually assert on.
+  getCliTools: vi.fn(),
+  getApiKeys: vi.fn(),
+  getBrainEngine: vi.fn(),
+}));
 
-import { getMe, updateMe } from "../api/broker";
+import { getApiKeys, getBrainEngine, getCliTools, getMe, updateMe } from "../api/broker";
 import type { MeRecord } from "../api/types";
+import { PREFLIGHT } from "../lib/wizardSteps";
 import { WizardGate } from "./WizardGate";
 
 // retry: false — one of these tests rejects the query deliberately, and the
@@ -21,6 +32,9 @@ const wrap = (ui: ReactNode) =>
 
 function stubMe(me: MeRecord) {
   (getMe as ReturnType<typeof vi.fn>).mockResolvedValue(me);
+  (getCliTools as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+  (getApiKeys as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+  (getBrainEngine as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 }
 
 function stubMeFailure() {
@@ -44,6 +58,42 @@ function stubViewport({ width }: { width: number }) {
       removeEventListener: () => {},
     })),
   );
+}
+
+/**
+ * Renders the gate over a user record described by its wizard-relevant parts,
+ * and hands back the `updateMe` mock so a test can assert what the host
+ * actually persisted — a step change that never reaches the server looks
+ * identical on screen and resumes at the wrong step on the next reload.
+ *
+ * The viewport is pinned wide because every test using this helper is about
+ * the desktop path; the two compact-gate tests stub their own.
+ *
+ * `updateMe` resolves with an empty record by default: the host's own save
+ * handling reads `result.error`, so a mock returning `undefined` would fail
+ * inside the promise chain rather than in the test.
+ */
+function renderGate({
+  name = "You",
+  placeholder = false,
+  setup,
+}: {
+  name?: string;
+  placeholder?: boolean;
+  setup?: MeRecord["setup"];
+}) {
+  stubViewport({ width: 1440 });
+  stubMe({ id: "me", name, connectors: [], placeholder, setup });
+  const updateMeMock = updateMe as ReturnType<typeof vi.fn>;
+  updateMeMock.mockResolvedValue({});
+  return {
+    ...wrap(
+      <WizardGate>
+        <div>THE APP</div>
+      </WizardGate>,
+    ),
+    updateMe: updateMeMock,
+  };
 }
 
 afterEach(() => {
@@ -103,17 +153,15 @@ describe("WizardGate", () => {
   });
 
   it("resumes an unfinished setup at the step the user left", async () => {
-    stubMe({ id: "me", name: "Edwin", connectors: [], placeholder: false, setup: { step: "fork" } });
-    const { container } = wrap(
-      <WizardGate>
-        <div>THE APP</div>
-      </WizardGate>,
-    );
+    // The recorded step is only resumable together with the answers that make
+    // it reachable — `resumeStep` sends a step outside the selected sequence
+    // back to preflight rather than stranding the user on it.
+    const { container } = renderGate({ name: "Edwin", setup: { mode: "local", step: "subscriptions" } });
 
-    // Assert what the host itself renders (which step it selected), not the
-    // fork step's own markup — WizardForkStep's radio group belongs to Task 3.
+    // Assert what the host itself renders (which step it selected), not that
+    // step's own markup, which belongs to the step's own suite.
     await screen.findByRole("heading", { name: /welcome/i });
-    expect(container.querySelector('[data-step="fork"]')).not.toBeNull();
+    expect(container.querySelector('[data-step="subscriptions"]')).not.toBeNull();
   });
 
   it("shows the app rather than stranding the user when /me cannot be reached", async () => {
@@ -192,6 +240,115 @@ describe("WizardGate", () => {
     expect(await screen.findByText(/origin not allowed/i)).toBeInTheDocument();
     // Unlike a network blip, a server-reported rejection is a firm "no" — the
     // wizard doesn't creep forward on a step that it knows didn't persist.
-    expect(container.querySelector('[data-step="name"]')).not.toBeNull();
+    expect(container.querySelector('[data-step="preflight"]')).not.toBeNull();
+  });
+
+  it("shows no step indicator on a fresh install's preflight", async () => {
+    renderGate({ placeholder: true, setup: undefined });
+
+    expect(await screen.findByTestId("wizard-host")).toHaveAttribute("data-step", "preflight");
+    expect(screen.queryByText("Subscriptions")).toBeNull();
+  });
+
+  it("shows no step indicator on preflight even once the answers select a sequence", async () => {
+    // Strictly stronger than the fresh-install case above, which an indicator
+    // driven off the answers alone would also pass: with a mode already
+    // recorded the sequence is NON-empty, so the only thing that can keep the
+    // indicator off the screen is preflight itself being excluded from it.
+    // This is the state someone lands in by pressing Back.
+    renderGate({ name: "Edwin", setup: { mode: "local", step: PREFLIGHT } });
+
+    expect(await screen.findByTestId("wizard-host")).toHaveAttribute("data-step", "preflight");
+    expect(screen.queryByText("Subscriptions")).toBeNull();
+    expect(screen.queryByText("Anderson")).toBeNull();
+  });
+
+  it("does not greet by name on preflight, where the name is being asked for", async () => {
+    // A record that HAS a name, and awaited: with `placeholder: true` there is
+    // no name to greet with in the first place, and an un-awaited query runs
+    // while /me is still loading — either one passes without the guard.
+    renderGate({ name: "Edwin", setup: { mode: "local", step: PREFLIGHT } });
+
+    expect(await screen.findByTestId("wizard-host")).toHaveAttribute("data-step", "preflight");
+    expect(screen.queryByText(/Welcome,/)).toBeNull();
+  });
+
+  it("greets by name on the first setup step", async () => {
+    renderGate({ name: "Edwin", setup: { mode: "local", step: "subscriptions" } });
+
+    expect(await screen.findByText("Welcome, Edwin")).toBeInTheDocument();
+  });
+
+  it("shows only the chosen sequence in the indicator", async () => {
+    renderGate({ name: "Edwin", setup: { mode: "local", step: "subscriptions" } });
+
+    expect(await screen.findByText("Subscriptions")).toBeInTheDocument();
+    expect(screen.getByText("Anderson")).toBeInTheDocument();
+    // Preflight is not in it. Exact-string, so the "Welcome, Edwin" heading
+    // above the indicator is not what satisfies this.
+    expect(screen.queryByText("Welcome")).toBeNull();
+  });
+
+  it("enters the sequence the answer just given selects, not the one state still holds", async () => {
+    const { updateMe } = renderGate({ placeholder: true, setup: undefined });
+
+    await screen.findByTestId("wizard-host");
+    await userEvent.type(screen.getByLabelText(/your name/i), "Edwin");
+    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+
+    // Read from state instead of from the patch, `mode` is still undefined at
+    // this point — `setupStepsFor` returns nothing for it, so the wizard would
+    // persist `done` and drop a user who has answered nothing into the app.
+    expect(await screen.findByTestId("wizard-host")).toHaveAttribute("data-step", "subscriptions");
+    expect(updateMe).toHaveBeenCalledWith(
+      expect.objectContaining({ setup: expect.objectContaining({ mode: "local", step: "subscriptions" }) }),
+    );
+  });
+
+  it("goes back from the first setup step into preflight, and persists it", async () => {
+    const { updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "subscriptions" } });
+
+    await userEvent.click(await screen.findByRole("button", { name: /back/i }));
+
+    expect(await screen.findByTestId("wizard-host")).toHaveAttribute("data-step", "preflight");
+    // Persisted, or a reload would resume at the step they just left.
+    expect(updateMe).toHaveBeenCalledWith(
+      expect.objectContaining({ setup: expect.objectContaining({ step: "preflight" }) }),
+    );
+  });
+
+  it("a server-refused Back returns to the step it left and says why", async () => {
+    // The shape a `.catch` alone never sees: brokerFetch does not throw on a
+    // non-2xx, so this RESOLVES with {error}. Without the resolved-branch
+    // check the screen would sit on preflight having persisted nothing, and
+    // the next reload would throw the user forward again.
+    const { updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "subscriptions" } });
+    updateMe.mockResolvedValue({ error: "origin not allowed" });
+
+    await userEvent.click(await screen.findByRole("button", { name: /back/i }));
+
+    expect(await screen.findByText(/origin not allowed/i)).toBeInTheDocument();
+    expect(screen.getByTestId("wizard-host")).toHaveAttribute("data-step", "subscriptions");
+  });
+
+  it("a network-level failure on Back keeps the user where they navigated, and still reports it", async () => {
+    // The other shape, and deliberately NOT handled the same way: a rejection
+    // is ambiguous — the write may well have landed — so the step change
+    // stands, exactly as `advance` treats its own rejections. Reported either
+    // way; a whole wizard's worth of unsaved work must never go unmentioned.
+    const { updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "subscriptions" } });
+    updateMe.mockRejectedValue(new Error("network error"));
+
+    await userEvent.click(await screen.findByRole("button", { name: /back/i }));
+
+    expect(await screen.findByText(/network error/i)).toBeInTheDocument();
+    expect(screen.getByTestId("wizard-host")).toHaveAttribute("data-step", "preflight");
+  });
+
+  it("offers no Back on preflight — it is the beginning", async () => {
+    renderGate({ placeholder: true, setup: undefined });
+
+    await screen.findByTestId("wizard-host");
+    expect(screen.queryByRole("button", { name: /back/i })).toBeNull();
   });
 });

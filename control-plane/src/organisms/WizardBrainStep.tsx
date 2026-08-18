@@ -6,6 +6,8 @@ import { useApiKeys, useBrainEngine, useCliTools, useSaveBrainEngine } from "../
 
 export interface WizardBrainStepProps {
   onDone: (patch: { setup: Setup }) => void;
+  /** Same contract as `WizardSubscriptionsStepProps["onBack"]` — see there. */
+  onBack?: () => void;
 }
 
 /**
@@ -42,7 +44,7 @@ interface Candidate {
  * user whose only working tool is refused deserves to know why, not stare at
  * an empty picker.
  */
-export function WizardBrainStep({ onDone }: WizardBrainStepProps) {
+export function WizardBrainStep({ onDone, onBack }: WizardBrainStepProps) {
   const { data: tools = [] } = useCliTools();
   const { data: keys = [] } = useApiKeys();
   const { data: current } = useBrainEngine();
@@ -52,8 +54,9 @@ export function WizardBrainStep({ onDone }: WizardBrainStepProps) {
   const [busy, setBusy] = useState(false);
   // Sticky once set, and never cleared by a later attempt: a save that has
   // failed even once is proof this user can be trapped here, and this is the
-  // last step — there is no Back, and RadioButtonGroup has no deselect. See
-  // the escape it unlocks in the footer.
+  // last step — Back only retreats into the sequence, it never reaches the
+  // app, and RadioButtonGroup has no deselect. See the escape it unlocks in
+  // the footer.
   const [saveFailed, setSaveFailed] = useState(false);
 
   // cli candidates first — a working subscription CLI beats a pasted key as
@@ -173,6 +176,15 @@ export function WizardBrainStep({ onDone }: WizardBrainStepProps) {
           // the LAST step, never reaches the app at all.
           <Button variant="secondary" onPress={() => onDone({ setup: {} })} isDisabled={busy}>
             Skip for now
+          </Button>
+        )}
+        {/* Last, under the escape hatch: "Skip for now" is the way OUT of a
+            step that refused a save, Back is the way to change an earlier
+            answer. Disabled only while a save is in flight, so it can never
+            race the mutation it would navigate away from. */}
+        {onBack && (
+          <Button variant="secondary" onPress={onBack} isDisabled={busy}>
+            Back
           </Button>
         )}
       </div>

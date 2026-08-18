@@ -291,8 +291,11 @@ export interface MeRecord {
   connectors: ConnectorInstanceRecord[];
   /** True when no user record is saved yet — the wizard's first-run sentinel. */
   placeholder?: boolean;
-  /** How far through the welcome wizard this user got. */
-  setup?: { mode?: "local" | "hosted"; step?: string };
+  /** How far through the welcome wizard this user got, and the preflight
+      answers that chose its sequence. Mirrors swarm's `User["setup"]`
+      (swarm/src/users.ts) — `voice` was already persisted and returned there;
+      this side had simply not been widened to see it. */
+  setup?: { mode?: "local" | "hosted"; voice?: boolean; step?: string };
 }
 
 /**

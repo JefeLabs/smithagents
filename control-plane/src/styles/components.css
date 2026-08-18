@@ -4367,10 +4367,10 @@ button.logo {
 .wizard-gate__footer [data-slot="button"] {
   width: 100%;
 }
-/* Only the Brain step's escape hatch ("Skip for now", shown after a save the
-   server refused) ever puts a SECOND button in a footer — every other step
-   holds exactly one, so this adjacent-sibling rule is inert there rather than
-   changing any existing footer's box. */
+/* Footers stack rather than sit side by side: every step past preflight holds
+   Continue plus a Back, and the Brain step's escape hatch ("Skip for now",
+   shown after a save the server refused) can make that three. Preflight itself
+   holds exactly one, so this adjacent-sibling rule stays inert there. */
 .wizard-gate__footer [data-slot="button"] + [data-slot="button"] {
   margin-top: 10px;
 }

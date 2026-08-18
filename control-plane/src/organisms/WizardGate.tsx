@@ -7,17 +7,19 @@ import type { MeRecord } from "../api/types";
 import {
   isSetupComplete,
   nextStep,
+  PREFLIGHT,
+  prevStep,
   resumeStep,
   SETUP_DONE,
+  type Setup,
+  setupStepsFor,
   WIZARD_STEP_META,
-  WIZARD_STEPS,
   type WizardStep,
 } from "../lib/wizardSteps";
 import { useMe } from "../queries/http";
 import { qk } from "../queries/keys";
 import { WizardBrainStep } from "./WizardBrainStep";
-import { WizardForkStep } from "./WizardForkStep";
-import { WizardNameStep } from "./WizardNameStep";
+import { WizardPreflightStep } from "./WizardPreflightStep";
 import { WizardSubscriptionsStep } from "./WizardSubscriptionsStep";
 
 /**
@@ -100,12 +102,14 @@ function WizardComingSoon() {
 }
 
 /**
- * The step host. Owns the current step and its persistence — every step is a
+ * The step host. Owns the current step, its persistence, and the three
+ * preflight answers that select which sequence follows — every step is a
  * controlled organism (props in, `onDone(patch)` out) with no fetch of its
  * own. `data-step` on the root names which step is showing without depending
  * on that step's own markup, so resume behaviour stays testable across a step
- * swap (Task 2's resume test asserts through this attribute, not any step's
- * internal markup).
+ * swap (the resume test asserts through this attribute, not any step's
+ * internal markup; `data-testid` beside it just gives that same root a name to
+ * await by).
  *
  * Advances the on-screen step immediately on `onDone` — the PUT and the cache
  * invalidation run in the background rather than gating the transition, so
@@ -132,16 +136,48 @@ function WizardComingSoon() {
 function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRecord }) {
   const [step, setStep] = useState(initialStep);
   const [error, setError] = useState<string | null>(null);
+  // The three preflight answers live here, not in `me`. Every save below is
+  // optimistic, so a re-read of the refetched record would land a beat late
+  // and both the greeting and the step indicator would trail one step behind
+  // what is actually on screen. Seeded from the record, updated from the
+  // PATCH — see `advance`.
+  const [name, setName] = useState(me.placeholder ? "" : me.name);
+  const [voice, setVoice] = useState(me.setup?.voice);
+  const [mode, setMode] = useState(me.setup?.mode);
   const qc = useQueryClient();
 
-  const advance = (patch: { name?: string; setup?: MeRecord["setup"] }) => {
+  // What the SETUP sequence is computed from. Not a step-independent constant:
+  // the mode selects the branch and (once the Voice plan lands) `voice` adds a
+  // step, so every question this host asks the step machine is asked with the
+  // user's own answers in hand.
+  const answers: Setup = { mode, voice };
+  const sequence = setupStepsFor(answers);
+
+  const advance = (patch: { name?: string; setup?: Setup }) => {
     const current = step;
-    const next = nextStep(current);
+    // From the PATCH, never from state. The preflight patch carries the very
+    // answers that SELECT the sequence being entered, and a `setMode` in this
+    // same handler is not visible until the next render — reading `mode` here
+    // would route by the PREVIOUS answer. On a fresh install that previous
+    // answer is `undefined`, whose sequence is empty, so the wizard would
+    // persist `done` and drop the user straight into the app.
+    const next = nextStep(current, { mode: patch.setup?.mode ?? mode, voice: patch.setup?.voice ?? voice });
     setError(null);
+    // Only what the patch actually carries: a step with nothing to say about
+    // an answer (Subscriptions and Anderson both send `setup: {}`) must not
+    // blank one out. Mirrors the server's own merge, which is why omitting a
+    // field there keeps its old value too.
+    if (patch.name !== undefined) setName(patch.name);
+    if (patch.setup?.mode !== undefined) setMode(patch.setup.mode);
+    if (patch.setup?.voice !== undefined) setVoice(patch.setup.voice);
     api
       .updateMe({ ...patch, setup: { ...patch.setup, step: next ?? SETUP_DONE } })
       .then((result) => {
         if (result.error) {
+          // Only the STEP rolls back, never the answers: the server refused to
+          // record them, but they are still what the user just typed, and
+          // wiping the fields they are about to be shown again would be a
+          // second failure on top of the first.
           setStep(current);
           setError(result.error);
           return;
@@ -157,33 +193,89 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
     if (next) setStep(next);
   };
 
+  /**
+   * Back — `advance`'s sibling, deliberately the same shape rather than a
+   * tidier one, because the two failure modes it has to tell apart are the
+   * same two and they are not interchangeable. `brokerFetch` never throws on
+   * a non-2xx: a network-level failure REJECTS (ambiguous — the write may
+   * well have landed, so the step change is kept and only reported), while a
+   * server refusal RESOLVES with `{error}` (a firm no, so the step rolls
+   * back and the server's own sentence is shown). A `.catch` alone would see
+   * only the first, and a Back that changes the screen without persisting is
+   * worse than no Back at all: it looks right, then throws the user forward
+   * again on the next reload, because `resumeStep` reads the step the server
+   * still holds.
+   *
+   * `{ step: prev }` alone is the whole patch, and it clears nothing — the
+   * server merges setup (`{...existing.setup, ...body.setup}`), so the mode
+   * and voice already recorded survive untouched.
+   */
+  const goBack = () => {
+    const current = step;
+    const prev = prevStep(current, answers);
+    if (!prev) return;
+    setError(null);
+    setStep(prev);
+    api
+      .updateMe({ setup: { step: prev } })
+      .then((result) => {
+        if (result.error) {
+          setStep(current);
+          setError(result.error);
+          return;
+        }
+        void qc.invalidateQueries({ queryKey: qk.me });
+      })
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : "Could not save — check your connection and try again.");
+      });
+  };
+
+  // Every step behind which there is something to go back to gets a Back —
+  // asked of the step machine rather than hardcoded, so a sequence that grows
+  // a step needs nothing here.
+  const onBack = prevStep(step, answers) ? goBack : undefined;
+
   return (
-    <div className="wizard-gate__host" data-step={step}>
+    <div className="wizard-gate__host" data-step={step} data-testid="wizard-host">
       <div className="wizard-gate__panel">
-        {/* Display-only — no `onStepChange`, so the indicator never becomes a
-            second way to navigate. The step machine (`advance`, above) is the
-            only thing that moves `step`; the Stepper just reflects it. Driven
-            entirely by WIZARD_STEPS/WIZARD_STEP_META so a step this array
-            gains later shows up here without touching this component. */}
-        <Stepper currentStep={WIZARD_STEPS.indexOf(step)}>
-          {WIZARD_STEPS.map((s) => (
-            <Stepper.Step key={s}>
-              <Stepper.Indicator />
-              <Stepper.Content>
-                <Stepper.Title>{WIZARD_STEP_META[s].title}</Stepper.Title>
-                <Stepper.Description>{WIZARD_STEP_META[s].description}</Stepper.Description>
-              </Stepper.Content>
-              <Stepper.Separator />
-            </Stepper.Step>
-          ))}
-        </Stepper>
+        {/* Never over preflight: an indicator there would assert an order that
+            preflight's own answers have not chosen yet (its sequence is empty
+            until the mode is known). Otherwise display-only — no
+            `onStepChange`, so it never becomes a second way to navigate. The
+            step machine (`advance`/`goBack`, above) is the only thing that
+            moves `step`; the Stepper just reflects it, over exactly the
+            sequence those answers selected. */}
+        {step !== PREFLIGHT && sequence.length > 0 && (
+          <Stepper currentStep={sequence.indexOf(step)}>
+            {sequence.map((s) => (
+              <Stepper.Step key={s}>
+                <Stepper.Indicator />
+                <Stepper.Content>
+                  <Stepper.Title>{WIZARD_STEP_META[s].title}</Stepper.Title>
+                  <Stepper.Description>{WIZARD_STEP_META[s].description}</Stepper.Description>
+                </Stepper.Content>
+                <Stepper.Separator />
+              </Stepper.Step>
+            ))}
+          </Stepper>
+        )}
         <div className="wizard-gate__body">
-          <h1 className="wizard-gate__title">Welcome{me.placeholder ? "" : `, ${me.name}`}</h1>
+          {/* Greeted by name only once there is a name AND the screen is not
+              the one asking for it. On preflight the greeting would be either
+              empty (fresh install, no name yet) or — for someone who backed up
+              into it — a redundant echo of the field directly below it. The
+              bare "Welcome" stays in both cases: it is the panel's only `<h1>`,
+              which is exactly what the steps' `headingLevel="h2"` assumes. */}
+          <h1 className="wizard-gate__title">{step !== PREFLIGHT && name ? `Welcome, ${name}` : "Welcome"}</h1>
           {error && <p className="wizard-gate__error">{error}</p>}
-          {step === "name" && <WizardNameStep initialName={me.placeholder ? "" : me.name} onDone={advance} />}
-          {step === "fork" && <WizardForkStep onDone={advance} />}
-          {step === "subscriptions" && <WizardSubscriptionsStep onDone={advance} />}
-          {step === "brain" && <WizardBrainStep onDone={advance} />}
+          {step === PREFLIGHT && (
+            // Seeded with the answers already given, so backing up into this
+            // screen shows what the user said rather than a blank form.
+            <WizardPreflightStep initialName={name} initialVoice={voice} initialMode={mode} onDone={advance} />
+          )}
+          {step === "subscriptions" && <WizardSubscriptionsStep onDone={advance} onBack={onBack} />}
+          {step === "anderson" && <WizardBrainStep onDone={advance} onBack={onBack} />}
         </div>
       </div>
     </div>

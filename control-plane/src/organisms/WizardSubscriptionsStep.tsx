@@ -6,6 +6,10 @@ import { CliToolsGroup } from "./settings/CliToolsGroup";
 
 export interface WizardSubscriptionsStepProps {
   onDone: (patch: { setup: Setup }) => void;
+  /** Absent when there is nothing behind this step — the host asks the step
+      machine (`prevStep`) and simply does not pass one, so this component
+      never has to know where it sits in a sequence it does not own. */
+  onBack?: () => void;
 }
 
 /**
@@ -37,7 +41,7 @@ export interface WizardSubscriptionsStepProps {
  * on PROBE validity only. Live-turn validation belongs with whatever plan
  * owns turn execution.
  */
-export function WizardSubscriptionsStep({ onDone }: WizardSubscriptionsStepProps) {
+export function WizardSubscriptionsStep({ onDone, onBack }: WizardSubscriptionsStepProps) {
   const { data: tools = [] } = useCliTools();
   const { data: keys = [] } = useApiKeys();
 
@@ -67,6 +71,16 @@ export function WizardSubscriptionsStep({ onDone }: WizardSubscriptionsStepProps
         <Button variant="primary" onPress={() => onDone({ setup: {} })} isDisabled={!canContinue}>
           Continue
         </Button>
+        {/* Back lives in the step's own footer, not in a second band of the
+            host's — this step owns the only `.wizard-gate__footer` on screen,
+            and a host-rendered one would stack a second sticky bar under it.
+            Never disabled by `canContinue`: retracting an answer is exactly
+            what someone stuck on this gate needs. */}
+        {onBack && (
+          <Button variant="secondary" onPress={onBack}>
+            Back
+          </Button>
+        )}
       </div>
     </div>
   );
