@@ -99,6 +99,12 @@ describe("WizardBrainStep", () => {
     vi.unstubAllGlobals();
   });
 
+  it("frames the step as setting Anderson up, and says where the options come from", async () => {
+    renderBrainStep({ tools: { claude: { active: true } } });
+    expect(await screen.findByRole("heading", { name: /set up anderson/i })).toBeInTheDocument();
+    expect(screen.getByText(/installed provider tools/i)).toBeInTheDocument();
+  });
+
   it("defaults to the strongest validated option, so the step is a confirmation", async () => {
     renderBrainStep({ tools: { claude: { active: true } }, keys: [{ provider: "anthropic", verified: true }] });
     expect(await screen.findByRole("radio", { name: /claude/i })).toBeChecked();

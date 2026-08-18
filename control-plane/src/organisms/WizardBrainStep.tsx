@@ -149,9 +149,9 @@ export function WizardBrainStep({ onDone, onBack }: WizardBrainStepProps) {
 
   return (
     <div className="wizard-brain-step">
+      <h2 className="wizard-brain-step__title">Set up Anderson</h2>
       <p className="wizard-brain-step__prompt" id="wizard-brain-prompt">
-        What should Anderson — the conversational host — use to reply? This can differ from what backs your coding
-        agents.
+        Anderson needs a brain. Choose from your installed provider tools.
       </p>
       {error && <p className="wizard__error">{error}</p>}
       {saveFailed && (

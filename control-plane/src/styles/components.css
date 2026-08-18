@@ -4417,6 +4417,18 @@ button.logo {
 .wizard-subscriptions-step .connector-grid {
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
 }
+/* `<h2>` because the page's `<h1>` belongs to the host's own greeting
+   (WizardGate's `.wizard-gate__title`) — same reasoning as the `headingLevel`
+   prop on WizardSubscriptionsStep's two groups. Values mirror
+   `.wizard-subscriptions-step .settings-group__title`; margin is left to
+   `.wizard-brain-step`'s own flex `gap: 12px` rather than set here. */
+.wizard-brain-step__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--foreground);
+}
 .wizard-brain-step__prompt {
   font-size: 13px;
   color: var(--text-2);

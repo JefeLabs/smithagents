@@ -372,7 +372,7 @@ describe("WizardGate", () => {
     const { container } = renderGate({ name: "Edwin", setup: { mode: "local", step: "anderson" } });
 
     expect(await findHost(container)).toHaveAttribute("data-step", "anderson");
-    expect(await screen.findByText(/what should anderson/i)).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /set up anderson/i })).toBeInTheDocument();
   });
 
   it("goes back from the last step into the one before it, and persists that", async () => {
