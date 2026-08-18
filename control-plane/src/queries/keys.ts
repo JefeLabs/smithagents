@@ -16,6 +16,7 @@ export const qk = {
   myConnectors: ["my-connectors"] as const,
   cliTools: ["cli-tools"] as const,
   apiKeys: ["api-keys"] as const,
+  localModels: ["local-models"] as const,
   containers: ["containers"] as const,
   voiceSettings: ["voice-settings"] as const,
   researchEngine: ["research-engine"] as const,

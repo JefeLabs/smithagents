@@ -4555,6 +4555,101 @@ button.logo {
 .wizard-subscriptions-step .connector-grid {
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
 }
+
+/* --- Sources step interior (Step 1, "Where I think") ---
+   Same reuse, same re-fit as the subscriptions block above: this step renders
+   Settings' own ApiKeysGroup inside a 640px panel, so it needs that screen's
+   two width fixes verbatim. What is new here is the three-source list — a
+   checkbox per source with its own body underneath. NOT VERIFIED IN A
+   BROWSER: nothing renders this step yet (the sequence swap is its own task),
+   and jsdom has no layout, so every value below is carried over from the
+   step it replaces rather than measured. The browser walk owns confirming it.
+   */
+.wizard-sources-step {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+/* Anderson's question and its supporting line — the same two treatments the
+   subscriptions step used, so the two screens keep one type hierarchy. */
+.wizard-sources-step__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--foreground);
+}
+.wizard-sources-step__lede {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+/* One source: its checkbox, then whatever that source has to show. */
+.wizard-sources-step__source {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* Every body under a checkbox aligns to the label text rather than to the
+   box, so the three sources read as one column. 26px is the control plus its
+   gap; a browser pass may want it exact. */
+.wizard-sources-step__logins,
+.wizard-sources-step__findings {
+  padding-inline-start: 26px;
+}
+.wizard-sources-step__logins,
+.wizard-sources-step__models {
+  margin: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.wizard-sources-step__findings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.wizard-sources-step__server {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.wizard-sources-step__models {
+  padding-inline-start: 12px;
+}
+/* Model id on the left, size (when the server reports one) on the right. */
+.wizard-sources-step__models li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.wizard-sources-step__models em {
+  font-style: normal;
+  color: var(--text-2);
+}
+/* "check again" is a direct child of a stretch-aligned flex column, which
+   blows a 12px label out to the full panel width — the same fix, for the same
+   reason, as `.wizard-subscriptions-step > .settings-btn` above. */
+.wizard-sources-step__findings > .settings-btn {
+  align-self: flex-start;
+}
+/* ApiKeysGroup nested to `<h2>` here — see the subscriptions block for why
+   Settings' own `.settings-screen__content h1` rule never reaches it. */
+.wizard-sources-step .settings-group__title {
+  margin: 8px 0 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--foreground);
+}
+.wizard-sources-step .connector-grid {
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+}
 /* `<h2>` because the page's `<h1>` belongs to the host's own greeting
    (WizardGate's `.wizard-gate__title`) — same reasoning as the `headingLevel`
    prop on WizardSubscriptionsStep's two groups. Values mirror

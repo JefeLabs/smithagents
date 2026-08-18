@@ -3,10 +3,16 @@ import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders } from "../test/renderWithProviders";
-import { useApiKeys, useSaveApiKey } from "./http";
+import { useApiKeys, useLocalModels, useSaveApiKey } from "./http";
 import { qk } from "./keys";
 
 afterEach(() => vi.unstubAllGlobals());
+
+/** Records the URL the hook actually requested, plus what it unwrapped. */
+function LocalModelsProbe() {
+  const { data } = useLocalModels();
+  return <span data-testid="servers">{data === undefined ? "pending" : data.map((s) => s.id).join(",")}</span>;
+}
 
 function Probe() {
   const { data = [] } = useApiKeys();
@@ -59,5 +65,29 @@ describe("http queries", () => {
     expect(await screen.findByTestId("count")).toHaveTextContent("0");
     await userEvent.click(screen.getByRole("button", { name: "save" }));
     expect(await screen.findByTestId("count")).toHaveTextContent("1");
+  });
+
+  it("useLocalModels asks the BROKER for /local-models and unwraps its envelope", async () => {
+    // The cross-package trap this project has already shipped once: the route
+    // lives on the swarm, the broker only PROXIES it, and a client aimed at the
+    // swarm's own port answers nothing in the browser — which looks exactly
+    // like "no model server is running". Asserting the URL is the only thing
+    // that tells those two apart, since every component test stubs fetch.
+    // `_url` is declared so `fetchMock.mock.calls[0][0]` is a typed tuple
+    // element rather than an index into `[]` — the same TS2493 two other
+    // suites in this repo carry unfixed.
+    const fetchMock = vi.fn(
+      async (_url: string) =>
+        ({
+          ok: true,
+          status: 200,
+          json: async () => ({ servers: [{ id: "lmstudio", models: [] }] }),
+        }) as unknown as Response,
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    renderWithProviders(<LocalModelsProbe />);
+
+    expect(await screen.findByText("lmstudio")).toBeInTheDocument();
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://127.0.0.1:7790/local-models");
   });
 });

@@ -426,3 +426,22 @@ export interface ApiKeyListing {
   detail: string | null;
   lastCheckedAt: string | null;
 }
+
+/**
+ * A local OpenAI-compatible model server this machine is running, mirroring
+ * `LocalServer` in `swarm/src/local-models.ts` (the probe that produces it).
+ * Duplicated rather than imported: no shared package crosses the
+ * control-plane/swarm boundary, the same way `CliToolListing` and
+ * `ApiKeyListing` above are duplicated from their swarm originals.
+ *
+ * `sizeBytes` is `null` for every model in practice — the OpenAI-compatible
+ * `/v1/models` does not report a size, and the probe refuses to guess one.
+ * Render nothing for a null; never a zero.
+ */
+export interface LocalServer {
+  /** "ollama" | "lmstudio" — which default port answered. */
+  id: string;
+  label: string;
+  baseUrl: string;
+  models: { id: string; sizeBytes: number | null }[];
+}

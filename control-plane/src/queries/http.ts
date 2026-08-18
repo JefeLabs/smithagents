@@ -76,6 +76,21 @@ export function useApiKeys() {
   return useQuery({ queryKey: qk.apiKeys, queryFn: () => api.getApiKeys() });
 }
 
+/**
+ * `GET /local-models` — which model servers are running on this machine RIGHT
+ * NOW. Deliberately left at the default `staleTime: 0` (no
+ * `Number.POSITIVE_INFINITY` like `useBlueprints`): the answer changes the
+ * moment someone starts or stops LM Studio, and a cached "nothing is running"
+ * is the exact stale lie the wizard's local section must not tell.
+ *
+ * Callers must distinguish `data: []` (looked, found nothing) from
+ * `data: undefined` (still looking, or the look failed) — `data ?? []`
+ * collapses the two and reports an absence the probe never established.
+ */
+export function useLocalModels() {
+  return useQuery({ queryKey: qk.localModels, queryFn: () => api.getLocalModels() });
+}
+
 export function useContainers() {
   return useQuery({ queryKey: qk.containers, queryFn: () => api.getContainers() });
 }

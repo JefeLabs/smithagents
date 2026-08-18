@@ -14,11 +14,24 @@ export function pillForApiKey(l: ApiKeyListing): { label: string; cls: string } 
 export interface ApiKeysGroupProps {
   /** Same contract as `CliToolsGroupProps["headingLevel"]` — see there for why. */
   headingLevel?: "h1" | "h2";
+  /**
+   * Registry ids to show, in place of every registered provider.
+   *
+   * Settings passes nothing and keeps the whole registry — a key someone
+   * pasted for a future consumer still belongs on the permanent screen. The
+   * wizard's sources step passes `["anthropic", "google"]`, because a wizard
+   * that offers a provider nothing in this codebase consumes is collecting a
+   * credential that cannot do anything (the user's ruling on Plan 2). An id
+   * that isn't in the registry simply matches nothing rather than rendering
+   * an empty card.
+   */
+  only?: readonly string[];
 }
 
 /** Card grid, one per registry provider — masked key state, save/verify/remove. */
-export function ApiKeysGroup({ headingLevel: Heading = "h1" }: ApiKeysGroupProps = {}) {
-  const { data: keys = [], error: loadError } = useApiKeys();
+export function ApiKeysGroup({ headingLevel: Heading = "h1", only }: ApiKeysGroupProps = {}) {
+  const { data: allKeys = [], error: loadError } = useApiKeys();
+  const keys = only ? allKeys.filter((l) => only.includes(l.id)) : allKeys;
   const save = useSaveApiKey();
   const verify = useVerifyApiKey();
   const remove = useDeleteApiKey();

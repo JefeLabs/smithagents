@@ -17,6 +17,7 @@ import type {
   ConnectorVendorMeta,
   DocT,
   ExecutionMode,
+  LocalServer,
   MeRecord,
   Target,
   VoiceSettingsRecord,
@@ -407,6 +408,24 @@ export async function verifyConnector(
 export async function getCliTools(base: string = BROKER_BASE): Promise<CliToolListing[]> {
   const res = await brokerFetch(`/cli-tools`, base);
   return ((await res.json()) as { tools?: CliToolListing[] }).tools ?? [];
+}
+
+/**
+ * GET /local-models — the model servers actually running on this machine.
+ *
+ * The broker PROXIES this to the swarm (broker/src/main.ts); the swarm is the
+ * only process that can probe 127.0.0.1. Requested from `BROKER_BASE` like
+ * every other call here — a control-plane fetch aimed at the swarm's own port
+ * is the cross-package mistake that shipped a permanently-empty list once
+ * already.
+ *
+ * An absent server is `[]`, which is a real answer ("nothing is running") and
+ * must not be conflated with a failed request — this throws on a network
+ * failure so the caller's query lands in `error`, never in an empty success.
+ */
+export async function getLocalModels(base: string = BROKER_BASE): Promise<LocalServer[]> {
+  const res = await brokerFetch(`/local-models`, base);
+  return ((await res.json()) as { servers?: LocalServer[] }).servers ?? [];
 }
 
 /** GET /containers */
