@@ -310,12 +310,22 @@ export interface VoiceSettingsRecord {
   enabled: boolean;
 }
 
+/**
+ * Why an inactive tool is inactive, as a CLASS rather than prose — mirrors
+ * `AuthFailure` in `swarm/src/cli-tools.ts` (no shared package crosses this
+ * boundary, so the literal union is duplicated, same as every other wire
+ * shape in this file). Set only on a confirmed negative; absent whenever
+ * `authOk` is `"unknown"` — block only confirmed negatives, never ignorance.
+ */
+export type AuthFailure = "missing" | "unauthenticated" | "billing" | "policy" | "unknown";
+
 /** One CLI tool's machine status, as the registry persists it. */
 export interface CliToolStatusRecord {
   detected: boolean;
   authOk: boolean | "unknown";
   enabled: boolean;
   detail: string;
+  failure?: AuthFailure;
   version?: string;
   lastCheckedAt: string;
 }

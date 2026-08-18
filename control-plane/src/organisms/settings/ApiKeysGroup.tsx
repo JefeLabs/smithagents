@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { ApiKeyListing } from "../../api/types";
+import { ConnectorCard } from "../../molecules/ConnectorCard";
 import { useApiKeys, useDeleteApiKey, useSaveApiKey, useVerifyApiKey } from "../../queries/http";
 
 /** Status pill precedence mirrors CliToolsGroup: reality before preference. Exported for tests. */
@@ -44,72 +45,62 @@ export function ApiKeysGroup() {
       </p>
       {displayError && <p className="wizard__error">{displayError}</p>}
       <div className="connector-grid">
-        {keys.map((l) => {
-          const pill = pillForApiKey(l);
-          return (
-            <div key={l.id} className="connector-card">
-              <div className="connector-card__head">
-                <b>{l.label}</b>
-                <em>{l.description}</em>
-              </div>
-              <div className="connector-instance">
-                <span className={`connector-status ${pill.cls}`}>{pill.label}</span>
-                <span>
-                  {l.hasKey ? `•••• ${l.last4}` : "no key on this machine"}
-                  {l.detail ? ` — ${l.detail}` : ""}
-                </span>
-              </div>
-              {l.lastCheckedAt && (
-                <p className="wizard__hint">last checked {new Date(l.lastCheckedAt).toLocaleString()}</p>
+        {keys.map((l) => (
+          <ConnectorCard
+            key={l.id}
+            label={l.label}
+            note={l.description}
+            pill={pillForApiKey(l)}
+            line={`${l.hasKey ? `•••• ${l.last4}` : "no key on this machine"}${l.detail ? ` — ${l.detail}` : ""}`}
+            lastCheckedAt={l.lastCheckedAt}
+          >
+            <label>
+              API key
+              <input
+                type="password"
+                value={drafts[l.id] ?? ""}
+                placeholder={l.hasKey ? "paste a new key to replace" : "paste key"}
+                onChange={(e) => setDrafts((d) => ({ ...d, [l.id]: e.target.value }))}
+              />
+            </label>
+            <div className="connector-instance">
+              <button
+                type="button"
+                className="settings-btn"
+                disabled={busy !== null || !(drafts[l.id] ?? "").trim()}
+                onClick={() =>
+                  void apply(l.id, () => save.mutateAsync({ id: l.id, key: (drafts[l.id] ?? "").trim() })).then(
+                    (ok) => {
+                      if (ok) setDrafts((d) => ({ ...d, [l.id]: "" }));
+                    },
+                  )
+                }
+              >
+                {busy === l.id ? "saving…" : "save"}
+              </button>
+              {l.hasKey && (
+                <>
+                  <button
+                    type="button"
+                    className="settings-btn"
+                    disabled={busy !== null}
+                    onClick={() => void apply(l.id, () => verify.mutateAsync(l.id))}
+                  >
+                    verify
+                  </button>
+                  <button
+                    type="button"
+                    className="settings-btn"
+                    disabled={busy !== null}
+                    onClick={() => void apply(l.id, () => remove.mutateAsync(l.id))}
+                  >
+                    remove
+                  </button>
+                </>
               )}
-              <label>
-                API key
-                <input
-                  type="password"
-                  value={drafts[l.id] ?? ""}
-                  placeholder={l.hasKey ? "paste a new key to replace" : "paste key"}
-                  onChange={(e) => setDrafts((d) => ({ ...d, [l.id]: e.target.value }))}
-                />
-              </label>
-              <div className="connector-instance">
-                <button
-                  type="button"
-                  className="settings-btn"
-                  disabled={busy !== null || !(drafts[l.id] ?? "").trim()}
-                  onClick={() =>
-                    void apply(l.id, () => save.mutateAsync({ id: l.id, key: (drafts[l.id] ?? "").trim() })).then(
-                      (ok) => {
-                        if (ok) setDrafts((d) => ({ ...d, [l.id]: "" }));
-                      },
-                    )
-                  }
-                >
-                  {busy === l.id ? "saving…" : "save"}
-                </button>
-                {l.hasKey && (
-                  <>
-                    <button
-                      type="button"
-                      className="settings-btn"
-                      disabled={busy !== null}
-                      onClick={() => void apply(l.id, () => verify.mutateAsync(l.id))}
-                    >
-                      verify
-                    </button>
-                    <button
-                      type="button"
-                      className="settings-btn"
-                      disabled={busy !== null}
-                      onClick={() => void apply(l.id, () => remove.mutateAsync(l.id))}
-                    >
-                      remove
-                    </button>
-                  </>
-                )}
-              </div>
             </div>
-          );
-        })}
+          </ConnectorCard>
+        ))}
       </div>
     </>
   );
