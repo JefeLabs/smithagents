@@ -4540,3 +4540,48 @@ fieldset.wizard-fork-step {
   color: #d9534f;
   margin: 0;
 }
+/* What the gate collapses into past preflight (WizardChip.tsx) — a pill in
+   the same family as `.sm-chip`, but its own class rather than a shared one:
+   `.sm-chip` is a TOGGLE (`aria-pressed`, picked/unpicked), and this is a
+   persistent, always-clickable status readout with nothing to toggle. */
+.wizard-chip {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--pill-br);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.wizard-chip:hover {
+  border-color: var(--accent);
+  color: var(--foreground);
+}
+/* The confirm dialog's own copy (WizardChip's ModalShell body) — sized down
+   from the panel's 13-15px body text since this is a secondary, momentary
+   surface, not a wizard step of its own. */
+.wizard-chip__lede {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.wizard-chip__clears {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  font-size: 13px;
+  color: var(--foreground);
+}
+.wizard-chip__clears li {
+  margin: 2px 0;
+}
+.wizard-chip__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}

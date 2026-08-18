@@ -17,6 +17,7 @@ import {
   type WizardSaveState,
   type WizardStep,
 } from "../lib/wizardSteps";
+import { WizardChip } from "../molecules/WizardChip";
 import { useMe } from "../queries/http";
 import { qk } from "../queries/keys";
 import { WizardBrainStep } from "./WizardBrainStep";
@@ -261,9 +262,59 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
   // a step needs nothing here.
   const onBack = prevStep(step, answers) ? goBack : undefined;
 
+  /**
+   * The chip's own transition — confirmed (or, with nothing to lose, silent)
+   * inside WizardChip itself, so by the time this runs the decision is
+   * already made. Not routed through `goBack`: that function moves exactly
+   * one step, using `prevStep`, and the chip can be clicked from ANY
+   * post-preflight step straight back to preflight, which is not one step
+   * back on the last one. Same resolved-vs-rejected handling as `goBack` and
+   * for the same reason — `brokerFetch` never throws on a non-2xx, so a
+   * server refusal must roll the step back while a network rejection may
+   * well have landed and is left alone, just reported.
+   */
+  const editAnswers = () => {
+    const current = step;
+    setError(null);
+    setSaveState("saving");
+    setStep(PREFLIGHT);
+    api
+      .updateMe({ setup: { step: PREFLIGHT } })
+      .then((result) => {
+        if (result.error) {
+          setStep(current);
+          setError(result.error);
+          setSaveState("failed");
+          return;
+        }
+        setSaveState("idle");
+        void qc.invalidateQueries({ queryKey: qk.me });
+      })
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : "Could not save — check your connection and try again.");
+        setSaveState("failed");
+      });
+  };
+
+  // Titles of the steps THIS sequence position has already answered — never
+  // the future "brain source / models / voice backend" wording the full spec
+  // names, because those are Plan 2 screens that do not exist in this build.
+  // A chip warning about a screen the user has never seen is worse than one
+  // that warns about less (see the plan's controller ruling). Empty exactly
+  // when `step` is the first entry in `sequence`, which is also exactly when
+  // nothing past preflight has been answered yet.
+  const clears = sequence.slice(0, sequence.indexOf(step)).map((s) => WIZARD_STEP_META[s].title);
+
   return (
     <div className="wizard-gate__host" data-step={step}>
       <div className="wizard-gate__panel">
+        {/* Never on the gate itself (PREFLIGHT) — the gate is where the
+            chip's own contents are chosen; a chip above it would be a
+            control that edits the screen you are already on. Rendered once
+            `mode` is settled, which every step past preflight guarantees
+            (a "hosted" answer's sequence is empty, so the host never lands
+            on a post-preflight step without a "local" mode in hand). */}
+        {step !== PREFLIGHT && <WizardChip name={name} mode={mode ?? "local"} clears={clears} onEdit={editAnswers} />}
         {/* Never over preflight: an indicator there would assert an order that
             preflight's own answers have not chosen yet (its sequence is empty
             until the mode is known). Otherwise display-only — no
