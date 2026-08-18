@@ -4810,7 +4810,13 @@ fieldset.wizard-fork-step > .wizard-fork-step__prompt {
    file comment for why this is hand-authored rather than HeroUI's Radio. */
 .wizard-fork-step__hosted[aria-disabled="true"],
 .wizard-voice-step__ondevice[aria-disabled="true"] {
-  opacity: 0.55;
+  /* 0.75, not the 0.55 the gate's Cloud row uses: this row's hint carries the
+     NAMED WAY FORWARD ("needs a small download — coming soon"), which is the
+     entire point of offering the row at all. The walk measured the 0.55
+     composite at 1.8:1 — near-invisible in sand — so the promise the user
+     ruled must be visible was the least legible text on the step. WCAG
+     exempts disabled controls; the product does not exempt this sentence. */
+  opacity: 0.75;
   pointer-events: none;
 }
 /* Hand-authored, so it inherits none of the card layout HeroUI gives the
@@ -4825,6 +4831,15 @@ fieldset.wizard-fork-step > .wizard-fork-step__prompt {
   display: grid;
   grid-template-columns: auto 1fr;
   column-gap: 8px;
+  /* The card chrome its HeroUI sibling gets for free. Hand-authored markup
+     (the documented react-aria reason) inherits none of it, and the walk
+     found the bare row read as a CAPTION above the options rather than as
+     the first of two options — different width, different left edge. The
+     border keeps the two readings parallel; the dimming above still marks it
+     disabled. */
+  border: 1px solid var(--pill-br);
+  border-radius: 12px;
+  padding: 14px 16px;
 }
 .wizard-fork-step__hosted .wizard-fork-step__label,
 .wizard-fork-step__hosted .wizard-fork-step__hint,
