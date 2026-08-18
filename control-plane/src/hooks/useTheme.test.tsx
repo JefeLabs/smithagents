@@ -4,6 +4,12 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ThemeProvider, useTheme } from "./useTheme";
 
+/** Reads the theme without offering a way to change it — the second consumer. */
+function Readout({ label }: { label: string }) {
+  const { theme } = useTheme();
+  return <span>{`${label}:${theme}`}</span>;
+}
+
 function Switcher() {
   const { theme, setTheme } = useTheme();
   return (
@@ -43,6 +49,30 @@ describe("ThemeProvider", () => {
     await userEvent.click(screen.getByRole("button"));
     expect(document.documentElement.getAttribute("data-theme")).toBe("midnight");
     expect(screen.getByRole("button")).toHaveTextContent("midnight");
+  });
+
+  it("two consumers share ONE choice — a change in either is seen by the other", async () => {
+    // The discriminating test for this provider, and the reason it is a
+    // provider at all. A plausible wrong implementation — ThemeProvider
+    // calling the plain hook itself, so every consumer keeps its own
+    // useState — passes every other test in this file, because all the
+    // copies write to the same singleton documentElement/localStorage and
+    // only one consumer is ever mounted. Divergence is only observable with
+    // TWO consumers alive at once: the reader must re-render with the
+    // switcher's new value, which independent useState copies cannot do.
+    localStorage.setItem("smith.theme", "light");
+    render(
+      <ThemeProvider>
+        <Switcher />
+        <Readout label="reader" />
+      </ThemeProvider>,
+    );
+    expect(screen.getByText("reader:light")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button"));
+
+    expect(screen.getByText("reader:midnight")).toBeInTheDocument();
+    expect(document.documentElement.getAttribute("data-theme")).toBe("midnight");
   });
 
   it("system removes the attribute so the OS media query takes over", () => {
