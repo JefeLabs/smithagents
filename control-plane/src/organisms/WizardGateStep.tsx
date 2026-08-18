@@ -98,30 +98,23 @@ export function WizardGateStep({
 
   return (
     <form className="wizard-fork-step" onSubmit={submit}>
-      {/* Anderson's own introduction, above the questions — and its first
-          line is this screen's `<h1>`, the only one on it. The host used to
-          render a generic "Welcome" above these two lines at 26px while they
-          sat at 15px, the same weight as the field label directly below, so
-          the largest words on the product's opening screen were a word
-          nobody said and the introduction was typeset as though it were
-          another form label. WizardGate now withholds its heading on this
-          step precisely so this can be it (see the comment there); the
-          promotion is a heading level and a type size, NOT a rewrite — the
-          copy is the spec's own, and `36a5eb2` already settled that the
-          second line is the spec's supporting line rather than a synthesis
-          of it. That second line stays prose beneath the heading: it is
-          Anderson still talking, not a subtitle for a form.
+      {/* Anderson's introduction, and this screen's `<h1>` — the only one on
+          it. The host used to render a generic "Welcome" above this at 26px
+          while Anderson's own words sat at 15px, the same weight as the field
+          label directly below, so the largest words on the product's opening
+          screen were a word nobody said. WizardGate now withholds its heading
+          on this step precisely so this can be it (see the comment there).
+
+          It used to carry a supporting line — "Anderson Smith, but Anderson
+          is fine…" — which the user removed after seeing it live. He greets,
+          he asks, and the screen gets on with it. `WizardGateStep.test.tsx`
+          asserts that line is ABSENT rather than merely not asserting it, so
+          an accidental restoration fails rather than passing quietly.
 
           Everything below this is still the steps' `<h2>` tier, so the
           `headingLevel="h2"` the reused Settings groups take keeps meaning
           what it meant. */}
-      <div className="wizard-gate-step__intro">
-        <h1 className="wizard-gate-step__greeting">Hello! My name is Anderson.</h1>
-        <p className="wizard-gate-step__lede">
-          Anderson Smith, but Anderson is fine. Let's get acquainted — a minute or so, and you can change your mind
-          about any of it later.
-        </p>
-      </div>
+      <h1 className="wizard-gate-step__greeting">Hello! My name is Anderson.</h1>
 
       <FormTextField
         control={control}

@@ -4503,12 +4503,6 @@ button.logo {
   letter-spacing: -0.01em;
   color: var(--foreground);
 }
-.wizard-gate-step__lede {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--text-2);
-}
 /* --- Subscriptions step interior ---
    This step renders Settings' OWN two screens (CliToolsGroup, ApiKeysGroup)
    rather than wizard-only clones — a deliberate reuse, not an accident. Both
@@ -4527,8 +4521,9 @@ button.logo {
   letter-spacing: 0.01em;
   color: var(--foreground);
 }
-/* The supporting line under it. Values mirror `.wizard-gate-step__lede`, the
-   same "Anderson's own aside" treatment preflight's intro already uses. */
+/* The supporting line under it — the same "Anderson's own aside" treatment as
+   `.wizard-sources-step__lede`. (It used to mirror `.wizard-gate-step__lede`;
+   that rule went when the user removed preflight's supporting line.) */
 .wizard-subscriptions-step__lede {
   margin: 0;
   font-size: 13px;
