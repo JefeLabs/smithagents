@@ -1,9 +1,10 @@
-# herdr-broker Plugin — Design
+# herdr-web-broker-plugin — Design
 
 **Date:** 2026-08-18
 **Status:** Approved design, ready for planning
 **Deliverable:** a standalone community plugin for the herdr marketplace — a new
-public GitHub repository (`herdr-broker`, tagged `herdr-plugin`), not a package
+public GitHub repository (`herdr-web-broker-plugin`, tagged `herdr-plugin`),
+not a package
 in this monorepo. The spec lives here because smithagents is where the
 architecture happens; smithagents is also an eventual *client* of this plugin,
 but the design optimizes for the general herdr↔herdr case, not for us.
@@ -69,8 +70,8 @@ The repository root carries the marketplace contract:
 
 ```toml
 # herdr-plugin.toml
-id = "herdr.broker"
-name = "Broker"
+id = "jefelabs.web-broker"
+name = "Web Broker"
 version = "0.1.0"
 min_herdr_version = "0.8.0"
 description = "REST/WS gateway and parent↔child federation for herdr instances"
@@ -235,8 +236,9 @@ fails any in-flight forwarded requests with `instance_offline`.
 
 ## 4. Enrollment and security
 
-**Minting.** On the parent: `herdr plugin action invoke herdr.broker.issue-secret
---name laptop` generates a random 256-bit secret, prints it exactly once,
+**Minting.** On the parent: `herdr plugin action invoke
+jefelabs.web-broker.issue-secret --name laptop` generates a random 256-bit
+secret, prints it exactly once,
 and stores only its SHA-256 hash in `children.json`. The name is bound at mint
 time: a secret is valid for exactly one instance name, so a leaked secret
 cannot impersonate a different node, and re-enrolling a rebuilt machine reuses
