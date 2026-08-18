@@ -60,7 +60,7 @@ machines, each reachable by name, each reporting agent status live.
 - **Stale beats silent.** An offline instance keeps its last-known status with
   `online: false` and its original `as_of` timestamp. "Laptop went dark two
   hours ago with one agent blocked" is the answer an operator needs.
-- **TypeScript on Node ≥ 22, one runtime dependency (`ws`).** herdr plugins may
+- **TypeScript on Node ≥ 22, two runtime dependencies (`ws`, `smol-toml`).** herdr plugins may
   be any executable; herdr's own plugin example is Node. No native deps, no
   framework.
 
@@ -77,40 +77,43 @@ min_herdr_version = "0.8.0"
 description = "REST/WS gateway and parent↔child federation for herdr instances"
 
 [[build]]
-command = ["npm", "install", "--omit=dev"]
+command = ["npm", "install"]
+
+[[build]]
+command = ["npm", "run", "build"]
 
 [[startup]]
-command = ["node", "daemon.js"]
+command = ["node", "dist/src/daemon.js"]
 
 [[actions]]
 id = "status"
 title = "Broker: status"
 contexts = ["workspace"]
-command = ["node", "cli.js", "status"]
+command = ["node", "dist/src/cli.js", "status"]
 
 [[actions]]
 id = "issue-secret"
 title = "Broker: issue child secret"
 contexts = ["workspace"]
-command = ["node", "cli.js", "issue-secret"]
+command = ["node", "dist/src/cli.js", "issue-secret"]
 
 [[actions]]
 id = "pair"
 title = "Broker: pair with parent"
 contexts = ["workspace"]
-command = ["node", "cli.js", "pair"]
+command = ["node", "dist/src/cli.js", "pair"]
 
 [[actions]]
 id = "revoke"
 title = "Broker: revoke child"
 contexts = ["workspace"]
-command = ["node", "cli.js", "revoke"]
+command = ["node", "dist/src/cli.js", "revoke"]
 
 [[actions]]
 id = "start"
 title = "Broker: start daemon"
 contexts = ["workspace"]
-command = ["node", "cli.js", "start"]
+command = ["node", "dist/src/cli.js", "start"]
 ```
 
 **Lifecycle.** herdr runs `[[startup]]` hooks asynchronously at server init
@@ -141,6 +144,7 @@ token = "…"                       # bearer token for REST/WS clients
 [parent]                          # present only on children
 address = "wss://home.example:7591"
 secret = "…"                      # minted by the parent, §4
+name = "laptop"                   # this machine's registered name, bound to the secret
 
 [policy]
 remote_deny = ["server.stop", "server.reload_config", "plugin.*"]
