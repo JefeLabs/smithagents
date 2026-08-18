@@ -2,6 +2,7 @@ import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as api from "../api/broker";
+import { WIZARD_STEPS } from "../lib/wizardSteps";
 import { qk } from "../queries/keys";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { SettingsPanel } from "./SettingsPanel";
@@ -149,8 +150,12 @@ describe("SettingsPanel", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /re-run setup|run setup again/i }));
 
+    // Asserted against WIZARD_STEPS[0] rather than a literal, because
+    // GeneralGroup writes WIZARD_STEPS[0] — a literal here goes stale the next
+    // time the first step is renamed, which is exactly what happened when
+    // "name" became "preflight".
     expect(updateMe).toHaveBeenCalledWith(
-      expect.objectContaining({ setup: expect.objectContaining({ step: "name" }) }),
+      expect.objectContaining({ setup: expect.objectContaining({ step: WIZARD_STEPS[0] }) }),
     );
     // The name is NOT cleared — this is a re-run, not a factory reset.
     expect(updateMe).not.toHaveBeenCalledWith(expect.objectContaining({ name: "" }));
