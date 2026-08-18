@@ -272,7 +272,7 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
           {step === PREFLIGHT && (
             // Seeded with the answers already given, so backing up into this
             // screen shows what the user said rather than a blank form.
-            <WizardPreflightStep initialName={name} initialVoice={voice} initialMode={mode} onDone={advance} />
+            <WizardPreflightStep initialName={name} initialMode={mode} onDone={advance} />
           )}
           {step === "subscriptions" && <WizardSubscriptionsStep onDone={advance} onBack={onBack} />}
           {step === "anderson" && <WizardBrainStep onDone={advance} onBack={onBack} />}

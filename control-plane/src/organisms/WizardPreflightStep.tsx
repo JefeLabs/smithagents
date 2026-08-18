@@ -13,7 +13,6 @@ export interface WizardPreflightStepProps {
   /** The user's current name, if the record already carries one — never the
       "You" placeholder fallback; the host is responsible for that guard. */
   initialName: string;
-  initialVoice?: boolean;
   initialMode?: SetupMode;
   onDone: (patch: { name: string; setup: Setup }) => void;
 }
@@ -22,12 +21,20 @@ export interface WizardPreflightStepProps {
 const filled = (v: string) => v.trim().length > 0;
 
 /**
- * The wizard's one preflight screen: name, voice, and where this runs — the
- * three questions that decide *intent*, asked together because they select
- * which SETUP steps follow rather than belonging to a sequence of their own
- * (see wizardSteps.ts's file comment). This merges what used to be
- * WizardNameStep and WizardForkStep into a single controlled organism: props
- * in, `onDone(patch)` out, the host persists it.
+ * The wizard's one preflight screen: name and where this runs — the two
+ * questions that decide *intent*, asked together because they select which
+ * SETUP steps follow rather than belonging to a sequence of their own (see
+ * wizardSteps.ts's file comment). This merges what used to be WizardNameStep
+ * and WizardForkStep into a single controlled organism: props in,
+ * `onDone(patch)` out, the host persists it.
+ *
+ * Voice used to be a third question here. The 2026-08-17 spec revision moves
+ * it out entirely: what voice REQUIRES depends on the mode chosen below
+ * (local voice needs `deepgram`/`elevenlabs` on this machine, cloud voice
+ * plausibly needs neither), so asking it before mode is settled asks a
+ * question whose meaning is not yet decided. It is also secondary to the
+ * brain, so it resurfaces after *Set up Anderson*, in its own gated step —
+ * see the Voice-step plan.
  *
  * The spec has the CLI probe start here, in the background, so the next
  * screen (Plan 2's subscriptions step) arrives already populated. NOT built
@@ -35,29 +42,21 @@ const filled = (v: string) => v.trim().length > 0;
  * the seam it will hang off: kick it off beside `submit`, keyed on the typed
  * name, and hand its result forward via a second field on `onDone`'s patch.
  *
- * `onDone` always sends explicit `voice` and `mode` values, never omits
- * either — the server persists setup by merging (`{...existing.setup,
- * ...body.setup}`), so an omitted field would keep whatever was recorded
- * before rather than clearing it. A user who backs up from a later step and
- * flips voice off has to have that `false` actually sent, or the merge
- * silently keeps them opted in.
+ * `onDone` always sends an explicit `mode`, never omits it — the server
+ * persists setup by merging (`{...existing.setup, ...body.setup}`), so an
+ * omitted field would keep whatever was recorded before rather than clearing
+ * it.
  */
-export function WizardPreflightStep({
-  initialName,
-  initialVoice = false,
-  initialMode = "local",
-  onDone,
-}: WizardPreflightStepProps) {
+export function WizardPreflightStep({ initialName, initialMode = "local", onDone }: WizardPreflightStepProps) {
   const { control, handleSubmit } = useForm<PreflightFormValues>({ defaultValues: { name: initialName } });
   // Watched, not read from formState.errors: errors only exist after a
   // validation run, so gating on them would leave Continue enabled on a
   // pristine blank form — the second test's exact case.
   const name = useWatch({ control, name: "name" });
 
-  const [voice, setVoice] = useState(initialVoice);
   const [mode, setMode] = useState<SetupMode>(initialMode);
 
-  const submit = handleSubmit(({ name }) => onDone({ name: name.trim(), setup: { voice, mode } }));
+  const submit = handleSubmit(({ name }) => onDone({ name: name.trim(), setup: { mode } }));
 
   return (
     <form className="wizard-fork-step" onSubmit={submit}>
@@ -68,44 +67,6 @@ export function WizardPreflightStep({
         placeholder="e.g. Edwin"
         rules={{ validate: filled }}
       />
-
-      {/* A real `<fieldset>`, not a hand-rolled `role="group"` `<div>` —
-          biome's `useSemanticElements` catches exactly that substitution,
-          and a native fieldset gets the `group` role for free. Its implicit
-          role is distinct from the RadioButtonGroup it wraps, which is its
-          own `radiogroup` (verified: `getByRole("group")` does not match a
-          `radiogroup`, confirmed against the installed react-aria/HeroUI
-          build) — the component test asserts through `group`, so the
-          fieldset is what it finds. Border/margin/padding reset inline
-          rather than in components.css: this file's task scope is
-          organisms only, and the visible prompt/gap styling below already
-          comes from the reused `.wizard-fork-step` classes. */}
-      <fieldset className="wizard-fork-step" style={{ border: 0, margin: 0, padding: 0 }}>
-        <legend className="wizard-fork-step__prompt" id="wizard-preflight-voice-prompt">
-          Would you like voice?
-        </legend>
-        <RadioButtonGroup
-          aria-labelledby="wizard-preflight-voice-prompt"
-          value={voice ? "yes" : "no"}
-          onChange={(value) => {
-            if (value === "yes" || value === "no") setVoice(value === "yes");
-          }}
-          orientation="horizontal"
-        >
-          <RadioButtonGroup.Item value="yes">
-            <RadioButtonGroup.Indicator />
-            <RadioButtonGroup.ItemContent>
-              <span className="wizard-fork-step__label">Yes</span>
-            </RadioButtonGroup.ItemContent>
-          </RadioButtonGroup.Item>
-          <RadioButtonGroup.Item value="no">
-            <RadioButtonGroup.Indicator />
-            <RadioButtonGroup.ItemContent>
-              <span className="wizard-fork-step__label">No</span>
-            </RadioButtonGroup.ItemContent>
-          </RadioButtonGroup.Item>
-        </RadioButtonGroup>
-      </fieldset>
 
       {/*
        * Local vs Cloud. Local is enabled and default-selected; Cloud is

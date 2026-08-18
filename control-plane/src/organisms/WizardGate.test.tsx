@@ -392,18 +392,17 @@ describe("WizardGate", () => {
 
   it("backing into preflight shows the answers already given, not a blank form", async () => {
     // Seeding is half of a guarantee whose other half is WizardPreflightStep
-    // sending `voice`/`mode` EXPLICITLY on every submit. Unseeded, Back lands
-    // on a preflight whose name field is empty (Continue disabled until it is
-    // retyped) and whose voice answer has reset to the `false` default — and
-    // the next Continue then writes that `false` over the user's recorded
-    // `true`. The explicit send exists to stop the server's merge from keeping
-    // a stale answer; without seeding it overwrites a good one instead.
-    renderGate({ name: "Edwin", setup: { mode: "local", voice: true, step: "subscriptions" } });
+    // sending `mode` EXPLICITLY on every submit. Unseeded, Back lands on a
+    // preflight whose name field is empty (Continue disabled until it is
+    // retyped) — the explicit send exists to stop the server's merge from
+    // keeping a stale answer; without seeding, resubmitting would overwrite a
+    // good one instead.
+    renderGate({ name: "Edwin", setup: { mode: "local", step: "subscriptions" } });
 
     await userEvent.click(await screen.findByRole("button", { name: /back/i }));
 
     expect(await screen.findByLabelText(/your name/i)).toHaveValue("Edwin");
-    expect(screen.getByRole("radio", { name: /^yes$/i })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /local/i })).toBeChecked();
     // The user-visible consequence of losing the name seed, asserted directly.
     expect(screen.getByRole("button", { name: /continue/i })).toBeEnabled();
   });

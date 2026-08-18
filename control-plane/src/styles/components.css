@@ -4445,25 +4445,6 @@ button.logo {
 .wizard-fork-step__label {
   font-weight: 600;
 }
-/* The voice question's Yes/No are the only RadioButtonGroup items narrow
-   enough to collide with their own indicator. HeroUI pins it with
-   `.radio-button-group__indicator { position: absolute; inset-inline-end: 16px;
-   top: 12px }` unconditionally — a card component that assumes a row wide
-   enough for a corner dot, which the Local/Cloud rows below (558px) are and a
-   shrink-wrapped "Yes" (66px) is not: the dot landed on top of the label text
-   in all four themes. Reserve the dot its own column instead of hiding an
-   indicator the JSX renders, and centre it on the single line of text rather
-   than leaving it pinned to a corner that a one-line pill does not have.
-   Scoped to `horizontal` because that orientation is what shrink-wraps these
-   items; the vertical group is already wide enough and must keep the corner
-   placement it was designed around. */
-.wizard-fork-step [data-slot="radio-button-group"][data-orientation="horizontal"] .radio-button-group__item {
-  padding-inline-end: 44px;
-}
-.wizard-fork-step [data-slot="radio-button-group"][data-orientation="horizontal"] .radio-button-group__indicator {
-  top: 50%;
-  transform: translateY(-50%);
-}
 .wizard-fork-step__hint {
   display: block;
   font-size: 11.5px;

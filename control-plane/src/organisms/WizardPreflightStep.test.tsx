@@ -10,10 +10,9 @@ const setup = (over = {}) => {
 };
 
 describe("WizardPreflightStep", () => {
-  it("asks all three questions on one screen", () => {
+  it("asks both questions on one screen", () => {
     setup();
     expect(screen.getByLabelText(/your name/i)).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: /voice/i })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /local/i })).toBeInTheDocument();
   });
 
@@ -71,26 +70,16 @@ describe("WizardPreflightStep", () => {
     expect(cloud).toBeDisabled();
   });
 
-  it("emits voice explicitly as false when not chosen, never omitted", async () => {
-    // Setup MERGES: an omitted field keeps its previous value, so a user who
-    // goes back and turns voice OFF must send false, not nothing.
-    const { onDone, user } = setup({ initialName: "Edwin", initialVoice: true });
-    await user.click(screen.getByRole("radio", { name: /^no$/i }));
-    await user.click(screen.getByRole("button", { name: /continue/i }));
-    expect(onDone).toHaveBeenCalledWith(expect.objectContaining({ setup: expect.objectContaining({ voice: false }) }));
-  });
-
-  it("emits the name, the voice answer and the mode together", async () => {
+  it("emits the name and the mode together", async () => {
     const { onDone, user } = setup();
     await user.type(screen.getByLabelText(/your name/i), "Edwin");
-    await user.click(screen.getByRole("radio", { name: /^yes$/i }));
     await user.click(screen.getByRole("button", { name: /continue/i }));
-    expect(onDone).toHaveBeenCalledWith({ name: "Edwin", setup: { voice: true, mode: "local" } });
+    expect(onDone).toHaveBeenCalledWith({ name: "Edwin", setup: { mode: "local" } });
   });
 
   it("seeds from prior answers so going back shows what was chosen", () => {
-    setup({ initialName: "Edwin", initialVoice: true, initialMode: "local" });
+    setup({ initialName: "Edwin", initialMode: "local" });
     expect(screen.getByLabelText(/your name/i)).toHaveValue("Edwin");
-    expect(screen.getByRole("radio", { name: /^yes$/i })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /local/i })).toBeChecked();
   });
 });
