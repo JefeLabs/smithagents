@@ -4239,11 +4239,73 @@ button.logo {
   opacity: 0.5;
 }
 
-/* Welcome wizard — Name, Fork, and Brain steps (Tasks 3-4, 2026-08-17). Minimal on
-   purpose: this plan is the shell, layout polish is a later pass. */
+/* Welcome wizard — the frame around the four step components (name, fork,
+   subscriptions, brain). Modeled on the two layout idioms this app already
+   ships rather than a new one: `.login-screen` (base.css) for the fixed,
+   full-viewport host with a centered card — WizardGate sits at the same
+   architectural tier as AuthGate's CloudAuthGate, a pre-app gate, not a page
+   — and NewContextModal's Stepper-over-stacked-steps for the panel's own
+   inside. The step components' own markup (WizardNameStep.tsx etc.) is
+   untouched; every selector below either wraps them (WizardGate.tsx) or
+   reaches into them by a stable HeroUI hook (`[data-slot="button"]`) rather
+   than a class edited into their files. */
+.wizard-gate__host {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--background);
+  padding: 24px;
+}
+.wizard-gate__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  width: 100%;
+  max-width: 640px;
+  /* Tallest step (Subscriptions renders Settings' own CLI + API key groups)
+     can still outgrow the viewport — the panel scrolls internally rather
+     than clipping or pushing Continue off screen. */
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  padding: 40px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+}
+.wizard-gate__body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.wizard-gate__title {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--foreground);
+}
+/* The Continue button every step ends its own markup with (verified: it's
+   the last child in all four — WizardNameStep, WizardForkStep,
+   WizardBrainStep, WizardSubscriptionsStep). `data-slot="button"` is
+   HeroUI's own Button hook, not a class this task added, and no other
+   control in any step uses HeroUI's Button — CliToolsGroup/ApiKeysGroup's
+   own actions are hand-authored `.settings-btn` elements — so this reaches
+   exactly one element per step without editing that step's file. */
+.wizard-gate__host [data-slot="button"] {
+  width: 100%;
+  /* The divider itself is the visual cue that this is a footer, not another
+     row in the list above it; the button's own fixed height (`.button`'s
+     `h-10`/`h-9`, base.css's global `box-sizing: border-box`) means padding
+     here would eat into — not add to — that height and shove the label
+     off-center, so spacing comes from margin instead. */
+  margin-top: 28px;
+  border-top: 1px solid var(--pill-br);
+}
 .wizard-name-step,
 .wizard-fork-step,
-.wizard-brain-step {
+.wizard-brain-step,
+.wizard-subscriptions-step {
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -4292,6 +4354,18 @@ button.logo {
   align-self: flex-start;
   font-size: 12px;
   color: var(--accent);
+}
+/* WizardComingSoon's panel — same card, a narrower/centered read since its
+   three lines (heading, message, link) have no form fields to left-align
+   against. */
+.wizard-gate__panel--compact {
+  max-width: 420px;
+  align-items: center;
+  gap: 16px;
+  text-align: center;
+}
+.wizard-gate__panel--compact .wizard-fork-step__notify {
+  align-self: center;
 }
 .wizard-gate__compact-message {
   font-size: 13px;

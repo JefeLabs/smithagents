@@ -1,9 +1,18 @@
+import { Stepper } from "@heroui-pro/react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import * as api from "../api/broker";
 import type { MeRecord } from "../api/types";
-import { isSetupComplete, nextStep, resumeStep, SETUP_DONE, type WizardStep } from "../lib/wizardSteps";
+import {
+  isSetupComplete,
+  nextStep,
+  resumeStep,
+  SETUP_DONE,
+  WIZARD_STEP_META,
+  WIZARD_STEPS,
+  type WizardStep,
+} from "../lib/wizardSteps";
 import { useMe } from "../queries/http";
 import { qk } from "../queries/keys";
 import { WizardBrainStep } from "./WizardBrainStep";
@@ -75,15 +84,17 @@ export function WizardGate({ children }: { children: ReactNode }) {
  * mode) rather than leaving a compact viewport stranded on a blank gate. */
 function WizardComingSoon() {
   return (
-    <div className="wizard-gate__host wizard-gate__compact">
-      <h1>Welcome</h1>
-      <p className="wizard-gate__compact-message">
-        This device has no local machine to run agents on. Hosted mode — works on any device, no CLI to install — is
-        coming soon.
-      </p>
-      <a className="wizard-fork-step__notify" href="https://smithagents.com" target="_blank" rel="noreferrer">
-        → notify me
-      </a>
+    <div className="wizard-gate__host">
+      <div className="wizard-gate__panel wizard-gate__panel--compact">
+        <h1 className="wizard-gate__title">Welcome</h1>
+        <p className="wizard-gate__compact-message">
+          This device has no local machine to run agents on. Hosted mode — works on any device, no CLI to install — is
+          coming soon.
+        </p>
+        <a className="wizard-fork-step__notify" href="https://smithagents.com" target="_blank" rel="noreferrer">
+          → notify me
+        </a>
+      </div>
     </div>
   );
 }
@@ -148,12 +159,33 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
 
   return (
     <div className="wizard-gate__host" data-step={step}>
-      <h1>Welcome{me.placeholder ? "" : `, ${me.name}`}</h1>
-      {error && <p className="wizard-gate__error">{error}</p>}
-      {step === "name" && <WizardNameStep initialName={me.placeholder ? "" : me.name} onDone={advance} />}
-      {step === "fork" && <WizardForkStep onDone={advance} />}
-      {step === "subscriptions" && <WizardSubscriptionsStep onDone={advance} />}
-      {step === "brain" && <WizardBrainStep onDone={advance} />}
+      <div className="wizard-gate__panel">
+        {/* Display-only — no `onStepChange`, so the indicator never becomes a
+            second way to navigate. The step machine (`advance`, above) is the
+            only thing that moves `step`; the Stepper just reflects it. Driven
+            entirely by WIZARD_STEPS/WIZARD_STEP_META so a step this array
+            gains later shows up here without touching this component. */}
+        <Stepper currentStep={WIZARD_STEPS.indexOf(step)}>
+          {WIZARD_STEPS.map((s) => (
+            <Stepper.Step key={s}>
+              <Stepper.Indicator />
+              <Stepper.Content>
+                <Stepper.Title>{WIZARD_STEP_META[s].title}</Stepper.Title>
+                <Stepper.Description>{WIZARD_STEP_META[s].description}</Stepper.Description>
+              </Stepper.Content>
+              <Stepper.Separator />
+            </Stepper.Step>
+          ))}
+        </Stepper>
+        <div className="wizard-gate__body">
+          <h1 className="wizard-gate__title">Welcome{me.placeholder ? "" : `, ${me.name}`}</h1>
+          {error && <p className="wizard-gate__error">{error}</p>}
+          {step === "name" && <WizardNameStep initialName={me.placeholder ? "" : me.name} onDone={advance} />}
+          {step === "fork" && <WizardForkStep onDone={advance} />}
+          {step === "subscriptions" && <WizardSubscriptionsStep onDone={advance} />}
+          {step === "brain" && <WizardBrainStep onDone={advance} />}
+        </div>
+      </div>
     </div>
   );
 }

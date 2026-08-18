@@ -10,6 +10,22 @@ export const WIZARD_STEPS = ["name", "fork", "subscriptions", "brain"] as const;
 
 export type WizardStep = (typeof WIZARD_STEPS)[number];
 
+/**
+ * Display title/description for the step indicator (WizardGate's Stepper),
+ * keyed by step id rather than listed in WIZARD_STEPS' own order — a
+ * `Record<WizardStep, …>` forces every id in WIZARD_STEPS to have an entry
+ * here (and forbids a stale one for an id that's gone), so the compiler is
+ * what keeps the two lists in step, not a convention. Sits right next to
+ * WIZARD_STEPS for the same reason the file comment above gives for the
+ * array itself: one place to look when a later plan adds a step.
+ */
+export const WIZARD_STEP_META: Record<WizardStep, { title: string; description: string }> = {
+  name: { title: "Name", description: "Introduce yourself" },
+  fork: { title: "Location", description: "Where this runs" },
+  subscriptions: { title: "Subscriptions", description: "Connect a CLI or key" },
+  brain: { title: "Brain", description: "How Anderson replies" },
+};
+
 /** Sentinel stored once the last step is done. */
 export const SETUP_DONE = "done";
 
