@@ -45,7 +45,18 @@ export interface User {
    * spec makes the user record the resume anchor — a fresh browser profile must
    * still resume where the person left off.
    */
-  setup?: { mode?: "local" | "hosted"; voice?: boolean; step?: string };
+  setup?: {
+    mode?: "local" | "hosted";
+    voice?: boolean;
+    /** The user declined to configure a step, as opposed to never reaching it.
+        Recorded because a skip on these two steps has no value of its own to
+        write — their real state lives in the CLI-tools/API-key registries and
+        the brain-engine store — so without a flag, "skipped" and "not yet
+        asked" would be indistinguishable. */
+    subscriptionsSkipped?: boolean;
+    brainSkipped?: boolean;
+    step?: string;
+  };
 }
 
 export interface BrainEngine {
