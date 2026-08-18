@@ -66,11 +66,14 @@ function renderStep(opts: {
   onBack?: () => void;
   /** The host's own write state. Defaults to the resting one. */
   saveState?: WizardSaveState;
+  /** Threads to the heading. Defaults to a fixture name — only the one new
+      test below cares what it actually is. */
+  name?: string;
 }) {
   stubNoNetwork();
   const onDone = vi.fn();
   const element = (saveState: WizardSaveState) => (
-    <WizardSubscriptionsStep onDone={onDone} onBack={opts.onBack} saveState={saveState} />
+    <WizardSubscriptionsStep onDone={onDone} onBack={opts.onBack} saveState={saveState} name={opts.name ?? "Edwin"} />
   );
   const result = renderWithProviders(element(opts.saveState ?? "idle"));
   result.client.setQueryData<CliToolListing[]>(
@@ -232,5 +235,18 @@ describe("WizardSubscriptionsStep", () => {
 
     const labels = screen.getAllByRole("button").map((b) => b.textContent);
     expect(labels.indexOf("Back")).toBeLessThan(labels.indexOf("Continue"));
+  });
+
+  it("Anderson asks the question in his own voice, by the host's name", async () => {
+    // Task 6: this step used to have no heading of its own at all — the panel
+    // above it already says "Welcome, {name}", but the step itself spoke
+    // through nothing but a form hint. A wrong implementation that hardcoded
+    // some other name, or omitted {name} entirely, would fail this; one that
+    // merely added ANY heading without threading the host's name would too,
+    // since the query is anchored on both the phrase and the name together.
+    renderStep({ tools: { claude: { detected: true, authOk: true, enabled: true } }, name: "Kathia" });
+    expect(
+      await screen.findByRole("heading", { name: /where should i get my thinking from, kathia\??/i }),
+    ).toBeInTheDocument();
   });
 });

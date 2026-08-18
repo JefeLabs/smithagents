@@ -415,7 +415,14 @@ describe("WizardGate", () => {
     const { container } = renderGate({ name: "Edwin", setup: { mode: "local", step: "anderson" } });
 
     expect(await findHost(container)).toHaveAttribute("data-step", "anderson");
-    expect(await screen.findByRole("heading", { name: /set up anderson/i })).toBeInTheDocument();
+    // Task 6 re-voiced this heading from "Set up Anderson"; still the step's
+    // own distinctive prompt, not a substring any other step's copy shares —
+    // the panel's own "Welcome, Edwin" h1 and Subscriptions' "Where should I
+    // get my thinking from, Edwin?" h2 are both on-screen at other steps in
+    // this same suite and neither matches this pattern.
+    expect(
+      await screen.findByRole("heading", { name: /which of these should i use, and for what\?/i }),
+    ).toBeInTheDocument();
   });
 
   it("goes back from the last step into the one before it, and persists that", async () => {

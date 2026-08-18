@@ -4409,6 +4409,25 @@ button.logo {
    below re-fits them to a 640px panel WITHOUT touching either component's
    markup or Settings' own rules, so Settings comes out unchanged. */
 
+/* The step's own heading — Anderson's question, sibling to the two groups'
+   own `<h2>`s below rather than a second level above them. Values mirror
+   `.wizard-brain-step__title`, the same step-heading pattern one screen
+   later. */
+.wizard-subscriptions-step__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--foreground);
+}
+/* The supporting line under it. Values mirror `.wizard-gate-step__lede`, the
+   same "Anderson's own aside" treatment preflight's intro already uses. */
+.wizard-subscriptions-step__lede {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
 /* Both groups' titles, nested to `<h2>` here (see WizardSubscriptionsStep).
    Settings styles its own via `.settings-screen__content h1`, which this
    never reaches; unstyled, preflight leaves these at body size and they read

@@ -108,10 +108,17 @@ describe("WizardBrainStep", () => {
     vi.unstubAllGlobals();
   });
 
-  it("frames the step as setting Anderson up, and says where the options come from", async () => {
+  it("frames the step as Anderson's own question, and says where the options come from", async () => {
+    // Task 6: re-voiced from "Set up Anderson" (third person, instructing) to
+    // Anderson asking directly. A wrong implementation that kept some other
+    // heading, or dropped the supporting line's claim that these are the
+    // machine's own working tools, would fail one half of this without
+    // failing the other.
     renderBrainStep({ tools: { claude: { active: true } } });
-    expect(await screen.findByRole("heading", { name: /set up anderson/i })).toBeInTheDocument();
-    expect(screen.getByText(/installed provider tools/i)).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: /which of these should i use, and for what\?/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/already working on your machine/i)).toBeInTheDocument();
   });
 
   it("defaults to the strongest validated option, so the step is a confirmation", async () => {

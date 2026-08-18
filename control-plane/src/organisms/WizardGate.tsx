@@ -433,7 +433,7 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
             <WizardGateStep initialName={name} initialMode={mode} onDone={advance} onPickForMe={pickForMe} />
           )}
           {step === "subscriptions" && (
-            <WizardSubscriptionsStep onDone={advance} onBack={onBack} saveState={saveState} />
+            <WizardSubscriptionsStep onDone={advance} onBack={onBack} saveState={saveState} name={name} />
           )}
           {step === "anderson" && <WizardBrainStep onDone={advance} onBack={onBack} saveState={saveState} />}
         </div>

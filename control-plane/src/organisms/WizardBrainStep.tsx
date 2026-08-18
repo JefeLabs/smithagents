@@ -184,19 +184,19 @@ export function WizardBrainStep({ onDone, onBack, saveState = "idle" }: WizardBr
 
   return (
     <div className="wizard-brain-step">
-      <h2 className="wizard-brain-step__title">Set up Anderson</h2>
+      <h2 className="wizard-brain-step__title">Which of these should I use, and for what?</h2>
       <p className="wizard-brain-step__prompt" id="wizard-brain-prompt">
-        Anderson needs a brain. Choose from your installed provider tools.
+        This is what I'll think with — pick from what's already working on your machine.
       </p>
       {error && <p className="wizard__error">{error}</p>}
       {saveFailed && (
         <p className="wizard__hint">
-          Anderson still replies using a built-in default — you can set this later in Settings → Brain.
+          I'll still reply using a built-in default — you can set this later in Settings → Brain.
         </p>
       )}
       {candidates.length === 0 ? (
         <p className="wizard__hint">
-          Nothing validated yet to pick from — Anderson falls back to a built-in default until you add a CLI or key.
+          Nothing validated yet to pick from — I'll fall back to a built-in default until you add a CLI or key.
         </p>
       ) : (
         <RadioButtonGroup

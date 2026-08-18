@@ -10,6 +10,12 @@ export interface WizardSubscriptionsStepProps {
       machine (`prevStep`) and simply does not pass one, so this component
       never has to know where it sits in a sequence it does not own. */
   onBack?: () => void;
+  /** For the heading, which Anderson addresses by name. The host already
+      tracks it (for its own "Welcome, {name}" greeting and the chip) —
+      threaded through, not re-fetched, so there is exactly one place that
+      reads it from the user record. Never the "You" placeholder: by the time
+      this step is reachable, preflight has already collected a real name. */
+  name: string;
   /**
    * What became of the host's own save for the patch it last sent. Same prop,
    * same meaning, as `WizardBrainStepProps["saveState"]` — one mechanism, not
@@ -49,7 +55,7 @@ export interface WizardSubscriptionsStepProps {
  * on PROBE validity only. Live-turn validation belongs with whatever plan
  * owns turn execution.
  */
-export function WizardSubscriptionsStep({ onDone, onBack, saveState = "idle" }: WizardSubscriptionsStepProps) {
+export function WizardSubscriptionsStep({ onDone, onBack, saveState = "idle", name }: WizardSubscriptionsStepProps) {
   const { data: tools = [] } = useCliTools();
   const { data: keys = [] } = useApiKeys();
 
@@ -57,8 +63,16 @@ export function WizardSubscriptionsStep({ onDone, onBack, saveState = "idle" }: 
 
   return (
     <div className="wizard-subscriptions-step">
+      {/* `<h2>`, sibling to CliToolsGroup's and ApiKeysGroup's own — see the
+          `headingLevel` comment below for why the panel's `<h1>` rules out an
+          `<h1>` here. Anderson asking directly, by name, rather than the old
+          unaddressed form hint. */}
+      <h2 className="wizard-subscriptions-step__title">Where should I get my thinking from, {name}?</h2>
+      <p className="wizard-subscriptions-step__lede">
+        You already pay for a few of these — I'm the thing that makes them argue with each other.
+      </p>
       <p className="wizard__hint">
-        Install a CLI or paste an API key — Continue unlocks the moment one of your subscriptions actually works.
+        Install a CLI or paste an API key — I'll be ready the moment one of them actually works.
       </p>
       {/* `headingLevel` is the ONLY reason these two take a prop at all. Each
           group titles itself with an `<h1>`, which is right in Settings —
