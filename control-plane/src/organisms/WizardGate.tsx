@@ -22,9 +22,9 @@ import {
 import { WizardChip } from "../molecules/WizardChip";
 import { useMe } from "../queries/http";
 import { qk } from "../queries/keys";
-import { WizardBrainStep } from "./WizardBrainStep";
 import { WizardGateStep } from "./WizardGateStep";
-import { WizardSubscriptionsStep } from "./WizardSubscriptionsStep";
+import { WizardRolesStep } from "./WizardRolesStep";
+import { WizardSourcesStep } from "./WizardSourcesStep";
 
 /**
  * Mirrors the app shell's own mobile breakpoint (`components.css`'s 768px
@@ -160,7 +160,7 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
   // every step's Back can race a write the step itself cannot see — the one
   // that brought it here, or (on the last step, which nothing swaps out) its
   // own handoff. Both `advance` and `goBack` maintain it, since both write.
-  // Read by WizardSubscriptionsStep and WizardBrainStep through the same
+  // Read by WizardSourcesStep and WizardRolesStep through the same
   // `saveState` prop; see the type's comment in lib/wizardSteps.ts.
   const [saveState, setSaveState] = useState<WizardSaveState>("idle");
   const qc = useQueryClient();
@@ -201,8 +201,7 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
     // one raced.
     setSaveState("saving");
     // Only what the patch actually carries: a step with nothing to say about
-    // an answer (Subscriptions and Anderson both send `setup: {}`) must not
-    // blank one out. Mirrors the server's own merge, which is why omitting a
+    // an answer (both setup steps send `setup: {}`) must not blank one out. Mirrors the server's own merge, which is why omitting a
     // field there keeps its old value too.
     if (patch.name !== undefined) setName(patch.name);
     if (patch.setup?.mode !== undefined) setMode(patch.setup.mode);
@@ -403,9 +402,10 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
             body, alongside the Stepper it numbers, rather than inside it:
             the step's own `.wizard-gate__footer` (Back/Continue) is a
             `position: sticky` band scoped to this same scrolling panel, and
-            anything placed AFTER it in DOM order — Subscriptions is the one
-            step tall enough to make this observable — ends up pinned behind
-            it, unreachable while scrolled. Skip is a host control, not a
+            anything placed AFTER it in DOM order — *Where I think*, with its
+            keys section open, is the one step tall enough to make this
+            observable — ends up pinned behind it, unreachable while
+            scrolled. Skip is a host control, not a
             per-step one (Task 4's brief modifies this file and
             `wizardSteps.ts` only, never the step components that own that
             footer), so it renders here rather than inside it.
@@ -440,22 +440,35 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
             </button>
           </div>
         )}
+        {/* No host heading, on ANY step. The gate lost its bare "Welcome" in
+            an earlier pass — WizardGateStep owns that screen's `<h1>` now,
+            Anderson's own first words — and this is the same finding one
+            screen later, made walking the live app: the setup steps'
+            `<h1>Welcome, {name}</h1>` rendered at 26px/700 directly above
+            Anderson's actual question at 15px, so a greeting nobody asked for
+            outranked the person on every step. He already said hello at the
+            gate; repeating it above each question is chrome outranking
+            content.
+
+            The deliberate consequence is that a setup step now has NO `<h1>`
+            at all. The question is not promoted to fill the slot — questions
+            stay `<h2>`, the user's own ruling — and no visually-hidden `<h1>`
+            stands in for the greeting either: the only copy such a heading
+            could plausibly carry is the greeting just removed, so it would
+            restore for assistive technology exactly what was removed for
+            everyone else. WCAG asks for a sensible heading ORDER, not for an
+            `<h1>` (the "one h1 per page" rule is axe's best-practice set, not
+            a success criterion); what a screen reader lands on here is the
+            step's own question, which describes the screen better than
+            "Welcome" ever did, with the chip and `Step n of N` above it for
+            position.
+
+            `headingLevel="h2"` on the reused Settings group gets MORE
+            load-bearing, not less: ApiKeysGroup defaults to `<h1>`, so
+            without it the outline would run question (`h2`) → "api keys"
+            (`h1`) — a reused Settings title outranking Anderson's question,
+            the same inversion this removes, one level down. */}
         <div className="wizard-gate__body">
-          {/* Greeted by name on the setup steps, and given no host heading at
-              all on the gate. An earlier pass already withheld the
-              personalised greeting there — it would be either empty on a
-              fresh install or a redundant echo of the field directly below
-              it — but kept a bare "Welcome" so the panel still carried the
-              one `<h1>` the steps' `headingLevel="h2"` assumes. That bare
-              word is the problem this removes: on the single screen where
-              the name is still being asked for it says nothing, and it said
-              it at 26px directly above Anderson's own first words at 15px,
-              so the largest thing on the product's opening screen was a word
-              nobody said. WizardGateStep owns the gate's `<h1>` instead (see
-              its intro comment). Exactly one `<h1>` per screen either way, so
-              `headingLevel="h2"` on the reused Settings groups keeps meaning
-              what it meant. */}
-          {step !== PREFLIGHT && <h1 className="wizard-gate__title">{name ? `Welcome, ${name}` : "Welcome"}</h1>}
           {error && <p className="wizard-gate__error">{error}</p>}
           {step === PREFLIGHT && (
             // Seeded with the answers already given, so backing up into this
@@ -468,18 +481,19 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
               saveState={saveState}
             />
           )}
-          {step === "subscriptions" && (
-            <WizardSubscriptionsStep onDone={advance} onBack={onBack} saveState={saveState} name={name} />
+          {step === "sources" && (
+            <WizardSourcesStep onDone={advance} onBack={onBack} saveState={saveState} name={name} />
           )}
           {/* `onSkip={skip}` is the host's own progress-row Skip, handed to
-              the step verbatim — the step's escape and that button are then
-              literally the same call, reading `skipDefault()` from the step
-              registry in one place. The step has no value of its own to
-              write, so a patch composed on its side would be a second answer
-              to a question this file already answers. */}
-          {step === "anderson" && (
-            <WizardBrainStep onDone={advance} onSkip={skip} onBack={onBack} saveState={saveState} />
-          )}
+              the step verbatim — the step's escape (which appears only after
+              a save the server refused) and that button are then literally
+              the same call, reading `skipDefault()` from the step registry in
+              one place. The step's three answers live on the user record
+              proper, via `PUT /me/engines`, so a way off it that saved
+              nothing has no value of its own to write, and a patch composed
+              on its side would be a second answer to a question this file
+              already answers. */}
+          {step === "roles" && <WizardRolesStep onDone={advance} onSkip={skip} onBack={onBack} saveState={saveState} />}
         </div>
       </div>
     </div>

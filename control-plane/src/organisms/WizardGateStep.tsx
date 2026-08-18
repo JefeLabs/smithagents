@@ -26,7 +26,7 @@ export interface WizardGateStepProps {
   onPickForMe?: (name: string, mode: SetupMode) => void;
   /**
    * What became of the host's own last `PUT /me` — same prop, same meaning, as
-   * `WizardBrainStepProps["saveState"]`.
+   * `WizardRolesStepProps["saveState"]`.
    *
    * Needed here for the reason the LAST step needs it, and it is easy to miss
    * that this step has that shape too: "just pick sensible things for me"
@@ -249,17 +249,19 @@ export function WizardGateStep({
           order is what keeps the tab order agreeing with the visual one now
           that the two sit left-to-right in a row.
 
-          `--gate` because these two are not two answers to one question, the
-          way Back and Continue are on every later step. One is the path
-          through setup and the other is the door out of it, and stacked as
-          two identical full-width pills they read as a choice between
-          equals — which weights a shortcut that silently accepts every
-          remaining default exactly as heavily as walking the setup. So the
-          shortcut drops to quiet text and the primary stays the only filled
-          control on the screen; the ranking is legible before either label
-          is read. Same hand-styled `<button>` as the per-step Skip, for the
-          same reasons — see `.wizard-gate__skip` in components.css. */}
-      <div className="wizard-gate__footer wizard-gate__footer--gate">
+          Stacked as two identical full-width pills these read as a choice
+          between equals — which weights a shortcut that silently accepts
+          every remaining default exactly as heavily as walking the setup. So
+          the shortcut drops to quiet text and the primary stays the only
+          filled control on the screen; the ranking is legible before either
+          label is read. That started here as a `--gate` modifier, on the
+          reasoning that the steps' Back and Continue WERE two answers to one
+          question and could stay equals; the user, walking the live app,
+          ruled otherwise, so the row is now what `.wizard-gate__footer`
+          itself does and the modifier is gone. Same hand-styled `<button>`
+          as every other quiet control here — see `.wizard-gate__quiet` in
+          components.css. */}
+      <div className="wizard-gate__footer">
         {onPickForMe && (
           // Same rule as the primary beside it: the name still has to be
           // typed — this button picks the OTHER things, not that one. Mode
@@ -267,7 +269,7 @@ export function WizardGateStep({
           // disabled) so it always has a value to hand back.
           <button
             type="button"
-            className="wizard-gate__shortcut"
+            className="wizard-gate__quiet"
             onClick={() => onPickForMe((name ?? "").trim(), mode)}
             disabled={!filled(name ?? "") || writing}
           >

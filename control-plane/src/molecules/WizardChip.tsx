@@ -12,7 +12,7 @@ export interface WizardChipProps {
   onEdit: () => void;
   /**
    * What became of the host's own last `PUT /me` — same prop, same meaning, as
-   * `WizardBrainStepProps["saveState"]`, and read for the same reason.
+   * `WizardRolesStepProps["saveState"]`, and read for the same reason.
    *
    * This control needs it more than any footer does. A Back moves one step and
    * lives on a step the host swaps out; the chip reaches preflight from ANY

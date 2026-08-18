@@ -229,8 +229,12 @@ export function WizardSourcesStep({ onDone, onBack, saveState = "idle", name }: 
 
   return (
     <div className="wizard-sources-step">
-      {/* `<h2>`: the panel's `<h1>` is the host's greeting, and ApiKeysGroup's
-          own title below is this step's sibling, not its child. */}
+      {/* `<h2>`, and it is now the FIRST heading on the screen: the host's own
+          `<h1>Welcome, {name}</h1>` is gone (see WizardGate), so Anderson's
+          question takes the size and the rank the greeting used to have. Still
+          `<h2>` rather than promoted — the user's ruling — and ApiKeysGroup's
+          own title below stays this step's sibling, not its child, which is
+          what `headingLevel="h2"` buys. */}
       <h2 className="wizard-sources-step__title">Where should I get my thinking from, {name}?</h2>
       <p className="wizard-sources-step__lede">Pick as many as you like — I'll use whichever suits each job.</p>
 
@@ -274,7 +278,23 @@ export function WizardSourcesStep({ onDone, onBack, saveState = "idle", name }: 
             </span>
           </Checkbox.Content>
         </Checkbox>
-        {chosen.keys && <ApiKeysGroup headingLevel="h2" only={WIZARD_KEY_PROVIDERS} />}
+        {/* Settings' own component, in Anderson's voice. Reusing it is right —
+            it owns save, verify, remove and the error surfacing for all three,
+            and a wizard-only copy would drift from it — but its default copy
+            is Settings talking ("api keys", and a blurb about accelerating
+            avatar generation) in the middle of a screen where Anderson is
+            asking, about a consumer this wizard never mentions. `title` and
+            `blurb` are the same contextual treatment `headingLevel` already
+            demonstrates: the surrounding screen supplies the words, the
+            component keeps the behaviour. */}
+        {chosen.keys && (
+          <ApiKeysGroup
+            headingLevel="h2"
+            only={WIZARD_KEY_PROVIDERS}
+            title="Your keys"
+            blurb="Paste one and I'll check it right now. It stays on this machine, and I'll never show it back to you."
+          />
+        )}
       </div>
 
       <div className="wizard-sources-step__source">
@@ -317,9 +337,18 @@ export function WizardSourcesStep({ onDone, onBack, saveState = "idle", name }: 
             contract is that moving FORWARD never waits on the network, and a
             forward click unmounts this step anyway. */}
         {onBack && (
-          <Button variant="secondary" onPress={onBack} isDisabled={saveState === "saving"}>
+          // Quiet text, not a second pill. As two identical full-width pills
+          // Back and Continue read as a choice between equals, so the way OUT
+          // of the question carried exactly the weight of the way through it —
+          // the same inversion Task 8 of Plan 1 settled on the gate, where the
+          // shortcut dropped to text beside the one filled control. A plain
+          // `<button>` for the reasons `.wizard-gate__quiet` records: dressing
+          // a HeroUI Button down to text means undoing its height, padding,
+          // border, radius and fill, and native `disabled` stops the pointer
+          // AND the keyboard where dimming alone stops neither.
+          <button type="button" className="wizard-gate__quiet" onClick={onBack} disabled={saveState === "saving"}>
             Back
-          </Button>
+          </button>
         )}
         <Button variant="primary" onPress={() => onDone({ setup: {} })} isDisabled={!canContinue}>
           Continue

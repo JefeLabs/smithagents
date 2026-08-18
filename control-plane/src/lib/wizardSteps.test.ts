@@ -13,7 +13,7 @@ describe("preflight", () => {
 
 describe("the sequence derives from the answers", () => {
   it("local mode yields the local sequence", () => {
-    expect([...setupStepsFor({ mode: "local" })]).toEqual(["subscriptions", "anderson"]);
+    expect([...setupStepsFor({ mode: "local" })]).toEqual(["sources", "roles"]);
   });
 
   it("no mode yields no sequence rather than defaulting to local", () => {
@@ -25,7 +25,7 @@ describe("the sequence derives from the answers", () => {
   it("the voice answer is carried but adds no step in this plan", () => {
     // The Voice screen is a later plan. Until it exists, a sequence entry for
     // it would be a dead route — but the ANSWER must already round-trip.
-    expect([...setupStepsFor({ mode: "local", voice: true })]).toEqual(["subscriptions", "anderson"]);
+    expect([...setupStepsFor({ mode: "local", voice: true })]).toEqual(["sources", "roles"]);
   });
 });
 
@@ -34,8 +34,23 @@ describe("labels match the spec", () => {
     expect(stepsFor({ mode: "local" }).map((s) => s.title)).not.toContain("Location");
   });
 
-  it("names Configure Anderson, not Brain", () => {
-    expect(stepsFor({ mode: "local" }).find((s) => s.id === "anderson")?.title).toBe("Anderson");
+  it("carries the spec's own two section names, in its order", () => {
+    // `## Step 1 of 6 · Where I think` / `## Step 2 of 6 · What I think with`
+    // — the spec's headings verbatim, because the indicator is the only place
+    // a step is named to the user and a paraphrase there is a second name for
+    // the same screen.
+    expect(stepsFor({ mode: "local" }).map((s) => s.title)).toEqual(["Where I think", "What I think with"]);
+  });
+
+  it("no longer names the two screens these replaced", () => {
+    // Not redundant with the equality above: it is the assertion that FAILS
+    // if a registry keeps the old entries alongside the new ones (a swap done
+    // by addition rather than replacement), which the exact-order check above
+    // would also catch but for a reason that reads as a copy edit rather than
+    // as two dead screens still in the sequence.
+    const titles = stepsFor({ mode: "local" }).map((s) => s.title);
+    expect(titles).not.toContain("Subscriptions");
+    expect(titles).not.toContain("Anderson");
   });
 });
 
@@ -45,14 +60,14 @@ describe("progress is honest", () => {
   });
 
   it("counts within the sequence the answers actually selected", () => {
-    const p = progressFor("subscriptions", { mode: "local" });
+    const p = progressFor("sources", { mode: "local" });
     expect(p).toEqual({ n: 1, of: stepsFor({ mode: "local" }).length });
   });
 
   it("never reports a total the sequence does not contain", () => {
     // The spec's "Step n of 6" is honest ONLY because the branch is settled at
     // the gate. A hardcoded 6 would lie for any shorter sequence.
-    const of = progressFor("subscriptions", { mode: "local" })?.of;
+    const of = progressFor("sources", { mode: "local" })?.of;
     expect(of).toBe(stepsFor({ mode: "local" }).length);
   });
 });
@@ -77,7 +92,7 @@ describe("skip applies a stated default", () => {
 
 describe("nextStep", () => {
   it("leaves preflight for the first step of the chosen sequence", () => {
-    expect(nextStep(PREFLIGHT, { mode: "local" })).toBe("subscriptions");
+    expect(nextStep(PREFLIGHT, { mode: "local" })).toBe("sources");
   });
 
   it("cannot leave preflight with no mode chosen", () => {
@@ -87,22 +102,22 @@ describe("nextStep", () => {
     // whether or not this task's implementation exists. The contrast is what
     // discriminates.
     expect(nextStep(PREFLIGHT, {})).toBeNull();
-    expect(nextStep(PREFLIGHT, { mode: "local" })).toBe("subscriptions");
+    expect(nextStep(PREFLIGHT, { mode: "local" })).toBe("sources");
   });
 
   it("walks the sequence and ends at null", () => {
-    expect(nextStep("subscriptions", { mode: "local" })).toBe("anderson");
-    expect(nextStep("anderson", { mode: "local" })).toBeNull();
+    expect(nextStep("sources", { mode: "local" })).toBe("roles");
+    expect(nextStep("roles", { mode: "local" })).toBeNull();
   });
 });
 
 describe("prevStep — the escape hatch a blocking step depends on", () => {
   it("goes back from the first setup step into preflight", () => {
-    expect(prevStep("subscriptions", { mode: "local" })).toBe(PREFLIGHT);
+    expect(prevStep("sources", { mode: "local" })).toBe(PREFLIGHT);
   });
 
   it("goes back within the sequence", () => {
-    expect(prevStep("anderson", { mode: "local" })).toBe("subscriptions");
+    expect(prevStep("roles", { mode: "local" })).toBe("sources");
   });
 
   it("cannot go back from preflight — it is the beginning", () => {
@@ -116,14 +131,27 @@ describe("resumeStep", () => {
   });
 
   it("returns to preflight for a setup step saved with no mode", () => {
-    expect(resumeStep({ step: "subscriptions" })).toBe(PREFLIGHT);
+    expect(resumeStep({ step: "sources" })).toBe(PREFLIGHT);
   });
 
   it("resumes a step the recorded answers actually contain", () => {
-    expect(resumeStep({ mode: "local", step: "anderson" })).toBe("anderson");
+    expect(resumeStep({ mode: "local", step: "roles" })).toBe("roles");
   });
 
   it("restarts on a step id the sequence does not contain", () => {
     expect(resumeStep({ mode: "local", step: "not-a-step" })).toBe(PREFLIGHT);
+  });
+
+  it("sends a record left on one of the RETIRED steps back to the gate", () => {
+    // The upgrade path, and the only one this swap creates: someone who was
+    // mid-wizard when this build replaced the two steps has `subscriptions`
+    // or `anderson` recorded on their user record. Neither renders any more,
+    // so without this they would resume onto an empty panel — a heading, an
+    // indicator, and no controls at all, on every reload, with the gate
+    // reopening each time because setup never completes. Same clause that
+    // covers "not-a-step" above; asserted separately because these two ids
+    // are the ones that will actually be on disk.
+    expect(resumeStep({ mode: "local", step: "subscriptions" })).toBe(PREFLIGHT);
+    expect(resumeStep({ mode: "local", step: "anderson" })).toBe(PREFLIGHT);
   });
 });

@@ -85,8 +85,9 @@ function renderStep(opts: StepOpts = {}) {
     }),
   );
   const onDone = vi.fn();
+  const onSkip = vi.fn();
   const element = (saveState: WizardSaveState) => (
-    <WizardRolesStep onDone={onDone} onBack={opts.onBack} saveState={saveState} />
+    <WizardRolesStep onDone={onDone} onSkip={onSkip} onBack={opts.onBack} saveState={saveState} />
   );
   const result = renderWithProviders(element(opts.saveState ?? "idle"));
   result.client.setQueryData<CliToolListing[]>(
@@ -103,6 +104,7 @@ function renderStep(opts: StepOpts = {}) {
   return {
     ...result,
     onDone,
+    onSkip,
     puts,
     reportSaveState: (saveState: WizardSaveState) => result.rerender(element(saveState)),
   };
@@ -370,7 +372,7 @@ describe("WizardRolesStep", () => {
       ),
     );
     const pending = vi.fn();
-    const { client } = renderWithProviders(<WizardRolesStep onDone={pending} />);
+    const { client } = renderWithProviders(<WizardRolesStep onDone={pending} onSkip={vi.fn()} />);
     client.setQueryData<CliToolListing[]>(qk.cliTools, [toolListing("claude")]);
     client.setQueryData<ApiKeyListing[]>(qk.apiKeys, []);
     client.setQueryData<LocalServer[]>(qk.localModels, []);
@@ -408,16 +410,23 @@ describe("WizardRolesStep", () => {
     // user, but a server can still refuse at save time — a broker that is down,
     // a cli logged out between the probe and the click. Without this the user
     // is on a wizard step whose only forward action fails every time.
-    const { onDone } = renderStep({ tools: { claude: {} }, save: "refuse" });
+    const { onDone, onSkip } = renderStep({ tools: { claude: {} }, save: "refuse" });
     await screen.findByRole("combobox", { name: MAIN });
     expect(screen.queryByRole("button", { name: ESCAPE })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: CONTINUE }));
     await userEvent.click(await screen.findByRole("button", { name: ESCAPE }));
-    expect(onDone).toHaveBeenCalledWith({ setup: {} });
+    // Through the HOST's skip, not a bare `{setup: {}}` of its own: nothing
+    // was saved, so this is the same outcome the progress-row Skip states, and
+    // the flag that records it (`rolesSkipped`) lives in the step registry
+    // where exactly one place composes it. A patch built here instead would be
+    // a second copy, and this user would finish byte-identical to one who
+    // actually picked three engines.
+    expect(onSkip).toHaveBeenCalledTimes(1);
+    expect(onDone).not.toHaveBeenCalled();
   });
 
   it("nothing to pick is not a dead end either", async () => {
-    const { onDone, puts } = renderStep({ tools: { claude: { detected: false } } });
+    const { onDone, onSkip, puts } = renderStep({ tools: { claude: { detected: false } } });
     expect(
       await screen.findByText(
         "Nothing validated yet to pick from — I'll fall back to a built-in default until you add a CLI or key.",
@@ -425,9 +434,12 @@ describe("WizardRolesStep", () => {
     ).toBeInTheDocument();
     expect(screen.queryByRole("combobox")).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: CONTINUE }));
-    // Nothing to save, so nothing is sent — but the step still hands over.
+    // Nothing to save, so nothing is sent — but the step still hands over, and
+    // as a SKIP: that is exactly what this outcome is, and recording it as a
+    // plain completion would lose the distinction the flag exists for.
     expect(puts).toHaveLength(0);
-    expect(onDone).toHaveBeenCalledWith({ setup: {} });
+    expect(onSkip).toHaveBeenCalledTimes(1);
+    expect(onDone).not.toHaveBeenCalled();
   });
 
   // --- The in-flight guards ------------------------------------------------
@@ -443,6 +455,28 @@ describe("WizardRolesStep", () => {
     expect(screen.getByRole("button", { name: "Back" })).toBeEnabled();
   });
 
+  it("ranks the footer: one filled pill, and it is Continue", async () => {
+    // Back and the escape both DECLINE this question; only Continue answers
+    // it. Shipped as three identical full-width pills they read as three equal
+    // choices, which is what the user found walking the live app. jsdom cannot
+    // measure weight, but it can hold what the weight rests on: the HeroUI
+    // pill hook `[data-slot="button"]` appears exactly once in the footer, on
+    // the primary, and both quiet controls carry the hand-styled class
+    // instead. Asserted in the THREE-control state, which is the one a
+    // two-control check would miss.
+    renderStep({ tools: { claude: {} }, onBack: vi.fn(), save: "refuse" });
+    await userEvent.click(await screen.findByRole("button", { name: CONTINUE }));
+    const escapeBtn = await screen.findByRole("button", { name: ESCAPE });
+
+    const footer = escapeBtn.closest(".wizard-gate__footer");
+    expect(footer).not.toBeNull();
+    expect(escapeBtn).toHaveClass("wizard-gate__quiet");
+    expect(screen.getByRole("button", { name: "Back" })).toHaveClass("wizard-gate__quiet");
+    const pills = footer?.querySelectorAll('[data-slot="button"]') ?? [];
+    expect(pills).toHaveLength(1);
+    expect(pills[0]).toHaveTextContent(CONTINUE);
+  });
+
   it("Continue cannot be clicked twice into the same save", async () => {
     // The stub never settles, so the first click leaves the save in flight.
     vi.stubGlobal(
@@ -452,7 +486,7 @@ describe("WizardRolesStep", () => {
       ),
     );
     const onDone = vi.fn();
-    const { client } = renderWithProviders(<WizardRolesStep onDone={onDone} />);
+    const { client } = renderWithProviders(<WizardRolesStep onDone={onDone} onSkip={vi.fn()} />);
     client.setQueryData<CliToolListing[]>(qk.cliTools, [toolListing("claude")]);
     client.setQueryData<ApiKeyListing[]>(qk.apiKeys, []);
     client.setQueryData<LocalServer[]>(qk.localModels, []);

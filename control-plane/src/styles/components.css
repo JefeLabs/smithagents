@@ -4355,23 +4355,36 @@ button.logo {
 .wizard-gate__progress .wizard__hint {
   margin-bottom: 0;
 }
-/* The wizard's two quiet actions: the per-step Skip beside the progress line,
-   and the gate's own "pick sensible things for me". Both DECLINE a question
-   rather than answer one, so neither is a pill — the pill is the path, these
-   are the door beside it. Hand-styled `<button>`s rather than HeroUI's, on
-   the precedent `.wizard-chip` already set in this feature: dressing a
-   `Button` down to text means undoing its height, padding, border, radius,
-   min-width and fill, and going native keeps the real `disabled` attribute
-   these both need (it stops pointer AND keyboard, where dimming alone stops
-   neither — the distinction this branch has already been bitten by). Size is
-   set per caller below, since one sits beside 11px progress type and the
-   other beside a 14px primary. */
-.wizard-gate__skip,
-.wizard-gate__shortcut {
+/* Every quiet action in the wizard: the per-step Skip beside the progress
+   line, the gate's "just pick sensible things for me", each step's Back, and
+   the roles step's escape after a refused save. All four DECLINE a question
+   rather than answer it, so none is a pill — the pill is the path, these are
+   the door beside it. Back and the escape arrived here late: they shipped as
+   full-width HeroUI pills stacked under Continue, which read as a choice
+   between equals and weighted the way out of a question exactly as heavily as
+   the way through it. Task 8 of Plan 1 had already settled that on the gate;
+   this is the same ruling reaching the steps.
+
+   Hand-styled `<button>`s rather than HeroUI's, on the precedent
+   `.wizard-chip` already set in this feature: dressing a `Button` down to text
+   means undoing its height, padding, border, radius, min-width and fill, and
+   going native keeps the real `disabled` attribute these all need (it stops
+   pointer AND keyboard, where dimming alone stops neither — the distinction
+   this branch has already been bitten by).
+
+   13px is the footer size; `.wizard-gate__skip` overrides it below, since it
+   is the one that sits beside 11px progress type rather than beside a 14px
+   primary. */
+.wizard-gate__quiet,
+.wizard-gate__skip {
   padding: 0;
   border: 0;
   background: none;
+  /* Shorthand first, then the two it resets — `font: inherit` would otherwise
+     wipe a font-size declared above it. */
   font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
   /* `--text-2`, NOT the `--text-dim` the progress line beside it uses, even
      though matching it exactly would read as one line more cleanly. Measured
      against the panel's own surface, `--text-dim` gives 3.06:1 in light and
@@ -4385,20 +4398,20 @@ button.logo {
   text-underline-offset: 2px;
   cursor: pointer;
 }
-.wizard-gate__skip:hover:not(:disabled),
-.wizard-gate__shortcut:hover:not(:disabled) {
+.wizard-gate__quiet:hover:not(:disabled),
+.wizard-gate__skip:hover:not(:disabled) {
   color: var(--foreground);
 }
-.wizard-gate__skip:disabled,
-.wizard-gate__shortcut:disabled {
+.wizard-gate__quiet:disabled,
+.wizard-gate__skip:disabled {
   opacity: 0.5;
   cursor: default;
 }
-/* The progress line's own size and colour, so the row reads as one line. */
+/* The progress line's own size, so that row reads as one line rather than as
+   a label with a control parked next to it. */
 .wizard-gate__skip {
   flex: 0 1 auto;
   font-size: 11px;
-  line-height: 1.4;
   text-align: right;
 }
 /* The footer band each step wraps its Continue button in. Pass 1 drew this
@@ -4413,13 +4426,24 @@ button.logo {
    1 found the hard way: under the global `box-sizing: border-box`, padding
    on the fixed-height button eats its height instead of adding to it. */
 .wizard-gate__footer {
-  /* Sticks only when there is something to scroll — on the three short
-     steps the panel never overflows, so this is inert and the footer sits in
-     flow exactly where pass 1 left it. On Subscriptions (the one step tall
-     enough to scroll) it pins Continue to the panel's bottom edge instead of
-     leaving it ~1200px below the fold. At full scroll the footer is back at
-     its natural place after the last card, so it never ends up covering the
-     final card's controls. */
+  /* ONE ROW, not a stack — the primary right-ranked and last, every quiet
+     control beside it. This used to be a column of identical full-width
+     pills, which is what made Back read as heavy as Continue; the gate got
+     the row treatment in Task 8 of Plan 1 (as a `--gate` modifier, since
+     retired) and the steps did not. Same right-ranked actions row
+     `.wizard-chip__footer` already uses, and DOM order is unchanged, so the
+     tab order still runs left to right. */
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+  /* Sticks only when there is something to scroll — on the short steps the
+     panel never overflows, so this is inert and the footer sits in flow. On
+     *Where I think* with its keys section open (the one step tall enough to
+     scroll) it pins Continue to the panel's bottom edge instead of leaving it
+     ~1200px below the fold. At full scroll the footer is back at its natural
+     place after the last card, so it never ends up covering the final card's
+     controls. */
   position: sticky;
   bottom: 0;
   /* Both this and the cards under it are positioned/stacked; without this the
@@ -4436,47 +4460,19 @@ button.logo {
      across the bottom of a lighter card. */
   background: var(--surface-raised);
 }
-.wizard-gate__footer [data-slot="button"] {
-  width: 100%;
+/* The LEADING quiet control gets pushed to the far side, and everything after
+   it groups against the primary: Back at the left edge of a step's footer,
+   "just pick sensible things for me" at the left edge of the gate's. An
+   `auto` margin rather than `space-between` on the row, because the roles
+   step's footer can hold THREE controls after a refused save (Back, the
+   escape, Continue) and `space-between` would spread those evenly instead of
+   leaving the retreat where it belongs. Inert when the leading child is the
+   primary itself — a step with no Back — which is exactly when there is
+   nothing to push away from. */
+.wizard-gate__footer > .wizard-gate__quiet:first-child {
+  margin-inline-end: auto;
 }
-/* Footers stack rather than sit side by side: every step past preflight holds
-   Continue plus a Back, and the Brain step's escape hatch ("Skip for now",
-   shown after a save the server refused) can make that three. Preflight itself
-   holds exactly one, so this adjacent-sibling rule stays inert there. */
-.wizard-gate__footer [data-slot="button"] + [data-slot="button"] {
-  margin-top: 10px;
-}
-/* The gate's footer holds a path and the door out of it, not two answers to
-   one question the way Back and Continue do on every later step. Stacked as
-   two identical full-width pills the shortcut — which silently accepts every
-   remaining default — carried exactly the weight of walking the setup. One
-   row instead: the shortcut as quiet text on the left, the primary as the
-   only filled control on the screen on the right. Same right-ranked actions
-   row `.wizard-chip__footer` already uses, and DOM order is unchanged, so the
-   tab order still runs left to right.
-
-   Only ONE `[data-slot="button"]` is left in this footer (the shortcut is a
-   plain `<button>` now), which is why the stacking rule above needs no
-   counterpart here — it has nothing to match. */
-.wizard-gate__footer--gate {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-/* Undoes the full-width rule above, for this footer only. Same specificity as
-   that rule (0,2,0), so this HAS to stay after it in source order. */
-.wizard-gate__footer--gate [data-slot="button"] {
-  width: auto;
-}
-.wizard-gate__shortcut {
-  font-size: 13px;
-  line-height: 1.4;
-  text-align: left;
-}
-.wizard-fork-step,
-.wizard-brain-step,
-.wizard-subscriptions-step {
+.wizard-fork-step {
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -4503,72 +4499,19 @@ button.logo {
   letter-spacing: -0.01em;
   color: var(--foreground);
 }
-/* --- Subscriptions step interior ---
-   This step renders Settings' OWN two screens (CliToolsGroup, ApiKeysGroup)
-   rather than wizard-only clones — a deliberate reuse, not an accident. Both
-   were laid out for the Settings shell's ~1050px content column; everything
-   below re-fits them to a 640px panel WITHOUT touching either component's
-   markup or Settings' own rules, so Settings comes out unchanged. */
-
-/* The step's own heading — Anderson's question, sibling to the two groups'
-   own `<h2>`s below rather than a second level above them. Values mirror
-   `.wizard-brain-step__title`, the same step-heading pattern one screen
-   later. */
-.wizard-subscriptions-step__title {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  color: var(--foreground);
-}
-/* The supporting line under it — the same "Anderson's own aside" treatment as
-   `.wizard-sources-step__lede`. (It used to mirror `.wizard-gate-step__lede`;
-   that rule went when the user removed preflight's supporting line.) */
-.wizard-subscriptions-step__lede {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--text-2);
-}
-/* Both groups' titles, nested to `<h2>` here (see WizardSubscriptionsStep).
-   Settings styles its own via `.settings-screen__content h1`, which this
-   never reaches; unstyled, preflight leaves these at body size and they read
-   as stray lowercase text rather than the two section headings they are. */
-.wizard-subscriptions-step .settings-group__title {
-  margin: 8px 0 0;
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  color: var(--foreground);
-}
-/* The group's own action ("refresh all") is a direct child of this flex
-   column, so `align-items: stretch` blew it out to the full panel width — a
-   543px pill around a 12px label. It shrink-wraps in Settings because that
-   shell is a block container, not a flex one. (The icon/label break inside
-   it was a separate bug, fixed on `.settings-btn` itself.) */
-.wizard-subscriptions-step > .settings-btn {
-  align-self: flex-start;
-}
-/* Settings gets 3 columns out of `minmax(280px, 1fr)`; the panel's 543px
-   content box gets exactly 1, which is what stretched each card to 543px and
-   left the status strip's `space-between` pill and text ~300px apart, reading
-   as an unresolved layout. Two columns put the cards at ~265px — inside the
-   280px band the strip was designed against, where the text fills the row and
-   the gap closes — and halve the step's height as a side effect. The strip's
-   own rule is untouched: this is a width fix, not a restyle. */
-.wizard-subscriptions-step .connector-grid {
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-}
-
 /* --- Sources step interior (Step 1, "Where I think") ---
-   Same reuse, same re-fit as the subscriptions block above: this step renders
-   Settings' own ApiKeysGroup inside a 640px panel, so it needs that screen's
-   two width fixes verbatim. What is new here is the three-source list — a
-   checkbox per source with its own body underneath. NOT VERIFIED IN A
-   BROWSER: nothing renders this step yet (the sequence swap is its own task),
-   and jsdom has no layout, so every value below is carried over from the
-   step it replaces rather than measured. The browser walk owns confirming it.
-   */
+   This step renders Settings' OWN key screen (ApiKeysGroup) rather than a
+   wizard-only clone — a deliberate reuse, not an accident. That screen was
+   laid out for the Settings shell's ~1050px content column, so the two rules
+   at the end of this block re-fit it to a 640px panel WITHOUT touching its
+   markup or Settings' own rules, and Settings comes out unchanged. (Both
+   started life on the step this replaced, which reused the same component the
+   same way.) What is new here is the three-source list — a checkbox per
+   source with its own body underneath.
+
+   NOT VERIFIED IN A BROWSER: jsdom has no layout, so every value below is
+   carried over from the step it replaces rather than measured. The browser
+   walk owns confirming it, at 1280x900, sand included. */
 .wizard-sources-step {
   display: flex;
   flex-direction: column;
@@ -4637,13 +4580,16 @@ button.logo {
   color: var(--text-2);
 }
 /* "check again" is a direct child of a stretch-aligned flex column, which
-   blows a 12px label out to the full panel width — the same fix, for the same
-   reason, as `.wizard-subscriptions-step > .settings-btn` above. */
+   blows a 12px label out to the full panel width. It shrink-wraps in Settings
+   because that shell is a block container, not a flex one. */
 .wizard-sources-step__findings > .settings-btn {
   align-self: flex-start;
 }
-/* ApiKeysGroup nested to `<h2>` here — see the subscriptions block for why
-   Settings' own `.settings-screen__content h1` rule never reaches it. */
+/* ApiKeysGroup's title, nested to `<h2>` here (see WizardSourcesStep, and
+   WizardGate for why this screen has no `<h1>` at all). Settings styles its
+   own via `.settings-screen__content h1`, which this never reaches;
+   unstyled, it would sit at body size and read as stray lowercase text
+   rather than as the section heading it is. */
 .wizard-sources-step .settings-group__title {
   margin: 8px 0 0;
   font-size: 15px;
@@ -4651,6 +4597,13 @@ button.logo {
   letter-spacing: 0.01em;
   color: var(--foreground);
 }
+/* Settings gets 3 columns out of `minmax(280px, 1fr)`; the panel's 543px
+   content box gets exactly 1, which stretched each card to 543px and left the
+   status strip's `space-between` pill and text ~300px apart, reading as an
+   unresolved layout. Two columns put the cards at ~265px — inside the 280px
+   band the strip was designed against, where the text fills the row and the
+   gap closes. The strip's own rule is untouched: this is a width fix, not a
+   restyle. */
 .wizard-sources-step .connector-grid {
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
 }
@@ -4660,17 +4613,18 @@ button.logo {
    existing selector lists above, so the caret and the option colours have one
    home and cannot drift between the two screens in any of the five themes.
 
-   NOT VERIFIED IN A BROWSER: nothing renders this step yet (the sequence swap
-   is its own task) and jsdom has no layout, so the values below are carried
-   over from `.wizard-sources-step` rather than measured. The browser walk owns
-   confirming them, at 1280x900, sand included. */
+   NOT VERIFIED IN A BROWSER: jsdom has no layout, so the values below are
+   carried over from `.wizard-sources-step` rather than measured. The browser
+   walk owns confirming them, at 1280x900, sand included. */
 .wizard-roles-step {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
-/* `<h2>`, and the same treatment as the two steps before it, so the wizard
-   keeps one type hierarchy across its screens. */
+/* `<h2>`, and the same treatment as the two screens before it, so the wizard
+   keeps one type hierarchy throughout. Note there is no `<h1>` above it on a
+   setup step at all — see WizardGate for the ruling — so this heading is the
+   first and largest thing here. */
 .wizard-roles-step__title {
   margin: 0;
   font-size: 15px;
@@ -4708,26 +4662,6 @@ button.logo {
   font-style: italic;
   line-height: 1.5;
   color: var(--text-2);
-}
-/* `<h2>` because the page's `<h1>` belongs to the host's own greeting
-   (WizardGate's `.wizard-gate__title`) — same reasoning as the `headingLevel`
-   prop on WizardSubscriptionsStep's two groups. Values mirror
-   `.wizard-subscriptions-step .settings-group__title`; margin is left to
-   `.wizard-brain-step`'s own flex `gap: 12px` rather than set here. */
-.wizard-brain-step__title {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  color: var(--foreground);
-}
-.wizard-brain-step__prompt {
-  font-size: 13px;
-  color: var(--text-2);
-  margin: 0;
-}
-.wizard-brain-step__label {
-  font-weight: 600;
 }
 .wizard-fork-step__prompt {
   font-size: 13px;

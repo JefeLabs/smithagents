@@ -297,12 +297,33 @@ describe("WizardSourcesStep", () => {
     expect(screen.getByRole("button", { name: "remove" })).toBeInTheDocument();
   });
 
-  it("keeps the page's only <h1> for the host — the reused group must not add one", async () => {
-    // `headingLevel`. ApiKeysGroup titles itself with an <h1> by default, which
-    // is right in Settings and wrong inside a panel that already owns one.
+  it("keeps the reused group's title at h2 — nothing here outranks Anderson's question", async () => {
+    // `headingLevel`. ApiKeysGroup titles itself with an <h1> by default,
+    // which is right in Settings and wrong here: the host renders NO <h1> on a
+    // setup step at all (see WizardGate), so an <h1> from the reused group
+    // would be the only top-level heading on the screen, and it would be a
+    // Settings section title sitting above the question Anderson just asked.
     renderStep({ tools: { claude: {} }, keys: [{ provider: "anthropic", label: "Anthropic", verified: null }] });
     await userEvent.click(await screen.findByRole("checkbox", KEYS));
     expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
+    expect(screen.getAllByRole("heading", { level: 2 }).length).toBeGreaterThan(1);
+  });
+
+  it("speaks in Anderson's voice, not Settings', over Settings' own component", async () => {
+    // The reuse is right — ApiKeysGroup owns save/verify/remove and the error
+    // surfacing, and a wizard-only copy would drift — but its DEFAULT copy is
+    // the system talking in the middle of a screen where Anderson is asking,
+    // and it advertises a consumer ("accelerates avatar generation") this
+    // wizard has never mentioned. Contextual props, the same treatment
+    // `headingLevel` already demonstrates.
+    renderStep({ tools: { claude: {} }, keys: [{ provider: "anthropic", label: "Anthropic", verified: null }] });
+    await userEvent.click(await screen.findByRole("checkbox", KEYS));
+    expect(screen.getByRole("heading", { name: "Your keys" })).toBeInTheDocument();
+    expect(screen.getByText(/I'll check it right now/)).toBeInTheDocument();
+    // The two halves of Settings' own copy that read worst here, named so this
+    // fails on a lost prop rather than on a rewritten blurb.
+    expect(screen.queryByText(/avatar generation/)).toBeNull();
+    expect(screen.queryByRole("heading", { name: "api keys" })).toBeNull();
   });
 
   it("continues on a verified key with no CLI at all", async () => {
@@ -477,5 +498,24 @@ describe("WizardSourcesStep", () => {
     await screen.findByRole("button", CONTINUE);
     const labels = screen.getAllByRole("button").map((b) => b.textContent);
     expect(labels.indexOf("Back")).toBeLessThan(labels.indexOf("Continue"));
+  });
+
+  it("ranks the footer: one filled pill, and it is Continue", async () => {
+    // Back DECLINES the question; only Continue answers it. Shipped as two
+    // identical full-width pills they read as a choice between equals, which
+    // is what the user found walking the live app — and it is the same
+    // inversion Task 8 of Plan 1 had already settled on the gate. jsdom cannot
+    // measure weight, but it can hold what the weight rests on: the HeroUI
+    // pill hook `[data-slot="button"]` appears exactly once in the footer, on
+    // the primary, and Back carries the hand-styled quiet class instead.
+    renderStep({ tools: { claude: {} }, onBack: vi.fn() });
+    const back = await screen.findByRole("button", { name: "Back" });
+
+    const footer = back.closest(".wizard-gate__footer");
+    expect(footer).not.toBeNull();
+    expect(back).toHaveClass("wizard-gate__quiet");
+    const pills = footer?.querySelectorAll('[data-slot="button"]') ?? [];
+    expect(pills).toHaveLength(1);
+    expect(pills[0]).toHaveTextContent("Continue");
   });
 });

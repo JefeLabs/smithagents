@@ -120,6 +120,22 @@ function candidatesFrom(
 
 export interface WizardRolesStepProps {
   onDone: (patch: { setup: Setup }) => void;
+  /**
+   * Declines the step — on the host's terms, not this step's.
+   *
+   * A way off this screen that saved nothing has to PERSIST something:
+   * `rolesSkipped`, so "skipped" and "never asked" stay distinguishable (see
+   * its comment in lib/wizardSteps.ts). The three answers live on the user
+   * record proper, via `PUT /me/engines`, so this step has no value of its own
+   * from which such a patch could be derived — and after a refused save there
+   * are TWO such controls on screen at once, the host's Skip beside the
+   * progress line and the escape in this footer. Composing
+   * `{setup: {rolesSkipped: true}}` here would be a second copy of an answer
+   * the step registry already holds, and the first thing to drift out of it
+   * the next time a field is added to `skipDefault()`. So this re-emits the
+   * host's own skip, which reads that registry once, for both controls.
+   */
+  onSkip: () => void;
   /** Absent when there is nothing behind this step — same contract as WizardSourcesStep's. */
   onBack?: () => void;
   /** What became of the HOST's own `PUT /me` for the patch it last sent — see `WizardSaveState`. */
@@ -150,7 +166,7 @@ export interface WizardRolesStepProps {
  * user just changed. That is the same class as the voice-flip bug this
  * codebase has already fixed once.
  */
-export function WizardRolesStep({ onDone, onBack, saveState = "idle" }: WizardRolesStepProps) {
+export function WizardRolesStep({ onDone, onSkip, onBack, saveState = "idle" }: WizardRolesStepProps) {
   const { data: tools = [] } = useCliTools();
   const { data: keys = [] } = useApiKeys();
   const { data: servers } = useLocalModels();
@@ -223,13 +239,30 @@ export function WizardRolesStep({ onDone, onBack, saveState = "idle" }: WizardRo
     onDone({ setup: {} });
   };
 
+  /**
+   * `finish`'s sibling for the two ways off this step that saved NOTHING.
+   * Identical as far as this component is concerned — the host writes, nothing
+   * swaps this step out on the last step, so it closes the same handoff window
+   * `finish` does, for the same reason. What differs is only what gets
+   * written, and that is the host's to say: see `onSkip`. A bare `{setup: {}}`
+   * here would leave a user whose save the server refused indistinguishable on
+   * the wire from one who deliberately picked three engines.
+   */
+  const skipOut = () => {
+    setHandedOff(true);
+    onSkip();
+  };
+
   const proceed = async () => {
     if (candidates.length === 0) {
       // Nothing to pick and nothing was. `brainEngine` stays unset, which
       // resolveBrainFactory (broker/src/brain-engine.ts) already treats as a
       // working state — SMITH_BRAIN_PROVIDER, then the no-key default. Sending
       // three nulls instead would CLEAR whatever a previous run had stored.
-      finish();
+      //
+      // `skipOut`, not `finish`: that outcome is precisely what a skip states,
+      // so it is recorded as one.
+      skipOut();
       return;
     }
     setBusy(true);
@@ -314,22 +347,38 @@ export function WizardRolesStep({ onDone, onBack, saveState = "idle" }: WizardRo
             {step}` that put this screen here — and live again the moment the
             host reports one over and failed. */}
         {onBack && (
-          <Button variant="secondary" onPress={onBack} isDisabled={inert || saveState === "saving"}>
+          // Quiet text, not a second pill — see WizardSourcesStep's own Back
+          // for the finding and `.wizard-gate__quiet` for the mechanics. A
+          // plain `<button>` also keeps the native `disabled` attribute this
+          // guard depends on, which stops the pointer and the keyboard
+          // together.
+          <button
+            type="button"
+            className="wizard-gate__quiet"
+            onClick={onBack}
+            disabled={inert || saveState === "saving"}
+          >
             Back
-          </Button>
+          </button>
         )}
-        <Button variant="primary" onPress={() => void proceed()} isDisabled={inert}>
-          Continue
-        </Button>
         {saveFailed && (
           // Only after a save has actually failed, so this stays a
           // three-question screen for everyone else. Says what it does rather
           // than the bare word "skip": it leaves the three roles unset, which
           // resolveBrainFactory already treats as a working state.
-          <Button variant="secondary" onPress={finish} isDisabled={inert}>
+          //
+          // Quiet too, and for the same reason Back is: it declines the
+          // question rather than answering it, so it must not read as heavy as
+          // the primary it sits beside. Rendered AFTER Back so the two group
+          // where they belong — the retreat at the far left of the row, this
+          // one beside the action it is an alternative to.
+          <button type="button" className="wizard-gate__quiet" onClick={skipOut} disabled={inert}>
             Continue without setting these
-          </Button>
+          </button>
         )}
+        <Button variant="primary" onPress={() => void proceed()} isDisabled={inert}>
+          Continue
+        </Button>
       </div>
     </div>
   );

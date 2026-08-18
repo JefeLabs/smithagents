@@ -7,20 +7,34 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("../api/broker", () => ({
   getMe: vi.fn(),
   updateMe: vi.fn(),
-  // The Subscriptions and Anderson steps render the real Settings groups,
-  // which fetch through this same module. Stubbed so they show their own
-  // empty state rather than a load error sitting in the panel beside the
-  // errors these tests actually assert on.
+  // Both setup steps probe this machine, and the sources step renders the
+  // real Settings key screen, which fetches through this same module. Stubbed
+  // so each shows its own empty state rather than a load error sitting in the
+  // panel beside the errors these tests actually assert on. A factory mock
+  // replaces the WHOLE module, so anything the rendered tree calls has to be
+  // named here — an omission surfaces as "not a function" inside a query,
+  // which react-query swallows into an error state rather than a failure.
   getCliTools: vi.fn(),
   getApiKeys: vi.fn(),
-  getBrainEngine: vi.fn(),
-  // The Anderson step's own save. Present here because the LAST step's
-  // handoff can only be reached through it — see the two terminal-save tests
-  // at the bottom of this suite.
-  saveBrainEngine: vi.fn(),
+  getLocalModels: vi.fn(),
+  getMachineFacts: vi.fn(),
+  getEngines: vi.fn(),
+  // The roles step's own save. Present here because the LAST step's handoff
+  // can only be reached through it — see the terminal-save tests at the
+  // bottom of this suite.
+  saveEngines: vi.fn(),
 }));
 
-import { getApiKeys, getBrainEngine, getCliTools, getMe, saveBrainEngine, updateMe } from "../api/broker";
+import {
+  getApiKeys,
+  getCliTools,
+  getEngines,
+  getLocalModels,
+  getMachineFacts,
+  getMe,
+  saveEngines,
+  updateMe,
+} from "../api/broker";
 import type { CliToolListing, MeRecord } from "../api/types";
 import { PREFLIGHT, SETUP_DONE, stepsFor } from "../lib/wizardSteps";
 import { WizardGate } from "./WizardGate";
@@ -38,15 +52,32 @@ function stubMe(me: MeRecord, tools: CliToolListing[] = []) {
   (getMe as ReturnType<typeof vi.fn>).mockResolvedValue(me);
   (getCliTools as ReturnType<typeof vi.fn>).mockResolvedValue(tools);
   (getApiKeys as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-  (getBrainEngine as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+  // Nothing running and nothing known: this suite is about the host, and a
+  // machine with local servers or a RAM figure would only add copy to the two
+  // steps it renders. Their own suites cover both.
+  (getLocalModels as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+  (getMachineFacts as ReturnType<typeof vi.fn>).mockResolvedValue({ totalMemBytes: 34_359_738_368 });
+  (getEngines as ReturnType<typeof vi.fn>).mockResolvedValue({ main: null, quick: null, fallback: null });
   // Succeeds by default: the failure these tests are about is the HOST's own
   // `PUT /me`, which only happens once the step's own save has gone through.
-  (saveBrainEngine as ReturnType<typeof vi.fn>).mockResolvedValue({ kind: "cli", provider: "claude" });
+  (saveEngines as ReturnType<typeof vi.fn>).mockResolvedValue({ main: null, quick: null, fallback: null });
 }
 
-/** Mirrors WizardBrainStep.test.tsx's toolListing — only `active` matters here. */
+/**
+ * Mirrors WizardRolesStep.test.tsx's own fixture math, and unlike the version
+ * this replaced it carries a real `status`: the sources step prints one line
+ * per CLI from it, and a `null` status renders "I haven't checked this one
+ * yet" beside a ✓ rather than the signed-in line these tests read past.
+ */
 function toolListing(cli: string): CliToolListing {
-  return { cli, label: cli, models: [], warmSessions: true, status: null, active: true };
+  return {
+    cli,
+    label: cli,
+    models: [],
+    warmSessions: true,
+    status: { detected: true, authOk: true, enabled: true, detail: "", lastCheckedAt: "2026-08-18T00:00:00.000Z" },
+    active: true,
+  };
 }
 
 function stubMeFailure() {
@@ -110,7 +141,9 @@ function renderGate({
   name?: string;
   placeholder?: boolean;
   setup?: MeRecord["setup"];
-  /** Active CLIs the Anderson step can offer as brain candidates. */
+  /** Active CLIs the roles step can offer as engine candidates. Only `claude`
+      is ever offered (it mirrors the swarm's own BRAIN_CLI_ALLOWLIST), so a
+      fixture naming anything else deliberately produces an empty picker. */
   tools?: CliToolListing[];
 }) {
   stubViewport({ width: 1440 });
@@ -187,12 +220,15 @@ describe("WizardGate", () => {
     // The recorded step is only resumable together with the answers that make
     // it reachable — `resumeStep` sends a step outside the selected sequence
     // back to preflight rather than stranding the user on it.
-    const { container } = renderGate({ name: "Edwin", setup: { mode: "local", step: "subscriptions" } });
+    const { container } = renderGate({ name: "Edwin", setup: { mode: "local", step: "sources" } });
 
-    // Assert what the host itself renders (which step it selected), not that
-    // step's own markup, which belongs to the step's own suite.
-    await screen.findByRole("heading", { name: /welcome/i });
-    expect(container.querySelector('[data-step="subscriptions"]')).not.toBeNull();
+    // Asserted through `data-step` — what the HOST itself selected — rather
+    // than through that step's own markup, which belongs to the step's own
+    // suite. Awaited via `findHost`, because /me resolves a tick after mount
+    // and an unawaited query would pass against a splash that renders no
+    // `[data-step]` at all... which is what this used to do, indirectly, by
+    // awaiting the host greeting that no longer exists.
+    expect(await findHost(container)).toHaveAttribute("data-step", "sources");
   });
 
   it("shows the app rather than stranding the user when /me cannot be reached", async () => {
@@ -278,7 +314,7 @@ describe("WizardGate", () => {
     const { container } = renderGate({ placeholder: true, setup: undefined });
 
     expect(await findHost(container)).toHaveAttribute("data-step", "preflight");
-    expect(screen.queryByText("Subscriptions")).toBeNull();
+    expect(screen.queryByText("Where I think")).toBeNull();
   });
 
   it("shows no step indicator on preflight even once the answers select a sequence", async () => {
@@ -290,8 +326,8 @@ describe("WizardGate", () => {
     const { container } = renderGate({ name: "Edwin", setup: { mode: "local", step: PREFLIGHT } });
 
     expect(await findHost(container)).toHaveAttribute("data-step", "preflight");
-    expect(screen.queryByText("Subscriptions")).toBeNull();
-    expect(screen.queryByText("Anderson")).toBeNull();
+    expect(screen.queryByText("Where I think")).toBeNull();
+    expect(screen.queryByText("What I think with")).toBeNull();
   });
 
   it("does not greet by name on preflight, where the name is being asked for", async () => {
@@ -323,38 +359,57 @@ describe("WizardGate", () => {
     expect(headings[0]).toHaveTextContent(/hello! my name is anderson/i);
   });
 
-  it("keeps exactly one h1 on a setup step too, over the reused Settings groups' h2s", async () => {
-    // The other half of the same rule, and the reason it needs its own test:
-    // the gate gave its heading away, and the setup steps must not have
-    // gained a second one in exchange. CliToolsGroup and ApiKeysGroup both
-    // DEFAULT to `h1` and are handed `headingLevel="h2"` for precisely this
-    // reason, so this fails the moment either loses that prop — the h2 count
-    // is what stops it passing on a step that simply renders no groups.
-    const { container } = renderGate({ name: "Edwin", setup: { mode: "local", step: "subscriptions" } });
+  it("greets nobody on a setup step — the question is the first thing said", async () => {
+    // The user's ruling, walked in the live app: the host's
+    // `<h1>Welcome, {name}</h1>` rendered at 26px/700 directly above
+    // Anderson's actual question at `<h2>`, so a generic greeting outranked
+    // the person on every single step. He already said hello at the gate.
+    //
+    // Both halves are load-bearing. The name query alone passes for a host
+    // that keeps a bare "Welcome" — which is exactly the state the GATE was
+    // in before Task 8 of Plan 1, so it is a regression this codebase has
+    // already shipped once — and the bare-word query alone passes for one
+    // that still greets by name.
+    const { container } = renderGate({ name: "Edwin", setup: { mode: "local", step: "sources" } });
 
-    await screen.findByText("Welcome, Edwin");
-    expect(container.querySelectorAll("h1")).toHaveLength(1);
-    expect(container.querySelectorAll("h2").length).toBeGreaterThan(0);
-  });
-
-  it("greets by name on the first setup step", async () => {
-    renderGate({ name: "Edwin", setup: { mode: "local", step: "subscriptions" } });
-
-    expect(await screen.findByText("Welcome, Edwin")).toBeInTheDocument();
-  });
-
-  it("shows only the chosen sequence in the indicator", async () => {
-    renderGate({ name: "Edwin", setup: { mode: "local", step: "subscriptions" } });
-
-    expect(await screen.findByText("Subscriptions")).toBeInTheDocument();
-    expect(screen.getByText("Anderson")).toBeInTheDocument();
-    // Preflight is not in it. Exact-string, so the "Welcome, Edwin" heading
-    // above the indicator is not what satisfies this.
+    expect(await findHost(container)).toHaveAttribute("data-step", "sources");
+    expect(screen.queryByText("Welcome, Edwin")).toBeNull();
     expect(screen.queryByText("Welcome")).toBeNull();
   });
 
+  it("leaves a setup step with NO h1, and never by promoting the question to fill it", async () => {
+    // The deliberate consequence of the ruling above, pinned so nothing
+    // "fixes" it back: the greeting is not demoted to `<h2>` and re-shown, and
+    // no question is promoted to `<h1>` to keep the slot filled. Anderson's
+    // question stays `<h2>` — his words — and simply becomes the first and
+    // largest thing on the screen.
+    //
+    // The h2 count is what stops this passing on a step that renders nothing
+    // at all, and it is also what keeps `headingLevel="h2"` load-bearing:
+    // ApiKeysGroup DEFAULTS to `<h1>`, so a lost prop would both re-introduce
+    // an h1 here and put a reused Settings title above Anderson's question in
+    // the outline — the same inversion, one level down.
+    const { container } = renderGate({ name: "Edwin", setup: { mode: "local", step: "sources" } });
+
+    expect(
+      await screen.findByRole("heading", { name: /where should i get my thinking from, edwin\?/i }),
+    ).toHaveProperty("tagName", "H2");
+    expect(container.querySelectorAll("h1")).toHaveLength(0);
+    expect(container.querySelectorAll("h2").length).toBeGreaterThan(0);
+  });
+
+  it("shows only the chosen sequence in the indicator", async () => {
+    renderGate({ name: "Edwin", setup: { mode: "local", step: "sources" } });
+
+    expect(await screen.findByText("Where I think")).toBeInTheDocument();
+    expect(screen.getByText("What I think with")).toBeInTheDocument();
+    // Preflight is not in it, under either of the names it has ever had.
+    expect(screen.queryByText("Welcome")).toBeNull();
+    expect(screen.queryByText(PREFLIGHT)).toBeNull();
+  });
+
   it("shows honest progress and a skip control that states its default, not the bare word", async () => {
-    renderGate({ name: "Edwin", setup: { mode: "local", step: "subscriptions" } });
+    renderGate({ name: "Edwin", setup: { mode: "local", step: "sources" } });
 
     expect(await screen.findByText("Step 1 of 2")).toBeInTheDocument();
     const skip = screen.getByRole("button", { name: /skip/i });
@@ -364,16 +419,16 @@ describe("WizardGate", () => {
     expect(skip.textContent?.trim().toLowerCase()).not.toBe("skip");
   });
 
-  it("hangs Skip off the progress line rather than above the greeting", async () => {
+  it("hangs Skip off the progress line rather than on a line of its own", async () => {
     // Skip used to render as an accent pill on a line of its own between
-    // `Step n of N` and the greeting — measured 48px ABOVE the panel's
-    // heading, so the first control on the step, and the only one visible
-    // without scrolling past the question, was the one that declines it.
-    // jsdom cannot measure that. What it CAN hold is the structure the
-    // placement rests on, and both halves are asserted because each alone is
-    // weak: sharing the row passes with Skip rendered BEFORE the number, and
-    // the ordering passes with the two sitting in separate containers.
-    renderGate({ name: "Edwin", setup: { mode: "local", step: "subscriptions" } });
+    // `Step n of N` and the panel heading — measured 48px above it, so the
+    // first control on the step, and the only one visible without scrolling
+    // past the question, was the one that declines it. jsdom cannot measure
+    // that. What it CAN hold is the structure the placement rests on, and
+    // both halves are asserted because each alone is weak: sharing the row
+    // passes with Skip rendered BEFORE the number, and the ordering passes
+    // with the two sitting in separate containers.
+    renderGate({ name: "Edwin", setup: { mode: "local", step: "sources" } });
 
     const skip = await screen.findByRole("button", { name: /skip/i });
     const row = skip.closest(".wizard-gate__progress");
@@ -385,7 +440,7 @@ describe("WizardGate", () => {
     // Same window `advance` opens for the steps' own Back (see the test near
     // the end of this file): the step changes immediately and its PUT runs
     // behind it, so Subscriptions is on screen with a live Skip while
-    // PUT {mode, step:"subscriptions"} is still in flight. Held open here
+    // PUT {mode, step:"sources"} is still in flight. Held open here
     // rather than left a millisecond wide.
     //
     // Worth its own test because the control is no longer a HeroUI `Button`:
@@ -405,7 +460,7 @@ describe("WizardGate", () => {
     await userEvent.type(screen.getByLabelText(/what shall i call you/i), "Edwin");
     await userEvent.click(screen.getByRole("button", { name: /nice to meet you/i }));
 
-    expect(await findHost(container)).toHaveAttribute("data-step", "subscriptions");
+    expect(await findHost(container)).toHaveAttribute("data-step", "sources");
     expect(screen.getByRole("button", { name: /skip/i })).toBeDisabled();
 
     // A window, not a ban — the moment the write lands, Skip is live again.
@@ -420,13 +475,13 @@ describe("WizardGate", () => {
     // and could look identical to a passing test that only checked the step
     // changed, which is exactly the empty-patch failure mode the brief rules
     // out.
-    const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "subscriptions" } });
+    const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "sources" } });
 
     await userEvent.click(await screen.findByRole("button", { name: /skip/i }));
 
-    expect(await findHost(container)).toHaveAttribute("data-step", "anderson");
+    expect(await findHost(container)).toHaveAttribute("data-step", "roles");
     expect(updateMe).toHaveBeenCalledWith(
-      expect.objectContaining({ setup: expect.objectContaining({ subscriptionsSkipped: true, step: "anderson" }) }),
+      expect.objectContaining({ setup: expect.objectContaining({ sourcesSkipped: true, step: "roles" }) }),
     );
   });
 
@@ -440,14 +495,14 @@ describe("WizardGate", () => {
     // Read from state instead of from the patch, `mode` is still undefined at
     // this point — `setupStepsFor` returns nothing for it, so the wizard would
     // persist `done` and drop a user who has answered nothing into the app.
-    expect(host).toHaveAttribute("data-step", "subscriptions");
+    expect(host).toHaveAttribute("data-step", "sources");
     expect(updateMe).toHaveBeenCalledWith(
-      expect.objectContaining({ setup: expect.objectContaining({ mode: "local", step: "subscriptions" }) }),
+      expect.objectContaining({ setup: expect.objectContaining({ mode: "local", step: "sources" }) }),
     );
   });
 
   it("goes back from the first setup step into preflight, and persists it", async () => {
-    const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "subscriptions" } });
+    const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "sources" } });
 
     await userEvent.click(await screen.findByRole("button", { name: /back/i }));
 
@@ -463,13 +518,13 @@ describe("WizardGate", () => {
     // non-2xx, so this RESOLVES with {error}. Without the resolved-branch
     // check the screen would sit on preflight having persisted nothing, and
     // the next reload would throw the user forward again.
-    const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "subscriptions" } });
+    const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "sources" } });
     updateMe.mockResolvedValue({ error: "origin not allowed" });
 
     await userEvent.click(await screen.findByRole("button", { name: /back/i }));
 
     expect(await screen.findByText(/origin not allowed/i)).toBeInTheDocument();
-    expect(await findHost(container)).toHaveAttribute("data-step", "subscriptions");
+    expect(await findHost(container)).toHaveAttribute("data-step", "sources");
   });
 
   it("a network-level failure on Back keeps the user where they navigated, and still reports it", async () => {
@@ -477,7 +532,7 @@ describe("WizardGate", () => {
     // is ambiguous — the write may well have landed — so the step change
     // stands, exactly as `advance` treats its own rejections. Reported either
     // way; a whole wizard's worth of unsaved work must never go unmentioned.
-    const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "subscriptions" } });
+    const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "sources" } });
     updateMe.mockRejectedValue(new Error("network error"));
 
     await userEvent.click(await screen.findByRole("button", { name: /back/i }));
@@ -486,22 +541,23 @@ describe("WizardGate", () => {
     expect(await findHost(container)).toHaveAttribute("data-step", "preflight");
   });
 
-  it("routes the last step to the Anderson screen", async () => {
-    // The `brain` → `anderson` rename had no regression protection: a route
-    // naming a step id nothing renders leaves the body EMPTY — no Continue, no
-    // "Skip for now", and no Back either, since Back lives inside the step
-    // component — so the user is stranded on a panel with a heading and an
-    // indicator, and the gate reopens on every reload because setup never
-    // completes. Asserted through the step's own prompt, which is the thing
-    // that actually stops existing.
-    const { container } = renderGate({ name: "Edwin", setup: { mode: "local", step: "anderson" } });
+  it("routes the last step to the roles screen", async () => {
+    // A route naming a step id nothing renders leaves the body EMPTY — no
+    // Continue, no escape, and no Back either, since Back lives inside the
+    // step component — so the user is stranded on a panel with an indicator
+    // and nothing else, and the gate reopens on every reload because setup
+    // never completes. That shipped once already on the `brain` → `anderson`
+    // rename, which is why this route has its own test; this swap renames
+    // BOTH ids at once, so it is the same exposure twice over. Asserted
+    // through the step's own question, which is the thing that actually stops
+    // existing.
+    const { container } = renderGate({ name: "Edwin", setup: { mode: "local", step: "roles" } });
 
-    expect(await findHost(container)).toHaveAttribute("data-step", "anderson");
-    // Task 6 re-voiced this heading from "Set up Anderson"; still the step's
-    // own distinctive prompt, not a substring any other step's copy shares —
-    // the panel's own "Welcome, Edwin" h1 and Subscriptions' "Where should I
-    // get my thinking from, Edwin?" h2 are both on-screen at other steps in
-    // this same suite and neither matches this pattern.
+    expect(await findHost(container)).toHaveAttribute("data-step", "roles");
+    // The step's own distinctive question, not a substring any other step's
+    // copy shares — the sources step's "Where should I get my thinking from,
+    // Edwin?" is on screen at another step in this same suite and does not
+    // match this pattern.
     expect(
       await screen.findByRole("heading", { name: /which of these should i use, and for what\?/i }),
     ).toBeInTheDocument();
@@ -511,14 +567,14 @@ describe("WizardGate", () => {
     // The other half of "every setup step can go Back". Fails if the host
     // stops passing `onBack` to the Anderson route, and equally if that step
     // stops rendering the button — this clicks the real component's own.
-    const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "anderson" } });
+    const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "roles" } });
 
     await userEvent.click(await screen.findByRole("button", { name: /back/i }));
 
     // Into the step BEFORE it, not all the way out to preflight.
-    expect(await findHost(container)).toHaveAttribute("data-step", "subscriptions");
+    expect(await findHost(container)).toHaveAttribute("data-step", "sources");
     expect(updateMe).toHaveBeenCalledWith(
-      expect.objectContaining({ setup: expect.objectContaining({ step: "subscriptions" }) }),
+      expect.objectContaining({ setup: expect.objectContaining({ step: "sources" }) }),
     );
   });
 
@@ -529,7 +585,7 @@ describe("WizardGate", () => {
     // retyped) — the explicit send exists to stop the server's merge from
     // keeping a stale answer; without seeding, resubmitting would overwrite a
     // good one instead.
-    renderGate({ name: "Edwin", setup: { mode: "local", step: "subscriptions" } });
+    renderGate({ name: "Edwin", setup: { mode: "local", step: "sources" } });
 
     await userEvent.click(await screen.findByRole("button", { name: /back/i }));
 
@@ -549,7 +605,7 @@ describe("WizardGate", () => {
     // `setupStepsFor("hosted")` is empty, so `resumeStep` sends every hosted
     // record — whatever step it names — back to preflight. Fails both for a
     // host that stops passing the prop and for a step that stops reading it.
-    const { container } = renderGate({ name: "Edwin", setup: { mode: "hosted", step: "anderson" } });
+    const { container } = renderGate({ name: "Edwin", setup: { mode: "hosted", step: "roles" } });
 
     expect(await findHost(container)).toHaveAttribute("data-step", "preflight");
     expect(await screen.findByRole("radio", { name: /on your machine/i })).not.toBeChecked();
@@ -617,7 +673,7 @@ describe("WizardGate", () => {
 
   // The two below are the only tests in the repo that span the host and the
   // LAST step together, and that is the point: neither side can see this
-  // failure alone. WizardBrainStep's own suite mocks `onDone`, so the host's
+  // failure alone. WizardRolesStep's own suite mocks `onDone`, so the host's
   // save never happens there; this suite exercised a refused save only at
   // preflight, where the step is swapped out and the question cannot arise.
   // The last step is different — `nextStep` returns null, so nothing swaps and
@@ -627,7 +683,7 @@ describe("WizardGate", () => {
     // The host-side half of the same window, one step before the last one.
     // `advance` moves the step immediately and lets its PUT run in the
     // background, so Subscriptions is on screen — with a live Back — while
-    // PUT {mode, step:"subscriptions"} is still unresolved. This write never
+    // PUT {mode, step:"sources"} is still unresolved. This write never
     // settles until the test says so, which is what makes that window
     // observable rather than a millisecond wide.
     let settle: (value: unknown) => void = () => {};
@@ -642,7 +698,7 @@ describe("WizardGate", () => {
     await userEvent.type(screen.getByLabelText(/what shall i call you/i), "Edwin");
     await userEvent.click(screen.getByRole("button", { name: /nice to meet you/i }));
 
-    expect(await findHost(container)).toHaveAttribute("data-step", "subscriptions");
+    expect(await findHost(container)).toHaveAttribute("data-step", "sources");
     expect(screen.getByRole("button", { name: /back/i })).toBeDisabled();
 
     // A window, not a ban: the moment that write lands, Back is live again.
@@ -656,7 +712,7 @@ describe("WizardGate", () => {
     // on the FIRST setup step `clears` is empty, so `requestEdit` skips the
     // confirm dialog entirely and calls `onEdit` on the bare click. Left live,
     // that is `PUT {step:"preflight"}` fired against an unresolved
-    // `PUT {step:"subscriptions"}` — and `resumeStep` reads whichever the
+    // `PUT {step:"sources"}` — and `resumeStep` reads whichever the
     // server ends up holding, not what is on screen, so the losing order
     // throws the user forward past the very answers the chip went back for.
     let settle: (value: unknown) => void = () => {};
@@ -676,7 +732,7 @@ describe("WizardGate", () => {
     await userEvent.type(screen.getByLabelText(/what shall i call you/i), "Edwin");
     await userEvent.click(screen.getByRole("button", { name: /nice to meet you/i }));
 
-    expect(await findHost(container)).toHaveAttribute("data-step", "subscriptions");
+    expect(await findHost(container)).toHaveAttribute("data-step", "sources");
     const chip = () => screen.getByRole("button", { name: /anderson · on your machine/i });
     expect(chip()).toBeDisabled();
 
@@ -686,7 +742,7 @@ describe("WizardGate", () => {
     await userEvent.click(chip());
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(updateMe).toHaveBeenCalledTimes(1);
-    expect(await findHost(container)).toHaveAttribute("data-step", "subscriptions");
+    expect(await findHost(container)).toHaveAttribute("data-step", "sources");
 
     // A window, not a ban — same as Back beside it.
     settle({});
@@ -696,25 +752,28 @@ describe("WizardGate", () => {
   it("a refused save on the LAST step leaves the footer something to click", async () => {
     // The refusal shape: `brokerFetch` never throws on a non-2xx, so an origin
     // block, a credential failure, or swarm-side validation all RESOLVE with
-    // `{error}`. The step's own brain save SUCCEEDED here, so "Skip for now"
-    // is (correctly) absent — if Back and Continue are inert too, the last
-    // screen of first-run setup has nothing clickable on it at all, and only a
-    // page reload nothing mentions gets the user out.
+    // `{error}`. The step's own engines save SUCCEEDED here, so the step's own
+    // escape is (correctly) absent — if Back and Continue are inert too, the
+    // last screen of first-run setup has nothing clickable on it at all, and
+    // only a page reload nothing mentions gets the user out.
     const { container, updateMe } = renderGate({
       name: "Edwin",
-      setup: { mode: "local", step: "anderson" },
+      setup: { mode: "local", step: "roles" },
       tools: [toolListing("claude")],
     });
-    await screen.findByRole("radio", { name: /claude/i });
+    await screen.findByRole("combobox", { name: "My main brain" });
 
     updateMe.mockResolvedValue({ error: "origin not allowed" });
-    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+    // Exact names throughout, never /continue/i: the step's escape is labelled
+    // "Continue without setting these", so a loose matcher goes ambiguous the
+    // moment a save fails rather than in the test that cares.
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
 
     expect(await screen.findByText(/origin not allowed/i)).toBeInTheDocument();
     // Still here — this is what makes the last step unlike every other one.
-    expect(await findHost(container)).toHaveAttribute("data-step", "anderson");
-    expect(screen.getByRole("button", { name: /continue/i })).toBeEnabled();
-    expect(screen.getByRole("button", { name: /back/i })).toBeEnabled();
+    expect(await findHost(container)).toHaveAttribute("data-step", "roles");
+    expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Back" })).toBeEnabled();
 
     // Enabled is not the same as live: in this codebase a button can read as
     // enabled and still eat the click (aria-disabled ⇒ pointer-events: none).
@@ -722,7 +781,7 @@ describe("WizardGate", () => {
     // the state below is the retry's write still in flight.
     updateMe.mockClear();
     updateMe.mockReturnValue(new Promise(() => {}));
-    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
 
     await waitFor(() =>
       expect(updateMe).toHaveBeenCalledWith(
@@ -733,7 +792,7 @@ describe("WizardGate", () => {
     // retry — a fix that simply stops re-inerting after the first failure
     // passes everything above this line and re-opens exactly the window
     // `handedOff` was added to close.
-    expect(screen.getByRole("button", { name: /back/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Back" })).toBeDisabled();
   });
 
   it("the gate's own shortcut cannot be followed by a second, contradicting write", async () => {
@@ -741,9 +800,9 @@ describe("WizardGate", () => {
     // true)`, and `finish` makes `next` null — so `if (next) setStep(next)`
     // never runs and the gate step STAYS MOUNTED, both controls live, behind
     // an unresolved `PUT {step:"done"}`. Clicking the primary next to it then
-    // fires `PUT {step:"subscriptions"}` against it: if `done` lands last the
-    // gate closes with the screen still on preflight, and if `subscriptions`
-    // does, setup reopens one moment after it finished.
+    // fires `PUT {step:"sources"}` against it: if `done` lands last the
+    // gate closes with the screen still on preflight, and if `sources` does,
+    // setup reopens one moment after it finished.
     let settle: (value: unknown) => void = () => {};
     const { container, updateMe } = renderGate({ placeholder: true, setup: undefined });
     await findHost(container);
@@ -834,40 +893,48 @@ describe("WizardGate", () => {
     // than retrying the shortcut is the sensible move. Live, not just visible.
     updateMe.mockResolvedValue({});
     await userEvent.click(screen.getByRole("button", { name: /nice to meet you/i }));
-    expect(await findHost(container)).toHaveAttribute("data-step", "subscriptions");
+    expect(await findHost(container)).toHaveAttribute("data-step", "sources");
   });
 
   it("the step's own escape records the SAME 'skipped' the progress-row Skip does", async () => {
-    // The two Skips on this one screen, side by side after a failed brain
-    // save. `brainSkipped` exists so "skipped" and "never asked" stay
-    // distinguishable — the brain step has no value of its own to write — and
-    // the escape used to hand back a bare `{setup: {}}`, so a codex-only user
-    // who hit the refusal finished byte-identical to someone who deliberately
-    // picked a brain. Nothing reads the flag yet, which is exactly why this
-    // has to be pinned here rather than found later.
+    // The two escapes on this one screen, side by side after a refused save.
+    // `rolesSkipped` exists so "skipped" and "never asked" stay
+    // distinguishable — the roles step writes its answers to `/me/engines`,
+    // not to `setup`, so a way off it that saved nothing has nothing else to
+    // leave behind — and the escape used to hand back a bare `{setup: {}}`,
+    // so a user whose save the server refused finished byte-identical to
+    // someone who deliberately picked three engines. Nothing reads the flag
+    // yet, which is exactly why this has to be pinned here rather than found
+    // later.
+    //
+    // Task 4's dropdown filtering is why the fixture is `claude` rather than
+    // the codex-only machine this test used to describe: an unofferable CLI
+    // now yields NO candidates at all, so the step never saves and the
+    // refusal cannot be reached. The refusal that remains is the one
+    // filtering cannot remove — the server saying no at save time.
     //
     // Asserted against the registry's own `skipDefault()`, never a literal
-    // `brainSkipped: true`: the requirement is that a field added to a step's
+    // `rolesSkipped: true`: the requirement is that a field added to a step's
     // skip default cannot leave one of the two paths behind, and a hardcoded
     // expectation here would stop discriminating the moment that happens.
     const { updateMe } = renderGate({
       name: "Edwin",
-      setup: { mode: "local", step: "anderson" },
-      tools: [toolListing("codex")],
+      setup: { mode: "local", step: "roles" },
+      tools: [toolListing("claude")],
     });
-    await screen.findByRole("radio", { name: /codex/i });
+    await screen.findByRole("combobox", { name: "My main brain" });
 
-    (saveBrainEngine as ReturnType<typeof vi.fn>).mockResolvedValue({ error: "codex is not supported as a brain yet" });
-    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+    (saveEngines as ReturnType<typeof vi.fn>).mockResolvedValue({ error: "claude is not supported as a brain yet" });
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
     await screen.findByText(/not supported as a brain/i);
 
     updateMe.mockClear();
-    await userEvent.click(screen.getByRole("button", { name: /skip for now/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Continue without setting these" }));
     await waitFor(() => expect(updateMe).toHaveBeenCalled());
 
     const expected =
       stepsFor({ mode: "local" })
-        .find((d) => d.id === "anderson")
+        .find((d) => d.id === "roles")
         ?.skipDefault() ?? {};
     // Positive control: a registry lookup that missed would leave the loop
     // below empty and pass this test on nothing at all.
@@ -889,22 +956,51 @@ describe("WizardGate", () => {
     // this user just as stuck.
     const { container, updateMe } = renderGate({
       name: "Edwin",
-      setup: { mode: "local", step: "anderson" },
+      setup: { mode: "local", step: "roles" },
       tools: [toolListing("claude")],
     });
-    await screen.findByRole("radio", { name: /claude/i });
+    await screen.findByRole("combobox", { name: "My main brain" });
 
     updateMe.mockRejectedValue(new Error("network error"));
-    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
 
     expect(await screen.findByText(/network error/i)).toBeInTheDocument();
-    expect(await findHost(container)).toHaveAttribute("data-step", "anderson");
-    expect(screen.getByRole("button", { name: /continue/i })).toBeEnabled();
+    expect(await findHost(container)).toHaveAttribute("data-step", "roles");
+    expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
 
     // Back is the escape that matters on this shape — a rejection is
     // ambiguous, the write may well have landed, so retrying it is not the
     // only sensible move — and it has to be live, not merely visible.
-    await userEvent.click(screen.getByRole("button", { name: /back/i }));
-    expect(await findHost(container)).toHaveAttribute("data-step", "subscriptions");
+    await userEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(await findHost(container)).toHaveAttribute("data-step", "sources");
+  });
+
+  // --- The footer's own ranking --------------------------------------------
+
+  it("ranks Back below Continue rather than beside it as an equal pill", async () => {
+    // Walked in the live app: Back and Continue rendered as two identical
+    // full-width stacked pills, so the way OUT of a question read exactly as
+    // heavy as the way through it. Task 8 of Plan 1 settled this on the gate
+    // — the shortcut dropped to quiet text beside the one filled control —
+    // and the setup steps never got the same treatment.
+    //
+    // jsdom has no layout, so the weight itself is not measurable here. What
+    // is, and what the styling rests on, is that exactly ONE control in the
+    // footer is a HeroUI pill and it is the primary: `.wizard-gate__footer
+    // [data-slot="button"]` is the hook the fill, height and radius hang off,
+    // and Back carries the same hand-styled quiet class the gate's shortcut
+    // already uses. Asserted on BOTH steps, because the treatment lives in
+    // each step's own footer rather than in the host.
+    for (const step of ["sources", "roles"] as const) {
+      const { unmount } = renderGate({ name: "Edwin", setup: { mode: "local", step } });
+      const back = await screen.findByRole("button", { name: "Back" });
+      const footer = back.closest(".wizard-gate__footer");
+      expect(footer).not.toBeNull();
+      expect(back).toHaveClass("wizard-gate__quiet");
+      const pills = footer?.querySelectorAll('[data-slot="button"]') ?? [];
+      expect(pills).toHaveLength(1);
+      expect(pills[0]).toHaveTextContent("Continue");
+      unmount();
+    }
   });
 });

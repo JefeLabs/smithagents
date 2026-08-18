@@ -16,7 +16,7 @@ export const PREFLIGHT = "preflight";
 export type SetupMode = "local" | "hosted";
 
 /** Every id the host can render, preflight included. */
-export const WIZARD_STEPS = [PREFLIGHT, "subscriptions", "anderson"] as const;
+export const WIZARD_STEPS = [PREFLIGHT, "sources", "roles"] as const;
 
 export type WizardStep = (typeof WIZARD_STEPS)[number];
 
@@ -26,20 +26,25 @@ export type Setup =
       voice?: boolean;
       step?: string;
       /**
-       * The stated default a skipped "Subscriptions" step applies: no CLI or
-       * key was chosen here, so Anderson runs on whatever is already active
-       * (`CliToolListing.active` / a verified key) and nothing further is
-       * configured. Written only by a skip — the normal Continue path never
-       * sets it, because it isn't declining anything.
+       * The stated default a skipped *Where I think* step applies: no source
+       * was chosen here, so Anderson uses whatever this machine already has —
+       * an active login (`CliToolListing.active`) or a verified key — and
+       * nothing further is configured. Written only by a skip; the normal
+       * Continue path never sets it, because it isn't declining anything.
        */
-      subscriptionsSkipped?: boolean;
+      sourcesSkipped?: boolean;
       /**
-       * The stated default a skipped "Anderson" step applies: no brain engine
-       * is saved, which `resolveBrainFactory` (broker/src/brain-engine.ts)
-       * already treats as a safe, working state — the same one an empty
-       * candidate list falls back to today.
+       * The stated default a skipped *What I think with* step applies: none
+       * of the three roles is saved, which `resolveBrainFactory`
+       * (broker/src/brain-engine.ts) already treats as a safe, working state
+       * — the same one an empty candidate list falls back to today.
+       *
+       * Written by BOTH ways off that step that save nothing: the host's own
+       * progress-row Skip, and the step's escape after a refused save. They
+       * are the same outcome on the wire, so recording only one of them would
+       * make the other indistinguishable from a user who answered.
        */
-      brainSkipped?: boolean;
+      rolesSkipped?: boolean;
     }
   | undefined;
 
@@ -76,12 +81,12 @@ export type WizardSaveState = "idle" | "saving" | "failed";
  * `voice` is carried in `Setup` and persisted, but adds no step yet — the
  * Voice screen is a later plan, and an entry here for a screen that does not
  * exist would be a dead route. When that plan lands it inserts "voice" after
- * "subscriptions" here, and nothing else in this file changes.
+ * "roles" here, and nothing else in this file changes.
  */
 export function setupStepsFor(setup: Setup): readonly WizardStep[] {
   if (!setup?.mode) return [];
   if (setup.mode === "hosted") return [];
-  return ["subscriptions", "anderson"];
+  return ["sources", "roles"];
 }
 
 export interface WizardStepDef {
@@ -103,22 +108,26 @@ export interface WizardStepDef {
  * `WIZARD_STEP_META` (this registry's predecessor) had and this preserves:
  * a step with no definition is a compile failure, not a lookup miss.
  *
- * Titles come from the spec's own flow map. Two had drifted and would have
- * collided with steps still to come: the mode question was titled "Location"
- * (which is the geolocation step) and Configure Anderson was titled "Brain".
+ * Titles are the spec's own section names verbatim — `## Step 1 of 6 · Where
+ * I think`, `## Step 2 of 6 · What I think with`. The indicator is the only
+ * place a step is named to the user, so a paraphrase here would be a second
+ * name for the same screen. (The ids these replaced, `subscriptions` and
+ * `anderson`, named what the old screens DID rather than what they ask; both
+ * screens are gone. The mode question is still never titled "Location" — that
+ * is the geolocation step, still to come.)
  */
 const STEP_DEFS: Record<Exclude<WizardStep, typeof PREFLIGHT>, Omit<WizardStepDef, "id">> = {
-  subscriptions: {
-    title: "Subscriptions",
-    description: "Connect a CLI or key",
-    skipLabel: "Skip — I'll use whatever CLI or key is already active",
-    skipDefault: () => ({ subscriptionsSkipped: true }),
+  sources: {
+    title: "Where I think",
+    description: "Logins, keys, or local models",
+    skipLabel: "Skip — I'll use whichever logins or keys already work",
+    skipDefault: () => ({ sourcesSkipped: true }),
   },
-  anderson: {
-    title: "Anderson",
-    description: "Pick a brain",
+  roles: {
+    title: "What I think with",
+    description: "One for each kind of job",
     skipLabel: "Skip — I'll reply using a built-in default",
-    skipDefault: () => ({ brainSkipped: true }),
+    skipDefault: () => ({ rolesSkipped: true }),
   },
 };
 
@@ -180,9 +189,12 @@ export const SETUP_DONE = "done";
 
 /**
  * Where to resume. A step the recorded answers do not contain — a record from
- * a newer build, a hand-edited one, or one saved before the mode was chosen —
- * returns to preflight rather than stranding the user on a step that the
- * current answers cannot reach.
+ * a newer build, a hand-edited one, one saved before the mode was chosen, or
+ * one left on a step a later build RETIRED (`subscriptions`/`anderson`, which
+ * `sources`/`roles` replaced) — returns to preflight rather than stranding
+ * the user on a step that the current answers cannot reach. Without that last
+ * case a half-finished record from the previous build would resume onto an
+ * empty panel, on every reload, with the gate reopening each time.
  */
 export function resumeStep(setup: Setup): WizardStep {
   const step = setup?.step;

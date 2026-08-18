@@ -26,10 +26,34 @@ export interface ApiKeysGroupProps {
    * an empty card.
    */
   only?: readonly string[];
+  /**
+   * The heading and the line beneath it, for a surrounding screen that speaks
+   * in a different voice.
+   *
+   * The same shape of contextual treatment as `headingLevel` above, added for
+   * the same kind of reason. Settings passes neither and keeps its own copy —
+   * lowercase "api keys" to match its ten sibling groups, and a blurb that
+   * names avatar generation, which is a Settings concern. Inside the wizard
+   * that is the system talking in the middle of a screen where Anderson is
+   * asking, about a consumer the wizard has never mentioned.
+   *
+   * Contextual props rather than a wizard-only fork: this component owns
+   * save/verify/remove and the error surfacing for all three, and a second
+   * implementation would drift from it on the first change to any of them.
+   * Copy is the only thing that differs by context, so copy is the only thing
+   * a context passes.
+   */
+  title?: string;
+  blurb?: string;
 }
 
 /** Card grid, one per registry provider — masked key state, save/verify/remove. */
-export function ApiKeysGroup({ headingLevel: Heading = "h1", only }: ApiKeysGroupProps = {}) {
+export function ApiKeysGroup({
+  headingLevel: Heading = "h1",
+  only,
+  title = "api keys",
+  blurb = "Provider keys for what subscriptions can\u2019t cover \u2014 verified live, stored on this machine only, never shown back. Subscription CLIs stay the default for agent work; a Google key here accelerates avatar generation.",
+}: ApiKeysGroupProps = {}) {
   const { data: allKeys = [], error: loadError } = useApiKeys();
   const keys = only ? allKeys.filter((l) => only.includes(l.id)) : allKeys;
   const save = useSaveApiKey();
@@ -56,11 +80,8 @@ export function ApiKeysGroup({ headingLevel: Heading = "h1", only }: ApiKeysGrou
 
   return (
     <>
-      <Heading className="settings-group__title">api keys</Heading>
-      <p className="wizard__hint">
-        Provider keys for what subscriptions can’t cover — verified live, stored on this machine only, never shown back.
-        Subscription CLIs stay the default for agent work; a Google key here accelerates avatar generation.
-      </p>
+      <Heading className="settings-group__title">{title}</Heading>
+      <p className="wizard__hint">{blurb}</p>
       {displayError && <p className="wizard__error">{displayError}</p>}
       <div className="connector-grid">
         {keys.map((l) => (

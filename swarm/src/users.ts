@@ -69,10 +69,17 @@ export interface User {
     /** The user declined to configure a step, as opposed to never reaching it.
         Recorded because a skip on these two steps has no value of its own to
         write — their real state lives in the CLI-tools/API-key registries and
-        the brain-engine store — so without a flag, "skipped" and "not yet
-        asked" would be indistinguishable. */
-    subscriptionsSkipped?: boolean;
-    brainSkipped?: boolean;
+        the engines store — so without a flag, "skipped" and "not yet asked"
+        would be indistinguishable.
+
+        Named for the steps as they are now (*Where I think* / *What I think
+        with*). The ids they replaced wrote `subscriptionsSkipped` and
+        `brainSkipped`; those may still sit on a record written by an older
+        build, harmlessly — nothing has ever read either, and `buildUserUpdate`
+        merges rather than replaces, so an unknown key is neither validated nor
+        dropped. */
+    sourcesSkipped?: boolean;
+    rolesSkipped?: boolean;
     step?: string;
   };
 }
