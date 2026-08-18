@@ -44,9 +44,15 @@ export function WizardNameStep({ initialName, onDone }: WizardNameStepProps) {
         placeholder="e.g. Edwin"
         rules={{ validate: filled }}
       />
-      <Button type="submit" variant="primary" isDisabled={!filled(name ?? "")}>
-        Continue
-      </Button>
+      {/* `.wizard-gate__footer` is the wizard's shared footer band (see
+          components.css) — the divider and spacing live on it, and on a step
+          tall enough to scroll the panel it sticks to the panel's bottom edge
+          so Continue never drops below the fold. */}
+      <div className="wizard-gate__footer">
+        <Button type="submit" variant="primary" isDisabled={!filled(name ?? "")}>
+          Continue
+        </Button>
+      </div>
     </form>
   );
 }

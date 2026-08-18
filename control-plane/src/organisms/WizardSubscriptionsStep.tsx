@@ -48,16 +48,26 @@ export function WizardSubscriptionsStep({ onDone }: WizardSubscriptionsStepProps
       <p className="wizard__hint">
         Install a CLI or paste an API key — Continue unlocks the moment one of your subscriptions actually works.
       </p>
-      <CliToolsGroup />
-      <ApiKeysGroup />
+      {/* `headingLevel` is the ONLY reason these two take a prop at all. Each
+          group titles itself with an `<h1>`, which is right in Settings —
+          SettingsPanel renders exactly one group at a time and has no heading
+          of its own, so that `<h1>` is the page's only one. Here two groups
+          render at once *inside* a panel that already owns the `<h1>`
+          ("Welcome, …"), so left alone this screen ships three. Passing the
+          nested level fixes the document outline without demoting the ten
+          other Settings groups that share the `<h1>` pattern. */}
+      <CliToolsGroup headingLevel="h2" />
+      <ApiKeysGroup headingLevel="h2" />
       {/* `setup: {}` is enough: the host (`WizardGate`'s `advance`) always
           stamps `step` itself, and the broker's own merge — buildUserUpdate,
           `{...existing?.setup, ...body.setup}` — preserves whatever the fork
           step already recorded (e.g. `mode`). Nothing here has data of its
           own to add. */}
-      <Button variant="primary" onPress={() => onDone({ setup: {} })} isDisabled={!canContinue}>
-        Continue
-      </Button>
+      <div className="wizard-gate__footer">
+        <Button variant="primary" onPress={() => onDone({ setup: {} })} isDisabled={!canContinue}>
+          Continue
+        </Button>
+      </div>
     </div>
   );
 }

@@ -103,9 +103,11 @@ export function WizardForkStep({ onDone }: WizardForkStepProps) {
         → notify me
       </a>
 
-      <Button variant="primary" onPress={submit}>
-        Continue
-      </Button>
+      <div className="wizard-gate__footer">
+        <Button variant="primary" onPress={submit}>
+          Continue
+        </Button>
+      </div>
     </div>
   );
 }

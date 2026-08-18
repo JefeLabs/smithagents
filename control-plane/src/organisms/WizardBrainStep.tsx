@@ -142,9 +142,11 @@ export function WizardBrainStep({ onDone }: WizardBrainStepProps) {
           ))}
         </RadioButtonGroup>
       )}
-      <Button variant="primary" onPress={() => void proceed()} isDisabled={busy}>
-        Continue
-      </Button>
+      <div className="wizard-gate__footer">
+        <Button variant="primary" onPress={() => void proceed()} isDisabled={busy}>
+          Continue
+        </Button>
+      </div>
     </div>
   );
 }

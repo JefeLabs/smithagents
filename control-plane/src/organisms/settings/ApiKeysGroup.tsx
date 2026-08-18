@@ -11,8 +11,13 @@ export function pillForApiKey(l: ApiKeyListing): { label: string; cls: string } 
   return { label: "valid", cls: "connector-status--connected" };
 }
 
+export interface ApiKeysGroupProps {
+  /** Same contract as `CliToolsGroupProps["headingLevel"]` — see there for why. */
+  headingLevel?: "h1" | "h2";
+}
+
 /** Card grid, one per registry provider — masked key state, save/verify/remove. */
-export function ApiKeysGroup() {
+export function ApiKeysGroup({ headingLevel: Heading = "h1" }: ApiKeysGroupProps = {}) {
   const { data: keys = [], error: loadError } = useApiKeys();
   const save = useSaveApiKey();
   const verify = useVerifyApiKey();
@@ -38,7 +43,7 @@ export function ApiKeysGroup() {
 
   return (
     <>
-      <h1>api keys</h1>
+      <Heading className="settings-group__title">api keys</Heading>
       <p className="wizard__hint">
         Provider keys for what subscriptions can’t cover — verified live, stored on this machine only, never shown back.
         Subscription CLIs stay the default for agent work; a Google key here accelerates avatar generation.

@@ -1499,6 +1499,18 @@ button.logo {
   color: #d9534f;
 }
 .settings-btn {
+  /* inline-flex, not the button default of inline-block: Tailwind preflight
+     sets `svg { display: block }`, so an icon+label button (CliToolsGroup's
+     "refresh all") laid its icon out as a block box on its own line — icon
+     stranded at the left edge, label centered underneath, 40px tall instead
+     of 26px. A flex line puts them back on one row; `gap` replaces the
+     collapsed text space that separated them. Text-only `.settings-btn`s
+     (every other one) are a single anonymous flex item and render
+     identically to before — verified by measurement, not assumed. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   padding: 6px 12px;
   border-radius: 999px;
   border: 1px solid var(--pill-br);
@@ -1694,6 +1706,34 @@ button.logo {
 .connector-status--unconnected {
   color: #d9a441;
   border-color: color-mix(in srgb, #d9a441 45%, transparent);
+}
+/* The key field inside a card (ApiKeysGroup's only one). Its
+   `<label>API key<input/></label>` had no rule anywhere in this stylesheet:
+   the label laid out inline and the input inherited preflight's reset, so the
+   label text butted straight against a borderless, transparent field —
+   rendering as the run-together string "API keypaste key" with no visible box
+   to paste into, on the one screen whose whole job is pasting a key. Same
+   stacked label-over-field shape as `.account-panel__form`'s label/input pair,
+   which is this app's existing idiom for exactly that, down to the tokens. */
+.connector-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+.connector-card label input {
+  padding: 7px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--pill-br);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+.connector-card label input:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 /* Class-aware fix-it guidance (missing/unauthenticated/billing/policy) inside a card. */
 .connector-guidance {
@@ -4268,7 +4308,13 @@ button.logo {
      than clipping or pushing Continue off screen. */
   max-height: calc(100vh - 48px);
   overflow-y: auto;
-  padding: 40px;
+  /* No bottom padding: `.wizard-gate__footer` owns it instead (40px, matching
+     the sides). The footer sticks to the BOTTOM OF THE SCROLLPORT, which for
+     an overflow container is its padding box — so any bottom padding here
+     would sit behind the stuck footer and give the button no clearance from
+     the panel's border. Moving that 40px into the footer's own box makes the
+     spacing identical whether the footer is stuck or sitting in flow. */
+  padding: 40px 40px 0;
   border: 1px solid var(--border);
   border-radius: 16px;
   background: var(--surface);
@@ -4285,22 +4331,41 @@ button.logo {
   letter-spacing: -0.01em;
   color: var(--foreground);
 }
-/* The Continue button every step ends its own markup with (verified: it's
-   the last child in all four — WizardNameStep, WizardForkStep,
-   WizardBrainStep, WizardSubscriptionsStep). `data-slot="button"` is
-   HeroUI's own Button hook, not a class this task added, and no other
-   control in any step uses HeroUI's Button — CliToolsGroup/ApiKeysGroup's
-   own actions are hand-authored `.settings-btn` elements — so this reaches
-   exactly one element per step without editing that step's file. */
-.wizard-gate__host [data-slot="button"] {
-  width: 100%;
-  /* The divider itself is the visual cue that this is a footer, not another
-     row in the list above it; the button's own fixed height (`.button`'s
-     `h-10`/`h-9`, base.css's global `box-sizing: border-box`) means padding
-     here would eat into — not add to — that height and shove the label
-     off-center, so spacing comes from margin instead. */
-  margin-top: 28px;
+/* The footer band each step wraps its Continue button in. Pass 1 drew this
+   band on the button itself, via a `[data-slot="button"]` rule — it could
+   not be made sticky that way: a stuck footer has to paint an opaque band
+   over the content scrolling beneath it, and the only element available was
+   the button, whose background belongs to HeroUI's `primary` variant and
+   whose height is fixed (`h-10`), so neither a background nor padding could
+   be added to it without breaking it. So the band became a real element.
+   Same look, same one-per-step reach, now with somewhere to put the
+   backdrop. Spacing lives here rather than on the button for the reason pass
+   1 found the hard way: under the global `box-sizing: border-box`, padding
+   on the fixed-height button eats its height instead of adding to it. */
+.wizard-gate__footer {
+  /* Sticks only when there is something to scroll — on the three short
+     steps the panel never overflows, so this is inert and the footer sits in
+     flow exactly where pass 1 left it. On Subscriptions (the one step tall
+     enough to scroll) it pins Continue to the panel's bottom edge instead of
+     leaving it ~1200px below the fold. At full scroll the footer is back at
+     its natural place after the last card, so it never ends up covering the
+     final card's controls. */
+  position: sticky;
+  bottom: 0;
+  /* Both this and the cards under it are positioned/stacked; without this the
+     later-painted content would show through. */
+  z-index: 1;
+  padding-top: 24px;
+  /* The panel's own bottom padding, moved here — see `.wizard-gate__panel`. */
+  padding-bottom: 40px;
   border-top: 1px solid var(--pill-br);
+  /* Opaque: this is what the scrolled content passes behind. Same token the
+     panel paints, so a stuck footer is indistinguishable from the panel's
+     own bottom edge. */
+  background: var(--surface);
+}
+.wizard-gate__footer [data-slot="button"] {
+  width: 100%;
 }
 .wizard-name-step,
 .wizard-fork-step,
@@ -4309,6 +4374,42 @@ button.logo {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+/* --- Subscriptions step interior ---
+   This step renders Settings' OWN two screens (CliToolsGroup, ApiKeysGroup)
+   rather than wizard-only clones — a deliberate reuse, not an accident. Both
+   were laid out for the Settings shell's ~1050px content column; everything
+   below re-fits them to a 640px panel WITHOUT touching either component's
+   markup or Settings' own rules, so Settings comes out unchanged. */
+
+/* Both groups' titles, nested to `<h2>` here (see WizardSubscriptionsStep).
+   Settings styles its own via `.settings-screen__content h1`, which this
+   never reaches; unstyled, preflight leaves these at body size and they read
+   as stray lowercase text rather than the two section headings they are. */
+.wizard-subscriptions-step .settings-group__title {
+  margin: 8px 0 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--foreground);
+}
+/* The group's own action ("refresh all") is a direct child of this flex
+   column, so `align-items: stretch` blew it out to the full panel width — a
+   543px pill around a 12px label. It shrink-wraps in Settings because that
+   shell is a block container, not a flex one. (The icon/label break inside
+   it was a separate bug, fixed on `.settings-btn` itself.) */
+.wizard-subscriptions-step > .settings-btn {
+  align-self: flex-start;
+}
+/* Settings gets 3 columns out of `minmax(280px, 1fr)`; the panel's 543px
+   content box gets exactly 1, which is what stretched each card to 543px and
+   left the status strip's `space-between` pill and text ~300px apart, reading
+   as an unresolved layout. Two columns put the cards at ~265px — inside the
+   280px band the strip was designed against, where the text fills the row and
+   the gap closes — and halve the step's height as a side effect. The strip's
+   own rule is untouched: this is a width fix, not a restyle. */
+.wizard-subscriptions-step .connector-grid {
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
 }
 .wizard-brain-step__prompt {
   font-size: 13px;
@@ -4363,6 +4464,9 @@ button.logo {
   align-items: center;
   gap: 16px;
   text-align: center;
+  /* WizardComingSoon has no Continue, so no `.wizard-gate__footer` to carry
+     the bottom padding the panel rule now delegates — it keeps its own. */
+  padding-bottom: 40px;
 }
 .wizard-gate__panel--compact .wizard-fork-step__notify {
   align-self: center;

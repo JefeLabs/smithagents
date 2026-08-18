@@ -100,8 +100,22 @@ function ToolGuidanceBlock({ guidance }: { guidance: ToolGuidance | null }) {
   );
 }
 
+export interface CliToolsGroupProps {
+  /**
+   * The group's own title tag. Defaults to `"h1"` — correct in Settings,
+   * where `SettingsPanel` shows one group at a time under no heading of its
+   * own, so this is the page's only `<h1>`. A host that already owns the
+   * page's `<h1>` (the welcome wizard, which also renders a SECOND group
+   * beside this one) passes `"h2"` instead, rather than this component
+   * guessing its own depth. Purely the document outline: no styling here
+   * keys off the tag, and Settings' own `.settings-screen__content h1` rule
+   * is untouched.
+   */
+  headingLevel?: "h1" | "h2";
+}
+
 /** Card grid, one per catalog engine — machine status, refresh probes, and the opt-out toggle. */
-export function CliToolsGroup() {
+export function CliToolsGroup({ headingLevel: Heading = "h1" }: CliToolsGroupProps = {}) {
   const { data: tools = [], error: loadError } = useCliTools();
   const refreshTools = useRefreshCliTools();
   const setEnabled = useSetCliToolEnabled();
@@ -133,7 +147,7 @@ export function CliToolsGroup() {
 
   return (
     <>
-      <h1>cli tools</h1>
+      <Heading className="settings-group__title">cli tools</Heading>
       <p className="wizard__hint">
         Agent CLI tools detected on this machine. Only active tools can be assigned to agents; an agent whose tool goes
         dark is flagged in the rail and blocked from launching.
