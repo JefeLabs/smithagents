@@ -89,16 +89,17 @@ to offer, so they wait for hosted.
 ## Flow
 
 ```
-  ── preflight: one screen, no step indicator ──
+  ── preflight: one screen, never blocks ──
   What's your name?     → the greeting; creates the user record
-  Voice mode?           → if yes, deepgram + elevenlabs become REQUIRED below
+  Voice mode?           → if yes, ADDS the Voice setup step below
   Local or Cloud?       → selects which sequence follows
                           cloud visible but disabled — "coming soon"
 
   ── setup: the sequence the answers above selected ──
   Subscriptions         guide and validate; cannot continue until
                         a subscription or an API key works
-                        + deepgram and elevenlabs, iff voice was chosen
+  Voice setup           ONLY IF voice was chosen. Blocks until both
+                        deepgram (STT) and elevenlabs (TTS) are connected.
   Configure Anderson    "Anderson needs a brain — choose from your
                         installed provider tools"
   Share your location?  → if yes, browser geolocation. Needs NO keys.
@@ -106,6 +107,8 @@ to offer, so they wait for hosted.
   Local workspace       what is it for — documents and/or coding?
                         version control and PR publishing?
                         GitHub required if coding OR version control
+
+  Every setup step can go BACK, including back into preflight.
 
   ── the app works from here ──
   Integrations    optional
@@ -122,14 +125,29 @@ indicator, which would claim to know the sequence before the answer that picks
 it. The name is asked because it produces the greeting; a wizard that collects
 a name and never says it has taken something for nothing.
 
-**Voice moved forward, and it gates.** Voice mode needs the `deepgram` (STT)
-and `elevenlabs` (TTS) connectors. Asked at the end, it stranded the
-Subscriptions step with an incomplete picture of its own requirements. Asked in
-preflight it costs one radio and no credentials, and Subscriptions then knows
-its full requirement set. **Choosing voice makes those two connectors
-required** — the alternative, offering voice and then letting setup finish
-without the two things voice cannot run without, is the "disabled control
-someone actually wants" frustration this spec already rejects, one level up.
+**Voice: asked in preflight, gated in its own step.** Voice mode needs the
+`deepgram` (STT) and `elevenlabs` (TTS) connectors. Asked at the end, setup
+never knew this requirement existed until it was over.
+
+Preflight asks, but **preflight itself never blocks** — it is three questions
+about intent, and none of them can be wrong. Choosing voice instead *adds a
+step*: a Voice setup screen that appears only for people who asked for voice,
+and blocks until both connectors are filled. This keeps the requirement with
+the capability that generated it rather than swelling Subscriptions, whose own
+gate stays exactly "one coding subscription or key works".
+
+**So the sequence is a function of the preflight answers**, not of mode alone.
+Voice is the first conditional step; it will not be the last.
+
+**Every setup step can go back, including into preflight.** This is load-bearing
+precisely *because* the Voice step blocks: someone who asks for voice and then
+finds they have no `elevenlabs` key would otherwise be stuck against a gate
+they cannot pass and cannot retract — the exact stranding this spec forbids
+elsewhere ("Hosted login failure falls back to local, and vice versa. Neither
+path may dead-end"). Going back into preflight and answering "no" to voice
+removes the Voice step from the sequence and lets setup finish. Back must
+persist the same way forward does, so a reload after going back resumes where
+the user actually is, not where they had reached.
 
 **Location moved forward, and it needs no keys.** Verified against the
 implementations, not assumed:
