@@ -15,11 +15,15 @@ export interface WizardGateStepProps {
   initialName: string;
   initialMode?: SetupMode;
   onDone: (patch: { name: string; setup: Setup }) => void;
-  /** "Just pick sensible things for me" calls this when given. Task 5 wires
-      it from the step registry's own defaults; until then it is absent and
-      the button is inert — a second, hand-rolled set of defaults here would
-      only drift from that one. */
-  onPickForMe?: () => void;
+  /** "Just pick sensible things for me" calls this when given, with the
+      typed name and the chosen mode — this component's own answers so far.
+      It does NOT compose the finishing patch itself: WizardGate reads the
+      step registry (`stepsFor` in wizardSteps.ts) and merges every step's
+      stated default, so there is exactly one place that reads that
+      registry, never a second, hand-rolled set of defaults here that could
+      drift from it. Absent for any caller that doesn't want the shortcut,
+      which is what leaves the button unrendered rather than merely inert. */
+  onPickForMe?: (name: string, mode: SetupMode) => void;
 }
 
 /** Non-blank after trimming — same rule NewContextModal's fields use. */
@@ -212,7 +216,16 @@ export function WizardGateStep({ initialName, initialMode = "local", onDone, onP
           every other wizard footer in this file reads. */}
       <div className="wizard-gate__footer">
         {onPickForMe && (
-          <Button type="button" variant="secondary" onPress={onPickForMe}>
+          // Same rule as Continue below: the name still has to be typed —
+          // this button picks the OTHER things, not that one. Mode needs no
+          // equivalent guard; the field is pre-selected (Cloud is disabled)
+          // so it always has a value to hand back.
+          <Button
+            type="button"
+            variant="secondary"
+            onPress={() => onPickForMe((name ?? "").trim(), mode)}
+            isDisabled={!filled(name ?? "")}
+          >
             Just pick sensible things for me
           </Button>
         )}

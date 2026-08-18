@@ -14,6 +14,7 @@ import {
   resumeStep,
   SETUP_DONE,
   type Setup,
+  type SetupMode,
   setupStepsFor,
   stepsFor,
   type WizardSaveState,
@@ -136,6 +137,13 @@ function WizardComingSoon() {
  * incomplete setup, and a step that never actually persisted never becomes
  * complete) with no explanation, and it would throw away exactly the
  * validation text the swarm side writes for a human to read here.
+ *
+ * `finish` (set only by `pickForMe`, below) skips the one-step computation
+ * entirely: "pick sensible things for me" already merged every remaining
+ * step's default into `patch`, and its destination is the END of setup, not
+ * whatever the first step of the sequence would be. Routing it through this
+ * same function — rather than a second write of its own — is what keeps the
+ * resolved/rejected handling above covering it too.
  */
 function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRecord }) {
   const [step, setStep] = useState(initialStep);
@@ -173,7 +181,7 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
   // shorter sequence.
   const progress = progressFor(step, answers);
 
-  const advance = (patch: { name?: string; setup?: Setup }) => {
+  const advance = (patch: { name?: string; setup?: Setup }, finish = false) => {
     const current = step;
     // From the PATCH, never from state. The preflight patch carries the very
     // answers that SELECT the sequence being entered, and a `setMode` in this
@@ -181,7 +189,12 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
     // would route by the PREVIOUS answer. On a fresh install that previous
     // answer is `undefined`, whose sequence is empty, so the wizard would
     // persist `done` and drop the user straight into the app.
-    const next = nextStep(current, { mode: patch.setup?.mode ?? mode, voice: patch.setup?.voice ?? voice });
+    //
+    // `finish` overrides this outright: a patch that sets it already IS the
+    // end of setup (see `pickForMe`), not one step of it.
+    const next = finish
+      ? null
+      : nextStep(current, { mode: patch.setup?.mode ?? mode, voice: patch.setup?.voice ?? voice });
     setError(null);
     // Marked as the write goes out, not only when it settles: a retry from the
     // last step hands off again, and until this one resolves that step must be
@@ -292,6 +305,25 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
   };
 
   /**
+   * The gate's own shortcut, distinct from `skip` above (which applies only
+   * the ONE step currently on screen): every step the chosen mode would ever
+   * reach gets its own stated default, merged into a single patch and sent
+   * as ONE write via `advance`'s `finish` flag — not stepped through each
+   * screen in turn. `stepsFor(...)` is the exact registry `skip` already
+   * reads, so a step's default changing follows this too, rather than a
+   * second, hand-rolled list drifting from it.
+   *
+   * Takes `mode` as an argument rather than reading this host's own `mode`
+   * state, for the same reason `advance`'s `next` does: that state is not
+   * yet updated by the very preflight answer this call is delivering.
+   */
+  const pickForMe = (pickedName: string, pickedMode: SetupMode) => {
+    const setup: Setup = { mode: pickedMode };
+    for (const s of stepsFor({ mode: pickedMode })) Object.assign(setup, s.skipDefault());
+    advance({ name: pickedName, setup }, true);
+  };
+
+  /**
    * The chip's own transition — confirmed (or, with nothing to lose, silent)
    * inside WizardChip itself, so by the time this runs the decision is
    * already made. Not routed through `goBack`: that function moves exactly
@@ -398,9 +430,7 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
           {step === PREFLIGHT && (
             // Seeded with the answers already given, so backing up into this
             // screen shows what the user said rather than a blank form.
-            // `onPickForMe` is Task 5's wire — absent here, which is what
-            // leaves the button inert until the step registry supplies it.
-            <WizardGateStep initialName={name} initialMode={mode} onDone={advance} />
+            <WizardGateStep initialName={name} initialMode={mode} onDone={advance} onPickForMe={pickForMe} />
           )}
           {step === "subscriptions" && (
             <WizardSubscriptionsStep onDone={advance} onBack={onBack} saveState={saveState} />

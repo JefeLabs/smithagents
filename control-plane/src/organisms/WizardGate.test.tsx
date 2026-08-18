@@ -22,7 +22,7 @@ vi.mock("../api/broker", () => ({
 
 import { getApiKeys, getBrainEngine, getCliTools, getMe, saveBrainEngine, updateMe } from "../api/broker";
 import type { CliToolListing, MeRecord } from "../api/types";
-import { PREFLIGHT } from "../lib/wizardSteps";
+import { PREFLIGHT, SETUP_DONE, stepsFor } from "../lib/wizardSteps";
 import { WizardGate } from "./WizardGate";
 
 // retry: false — one of these tests rejects the query deliberately, and the
@@ -464,6 +464,35 @@ describe("WizardGate", () => {
 
     expect(await findHost(container)).toHaveAttribute("data-step", "preflight");
     expect(await screen.findByRole("radio", { name: /on your machine/i })).not.toBeChecked();
+  });
+
+  it("applies every step's stated default and finishes", async () => {
+    // Composed from `stepsFor`, the SAME registry `skip` reads — not a
+    // second, hand-rolled list. If a step's default changes, this follows
+    // it; a hardcoded copy here would silently stop matching what the
+    // button actually applies. `.at(-1)` rather than the only call: the
+    // point being verified is what the button's write ultimately contains,
+    // however many writes it took to get there.
+    const { updateMe } = renderGate({ placeholder: true, setup: undefined });
+    await userEvent.type(await screen.findByLabelText(/what shall i call you/i), "Edwin");
+    await userEvent.click(screen.getByRole("button", { name: /just pick sensible things for me/i }));
+
+    // `lastCall`, not `.calls.at(-1)`: this repo's `tsc` lib target has no
+    // `Array.prototype.at`, and `.calls.at(-1)` is exactly the shape that
+    // trips it — `lastCall` says the same thing without it.
+    const patch = updateMe.mock.lastCall?.[0];
+    expect(patch.name).toBe("Edwin");
+    expect(patch.setup.step).toBe(SETUP_DONE);
+    for (const s of stepsFor({ mode: "local" })) {
+      for (const [k, v] of Object.entries(s.skipDefault() ?? {})) {
+        expect(patch.setup[k]).toEqual(v);
+      }
+    }
+  });
+
+  it("still needs a name — it picks the other things, not that one", async () => {
+    renderGate({ placeholder: true, setup: undefined });
+    expect(await screen.findByRole("button", { name: /just pick sensible things for me/i })).toBeDisabled();
   });
 
   it("offers no Back on preflight — it is the beginning", async () => {

@@ -73,4 +73,17 @@ describe("WizardGateStep", () => {
     setup({ initialName: "Edwin", initialMode: "local" });
     expect(screen.getByLabelText(/what shall i call you/i)).toHaveValue("Edwin");
   });
+
+  it("hands back the typed name and chosen mode — composing the actual patch stays with the host", async () => {
+    const onPickForMe = vi.fn();
+    const { user } = setup({ onPickForMe });
+    await user.type(screen.getByLabelText(/what shall i call you/i), "Edwin");
+    await user.click(screen.getByRole("button", { name: /just pick sensible things for me/i }));
+    expect(onPickForMe).toHaveBeenCalledWith("Edwin", "local");
+  });
+
+  it("still needs a name — it picks the other things, not that one", () => {
+    setup({ onPickForMe: vi.fn() });
+    expect(screen.getByRole("button", { name: /just pick sensible things for me/i })).toBeDisabled();
+  });
 });
