@@ -128,10 +128,22 @@ Copy per the spec + ruling. Requirements, all load-bearing:
   `aria-disabled` (the react-aria hand-authored-radio pattern from the gate —
   move that reasoning, don't re-derive it), copy naming the way forward.
   **Hosted preselected.**
-- Hosted expands to the two key fields with **live verification through the
-  existing connector machinery** — reuse, don't reimplement. Assign both
-  slots via `PUT /me/voice { stt, tts, enabled: true }` only when both
-  connectors verify (the invariant).
+- **USER RULING (2026-08-18): hosted is two per-slot CHOOSERS, not two fixed
+  key fields.** "I'll listen with [ ▾ ]" and "speak with [ ▾ ]" each list the
+  capability-matching options — vendors filtered by
+  `capabilities.includes(slot)` × existing connector instances, exactly
+  `VoiceGroup.optionsFor`'s pattern (`VoiceGroup.tsx:46-52`) — so a future
+  STT/TTS vendor appears with zero wizard changes. Today that resolves to
+  Deepgram and ElevenLabs, which is why the spec's mockup names them.
+- **Each chooser also offers "Add a … key" INLINE** — create the connector,
+  live-verify it, and the new instance becomes the selection. This is the gap
+  VoiceGroup deliberately punts to Integrations ("Connect a Deepgram key in
+  Integrations first"); the wizard must not punt. Reuse the existing
+  connector create/verify machinery — key material never handled outside it.
+- Assign both slots via `PUT /me/voice { stt, tts, enabled: true }` only when
+  both chosen instances are **verified** (the invariant). A
+  stored-but-unverified key counting as verified is the discriminating case —
+  pin it.
 - "How should I sound?" renders `GET /voice/options`; **▶ Say something**
   plays the preview (`Audio` from the base64) and surfaces the refusal
   sentence inline when it fails. The button is inert while a preview is in
