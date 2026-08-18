@@ -12,6 +12,8 @@ import type {
   BrainEngineRecord,
   ChannelsRecord,
   CliToolListing,
+  EnginesRecord,
+  EnginesUpdate,
   MeRecord,
   VoiceSettingsRecord,
   WorkspaceRecord,
@@ -105,6 +107,28 @@ export function useResearchEngine() {
 
 export function useBrainEngine() {
   return useQuery({ queryKey: qk.brainEngine, queryFn: () => api.getBrainEngine() });
+}
+
+/**
+ * `GET /me/engines` — the three roles the wizard's *What I think with* step
+ * assigns. Separate from `useBrainEngine` (which Settings still uses for the
+ * main brain alone) because this asks the whole question in one read, and the
+ * step shows all three answers at once.
+ */
+export function useEngines() {
+  return useQuery({ queryKey: qk.engines, queryFn: () => api.getEngines() });
+}
+
+/**
+ * `GET /machine` — this host's memory, for the wizard's local-model advice.
+ * A machine's RAM does not change while the wizard is open, so unlike
+ * `useLocalModels` above there is nothing here that goes stale mid-step; it is
+ * left at the default anyway rather than pinned, since one extra request on a
+ * step that already makes three is not worth a second caching rule to reason
+ * about.
+ */
+export function useMachineFacts() {
+  return useQuery({ queryKey: qk.machine, queryFn: () => api.getMachineFacts() });
 }
 
 export function useMe() {
@@ -222,6 +246,33 @@ export function useSaveBrainEngine() {
         ? { kind: result.kind, provider: result.provider ?? "", model: result.model }
         : null;
       qc.setQueryData(qk.brainEngine, value);
+    },
+  });
+}
+
+/**
+ * `PUT /me/engines`. Commits to the cache only when the response carries no
+ * `error`, the same contract as `useSaveBrainEngine` above — a refused save
+ * must never leave the picker showing a choice the server rejected.
+ *
+ * The response is the redacted record of all three roles, so it is written
+ * straight in rather than invalidated: what came back IS what a refetch would
+ * fetch. `brainEngine`'s own key is invalidated alongside it, because the main
+ * role and that key are the same stored field seen two ways, and Settings must
+ * not keep showing the brain the wizard just replaced.
+ */
+export function useSaveEngines() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: EnginesUpdate) => api.saveEngines(body),
+    onSuccess: (result) => {
+      if (result?.error) return;
+      qc.setQueryData<EnginesRecord>(qk.engines, {
+        main: result?.main ?? null,
+        quick: result?.quick ?? null,
+        fallback: result?.fallback ?? null,
+      });
+      void qc.invalidateQueries({ queryKey: qk.brainEngine });
     },
   });
 }

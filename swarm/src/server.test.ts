@@ -20,6 +20,7 @@ import {
   buildChannelsUpdate,
   buildConnectorFields,
   buildConnectorUpdate,
+  buildEnginesUpdate,
   buildResearchEngineUpdate,
   buildUserUpdate,
   buildVoiceUpdate,
@@ -31,6 +32,7 @@ import {
   prepareSquadSwarm,
   redactBrainEngine,
   redactConnector,
+  redactEngines,
   redactResearchEngine,
   redactUser,
   resolveAtlassianConnector,
@@ -802,6 +804,187 @@ test("redactBrainEngine hides a cli whose gate now fails", () => {
   assert.equal(
     redactBrainEngine(u, () => "not installed"),
     null,
+  );
+});
+
+// ── buildEnginesUpdate / redactEngines ───────────────────────────────
+//
+// The three engine roles share ONE validated save path. The hazard these
+// tests exist for is specific: `buildUserUpdate` SPREADS rather than
+// allow-lists, so `quickEngine` and `fallbackEngine` would round-trip
+// through PUT /me perfectly while bypassing every allowlist `brainEngine`
+// has had since the brain-engine spec — a wrong thing that looks right at
+// every step and fails silently rather than loudly.
+
+test("buildEnginesUpdate: every role is gated by the SAME allowlists as the main brain", () => {
+  const ok = () => "";
+  // Looped over the roles rather than written out for `main` alone: a fourth
+  // role added later without a validated path fails here, which is the whole
+  // point. A per-role copy of this assertion would pass for whichever roles
+  // its author remembered.
+  for (const role of ["main", "quick", "fallback"] as const) {
+    const cli = buildEnginesUpdate({ [role]: { kind: "cli", provider: "agy" } }, ENGINES, ok);
+    assert.ok("error" in cli, `${role}: agy must be refused as a cli engine`);
+    assert.match((cli as { error: string }).error, /claude|--json-schema/i, `${role}: refused for the stated reason`);
+
+    const api = buildEnginesUpdate({ [role]: { kind: "api", provider: "openai" } }, ENGINES, ok);
+    assert.ok("error" in api, `${role}: openai must be refused as an api engine`);
+
+    const local = buildEnginesUpdate({ [role]: { kind: "local", provider: "lmstudio" } }, ENGINES, ok);
+    assert.deepEqual(local, { error: "local engines require a baseUrl" }, `${role}: local needs a baseUrl`);
+
+    const gated = buildEnginesUpdate({ [role]: { kind: "cli", provider: "claude" } }, ENGINES, () => "not logged in");
+    assert.deepEqual(gated, { error: "not logged in" }, `${role}: the cli gate applies`);
+
+    const kind = buildEnginesUpdate({ [role]: { kind: "wat", provider: "claude" } }, ENGINES, ok);
+    assert.ok("error" in kind, `${role}: an unknown kind must be refused`);
+  }
+});
+
+test("buildEnginesUpdate: each role writes its own field", () => {
+  const ok = () => "";
+  assert.deepEqual(buildEnginesUpdate({ main: { kind: "cli", provider: "claude" } }, ENGINES, ok), {
+    brainEngine: { kind: "cli", provider: "claude" },
+  });
+  assert.deepEqual(
+    buildEnginesUpdate(
+      { quick: { kind: "local", provider: "lmstudio", baseUrl: "http://127.0.0.1:1234" } },
+      ENGINES,
+      ok,
+    ),
+    { quickEngine: { kind: "local", provider: "lmstudio", baseUrl: "http://127.0.0.1:1234" } },
+  );
+  assert.deepEqual(buildEnginesUpdate({ fallback: { kind: "api", provider: "gemini" } }, ENGINES, ok), {
+    fallbackEngine: { kind: "api", provider: "gemini" },
+  });
+});
+
+test('buildEnginesUpdate: the fallback\'s "nothing" is a VALUE — it persists as null, never as an omission', () => {
+  // The bug class this closes is the voice-flip one this codebase already
+  // fixed once: the route MERGES (`{...existing, ...patch}`), so a choice
+  // recorded as an omitted field leaves the previous engine in place. A user
+  // who says "nothing — I'll just tell you" after picking Gemini would keep
+  // silently falling back to Gemini.
+  const patch = buildEnginesUpdate({ fallback: null }, ENGINES, () => "");
+  assert.ok(!("error" in patch), "an explicit nothing is accepted, not refused");
+  assert.ok(Object.hasOwn(patch, "fallbackEngine"), "the field is PRESENT in the patch, not omitted");
+  assert.strictEqual(
+    (patch as { fallbackEngine?: unknown }).fallbackEngine,
+    null,
+    "and its value is null, not undefined",
+  );
+
+  // The claim that actually matters is about the FILE, not the object: an
+  // `undefined` survives a spread but vanishes through JSON.stringify, which
+  // is exactly how an "explicit nothing" becomes an omission on disk and the
+  // old engine comes back on the next load.
+  const existing = { id: "me", name: "You", fallbackEngine: { kind: "api" as const, provider: "gemini" } };
+  const merged = { ...existing, ...patch };
+  const onDisk = JSON.parse(JSON.stringify(merged)) as Record<string, unknown>;
+  assert.ok(Object.hasOwn(onDisk, "fallbackEngine"), "and it survives serialisation as a stored null");
+  assert.strictEqual(onDisk.fallbackEngine, null, "the previously stored engine is GONE, not kept");
+});
+
+test("buildEnginesUpdate: a null main or quick CLEARS, the way PUT /me/brain-engine's null already does", () => {
+  const ok = () => "";
+  const main = buildEnginesUpdate({ main: null }, ENGINES, ok);
+  assert.ok(Object.hasOwn(main, "brainEngine"));
+  assert.strictEqual((main as { brainEngine?: unknown }).brainEngine, undefined);
+
+  const quick = buildEnginesUpdate({ quick: null }, ENGINES, ok);
+  assert.ok(Object.hasOwn(quick, "quickEngine"));
+  assert.strictEqual((quick as { quickEngine?: unknown }).quickEngine, undefined);
+});
+
+test("buildEnginesUpdate: a role the body never mentions is left alone", () => {
+  const patch = buildEnginesUpdate({ main: { kind: "cli", provider: "claude" } }, ENGINES, () => "");
+  assert.equal(Object.hasOwn(patch, "quickEngine"), false, "quick is untouched, not cleared");
+  assert.equal(Object.hasOwn(patch, "fallbackEngine"), false, "fallback is untouched, not cleared");
+
+  const existing = {
+    id: "me",
+    name: "You",
+    quickEngine: { kind: "api" as const, provider: "gemini" },
+    fallbackEngine: null,
+  };
+  const merged = { ...existing, ...patch };
+  assert.deepEqual(merged.quickEngine, { kind: "api", provider: "gemini" });
+  assert.strictEqual(merged.fallbackEngine, null);
+});
+
+test("buildEnginesUpdate: an unknown key is REFUSED, never silently dropped", () => {
+  // This route exists because `buildUserUpdate` spreads: an arbitrary field
+  // round-trips through PUT /me looking perfectly saved. A typo'd role here
+  // would do the same thing on this route — accept the request, save
+  // nothing, and report success — so the body is allow-listed even though
+  // the fields it writes are not.
+  const typo = buildEnginesUpdate({ mian: { kind: "cli", provider: "claude" } }, ENGINES, () => "");
+  assert.ok("error" in typo, "an unknown role is an error, not a no-op");
+  assert.match((typo as { error: string }).error, /mian/);
+
+  for (const body of [null, "main", 7, [{ kind: "cli" }]]) {
+    const r = buildEnginesUpdate(body, ENGINES, () => "");
+    assert.ok("error" in r, `a ${typeof body} body must be refused: ${JSON.stringify(body)}`);
+  }
+});
+
+test('the fallback\'s "nothing" survives a real save and reload — not just a JSON.stringify', async () => {
+  // The one claim the pure tests above can only simulate. `saveUser` encrypts
+  // and rewrites the record, `loadUsersFromDir` migrates it on the way back,
+  // and either could plausibly drop a null on the floor — at which point the
+  // engine the user just rejected quietly returns on the next request. This
+  // walks the actual path: patch -> merge -> disk -> reload.
+  const dir = await mkdtemp(join(tmpdir(), "engines-"));
+  try {
+    await saveUser(dir, {
+      id: "me",
+      name: "Edwin",
+      default: true,
+      fallbackEngine: { kind: "api", provider: "gemini" },
+    });
+
+    const patch = buildEnginesUpdate({ fallback: null }, ENGINES, () => "");
+    assert.ok(!("error" in patch));
+    const [existing] = await loadUsersFromDir(dir);
+    await saveUser(dir, { ...(existing as User), ...patch });
+
+    const [reloaded] = await loadUsersFromDir(dir);
+    assert.strictEqual(
+      reloaded?.fallbackEngine,
+      null,
+      "the stored gemini engine is gone, replaced by an explicit null",
+    );
+    const raw = JSON.parse(await readFile(join(dir, "me.json"), "utf8")) as Record<string, unknown>;
+    assert.ok(Object.hasOwn(raw, "fallbackEngine"), "and the FILE holds the key, rather than having dropped it");
+    assert.strictEqual(raw.fallbackEngine, null);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("redactEngines: a stored engine whose cli gate now fails reads as unset, in every role", () => {
+  const u: User = {
+    id: "me",
+    name: "You",
+    brainEngine: { kind: "cli", provider: "claude" },
+    quickEngine: { kind: "cli", provider: "claude" },
+    fallbackEngine: { kind: "cli", provider: "claude" },
+  };
+  assert.deepEqual(
+    redactEngines(u, () => ""),
+    {
+      main: { kind: "cli", provider: "claude" },
+      quick: { kind: "cli", provider: "claude" },
+      fallback: { kind: "cli", provider: "claude" },
+    },
+  );
+  assert.deepEqual(
+    redactEngines(u, () => "not installed"),
+    { main: null, quick: null, fallback: null },
+  );
+  assert.deepEqual(
+    redactEngines(null, () => ""),
+    { main: null, quick: null, fallback: null },
   );
 });
 

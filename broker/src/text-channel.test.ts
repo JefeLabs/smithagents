@@ -1334,6 +1334,11 @@ test("research: clearing to null answers instead of hanging", async () => {
 const brainDep = {
   get: async () => ({ kind: "cli", provider: "claude" }),
   save: async (body: unknown) => body as Record<string, unknown>,
+  // The three-role half of the same dep. Present on the shared fixture so the
+  // /me/brain-engine tests below stay about /me/brain-engine — each one that
+  // cares overrides these two.
+  getEngines: async () => ({ main: null, quick: null, fallback: null }),
+  saveEngines: async (body: unknown) => body as Record<string, unknown>,
 };
 
 test("brain: GET and PUT /me/brain-engine are proxied when the brain dep is wired", async () => {
@@ -1380,7 +1385,9 @@ test("brain: a refused engine comes back carrying the swarm's own reason, not a 
       signal: AbortSignal.timeout(5000),
     });
 
-  const resolved = channelWith({ brain: { get: async () => null, save: async () => ({ error: refusal }) } });
+  const resolved = channelWith({
+    brain: { ...brainDep, get: async () => null, save: async () => ({ error: refusal }) },
+  });
   const resolvedPort = await resolved.start(0);
   try {
     const res = await put(resolvedPort);
@@ -1392,6 +1399,7 @@ test("brain: a refused engine comes back carrying the swarm's own reason, not a 
 
   const thrown = channelWith({
     brain: {
+      ...brainDep,
       get: async () => null,
       save: async () => {
         throw new Error(refusal);
@@ -1414,7 +1422,7 @@ test("brain: clearing to null answers instead of hanging", async () => {
   // swallows the rejection — no response is ever written and the client hangs
   // forever instead of failing. The `?.` is what this asserts.
   const channel = channelWith({
-    brain: { get: async () => null, save: async () => null },
+    brain: { ...brainDep, get: async () => null, save: async () => null },
   });
   const port = await channel.start(0);
   try {
@@ -1428,6 +1436,102 @@ test("brain: clearing to null answers instead of hanging", async () => {
     assert.equal(await put.json(), null);
   } finally {
     await channel.stop();
+  }
+});
+
+test("engines: GET and PUT /me/engines are proxied when the brain dep is wired", async () => {
+  // The wizard's "What I think with" step saves all three roles through this
+  // route on 7790. The route lives only on the swarm (7777); the browser never
+  // talks to 7777. This is the exact omission that made /me/brain-engine 404
+  // for the step above, and the same one that shipped a permanently-empty
+  // work-kinds list — so it gets the same test.
+  const seen: unknown[] = [];
+  const channel = channelWith({
+    brain: {
+      ...brainDep,
+      getEngines: async () => ({ main: { kind: "cli", provider: "claude" }, quick: null, fallback: null }),
+      saveEngines: async (body: unknown) => {
+        seen.push(body);
+        return body as Record<string, unknown>;
+      },
+    },
+  });
+  const port = await channel.start(0);
+  try {
+    const got = await fetch(`http://127.0.0.1:${port}/me/engines`, { headers: { Origin: "http://localhost:1420" } });
+    assert.equal(got.status, 200);
+    assert.deepEqual(await got.json(), { main: { kind: "cli", provider: "claude" }, quick: null, fallback: null });
+
+    const body = {
+      main: { kind: "cli", provider: "claude" },
+      quick: { kind: "local", provider: "lmstudio", baseUrl: "http://127.0.0.1:1234", model: "qwen3.6-27b" },
+      fallback: null,
+    };
+    const put = await fetch(`http://127.0.0.1:${port}/me/engines`, {
+      method: "PUT",
+      headers: { Origin: "http://localhost:1420", "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(5000),
+    });
+    assert.equal(put.status, 200);
+    assert.deepEqual(await put.json(), body);
+
+    // The half that a `deepEqual` on the RESPONSE cannot prove: the fallback's
+    // explicit `null` has to reach the swarm as a present key. A proxy that
+    // reserialised the body through anything that drops nulls would answer
+    // exactly the same 200 while turning the user's "nothing — I'll just tell
+    // you" into an omission, which the swarm then merges as "keep whatever was
+    // there before".
+    const received = seen[0] as Record<string, unknown>;
+    assert.ok(Object.hasOwn(received, "fallback"), "the fallback key reaches the swarm");
+    assert.strictEqual(received.fallback, null, "and it reaches it as null, not undefined");
+  } finally {
+    await channel.stop();
+  }
+});
+
+test("engines: a refused role comes back carrying the swarm's own reason", async () => {
+  // Same two shapes, same reason, as /me/brain-engine's refusal test above:
+  // SwarmClient.http() THROWS on the swarm's 400, a resolved `{error}` takes
+  // the 400 arm, and the control-plane reads `{error}` either way. The step
+  // renders this sentence verbatim, so what must not vary is the sentence.
+  const refusal = "Antigravity is not supported as a brain yet — only Claude Code enforces --json-schema";
+  const put = (port: number) =>
+    fetch(`http://127.0.0.1:${port}/me/engines`, {
+      method: "PUT",
+      headers: { Origin: "http://localhost:1420", "content-type": "application/json" },
+      body: JSON.stringify({ quick: { kind: "cli", provider: "agy" } }),
+      signal: AbortSignal.timeout(5000),
+    });
+
+  const resolved = channelWith({
+    brain: { ...brainDep, getEngines: async () => null, saveEngines: async () => ({ error: refusal }) },
+  });
+  const resolvedPort = await resolved.start(0);
+  try {
+    const res = await put(resolvedPort);
+    assert.equal(res.status, 400);
+    assert.deepEqual(await res.json(), { error: refusal });
+  } finally {
+    await resolved.stop();
+  }
+
+  const thrown = channelWith({
+    brain: {
+      ...brainDep,
+      getEngines: async () => null,
+      saveEngines: async () => {
+        throw new Error(refusal);
+      },
+    },
+  });
+  const thrownPort = await thrown.start(0);
+  try {
+    const res = await put(thrownPort);
+    assert.equal(res.status, 500);
+    assert.deepEqual(await res.json(), { error: refusal });
+  } finally {
+    await thrown.stop();
   }
 });
 

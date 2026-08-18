@@ -296,6 +296,11 @@ export interface MeRecord {
       (swarm/src/users.ts) — `voice` was already persisted and returned there;
       this side had simply not been widened to see it. */
   setup?: { mode?: "local" | "hosted"; voice?: boolean; step?: string };
+  // The engine roles (`brainEngine`, `quickEngine`, `fallbackEngine`) are
+  // NOT here, and their absence is deliberate rather than the drift it
+  // resembles: this interface mirrors `redactUser`'s output (swarm's
+  // server.ts), which has never serialised any of the three. They travel on
+  // `GET/PUT /me/engines` instead — see `EnginesRecord` below.
 }
 
 /**
@@ -310,6 +315,43 @@ export interface BrainEngineRecord {
   model?: string;
   /** local only — where the OpenAI-compatible server listens. */
   baseUrl?: string;
+}
+
+/**
+ * The three roles an engine can play, as `GET/PUT /me/engines` carries them —
+ * mirroring swarm's `brainEngine` / `quickEngine` / `fallbackEngine` (`User`,
+ * swarm/src/users.ts). Same duplication rule as every other wire shape here:
+ * no shared package crosses this boundary.
+ *
+ * `main` is the brain that already existed; `quick` is "quick little things",
+ * absent meaning it falls back to the main brain; `fallback` is "if something's
+ * unavailable", where `null` is the ANSWER "nothing — I'll just tell you"
+ * rather than the absence of one. On the way OUT, a never-answered fallback
+ * and an explicit "nothing" both read as `null` — nothing downstream needs to
+ * tell them apart. On the way IN they are very different: the save merges, so
+ * a "nothing" sent as an omitted key leaves the previous engine in place.
+ */
+export interface EnginesRecord {
+  main: BrainEngineRecord | null;
+  quick: BrainEngineRecord | null;
+  fallback: BrainEngineRecord | null;
+}
+
+/** What `PUT /me/engines` accepts — every role the caller means to set, stated. */
+export interface EnginesUpdate {
+  main?: BrainEngineRecord | null;
+  quick?: BrainEngineRecord | null;
+  fallback?: BrainEngineRecord | null;
+}
+
+/**
+ * `GET /machine` — machine-level facts read straight from the OS, mirroring
+ * swarm's `machineFacts()`. Advice for the wizard's local-model picks, never
+ * a gate: an unavailable answer means the sentence is omitted, not that a
+ * number is guessed.
+ */
+export interface MachineFacts {
+  totalMemBytes: number;
 }
 
 /** Per-workspace channel config — Discord token read back as a boolean, never the secret itself. */

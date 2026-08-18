@@ -2460,6 +2460,39 @@ export class OrchestratorServer {
       return redactBrainEngine(merged, gate);
     });
 
+    // All three engine roles at once (welcome wizard, "What I think with").
+    // A sibling of /me/brain-engine rather than a replacement: Settings still
+    // edits the main brain alone, and both go through buildEngineSetting, so
+    // there is one set of allowlists and not two. ONE write for the three
+    // roles, because the wizard asks the three questions on one screen —
+    // three sequential PUTs would leave a half-answered record behind any
+    // failure between them.
+    this.app.get("/me/engines", async () => {
+      const users = await loadUsersFromDir(this.paths.users);
+      const file = await loadCliToolsFile(this.paths.cliTools);
+      return redactEngines(resolveCurrentUser(users), (cli) => gateReason(file, cli));
+    });
+
+    this.app.put("/me/engines", async (req, reply) => {
+      const dir = this.paths.users;
+      const users = await loadUsersFromDir(dir);
+      const existing = resolveCurrentUser(users) ?? { id: "me", name: "You", default: true, connectors: [] };
+      const file = await loadCliToolsFile(this.paths.cliTools);
+      const gate = (cli: string) => gateReason(file, cli);
+      const r = buildEnginesUpdate(req.body, ENGINES, gate);
+      if ("error" in r) return reply.status(400).send({ error: r.error });
+      // Spread, not field-by-field: `r` carries a key only for the roles the
+      // body named, so an unmentioned role keeps its stored value while a
+      // named one always applies — including the fallback's explicit `null`.
+      const merged: User = { ...existing, ...r };
+      try {
+        await saveUser(dir, merged);
+      } catch (err) {
+        return reply.status(400).send({ error: String((err as Error).message) });
+      }
+      return redactEngines(merged, gate);
+    });
+
     // Internal-only — returns RAW voice keys, like /workspaces/:name/channels/discord-token
     // above: never proxied through broker's browser-facing text-channel.ts surface.
     // broker's SwarmClient calls it server-to-server on the same loopback-bound,
@@ -4269,7 +4302,30 @@ export function buildBrainEngineUpdate(
   engines: EngineOption[],
   gate: (cli: string) => string,
 ): { brainEngine?: BrainEngine } | { error: string } {
-  if (body === null) return { brainEngine: undefined };
+  const r = buildEngineSetting(body, engines, gate);
+  return "error" in r ? r : { brainEngine: r.engine };
+}
+
+/**
+ * The ONE validated path an engine takes into the record, whichever role it
+ * plays. Extracted from buildBrainEngineUpdate unchanged — it is still that
+ * function's whole body — so the main brain, the quick role and the fallback
+ * cannot drift into three different ideas of what is acceptable.
+ *
+ * That is not a tidiness argument. `buildUserUpdate` SPREADS rather than
+ * allow-listing (see its comment, and the three bugs that taught it), so a
+ * new engine field round-trips through PUT /me perfectly while being checked
+ * by nothing at all: it persists, it reads back, a test of it passes, and
+ * every allowlist below has been bypassed. A wrong thing that fails loudly is
+ * safer than one that looks right at every step, so all three roles are
+ * routed here instead.
+ */
+function buildEngineSetting(
+  body: unknown,
+  engines: EngineOption[],
+  gate: (cli: string) => string,
+): { engine?: BrainEngine } | { error: string } {
+  if (body === null) return { engine: undefined };
   const b = (body ?? {}) as Partial<BrainEngine>;
 
   if (b.kind === "cli") {
@@ -4280,13 +4336,13 @@ export function buildBrainEngineUpdate(
     }
     const reason = gate(engine.cli);
     if (reason) return { error: reason };
-    return { brainEngine: { kind: "cli", provider: engine.cli, ...(b.model ? { model: b.model } : {}) } };
+    return { engine: { kind: "cli", provider: engine.cli, ...(b.model ? { model: b.model } : {}) } };
   }
 
   if (b.kind === "local") {
     if (!b.baseUrl) return { error: "local engines require a baseUrl" };
     return {
-      brainEngine: {
+      engine: {
         kind: "local",
         provider: b.provider ?? "local",
         baseUrl: b.baseUrl,
@@ -4299,7 +4355,7 @@ export function buildBrainEngineUpdate(
     if (!b.provider || !API_BRAIN_PROVIDERS.has(b.provider)) {
       return { error: `Unknown api provider: ${String(b.provider)}` };
     }
-    return { brainEngine: { kind: "api", provider: b.provider, ...(b.model ? { model: b.model } : {}) } };
+    return { engine: { kind: "api", provider: b.provider, ...(b.model ? { model: b.model } : {}) } };
   }
 
   return { error: `Unknown engine kind: ${String(b.kind)}` };
@@ -4311,6 +4367,92 @@ export function redactBrainEngine(u: User | null, gate: (cli: string) => string)
   if (!e) return null;
   if (e.kind === "cli" && gate(e.provider)) return null;
   return e;
+}
+
+/**
+ * The three roles the wizard's *What I think with* step assigns, and the
+ * record field each one writes. `main` is `brainEngine` — the field that
+ * already existed — so the two new roles are siblings on the wire rather
+ * than a second concept.
+ */
+const ENGINE_ROLE_FIELDS = {
+  main: "brainEngine",
+  quick: "quickEngine",
+  fallback: "fallbackEngine",
+} as const satisfies Record<string, keyof User>;
+
+type EngineRole = keyof typeof ENGINE_ROLE_FIELDS;
+
+/** Only the roles the body actually mentioned — a role it omits keeps whatever is stored. */
+export type EnginesPatch = Partial<Pick<User, "brainEngine" | "quickEngine" | "fallbackEngine">>;
+
+/**
+ * PUT /me/engines body → a validated patch over the three engine roles.
+ *
+ * `{ main?, quick?, fallback? }`, each either an engine or `null`. Every one
+ * of them goes through `buildEngineSetting`, so `cli` is still claude-only,
+ * `api` is still anthropic/gemini, and `local` still needs a baseUrl — see
+ * there for why that routing is a correctness requirement rather than a
+ * refactor.
+ *
+ * Two rules that are not obvious from the shape:
+ *
+ * 1. **An omitted role is untouched, a present one always applies.** The
+ *    route merges (`{...existing, ...patch}`), so only the keys this returns
+ *    are written. A caller changing an answer must therefore send that role
+ *    explicitly — the same "setup merges, so state your values" contract PUT
+ *    /me has.
+ * 2. **`null` means different things for `fallback` than for the other two**,
+ *    and deliberately. For `main`/`quick` it CLEARS (matching PUT
+ *    /me/brain-engine's own null-clears contract, and leaving "fall back to
+ *    the main brain" as quick's absent state). For `fallback` it is the
+ *    ANSWER "nothing — I'll just tell you", so it is stored AS null: a stored
+ *    `undefined` would vanish through JSON.stringify and the user's previous
+ *    engine would silently come back on the next load.
+ *
+ * The body is allow-listed even though the fields it writes are not, because
+ * the alternative here is the failure mode this whole route exists to avoid:
+ * a typo'd role would otherwise be accepted, save nothing, and report success.
+ */
+export function buildEnginesUpdate(
+  body: unknown,
+  engines: EngineOption[],
+  gate: (cli: string) => string,
+): EnginesPatch | { error: string } {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return { error: "body must be an object naming any of: main, quick, fallback" };
+  }
+  const b = body as Record<string, unknown>;
+  const patch: EnginesPatch = {};
+  for (const key of Object.keys(b)) {
+    if (!Object.hasOwn(ENGINE_ROLE_FIELDS, key)) {
+      return { error: `Unknown engine role: ${key}` };
+    }
+    const role = key as EngineRole;
+    // Rule 2 above: the fallback's null is a value, everyone else's clears.
+    if (b[role] === null && role === "fallback") {
+      patch.fallbackEngine = null;
+      continue;
+    }
+    const r = buildEngineSetting(b[role], engines, gate);
+    if ("error" in r) return r;
+    patch[ENGINE_ROLE_FIELDS[role]] = r.engine;
+  }
+  return patch;
+}
+
+/** GET /me/engines' shaping — `redactBrainEngine`'s rule applied to all three roles. */
+export function redactEngines(
+  u: User | null,
+  gate: (cli: string) => string,
+): { main: BrainEngine | null; quick: BrainEngine | null; fallback: BrainEngine | null } {
+  // A stored fallback of `null` ("nothing — I'll just tell you") and a
+  // never-answered one both read as null here, and nothing downstream needs
+  // to tell them apart: both mean "say something rather than think with
+  // anything", which is also what the picker shows when unanswered.
+  const redact = (e: BrainEngine | null | undefined): BrainEngine | null =>
+    !e || (e.kind === "cli" && gate(e.provider)) ? null : e;
+  return { main: redact(u?.brainEngine), quick: redact(u?.quickEngine), fallback: redact(u?.fallbackEngine) };
 }
 
 /** PUT /me/voice body → validated full-replace VoiceSettings (spec §2). */

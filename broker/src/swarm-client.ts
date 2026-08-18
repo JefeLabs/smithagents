@@ -660,6 +660,21 @@ export class SwarmClient {
     return (await this.http("PUT", "/me/brain-engine", body)) as Record<string, unknown> | null;
   }
 
+  /**
+   * All three engine roles at once — the welcome wizard's "What I think with"
+   * step. A sibling of getBrainEngine rather than a replacement: Settings
+   * still reads and writes the main brain alone, and the swarm routes both
+   * through one validated path.
+   */
+  async getEngines(): Promise<Record<string, unknown> | null> {
+    return (await this.http("GET", "/me/engines")) as Record<string, unknown> | null;
+  }
+
+  /** Unbounded like saveBrainEngine, and for the same reason: a user action, never a per-turn read. */
+  async saveEngines(body: unknown): Promise<Record<string, unknown> | null> {
+    return (await this.http("PUT", "/me/engines", body)) as Record<string, unknown> | null;
+  }
+
   async saveMyVoice(body: unknown): Promise<Record<string, unknown>> {
     return this.http("PUT", "/me/voice", body);
   }

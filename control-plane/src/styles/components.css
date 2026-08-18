@@ -1805,6 +1805,7 @@ button.logo {
 .wizard__form input,
 .wizard__form textarea,
 .wizard__form select,
+.wizard-roles-step__role select,
 .voice-browser input {
   padding: 7px 10px;
   border-radius: 10px;
@@ -1816,7 +1817,8 @@ button.logo {
 }
 /* Native select chrome ignores the panel's theme, so draw our own caret and
    let the control inherit the same surface as every other field. */
-.wizard__form select {
+.wizard__form select,
+.wizard-roles-step__role select {
   appearance: none;
   cursor: pointer;
   padding-right: 28px;
@@ -1833,7 +1835,8 @@ button.logo {
 }
 /* The dropdown list itself is drawn by the OS — give it readable colors in
    both themes rather than leaving it white-on-white in dark mode. */
-.wizard__form select option {
+.wizard__form select option,
+.wizard-roles-step__role select option {
   background: var(--panel, #1a1a1a);
   color: var(--text);
 }
@@ -4649,6 +4652,61 @@ button.logo {
 }
 .wizard-sources-step .connector-grid {
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+}
+/* Step 2 of the welcome wizard — *What I think with* (WizardRolesStep).
+   Three role rows, each a label and a native <select>. The select chrome
+   itself is NOT redefined here: this block joins `.wizard__form select`'s
+   existing selector lists above, so the caret and the option colours have one
+   home and cannot drift between the two screens in any of the five themes.
+
+   NOT VERIFIED IN A BROWSER: nothing renders this step yet (the sequence swap
+   is its own task) and jsdom has no layout, so the values below are carried
+   over from `.wizard-sources-step` rather than measured. The browser walk owns
+   confirming them, at 1280x900, sand included. */
+.wizard-roles-step {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+/* `<h2>`, and the same treatment as the two steps before it, so the wizard
+   keeps one type hierarchy across its screens. */
+.wizard-roles-step__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--foreground);
+}
+.wizard-roles-step__roles {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* Label left, dropdown right, on one line — the spec's own layout
+   (`My main brain [ ... ]`). The select is allowed to shrink so a long model
+   id cannot push the row wider than the 640px panel. */
+.wizard-roles-step__role {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.wizard-roles-step__role label {
+  font-size: 13px;
+  color: var(--text-2);
+}
+.wizard-roles-step__role select {
+  flex: 0 1 320px;
+  min-width: 0;
+}
+/* Advice, and it reads as advice: the spec sets this paragraph in italics,
+   below the three questions rather than above them. */
+.wizard-roles-step__ram {
+  margin: 0;
+  font-size: 12.5px;
+  font-style: italic;
+  line-height: 1.5;
+  color: var(--text-2);
 }
 /* `<h2>` because the page's `<h1>` belongs to the host's own greeting
    (WizardGate's `.wizard-gate__title`) — same reasoning as the `headingLevel`

@@ -37,8 +37,26 @@ export interface User {
   agendaSweptDay?: string;
   /** Which CLI engine runs the broker's research turns. Absent = the broker's built-in default. */
   researchEngine?: { cli: string; model?: string };
-  /** Which engine backs the conversational brain. Absent = SMITH_BRAIN_PROVIDER, then the no-key default. */
+  /** Which engine backs the conversational brain — the "main brain" role. Absent = SMITH_BRAIN_PROVIDER, then the no-key default. */
   brainEngine?: BrainEngine;
+  /**
+   * The "quick little things" role — same shape as brainEngine, deliberately,
+   * so the wire stays one idea rather than three. Absent = fall back to the
+   * main brain.
+   */
+  quickEngine?: BrainEngine;
+  /**
+   * The "if something's unavailable" role. Same shape again, with one extra
+   * state the other two do not have: an explicit `null` is the ANSWER
+   * "nothing — I'll just tell you", not the absence of one. Absent means the
+   * question has not been asked yet.
+   *
+   * The distinction is load-bearing because every save path here merges: a
+   * "nothing" recorded as an omitted field would leave whatever engine was
+   * chosen before quietly in place. Same class as the voice-flip bug this
+   * codebase has already fixed once.
+   */
+  fallbackEngine?: BrainEngine | null;
   /**
    * How far through the welcome wizard this user got, and which branch they
    * chose. Persisted on the record rather than in browser storage because the

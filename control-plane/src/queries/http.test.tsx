@@ -3,7 +3,7 @@ import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders } from "../test/renderWithProviders";
-import { useApiKeys, useLocalModels, useSaveApiKey } from "./http";
+import { useApiKeys, useLocalModels, useMachineFacts, useSaveApiKey, useSaveEngines } from "./http";
 import { qk } from "./keys";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -12,6 +12,23 @@ afterEach(() => vi.unstubAllGlobals());
 function LocalModelsProbe() {
   const { data } = useLocalModels();
   return <span data-testid="servers">{data === undefined ? "pending" : data.map((s) => s.id).join(",")}</span>;
+}
+
+function MachineProbe() {
+  const { data } = useMachineFacts();
+  return <span data-testid="mem">{data ? String(data.totalMemBytes) : "pending"}</span>;
+}
+
+function EnginesProbe() {
+  const save = useSaveEngines();
+  return (
+    <button
+      type="button"
+      onClick={() => save.mutate({ main: { kind: "cli", provider: "claude" }, quick: null, fallback: null })}
+    >
+      save engines
+    </button>
+  );
 }
 
 function Probe() {
@@ -89,5 +106,51 @@ describe("http queries", () => {
 
     expect(await screen.findByText("lmstudio")).toBeInTheDocument();
     expect(fetchMock.mock.calls[0]?.[0]).toBe("http://127.0.0.1:7790/local-models");
+  });
+
+  it("useMachineFacts asks the BROKER for /machine", async () => {
+    // Same cross-package trap as /local-models above: `machineFacts()` is a
+    // swarm module, the broker only proxies the route, and the browser never
+    // talks to 7777. A client aimed at the wrong port answers nothing, which
+    // the wizard renders as "I don't know how much RAM you have" — an honest-
+    // looking omission with a wiring bug behind it.
+    const fetchMock = vi.fn(
+      async (_url: string) =>
+        ({ ok: true, status: 200, json: async () => ({ totalMemBytes: 103079215104 }) }) as unknown as Response,
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    renderWithProviders(<MachineProbe />);
+
+    // findByText, not findByTestId + toHaveTextContent: the probe renders
+    // "pending" synchronously, so the element is found on the first tick and
+    // the assertion would run against the pre-fetch state.
+    expect(await screen.findByText("103079215104")).toBeInTheDocument();
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://127.0.0.1:7790/machine");
+  });
+
+  it("useSaveEngines PUTs the three roles to the BROKER's /me/engines, fallback null included", async () => {
+    // The route is new on the swarm AND new on the broker's proxy. Every
+    // component test stubs fetch, so asserting the URL is the only thing that
+    // tells a wired route from an unreachable one — and the body assertion is
+    // the other half: a `fallback: null` that does not survive serialisation
+    // becomes an omission, which the swarm merges as "keep the old engine".
+    const fetchMock = vi.fn(
+      async (_url: string, _init?: RequestInit) =>
+        ({
+          ok: true,
+          status: 200,
+          json: async () => ({ main: null, quick: null, fallback: null }),
+        }) as unknown as Response,
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    renderWithProviders(<EnginesProbe />);
+    await userEvent.click(screen.getByRole("button", { name: "save engines" }));
+
+    const [url, init] = fetchMock.mock.calls[0] ?? [];
+    expect(url).toBe("http://127.0.0.1:7790/me/engines");
+    expect(init?.method).toBe("PUT");
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    expect("fallback" in body).toBe(true);
+    expect(body.fallback).toBeNull();
   });
 });

@@ -1071,6 +1071,11 @@ const research = {
 const brainEngineSetting = {
   get: () => swarm.getBrainEngine() as Promise<Record<string, unknown> | null>,
   save: (body: unknown) => swarm.saveBrainEngine(body),
+  // The same setting seen whole — all three roles the wizard's "What I think
+  // with" step assigns. On this dep rather than a fourth one because it is
+  // the same swarm-side store and the same allowlists behind it.
+  getEngines: () => swarm.getEngines(),
+  saveEngines: (body: unknown) => swarm.saveEngines(body),
 };
 
 // Local model + machine passthroughs — welcome wizard step 2 (Settings →

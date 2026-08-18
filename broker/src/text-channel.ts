@@ -421,6 +421,9 @@ export class TextChannel {
     private readonly brain?: {
       get(): Promise<Record<string, unknown> | null>;
       save(body: unknown): Promise<Record<string, unknown> | null>;
+      /** All three engine roles at once — the wizard's "What I think with" step. Same dep, because it is the same setting seen whole rather than a second one. */
+      getEngines(): Promise<Record<string, unknown> | null>;
+      saveEngines(body: unknown): Promise<Record<string, unknown> | null>;
     },
     /**
      * Local model server detection (welcome wizard step 2, Settings → Brain).
@@ -1160,6 +1163,39 @@ export class TextChannel {
             // forever rather than failing.
             void brain
               .save(parsed)
+              .then((r) => credJson((r as { error?: string } | null)?.error ? 400 : 200, r), credFail);
+          });
+          return;
+        }
+        if (req.method === "GET" && url.pathname === "/me/engines" && this.brain) {
+          if (originBlocked()) return;
+          void this.brain.getEngines().then((v) => credJson(200, v), credFail);
+          return;
+        }
+        if (req.method === "PUT" && url.pathname === "/me/engines" && this.brain) {
+          const brain = this.brain;
+          if (originBlocked()) return;
+          let body = "";
+          req.on("data", (c) => {
+            body += c;
+          });
+          req.on("end", () => {
+            let parsed: Record<string, unknown> | null = null;
+            try {
+              parsed = JSON.parse(body || "{}") as Record<string, unknown> | null;
+            } catch {
+              return credJson(400, { error: "body must be JSON" });
+            }
+            // Handed on verbatim — in particular a `fallback: null`, which is
+            // the ANSWER "nothing — I'll just tell you" rather than an absent
+            // one. Anything that dropped it here would answer 200 while the
+            // swarm merged the user's previous engine straight back in.
+            //
+            // `?.` for the same reason the brain PUT above documents: a
+            // response of literal `null` makes a bare `.error` throw inside
+            // this `.then`, where `void` swallows it and the client hangs.
+            void brain
+              .saveEngines(parsed)
               .then((r) => credJson((r as { error?: string } | null)?.error ? 400 : 200, r), credFail);
           });
           return;

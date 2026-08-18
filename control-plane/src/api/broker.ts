@@ -16,8 +16,11 @@ import type {
   ConnectorInstanceRecord,
   ConnectorVendorMeta,
   DocT,
+  EnginesRecord,
+  EnginesUpdate,
   ExecutionMode,
   LocalServer,
+  MachineFacts,
   MeRecord,
   Target,
   VoiceSettingsRecord,
@@ -321,6 +324,49 @@ export async function saveBrainEngine(
     body: JSON.stringify(body),
   });
   return (await res.json()) as { kind?: BrainEngineRecord["kind"]; provider?: string; model?: string; error?: string };
+}
+
+/**
+ * GET /me/engines — all three engine roles at once (the wizard's *What I think
+ * with* step). A sibling of getBrainEngine rather than a replacement: Settings
+ * still edits the main brain alone, and the swarm validates both through one
+ * path.
+ */
+export async function getEngines(base: string = BROKER_BASE): Promise<EnginesRecord> {
+  const res = await brokerFetch(`/me/engines`, base);
+  return (await res.json()) as EnginesRecord;
+}
+
+/**
+ * PUT /me/engines — a refused role comes back as `{error}` carrying the
+ * swarm's own sentence.
+ *
+ * Every role the caller means to set must be PRESENT in `body`, including a
+ * `fallback: null` for "nothing — I'll just tell you": the swarm merges, so an
+ * omitted role keeps whatever was stored. JSON.stringify preserves an explicit
+ * null and drops an `undefined`, which is exactly the difference between the
+ * two.
+ */
+export async function saveEngines(
+  body: EnginesUpdate,
+  base: string = BROKER_BASE,
+): Promise<Partial<EnginesRecord> & { error?: string }> {
+  const res = await brokerFetch(`/me/engines`, base, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return (await res.json()) as Partial<EnginesRecord> & { error?: string };
+}
+
+/**
+ * GET /machine — how much memory this machine has. Proxied by the broker from
+ * the swarm, like /local-models above and for the same reason: only the swarm
+ * process can read the host. Requested from BROKER_BASE accordingly.
+ */
+export async function getMachineFacts(base: string = BROKER_BASE): Promise<MachineFacts> {
+  const res = await brokerFetch(`/machine`, base);
+  return (await res.json()) as MachineFacts;
 }
 
 /** GET /me — the operator's own profile. */
