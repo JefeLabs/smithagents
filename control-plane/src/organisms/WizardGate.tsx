@@ -1,3 +1,4 @@
+import { Button } from "@heroui/react";
 import { Stepper } from "@heroui-pro/react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
@@ -9,11 +10,12 @@ import {
   nextStep,
   PREFLIGHT,
   prevStep,
+  progressFor,
   resumeStep,
   SETUP_DONE,
   type Setup,
   setupStepsFor,
-  WIZARD_STEP_META,
+  stepsFor,
   type WizardSaveState,
   type WizardStep,
 } from "../lib/wizardSteps";
@@ -162,6 +164,14 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
   // user's own answers in hand.
   const answers: Setup = { mode, voice };
   const sequence = setupStepsFor(answers);
+  // The same sequence, with each step's title/description/skip def attached
+  // — `stepsFor` wraps `setupStepsFor`, so the two never disagree about which
+  // ids are in play, only about how much each one carries.
+  const defs = stepsFor(answers);
+  // Null on the gate — no number, per the spec — and honest everywhere else:
+  // `of` is `defs.length`, never a hardcoded total, so it can't lie for a
+  // shorter sequence.
+  const progress = progressFor(step, answers);
 
   const advance = (patch: { name?: string; setup?: Setup }) => {
     const current = step;
@@ -262,6 +272,25 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
   // a step needs nothing here.
   const onBack = prevStep(step, answers) ? goBack : undefined;
 
+  // The current step's own definition — undefined on the gate, which is
+  // exactly when there is no Skip to show (it has its own "pick sensible
+  // things for me" instead, a whole-gate action rather than a per-step one).
+  const currentDef = defs.find((d) => d.id === step);
+
+  /**
+   * Applies the current step's stated default and moves on — routed through
+   * `advance`, the SAME path a real answer takes, rather than a second write
+   * of its own. That is what keeps `advance`'s two failure shapes (a
+   * rejection stays optimistic, a resolved `{error}` rolls back and shows the
+   * server's sentence) covering this control too, instead of a duplicate
+   * that would have to reason about them a second time — which is exactly
+   * what produced the dead-end bug this feature already hit once.
+   */
+  const skip = () => {
+    if (!currentDef) return;
+    advance({ setup: currentDef.skipDefault() });
+  };
+
   /**
    * The chip's own transition — confirmed (or, with nothing to lose, silent)
    * inside WizardChip itself, so by the time this runs the decision is
@@ -303,7 +332,7 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
   // that warns about less (see the plan's controller ruling). Empty exactly
   // when `step` is the first entry in `sequence`, which is also exactly when
   // nothing past preflight has been answered yet.
-  const clears = sequence.slice(0, sequence.indexOf(step)).map((s) => WIZARD_STEP_META[s].title);
+  const clears = defs.slice(0, sequence.indexOf(step)).map((d) => d.title);
 
   return (
     <div className="wizard-gate__host" data-step={step}>
@@ -324,17 +353,38 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
             sequence those answers selected. */}
         {step !== PREFLIGHT && sequence.length > 0 && (
           <Stepper currentStep={sequence.indexOf(step)}>
-            {sequence.map((s) => (
-              <Stepper.Step key={s}>
+            {defs.map((d) => (
+              <Stepper.Step key={d.id}>
                 <Stepper.Indicator />
                 <Stepper.Content>
-                  <Stepper.Title>{WIZARD_STEP_META[s].title}</Stepper.Title>
-                  <Stepper.Description>{WIZARD_STEP_META[s].description}</Stepper.Description>
+                  <Stepper.Title>{d.title}</Stepper.Title>
+                  <Stepper.Description>{d.description}</Stepper.Description>
                 </Stepper.Content>
                 <Stepper.Separator />
               </Stepper.Step>
             ))}
           </Stepper>
+        )}
+        {/* Honest `Step n of N` — `progressFor` returns null on the gate, so
+            this is inert there without a separate guard. Placed above the
+            body, alongside the Stepper it numbers, rather than inside it:
+            the step's own `.wizard-gate__footer` (Back/Continue) is a
+            `position: sticky` band scoped to this same scrolling panel, and
+            anything placed AFTER it in DOM order — Subscriptions is the one
+            step tall enough to make this observable — ends up pinned behind
+            it, unreachable while scrolled. Skip is a host control, not a
+            per-step one (Task 4's brief modifies this file and
+            `wizardSteps.ts` only, never the step components that own that
+            footer), so it renders here rather than inside it. */}
+        {progress && currentDef && (
+          <>
+            <p className="wizard__hint">
+              Step {progress.n} of {progress.of}
+            </p>
+            <Button variant="secondary" onPress={skip} isDisabled={saveState === "saving"}>
+              {currentDef.skipLabel}
+            </Button>
+          </>
         )}
         <div className="wizard-gate__body">
           {/* Greeted by name only once there is a name AND the screen is not

@@ -320,6 +320,34 @@ describe("WizardGate", () => {
     expect(screen.queryByText("Welcome")).toBeNull();
   });
 
+  it("shows honest progress and a skip control that states its default, not the bare word", async () => {
+    renderGate({ name: "Edwin", setup: { mode: "local", step: "subscriptions" } });
+
+    expect(await screen.findByText("Step 1 of 2")).toBeInTheDocument();
+    const skip = screen.getByRole("button", { name: /skip/i });
+    // Discriminates the same way wizardSteps.test.ts's own check does, one
+    // layer up: a control merely labelled "Skip" would satisfy a name-only
+    // query but fail this — it has to say what skipping DOES.
+    expect(skip.textContent?.trim().toLowerCase()).not.toBe("skip");
+  });
+
+  it("skip applies the step's stated default through the same advance path a real answer takes", async () => {
+    // Not a second write path: this asserts the skip lands as a normal PUT
+    // {setup} through `advance`, carrying an EXPLICIT key beyond the `step`
+    // advance always stamps — a `{}` patch would still move `step` forward
+    // and could look identical to a passing test that only checked the step
+    // changed, which is exactly the empty-patch failure mode the brief rules
+    // out.
+    const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "subscriptions" } });
+
+    await userEvent.click(await screen.findByRole("button", { name: /skip/i }));
+
+    expect(await findHost(container)).toHaveAttribute("data-step", "anderson");
+    expect(updateMe).toHaveBeenCalledWith(
+      expect.objectContaining({ setup: expect.objectContaining({ subscriptionsSkipped: true, step: "anderson" }) }),
+    );
+  });
+
   it("enters the sequence the answer just given selects, not the one state still holds", async () => {
     const { container, updateMe } = renderGate({ placeholder: true, setup: undefined });
 

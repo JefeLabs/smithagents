@@ -20,7 +20,28 @@ export const WIZARD_STEPS = [PREFLIGHT, "subscriptions", "anderson"] as const;
 
 export type WizardStep = (typeof WIZARD_STEPS)[number];
 
-export type Setup = { mode?: SetupMode; voice?: boolean; step?: string } | undefined;
+export type Setup =
+  | {
+      mode?: SetupMode;
+      voice?: boolean;
+      step?: string;
+      /**
+       * The stated default a skipped "Subscriptions" step applies: no CLI or
+       * key was chosen here, so Anderson runs on whatever is already active
+       * (`CliToolListing.active` / a verified key) and nothing further is
+       * configured. Written only by a skip — the normal Continue path never
+       * sets it, because it isn't declining anything.
+       */
+      subscriptionsSkipped?: boolean;
+      /**
+       * The stated default a skipped "Anderson" step applies: no brain engine
+       * is saved, which `resolveBrainFactory` (broker/src/brain-engine.ts)
+       * already treats as a safe, working state — the same one an empty
+       * candidate list falls back to today.
+       */
+      brainSkipped?: boolean;
+    }
+  | undefined;
 
 /**
  * The state of the HOST's own `PUT /me` for the patch a step last handed it.
@@ -46,17 +67,6 @@ export type Setup = { mode?: SetupMode; voice?: boolean; step?: string } | undef
 export type WizardSaveState = "idle" | "saving" | "failed";
 
 /**
- * Titles come from the spec's own flow map. Two had drifted and would have
- * collided with steps still to come: the mode question was titled "Location"
- * (which is the geolocation step) and Configure Anderson was titled "Brain".
- */
-export const WIZARD_STEP_META: Record<WizardStep, { title: string; description: string }> = {
-  [PREFLIGHT]: { title: "Welcome", description: "Tell us about you" },
-  subscriptions: { title: "Subscriptions", description: "Connect a CLI or key" },
-  anderson: { title: "Anderson", description: "Pick a brain" },
-};
-
-/**
  * The sequence these answers select.
  *
  * An absent mode yields NOTHING rather than defaulting to local: the mode
@@ -72,6 +82,73 @@ export function setupStepsFor(setup: Setup): readonly WizardStep[] {
   if (!setup?.mode) return [];
   if (setup.mode === "hosted") return [];
   return ["subscriptions", "anderson"];
+}
+
+export interface WizardStepDef {
+  id: WizardStep;
+  title: string;
+  description: string;
+  /** Shown ON the skip control: what skipping will do. Never bare "Skip". */
+  skipLabel: string;
+  /** The patch a skip applies. Explicit values only — setup merges. */
+  skipDefault: () => Setup;
+}
+
+/**
+ * One definition per step the SETUP sequence can ever select — keyed by
+ * `Exclude<WizardStep, typeof PREFLIGHT>` rather than `WizardStep` itself, so
+ * the gate (which has no per-step Skip; it has its own "pick sensible things
+ * for me") never needs a placeholder entry. Adding an id to `WIZARD_STEPS`
+ * without adding it here is still a type error, which is the property
+ * `WIZARD_STEP_META` (this registry's predecessor) had and this preserves:
+ * a step with no definition is a compile failure, not a lookup miss.
+ *
+ * Titles come from the spec's own flow map. Two had drifted and would have
+ * collided with steps still to come: the mode question was titled "Location"
+ * (which is the geolocation step) and Configure Anderson was titled "Brain".
+ */
+const STEP_DEFS: Record<Exclude<WizardStep, typeof PREFLIGHT>, Omit<WizardStepDef, "id">> = {
+  subscriptions: {
+    title: "Subscriptions",
+    description: "Connect a CLI or key",
+    skipLabel: "Skip — I'll use whatever CLI or key is already active",
+    skipDefault: () => ({ subscriptionsSkipped: true }),
+  },
+  anderson: {
+    title: "Anderson",
+    description: "Pick a brain",
+    skipLabel: "Skip — I'll reply using a built-in default",
+    skipDefault: () => ({ brainSkipped: true }),
+  },
+};
+
+/**
+ * The sequence these answers select, with each step's full definition —
+ * `setupStepsFor` plus what `WIZARD_STEP_META` used to hold, now including
+ * what a Skip does. Never includes the gate: PREFLIGHT is not a step in this
+ * sequence, the same way `setupStepsFor` never returns it.
+ */
+export function stepsFor(setup: Setup): readonly WizardStepDef[] {
+  // `setupStepsFor`'s declared element type is `WizardStep` (PREFLIGHT
+  // included, for the same reason `nextStep`/`prevStep` cast `current` to
+  // it), but its actual values never contain PREFLIGHT — this narrows back
+  // to what `STEP_DEFS` is actually keyed by.
+  return setupStepsFor(setup).map((id) => ({ id, ...STEP_DEFS[id as Exclude<WizardStep, typeof PREFLIGHT>] }));
+}
+
+/**
+ * `{ n, of }` within the sequence the answers actually selected, or `null`
+ * for the gate — which has no number, per the spec ("the branch was settled
+ * at the gate" is what makes `Step n of N` honest for every step after it).
+ * `of` is always `stepsFor(setup).length`, never a hardcoded total, so a
+ * shorter sequence (fewer answers, or "hosted") reports its own real count
+ * rather than a total it does not contain.
+ */
+export function progressFor(step: string, setup: Setup): { n: number; of: number } | null {
+  if (step === PREFLIGHT) return null;
+  const steps = setupStepsFor(setup);
+  const i = steps.indexOf(step as WizardStep);
+  return i >= 0 ? { n: i + 1, of: steps.length } : null;
 }
 
 /** The next step, or null at the end of the selected sequence. */
