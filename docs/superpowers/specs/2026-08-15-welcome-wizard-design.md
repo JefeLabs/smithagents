@@ -91,17 +91,17 @@ to offer, so they wait for hosted.
 ```
   ── preflight: one screen, never blocks ──
   What's your name?     → the greeting; creates the user record
-  Voice mode?           → if yes, ADDS the Voice setup step below
   Local or Cloud?       → selects which sequence follows
                           cloud visible but disabled — "coming soon"
 
   ── setup: the sequence the answers above selected ──
   Subscriptions         guide and validate; cannot continue until
                         a subscription or an API key works
-  Voice setup           ONLY IF voice was chosen. Blocks until both
-                        deepgram (STT) and elevenlabs (TTS) are connected.
-  Configure Anderson    "Anderson needs a brain — choose from your
+  Set up Anderson       "Anderson needs a brain — choose from your
                         installed provider tools"
+  Voice mode?           SECONDARY to the brain choice above. If yes,
+                        blocks until deepgram (STT) and elevenlabs
+                        (TTS) are both connected.
   Share your location?  → if yes, browser geolocation. Needs NO keys.
                           Then: topics of interest.
   Local workspace       what is it for — documents and/or coding?
@@ -125,29 +125,28 @@ indicator, which would claim to know the sequence before the answer that picks
 it. The name is asked because it produces the greeting; a wizard that collects
 a name and never says it has taken something for nothing.
 
-**Voice: asked in preflight, gated in its own step.** Voice mode needs the
-`deepgram` (STT) and `elevenlabs` (TTS) connectors. Asked at the end, setup
-never knew this requirement existed until it was over.
+**Voice: asked AFTER the brain, gated in its own step.** Voice mode needs the
+`deepgram` (STT) and `elevenlabs` (TTS) connectors. Asked at the very end of the
+old flow, setup never knew this requirement existed until it was over.
 
-Preflight asks, but **preflight itself never blocks** — it is three questions
-about intent, and none of them can be wrong. Choosing voice instead *adds a
-step*: a Voice setup screen that appears only for people who asked for voice,
-and blocks until both connectors are filled. This keeps the requirement with
-the capability that generated it rather than swelling Subscriptions, whose own
-gate stays exactly "one coding subscription or key works".
+It is **not** a preflight question, and the reason is the same rule preflight
+itself follows: ask a question only where its answer's implications are known.
+What voice REQUIRES depends on the mode — local voice needs both connectors on
+this machine, cloud voice plausibly needs neither — so asking it before
+local-or-cloud is settled asks a question whose meaning is not yet decided.
+
+It is also **secondary to the brain choice**, and sits after *Set up Anderson*.
+Voice is how Anderson speaks; it only means anything once Anderson has a brain
+to speak with. Ordering it before the brain would offer a mode of a capability
+the user has not yet chosen.
+
+**Preflight itself never blocks** — its two questions are about intent and
+neither can be wrong. Choosing voice instead *adds a step*: a Voice screen shown
+only to people who asked for voice, blocking until both connectors are filled.
+Subscriptions' own gate stays exactly "one coding subscription or key works".
 
 **So the sequence is a function of the preflight answers**, not of mode alone.
 Voice is the first conditional step; it will not be the last.
-
-**Every setup step can go back, including into preflight.** This is load-bearing
-precisely *because* the Voice step blocks: someone who asks for voice and then
-finds they have no `elevenlabs` key would otherwise be stuck against a gate
-they cannot pass and cannot retract — the exact stranding this spec forbids
-elsewhere ("Hosted login failure falls back to local, and vice versa. Neither
-path may dead-end"). Going back into preflight and answering "no" to voice
-removes the Voice step from the sequence and lets setup finish. Back must
-persist the same way forward does, so a reload after going back resumes where
-the user actually is, not where they had reached.
 
 **Location moved forward, and it needs no keys.** Verified against the
 implementations, not assumed:
@@ -378,22 +377,29 @@ Integrations and Build a crew remain optional and skippable; Location remains
 refusable; and voice is optional in the only sense that counts — nobody is
 made to answer yes. Each section below is annotated with where it now sits.
 
-### Voice mode — asked in preflight, satisfied in Subscriptions
+### Voice mode — asked after Set up Anderson, in its own gated step
 
-**Superseded as an optional trailing step by the 2026-08-17 revision above.**
-The *question* moved to preflight; the *credentials* are collected in
-Subscriptions alongside the coding subscription.
+**Superseded as an optional trailing step by the 2026-08-17 revision above**,
+and repositioned again the same day: the question is neither a preflight
+question nor a Subscriptions concern. It is its own step, placed immediately
+after *Set up Anderson*.
 
 Assign the `deepgram` (STT) and `elevenlabs` (TTS) connectors. Voice Mode may only
 be enabled while **both** slots are filled — the existing invariant. That
-invariant is exactly why the question moved: it means voice has a hard,
-knowable requirement, and a requirement is worth knowing before the screen that
-collects requirements rather than after it.
+invariant is why voice needs a step of its own rather than a checkbox somewhere:
+it has a hard, knowable requirement, and a requirement deserves the screen that
+collects it.
 
-Answering **no** in preflight leaves voice off and everything else working,
-which is the old "skipping" behaviour. Answering **yes** makes both connectors
-required — see the revision note for why offering voice and then permitting a
-finish without it is the frustration this spec already rejects.
+Two placement rules, both from the revision above:
+- **After the brain.** Voice is how Anderson speaks, so it is meaningless until
+  Anderson has a brain to speak with.
+- **Not before the mode.** What voice requires depends on local vs cloud, so the
+  question cannot be asked until that is settled.
+
+Declining leaves voice off and everything else working, which is the old
+"skipping" behaviour. Accepting makes both connectors required — see the
+revision note for why offering voice and then permitting a finish without it is
+the frustration this spec already rejects.
 
 ### Location — asked after Configure Anderson
 
