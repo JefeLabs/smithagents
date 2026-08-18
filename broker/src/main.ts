@@ -90,6 +90,7 @@ import { mintRoomToken } from "./token.ts";
 import { VoiceCatalog } from "./voice-catalog.ts";
 import { VOICE_STT_HINT, VOICE_TTS_HINT, VoiceKeyResolver } from "./voice-keys.ts";
 import type { VoicePresence } from "./voice-presence.ts";
+import { previewVoice, VOICE_PREVIEW_LINE, voiceOptionsFrom } from "./voice-preview.ts";
 
 // Defense in depth: the brain-turn queue in broker.ts isolates errors from
 // every turn it runs, but this catches anything outside that queue so a
@@ -1051,6 +1052,36 @@ const voice = {
   status: () => voiceKeys.statusSync(),
   get: () => swarm.getMyVoice(),
   save: (body: unknown) => swarm.saveMyVoice(body),
+  // The wizard's "How should I sound?" list — derived from speak()'s own
+  // premade stand-in cast (PREMADE_STANDINS, below), never a second
+  // hardcoded catalog.
+  options: async () => ({ options: voiceOptionsFrom(PREMADE_STANDINS) }),
+  // The wizard's ▶ Say something preview. Reuses currentTts(), the same
+  // timeout guard, and the same 402 stand-in fallback speak() (below) uses —
+  // no second ElevenLabs client — but RESOLVES `{error}` on every failure
+  // path instead of throwing, so the route never answers a bare 500.
+  preview: (voiceId: string, text?: string) =>
+    previewVoice(voiceId, text?.trim() || VOICE_PREVIEW_LINE, {
+      currentTts: async () => {
+        const t = await currentTts();
+        return t
+          ? {
+              synthesize: ({ voiceId: id, text: spokenText, signal }) =>
+                t.provider.synthesize({
+                  text: spokenText,
+                  personaId: "voice-preview",
+                  format: "mp3",
+                  voice: { provider: "elevenlabs", voiceId: id },
+                  signal,
+                }),
+            }
+          : null;
+      },
+      noTtsHint: VOICE_TTS_HINT,
+      standInVoiceId: PREMADE_DEFAULT,
+      timeoutMs: TTS_TIMEOUT_MS,
+      isTimeout: isTtsTimeout,
+    }),
 };
 
 // Research engine setting passthrough (Settings → Research group), same

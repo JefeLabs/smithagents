@@ -323,6 +323,10 @@ export class TextChannel {
       /** Voice settings passthrough (Settings → Voice group). Origin-restricted like connectors. */
       get(): Promise<Record<string, unknown>>;
       save(body: unknown): Promise<Record<string, unknown>>;
+      /** GET /voice/options — the wizard's curated "How should I sound?" list. Unrestricted, like /voices below: no credential, nothing to CSRF. */
+      options(): Promise<{ options: Array<{ id: string; label: string }> }>;
+      /** POST /voice/preview — synthesizes one line. `{error}` is a RESOLVED human sentence (no TTS configured, or a provider failure), never a throw — the route always answers 200. */
+      preview(voiceId: string, text?: string): Promise<{ mime: string; dataB64: string } | { error: string }>;
     },
     /** Execution-mode availability probe (new-session runtime picker): which runtimes this machine can actually run right now, keyed by mode id. Origin-restricted like cliTools. */
     private readonly execModes?: {
@@ -811,6 +815,38 @@ export class TextChannel {
             void creation
               .preview(parsed.voiceId, parsed.text?.trim() || "Hola, mi gente. This is how I sound.")
               .then((audio) => res.writeHead(200, { ...corsFor(req), "content-type": "audio/mpeg" }).end(audio), fail);
+          });
+          return;
+        }
+        // The wizard's "How should I sound?" step — a curated cast list and
+        // its ▶ Say something preview. Distinct from /voices and
+        // /voices/preview above (the agent-creation wizard's full ElevenLabs
+        // library browse): this is the small, guaranteed-to-work stand-in
+        // cast, and its preview resolves `{error}` on any failure rather
+        // than throwing, so a missing key is never a bare 500.
+        if (req.method === "GET" && url.pathname === "/voice/options" && this.voice) {
+          void this.voice.options().then((v) => json(200, v), fail);
+          return;
+        }
+        if (req.method === "POST" && url.pathname === "/voice/preview" && this.voice) {
+          const voice = this.voice;
+          let body = "";
+          req.on("data", (c) => {
+            body += c;
+          });
+          req.on("end", () => {
+            let parsed: { voiceId?: string; text?: string } = {};
+            try {
+              parsed = JSON.parse(body || "{}") as typeof parsed;
+            } catch {
+              /* handled below */
+            }
+            if (!parsed.voiceId) return json(400, { error: "body must be {voiceId, text?}" });
+            // Always 200: voice.preview() RESOLVES {error} for both "no TTS
+            // configured" and "the provider ultimately failed" — `fail` here
+            // is defense in depth for a genuinely unexpected exception, not
+            // the path a missing key takes.
+            void voice.preview(parsed.voiceId, parsed.text).then((r) => json(200, r), fail);
           });
           return;
         }

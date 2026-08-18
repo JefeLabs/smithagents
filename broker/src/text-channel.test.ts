@@ -1260,6 +1260,9 @@ const voiceDep = {
   status: () => ({ stt: true, tts: false }),
   get: async () => ({ stt: null, tts: null, hideInactive: false }),
   save: async (body: unknown) => body as Record<string, unknown>,
+  options: async () => ({ options: [{ id: "voice-1", label: "Manuel" }] }),
+  preview: async (voiceId: string, text?: string) =>
+    voiceId === "gated" ? { error: "no voice yet" } : { mime: "audio/mpeg", dataB64: `${voiceId}:${text ?? ""}` },
 };
 
 test("voice: GET and PUT /me/voice are proxied when the voice dep is wired", async () => {
@@ -1276,6 +1279,76 @@ test("voice: GET and PUT /me/voice are proxied when the voice dep is wired", asy
     });
     assert.equal(put.status, 200);
     assert.deepEqual(await put.json(), { stt: { instanceId: "dg1" }, tts: null, hideInactive: false });
+  } finally {
+    await channel.stop();
+  }
+});
+
+test("voice: GET /voice/options returns the curated list — no Origin restriction, like /voices", async () => {
+  const channel = channelWith({ voice: voiceDep });
+  const port = await channel.start(0);
+  try {
+    // No Origin header at all, AND a disallowed one — neither is gated,
+    // matching the sibling /voices route this one is modeled on.
+    const bare = await fetch(`http://127.0.0.1:${port}/voice/options`);
+    assert.equal(bare.status, 200);
+    assert.deepEqual(await bare.json(), { options: [{ id: "voice-1", label: "Manuel" }] });
+
+    const disallowed = await fetch(`http://127.0.0.1:${port}/voice/options`, {
+      headers: { Origin: "https://evil.example" },
+    });
+    assert.equal(disallowed.status, 200);
+  } finally {
+    await channel.stop();
+  }
+});
+
+test("voice: POST /voice/preview passes {voiceId, text} through and answers 200 with the resolved shape", async () => {
+  const channel = channelWith({ voice: voiceDep });
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/voice/preview`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ voiceId: "voice-1", text: "hola" }),
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { mime: "audio/mpeg", dataB64: "voice-1:hola" });
+  } finally {
+    await channel.stop();
+  }
+});
+
+// The refusal case: the dep resolves {error} (never throws) — the route
+// must still answer 200 with that body, not translate it into a 4xx/5xx. A
+// wrong implementation that maps any {error} to a non-200 status, or that
+// only forwards the body on success, fails this.
+test("voice: POST /voice/preview answers 200 with a resolved {error} body, never a 500", async () => {
+  const channel = channelWith({ voice: voiceDep });
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/voice/preview`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ voiceId: "gated" }),
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { error: "no voice yet" });
+  } finally {
+    await channel.stop();
+  }
+});
+
+test("voice: POST /voice/preview with no voiceId is a 400, not a call into the dep", async () => {
+  const channel = channelWith({ voice: voiceDep });
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/voice/preview`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: "hola" }),
+    });
+    assert.equal(res.status, 400);
   } finally {
     await channel.stop();
   }
