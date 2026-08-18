@@ -1,6 +1,60 @@
-import { act, renderHook } from "@testing-library/react";
+import { act, render, renderHook, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useTheme } from "./useTheme";
+import { ThemeProvider, useTheme } from "./useTheme";
+
+function Switcher() {
+  const { theme, setTheme } = useTheme();
+  return (
+    <button type="button" onClick={() => setTheme("midnight")}>
+      {theme}
+    </button>
+  );
+}
+
+afterEach(() => {
+  localStorage.clear();
+  document.documentElement.removeAttribute("data-theme");
+});
+
+describe("ThemeProvider", () => {
+  it("applies a stored theme even when nothing below it renders a switcher", () => {
+    // The wizard case: WizardGate returns the wizard INSTEAD of children, so
+    // HomePage never mounts. The theme must already be applied above it.
+    localStorage.setItem("smith.theme", "midnight");
+    render(
+      <ThemeProvider>
+        <div>the wizard, with no switcher anywhere beneath it</div>
+      </ThemeProvider>,
+    );
+    expect(document.documentElement.getAttribute("data-theme")).toBe("midnight");
+  });
+
+  it("one instance owns the choice — a switcher below updates what the provider applied", async () => {
+    // Two independent useState copies would diverge; this pins that they do not.
+    localStorage.setItem("smith.theme", "light");
+    render(
+      <ThemeProvider>
+        <Switcher />
+      </ThemeProvider>,
+    );
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+    await userEvent.click(screen.getByRole("button"));
+    expect(document.documentElement.getAttribute("data-theme")).toBe("midnight");
+    expect(screen.getByRole("button")).toHaveTextContent("midnight");
+  });
+
+  it("system removes the attribute so the OS media query takes over", () => {
+    localStorage.setItem("smith.theme", "system");
+    render(
+      <ThemeProvider>
+        <div />
+      </ThemeProvider>,
+    );
+    expect(document.documentElement.hasAttribute("data-theme")).toBe(false);
+  });
+});
 
 /** matchMedia is not implemented in jsdom; the hook needs a controllable stand-in. */
 function stubPrefersLight(matches: boolean) {
@@ -28,7 +82,14 @@ function stubPrefersLight(matches: boolean) {
   };
 }
 
-describe("useTheme drives HeroUI's dark palette", () => {
+function wrapper({ children }: { children: ReactNode }) {
+  return <ThemeProvider>{children}</ThemeProvider>;
+}
+
+// Predates the provider conversion (was against the bare hook via renderHook);
+// carried forward against ThemeProvider so the .dark mirror effect and the
+// OS-tracking/cleanup behaviour it depends on keep their coverage.
+describe("ThemeProvider mirrors HeroUI's dark class", () => {
   beforeEach(() => {
     localStorage.clear();
     document.documentElement.className = "";
@@ -43,7 +104,7 @@ describe("useTheme drives HeroUI's dark palette", () => {
     ["sand", false],
   ] as const)("theme %s sets .dark to %s", (theme, expected) => {
     stubPrefersLight(false);
-    const { result } = renderHook(() => useTheme());
+    const { result } = renderHook(() => useTheme(), { wrapper });
     act(() => result.current.setTheme(theme));
     expect(document.documentElement.classList.contains("dark")).toBe(expected);
     expect(document.documentElement.getAttribute("data-theme")).toBe(theme);
@@ -51,7 +112,7 @@ describe("useTheme drives HeroUI's dark palette", () => {
 
   it("system follows the OS and drops data-theme entirely", () => {
     stubPrefersLight(true);
-    const { result } = renderHook(() => useTheme());
+    const { result } = renderHook(() => useTheme(), { wrapper });
     act(() => result.current.setTheme("system"));
     expect(document.documentElement.hasAttribute("data-theme")).toBe(false);
     expect(document.documentElement.classList.contains("dark")).toBe(false);
@@ -59,7 +120,7 @@ describe("useTheme drives HeroUI's dark palette", () => {
 
   it("system keeps tracking the OS after mount", () => {
     const mq = stubPrefersLight(true);
-    const { result } = renderHook(() => useTheme());
+    const { result } = renderHook(() => useTheme(), { wrapper });
     act(() => result.current.setTheme("system"));
     expect(document.documentElement.classList.contains("dark")).toBe(false);
     // The user flips their OS to dark while the app is open.
@@ -69,7 +130,7 @@ describe("useTheme drives HeroUI's dark palette", () => {
 
   it("detaches its media listener on unmount", () => {
     const mq = stubPrefersLight(false);
-    const { unmount } = renderHook(() => useTheme());
+    const { unmount } = renderHook(() => useTheme(), { wrapper });
     expect(mq.listenerCount).toBe(1);
     unmount();
     expect(mq.listenerCount).toBe(0);

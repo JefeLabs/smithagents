@@ -2,7 +2,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { usePushToTalk } from "../hooks/usePushToTalk";
 import { useSpokenReplies } from "../hooks/useSpokenReplies";
@@ -328,7 +328,12 @@ describe("AlertMenu — the menu", () => {
 
 vi.mock("../hooks/useSpokenReplies");
 vi.mock("../hooks/usePushToTalk");
-vi.mock("../hooks/useTheme");
+// ThemeProvider must stay a real passthrough — renderWithProviders wraps every
+// tree in it, and an auto-mocked component renders nothing (an empty body).
+vi.mock("../hooks/useTheme", () => ({
+  useTheme: vi.fn(),
+  ThemeProvider: ({ children }: { children: ReactNode }) => children,
+}));
 
 /** Stand-in for the browser WebSocket — HomePage opens one on mount. */
 class FakeSocket {

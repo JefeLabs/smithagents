@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { createContext, type ReactNode, useCallback, useContext, useEffect, useState } from "react";
 
 const STORE_KEY = "smith.theme";
 
@@ -15,13 +15,23 @@ export const THEMES: Array<{ id: ThemeId; label: string; swatch: string }> = [
 /** Which of our themes are dark. `system` is decided at runtime from the OS. */
 const DARK_THEMES: ReadonlySet<ThemeId> = new Set<ThemeId>(["dark", "midnight"]);
 
+const ThemeContext = createContext<{ theme: ThemeId; setTheme: (t: ThemeId) => void } | null>(null);
+
 /**
- * Theme switcher. Palettes live in tokens.css keyed on `data-theme`; this
- * only decides which key is on <html> and remembers the choice. "system"
- * removes the attribute so the CSS media query takes over — that way the app
- * keeps following the OS after a restart, instead of freezing today's guess.
+ * Applies the theme ABOVE the wizard gate.
+ *
+ * `useTheme` used to be called in exactly one place — HomePage — which is a
+ * child of WizardGate. While the wizard renders, WizardGate returns the wizard
+ * INSTEAD of children, so HomePage never mounted and nothing ever set
+ * `data-theme`: every wizard screen rendered light on a machine set to
+ * midnight. Hoisting the application above the gate is the fix.
+ *
+ * A provider rather than a second `useTheme()` call at the root: two
+ * independent `useState` copies of one conceptual choice diverge the moment
+ * either calls `setTheme`, and the resulting bug (a stale instance re-applying
+ * an old theme on remount) is exactly the kind that survives review.
  */
-export function useTheme() {
+export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<ThemeId>(() => (localStorage.getItem(STORE_KEY) as ThemeId) || "system");
 
   useEffect(() => {
@@ -54,5 +64,11 @@ export function useTheme() {
   }, [theme]);
 
   const choose = useCallback((next: ThemeId) => setTheme(next), []);
-  return { theme, setTheme: choose };
+  return <ThemeContext.Provider value={{ theme, setTheme: choose }}>{children}</ThemeContext.Provider>;
+}
+
+export function useTheme() {
+  const ctx = useContext(ThemeContext);
+  if (!ctx) throw new Error("useTheme must be used inside <ThemeProvider>");
+  return ctx;
 }
