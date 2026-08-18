@@ -72,12 +72,25 @@ export function WizardGateStep({ initialName, initialMode = "local", onDone, onP
 
   return (
     <form className="wizard-fork-step" onSubmit={submit}>
-      {/* Anderson's own introduction, above the questions, as prose — not a
-          heading with form labels beneath it. The panel's own `<h1>`
-          (WizardGate's "Welcome") sits above this; these two lines are the
-          first words Anderson himself says. */}
+      {/* Anderson's own introduction, above the questions — and its first
+          line is this screen's `<h1>`, the only one on it. The host used to
+          render a generic "Welcome" above these two lines at 26px while they
+          sat at 15px, the same weight as the field label directly below, so
+          the largest words on the product's opening screen were a word
+          nobody said and the introduction was typeset as though it were
+          another form label. WizardGate now withholds its heading on this
+          step precisely so this can be it (see the comment there); the
+          promotion is a heading level and a type size, NOT a rewrite — the
+          copy is the spec's own, and `36a5eb2` already settled that the
+          second line is the spec's supporting line rather than a synthesis
+          of it. That second line stays prose beneath the heading: it is
+          Anderson still talking, not a subtitle for a form.
+
+          Everything below this is still the steps' `<h2>` tier, so the
+          `headingLevel="h2"` the reused Settings groups take keeps meaning
+          what it meant. */}
       <div className="wizard-gate-step__intro">
-        <p className="wizard-gate-step__greeting">Hello! My name is Anderson.</p>
+        <h1 className="wizard-gate-step__greeting">Hello! My name is Anderson.</h1>
         <p className="wizard-gate-step__lede">
           Anderson Smith, but Anderson is fine. Let's get acquainted — a minute or so, and you can change your mind
           about any of it later.
@@ -213,21 +226,34 @@ export function WizardGateStep({ initialName, initialMode = "local", onDone, onP
           tall enough to scroll the panel it sticks to the panel's bottom edge
           so the primary action never drops below the fold. Pick-for-me
           first, primary last — the same "less-committal action first" order
-          every other wizard footer in this file reads. */}
-      <div className="wizard-gate__footer">
+          every other wizard footer in this file reads, and keeping that DOM
+          order is what keeps the tab order agreeing with the visual one now
+          that the two sit left-to-right in a row.
+
+          `--gate` because these two are not two answers to one question, the
+          way Back and Continue are on every later step. One is the path
+          through setup and the other is the door out of it, and stacked as
+          two identical full-width pills they read as a choice between
+          equals — which weights a shortcut that silently accepts every
+          remaining default exactly as heavily as walking the setup. So the
+          shortcut drops to quiet text and the primary stays the only filled
+          control on the screen; the ranking is legible before either label
+          is read. Same hand-styled `<button>` as the per-step Skip, for the
+          same reasons — see `.wizard-gate__skip` in components.css. */}
+      <div className="wizard-gate__footer wizard-gate__footer--gate">
         {onPickForMe && (
-          // Same rule as Continue below: the name still has to be typed —
-          // this button picks the OTHER things, not that one. Mode needs no
-          // equivalent guard; the field is pre-selected (Cloud is disabled)
-          // so it always has a value to hand back.
-          <Button
+          // Same rule as the primary beside it: the name still has to be
+          // typed — this button picks the OTHER things, not that one. Mode
+          // needs no equivalent guard; the field is pre-selected (Cloud is
+          // disabled) so it always has a value to hand back.
+          <button
             type="button"
-            variant="secondary"
-            onPress={() => onPickForMe((name ?? "").trim(), mode)}
-            isDisabled={!filled(name ?? "")}
+            className="wizard-gate__shortcut"
+            onClick={() => onPickForMe((name ?? "").trim(), mode)}
+            disabled={!filled(name ?? "")}
           >
             Just pick sensible things for me
-          </Button>
+          </button>
         )}
         <Button type="submit" variant="primary" isDisabled={!filled(name ?? "")}>
           Nice to meet you →

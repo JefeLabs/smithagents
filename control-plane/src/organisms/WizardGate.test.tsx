@@ -141,7 +141,7 @@ describe("WizardGate", () => {
       </WizardGate>,
     );
 
-    expect(await screen.findByRole("heading", { name: /welcome/i })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /hello! my name is anderson/i })).toBeInTheDocument();
     expect(screen.queryByText("THE APP")).toBeNull();
   });
 
@@ -230,7 +230,7 @@ describe("WizardGate", () => {
       </WizardGate>,
     );
 
-    expect(await screen.findByRole("heading", { name: /welcome/i })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /hello! my name is anderson/i })).toBeInTheDocument();
   });
 
   it("a failed save on advance surfaces an error instead of vanishing silently", async () => {
@@ -242,7 +242,7 @@ describe("WizardGate", () => {
       </WizardGate>,
     );
 
-    await screen.findByRole("heading", { name: /welcome/i });
+    await screen.findByRole("heading", { name: /hello! my name is anderson/i });
     await userEvent.type(screen.getByLabelText(/what shall i call you/i), "Edwin");
     await userEvent.click(screen.getByRole("button", { name: /nice to meet you/i }));
 
@@ -264,7 +264,7 @@ describe("WizardGate", () => {
       </WizardGate>,
     );
 
-    await screen.findByRole("heading", { name: /welcome/i });
+    await screen.findByRole("heading", { name: /hello! my name is anderson/i });
     await userEvent.type(screen.getByLabelText(/what shall i call you/i), "Edwin");
     await userEvent.click(screen.getByRole("button", { name: /nice to meet you/i }));
 
@@ -304,6 +304,39 @@ describe("WizardGate", () => {
     expect(screen.queryByText(/Welcome,/)).toBeNull();
   });
 
+  it("the gate contributes no heading of its own — Anderson's introduction is the only h1", async () => {
+    // Strictly stronger than the test above, and deliberately not another
+    // `/Welcome,/` query: the bare word "Welcome" passes that one, and the
+    // bare word is exactly what this removes. Seeded WITH a name so the host
+    // would have had one to render.
+    //
+    // Both assertions are load-bearing, because either alone is satisfied by
+    // a regression the other catches: counting the h1s alone passes if the
+    // generic heading is the survivor and Anderson's line the one demoted,
+    // and naming the survivor alone passes with the host's heading still
+    // rendered above it — which is the state this screen was actually in.
+    const { container } = renderGate({ name: "Edwin", setup: { mode: "local", step: PREFLIGHT } });
+
+    expect(await findHost(container)).toHaveAttribute("data-step", "preflight");
+    const headings = container.querySelectorAll("h1");
+    expect(headings).toHaveLength(1);
+    expect(headings[0]).toHaveTextContent(/hello! my name is anderson/i);
+  });
+
+  it("keeps exactly one h1 on a setup step too, over the reused Settings groups' h2s", async () => {
+    // The other half of the same rule, and the reason it needs its own test:
+    // the gate gave its heading away, and the setup steps must not have
+    // gained a second one in exchange. CliToolsGroup and ApiKeysGroup both
+    // DEFAULT to `h1` and are handed `headingLevel="h2"` for precisely this
+    // reason, so this fails the moment either loses that prop — the h2 count
+    // is what stops it passing on a step that simply renders no groups.
+    const { container } = renderGate({ name: "Edwin", setup: { mode: "local", step: "subscriptions" } });
+
+    await screen.findByText("Welcome, Edwin");
+    expect(container.querySelectorAll("h1")).toHaveLength(1);
+    expect(container.querySelectorAll("h2").length).toBeGreaterThan(0);
+  });
+
   it("greets by name on the first setup step", async () => {
     renderGate({ name: "Edwin", setup: { mode: "local", step: "subscriptions" } });
 
@@ -329,6 +362,55 @@ describe("WizardGate", () => {
     // layer up: a control merely labelled "Skip" would satisfy a name-only
     // query but fail this — it has to say what skipping DOES.
     expect(skip.textContent?.trim().toLowerCase()).not.toBe("skip");
+  });
+
+  it("hangs Skip off the progress line rather than above the greeting", async () => {
+    // Skip used to render as an accent pill on a line of its own between
+    // `Step n of N` and the greeting — measured 48px ABOVE the panel's
+    // heading, so the first control on the step, and the only one visible
+    // without scrolling past the question, was the one that declines it.
+    // jsdom cannot measure that. What it CAN hold is the structure the
+    // placement rests on, and both halves are asserted because each alone is
+    // weak: sharing the row passes with Skip rendered BEFORE the number, and
+    // the ordering passes with the two sitting in separate containers.
+    renderGate({ name: "Edwin", setup: { mode: "local", step: "subscriptions" } });
+
+    const skip = await screen.findByRole("button", { name: /skip/i });
+    const row = skip.closest(".wizard-gate__progress");
+    expect(row).not.toBeNull();
+    expect(row?.textContent).toMatch(/^Step 1 of 2/);
+  });
+
+  it("Skip cannot race the write that put the user on the step", async () => {
+    // Same window `advance` opens for the steps' own Back (see the test near
+    // the end of this file): the step changes immediately and its PUT runs
+    // behind it, so Subscriptions is on screen with a live Skip while
+    // PUT {mode, step:"subscriptions"} is still in flight. Held open here
+    // rather than left a millisecond wide.
+    //
+    // Worth its own test because the control is no longer a HeroUI `Button`:
+    // `isDisabled` became the native `disabled` attribute, and dimming alone
+    // would satisfy the eye while leaving both the pointer and the keyboard
+    // live — the exact aria-disabled-vs-disabled split this branch has
+    // already been bitten by once.
+    let settle: (value: unknown) => void = () => {};
+    const { container, updateMe } = renderGate({ placeholder: true, setup: undefined });
+    await findHost(container);
+    updateMe.mockReturnValue(
+      new Promise((resolve) => {
+        settle = resolve;
+      }),
+    );
+
+    await userEvent.type(screen.getByLabelText(/what shall i call you/i), "Edwin");
+    await userEvent.click(screen.getByRole("button", { name: /nice to meet you/i }));
+
+    expect(await findHost(container)).toHaveAttribute("data-step", "subscriptions");
+    expect(screen.getByRole("button", { name: /skip/i })).toBeDisabled();
+
+    // A window, not a ban — the moment the write lands, Skip is live again.
+    settle({});
+    await waitFor(() => expect(screen.getByRole("button", { name: /skip/i })).toBeEnabled());
   });
 
   it("skip applies the step's stated default through the same advance path a real answer takes", async () => {

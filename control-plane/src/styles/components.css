@@ -4331,6 +4331,69 @@ button.logo {
   letter-spacing: -0.01em;
   color: var(--foreground);
 }
+/* `Step n of N` and this step's Skip, on one line — see WizardGate.tsx for
+   why Skip cannot simply move below the body instead. Baseline-aligned rather
+   than centred: the two are different type sizes, and only agreeing baselines
+   make them read as one line of metadata rather than as a label with a
+   control parked next to it. */
+.wizard-gate__progress {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+/* `.wizard__hint` carries a 4px bottom margin for the steps that use it as a
+   standalone line. In this row the panel's own 28px gap does that spacing, and
+   the margin would only push the two items off a shared baseline box. */
+.wizard-gate__progress .wizard__hint {
+  margin-bottom: 0;
+}
+/* The wizard's two quiet actions: the per-step Skip beside the progress line,
+   and the gate's own "pick sensible things for me". Both DECLINE a question
+   rather than answer one, so neither is a pill — the pill is the path, these
+   are the door beside it. Hand-styled `<button>`s rather than HeroUI's, on
+   the precedent `.wizard-chip` already set in this feature: dressing a
+   `Button` down to text means undoing its height, padding, border, radius,
+   min-width and fill, and going native keeps the real `disabled` attribute
+   these both need (it stops pointer AND keyboard, where dimming alone stops
+   neither — the distinction this branch has already been bitten by). Size is
+   set per caller below, since one sits beside 11px progress type and the
+   other beside a 14px primary. */
+.wizard-gate__skip,
+.wizard-gate__shortcut {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  /* `--text-2`, NOT the `--text-dim` the progress line beside it uses, even
+     though matching it exactly would read as one line more cleanly. Measured
+     against the panel's own surface, `--text-dim` gives 3.06:1 in light and
+     3.11:1 in sand — under WCAG AA's 4.5:1 for text this size, and these are
+     interactive controls, not the static number they sit next to. `--text-2`
+     measures 6.34:1 and 6.36:1 in the same two themes. The half-step of extra
+     weight it costs buys something as well: the clickable half of the row no
+     longer renders in exactly the dead colour of the half that isn't. */
+  color: var(--text-2);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.wizard-gate__skip:hover:not(:disabled),
+.wizard-gate__shortcut:hover:not(:disabled) {
+  color: var(--foreground);
+}
+.wizard-gate__skip:disabled,
+.wizard-gate__shortcut:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+/* The progress line's own size and colour, so the row reads as one line. */
+.wizard-gate__skip {
+  flex: 0 1 auto;
+  font-size: 11px;
+  line-height: 1.4;
+  text-align: right;
+}
 /* The footer band each step wraps its Continue button in. Pass 1 drew this
    band on the button itself, via a `[data-slot="button"]` rule — it could
    not be made sticky that way: a stuck footer has to paint an opaque band
@@ -4374,6 +4437,34 @@ button.logo {
 .wizard-gate__footer [data-slot="button"] + [data-slot="button"] {
   margin-top: 10px;
 }
+/* The gate's footer holds a path and the door out of it, not two answers to
+   one question the way Back and Continue do on every later step. Stacked as
+   two identical full-width pills the shortcut — which silently accepts every
+   remaining default — carried exactly the weight of walking the setup. One
+   row instead: the shortcut as quiet text on the left, the primary as the
+   only filled control on the screen on the right. Same right-ranked actions
+   row `.wizard-chip__footer` already uses, and DOM order is unchanged, so the
+   tab order still runs left to right.
+
+   Only ONE `[data-slot="button"]` is left in this footer (the shortcut is a
+   plain `<button>` now), which is why the stacking rule above needs no
+   counterpart here — it has nothing to match. */
+.wizard-gate__footer--gate {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+/* Undoes the full-width rule above, for this footer only. Same specificity as
+   that rule (0,2,0), so this HAS to stay after it in source order. */
+.wizard-gate__footer--gate [data-slot="button"] {
+  width: auto;
+}
+.wizard-gate__shortcut {
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: left;
+}
 .wizard-fork-step,
 .wizard-brain-step,
 .wizard-subscriptions-step {
@@ -4388,12 +4479,19 @@ button.logo {
 .wizard-gate-step__intro {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
+/* The gate's `<h1>` — Anderson's own first words. Deliberately the SAME
+   values `.wizard-gate__title` carries on the setup steps rather than a
+   heading scale of its own: it occupies the panel's heading slot, which the
+   host leaves empty on this one step, so the two screens keep one type
+   hierarchy between them instead of the gate inventing a second. It replaces
+   a 15px/700 line that measured within a point of the field label below it. */
 .wizard-gate-step__greeting {
   margin: 0;
-  font-size: 15px;
+  font-size: 26px;
   font-weight: 700;
+  letter-spacing: -0.01em;
   color: var(--foreground);
 }
 .wizard-gate-step__lede {

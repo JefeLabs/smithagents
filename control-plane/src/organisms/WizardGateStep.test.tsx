@@ -16,6 +16,17 @@ describe("WizardGateStep", () => {
     expect(screen.getByText(/anderson smith, but anderson is fine/i)).toBeInTheDocument();
   });
 
+  it("his first words are the screen's heading, and the line under them stays prose", () => {
+    // The promotion is a heading level and a type size, NOT a rewrite: the
+    // spec's own two lines, with the first one ranked. The second assertion
+    // is the one that matters — an implementation that promoted the greeting
+    // by DELETING the supporting line would satisfy the first on its own,
+    // and that is not a hypothetical failure mode.
+    setup();
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/hello! my name is anderson/i);
+    expect(screen.getByText(/anderson smith, but anderson is fine/i).tagName).toBe("P");
+  });
+
   it("asks in the first person, not as a form", () => {
     setup();
     expect(screen.getByLabelText(/what shall i call you/i)).toBeInTheDocument();

@@ -1,4 +1,3 @@
-import { Button } from "@heroui/react";
 import { Stepper } from "@heroui-pro/react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
@@ -407,25 +406,54 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
             it, unreachable while scrolled. Skip is a host control, not a
             per-step one (Task 4's brief modifies this file and
             `wizardSteps.ts` only, never the step components that own that
-            footer), so it renders here rather than inside it. */}
+            footer), so it renders here rather than inside it.
+
+            Skip shares that row rather than taking a line of its own beneath
+            it. Below the body is not available for the reason just given, so
+            the only question left was how it reads where it must live, and
+            as a pill on its own line it read wrong: it was the first control
+            on the step and the only one visible without scrolling past the
+            question, so Anderson offered the exit before he finished asking.
+            It was also the one accent-blue thing on screen besides the
+            primary action, which pulled the eye to it over the question. On
+            the progress line, right-aligned and at that line's own quiet
+            type, it is what it actually is — a note about this step beside
+            the other note about this step.
+
+            A plain `<button>`, not HeroUI's: dressing a `Button` down to
+            text means undoing its height, padding, border, radius and fill,
+            and `.wizard-chip` already sets the precedent for a hand-styled
+            control in this feature. It keeps the whole `skipLabel` as its
+            accessible name — setup MERGES server-side, so a skip that does
+            not state and send explicit values applies nothing — and the
+            native `disabled` attribute keeps it inert mid-write, closing the
+            pointer and the keyboard together rather than only dimming. */}
         {progress && currentDef && (
-          <>
+          <div className="wizard-gate__progress">
             <p className="wizard__hint">
               Step {progress.n} of {progress.of}
             </p>
-            <Button variant="secondary" onPress={skip} isDisabled={saveState === "saving"}>
+            <button type="button" className="wizard-gate__skip" onClick={skip} disabled={saveState === "saving"}>
               {currentDef.skipLabel}
-            </Button>
-          </>
+            </button>
+          </div>
         )}
         <div className="wizard-gate__body">
-          {/* Greeted by name only once there is a name AND the screen is not
-              the one asking for it. On preflight the greeting would be either
-              empty (fresh install, no name yet) or — for someone who backed up
-              into it — a redundant echo of the field directly below it. The
-              bare "Welcome" stays in both cases: it is the panel's only `<h1>`,
-              which is exactly what the steps' `headingLevel="h2"` assumes. */}
-          <h1 className="wizard-gate__title">{step !== PREFLIGHT && name ? `Welcome, ${name}` : "Welcome"}</h1>
+          {/* Greeted by name on the setup steps, and given no host heading at
+              all on the gate. An earlier pass already withheld the
+              personalised greeting there — it would be either empty on a
+              fresh install or a redundant echo of the field directly below
+              it — but kept a bare "Welcome" so the panel still carried the
+              one `<h1>` the steps' `headingLevel="h2"` assumes. That bare
+              word is the problem this removes: on the single screen where
+              the name is still being asked for it says nothing, and it said
+              it at 26px directly above Anderson's own first words at 15px,
+              so the largest thing on the product's opening screen was a word
+              nobody said. WizardGateStep owns the gate's `<h1>` instead (see
+              its intro comment). Exactly one `<h1>` per screen either way, so
+              `headingLevel="h2"` on the reused Settings groups keeps meaning
+              what it meant. */}
+          {step !== PREFLIGHT && <h1 className="wizard-gate__title">{name ? `Welcome, ${name}` : "Welcome"}</h1>}
           {error && <p className="wizard-gate__error">{error}</p>}
           {step === PREFLIGHT && (
             // Seeded with the answers already given, so backing up into this
