@@ -4320,7 +4320,11 @@ button.logo {
   padding: 40px 40px 0;
   border: 1px solid var(--border);
   border-radius: 16px;
-  background: var(--surface);
+  /* `--surface-raised`, not `--surface`: in the dark themes `--surface` is only
+     a few values off `--ground`, so the card read as part of the page instead
+     of sitting on it. Light and sand define it as their existing surface,
+     which is already the lightest thing they have. */
+  background: var(--surface-raised);
 }
 .wizard-gate__body {
   display: flex;
@@ -4427,8 +4431,10 @@ button.logo {
   border-top: 1px solid var(--pill-br);
   /* Opaque: this is what the scrolled content passes behind. Same token the
      panel paints, so a stuck footer is indistinguishable from the panel's
-     own bottom edge. */
-  background: var(--surface);
+     own bottom edge — a coupling, not a coincidence: moving the panel to
+     `--surface-raised` and leaving this on `--surface` painted a dark band
+     across the bottom of a lighter card. */
+  background: var(--surface-raised);
 }
 .wizard-gate__footer [data-slot="button"] {
   width: 100%;
