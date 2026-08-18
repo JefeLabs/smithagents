@@ -25,6 +25,7 @@ import { qk } from "../queries/keys";
 import { WizardGateStep } from "./WizardGateStep";
 import { WizardRolesStep } from "./WizardRolesStep";
 import { WizardSourcesStep } from "./WizardSourcesStep";
+import { WizardVoiceStep } from "./WizardVoiceStep";
 
 /**
  * Mirrors the app shell's own mobile breakpoint (`components.css`'s 768px
@@ -494,6 +495,17 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
               on its side would be a second answer to a question this file
               already answers. */}
           {step === "roles" && <WizardRolesStep onDone={advance} onSkip={skip} onBack={onBack} saveState={saveState} />}
+          {/* No `onSkip` here, unlike roles beside it — WizardVoiceStep's
+              props carry no such prop, and it needs none: "Not right now" is
+              a full first-class ANSWER, not a bail-out that has to mimic the
+              registry's skip default the way roles' own escape does (that
+              escape exists because a way off roles that saves nothing has
+              nothing else of its own to write). Voice's own answer already
+              IS `{voice: false}`, sent through `onDone` like any other
+              Continue — the host's progress-row Skip above stays the only
+              other way to reach that same patch, for a user who leaves
+              before scrolling to this footer at all. */}
+          {step === "voice" && <WizardVoiceStep onDone={advance} onBack={onBack} saveState={saveState} />}
         </div>
       </div>
     </div>

@@ -16,13 +16,25 @@ export const PREFLIGHT = "preflight";
 export type SetupMode = "local" | "hosted";
 
 /** Every id the host can render, preflight included. */
-export const WIZARD_STEPS = [PREFLIGHT, "sources", "roles"] as const;
+export const WIZARD_STEPS = [PREFLIGHT, "sources", "roles", "voice"] as const;
 
 export type WizardStep = (typeof WIZARD_STEPS)[number];
 
 export type Setup =
   | {
       mode?: SetupMode;
+      /**
+       * The voice step's own answer — `true` for "Yes, let's talk", `false`
+       * for "Not right now" (both sent explicitly; WizardVoiceStep never
+       * omits it, the same rule every other answer in this type follows).
+       *
+       * A record can carry this BEFORE the step itself does — voice used to
+       * be a third preflight question (see WizardGateStep's file comment)
+       * whose own skip default already wrote `false`, and this field never
+       * changed shape across that move. Nothing here has to reconcile the
+       * two histories: a pre-existing value is simply the answer the voice
+       * step resumes with, "previously declined" rather than "never asked".
+       */
       voice?: boolean;
       step?: string;
       /**
@@ -78,15 +90,16 @@ export type WizardSaveState = "idle" | "saving" | "failed";
  * question is what establishes it, and assuming local would walk someone into
  * CLI installation on the strength of a missing field.
  *
- * `voice` is carried in `Setup` and persisted, but adds no step yet — the
- * Voice screen is a later plan, and an entry here for a screen that does not
- * exist would be a dead route. When that plan lands it inserts "voice" after
- * "roles" here, and nothing else in this file changes.
+ * `voice` after `roles` — secondary to the brain, the user's own ruling. Its
+ * place in the local sequence is unconditional on the ANSWER: the step's
+ * whole job is to ASK the question, so it has to render whether `setup.voice`
+ * is `true`, `false`, or absent. Only `mode` decides whether it appears at
+ * all — the same as `sources`/`roles` beside it.
  */
 export function setupStepsFor(setup: Setup): readonly WizardStep[] {
   if (!setup?.mode) return [];
   if (setup.mode === "hosted") return [];
-  return ["sources", "roles"];
+  return ["sources", "roles", "voice"];
 }
 
 export interface WizardStepDef {
@@ -109,12 +122,13 @@ export interface WizardStepDef {
  * a step with no definition is a compile failure, not a lookup miss.
  *
  * Titles are the spec's own section names verbatim — `## Step 1 of 6 · Where
- * I think`, `## Step 2 of 6 · What I think with`. The indicator is the only
- * place a step is named to the user, so a paraphrase here would be a second
- * name for the same screen. (The ids these replaced, `subscriptions` and
- * `anderson`, named what the old screens DID rather than what they ask; both
- * screens are gone. The mode question is still never titled "Location" — that
- * is the geolocation step, still to come.)
+ * I think`, `## Step 2 of 6 · What I think with`, `## Step 3 of 6 · Talking
+ * out loud`. The indicator is the only place a step is named to the user, so
+ * a paraphrase here would be a second name for the same screen. (The ids
+ * these replaced, `subscriptions` and `anderson`, named what the old screens
+ * DID rather than what they ask; both screens are gone. The mode question is
+ * still never titled "Location" — that is the geolocation step, still to
+ * come.)
  */
 const STEP_DEFS: Record<Exclude<WizardStep, typeof PREFLIGHT>, Omit<WizardStepDef, "id">> = {
   sources: {
@@ -128,6 +142,18 @@ const STEP_DEFS: Record<Exclude<WizardStep, typeof PREFLIGHT>, Omit<WizardStepDe
     description: "One for each kind of job",
     skipLabel: "Skip — I'll reply using a built-in default",
     skipDefault: () => ({ rolesSkipped: true }),
+  },
+  voice: {
+    title: "Talking out loud",
+    description: "Hosted keys, or stay text-only",
+    // States the default rather than the bare word — same rule as the other
+    // two, and the one this step's own "Not right now" answer already applies
+    // on its own footer; this is what the HOST's progress-row Skip applies
+    // instead, for a user who leaves before reaching that footer.
+    skipLabel: "Skip — I'll stay text-only",
+    // Never `{}` — setup merges server-side, so an empty patch would leave a
+    // stale `voice: true` standing from an earlier run rather than declining.
+    skipDefault: () => ({ voice: false }),
   },
 };
 
@@ -171,10 +197,14 @@ export function nextStep(current: string, setup: Setup): WizardStep | null {
 /**
  * The previous step, or null at the beginning.
  *
- * Load-bearing rather than a convenience: a later plan's Voice step BLOCKS on
- * two connectors, so without a way back, asking for voice without an
- * elevenlabs key is a gate that can be neither passed nor retracted. Back into
- * preflight is what makes that answer retractable.
+ * Load-bearing rather than a convenience: the Voice step BLOCKS Continue on
+ * two VERIFIED connectors while its own answer is "yes", so without a way
+ * back, asking for voice without a working ElevenLabs key would be a gate
+ * that can be neither passed nor retracted. Back into roles (and, from there,
+ * further back) is what makes that retreat possible from the step machine's
+ * side — "Not right now" on the step itself is the other way out, and unlike
+ * this one it stays selectable in every state the step can reach, gate
+ * included (see WizardVoiceStep's own doc comment).
  */
 export function prevStep(current: string, setup: Setup): WizardStep | null {
   if (current === PREFLIGHT) return null;

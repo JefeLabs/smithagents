@@ -23,15 +23,27 @@ vi.mock("../api/broker", () => ({
   // can only be reached through it — see the terminal-save tests at the
   // bottom of this suite.
   saveEngines: vi.fn(),
+  // The voice step's own reads — it calls all four unconditionally on mount
+  // (the "yes" apparatus is conditionally RENDERED, not conditionally
+  // fetched), so every test that reaches step "voice" needs these named here
+  // regardless of which answer it exercises.
+  getConnectorVendors: vi.fn(),
+  getMyConnectors: vi.fn(),
+  getVoiceSettings: vi.fn(),
+  getVoiceOptions: vi.fn(),
 }));
 
 import {
   getApiKeys,
   getCliTools,
+  getConnectorVendors,
   getEngines,
   getLocalModels,
   getMachineFacts,
   getMe,
+  getMyConnectors,
+  getVoiceOptions,
+  getVoiceSettings,
   saveEngines,
   updateMe,
 } from "../api/broker";
@@ -61,6 +73,15 @@ function stubMe(me: MeRecord, tools: CliToolListing[] = []) {
   // Succeeds by default: the failure these tests are about is the HOST's own
   // `PUT /me`, which only happens once the step's own save has gone through.
   (saveEngines as ReturnType<typeof vi.fn>).mockResolvedValue({ main: null, quick: null, fallback: null });
+  // This machine's real, empty state (the plan's own "already true" table) —
+  // no vendors, no saved keys, no voice assigned, no cast to preview. The
+  // voice step's OWN suite covers what each of these populated looks like;
+  // this one is about the host around it, on the answer ("Not right now")
+  // that needs none of them to be non-empty.
+  (getConnectorVendors as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+  (getMyConnectors as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+  (getVoiceSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ stt: null, tts: null, enabled: false });
+  (getVoiceOptions as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 }
 
 /**
@@ -411,7 +432,7 @@ describe("WizardGate", () => {
   it("shows honest progress and a skip control that states its default, not the bare word", async () => {
     renderGate({ name: "Edwin", setup: { mode: "local", step: "sources" } });
 
-    expect(await screen.findByText("Step 1 of 2")).toBeInTheDocument();
+    expect(await screen.findByText("Step 1 of 3")).toBeInTheDocument();
     const skip = screen.getByRole("button", { name: /skip/i });
     // Discriminates the same way wizardSteps.test.ts's own check does, one
     // layer up: a control merely labelled "Skip" would satisfy a name-only
@@ -433,7 +454,7 @@ describe("WizardGate", () => {
     const skip = await screen.findByRole("button", { name: /skip/i });
     const row = skip.closest(".wizard-gate__progress");
     expect(row).not.toBeNull();
-    expect(row?.textContent).toMatch(/^Step 1 of 2/);
+    expect(row?.textContent).toMatch(/^Step 1 of 3/);
   });
 
   it("Skip cannot race the write that put the user on the step", async () => {
@@ -483,6 +504,39 @@ describe("WizardGate", () => {
     expect(updateMe).toHaveBeenCalledWith(
       expect.objectContaining({ setup: expect.objectContaining({ sourcesSkipped: true, step: "roles" }) }),
     );
+  });
+
+  it("the host's Skip on voice sends an EXPLICIT voice: false, and finishes setup", async () => {
+    // The same path as the sources test above, on the step this plan adds —
+    // and the one place `skipDefault()` returning `{}` would be invisible in
+    // every OTHER check (`stepsFor`'s own registry test only checks the keys
+    // are non-empty), because `step` still advances either way. This asserts
+    // the actual VALUE, and that it's the terminal write — voice is the new
+    // last step, so its own Skip is the one that reaches `SETUP_DONE` rather
+    // than the next step in the sequence.
+    const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "voice" } });
+
+    await userEvent.click(await screen.findByRole("button", { name: /skip/i }));
+
+    expect(await findHost(container)).toHaveAttribute("data-step", "voice");
+    expect(updateMe).toHaveBeenCalledWith(
+      expect.objectContaining({ setup: expect.objectContaining({ voice: false, step: SETUP_DONE }) }),
+    );
+  });
+
+  it("resumes mid-voice with a preflight-era 'voice: false' as previously declined, not never asked", async () => {
+    // Records from before this step existed may already carry `setup.voice`
+    // — written by the OLD preflight's own voice question, or by an earlier
+    // skip default (see the `Setup.voice` doc comment in wizardSteps.ts).
+    // `resumeStep` lands on "voice" regardless (pinned in wizardSteps.test.ts
+    // — this is the integration half); what this pins is that the step then
+    // renders with "Not right now" already the seeded answer rather than
+    // crashing or misreading the boolean, the concrete user-visible meaning
+    // of "previously declined" for a user who reopens the wizard mid-voice.
+    const { container } = renderGate({ name: "Edwin", setup: { mode: "local", step: "voice", voice: false } });
+
+    expect(await findHost(container)).toHaveAttribute("data-step", "voice");
+    expect(await screen.findByRole("radio", { name: /not right now/i })).toBeChecked();
   });
 
   it("enters the sequence the answer just given selects, not the one state still holds", async () => {
@@ -541,7 +595,7 @@ describe("WizardGate", () => {
     expect(await findHost(container)).toHaveAttribute("data-step", "preflight");
   });
 
-  it("routes the last step to the roles screen", async () => {
+  it("routes the roles screen", async () => {
     // A route naming a step id nothing renders leaves the body EMPTY — no
     // Continue, no escape, and no Back either, since Back lives inside the
     // step component — so the user is stranded on a panel with an indicator
@@ -563,9 +617,23 @@ describe("WizardGate", () => {
     ).toBeInTheDocument();
   });
 
-  it("goes back from the last step into the one before it, and persists that", async () => {
+  it("routes the NEW last step to the voice screen", async () => {
+    // Same exposure as the roles test above, on the id this plan adds: a
+    // `voice` entered into `setupStepsFor` with no matching render branch
+    // here would strand a user who just answered roles on a panel with an
+    // indicator and nothing else — the empty-body dead end this codebase has
+    // already shipped once on a step rename, now on a step INSERTION instead.
+    const { container } = renderGate({ name: "Edwin", setup: { mode: "local", step: "voice" } });
+
+    expect(await findHost(container)).toHaveAttribute("data-step", "voice");
+    expect(
+      await screen.findByRole("heading", { level: 2, name: "Would you like to talk to me out loud?" }),
+    ).toBeInTheDocument();
+  });
+
+  it("goes back from roles into sources, and persists that", async () => {
     // The other half of "every setup step can go Back". Fails if the host
-    // stops passing `onBack` to the Anderson route, and equally if that step
+    // stops passing `onBack` to the roles route, and equally if that step
     // stops rendering the button — this clicks the real component's own.
     const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "roles" } });
 
@@ -575,6 +643,50 @@ describe("WizardGate", () => {
     expect(await findHost(container)).toHaveAttribute("data-step", "sources");
     expect(updateMe).toHaveBeenCalledWith(
       expect.objectContaining({ setup: expect.objectContaining({ step: "sources" }) }),
+    );
+  });
+
+  it("goes back from the NEW last step (voice) into roles, and persists that", async () => {
+    // The same contract, on the step that now actually sits at the end of the
+    // sequence — `onBack` is computed generically from `prevStep`, so this is
+    // what actually discriminates a host that stopped wiring it through past
+    // roles, which the test above cannot: roles keeps a Back regardless.
+    const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "voice" } });
+
+    await userEvent.click(await screen.findByRole("button", { name: /back/i }));
+
+    expect(await findHost(container)).toHaveAttribute("data-step", "roles");
+    expect(updateMe).toHaveBeenCalledWith(
+      expect.objectContaining({ setup: expect.objectContaining({ step: "roles" }) }),
+    );
+  });
+
+  it("advances from roles into voice, now that roles is no longer the last step in the sequence", async () => {
+    // The wiring this whole plan is about, proven end to end: `nextStep`
+    // saying "voice" comes after "roles" is only half the contract — the
+    // other half is that a REAL answer on roles actually lands the user
+    // there rather than on the empty panel a route with no render branch
+    // produces (see "routes the NEW last step to the voice screen" above,
+    // which pins the render branch on its own; this pins the TRANSITION into
+    // it). `patch.setup.step` is asserted directly, not inferred from
+    // `data-step` alone, because an optimistic UI can show the right screen
+    // for the wrong reason — a host that hardcoded `setStep("voice")` on
+    // roles' `onDone` would pass the `data-step` half of this test and fail
+    // only the write.
+    const { container, updateMe } = renderGate({
+      name: "Edwin",
+      setup: { mode: "local", step: "roles" },
+      tools: [toolListing("claude")],
+    });
+    await screen.findByRole("combobox", { name: "My main brain" });
+
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    expect(await findHost(container)).toHaveAttribute("data-step", "voice");
+    await waitFor(() =>
+      expect(updateMe).toHaveBeenCalledWith(
+        expect.objectContaining({ setup: expect.objectContaining({ step: "voice" }) }),
+      ),
     );
   });
 
@@ -749,29 +861,29 @@ describe("WizardGate", () => {
     await waitFor(() => expect(chip()).toBeEnabled());
   });
 
-  it("a refused save on the LAST step leaves the footer something to click", async () => {
+  it("a refused save on the NEW LAST step leaves the footer something to click", async () => {
+    // Moved from "roles" to "voice" by this plan: `nextStep("roles", ...)` is
+    // no longer null, so a refused save on ROLES now rolls back to a step
+    // with a real successor and this exact race no longer arises there — see
+    // "the step's own escape..." below, whose final `step` assertion is what
+    // actually pins that. "voice" is where it now applies, reached here on
+    // its own default answer ("Not right now"), which needs no fixture setup
+    // of its own to get to a live Continue.
+    //
     // The refusal shape: `brokerFetch` never throws on a non-2xx, so an origin
     // block, a credential failure, or swarm-side validation all RESOLVE with
-    // `{error}`. The step's own engines save SUCCEEDED here, so the step's own
-    // escape is (correctly) absent — if Back and Continue are inert too, the
-    // last screen of first-run setup has nothing clickable on it at all, and
-    // only a page reload nothing mentions gets the user out.
-    const { container, updateMe } = renderGate({
-      name: "Edwin",
-      setup: { mode: "local", step: "roles" },
-      tools: [toolListing("claude")],
-    });
-    await screen.findByRole("combobox", { name: "My main brain" });
+    // `{error}`. If Back and Continue are inert too, the last screen of
+    // first-run setup has nothing clickable on it at all, and only a page
+    // reload nothing mentions gets the user out.
+    const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "voice" } });
+    await screen.findByRole("radio", { name: /not right now/i });
 
     updateMe.mockResolvedValue({ error: "origin not allowed" });
-    // Exact names throughout, never /continue/i: the step's escape is labelled
-    // "Continue without setting these", so a loose matcher goes ambiguous the
-    // moment a save fails rather than in the test that cares.
     await userEvent.click(screen.getByRole("button", { name: "Continue" }));
 
     expect(await screen.findByText(/origin not allowed/i)).toBeInTheDocument();
     // Still here — this is what makes the last step unlike every other one.
-    expect(await findHost(container)).toHaveAttribute("data-step", "roles");
+    expect(await findHost(container)).toHaveAttribute("data-step", "voice");
     expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Back" })).toBeEnabled();
 
@@ -943,36 +1055,45 @@ describe("WizardGate", () => {
     for (const [k, v] of Object.entries(expected)) {
       expect(patch.setup[k]).toEqual(v);
     }
-    // Still a completion, not a retreat — the escape ends setup like any other
-    // way off this step.
-    expect(patch.setup.step).toBe(SETUP_DONE);
+    // Still advances into the sequence's next step, not a retreat — the
+    // escape moves setup forward like any other way off this step. "voice",
+    // not `SETUP_DONE`: roles is no longer the last step this plan inserts
+    // "voice" after, and a stale `SETUP_DONE` expectation here is exactly the
+    // kind of assertion that would keep passing on a host that forgot to
+    // route the new step at all, because the write it checks never depended
+    // on anything rendering.
+    expect(patch.setup.step).toBe("voice");
   });
 
-  it("a rejected save on the LAST step leaves the footer something to click too", async () => {
-    // The other shape, and NOT interchangeable with the one above: a network
-    // failure rejects rather than resolving, and it takes `advance`'s `.catch`
-    // branch, which — unlike the resolved branch — never calls `setStep`. A
-    // fix wired only into the resolved branch passes the test above and leaves
-    // this user just as stuck.
-    const { container, updateMe } = renderGate({
-      name: "Edwin",
-      setup: { mode: "local", step: "roles" },
-      tools: [toolListing("claude")],
-    });
-    await screen.findByRole("combobox", { name: "My main brain" });
+  it("a rejected save on the NEW LAST step leaves the footer something to click too", async () => {
+    // Moved from "roles" to "voice", same reasoning as the refused-save test
+    // above: roles is no longer terminal, so `advance`'s `if (next)
+    // setStep(next)` now DOES fire for it regardless of how the write
+    // settles — see "advances from roles into voice..." below, which pins
+    // that transition directly. This test's actual subject — nothing swaps
+    // the screen at all, so the footer has to stay clickable on its own —
+    // only still arises where `next` is genuinely null, which is now here.
+    //
+    // The shape itself is still NOT interchangeable with the refused one: a
+    // network failure rejects rather than resolving, and it takes `advance`'s
+    // `.catch` branch, which — unlike the resolved branch — never calls
+    // `setStep`. A fix wired only into the resolved branch passes that test
+    // and leaves this user just as stuck.
+    const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "voice" } });
+    await screen.findByRole("radio", { name: /not right now/i });
 
     updateMe.mockRejectedValue(new Error("network error"));
     await userEvent.click(screen.getByRole("button", { name: "Continue" }));
 
     expect(await screen.findByText(/network error/i)).toBeInTheDocument();
-    expect(await findHost(container)).toHaveAttribute("data-step", "roles");
+    expect(await findHost(container)).toHaveAttribute("data-step", "voice");
     expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
 
     // Back is the escape that matters on this shape — a rejection is
     // ambiguous, the write may well have landed, so retrying it is not the
     // only sensible move — and it has to be live, not merely visible.
     await userEvent.click(screen.getByRole("button", { name: "Back" }));
-    expect(await findHost(container)).toHaveAttribute("data-step", "sources");
+    expect(await findHost(container)).toHaveAttribute("data-step", "roles");
   });
 
   // --- The footer's own ranking --------------------------------------------
@@ -989,9 +1110,9 @@ describe("WizardGate", () => {
     // footer is a HeroUI pill and it is the primary: `.wizard-gate__footer
     // [data-slot="button"]` is the hook the fill, height and radius hang off,
     // and Back carries the same hand-styled quiet class the gate's shortcut
-    // already uses. Asserted on BOTH steps, because the treatment lives in
-    // each step's own footer rather than in the host.
-    for (const step of ["sources", "roles"] as const) {
+    // already uses. Asserted on all THREE steps, because the treatment lives
+    // in each step's own footer rather than in the host.
+    for (const step of ["sources", "roles", "voice"] as const) {
       const { unmount } = renderGate({ name: "Edwin", setup: { mode: "local", step } });
       const back = await screen.findByRole("button", { name: "Back" });
       const footer = back.closest(".wizard-gate__footer");

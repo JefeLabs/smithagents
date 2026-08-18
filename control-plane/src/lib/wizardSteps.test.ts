@@ -13,7 +13,7 @@ describe("preflight", () => {
 
 describe("the sequence derives from the answers", () => {
   it("local mode yields the local sequence", () => {
-    expect([...setupStepsFor({ mode: "local" })]).toEqual(["sources", "roles"]);
+    expect([...setupStepsFor({ mode: "local" })]).toEqual(["sources", "roles", "voice"]);
   });
 
   it("no mode yields no sequence rather than defaulting to local", () => {
@@ -22,10 +22,14 @@ describe("the sequence derives from the answers", () => {
     expect([...setupStepsFor(undefined)]).toEqual([]);
   });
 
-  it("the voice answer is carried but adds no step in this plan", () => {
-    // The Voice screen is a later plan. Until it exists, a sequence entry for
-    // it would be a dead route — but the ANSWER must already round-trip.
-    expect([...setupStepsFor({ mode: "local", voice: true })]).toEqual(["sources", "roles"]);
+  it("voice is in the sequence unconditionally on its own answer — the step ASKS, it isn't gated by an answer already given", () => {
+    // Wrong impl this catches: a sequence that includes "voice" only once
+    // `setup.voice` is already `true` or `false` — which would strand a user
+    // who has never answered on a sequence one step short of the one the
+    // progress indicator (and `resumeStep`) actually walks.
+    expect([...setupStepsFor({ mode: "local" })]).toEqual(["sources", "roles", "voice"]);
+    expect([...setupStepsFor({ mode: "local", voice: true })]).toEqual(["sources", "roles", "voice"]);
+    expect([...setupStepsFor({ mode: "local", voice: false })]).toEqual(["sources", "roles", "voice"]);
   });
 });
 
@@ -34,12 +38,16 @@ describe("labels match the spec", () => {
     expect(stepsFor({ mode: "local" }).map((s) => s.title)).not.toContain("Location");
   });
 
-  it("carries the spec's own two section names, in its order", () => {
+  it("carries the spec's own three section names, in its order", () => {
     // `## Step 1 of 6 · Where I think` / `## Step 2 of 6 · What I think with`
-    // — the spec's headings verbatim, because the indicator is the only place
-    // a step is named to the user and a paraphrase there is a second name for
-    // the same screen.
-    expect(stepsFor({ mode: "local" }).map((s) => s.title)).toEqual(["Where I think", "What I think with"]);
+    // / `## Step 3 of 6 · Talking out loud` — the spec's headings verbatim,
+    // because the indicator is the only place a step is named to the user
+    // and a paraphrase there is a second name for the same screen.
+    expect(stepsFor({ mode: "local" }).map((s) => s.title)).toEqual([
+      "Where I think",
+      "What I think with",
+      "Talking out loud",
+    ]);
   });
 
   it("no longer names the two screens these replaced", () => {
@@ -69,6 +77,16 @@ describe("progress is honest", () => {
     // the gate. A hardcoded 6 would lie for any shorter sequence.
     const of = progressFor("sources", { mode: "local" })?.of;
     expect(of).toBe(stepsFor({ mode: "local" }).length);
+  });
+
+  it("the local sequence is honestly 'Step n of 3' now that voice is in it", () => {
+    // Pinned as the literal numbers, not just against `stepsFor(...).length`
+    // (which the two checks above already do): a regression that dropped
+    // "voice" back out of the sequence would still satisfy those against
+    // itself, reporting a self-consistent but wrong "of 2".
+    expect(progressFor("sources", { mode: "local" })).toEqual({ n: 1, of: 3 });
+    expect(progressFor("roles", { mode: "local" })).toEqual({ n: 2, of: 3 });
+    expect(progressFor("voice", { mode: "local" })).toEqual({ n: 3, of: 3 });
   });
 });
 
@@ -106,8 +124,12 @@ describe("nextStep", () => {
   });
 
   it("walks the sequence and ends at null", () => {
+    // "roles" is no longer the end — this is the exact regression a naive
+    // wiring of the new step would produce if `setupStepsFor` grew "voice"
+    // but something upstream still treated "roles" as terminal.
     expect(nextStep("sources", { mode: "local" })).toBe("roles");
-    expect(nextStep("roles", { mode: "local" })).toBeNull();
+    expect(nextStep("roles", { mode: "local" })).toBe("voice");
+    expect(nextStep("voice", { mode: "local" })).toBeNull();
   });
 });
 
@@ -118,6 +140,7 @@ describe("prevStep — the escape hatch a blocking step depends on", () => {
 
   it("goes back within the sequence", () => {
     expect(prevStep("roles", { mode: "local" })).toBe("sources");
+    expect(prevStep("voice", { mode: "local" })).toBe("roles");
   });
 
   it("cannot go back from preflight — it is the beginning", () => {
@@ -136,6 +159,23 @@ describe("resumeStep", () => {
 
   it("resumes a step the recorded answers actually contain", () => {
     expect(resumeStep({ mode: "local", step: "roles" })).toBe("roles");
+  });
+
+  it("resumes mid-voice — the new last step, reachable the same way any other is", () => {
+    expect(resumeStep({ mode: "local", step: "voice" })).toBe("voice");
+  });
+
+  it("a preflight-era 'voice: false' does not change WHICH step resumeStep returns", () => {
+    // Records from before this step existed may already carry `setup.voice`
+    // — written by the OLD preflight's own voice question, or by an earlier
+    // skip default (see the `Setup.voice` doc comment). `resumeStep` reads
+    // `step` alone; a wrong impl that let a pre-existing boolean answer
+    // divert resumption (e.g. treating an already-declined record as "done
+    // with voice" and skipping straight past it) would fail this against the
+    // plain mid-voice case right above it, which carries no `voice` field at
+    // all and must resume identically.
+    expect(resumeStep({ mode: "local", step: "voice", voice: false })).toBe("voice");
+    expect(resumeStep({ mode: "local", step: "roles", voice: false })).toBe("roles");
   });
 
   it("restarts on a step id the sequence does not contain", () => {
