@@ -89,22 +89,75 @@ to offer, so they wait for hosted.
 ## Flow
 
 ```
-  Name                  ← CLI probe starts here, in the background
-  Local or Hosted?      hosted visible but disabled — "coming soon"
+  ── preflight: one screen, no step indicator ──
+  What's your name?     → the greeting; creates the user record
+  Voice mode?           → if yes, deepgram + elevenlabs become REQUIRED below
+  Local or Cloud?       → selects which sequence follows
+                          cloud visible but disabled — "coming soon"
 
+  ── setup: the sequence the answers above selected ──
   Subscriptions         guide and validate; cannot continue until
                         a subscription or an API key works
-  Configure Anderson    use a subscription, or a key
+                        + deepgram and elevenlabs, iff voice was chosen
+  Configure Anderson    "Anderson needs a brain — choose from your
+                        installed provider tools"
+  Share your location?  → if yes, browser geolocation. Needs NO keys.
+                          Then: topics of interest.
   Local workspace       what is it for — documents and/or coding?
                         version control and PR publishing?
                         GitHub required if coding OR version control
 
   ── the app works from here ──
-  Voice mode      optional
-  Location        optional
   Integrations    optional
   Build a crew    optional
 ```
+
+### Revision, 2026-08-17: preflight, and intent before requirements
+
+The flow above replaces a flat list of peer steps. The correction, and why:
+
+**Preflight is one screen, not steps.** Its three questions are *intent* — they
+decide what the rest of setup must satisfy, so none of them belongs in a step
+indicator, which would claim to know the sequence before the answer that picks
+it. The name is asked because it produces the greeting; a wizard that collects
+a name and never says it has taken something for nothing.
+
+**Voice moved forward, and it gates.** Voice mode needs the `deepgram` (STT)
+and `elevenlabs` (TTS) connectors. Asked at the end, it stranded the
+Subscriptions step with an incomplete picture of its own requirements. Asked in
+preflight it costs one radio and no credentials, and Subscriptions then knows
+its full requirement set. **Choosing voice makes those two connectors
+required** — the alternative, offering voice and then letting setup finish
+without the two things voice cannot run without, is the "disabled control
+someone actually wants" frustration this spec already rejects, one level up.
+
+**Location moved forward, and it needs no keys.** Verified against the
+implementations, not assumed:
+
+| Source | Credential |
+|---|---|
+| `feeds/weather.ts` | **none** — Open-Meteo: "no key, no account, no quota worth worrying about". `lat,lon` only |
+| `feeds/rss.ts` | **none** — news, blogs, government notices, YouTube, GitHub releases |
+| `feeds/discovery.ts` | **none** — dispatches a CLI agent, which Subscriptions already guarantees |
+| `feeds/topics.ts`, `feeds/interests.ts` | **none** — a topic is configuration; sources hang off it |
+| `feeds/x.ts` | **an API key** — the only one, and it already degrades: no key returns `skipped` with a reason |
+| `feeds/jira-poll.ts` | the existing atlassian connector (Integrations owns it) |
+
+So this step asks for **permission and topics**, not credentials. `Location
+(optional)` below still describes the payoff correctly — that section stands,
+only its position and its "collect keys" implication change.
+
+**Naming, fixed.** Two labels had drifted from this spec and would have
+collided with later steps:
+- The local/cloud fork was titled **"Location"**, which is a *different* step —
+  the geolocation one above.
+- *Configure Anderson* was titled **"Brain"**. This spec's name wins.
+
+**"Cloud" in the UI, `hosted` on the wire.** The user-facing word is Cloud;
+the stored `Setup["mode"]` value stays `"hosted"`, matching this spec's prose
+and `control-plane/src/lib/cloud.ts`. Deliberate and recorded here so it is not
+mistaken for the same drift as the two above. No migration is owed: the cloud
+option has never been selectable, so no stored record can hold it.
 
 **Every required step precedes every optional one.** Someone who abandons the
 wizard after the workspace step still has a working app: a name, a brain, and
@@ -296,17 +349,39 @@ distinction above less of a fork than it appears until open sign-up lands.
 
 ## Both paths converge
 
-Everything below is optional. A user who stops here has a working app: a name, a
-brain, and somewhere to put work. **Every required step precedes every optional
-one**, so quitting among these costs nothing.
+A user who stops here has a working app: a name, a brain, and somewhere to put
+work. **Every required step precedes every optional one**, so quitting among
+these costs nothing.
 
-### Voice mode (optional)
+The 2026-08-17 revision moved two of the sections below earlier in the flow, so
+"everything below is optional" no longer describes this list as written. What
+survives that move is the *invariant*, which is the part that mattered:
+Integrations and Build a crew remain optional and skippable; Location remains
+refusable; and voice is optional in the only sense that counts — nobody is
+made to answer yes. Each section below is annotated with where it now sits.
+
+### Voice mode — asked in preflight, satisfied in Subscriptions
+
+**Superseded as an optional trailing step by the 2026-08-17 revision above.**
+The *question* moved to preflight; the *credentials* are collected in
+Subscriptions alongside the coding subscription.
 
 Assign the `deepgram` (STT) and `elevenlabs` (TTS) connectors. Voice Mode may only
-be enabled while **both** slots are filled — the existing invariant. Skipping
-leaves voice off and everything else working.
+be enabled while **both** slots are filled — the existing invariant. That
+invariant is exactly why the question moved: it means voice has a hard,
+knowable requirement, and a requirement is worth knowing before the screen that
+collects requirements rather than after it.
 
-### Location (optional)
+Answering **no** in preflight leaves voice off and everything else working,
+which is the old "skipping" behaviour. Answering **yes** makes both connectors
+required — see the revision note for why offering voice and then permitting a
+finish without it is the frustration this spec already rejects.
+
+### Location — asked after Configure Anderson
+
+**Repositioned by the 2026-08-17 revision above**, and it needs no API keys;
+see the credential table there. The payoff argument below is unchanged and is
+the reason the step exists.
 
 Feeds `feeds/weather.ts` (`weatherLine`, `weatherUrl`), which supplies the weather
 line in Anderson's morning digest (`BrainTurn.digest`). Needs `lat,lon`, so
