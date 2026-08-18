@@ -664,6 +664,16 @@ export class SwarmClient {
     return this.http("PUT", "/me/voice", body);
   }
 
+  /** Local model server detection (welcome wizard step 2). Pure proxy — the swarm's detectLocalServers() never throws. */
+  async getLocalModels(): Promise<Record<string, unknown>> {
+    return this.http("GET", "/local-models");
+  }
+
+  /** Machine facts — the RAM budget a local model has to fit inside. Sibling of getLocalModels above. */
+  async getMachine(): Promise<Record<string, unknown>> {
+    return this.http("GET", "/machine");
+  }
+
   /** Subscribe to /ws events. Reconnects every 2s until the returned fn is called. */
   subscribe(onEvent: (e: SwarmEvent) => void): () => void {
     const query = this.token ? `?token=${encodeURIComponent(this.token)}` : "";

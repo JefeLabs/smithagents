@@ -1073,6 +1073,20 @@ const brainEngineSetting = {
   save: (body: unknown) => swarm.saveBrainEngine(body),
 };
 
+// Local model + machine passthroughs — welcome wizard step 2 (Settings →
+// Brain). Same pure-proxy shape as `research`/`brainEngineSetting` above; the
+// swarm side (local-models.ts, machine.ts) never throws, so there is no logic
+// to add here, only a route to make reachable from the browser's 7790
+// surface. This is the exact bug `research`'s and `brainEngineSetting`'s own
+// comments describe: a route that exists only on swarm 404s from the UI,
+// because the control-plane talks to the broker, never to swarm directly.
+const localModelsSetting = {
+  list: () => swarm.getLocalModels(),
+};
+const machineSetting = {
+  get: () => swarm.getMachine(),
+};
+
 // Agent creation: the swarm owns the registry, the broker owns voices. A
 // named const (not an inline TextChannel argument) because the brain's
 // draft_agent/confirm_agent executors drive the same generate/create path
@@ -1740,6 +1754,8 @@ const textChannel = new TextChannel(
   groups,
   research,
   brainEngineSetting,
+  localModelsSetting,
+  machineSetting,
 );
 
 /**

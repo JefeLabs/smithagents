@@ -422,6 +422,25 @@ export class TextChannel {
       get(): Promise<Record<string, unknown> | null>;
       save(body: unknown): Promise<Record<string, unknown> | null>;
     },
+    /**
+     * Local model server detection (welcome wizard step 2, Settings → Brain).
+     * Pure proxy, same shape as `research`/`brain` above — the swarm's
+     * detectLocalServers() already never throws, so this dep exists to keep
+     * the route addressable from the browser's 7790 surface, not to add
+     * logic. Named `localModels`, not `local` — matches the swarm route's
+     * own noun so a reader can find one from the other.
+     */
+    private readonly localModels?: {
+      list(): Promise<Record<string, unknown>>;
+    },
+    /**
+     * Machine facts (welcome wizard step 2, Settings → Brain) — the RAM
+     * budget a local model has to fit inside. Sibling of `localModels`
+     * above, same pure-proxy shape.
+     */
+    private readonly machine?: {
+      get(): Promise<Record<string, unknown>>;
+    },
   ) {}
 
   private clientSeq = 0;
@@ -1143,6 +1162,16 @@ export class TextChannel {
               .save(parsed)
               .then((r) => credJson((r as { error?: string } | null)?.error ? 400 : 200, r), credFail);
           });
+          return;
+        }
+        if (req.method === "GET" && url.pathname === "/local-models" && this.localModels) {
+          if (originBlocked()) return;
+          void this.localModels.list().then((v) => credJson(200, v), credFail);
+          return;
+        }
+        if (req.method === "GET" && url.pathname === "/machine" && this.machine) {
+          if (originBlocked()) return;
+          void this.machine.get().then((v) => credJson(200, v), credFail);
           return;
         }
         if (req.method === "GET" && url.pathname === "/connectors/vendors" && this.connectors) {

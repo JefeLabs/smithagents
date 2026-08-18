@@ -125,6 +125,8 @@ function channelWith(opts: {
   topics?: ConstructorParameters<typeof TextChannel>[27];
   research?: ConstructorParameters<typeof TextChannel>[29];
   brain?: ConstructorParameters<typeof TextChannel>[30];
+  localModels?: ConstructorParameters<typeof TextChannel>[31];
+  machine?: ConstructorParameters<typeof TextChannel>[32];
   onUtterance?: ConstructorParameters<typeof TextChannel>[0];
 }): TextChannel {
   return new TextChannel(
@@ -159,6 +161,8 @@ function channelWith(opts: {
     undefined, // groups — not exercised by this suite (pre-existing gap)
     opts.research,
     opts.brain,
+    opts.localModels,
+    opts.machine,
   );
 }
 
@@ -1422,6 +1426,106 @@ test("brain: clearing to null answers instead of hanging", async () => {
     });
     assert.equal(put.status, 200);
     assert.equal(await put.json(), null);
+  } finally {
+    await channel.stop();
+  }
+});
+
+const localModelsDep = {
+  list: async () => ({
+    servers: [
+      {
+        id: "lmstudio",
+        label: "LM Studio",
+        baseUrl: "http://127.0.0.1:1234",
+        models: [{ id: "llama-3", sizeBytes: null }],
+      },
+    ],
+  }),
+};
+
+test("localModels: GET /local-models is proxied when the localModels dep is wired", async () => {
+  // Same bug shape as /work-kinds and /me/brain-engine before them: this route
+  // lives only on the swarm (7777) until wired here, and the wizard's step 2
+  // talks to the broker on 7790 exclusively. This test fails (404) against a
+  // channel with no localModels route, which is the point.
+  const channel = channelWith({ localModels: localModelsDep });
+  const port = await channel.start(0);
+  try {
+    const got = await fetch(`http://127.0.0.1:${port}/local-models`, {
+      headers: { Origin: "http://localhost:1420" },
+    });
+    assert.equal(got.status, 200);
+    assert.deepEqual(await got.json(), {
+      servers: [
+        {
+          id: "lmstudio",
+          label: "LM Studio",
+          baseUrl: "http://127.0.0.1:1234",
+          models: [{ id: "llama-3", sizeBytes: null }],
+        },
+      ],
+    });
+  } finally {
+    await channel.stop();
+  }
+});
+
+test("localModels: a probe failure comes back carrying the swarm's own reason, not a bare failure", async () => {
+  const refusal = "local model probe failed";
+  const channel = channelWith({
+    localModels: {
+      list: async () => {
+        throw new Error(refusal);
+      },
+    },
+  });
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/local-models`, {
+      headers: { Origin: "http://localhost:1420" },
+    });
+    assert.equal(res.status, 500);
+    assert.deepEqual(await res.json(), { error: refusal });
+  } finally {
+    await channel.stop();
+  }
+});
+
+const machineDep = {
+  get: async () => ({ totalMemBytes: 17179869184 }),
+};
+
+test("machine: GET /machine is proxied when the machine dep is wired", async () => {
+  const channel = channelWith({ machine: machineDep });
+  const port = await channel.start(0);
+  try {
+    const got = await fetch(`http://127.0.0.1:${port}/machine`, {
+      headers: { Origin: "http://localhost:1420" },
+    });
+    assert.equal(got.status, 200);
+    assert.deepEqual(await got.json(), { totalMemBytes: 17179869184 });
+  } finally {
+    await channel.stop();
+  }
+});
+
+test("machine: a read failure comes back carrying the swarm's own reason, not a bare failure", async () => {
+  const refusal = "machine read failed";
+  const channel = channelWith({
+    machine: {
+      get: async () => {
+        throw new Error(refusal);
+      },
+    },
+  });
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/machine`, {
+      headers: { Origin: "http://localhost:1420" },
+    });
+    assert.equal(res.status, 500);
+    assert.deepEqual(await res.json(), { error: refusal });
   } finally {
     await channel.stop();
   }
