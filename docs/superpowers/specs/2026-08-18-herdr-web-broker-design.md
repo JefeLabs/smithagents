@@ -1,9 +1,9 @@
-# herdr-web-broker-plugin — Design
+# herdr-web-broker — Design
 
 **Date:** 2026-08-18
 **Status:** Approved design, ready for planning
 **Deliverable:** a standalone community plugin for the herdr marketplace — a new
-public GitHub repository (`herdr-web-broker-plugin`, tagged `herdr-plugin`),
+public GitHub repository (`herdr-web-broker`, tagged `herdr-plugin`),
 not a package
 in this monorepo. The spec lives here because smithagents is where the
 architecture happens; smithagents is also an eventual *client* of this plugin,
