@@ -736,6 +736,42 @@ describe("WizardGate", () => {
     expect(screen.getByRole("button", { name: /back/i })).toBeDisabled();
   });
 
+  it("the gate's own shortcut cannot be followed by a second, contradicting write", async () => {
+    // The other half of the same finding. `pickForMe` calls `advance(patch,
+    // true)`, and `finish` makes `next` null — so `if (next) setStep(next)`
+    // never runs and the gate step STAYS MOUNTED, both controls live, behind
+    // an unresolved `PUT {step:"done"}`. Clicking the primary next to it then
+    // fires `PUT {step:"subscriptions"}` against it: if `done` lands last the
+    // gate closes with the screen still on preflight, and if `subscriptions`
+    // does, setup reopens one moment after it finished.
+    let settle: (value: unknown) => void = () => {};
+    const { container, updateMe } = renderGate({ placeholder: true, setup: undefined });
+    await findHost(container);
+    // See the chip test above: module-level mocks, nothing auto-clears them,
+    // and the call count is the whole point of this test.
+    updateMe.mockClear();
+    updateMe.mockReturnValue(
+      new Promise((resolve) => {
+        settle = resolve;
+      }),
+    );
+
+    await userEvent.type(screen.getByLabelText(/what shall i call you/i), "Edwin");
+    await userEvent.click(screen.getByRole("button", { name: /just pick sensible things for me/i }));
+
+    // Still here — that is what makes this step unlike the ones that advance.
+    expect(await findHost(container)).toHaveAttribute("data-step", PREFLIGHT);
+    const go = () => screen.getByRole("button", { name: /nice to meet you/i });
+    expect(go()).toBeDisabled();
+    expect(screen.getByRole("button", { name: /just pick sensible things for me/i })).toBeDisabled();
+
+    await userEvent.click(go());
+    expect(updateMe).toHaveBeenCalledTimes(1);
+
+    settle({});
+    await waitFor(() => expect(go()).toBeEnabled());
+  });
+
   it("the step's own escape records the SAME 'skipped' the progress-row Skip does", async () => {
     // The two Skips on this one screen, side by side after a failed brain
     // save. `brainSkipped` exists so "skipped" and "never asked" stay

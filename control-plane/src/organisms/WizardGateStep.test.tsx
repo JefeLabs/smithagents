@@ -5,8 +5,13 @@ import { WizardGateStep } from "./WizardGateStep";
 
 const setup = (over = {}) => {
   const onDone = vi.fn();
-  render(<WizardGateStep initialName="" onDone={onDone} {...over} />);
-  return { onDone, user: userEvent.setup() };
+  // The render result comes back too, so a test can re-render this same
+  // component under a different `saveState` — the host's own answer arriving
+  // is a prop change, not a remount.
+  const result = render(<WizardGateStep initialName="" onDone={onDone} {...over} />);
+  const rerender = (next = {}) =>
+    result.rerender(<WizardGateStep initialName="" onDone={onDone} {...over} {...next} />);
+  return { onDone, rerender, user: userEvent.setup() };
 };
 
 describe("WizardGateStep", () => {
@@ -96,5 +101,51 @@ describe("WizardGateStep", () => {
   it("still needs a name — it picks the other things, not that one", () => {
     setup({ onPickForMe: vi.fn() });
     expect(screen.getByRole("button", { name: /just pick sensible things for me/i })).toBeDisabled();
+  });
+
+  it("neither control can start a second write while the host's own is in flight", async () => {
+    // This step is unlike every other one: "just pick sensible things for me"
+    // finishes setup rather than advancing, and `advance`'s `finish` branch
+    // has no next step to move to — so nothing swaps this component out and
+    // both controls are still live behind `PUT {step:"done"}`. Whichever of
+    // the two writes lands last is what the next reload resumes to.
+    const onPickForMe = vi.fn();
+    const { onDone, user } = setup({ onPickForMe, initialName: "Edwin", saveState: "saving" });
+
+    const go = screen.getByRole("button", { name: /nice to meet you/i });
+    const shortcut = screen.getByRole("button", { name: /just pick sensible things for me/i });
+    expect(go).toBeDisabled();
+    expect(shortcut).toBeDisabled();
+
+    // Inert, not merely dimmed — in this codebase a control can read as
+    // disabled and still take the click.
+    await user.click(go);
+    await user.click(shortcut);
+    expect(onDone).not.toHaveBeenCalled();
+    expect(onPickForMe).not.toHaveBeenCalled();
+  });
+
+  it("comes back to life when that write is over, however it ended", async () => {
+    // A window, not a ban. `=== "saving"` and never `!== "idle"`: a refused
+    // `PUT` rolls the host back to THIS step and reports the server's reason,
+    // and a gate whose only two controls stayed shut would leave the opening
+    // screen of first-run setup with nothing clickable on it. The pair of
+    // assertions is also what discriminates against a control that is simply
+    // always disabled.
+    const onPickForMe = vi.fn();
+    const { rerender, user } = setup({ onPickForMe, initialName: "Edwin", saveState: "saving" });
+    expect(screen.getByRole("button", { name: /nice to meet you/i })).toBeDisabled();
+
+    rerender({ saveState: "failed" });
+
+    expect(screen.getByRole("button", { name: /nice to meet you/i })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: /just pick sensible things for me/i }));
+    expect(onPickForMe).toHaveBeenCalledWith("Edwin", "local");
+  });
+
+  it("defaults to live when no host says otherwise", () => {
+    setup({ onPickForMe: vi.fn(), initialName: "Edwin" });
+    expect(screen.getByRole("button", { name: /nice to meet you/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /just pick sensible things for me/i })).toBeEnabled();
   });
 });

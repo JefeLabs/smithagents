@@ -2,7 +2,7 @@ import { Button } from "@heroui/react";
 import { RadioButtonGroup } from "@heroui-pro/react";
 import { useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
-import type { Setup, SetupMode } from "../lib/wizardSteps";
+import type { Setup, SetupMode, WizardSaveState } from "../lib/wizardSteps";
 import { FormTextField } from "../molecules/form";
 
 interface GateFormValues {
@@ -24,6 +24,20 @@ export interface WizardGateStepProps {
       drift from it. Absent for any caller that doesn't want the shortcut,
       which is what leaves the button unrendered rather than merely inert. */
   onPickForMe?: (name: string, mode: SetupMode) => void;
+  /**
+   * What became of the host's own last `PUT /me` — same prop, same meaning, as
+   * `WizardBrainStepProps["saveState"]`.
+   *
+   * Needed here for the reason the LAST step needs it, and it is easy to miss
+   * that this step has that shape too: "just pick sensible things for me"
+   * FINISHES setup rather than advancing, and `advance`'s `finish` branch
+   * computes no next step — so nothing swaps this component out, and both
+   * controls below stay live behind a `PUT {step:"done"}` that is still in
+   * flight. A click on the primary then sends `PUT {step:"subscriptions"}`
+   * against it, and the landing order decides whether the app opens with the
+   * screen still on the gate or setup reopens the moment it finished.
+   */
+  saveState?: WizardSaveState;
 }
 
 /** Non-blank after trimming — same rule NewContextModal's fields use. */
@@ -59,7 +73,13 @@ const filled = (v: string) => v.trim().length > 0;
  * omitted field would keep whatever was recorded before rather than clearing
  * it.
  */
-export function WizardGateStep({ initialName, initialMode = "local", onDone, onPickForMe }: WizardGateStepProps) {
+export function WizardGateStep({
+  initialName,
+  initialMode = "local",
+  onDone,
+  onPickForMe,
+  saveState = "idle",
+}: WizardGateStepProps) {
   const { control, handleSubmit } = useForm<GateFormValues>({ defaultValues: { name: initialName } });
   // Watched, not read from formState.errors: errors only exist after a
   // validation run, so gating on them would leave Continue enabled on a
@@ -67,6 +87,12 @@ export function WizardGateStep({ initialName, initialMode = "local", onDone, onP
   const name = useWatch({ control, name: "name" });
 
   const [mode, setMode] = useState<SetupMode>(initialMode);
+  // `=== "saving"` and never `!== "idle"`: a refused write rolls the host back
+  // to THIS step with the server's reason on screen, and a gate whose only two
+  // controls stayed shut past that would leave the opening screen of first-run
+  // setup with nothing to click. Same reading, same reason, as every other
+  // guard in this feature.
+  const writing = saveState === "saving";
 
   const submit = handleSubmit(({ name }) => onDone({ name: name.trim(), setup: { mode } }));
 
@@ -250,12 +276,12 @@ export function WizardGateStep({ initialName, initialMode = "local", onDone, onP
             type="button"
             className="wizard-gate__shortcut"
             onClick={() => onPickForMe((name ?? "").trim(), mode)}
-            disabled={!filled(name ?? "")}
+            disabled={!filled(name ?? "") || writing}
           >
             Just pick sensible things for me
           </button>
         )}
-        <Button type="submit" variant="primary" isDisabled={!filled(name ?? "")}>
+        <Button type="submit" variant="primary" isDisabled={!filled(name ?? "") || writing}>
           Nice to meet you →
         </Button>
       </div>
