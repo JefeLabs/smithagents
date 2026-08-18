@@ -505,7 +505,9 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
               Continue — the host's progress-row Skip above stays the only
               other way to reach that same patch, for a user who leaves
               before scrolling to this footer at all. */}
-          {step === "voice" && <WizardVoiceStep onDone={advance} onBack={onBack} saveState={saveState} />}
+          {step === "voice" && (
+            <WizardVoiceStep initialVoice={voice} onDone={advance} onBack={onBack} saveState={saveState} />
+          )}
         </div>
       </div>
     </div>

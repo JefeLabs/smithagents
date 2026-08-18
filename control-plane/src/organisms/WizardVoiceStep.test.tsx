@@ -72,12 +72,13 @@ function renderStep(
     voice?: VoiceSettingsRecord;
     onBack?: () => void;
     saveState?: WizardSaveState;
+    initialVoice?: boolean;
   } = {},
 ) {
   const calls = stubRoutes(opts.routes ?? {});
   const onDone = vi.fn();
   const element = (saveState: WizardSaveState) => (
-    <WizardVoiceStep onDone={onDone} onBack={opts.onBack} saveState={saveState} />
+    <WizardVoiceStep initialVoice={opts.initialVoice} onDone={onDone} onBack={opts.onBack} saveState={saveState} />
   );
   const result = renderWithProviders(element(opts.saveState ?? "idle"));
   result.client.setQueryData<ConnectorVendorMeta[]>(qk.connectorVendors, opts.vendors ?? VENDORS);
@@ -116,6 +117,25 @@ describe("WizardVoiceStep", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+  });
+
+  // --- Resumed answers ----------------------------------------------------
+
+  it("a resumed 'yes' seeds the radio to yes — a prior answer is not discarded", async () => {
+    // The discriminating wrong implementation is the one that SHIPPED before
+    // this test: a hardcoded "no" default. It looks right for fresh runs and
+    // for resumed voice:false — and silently resets a resumed voice:true,
+    // which Continue (explicit send, by design) would then OVERWRITE with
+    // false. Third appearance of the answer-flip class on this feature.
+    renderStep({ initialVoice: true });
+    expect(await screen.findByRole("radio", YES)).toBeChecked();
+    // And the hosted half is already open, since yes is the standing answer.
+    expect(await screen.findByRole("combobox", LISTEN)).toBeInTheDocument();
+  });
+
+  it("absent and false both seed to 'not right now' — declined is the default", async () => {
+    renderStep({ initialVoice: false });
+    expect(await screen.findByRole("radio", NOT_NOW)).toBeChecked();
   });
 
   // --- The spec's own copy -------------------------------------------------

@@ -61,6 +61,16 @@ type Check = { state: "checking" } | { state: "ok" } | { state: "failed"; detail
 
 export interface WizardVoiceStepProps {
   /**
+   * Seeds the Yes/No answer for a RESUMED record. Without this, a user who
+   * said yes, left mid-wizard, and returned would find the radio reset to
+   * "no" — and because Continue sends the answer EXPLICITLY (see onDone),
+   * continuing would overwrite their recorded `voice: true` with false. The
+   * third appearance of the answer-flip bug class on this feature; seeding
+   * is the other half of the explicit-send guarantee, same as the gate's
+   * `initialMode`.
+   */
+  initialVoice?: boolean;
+  /**
    * Always sends `voice` EXPLICITLY, in both directions. The server merges
    * setup (`{...existing.setup, ...body.setup}`), so a declined answer that
    * merely omitted the field would leave a `voice: true` from an earlier run
@@ -116,7 +126,7 @@ export interface WizardVoiceStepProps {
  * else. This step therefore asks the vendor itself, per chosen instance, via
  * the connectors' own verify route, and Continue waits on that answer.
  */
-export function WizardVoiceStep({ onDone, onBack, saveState = "idle" }: WizardVoiceStepProps) {
+export function WizardVoiceStep({ initialVoice = false, onDone, onBack, saveState = "idle" }: WizardVoiceStepProps) {
   const qc = useQueryClient();
   const { data: vendors = [] } = useConnectorVendors();
   const { data: connectors = [] } = useMyConnectors();
@@ -127,7 +137,7 @@ export function WizardVoiceStep({ onDone, onBack, saveState = "idle" }: WizardVo
   const verifyConnector = useVerifyConnector();
   const previewVoice = usePreviewVoice();
 
-  const [answer, setAnswer] = useState<"yes" | "no">("no");
+  const [answer, setAnswer] = useState<"yes" | "no">(initialVoice ? "yes" : "no");
   const [choice, setChoice] = useState<Partial<Record<VoiceSlot, string>>>({});
   const [checks, setChecks] = useState<Record<string, Check>>({});
   const [voiceId, setVoiceId] = useState<string | null>(null);
