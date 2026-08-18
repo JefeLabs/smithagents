@@ -9,6 +9,7 @@ import type {
   AgentRecordsResponse,
   ApiKeyListing,
   BlueprintT,
+  BrainEngineRecord,
   ChannelsRecord,
   CliToolListing,
   ComposeOp,
@@ -300,6 +301,25 @@ export async function saveResearchEngine(
     body: JSON.stringify(body),
   });
   return (await res.json()) as { cli?: string; model?: string; error?: string };
+}
+
+/** GET /me/brain-engine — sibling of getResearchEngine, for the conversational brain rather than research turns. */
+export async function getBrainEngine(base: string = BROKER_BASE): Promise<BrainEngineRecord | null> {
+  const res = await brokerFetch(`/me/brain-engine`, base);
+  return (await res.json()) as BrainEngineRecord | null;
+}
+
+/** PUT /me/brain-engine — `null` clears the setting; a refused choice comes back as `{error}`. */
+export async function saveBrainEngine(
+  body: { kind: BrainEngineRecord["kind"]; provider: string; model?: string; baseUrl?: string } | null,
+  base: string = BROKER_BASE,
+): Promise<{ kind?: BrainEngineRecord["kind"]; provider?: string; model?: string; error?: string }> {
+  const res = await brokerFetch(`/me/brain-engine`, base, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return (await res.json()) as { kind?: BrainEngineRecord["kind"]; provider?: string; model?: string; error?: string };
 }
 
 /** GET /me — the operator's own profile. */

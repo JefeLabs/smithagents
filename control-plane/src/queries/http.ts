@@ -9,6 +9,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "../api/broker";
 import type {
   ApiKeyListing,
+  BrainEngineRecord,
   ChannelsRecord,
   CliToolListing,
   MeRecord,
@@ -85,6 +86,10 @@ export function useVoiceSettings() {
 
 export function useResearchEngine() {
   return useQuery({ queryKey: qk.researchEngine, queryFn: () => api.getResearchEngine() });
+}
+
+export function useBrainEngine() {
+  return useQuery({ queryKey: qk.brainEngine, queryFn: () => api.getBrainEngine() });
 }
 
 export function useMe() {
@@ -185,6 +190,23 @@ export function useSaveResearchEngine() {
         ? { cli: result.cli, model: result.model }
         : null;
       qc.setQueryData(qk.researchEngine, value);
+    },
+  });
+}
+
+export function useSaveBrainEngine() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (
+      body: { kind: BrainEngineRecord["kind"]; provider: string; model?: string; baseUrl?: string } | null,
+    ) => api.saveBrainEngine(body),
+    // Same "commit only when the response carries no `error`" contract as useSaveResearchEngine.
+    onSuccess: (result) => {
+      if (result?.error) return;
+      const value: BrainEngineRecord | null = result?.kind
+        ? { kind: result.kind, provider: result.provider ?? "", model: result.model }
+        : null;
+      qc.setQueryData(qk.brainEngine, value);
     },
   });
 }

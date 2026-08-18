@@ -4239,13 +4239,22 @@ button.logo {
   opacity: 0.5;
 }
 
-/* Welcome wizard — Name and Fork steps (Task 3, 2026-08-17). Minimal on
+/* Welcome wizard — Name, Fork, and Brain steps (Tasks 3-4, 2026-08-17). Minimal on
    purpose: this plan is the shell, layout polish is a later pass. */
 .wizard-name-step,
-.wizard-fork-step {
+.wizard-fork-step,
+.wizard-brain-step {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+.wizard-brain-step__prompt {
+  font-size: 13px;
+  color: var(--text-2);
+  margin: 0;
+}
+.wizard-brain-step__label {
+  font-weight: 600;
 }
 .wizard-fork-step__prompt {
   font-size: 13px;

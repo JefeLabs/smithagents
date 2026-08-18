@@ -6,6 +6,7 @@ import type { MeRecord } from "../api/types";
 import { isSetupComplete, nextStep, resumeStep, SETUP_DONE, type WizardStep } from "../lib/wizardSteps";
 import { useMe } from "../queries/http";
 import { qk } from "../queries/keys";
+import { WizardBrainStep } from "./WizardBrainStep";
 import { WizardForkStep } from "./WizardForkStep";
 import { WizardNameStep } from "./WizardNameStep";
 import { WizardSubscriptionsStep } from "./WizardSubscriptionsStep";
@@ -152,6 +153,7 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
       {step === "name" && <WizardNameStep initialName={me.placeholder ? "" : me.name} onDone={advance} />}
       {step === "fork" && <WizardForkStep onDone={advance} />}
       {step === "subscriptions" && <WizardSubscriptionsStep onDone={advance} />}
+      {step === "brain" && <WizardBrainStep onDone={advance} />}
     </div>
   );
 }

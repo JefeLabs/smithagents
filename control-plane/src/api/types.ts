@@ -295,6 +295,20 @@ export interface MeRecord {
   setup?: { mode?: "local" | "hosted"; step?: string };
 }
 
+/**
+ * Which engine backs the conversational brain — mirrors swarm's `BrainEngine`
+ * (swarm/src/users.ts); no shared package crosses this boundary, same as
+ * every other wire shape in this file.
+ */
+export interface BrainEngineRecord {
+  kind: "cli" | "local" | "api";
+  /** cli: a CLI id ("claude") · local: a server id ("lmstudio") · api: "anthropic" | "gemini" */
+  provider: string;
+  model?: string;
+  /** local only — where the OpenAI-compatible server listens. */
+  baseUrl?: string;
+}
+
 /** Per-workspace channel config — Discord token read back as a boolean, never the secret itself. */
 export interface ChannelsRecord {
   hasDiscordToken: boolean;
