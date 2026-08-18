@@ -143,7 +143,9 @@ describe("WizardSubscriptionsStep", () => {
       },
     });
     // Same class-aware guidance CliToolsGroup renders in Settings — proves
-    // this step is the real screen, not a re-implementation.
-    expect(await screen.findByRole("link", { name: /install/i })).toBeInTheDocument();
+    // this step is the real screen, not a re-implementation. (No link: per
+    // Edwin's ruling, `missing` names the problem and stops — see
+    // CliToolsGroup.tsx's guidanceFor.)
+    expect(await screen.findByText(/install codex/i)).toBeInTheDocument();
   });
 });

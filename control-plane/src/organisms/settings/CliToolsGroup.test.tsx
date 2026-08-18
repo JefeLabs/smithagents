@@ -91,21 +91,24 @@ describe("CliToolsGroup", () => {
   });
 
   describe("class-aware guidance (spec: name the right problem, not one collapsed 'unavailable')", () => {
-    it("tells a missing tool to install, not to log in", async () => {
+    it("tells a missing tool to install, not to log in — names the problem, no link (Edwin's ruling)", async () => {
       renderCliTools({ tools: { codex: { detected: false, failure: "missing", detail: "binary not found on PATH" } } });
       // `findByText` requires a UNIQUE match — the brief's original
       // `/not found|install/i` alternation stops being unique the moment a
-      // real "install" link exists alongside the pre-existing "not found"
-      // detail line (two distinct, both-correct elements), so this is split
-      // into its two unambiguous halves rather than weakened.
+      // real "install" instruction exists alongside the pre-existing "not
+      // found" detail line (two distinct, both-correct elements), so this is
+      // split into its two unambiguous halves rather than weakened.
       expect(await screen.findByText(/not found/i)).toBeInTheDocument();
       expect(screen.queryByText(/log ?in/i)).toBeNull();
       // Strengthened: the two lines above already pass off the PRE-EXISTING
       // detail rendering alone (CliToolsGroup has always echoed `detail`
       // beside the pill) — they would hold even with zero guidance code
-      // added. Prove a real fix-it affordance landed: a way to actually go
-      // install it, and nothing resembling a login command.
-      expect(screen.getByRole("link", { name: /install/i })).toBeInTheDocument();
+      // added. Prove the real fix-it affordance landed: naming the binary to
+      // install, as plain text — and, per Edwin's ruling, NO link at all (a
+      // search link reads unfinished beside the precise `codex login`
+      // command the unauthenticated case genuinely has) and no copy button.
+      expect(screen.getByText(/install codex/i)).toBeInTheDocument();
+      expect(screen.queryByRole("link")).toBeNull();
       expect(screen.queryByRole("button", { name: /copy/i })).toBeNull();
     });
 
@@ -165,7 +168,7 @@ describe("CliToolsGroup", () => {
       expect(screen.queryByRole("button", { name: /copy/i })).toBeNull();
     });
 
-    it("a billing-blocked tool links out to the vendor instead of offering a login command", async () => {
+    it("a billing-blocked tool names the issue with no link and no login command (Edwin's ruling)", async () => {
       // Forward compatibility only — no probe in this codebase sets 'billing'
       // today (cli-tools.ts's own doc comment). Exercised via a hand-built
       // fixture, same as the wizard's disabled-key test below.
@@ -174,7 +177,8 @@ describe("CliToolsGroup", () => {
           codex: { detected: true, authOk: false, failure: "billing", detail: "workspace deactivated — billing" },
         },
       });
-      expect(await screen.findByRole("link", { name: /billing/i })).toBeInTheDocument();
+      expect(await screen.findByText(/billing issue/i)).toBeInTheDocument();
+      expect(screen.queryByRole("link")).toBeNull();
       expect(screen.queryByRole("button", { name: /copy/i })).toBeNull();
     });
 
@@ -214,10 +218,10 @@ describe("CliToolsGroup", () => {
       expect(guidanceFor(listing(null))).toBeNull();
     });
 
-    it("missing -> names the binary and links out, never a fabricated install command", () => {
+    it("missing -> names the binary to install, never a fabricated command, no link (Edwin's ruling)", () => {
       const g = guidanceFor(listing(st({ detected: false, failure: "missing", detail: "codex not found on PATH" })));
       expect(g?.code).toBeUndefined();
-      expect(g?.linkHref).toMatch(/^https:\/\//);
+      expect(g?.note).toMatch(/install codex/i);
     });
 
     it("unauthenticated -> extracts the exact backtick-quoted command from detail", () => {
@@ -225,18 +229,17 @@ describe("CliToolsGroup", () => {
         listing(st({ authOk: false, failure: "unauthenticated", detail: "not logged in — run `codex login`" })),
       );
       expect(g?.code).toBe("codex login");
-      expect(g?.linkHref).toBeUndefined();
+      expect(g?.note).toMatch(/re-check/i);
     });
 
-    it("billing -> links out, no command to copy", () => {
+    it("billing -> names the issue, no command to copy, no link (Edwin's ruling)", () => {
       const g = guidanceFor(listing(st({ authOk: false, failure: "billing", detail: "workspace deactivated" })));
       expect(g?.code).toBeUndefined();
-      expect(g?.linkHref).toBeDefined();
+      expect(g?.note).toMatch(/billing/i);
     });
 
     it("policy -> says there is no generic fix, without repeating the detail already shown above it", () => {
       const g = guidanceFor(listing(st({ authOk: false, failure: "policy", detail: "org policy blocks it" })));
-      expect(g?.linkHref).toBeUndefined();
       expect(g?.code).toBeUndefined();
       expect(g?.note).toMatch(/no generic fix/i);
     });

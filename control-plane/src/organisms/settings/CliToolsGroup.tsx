@@ -19,25 +19,11 @@ export interface ToolGuidance {
   note: string;
   /** An exact, copyable command — only ever sourced from the probe's own `detail`, never invented. */
   code?: string;
-  linkHref?: string;
-  linkLabel?: string;
 }
 
 /** The backtick-quoted substring of a driver's `detail`, e.g. "codex login" out of "not logged in — run `codex login`". */
 function extractCommand(detail: string): string | undefined {
   return detail.match(/`([^`]+)`/)?.[1];
-}
-
-/**
- * No vendor page for any of these five CLIs is sourced anywhere in this
- * codebase (`DEFAULT_AGENT_COMMANDS` in swarm/src/config.ts has only the
- * binary, not how to get it — and it is vendor-specific). A search link is
- * the honest fallback: a real, working URL that makes no claim about WHERE
- * the answer lives, unlike a guessed vendor domain or a fabricated install
- * command would.
- */
-function searchLink(query: string): string {
-  return `https://www.google.com/search?q=${encodeURIComponent(query)}`;
 }
 
 /**
@@ -48,6 +34,17 @@ function searchLink(query: string): string {
  * "unknown"` is ACTIVE, never inactive (cli-tools.ts's own isActive/gate
  * rule — block only confirmed negatives), so those keep today's rendering
  * unchanged, exactly as the spec's class table requires.
+ *
+ * `missing` and `billing` name the problem and stop — no link. A prior draft
+ * linked out to a search query (no real install/billing URL is sourced
+ * anywhere in this codebase — see swarm/src/config.ts's DEFAULT_AGENT_COMMANDS,
+ * binary only), but Edwin ruled it out: a search link reads unfinished sitting
+ * beside `unauthenticated`'s genuinely precise, copyable command, and the two
+ * rows should not look unequal. Curating five vendors' install commands by
+ * hand was the alternative, and it buys a table that rots silently. So this
+ * under-delivers on the spec's "hand over the exact command" for `missing`,
+ * knowingly — the re-check button (always rendered, one level up) is the rest
+ * of the answer.
  *
  * `billing` and `policy` are exercised only by hand-built test fixtures
  * today — no driver in this codebase sets them (cli-tools.ts's own doc
@@ -60,11 +57,7 @@ export function guidanceFor(t: CliToolListing): ToolGuidance | null {
   const detail = status.detail;
   switch (status.failure) {
     case "missing":
-      return {
-        note: `Install ${t.cli}, then re-check.`,
-        linkHref: searchLink(`install ${t.label}`),
-        linkLabel: "how to install",
-      };
+      return { note: `Install ${t.cli}, then re-check.` };
     case "unauthenticated": {
       const code = extractCommand(detail);
       return code ? { note: "Run this, then re-check.", code } : { note: detail || "Not logged in." };
@@ -72,11 +65,7 @@ export function guidanceFor(t: CliToolListing): ToolGuidance | null {
     case "billing":
       // `detail` is already shown above, next to the pill — the note here is
       // additive (why to look, not a repeat of what it already said).
-      return {
-        note: "There may be a billing issue with this subscription.",
-        linkHref: searchLink(`${t.label} billing`),
-        linkLabel: "billing",
-      };
+      return { note: "There may be a billing issue with this subscription." };
     case "policy":
       // No generic fix for a policy block — the detail prose above (next to
       // the pill) is the whole answer; this says so rather than echoing it.
@@ -106,11 +95,6 @@ function ToolGuidanceBlock({ guidance }: { guidance: ToolGuidance | null }) {
             copy
           </button>
         </div>
-      )}
-      {guidance.linkHref && (
-        <a className="connector-guidance__link" href={guidance.linkHref} target="_blank" rel="noreferrer">
-          → {guidance.linkLabel}
-        </a>
       )}
     </div>
   );
