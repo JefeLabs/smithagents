@@ -6,7 +6,7 @@
  * step precedes every optional one (spec) — someone who abandons the wizard
  * after a required step still has a working app.
  */
-export const WIZARD_STEPS = ["name", "fork"] as const;
+export const WIZARD_STEPS = ["name", "fork", "subscriptions"] as const;
 
 export type WizardStep = (typeof WIZARD_STEPS)[number];
 

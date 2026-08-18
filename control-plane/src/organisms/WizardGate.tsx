@@ -8,6 +8,7 @@ import { useMe } from "../queries/http";
 import { qk } from "../queries/keys";
 import { WizardForkStep } from "./WizardForkStep";
 import { WizardNameStep } from "./WizardNameStep";
+import { WizardSubscriptionsStep } from "./WizardSubscriptionsStep";
 
 /**
  * Mirrors the app shell's own mobile breakpoint (`components.css`'s 768px
@@ -150,6 +151,7 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
       {error && <p className="wizard-gate__error">{error}</p>}
       {step === "name" && <WizardNameStep initialName={me.placeholder ? "" : me.name} onDone={advance} />}
       {step === "fork" && <WizardForkStep onDone={advance} />}
+      {step === "subscriptions" && <WizardSubscriptionsStep onDone={advance} />}
     </div>
   );
 }
