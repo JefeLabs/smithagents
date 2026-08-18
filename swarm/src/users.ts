@@ -45,7 +45,7 @@ export interface User {
    * spec makes the user record the resume anchor — a fresh browser profile must
    * still resume where the person left off.
    */
-  setup?: { mode?: "local" | "hosted"; step?: string };
+  setup?: { mode?: "local" | "hosted"; voice?: boolean; step?: string };
 }
 
 export interface BrainEngine {
