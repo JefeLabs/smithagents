@@ -20,7 +20,7 @@ import {
 import { useMe } from "../queries/http";
 import { qk } from "../queries/keys";
 import { WizardBrainStep } from "./WizardBrainStep";
-import { WizardPreflightStep } from "./WizardPreflightStep";
+import { WizardGateStep } from "./WizardGateStep";
 import { WizardSubscriptionsStep } from "./WizardSubscriptionsStep";
 
 /**
@@ -297,7 +297,9 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
           {step === PREFLIGHT && (
             // Seeded with the answers already given, so backing up into this
             // screen shows what the user said rather than a blank form.
-            <WizardPreflightStep initialName={name} initialMode={mode} onDone={advance} />
+            // `onPickForMe` is Task 5's wire — absent here, which is what
+            // leaves the button inert until the step registry supplies it.
+            <WizardGateStep initialName={name} initialMode={mode} onDone={advance} />
           )}
           {step === "subscriptions" && (
             <WizardSubscriptionsStep onDone={advance} onBack={onBack} saveState={saveState} />

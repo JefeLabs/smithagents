@@ -243,8 +243,8 @@ describe("WizardGate", () => {
     );
 
     await screen.findByRole("heading", { name: /welcome/i });
-    await userEvent.type(screen.getByLabelText(/your name/i), "Edwin");
-    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await userEvent.type(screen.getByLabelText(/what shall i call you/i), "Edwin");
+    await userEvent.click(screen.getByRole("button", { name: /nice to meet you/i }));
 
     // The step still advances optimistically (blocking on the network would be
     // worse) — what must never happen is the failure going unreported.
@@ -265,8 +265,8 @@ describe("WizardGate", () => {
     );
 
     await screen.findByRole("heading", { name: /welcome/i });
-    await userEvent.type(screen.getByLabelText(/your name/i), "Edwin");
-    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await userEvent.type(screen.getByLabelText(/what shall i call you/i), "Edwin");
+    await userEvent.click(screen.getByRole("button", { name: /nice to meet you/i }));
 
     expect(await screen.findByText(/origin not allowed/i)).toBeInTheDocument();
     // Unlike a network blip, a server-reported rejection is a firm "no" — the
@@ -324,8 +324,8 @@ describe("WizardGate", () => {
     const { container, updateMe } = renderGate({ placeholder: true, setup: undefined });
 
     const host = await findHost(container);
-    await userEvent.type(screen.getByLabelText(/your name/i), "Edwin");
-    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await userEvent.type(screen.getByLabelText(/what shall i call you/i), "Edwin");
+    await userEvent.click(screen.getByRole("button", { name: /nice to meet you/i }));
 
     // Read from state instead of from the patch, `mode` is still undefined at
     // this point — `setupStepsFor` returns nothing for it, so the wizard would
@@ -406,7 +406,7 @@ describe("WizardGate", () => {
   });
 
   it("backing into preflight shows the answers already given, not a blank form", async () => {
-    // Seeding is half of a guarantee whose other half is WizardPreflightStep
+    // Seeding is half of a guarantee whose other half is WizardGateStep
     // sending `mode` EXPLICITLY on every submit. Unseeded, Back lands on a
     // preflight whose name field is empty (Continue disabled until it is
     // retyped) — the explicit send exists to stop the server's merge from
@@ -416,14 +416,14 @@ describe("WizardGate", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: /back/i }));
 
-    expect(await screen.findByLabelText(/your name/i)).toHaveValue("Edwin");
+    expect(await screen.findByLabelText(/what shall i call you/i)).toHaveValue("Edwin");
     // The user-visible consequence of losing the name seed, asserted directly.
-    expect(screen.getByRole("button", { name: /continue/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /nice to meet you/i })).toBeEnabled();
     // The MODE seed is asserted in the test below instead, not here: a record
     // that reaches this screen by pressing Back necessarily has mode "local"
     // (no other mode has a step to come back from), and "local" is also
-    // WizardPreflightStep's own default — so `expect(local).toBeChecked()`
-    // here would hold whether or not the seed is passed or read at all.
+    // WizardGateStep's own default — so `expect(machine).toBeChecked()` here
+    // would hold whether or not the seed is passed or read at all.
   });
 
   it("hands preflight the mode already recorded, not the step's own default", async () => {
@@ -435,14 +435,14 @@ describe("WizardGate", () => {
     const { container } = renderGate({ name: "Edwin", setup: { mode: "hosted", step: "anderson" } });
 
     expect(await findHost(container)).toHaveAttribute("data-step", "preflight");
-    expect(await screen.findByRole("radio", { name: /local/i })).not.toBeChecked();
+    expect(await screen.findByRole("radio", { name: /on your machine/i })).not.toBeChecked();
   });
 
   it("offers no Back on preflight — it is the beginning", async () => {
     // Kept, and labelled, because it does NOT test what its name suggests.
     //
     // It pins a real user-visible contract — the first screen has no way
-    // backwards — but that contract is satisfied by WizardPreflightStep's own
+    // backwards — but that contract is satisfied by WizardGateStep's own
     // markup (it renders no Back under any props), not by the host's
     // `prevStep(step, answers) ? goBack : undefined`. So it cannot fail for a
     // host that computes `onBack` wrongly in the permissive direction.
@@ -493,8 +493,8 @@ describe("WizardGate", () => {
       }),
     );
 
-    await userEvent.type(screen.getByLabelText(/your name/i), "Edwin");
-    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await userEvent.type(screen.getByLabelText(/what shall i call you/i), "Edwin");
+    await userEvent.click(screen.getByRole("button", { name: /nice to meet you/i }));
 
     expect(await findHost(container)).toHaveAttribute("data-step", "subscriptions");
     expect(screen.getByRole("button", { name: /back/i })).toBeDisabled();
