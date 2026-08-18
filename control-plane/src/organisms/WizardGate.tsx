@@ -374,7 +374,9 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
             `mode` is settled, which every step past preflight guarantees
             (a "hosted" answer's sequence is empty, so the host never lands
             on a post-preflight step without a "local" mode in hand). */}
-        {step !== PREFLIGHT && <WizardChip name={name} mode={mode ?? "local"} clears={clears} onEdit={editAnswers} />}
+        {step !== PREFLIGHT && (
+          <WizardChip name={name} mode={mode ?? "local"} clears={clears} onEdit={editAnswers} saveState={saveState} />
+        )}
         {/* Never over preflight: an indicator there would assert an order that
             preflight's own answers have not chosen yet (its sequence is empty
             until the mode is known). Otherwise display-only — no

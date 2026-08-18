@@ -1,6 +1,6 @@
 import { Button } from "@heroui/react";
 import { useState } from "react";
-import type { SetupMode } from "../lib/wizardSteps";
+import type { SetupMode, WizardSaveState } from "../lib/wizardSteps";
 import { ModalShell } from "./form";
 
 export interface WizardChipProps {
@@ -10,6 +10,21 @@ export interface WizardChipProps {
   /** Steps already answered, so the chip knows whether editing costs anything. */
   clears: readonly string[];
   onEdit: () => void;
+  /**
+   * What became of the host's own last `PUT /me` — same prop, same meaning, as
+   * `WizardBrainStepProps["saveState"]`, and read for the same reason.
+   *
+   * This control needs it more than any footer does. A Back moves one step and
+   * lives on a step the host swaps out; the chip reaches preflight from ANY
+   * post-preflight step and stays mounted on all of them — including the last,
+   * where nothing swaps out and the step below it goes deliberately inert
+   * behind `PUT {step:"done"}`. And on the FIRST setup step `clears` is empty,
+   * so there is no confirm dialog between the click and the write. Left
+   * ungated it is the fastest way in this wizard to put two `PUT /me`
+   * disagreeing about `step` in flight at once — the exact race
+   * `WizardSaveState` exists to close.
+   */
+  saveState?: WizardSaveState;
 }
 
 /** Mirrors WizardGateStep's own wording for the two modes — one source of truth for the phrase, not a second one invented here. */
@@ -35,7 +50,7 @@ const MODE_LABEL: Record<SetupMode, string> = {
  * both fail the spec's "says so specifically" — this always itemizes, never
  * summarizes, so the two can't collapse into each other.
  */
-export function WizardChip({ name, mode, clears, onEdit }: WizardChipProps) {
+export function WizardChip({ name, mode, clears, onEdit, saveState = "idle" }: WizardChipProps) {
   const [confirming, setConfirming] = useState(false);
 
   const requestEdit = () => {
@@ -48,7 +63,12 @@ export function WizardChip({ name, mode, clears, onEdit }: WizardChipProps) {
 
   return (
     <>
-      <button type="button" className="wizard-chip" onClick={requestEdit}>
+      {/* Native `disabled`, not a class or `aria-disabled`: it closes the
+          pointer and the keyboard together, the same choice
+          `.wizard-gate__skip` made for the same reason. `=== "saving"` and
+          never `!== "idle"` — a write that FAILED is over, and a chip held
+          shut past it is the dead end WizardSaveState's own comment names. */}
+      <button type="button" className="wizard-chip" onClick={requestEdit} disabled={saveState === "saving"}>
         Anderson · {MODE_LABEL[mode]} <span aria-hidden="true">✎</span>
       </button>
       <ModalShell open={confirming} onClose={() => setConfirming(false)} title="Change your answers?">

@@ -4704,9 +4704,17 @@ fieldset.wizard-fork-step > .wizard-fork-step__prompt {
   font-size: 12.5px;
   cursor: pointer;
 }
-.wizard-chip:hover {
+.wizard-chip:hover:not(:disabled) {
   border-color: var(--accent);
   color: var(--foreground);
+}
+/* Inert while the host's own `PUT /me` is in flight (WizardChip's `saveState`),
+   dressed the same way `.wizard-gate__skip:disabled` beside it already is —
+   and `:not(:disabled)` on the hover rule above, so a chip that cannot be
+   clicked does not light its border up as though it could. */
+.wizard-chip:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 /* The confirm dialog's own copy (WizardChip's ModalShell body) — sized down
    from the panel's 13-15px body text since this is a secondary, momentary

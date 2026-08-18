@@ -650,6 +650,49 @@ describe("WizardGate", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /back/i })).toBeEnabled());
   });
 
+  it("the chip cannot race it either — and it is the control with nothing to slow it down", async () => {
+    // Back is guarded; the chip sits directly above it and was not. It is the
+    // one control that can reach preflight from ANY post-preflight step, and
+    // on the FIRST setup step `clears` is empty, so `requestEdit` skips the
+    // confirm dialog entirely and calls `onEdit` on the bare click. Left live,
+    // that is `PUT {step:"preflight"}` fired against an unresolved
+    // `PUT {step:"subscriptions"}` — and `resumeStep` reads whichever the
+    // server ends up holding, not what is on screen, so the losing order
+    // throws the user forward past the very answers the chip went back for.
+    let settle: (value: unknown) => void = () => {};
+    const { container, updateMe } = renderGate({ placeholder: true, setup: undefined });
+    await findHost(container);
+    // This suite's mocks are module-level and nothing auto-clears them between
+    // tests (no `clearMocks` in the vite config), so a call COUNT — which is
+    // what makes this a race test rather than a styling one — has to start
+    // from a known zero. The same reason the last-step tests below clear it.
+    updateMe.mockClear();
+    updateMe.mockReturnValue(
+      new Promise((resolve) => {
+        settle = resolve;
+      }),
+    );
+
+    await userEvent.type(screen.getByLabelText(/what shall i call you/i), "Edwin");
+    await userEvent.click(screen.getByRole("button", { name: /nice to meet you/i }));
+
+    expect(await findHost(container)).toHaveAttribute("data-step", "subscriptions");
+    const chip = () => screen.getByRole("button", { name: /anderson · on your machine/i });
+    expect(chip()).toBeDisabled();
+
+    // Not merely dimmed: no dialog, no second write, and the step does not
+    // move. Asserting the call count is what makes this a race test rather
+    // than a styling one.
+    await userEvent.click(chip());
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(updateMe).toHaveBeenCalledTimes(1);
+    expect(await findHost(container)).toHaveAttribute("data-step", "subscriptions");
+
+    // A window, not a ban — same as Back beside it.
+    settle({});
+    await waitFor(() => expect(chip()).toBeEnabled());
+  });
+
   it("a refused save on the LAST step leaves the footer something to click", async () => {
     // The refusal shape: `brokerFetch` never throws on a non-2xx, so an origin
     // block, a credential failure, or swarm-side validation all RESOLVE with
