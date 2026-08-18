@@ -23,6 +23,8 @@ import type {
   MachineFacts,
   MeRecord,
   Target,
+  VoiceOption,
+  VoicePreviewResult,
   VoiceSettingsRecord,
   WorkKindT,
   WorkspaceRecord,
@@ -292,6 +294,40 @@ export async function saveVoiceSettings(
 export async function getResearchEngine(base: string = BROKER_BASE): Promise<{ cli: string; model?: string } | null> {
   const res = await brokerFetch(`/me/research-engine`, base);
   return (await res.json()) as { cli: string; model?: string } | null;
+}
+
+/**
+ * GET /voice/options — the wizard's "How should I sound?" list.
+ *
+ * Broker-native (TTS lives on the broker; there is no swarm hop here), and
+ * unauthenticated by design — it names voices, never a credential. An
+ * unreadable body yields `[]`, which is an honest "nothing to choose from"
+ * for a screen whose voice picker is optional; a network failure still throws,
+ * so the caller's query lands in `error` rather than in an empty success.
+ */
+export async function getVoiceOptions(base: string = BROKER_BASE): Promise<VoiceOption[]> {
+  const res = await brokerFetch(`/voice/options`, base);
+  return ((await res.json()) as { options?: VoiceOption[] }).options ?? [];
+}
+
+/**
+ * POST /voice/preview — say one line out loud.
+ *
+ * Resolves either the audio or `{error}`; see `VoicePreviewResult`. `text` is
+ * omitted unless the caller has a line of its own — the broker holds Anderson's
+ * default one (`VOICE_PREVIEW_LINE`), so sending a copy from here would be a
+ * second place his preview line is written.
+ */
+export async function previewVoice(
+  body: { voiceId: string; text?: string },
+  base: string = BROKER_BASE,
+): Promise<VoicePreviewResult> {
+  const res = await brokerFetch(`/voice/preview`, base, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return (await res.json()) as VoicePreviewResult;
 }
 
 /** PUT /me/research-engine */

@@ -1806,6 +1806,8 @@ button.logo {
 .wizard__form textarea,
 .wizard__form select,
 .wizard-roles-step__role select,
+.wizard-voice-step__slot select,
+.wizard-voice-step__preview select,
 .voice-browser input {
   padding: 7px 10px;
   border-radius: 10px;
@@ -1818,7 +1820,9 @@ button.logo {
 /* Native select chrome ignores the panel's theme, so draw our own caret and
    let the control inherit the same surface as every other field. */
 .wizard__form select,
-.wizard-roles-step__role select {
+.wizard-roles-step__role select,
+.wizard-voice-step__slot select,
+.wizard-voice-step__preview select {
   appearance: none;
   cursor: pointer;
   padding-right: 28px;
@@ -1836,7 +1840,9 @@ button.logo {
 /* The dropdown list itself is drawn by the OS — give it readable colors in
    both themes rather than leaving it white-on-white in dark mode. */
 .wizard__form select option,
-.wizard-roles-step__role select option {
+.wizard-roles-step__role select option,
+.wizard-voice-step__slot select option,
+.wizard-voice-step__preview select option {
   background: var(--panel, #1a1a1a);
   color: var(--text);
 }
@@ -4663,6 +4669,92 @@ button.logo {
   line-height: 1.5;
   color: var(--text-2);
 }
+/* Step 3 of the welcome wizard — *Talking out loud* (WizardVoiceStep). Three
+   questions stacked, the last two revealed only once the answer is yes, so the
+   column has to read as one screen rather than as three that appeared. Same
+   12px rhythm and the same title treatment as the two steps before it.
+
+   NOTHING here paints a background. The panel is already `--surface-raised`
+   (see `.wizard-gate__panel`), which is the only raised token the five themes
+   agree on, so a sub-surface inside it would have to be either that same
+   colour — invisible — or `--surface`, which reads as a DARKER band in the
+   dark themes. The slot rows group by spacing and by the labels themselves
+   instead.
+
+   NOT VERIFIED IN A BROWSER: jsdom has no layout, so these values are carried
+   over from `.wizard-roles-step` rather than measured. The walk owns
+   confirming them, at 1280x900, sand included. */
+.wizard-voice-step {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+/* Every question on this step is an `<h2>` at the same tier — there is no
+   `<h1>` on a setup step at all (see WizardGate for the ruling), and the two
+   later questions are follow-ups rather than subordinate sections, so they
+   must not step down a size. */
+.wizard-voice-step__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--foreground);
+}
+.wizard-voice-step__slots {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* Label left, chooser right — the spec's own sentence broken over two rows
+   ("I'll listen with [ ... ]" / "and speak with [ ... ]"). The check result
+   sits BELOW its row rather than beside it, hence the wrap: a vendor's refusal
+   is a sentence, not a badge, and squeezing it onto the line would shrink the
+   chooser next to it. */
+.wizard-voice-step__slot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+.wizard-voice-step__slot label {
+  font-size: 13px;
+  color: var(--text-2);
+}
+/* Width only. The select chrome — the drawn caret, the field surface, the
+   option colours — is NOT redefined here: both of this step's selectors join
+   `.wizard__form select`'s existing lists further up, the same way the roles
+   step's did, so the four screens that draw a dropdown have one home for it
+   and cannot drift apart in any of the five themes. */
+.wizard-voice-step__slot select {
+  flex: 0 1 320px;
+  min-width: 0;
+}
+/* The check result claims the whole width of the row it wraps under, so a
+   long refusal sets as a paragraph instead of a ragged column beside the
+   chooser. */
+.wizard-voice-step__slot > p {
+  flex-basis: 100%;
+  margin: 0;
+}
+/* "Check it again" sits at the end of the refusal sentence it answers, inline
+   with it. `.wizard-gate__quiet` carries no margins of its own — every other
+   use of it is a footer child in a flex row with a `gap` — so the word-space
+   is added here rather than there. */
+.wizard-voice-step__slot .wizard-gate__quiet {
+  margin-inline-start: 6px;
+}
+/* Voice picker and ▶ on one line: the button previews what the picker
+   selects, and separating them would break that pairing. */
+.wizard-voice-step__preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.wizard-voice-step__preview select {
+  flex: 0 1 220px;
+  min-width: 0;
+}
 .wizard-fork-step__prompt {
   font-size: 13px;
   color: var(--text-2);
@@ -4716,7 +4808,8 @@ fieldset.wizard-fork-step > .wizard-fork-step__prompt {
    pointer-events cut on the whole row — not just the hidden input — so a
    click anywhere on the label can never reach it. See WizardForkStep.tsx's
    file comment for why this is hand-authored rather than HeroUI's Radio. */
-.wizard-fork-step__hosted[aria-disabled="true"] {
+.wizard-fork-step__hosted[aria-disabled="true"],
+.wizard-voice-step__ondevice[aria-disabled="true"] {
   opacity: 0.55;
   pointer-events: none;
 }
@@ -4727,16 +4820,20 @@ fieldset.wizard-fork-step > .wizard-fork-step__prompt {
    text. Two columns fix both — the input gets its own, and the 13px input
    plus this 8px gap put the text column at exactly the 20px+1px inset the
    card's own label and hint sit at, so the two options read as one group. */
-.wizard-fork-step__hosted {
+.wizard-fork-step__hosted,
+.wizard-voice-step__ondevice {
   display: grid;
   grid-template-columns: auto 1fr;
   column-gap: 8px;
 }
 .wizard-fork-step__hosted .wizard-fork-step__label,
-.wizard-fork-step__hosted .wizard-fork-step__hint {
+.wizard-fork-step__hosted .wizard-fork-step__hint,
+.wizard-voice-step__ondevice .wizard-fork-step__label,
+.wizard-voice-step__ondevice .wizard-fork-step__hint {
   grid-column: 2;
 }
-.wizard-fork-step__hosted-input {
+.wizard-fork-step__hosted-input,
+.wizard-voice-step__ondevice-input {
   align-self: center;
 }
 .wizard-fork-step__notify {

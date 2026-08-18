@@ -361,6 +361,30 @@ export interface ChannelsRecord {
   voiceChannels: string[];
 }
 
+/**
+ * One entry of the wizard's "How should I sound?" list (`GET /voice/options`).
+ *
+ * `id` is a real provider voice id and `label` the cast name that voice already
+ * carries everywhere else in the app — the broker DERIVES both from the
+ * stand-in cast (`voiceOptionsFrom`, broker/src/voice-preview.ts) rather than
+ * keeping a second catalog, so this list cannot drift from the voices that
+ * actually speak.
+ */
+export interface VoiceOption {
+  id: string;
+  label: string;
+}
+
+/**
+ * `POST /voice/preview` — one spoken line, or a refusal.
+ *
+ * A union, not one object with optional halves, because the route ALWAYS
+ * answers 200: "no text-to-speech key" is a resolved `{error}` carrying a
+ * sentence written for a human, never a 500 and never a throw. Narrow with
+ * `"error" in result` and render that sentence; there is nothing else to show.
+ */
+export type VoicePreviewResult = { mime: string; dataB64: string } | { error: string };
+
 /** The operator's chosen STT/TTS connectors — read back by instance id, never the secret itself. */
 export interface VoiceSettingsRecord {
   stt: { instanceId: string } | null;

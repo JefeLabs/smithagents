@@ -101,6 +101,22 @@ export function useVoiceSettings() {
   return useQuery({ queryKey: qk.voiceSettings, queryFn: () => api.getVoiceSettings() });
 }
 
+/**
+ * `GET /voice/options` — the wizard's "How should I sound?" cast.
+ *
+ * `staleTime: Infinity`, like `useBlueprints`: the broker derives this list
+ * from a constant stand-in cast at module scope, so it cannot change within a
+ * broker run and a refetch on every mount would only re-ask a settled
+ * question.
+ */
+export function useVoiceOptions() {
+  return useQuery({
+    queryKey: qk.voiceOptions,
+    queryFn: () => api.getVoiceOptions(),
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+}
+
 export function useResearchEngine() {
   return useQuery({ queryKey: qk.researchEngine, queryFn: () => api.getResearchEngine() });
 }
@@ -383,6 +399,22 @@ export function useDeleteConnector() {
 export function useVerifyConnector() {
   return useMutation({
     mutationFn: ({ id, extra }: { id: string; extra?: Record<string, string> }) => api.verifyConnector(id, extra),
+  });
+}
+
+/**
+ * `POST /voice/preview` — say one line out loud. Same fire-and-report shape as
+ * the verifies above and, like them, it touches no cache: a preview is a sound
+ * that plays once and is gone, never state to hold.
+ *
+ * The caller must read the RESULT, not just the promise: "I have no
+ * text-to-speech key" resolves as `{error}` with a sentence for a human, so a
+ * bare `await` that ignores the value would report a silent refusal as a
+ * success. See `VoicePreviewResult`.
+ */
+export function usePreviewVoice() {
+  return useMutation({
+    mutationFn: (body: { voiceId: string; text?: string }) => api.previewVoice(body),
   });
 }
 

@@ -19,6 +19,7 @@ export const qk = {
   localModels: ["local-models"] as const,
   containers: ["containers"] as const,
   voiceSettings: ["voice-settings"] as const,
+  voiceOptions: ["voice-options"] as const,
   researchEngine: ["research-engine"] as const,
   brainEngine: ["brain-engine"] as const,
   engines: ["engines"] as const,

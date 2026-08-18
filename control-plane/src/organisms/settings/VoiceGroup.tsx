@@ -1,6 +1,7 @@
 import { Switch } from "@heroui/react";
 import { useState } from "react";
 import type { VoiceSettingsRecord } from "../../api/types";
+import { voiceConnectorOptions } from "../../lib/voiceConnectors";
 import { useConnectorVendors, useMyConnectors, useSaveVoiceSettings, useVoiceSettings } from "../../queries/http";
 
 const SLOTS = [
@@ -43,15 +44,12 @@ export function VoiceGroup() {
     setError(null);
   };
 
-  const optionsFor = (slot: "stt" | "tts") => {
-    const vendorIds = new Set(vendors.filter((v) => v.capabilities?.includes(slot)).map((v) => v.id));
-    return connectors
-      .filter((c) => vendorIds.has(c.vendorId))
-      .map((c) => ({
-        id: c.id,
-        label: `${vendors.find((v) => v.id === c.vendorId)?.label ?? c.vendorId} — ${c.label}`,
-      }));
-  };
+  // The filter itself now lives in `lib/voiceConnectors` — the wizard's voice
+  // step offers the same per-slot list, and two copies would let a vendor show
+  // up in one screen and not the other. What stays here is what this screen
+  // does differently with an EMPTY list (point at Integrations, below); the
+  // wizard adds the key inline instead.
+  const optionsFor = (slot: "stt" | "tts") => voiceConnectorOptions(slot, vendors, connectors);
 
   if (!voice) {
     return (
