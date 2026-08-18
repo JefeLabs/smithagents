@@ -102,6 +102,8 @@ import {
 } from "./index.js";
 import { commentIssue, createIssue, importIssues, searchIssues, transitionIssue } from "./jira-sync.js";
 import { agentUsage, isBusy } from "./lifecycle.js";
+import { detectLocalServers } from "./local-models.js";
+import { machineFacts } from "./machine.js";
 import { MeetingOrchestrator } from "./meetings.js";
 import {
   isInitialized,
@@ -2564,6 +2566,11 @@ export class OrchestratorServer {
       const r = await getCredential(this.paths.apiKeys, req.params.provider);
       return "error" in r ? reply.status(r.status).send({ error: r.error }) : r;
     });
+
+    // ── Local model servers + machine facts (wizard "models on my machine" step) ──
+    this.app.get("/local-models", async () => ({ servers: await detectLocalServers({}) }));
+
+    this.app.get("/machine", async () => machineFacts());
 
     this.app.post<{ Params: { name: string } }>("/workspaces/:name/verify-atlassian", async (req, reply) => {
       const ws = this.workspaces.find((w) => w.name === req.params.name);
