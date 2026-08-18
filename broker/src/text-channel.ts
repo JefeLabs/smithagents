@@ -406,7 +406,21 @@ export class TextChannel {
      */
     private readonly research?: {
       get(): Promise<Record<string, unknown> | null>;
-      save(body: unknown): Promise<Record<string, unknown>>;
+      // `| null` on the SAVE too: clearing the setting resolves to literal
+      // `null`, which the route arm below already handles (`?.`) and this
+      // suite's own null test already exercises — the type just did not say
+      // so, and said so wrongly in the one place a reader checks first.
+      save(body: unknown): Promise<Record<string, unknown> | null>;
+    },
+    /**
+     * Brain engine setting passthrough — the conversational host's engine,
+     * the sibling of `research` above and shaped identically. The welcome
+     * wizard's LAST step writes through here, so an absent route does not
+     * merely degrade a setting: it strands a fresh install in the wizard.
+     */
+    private readonly brain?: {
+      get(): Promise<Record<string, unknown> | null>;
+      save(body: unknown): Promise<Record<string, unknown> | null>;
     },
   ) {}
 
@@ -1092,6 +1106,40 @@ export class TextChannel {
             // forever rather than failing. Voice's PUT never hits this because
             // it always resolves to an object.
             void research
+              .save(parsed)
+              .then((r) => credJson((r as { error?: string } | null)?.error ? 400 : 200, r), credFail);
+          });
+          return;
+        }
+        if (req.method === "GET" && url.pathname === "/me/brain-engine" && this.brain) {
+          if (originBlocked()) return;
+          void this.brain.get().then((v) => credJson(200, v), credFail);
+          return;
+        }
+        if (req.method === "PUT" && url.pathname === "/me/brain-engine" && this.brain) {
+          const brain = this.brain;
+          if (originBlocked()) return;
+          let body = "";
+          req.on("data", (c) => {
+            body += c;
+          });
+          req.on("end", () => {
+            // `body || "{}"` for the same reason research's PUT documents: a
+            // literal `null` body (clearing the setting) is non-empty and
+            // survives JSON.parse unchanged, and the swarm's clear path needs
+            // that exact `null` rather than an object.
+            let parsed: Record<string, unknown> | null = null;
+            try {
+              parsed = JSON.parse(body || "{}") as Record<string, unknown> | null;
+            } catch {
+              return credJson(400, { error: "body must be JSON" });
+            }
+            // `?.` is load-bearing, exactly as in research's PUT above: a
+            // successful CLEAR resolves to literal `null`, and a bare `.error`
+            // on it throws a TypeError inside this .then, which `void`
+            // swallows — no response is ever written and the client hangs
+            // forever rather than failing.
+            void brain
               .save(parsed)
               .then((r) => credJson((r as { error?: string } | null)?.error ? 400 : 200, r), credFail);
           });

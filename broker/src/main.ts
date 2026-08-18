@@ -1061,6 +1061,18 @@ const research = {
   save: (body: unknown) => swarm.saveResearchEngine(body),
 };
 
+// Brain engine setting passthrough — Settings → Brain and the welcome wizard's
+// last step. Same pure-proxy shape as `research` above; the swarm's
+// buildBrainEngineUpdate owns every rule about what may back the brain, and a
+// refusal travels back as its own sentence for the UI to render.
+// Named `brainEngineSetting`, not `brain`: `brain` is already the live
+// BrokerBrain instance above, and this is the stored SETTING that decides what
+// backs it — two different things.
+const brainEngineSetting = {
+  get: () => swarm.getBrainEngine() as Promise<Record<string, unknown> | null>,
+  save: (body: unknown) => swarm.saveBrainEngine(body),
+};
+
 // Agent creation: the swarm owns the registry, the broker owns voices. A
 // named const (not an inline TextChannel argument) because the brain's
 // draft_agent/confirm_agent executors drive the same generate/create path
@@ -1727,6 +1739,7 @@ const textChannel = new TextChannel(
   },
   groups,
   research,
+  brainEngineSetting,
 );
 
 /**

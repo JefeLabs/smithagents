@@ -124,6 +124,7 @@ function channelWith(opts: {
   feeds?: ConstructorParameters<typeof TextChannel>[26];
   topics?: ConstructorParameters<typeof TextChannel>[27];
   research?: ConstructorParameters<typeof TextChannel>[29];
+  brain?: ConstructorParameters<typeof TextChannel>[30];
   onUtterance?: ConstructorParameters<typeof TextChannel>[0];
 }): TextChannel {
   return new TextChannel(
@@ -157,6 +158,7 @@ function channelWith(opts: {
     opts.topics,
     undefined, // groups — not exercised by this suite (pre-existing gap)
     opts.research,
+    opts.brain,
   );
 }
 
@@ -1313,6 +1315,106 @@ test("research: clearing to null answers instead of hanging", async () => {
   const port = await channel.start(0);
   try {
     const put = await fetch(`http://127.0.0.1:${port}/me/research-engine`, {
+      method: "PUT",
+      headers: { Origin: "http://localhost:1420", "content-type": "application/json" },
+      body: JSON.stringify(null),
+      signal: AbortSignal.timeout(5000),
+    });
+    assert.equal(put.status, 200);
+    assert.equal(await put.json(), null);
+  } finally {
+    await channel.stop();
+  }
+});
+
+const brainDep = {
+  get: async () => ({ kind: "cli", provider: "claude" }),
+  save: async (body: unknown) => body as Record<string, unknown>,
+};
+
+test("brain: GET and PUT /me/brain-engine are proxied when the brain dep is wired", async () => {
+  // The welcome wizard's LAST step saves through this route on 7790. It lived
+  // only on the swarm (7777) until this was wired, so the browser got a 404
+  // with an EMPTY body, `res.json()` rejected, the step never called onDone,
+  // and the wizard reopened on every reload with no Back and no skip — the
+  // app was unreachable. This test fails (404) against a channel with no
+  // brain route, which is the point.
+  const channel = channelWith({ brain: brainDep });
+  const port = await channel.start(0);
+  try {
+    const got = await fetch(`http://127.0.0.1:${port}/me/brain-engine`, {
+      headers: { Origin: "http://localhost:1420" },
+    });
+    assert.equal(got.status, 200);
+    assert.deepEqual(await got.json(), { kind: "cli", provider: "claude" });
+    const put = await fetch(`http://127.0.0.1:${port}/me/brain-engine`, {
+      method: "PUT",
+      headers: { Origin: "http://localhost:1420", "content-type": "application/json" },
+      body: JSON.stringify({ kind: "api", provider: "gemini" }),
+    });
+    assert.equal(put.status, 200);
+    assert.deepEqual(await put.json(), { kind: "api", provider: "gemini" });
+  } finally {
+    await channel.stop();
+  }
+});
+
+test("brain: a refused engine comes back carrying the swarm's own reason, not a bare failure", async () => {
+  // The wizard renders this string verbatim — a user whose only CLI is refused
+  // learns why rather than staring at a dead Continue button. Both shapes are
+  // asserted because both are real: SwarmClient.http() THROWS on the swarm's
+  // 400 (with the swarm's own sentence as the message), which credFail turns
+  // into a 500 carrying that sentence; a resolved `{error}` takes the 400 arm.
+  // The control-plane reads `{error}` either way — brokerFetch never throws on
+  // a non-2xx — so what must not vary is the sentence.
+  const refusal = "Codex is not supported as a brain yet — only Claude Code enforces --json-schema";
+  const put = (port: number) =>
+    fetch(`http://127.0.0.1:${port}/me/brain-engine`, {
+      method: "PUT",
+      headers: { Origin: "http://localhost:1420", "content-type": "application/json" },
+      body: JSON.stringify({ kind: "cli", provider: "codex" }),
+      signal: AbortSignal.timeout(5000),
+    });
+
+  const resolved = channelWith({ brain: { get: async () => null, save: async () => ({ error: refusal }) } });
+  const resolvedPort = await resolved.start(0);
+  try {
+    const res = await put(resolvedPort);
+    assert.equal(res.status, 400);
+    assert.deepEqual(await res.json(), { error: refusal });
+  } finally {
+    await resolved.stop();
+  }
+
+  const thrown = channelWith({
+    brain: {
+      get: async () => null,
+      save: async () => {
+        throw new Error(refusal);
+      },
+    },
+  });
+  const thrownPort = await thrown.start(0);
+  try {
+    const res = await put(thrownPort);
+    assert.equal(res.status, 500);
+    assert.deepEqual(await res.json(), { error: refusal });
+  } finally {
+    await thrown.stop();
+  }
+});
+
+test("brain: clearing to null answers instead of hanging", async () => {
+  // Same trap research's PUT documents: a successful clear resolves to literal
+  // `null`, and a bare `.error` on it throws inside the .then, where `void`
+  // swallows the rejection — no response is ever written and the client hangs
+  // forever instead of failing. The `?.` is what this asserts.
+  const channel = channelWith({
+    brain: { get: async () => null, save: async () => null },
+  });
+  const port = await channel.start(0);
+  try {
+    const put = await fetch(`http://127.0.0.1:${port}/me/brain-engine`, {
       method: "PUT",
       headers: { Origin: "http://localhost:1420", "content-type": "application/json" },
       body: JSON.stringify(null),

@@ -650,6 +650,16 @@ export class SwarmClient {
     return (await this.http("GET", "/me/brain-engine", undefined, 10_000)) as unknown as BrainEngine | null;
   }
 
+  /**
+   * No timeout, unlike getBrainEngine above: this one runs in response to a
+   * user action (Settings, or the wizard's last step), never per turn, so it
+   * gets the same unbounded treatment as saveResearchEngine and every other
+   * write. `null` clears the setting and the swarm answers `null` in kind.
+   */
+  async saveBrainEngine(body: unknown): Promise<Record<string, unknown> | null> {
+    return (await this.http("PUT", "/me/brain-engine", body)) as Record<string, unknown> | null;
+  }
+
   async saveMyVoice(body: unknown): Promise<Record<string, unknown>> {
     return this.http("PUT", "/me/voice", body);
   }

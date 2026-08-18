@@ -415,6 +415,27 @@ test("getBrainEngine: the request carries a bounded AbortSignal — this runs on
   assert.ok(calls[0]!.init!.signal instanceof AbortSignal, "expected an AbortSignal on the request init");
 });
 
+test("saveBrainEngine: PUTs the body to /me/brain-engine and returns the saved record", async () => {
+  const { calls, fetch } = fakeFetch({ "/me/brain-engine": { kind: "cli", provider: "claude" } });
+  const client = new SwarmClient({ baseUrl: "http://s", fetchImpl: fetch });
+  assert.deepEqual(await client.saveBrainEngine({ kind: "cli", provider: "claude" }), {
+    kind: "cli",
+    provider: "claude",
+  });
+  assert.equal(calls[0]!.url, "http://s/me/brain-engine");
+  assert.equal(calls[0]!.init!.method, "PUT");
+  assert.deepEqual(JSON.parse(String(calls[0]!.init!.body)), { kind: "cli", provider: "claude" });
+});
+
+test("saveBrainEngine: a refusal surfaces the swarm's own sentence, not a status code", async () => {
+  // The wizard's Brain step renders this string; flattening it to "400" would
+  // leave a user unable to learn why their only CLI cannot back the brain.
+  const f = (async () =>
+    new Response(JSON.stringify({ error: "Codex is not supported as a brain yet" }), { status: 400 })) as typeof fetch;
+  const client = new SwarmClient({ baseUrl: "http://s", fetchImpl: f });
+  await assert.rejects(() => client.saveBrainEngine({ kind: "cli", provider: "codex" }), /not supported as a brain/);
+});
+
 test("apiAgentOneShot: reply on 200, notApiAgent on 404, typed throw otherwise", async () => {
   const { calls, fetch } = fakeFetch({ "/api-agents/sage/turn": { reply: "I should lead." } });
   const c = new SwarmClient({ baseUrl: "http://x", token: "tok", fetchImpl: fetch });
