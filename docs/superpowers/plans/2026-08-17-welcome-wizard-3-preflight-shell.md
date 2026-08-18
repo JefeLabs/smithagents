@@ -21,9 +21,16 @@
 - **pnpm, never npm.** Run gates from the repo root.
 - **Baselines, confirmed by name.** control-plane vitest **979 pass / 2 fail**
   (`HomePage` composer-backs-out, `MapStage` pan-mode-toggle — both
-  pre-existing); `tsc --noEmit` **10 errors**, all pre-existing; biome **0
-  diagnostics**; swarm **649 pass / 0 fail**. A third control-plane failure is
-  yours.
+  pre-existing); `tsc --noEmit` **10 errors**, all pre-existing; swarm
+  **649 pass / 0 fail**. A third control-plane failure is yours.
+- **biome baseline is 6 errors / 2 warnings / 1 info, NOT zero.** Measured on
+  `origin/main` in a detached worktree and byte-identical to this branch, so
+  none of it is ours and none of it blocks. Do not "fix" it here.
+- **biome measurement trap:** run it as `pnpm exec biome check .` with cwd
+  inside the tree being checked. Running from the repo root **against a path
+  argument** resolves config from the cwd instead and inflates the count to
+  34/53/9. A number nothing like the baseline above means the cwd is wrong,
+  not that the branch broke something.
 - **Count `tsc` errors with `grep -c 'error TS'`** after stripping ANSI, and
   cross-check the exit code. `grep -oE 'Found [0-9]+ error'` prints nothing
   without `--pretty` and reads as zero.
