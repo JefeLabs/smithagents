@@ -81,8 +81,9 @@ function renderBrainStep(opts: {
 }) {
   stubNoNetwork();
   const onDone = vi.fn();
+  const onSkip = vi.fn();
   const element = (saveState: WizardSaveState) => (
-    <WizardBrainStep onDone={onDone} onBack={opts.onBack} saveState={saveState} />
+    <WizardBrainStep onDone={onDone} onSkip={onSkip} onBack={opts.onBack} saveState={saveState} />
   );
   const result = renderWithProviders(element("idle"));
   result.client.setQueryData<CliToolListing[]>(
@@ -97,6 +98,9 @@ function renderBrainStep(opts: {
   return {
     ...result,
     onDone,
+    /** The host's own skip — the SAME function its progress-row Skip calls, so
+        this step never composes a "skipped" patch of its own. */
+    onSkip,
     /** What the host does when its own `PUT /me` settles. */
     reportSaveState: (saveState: WizardSaveState) => result.rerender(element(saveState)),
   };
@@ -181,9 +185,14 @@ describe("WizardBrainStep", () => {
   });
 
   it("continue still advances when nothing can back the brain — Anderson has a safe fallback", async () => {
-    const { onDone } = renderBrainStep({ tools: {} });
+    // Nothing was picked because there was nothing to pick, which is the same
+    // outcome a skip states: no brain engine saved. So it takes the same
+    // route, and records the same thing — not a bare `{setup: {}}` that reads
+    // on the wire as a deliberate choice.
+    const { onDone, onSkip } = renderBrainStep({ tools: {} });
     await userEvent.click(await screen.findByRole("button", { name: /continue/i }));
-    await waitFor(() => expect(onDone).toHaveBeenCalledWith({ setup: {} }));
+    await waitFor(() => expect(onSkip).toHaveBeenCalledTimes(1));
+    expect(onDone).not.toHaveBeenCalled();
   });
 
   it("saves to the BROKER base — the host that has to own the route", async () => {
@@ -208,13 +217,46 @@ describe("WizardBrainStep", () => {
     // candidate and no Back — without an escape here the wizard is impassable
     // and the app never opens. "Nothing working is a stop, but never a dead
     // end" (plan Global Constraint).
-    const { onDone } = renderBrainStep({ tools: { codex: { active: true } } });
+    const { onDone, onSkip } = renderBrainStep({ tools: { codex: { active: true } } });
     await userEvent.click(await screen.findByRole("radio", { name: /codex/i }));
     stubSave({ error: "Codex is not supported as a brain yet — only Claude Code enforces --json-schema" });
     await userEvent.click(screen.getByRole("button", { name: /continue/i }));
     await screen.findByText(/--json-schema/i);
     await userEvent.click(screen.getByRole("button", { name: /skip for now/i }));
-    await waitFor(() => expect(onDone).toHaveBeenCalledWith({ setup: {} }));
+    await waitFor(() => expect(onSkip).toHaveBeenCalledTimes(1));
+    expect(onDone).not.toHaveBeenCalled();
+  });
+
+  it("the escape is a SKIP, and says so through the host rather than composing its own patch", async () => {
+    // The finding this pins: there are two Skip controls on this screen at
+    // once after a failed save — the host's own, beside the progress line,
+    // and this one — and they used to disagree about what "skipped" persists.
+    // This step has no value of its own to write, so a bare `onDone({setup:
+    // {}})` here finished IDENTICALLY to a user who deliberately picked a
+    // brain, and `brainSkipped` (added by this same branch, for exactly this
+    // distinction) was recorded by only one of the two.
+    //
+    // The fix is structural, and so is this test: the escape re-emits the
+    // host's skip, so what a skip persists is read from the step registry in
+    // ONE place. A step that composed the patch itself would satisfy any
+    // assertion about today's field and drift the next time one is added —
+    // which is why this asserts the route, and the host's suite asserts the
+    // resulting wire against `skipDefault()` itself.
+    const { onDone, onSkip } = renderBrainStep({ tools: { codex: { active: true } } });
+    await userEvent.click(await screen.findByRole("radio", { name: /codex/i }));
+    stubSave({ error: "Codex is not supported as a brain yet" });
+    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await screen.findByText(/not supported as a brain/i);
+
+    await userEvent.click(screen.getByRole("button", { name: /skip for now/i }));
+
+    await waitFor(() => expect(onSkip).toHaveBeenCalledTimes(1));
+    expect(onDone).not.toHaveBeenCalled();
+    // And it still closes the window behind it: `advance` does not swap this
+    // step out, so the footer has to go inert behind the host's write exactly
+    // as it does for a normal handoff.
+    expect(screen.getByRole("button", { name: /skip for now/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /continue/i })).toBeDisabled();
   });
 
   it("the refusal stays on screen next to the escape — the user learns why, then moves on", async () => {
@@ -233,7 +275,7 @@ describe("WizardBrainStep", () => {
     // on a non-2xx, so a server refusal RESOLVES with `{error}` while a dead
     // broker REJECTS. Both must leave the user a way out; only the first is
     // covered by the test above.
-    const { onDone } = renderBrainStep({ tools: { codex: { active: true } } });
+    const { onDone, onSkip } = renderBrainStep({ tools: { codex: { active: true } } });
     await userEvent.click(await screen.findByRole("radio", { name: /codex/i }));
     vi.stubGlobal(
       "fetch",
@@ -244,7 +286,8 @@ describe("WizardBrainStep", () => {
     await userEvent.click(screen.getByRole("button", { name: /continue/i }));
     await screen.findByText(/failed to fetch/i);
     await userEvent.click(screen.getByRole("button", { name: /skip for now/i }));
-    await waitFor(() => expect(onDone).toHaveBeenCalledWith({ setup: {} }));
+    await waitFor(() => expect(onSkip).toHaveBeenCalledTimes(1));
+    expect(onDone).not.toHaveBeenCalled();
   });
 
   it("offers no escape before anything has failed — the step is still a confirmation, not a skip", async () => {

@@ -6,6 +6,21 @@ import { useApiKeys, useBrainEngine, useCliTools, useSaveBrainEngine } from "../
 
 export interface WizardBrainStepProps {
   onDone: (patch: { setup: Setup }) => void;
+  /**
+   * Declines the step — on the host's terms, not this step's.
+   *
+   * A skip has to PERSIST something: `brainSkipped`, so "skipped" and "never
+   * asked" stay distinguishable (see its comment in lib/wizardSteps.ts). This
+   * step has no value of its own to write, so there is nothing here from which
+   * that patch could be derived — and there are TWO skip controls on this
+   * screen at once after a failed save, the host's own beside the progress
+   * line and the escape in this footer. Composing `{setup: {brainSkipped:
+   * true}}` here would be a second copy of an answer the step registry already
+   * holds, and the first thing to drift out of it the next time a field is
+   * added to `skipDefault()`. So this re-emits the host's skip, which reads
+   * that registry once, for both controls.
+   */
+  onSkip: () => void;
   /** Same contract as `WizardSubscriptionsStepProps["onBack"]` — see there. */
   onBack?: () => void;
   /**
@@ -55,7 +70,7 @@ interface Candidate {
  * user whose only working tool is refused deserves to know why, not stare at
  * an empty picker.
  */
-export function WizardBrainStep({ onDone, onBack, saveState = "idle" }: WizardBrainStepProps) {
+export function WizardBrainStep({ onDone, onSkip, onBack, saveState = "idle" }: WizardBrainStepProps) {
   const { data: tools = [] } = useCliTools();
   const { data: keys = [] } = useApiKeys();
   const { data: current } = useBrainEngine();
@@ -144,6 +159,18 @@ export function WizardBrainStep({ onDone, onBack, saveState = "idle" }: WizardBr
     onDone({ setup: {} });
   };
 
+  /**
+   * `finish`'s sibling for the two ways OFF this step that saved no brain.
+   * Identical as far as this component is concerned — the host writes, nothing
+   * swaps this step out, so it closes the same window `finish` does, for the
+   * same reason. What differs is only what gets written, and that is the
+   * host's to say: see `onSkip`.
+   */
+  const skipOut = () => {
+    setHandedOff(true);
+    onSkip();
+  };
+
   const proceed = async () => {
     const candidate = candidates.find((c) => c.key === checkedKey);
     if (!candidate) {
@@ -151,7 +178,12 @@ export function WizardBrainStep({ onDone, onBack, saveState = "idle" }: WizardBr
       // resolveBrainFactory (broker/src/brain-engine.ts) already treats as a
       // safe, working state (SMITH_BRAIN_PROVIDER, then the no-key default).
       // This step never needs to block progress the way Subscriptions does.
-      finish();
+      //
+      // `skipOut`, not `finish`: that outcome is precisely what a skip states,
+      // so it must be recorded as one. Handing back a bare `{setup: {}}` here
+      // would leave this user indistinguishable on the wire from someone who
+      // deliberately chose a brain.
+      skipOut();
       return;
     }
     setBusy(true);
@@ -238,7 +270,7 @@ export function WizardBrainStep({ onDone, onBack, saveState = "idle" }: WizardBr
           // installed CLI the server refuses (codex-only, no verified
           // anthropic/gemini key) can never leave this step, and since it is
           // the LAST step, never reaches the app at all.
-          <Button variant="secondary" onPress={finish} isDisabled={inert}>
+          <Button variant="secondary" onPress={skipOut} isDisabled={inert}>
             Skip for now
           </Button>
         )}

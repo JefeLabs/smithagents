@@ -736,6 +736,50 @@ describe("WizardGate", () => {
     expect(screen.getByRole("button", { name: /back/i })).toBeDisabled();
   });
 
+  it("the step's own escape records the SAME 'skipped' the progress-row Skip does", async () => {
+    // The two Skips on this one screen, side by side after a failed brain
+    // save. `brainSkipped` exists so "skipped" and "never asked" stay
+    // distinguishable — the brain step has no value of its own to write — and
+    // the escape used to hand back a bare `{setup: {}}`, so a codex-only user
+    // who hit the refusal finished byte-identical to someone who deliberately
+    // picked a brain. Nothing reads the flag yet, which is exactly why this
+    // has to be pinned here rather than found later.
+    //
+    // Asserted against the registry's own `skipDefault()`, never a literal
+    // `brainSkipped: true`: the requirement is that a field added to a step's
+    // skip default cannot leave one of the two paths behind, and a hardcoded
+    // expectation here would stop discriminating the moment that happens.
+    const { updateMe } = renderGate({
+      name: "Edwin",
+      setup: { mode: "local", step: "anderson" },
+      tools: [toolListing("codex")],
+    });
+    await screen.findByRole("radio", { name: /codex/i });
+
+    (saveBrainEngine as ReturnType<typeof vi.fn>).mockResolvedValue({ error: "codex is not supported as a brain yet" });
+    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await screen.findByText(/not supported as a brain/i);
+
+    updateMe.mockClear();
+    await userEvent.click(screen.getByRole("button", { name: /skip for now/i }));
+    await waitFor(() => expect(updateMe).toHaveBeenCalled());
+
+    const expected =
+      stepsFor({ mode: "local" })
+        .find((d) => d.id === "anderson")
+        ?.skipDefault() ?? {};
+    // Positive control: a registry lookup that missed would leave the loop
+    // below empty and pass this test on nothing at all.
+    expect(Object.keys(expected).length).toBeGreaterThan(0);
+    const patch = updateMe.mock.lastCall?.[0];
+    for (const [k, v] of Object.entries(expected)) {
+      expect(patch.setup[k]).toEqual(v);
+    }
+    // Still a completion, not a retreat — the escape ends setup like any other
+    // way off this step.
+    expect(patch.setup.step).toBe(SETUP_DONE);
+  });
+
   it("a rejected save on the LAST step leaves the footer something to click too", async () => {
     // The other shape, and NOT interchangeable with the one above: a network
     // failure rejects rather than resolving, and it takes `advance`'s `.catch`

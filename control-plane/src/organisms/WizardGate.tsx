@@ -465,7 +465,15 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
           {step === "subscriptions" && (
             <WizardSubscriptionsStep onDone={advance} onBack={onBack} saveState={saveState} name={name} />
           )}
-          {step === "anderson" && <WizardBrainStep onDone={advance} onBack={onBack} saveState={saveState} />}
+          {/* `onSkip={skip}` is the host's own progress-row Skip, handed to
+              the step verbatim — the step's escape and that button are then
+              literally the same call, reading `skipDefault()` from the step
+              registry in one place. The step has no value of its own to
+              write, so a patch composed on its side would be a second answer
+              to a question this file already answers. */}
+          {step === "anderson" && (
+            <WizardBrainStep onDone={advance} onSkip={skip} onBack={onBack} saveState={saveState} />
+          )}
         </div>
       </div>
     </div>
