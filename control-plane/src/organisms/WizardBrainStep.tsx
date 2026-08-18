@@ -50,6 +50,11 @@ export function WizardBrainStep({ onDone }: WizardBrainStepProps) {
   const [selected, setSelected] = useState<string | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Sticky once set, and never cleared by a later attempt: a save that has
+  // failed even once is proof this user can be trapped here, and this is the
+  // last step — there is no Back, and RadioButtonGroup has no deselect. See
+  // the escape it unlocks in the footer.
+  const [saveFailed, setSaveFailed] = useState(false);
 
   // cli candidates first — a working subscription CLI beats a pasted key as
   // the "strongest validated option" default, the same route-order
@@ -96,8 +101,13 @@ export function WizardBrainStep({ onDone }: WizardBrainStepProps) {
     try {
       res = await saveEngine.mutateAsync(candidate.body);
     } catch (err) {
+      // The REJECT shape: brokerFetch never throws on a non-2xx, so only a
+      // network-level failure (or an unparseable body) lands here — the
+      // server's own refusal takes the resolved branch below. Both are dead
+      // ends without the escape, so both must set it.
       setBusy(false);
       setError(err instanceof Error ? err.message : String(err));
+      setSaveFailed(true);
       return;
     }
     setBusy(false);
@@ -107,6 +117,7 @@ export function WizardBrainStep({ onDone }: WizardBrainStepProps) {
       // own `advance`, which this step never even reaches on a refusal) has
       // nothing of this step's to lose.
       setError(res.error);
+      setSaveFailed(true);
       return;
     }
     onDone({ setup: {} });
@@ -119,6 +130,11 @@ export function WizardBrainStep({ onDone }: WizardBrainStepProps) {
         agents.
       </p>
       {error && <p className="wizard__error">{error}</p>}
+      {saveFailed && (
+        <p className="wizard__hint">
+          Anderson still replies using a built-in default — you can set this later in Settings → Brain.
+        </p>
+      )}
       {candidates.length === 0 ? (
         <p className="wizard__hint">
           Nothing validated yet to pick from — Anderson falls back to a built-in default until you add a CLI or key.
@@ -146,6 +162,19 @@ export function WizardBrainStep({ onDone }: WizardBrainStepProps) {
         <Button variant="primary" onPress={() => void proceed()} isDisabled={busy}>
           Continue
         </Button>
+        {saveFailed && (
+          // Appears only after a save has actually failed, so the step stays a
+          // confirmation for everyone else. Leaves `brainEngine` unset, which
+          // resolveBrainFactory (broker/src/brain-engine.ts) already treats as
+          // a safe working state — the same state the no-candidates branch of
+          // `proceed` above hands the wizard. Without it, a user whose only
+          // installed CLI the server refuses (codex-only, no verified
+          // anthropic/gemini key) can never leave this step, and since it is
+          // the LAST step, never reaches the app at all.
+          <Button variant="secondary" onPress={() => onDone({ setup: {} })} isDisabled={busy}>
+            Skip for now
+          </Button>
+        )}
       </div>
     </div>
   );
