@@ -516,3 +516,41 @@ Run it twice. The two `latencyMs` values must **differ** — an identical figure
   guessing about behaviour — only about layout, where the answer is "copy the
   file beside it". Reject this if you would rather the plan carry the code.
 - **Nothing consumes the ping outside this screen.** It is a wizard receipt, not a health check. If a general engine-latency surface is wanted, it should be designed where `engine-latency-matrix` lives, not here.
+
+---
+
+## Task 5 walk — what was and was not observed (2026-08-19)
+
+Run against an **isolated second broker** on `:7791` with its own
+`SMITH_STATE_ROOT`, so the live install on `:7790` was never touched. Verified
+before and after: `:7790` answered 200 throughout and its tmux session survived.
+
+**Observed:**
+
+- The route is reachable and wired end to end — `POST /brain/ping` returned
+  HTTP 200 with real JSON from a running broker.
+- Real model calls were attempted: two runs produced two distinct Anthropic
+  `request_id`s, so the handler genuinely reached the provider rather than
+  short-circuiting.
+- **A failure carries no number.** Both runs returned
+  `{ok:false, reason:"…credit balance is too low…"}` with `latencyMs` **absent**
+  from the payload. This is the property the whole screen rests on, and it now
+  holds against a live failure rather than only against a mock.
+
+**Not observed:**
+
+- **Two successful pings differing.** The install's API key is out of credits,
+  and `researchEngine()` reads its OWN stored engine — separate from
+  `/me/brain-engine`, which was set to `{kind:"cli",provider:"claude"}` and made
+  no difference. Blocked by billing and config, not by this code. The measured
+  figure remains proven only by unit test (`pingBrain` returns `now() - started`;
+  a slower ask reports a larger figure; the screen renders 0.8s and 2.4s
+  differently).
+- **Every interaction proof.** No browser that can click: Playwright's MCP server
+  disconnected mid-session and the remaining browser tool loads and screenshots
+  only. Untested: ticks appearing as their operations land, `Step 6 of 6`, the
+  per-line jump-back, and `Let's talk →` finishing.
+
+**Follow-up worth its own task:** point `researchEngine()` at an engine with
+credit and re-run the two-ping check. It is the one assertion that distinguishes
+a measured figure from a plausible constant in the running system.
