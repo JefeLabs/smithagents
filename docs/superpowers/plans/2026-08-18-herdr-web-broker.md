@@ -1470,8 +1470,10 @@ test("enroll: hello→welcome, snapshot lands, req/res round-trips, events apply
   assert.ok(registry.get("laptop")?.online);
   assert.deepEqual(registry.counts("laptop"), { working: 0, blocked: 0, idle: 1 });
 
-  // child answers a forwarded request
-  ws.on("message", (data) => {
+  // child answers exactly ONE forwarded request — `once`, not `on`: a permanent
+  // listener would also auto-answer the later agent.wait req, defeating the
+  // instance_offline assertion below (fixture bug found in execution, ruled fixed)
+  ws.once("message", (data) => {
     const frame = JSON.parse(String(data));
     if (frame.type === "req") {
       assert.equal(frame.session, "default");
