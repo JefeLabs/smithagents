@@ -5,7 +5,12 @@ import { createTalkPrefsReader, type TalkPrefs } from "./talk-prefs.ts";
 /** A clock the test moves by hand — no timers, no sleeps. */
 function fakeClock(start = 1_000) {
   let t = start;
-  return { now: () => t, advance: (ms: number) => void (t += ms) };
+  return {
+    now: () => t,
+    advance: (ms: number) => {
+      t += ms;
+    },
+  };
 }
 
 test("the first turn reads /me; a burst of turns inside the TTL reads nothing more", async () => {
@@ -92,19 +97,23 @@ test("a first read that fails yields today's behaviour — empty prefs, not a th
 
 test("concurrent turns share one read — never one fetch per caller", async () => {
   let reads = 0;
-  let release: ((p: TalkPrefs) => void) | null = null;
+  // Boxed in an object because TypeScript's control-flow analysis narrows a
+  // `let` to `null` when its only assignment happens inside a deferred
+  // callback — `release?.(...)` then types as `never`. The behaviour under test
+  // is unchanged; only the declaration moves.
+  const pending: { resolve?: (p: TalkPrefs) => void } = {};
   const prefs = createTalkPrefsReader(() => {
     reads++;
     return new Promise<TalkPrefs>((resolve) => {
-      release = resolve;
+      pending.resolve = resolve;
     });
   });
 
   const a = prefs.get();
   const b = prefs.get();
   await Promise.resolve();
-  assert.equal(typeof release, "function");
-  release?.({ smallTalk: false });
+  assert.equal(typeof pending.resolve, "function");
+  pending.resolve?.({ smallTalk: false });
   assert.deepEqual(await a, { smallTalk: false });
   assert.deepEqual(await b, { smallTalk: false });
   assert.equal(reads, 1);

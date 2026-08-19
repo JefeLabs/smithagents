@@ -1,12 +1,6 @@
 import assert from "node:assert/strict";
 import { mock, test } from "node:test";
-import {
-  type BrainStreamLike,
-  BrokerBrain,
-  NO_SMALL_TALK,
-  type StreamFactory,
-  type ToolExecutors,
-} from "./brain.ts";
+import { type BrainStreamLike, BrokerBrain, NO_SMALL_TALK, type StreamFactory, type ToolExecutors } from "./brain.ts";
 
 type FinalMsg = Awaited<ReturnType<BrainStreamLike["finalMessage"]>>;
 

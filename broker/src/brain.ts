@@ -30,6 +30,14 @@ export interface ToolExecutors {
   confirm_agent(input: { accept: boolean }): Promise<string>;
 }
 
+import type { TalkPrefs } from "./talk-prefs.ts";
+
+/**
+ * One line, not a paragraph. The persona already knows how to be brief; this
+ * says the single thing the human actually asked for.
+ */
+export const NO_SMALL_TALK = "Skip the pleasantries and answer directly.";
+
 export interface BrainTurn {
   roster: string;
   /**
@@ -38,6 +46,13 @@ export interface BrainTurn {
    * prompt is unchanged for anyone who never set this up.
    */
   digest?: string;
+  /**
+   * How the human asked to be talked to (wizard plan 4). Absent, empty, or with
+   * both answers `true` must leave the prompt and tool list byte-identical to
+   * the build before preferences existed — only an explicit `false` changes
+   * anything.
+   */
+  prefs?: TalkPrefs;
   onSpeech: (chunk: string) => void;
 }
 
@@ -276,13 +291,22 @@ export class BrokerBrain {
     const chunker = new SpeechChunker(turn.onSpeech);
     this.history.push({ role: "user", content: text });
 
+    // Only an explicit `false` opts out; absent and `true` are the old behaviour.
+    // Computed once so the suppression holds on every tool round, not just the
+    // first — a digest that reappears mid-turn would be the worse bug, because
+    // it looks like it worked.
+    const worldBlind = turn.prefs?.worldAware === false;
+    const digest = worldBlind ? "" : (turn.digest ?? "");
+    const tools = worldBlind ? TOOLS.filter((t) => t.name !== "check_feeds") : TOOLS;
+    const noSmallTalk = turn.prefs?.smallTalk === false ? `\n\n${NO_SMALL_TALK}` : "";
+
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       const params: Parameters<StreamFactory>[0] = {
         model: this.model,
         max_tokens: 1024,
-        system: this.persona + turn.roster + (turn.digest ?? ""),
+        system: this.persona + turn.roster + digest + noSmallTalk,
         messages: [...this.history],
-        tools: TOOLS,
+        tools,
       };
       if (round === MAX_TOOL_ROUNDS - 1) {
         // Last permitted round: keep tools in the request (required whenever history
