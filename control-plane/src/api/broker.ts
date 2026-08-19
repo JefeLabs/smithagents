@@ -10,6 +10,7 @@ import type {
   ApiKeyListing,
   BlueprintT,
   BrainEngineRecord,
+  BrainPing,
   ChannelsRecord,
   CliToolListing,
   ComposeOp,
@@ -659,6 +660,23 @@ export async function getTopicNames(base: string = BROKER_BASE): Promise<string[
     return (body.topics ?? []).map((t) => t.name).filter((n): n is string => typeof n === "string");
   } catch {
     return [];
+  }
+}
+
+/**
+ * `POST /brain/ping` — asks the broker's own brain a throwaway question and
+ * reports how long it took. Never throws: a failure is a result, because this
+ * feeds a receipt on the last screen of setup and must not strand it.
+ */
+export async function pingBrain(base: string = BROKER_BASE): Promise<BrainPing> {
+  try {
+    const res = await brokerFetch(`/brain/ping`, base, { method: "POST" });
+    // brokerFetch resolves for non-2xx as well, so an unchecked response would
+    // report a silent success and tick a receipt nothing earned.
+    if (!res.ok) return { ok: false, reason: `the broker answered ${res.status}` };
+    return (await res.json()) as BrainPing;
+  } catch (err) {
+    return { ok: false, reason: (err as Error).message };
   }
 }
 

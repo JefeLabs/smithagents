@@ -4,6 +4,7 @@ import {
   getApiKeys,
   getExecutionModes,
   getWorkspaceRecords,
+  pingBrain,
   postSession,
   postUtterance,
   saveApiKey,
@@ -216,5 +217,31 @@ describe("postUtterance with a target", () => {
     vi.stubGlobal("fetch", fetchMock);
     await postUtterance("plain old utterance");
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ text: "plain old utterance" });
+  });
+});
+
+describe("pingBrain", () => {
+  it("returns the measured result the broker reported", async () => {
+    stubJson({ ok: true, reply: "hi", latencyMs: 812 });
+    expect(await pingBrain()).toEqual({ ok: true, reply: "hi", latencyMs: 812 });
+  });
+
+  it("reports a non-2xx as a failure — brokerFetch resolves rather than throwing", async () => {
+    // An unchecked response here would tick a receipt nothing earned.
+    stubJson({ error: "nope" }, false, 500);
+    const result = await pingBrain();
+    expect(result.ok).toBe(false);
+  });
+
+  it("reports a thrown fetch as a failure rather than propagating", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("broker unreachable");
+      }),
+    );
+    const result = await pingBrain();
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toMatch(/unreachable/);
   });
 });

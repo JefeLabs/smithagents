@@ -72,6 +72,12 @@ export type Target =
 /** The control plane's copy of the broker's runtime vocabulary — must mirror swarm's ExecutionMode. */
 export type ExecutionMode = "local-in-process" | "local-docker" | "remote-in-process" | "remote-docker";
 
+/**
+ * `POST /brain/ping` — the wizard's closing receipt. A failure carries a reason
+ * and NO number: a latency is only ever reported when one was measured.
+ */
+export type BrainPing = { ok: true; reply: string; latencyMs: number } | { ok: false; reason: string };
+
 export interface SessionSummary {
   id: string;
   title: string;
