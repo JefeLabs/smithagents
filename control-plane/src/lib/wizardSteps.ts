@@ -15,6 +15,20 @@ export const PREFLIGHT = "preflight";
 
 export type SetupMode = "local" | "hosted";
 
+/** What Anderson may do without asking, per capability. */
+export type PermissionStance = "ask" | "allow" | "never";
+
+/**
+ * Declared here rather than in the step, because `Setup` carries it on the
+ * wire and two structurally-identical shapes for one field drift the moment
+ * either is edited.
+ */
+export interface WizardPermissions {
+  readFiles: PermissionStance;
+  runCommands: PermissionStance;
+  browseWeb: PermissionStance;
+}
+
 /** Every id the host can render, preflight included. */
 export const WIZARD_STEPS = [PREFLIGHT, "sources", "roles", "voice", "talk"] as const;
 
@@ -65,6 +79,21 @@ export type Setup =
        */
       smallTalk?: boolean;
       worldAware?: boolean;
+      /**
+       * *Remembering, and what I may do.* All sent EXPLICITLY by
+       * WizardMemoryStep, for the reason `voice` and `smallTalk` are: the
+       * server merges setup, so an omitted field leaves an earlier answer
+       * standing.
+       */
+      remember?: boolean;
+      /**
+       * Whether deeper recall is wanted, recorded ahead of the capability.
+       * memory.ts is deliberately lexical and needs no embeddings today; this
+       * is the answer a future backend reads, not a switch that does anything
+       * now. No control offers a download while none exists.
+       */
+      deeperRecall?: boolean;
+      permissions?: WizardPermissions;
     }
   | undefined;
 
