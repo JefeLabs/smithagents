@@ -20,11 +20,12 @@ import {
   type WizardStep,
 } from "../lib/wizardSteps";
 import { WizardChip } from "../molecules/WizardChip";
-import { useMe } from "../queries/http";
+import { useMe, useTopicNames } from "../queries/http";
 import { qk } from "../queries/keys";
 import { WizardGateStep } from "./WizardGateStep";
 import { WizardRolesStep } from "./WizardRolesStep";
 import { WizardSourcesStep } from "./WizardSourcesStep";
+import { WizardTalkStep } from "./WizardTalkStep";
 import { WizardVoiceStep } from "./WizardVoiceStep";
 
 /**
@@ -155,6 +156,11 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
   // PATCH — see `advance`.
   const [name, setName] = useState(me.placeholder ? "" : me.name);
   const [voice, setVoice] = useState(me.setup?.voice);
+  const [smallTalk, setSmallTalk] = useState(me.setup?.smallTalk);
+  const [worldAware, setWorldAware] = useState(me.setup?.worldAware);
+  // Only asked for on the step that shows them — a first run that never reaches
+  // "talk" should not spend a request listing topics nobody has created.
+  const topicNames = useTopicNames(step === "talk");
   const [mode, setMode] = useState(me.setup?.mode);
   // What became of this host's own last write. Distinct from `error`, which is
   // only ever displayed: this is handed BACK to the step on screen, because
@@ -207,6 +213,8 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
     if (patch.name !== undefined) setName(patch.name);
     if (patch.setup?.mode !== undefined) setMode(patch.setup.mode);
     if (patch.setup?.voice !== undefined) setVoice(patch.setup.voice);
+    if (patch.setup?.smallTalk !== undefined) setSmallTalk(patch.setup.smallTalk);
+    if (patch.setup?.worldAware !== undefined) setWorldAware(patch.setup.worldAware);
     api
       .updateMe({ ...patch, setup: { ...patch.setup, step: next ?? SETUP_DONE } })
       .then((result) => {
@@ -507,6 +515,20 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
               before scrolling to this footer at all. */}
           {step === "voice" && (
             <WizardVoiceStep initialVoice={voice} onDone={advance} onBack={onBack} saveState={saveState} />
+          )}
+          {/* No `onSkip`, for the same reason as voice above: both answers are
+              first-class, and the step's own Continue already sends them
+              explicitly. Topics already on the server are passed in so a
+              revisit SHOWS them rather than posting them a second time. */}
+          {step === "talk" && (
+            <WizardTalkStep
+              initialSmallTalk={smallTalk}
+              initialWorldAware={worldAware}
+              initialTopics={topicNames.data ?? []}
+              onDone={advance}
+              onBack={onBack}
+              saveState={saveState}
+            />
           )}
         </div>
       </div>

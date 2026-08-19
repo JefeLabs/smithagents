@@ -645,6 +645,23 @@ export async function deleteSession(id: string, base: string = BROKER_BASE): Pro
 }
 
 /** GET /blueprints — the creation form's schema list. */
+/**
+ * `GET /topics` — the names the wizard's *How I talk* step shows on a revisit,
+ * so a resumed record displays what was already posted instead of re-posting
+ * it. Absent or unreachable reads as none, matching `getBlueprints` beside it:
+ * a resume that cannot list topics must still be able to finish the step.
+ */
+export async function getTopicNames(base: string = BROKER_BASE): Promise<string[]> {
+  try {
+    const res = await brokerFetch(`/topics`, base);
+    if (!res.ok) return [];
+    const body = (await res.json()) as { topics?: Array<{ name?: string }> };
+    return (body.topics ?? []).map((t) => t.name).filter((n): n is string => typeof n === "string");
+  } catch {
+    return [];
+  }
+}
+
 export async function getBlueprints(base: string = BROKER_BASE): Promise<BlueprintT[]> {
   try {
     const res = await brokerFetch(`/blueprints`, base);

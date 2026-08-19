@@ -70,6 +70,11 @@ export function useBlueprints() {
   return useQuery({ queryKey: qk.blueprints, queryFn: () => api.getBlueprints(), staleTime: Number.POSITIVE_INFINITY });
 }
 
+/** `GET /topics` — names only, for the wizard's talk step on a revisit. */
+export function useTopicNames(enabled: boolean) {
+  return useQuery({ queryKey: qk.topicNames, queryFn: () => api.getTopicNames(), enabled });
+}
+
 export function useCliTools() {
   return useQuery({ queryKey: qk.cliTools, queryFn: () => api.getCliTools() });
 }

@@ -432,7 +432,7 @@ describe("WizardGate", () => {
   it("shows honest progress and a skip control that states its default, not the bare word", async () => {
     renderGate({ name: "Edwin", setup: { mode: "local", step: "sources" } });
 
-    expect(await screen.findByText("Step 1 of 3")).toBeInTheDocument();
+    expect(await screen.findByText("Step 1 of 4")).toBeInTheDocument();
     const skip = screen.getByRole("button", { name: /skip/i });
     // Discriminates the same way wizardSteps.test.ts's own check does, one
     // layer up: a control merely labelled "Skip" would satisfy a name-only
@@ -454,7 +454,7 @@ describe("WizardGate", () => {
     const skip = await screen.findByRole("button", { name: /skip/i });
     const row = skip.closest(".wizard-gate__progress");
     expect(row).not.toBeNull();
-    expect(row?.textContent).toMatch(/^Step 1 of 3/);
+    expect(row?.textContent).toMatch(/^Step 1 of 4/);
   });
 
   it("Skip cannot race the write that put the user on the step", async () => {
@@ -506,21 +506,40 @@ describe("WizardGate", () => {
     );
   });
 
-  it("the host's Skip on voice sends an EXPLICIT voice: false, and finishes setup", async () => {
+  it("the host's Skip on voice sends an EXPLICIT voice: false, and advances to talk", async () => {
     // The same path as the sources test above, on the step this plan adds —
     // and the one place `skipDefault()` returning `{}` would be invisible in
     // every OTHER check (`stepsFor`'s own registry test only checks the keys
     // are non-empty), because `step` still advances either way. This asserts
-    // the actual VALUE, and that it's the terminal write — voice is the new
-    // last step, so its own Skip is the one that reaches `SETUP_DONE` rather
-    // than the next step in the sequence.
+    // the actual VALUE. Voice is no longer terminal — "talk" now sits after
+    // it — so this Skip advances rather than finishing, and the terminal write
+    // is asserted on talk below.
     const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "voice" } });
 
     await userEvent.click(await screen.findByRole("button", { name: /skip/i }));
 
-    expect(await findHost(container)).toHaveAttribute("data-step", "voice");
+    // It ADVANCES now rather than staying put: skipping the last step finishes
+    // in place, but voice is no longer the last step.
+    expect(await findHost(container)).toHaveAttribute("data-step", "talk");
     expect(updateMe).toHaveBeenCalledWith(
-      expect.objectContaining({ setup: expect.objectContaining({ voice: false, step: SETUP_DONE }) }),
+      expect.objectContaining({ setup: expect.objectContaining({ voice: false, step: "talk" }) }),
+    );
+  });
+
+  it("the host's Skip on talk sends BOTH answers explicitly, and finishes setup", async () => {
+    // Talk is the new last step, so its Skip is the one that reaches
+    // SETUP_DONE. Both fields asserted by VALUE: a `skipDefault()` returning a
+    // partial patch would leave one answer standing from an earlier run and be
+    // invisible everywhere else, because `step` advances either way.
+    const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "talk" } });
+
+    await userEvent.click(await screen.findByRole("button", { name: /skip/i }));
+
+    expect(await findHost(container)).toHaveAttribute("data-step", "talk");
+    expect(updateMe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        setup: expect.objectContaining({ smallTalk: true, worldAware: false, step: SETUP_DONE }),
+      }),
     );
   });
 
@@ -861,29 +880,27 @@ describe("WizardGate", () => {
     await waitFor(() => expect(chip()).toBeEnabled());
   });
 
-  it("a refused save on the NEW LAST step leaves the footer something to click", async () => {
-    // Moved from "roles" to "voice" by this plan: `nextStep("roles", ...)` is
-    // no longer null, so a refused save on ROLES now rolls back to a step
-    // with a real successor and this exact race no longer arises there — see
-    // "the step's own escape..." below, whose final `step` assertion is what
-    // actually pins that. "voice" is where it now applies, reached here on
-    // its own default answer ("Not right now"), which needs no fixture setup
-    // of its own to get to a live Continue.
+  it("a refused save on the last step leaves the footer something to click", async () => {
+    // Retargeted again — roles → voice → talk. Each time a step is appended,
+    // `nextStep` stops returning null for the old last one, so this race moves
+    // with the terminal step rather than staying where it was written. "talk"
+    // is reachable on its own defaults (chatty, no news), so it needs no
+    // fixture setup to reach a live Continue.
     //
     // The refusal shape: `brokerFetch` never throws on a non-2xx, so an origin
     // block, a credential failure, or swarm-side validation all RESOLVE with
     // `{error}`. If Back and Continue are inert too, the last screen of
     // first-run setup has nothing clickable on it at all, and only a page
     // reload nothing mentions gets the user out.
-    const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "voice" } });
-    await screen.findByRole("radio", { name: /not right now/i });
+    const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "talk" } });
+    await screen.findByRole("radio", { name: /stick to what I already know/i });
 
     updateMe.mockResolvedValue({ error: "origin not allowed" });
     await userEvent.click(screen.getByRole("button", { name: "Continue" }));
 
     expect(await screen.findByText(/origin not allowed/i)).toBeInTheDocument();
     // Still here — this is what makes the last step unlike every other one.
-    expect(await findHost(container)).toHaveAttribute("data-step", "voice");
+    expect(await findHost(container)).toHaveAttribute("data-step", "talk");
     expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Back" })).toBeEnabled();
 
@@ -1065,7 +1082,7 @@ describe("WizardGate", () => {
     expect(patch.setup.step).toBe("voice");
   });
 
-  it("a rejected save on the NEW LAST step leaves the footer something to click too", async () => {
+  it("a rejected save on the last step leaves the footer something to click too", async () => {
     // Moved from "roles" to "voice", same reasoning as the refused-save test
     // above: roles is no longer terminal, so `advance`'s `if (next)
     // setStep(next)` now DOES fire for it regardless of how the write
@@ -1079,21 +1096,21 @@ describe("WizardGate", () => {
     // `.catch` branch, which — unlike the resolved branch — never calls
     // `setStep`. A fix wired only into the resolved branch passes that test
     // and leaves this user just as stuck.
-    const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "voice" } });
-    await screen.findByRole("radio", { name: /not right now/i });
+    const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "talk" } });
+    await screen.findByRole("radio", { name: /stick to what I already know/i });
 
     updateMe.mockRejectedValue(new Error("network error"));
     await userEvent.click(screen.getByRole("button", { name: "Continue" }));
 
     expect(await screen.findByText(/network error/i)).toBeInTheDocument();
-    expect(await findHost(container)).toHaveAttribute("data-step", "voice");
+    expect(await findHost(container)).toHaveAttribute("data-step", "talk");
     expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
 
     // Back is the escape that matters on this shape — a rejection is
     // ambiguous, the write may well have landed, so retrying it is not the
     // only sensible move — and it has to be live, not merely visible.
     await userEvent.click(screen.getByRole("button", { name: "Back" }));
-    expect(await findHost(container)).toHaveAttribute("data-step", "roles");
+    expect(await findHost(container)).toHaveAttribute("data-step", "voice");
   });
 
   // --- The footer's own ranking --------------------------------------------

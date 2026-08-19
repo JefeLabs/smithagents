@@ -32,5 +32,6 @@ export const qk = {
   capability: (id: string) => ["capability", id] as const,
   capabilities: ["capabilities"] as const,
   blueprints: ["blueprints"] as const,
+  topicNames: ["topic-names"] as const,
   documents: ["documents"] as const,
 };

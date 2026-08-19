@@ -16,7 +16,7 @@ export const PREFLIGHT = "preflight";
 export type SetupMode = "local" | "hosted";
 
 /** Every id the host can render, preflight included. */
-export const WIZARD_STEPS = [PREFLIGHT, "sources", "roles", "voice"] as const;
+export const WIZARD_STEPS = [PREFLIGHT, "sources", "roles", "voice", "talk"] as const;
 
 export type WizardStep = (typeof WIZARD_STEPS)[number];
 
@@ -107,7 +107,7 @@ export type WizardSaveState = "idle" | "saving" | "failed";
 export function setupStepsFor(setup: Setup): readonly WizardStep[] {
   if (!setup?.mode) return [];
   if (setup.mode === "hosted") return [];
-  return ["sources", "roles", "voice"];
+  return ["sources", "roles", "voice", "talk"];
 }
 
 export interface WizardStepDef {
@@ -162,6 +162,16 @@ const STEP_DEFS: Record<Exclude<WizardStep, typeof PREFLIGHT>, Omit<WizardStepDe
     // Never `{}` — setup merges server-side, so an empty patch would leave a
     // stale `voice: true` standing from an earlier run rather than declining.
     skipDefault: () => ({ voice: false }),
+  },
+  talk: {
+    title: "How I talk",
+    description: "Small talk, and keeping up with the world",
+    skipLabel: "Skip — I'll say hello properly and stick to what I know",
+    // BOTH answers, always. Chatty is the product default — the personality is
+    // the product, so small talk is opt-OUT — while news ingestion is opt-IN.
+    // A partial patch here would leave one of the two standing from an earlier
+    // run, which is the answer-flip class `voice` above already guards against.
+    skipDefault: () => ({ smallTalk: true, worldAware: false }),
   },
 };
 

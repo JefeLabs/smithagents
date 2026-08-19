@@ -13,7 +13,7 @@ describe("preflight", () => {
 
 describe("the sequence derives from the answers", () => {
   it("local mode yields the local sequence", () => {
-    expect([...setupStepsFor({ mode: "local" })]).toEqual(["sources", "roles", "voice"]);
+    expect([...setupStepsFor({ mode: "local" })]).toEqual(["sources", "roles", "voice", "talk"]);
   });
 
   it("no mode yields no sequence rather than defaulting to local", () => {
@@ -27,9 +27,18 @@ describe("the sequence derives from the answers", () => {
     // `setup.voice` is already `true` or `false` — which would strand a user
     // who has never answered on a sequence one step short of the one the
     // progress indicator (and `resumeStep`) actually walks.
-    expect([...setupStepsFor({ mode: "local" })]).toEqual(["sources", "roles", "voice"]);
-    expect([...setupStepsFor({ mode: "local", voice: true })]).toEqual(["sources", "roles", "voice"]);
-    expect([...setupStepsFor({ mode: "local", voice: false })]).toEqual(["sources", "roles", "voice"]);
+    expect([...setupStepsFor({ mode: "local" })]).toEqual(["sources", "roles", "voice", "talk"]);
+    expect([...setupStepsFor({ mode: "local", voice: true })]).toEqual(["sources", "roles", "voice", "talk"]);
+    expect([...setupStepsFor({ mode: "local", voice: false })]).toEqual(["sources", "roles", "voice", "talk"]);
+    // "talk" is unconditional for the same reason, and would strand a user the
+    // same way: its whole job is to ASK, so a record that already carries an
+    // answer must still reach the screen that asks it.
+    expect([...setupStepsFor({ mode: "local", smallTalk: false, worldAware: true })]).toEqual([
+      "sources",
+      "roles",
+      "voice",
+      "talk",
+    ]);
   });
 });
 
@@ -38,7 +47,7 @@ describe("labels match the spec", () => {
     expect(stepsFor({ mode: "local" }).map((s) => s.title)).not.toContain("Location");
   });
 
-  it("carries the spec's own three section names, in its order", () => {
+  it("carries the spec's own section names, in its order", () => {
     // `## Step 1 of 6 · Where I think` / `## Step 2 of 6 · What I think with`
     // / `## Step 3 of 6 · Talking out loud` — the spec's headings verbatim,
     // because the indicator is the only place a step is named to the user
@@ -47,6 +56,7 @@ describe("labels match the spec", () => {
       "Where I think",
       "What I think with",
       "Talking out loud",
+      "How I talk",
     ]);
   });
 
@@ -79,14 +89,15 @@ describe("progress is honest", () => {
     expect(of).toBe(stepsFor({ mode: "local" }).length);
   });
 
-  it("the local sequence is honestly 'Step n of 3' now that voice is in it", () => {
+  it("the local sequence is honestly 'Step n of 4' now that talk is in it", () => {
     // Pinned as the literal numbers, not just against `stepsFor(...).length`
     // (which the two checks above already do): a regression that dropped
     // "voice" back out of the sequence would still satisfy those against
     // itself, reporting a self-consistent but wrong "of 2".
-    expect(progressFor("sources", { mode: "local" })).toEqual({ n: 1, of: 3 });
-    expect(progressFor("roles", { mode: "local" })).toEqual({ n: 2, of: 3 });
-    expect(progressFor("voice", { mode: "local" })).toEqual({ n: 3, of: 3 });
+    expect(progressFor("sources", { mode: "local" })).toEqual({ n: 1, of: 4 });
+    expect(progressFor("roles", { mode: "local" })).toEqual({ n: 2, of: 4 });
+    expect(progressFor("voice", { mode: "local" })).toEqual({ n: 3, of: 4 });
+    expect(progressFor("talk", { mode: "local" })).toEqual({ n: 4, of: 4 });
   });
 });
 
@@ -124,12 +135,14 @@ describe("nextStep", () => {
   });
 
   it("walks the sequence and ends at null", () => {
-    // "roles" is no longer the end — this is the exact regression a naive
-    // wiring of the new step would produce if `setupStepsFor` grew "voice"
-    // but something upstream still treated "roles" as terminal.
+    // "voice" is no longer the end, exactly as "roles" stopped being it when
+    // voice arrived — the regression a naive wiring of each new step produces
+    // if `setupStepsFor` grows one but something upstream still treats the old
+    // last step as terminal.
     expect(nextStep("sources", { mode: "local" })).toBe("roles");
     expect(nextStep("roles", { mode: "local" })).toBe("voice");
-    expect(nextStep("voice", { mode: "local" })).toBeNull();
+    expect(nextStep("voice", { mode: "local" })).toBe("talk");
+    expect(nextStep("talk", { mode: "local" })).toBeNull();
   });
 });
 
@@ -193,5 +206,44 @@ describe("resumeStep", () => {
     // are the ones that will actually be on disk.
     expect(resumeStep({ mode: "local", step: "subscriptions" })).toBe(PREFLIGHT);
     expect(resumeStep({ mode: "local", step: "anderson" })).toBe(PREFLIGHT);
+  });
+});
+
+describe("How I talk joins the sequence", () => {
+  it("comes after voice, making the local sequence four steps", () => {
+    expect(setupStepsFor({ mode: "local" })).toEqual(["sources", "roles", "voice", "talk"]);
+  });
+
+  it("counts as step 4 of 4 — the arithmetic every step's indicator reads", () => {
+    expect(progressFor("talk", { mode: "local" })).toEqual({ n: 4, of: 4 });
+    expect(progressFor("voice", { mode: "local" })).toEqual({ n: 3, of: 4 });
+    expect(progressFor("sources", { mode: "local" })).toEqual({ n: 1, of: 4 });
+  });
+
+  it("carries the spec's own section name", () => {
+    const talk = stepsFor({ mode: "local" }).find((s) => s.id === "talk");
+    expect(talk?.title).toBe("How I talk");
+  });
+
+  it("its skip states what skipping does, never a bare Skip", () => {
+    const talk = stepsFor({ mode: "local" }).find((s) => s.id === "talk");
+    expect(talk?.skipLabel).toMatch(/say hello properly and stick to what I know/i);
+  });
+
+  it("its skip default sets BOTH answers explicitly — chatty, and news opt-in declined", () => {
+    const talk = stepsFor({ mode: "local" }).find((s) => s.id === "talk");
+    // Never `{}` or a partial: setup merges server-side, so an omitted field
+    // would leave an earlier run's answer standing.
+    expect(talk?.skipDefault()).toEqual({ smallTalk: true, worldAware: false });
+  });
+
+  it("pick-for-me picks it up without naming it — every step's default, applied", () => {
+    const setup: Record<string, unknown> = { mode: "local" };
+    for (const s of stepsFor({ mode: "local" })) Object.assign(setup, s.skipDefault());
+    expect(setup).toMatchObject({ smallTalk: true, worldAware: false });
+  });
+
+  it("hosted mode still selects no steps at all", () => {
+    expect(setupStepsFor({ mode: "hosted" })).toEqual([]);
   });
 });
