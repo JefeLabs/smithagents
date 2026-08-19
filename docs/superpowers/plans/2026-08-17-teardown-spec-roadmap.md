@@ -1,11 +1,11 @@
 # Borrowed Primitives — the seven-spec sequence
 
 **Source:** the Hamster / herdr / Orca teardown, 44 findings.
-**Status verified 2026-08-17** by probing `swarm/src`, `control-plane/src`, and
+**Status verified 2026-08-17** (spec 4 added same day) by probing `swarm/src`, `control-plane/src`, and
 `broker/src` — not by reading checkboxes. Control term returned 96 matches, so
 the sweep was live; all seven feature probes returned zero.
 
-Three specs are written. **None of the seven is implemented.** Two of them sit on
+Four specs are written. **None of the seven is implemented.** Two of them sit on
 foundations that already exist, which is why their scope is smaller than the
 register implied.
 
@@ -18,7 +18,7 @@ register implied.
 | 1 | Agent status reporting | ✅ `2026-08-16-agent-status-reporting-design.md` | ✗ | `drivers/*.materialize`, `prepareWorkspace` |
 | 2 | Session recovery | ✅ `2026-08-17-session-recovery-design.md` | ✗ | `session-reconcile.ts` (pure policy module) |
 | 3 | Instance provisioning | ✅ `2026-08-17-instance-provisioning-design.md` | ✗ | `workspace-instances.ts` (496 lines, create/destroy/dirty) |
-| 4 | Agent visibility | ✗ not brainstormed | ✗ | board + react-flow canvas |
+| 4 | Agent visibility | ✅ `2026-08-17-agent-visibility-design.md` | ✗ | `GET /agent-sessions`, BoardColumn/BoardCard |
 | 5 | Hibernation | ✗ not brainstormed | ✗ | — |
 | 6 | Coordination protocol | ✗ not brainstormed | ✗ | `dispatcher.ts`, broker relay |
 | 7 | Context projection | ✗ not brainstormed | ✗ | documents, work-items, skill emission |
@@ -50,8 +50,9 @@ in parallel.
    swarm work once spec 1 has landed.
 
 Specs 6 and 7 are separate bets, not continuations. Spec 6 is the largest in the
-set and overlaps spec 1: giving workers a structured way to *ask* reduces how
-often a blocked state is reached at all.
+set, overlaps spec 1 — giving workers a structured way to *ask* reduces how often
+a blocked state is reached at all — and **now also owns the coordination map**,
+which spec 4 deferred to it.
 
 ## What the code review changed
 
@@ -70,6 +71,16 @@ Reading the tree before writing each spec moved real scope:
   is cheaper and authoritative rather than inferred.
 - **Spec 2 got smaller.** Session ids are already pinned at launch, so recovery
   is a branch in an existing pure function plus two driver methods.
+- **Spec 4 lost the map and gained a level.** The coordination map draws dispatch
+  lineage that spec 6 has not defined, so it moved there. And the rollup is four
+  levels, not two: session → assignee → work item → workspace, because agents and
+  swarms receive a workspace's work items. A swarm assignee is not a simple
+  maximum — any member blocked blocks the work, `done` requires every member, and
+  one `unknown` member makes completion unprovable.
+- **Spec 4 found a route already stranded.** `GET /agent-sessions` has existed
+  since the warm-session work; the control-plane has zero references to it. The
+  swarm-route-without-broker-proxy bug has shipped twice, so a route-parity test
+  is part of that spec rather than a note.
 
 ## Open risks carried by the written specs
 
@@ -84,5 +95,5 @@ Reading the tree before writing each spec moved real scope:
 
 ## Next action
 
-Brainstorm spec 4, 5, 6, or 7 — or take a written spec to `writing-plans` and
+Brainstorm spec 5, 6, or 7 — or take a written spec to `writing-plans` and
 implement. Nothing in the sequence is blocked.
