@@ -3202,9 +3202,23 @@ export class Projection {
     const server = createServer((sock) => {
       const dec = new NdjsonDecoder();
       sock.on("data", (chunk) => {
-        for (const raw of dec.push(chunk)) {
+        // the decoder throws on a malformed line; an inbound local client must
+        // never be able to crash the daemon — close just that connection
+        let frames: unknown[];
+        try {
+          frames = dec.push(chunk);
+        } catch {
+          sock.destroy();
+          return;
+        }
+        for (const raw of frames) {
           const frame = raw as { id?: string; method?: string; params?: unknown };
-          if (typeof frame.method !== "string") continue;
+          if (typeof frame.method !== "string") {
+            sock.write(
+              encodeFrame({ id: frame.id, error: { code: "bad_request", message: "frame needs a string 'method'" } }),
+            );
+            continue;
+          }
           const child = this.opts.hub.get(instance);
           const call = child
             ? child.request(session, frame.method, frame.params ?? {})
@@ -3251,6 +3265,13 @@ export class Projection {
   }
 }
 ```
+
+**Test hermeticity (execution amendment):** every `startDaemon` call in the test
+suite must pass `projectionDir: tmpDir()` — without it the daemon defaults to
+the REAL `~/.config/herdr/remotes` and earlier suites (federation, daemon,
+ws-client) write sockets/dirs under the developer's actual `$HOME` on every
+run. Modify `test/federation.test.ts` (bootPair), `test/daemon.test.ts`, and
+`test/ws-client.test.ts` accordingly in this task.
 
 Modify `src/daemon.ts` — replace the `// Task 11 wires Projection here.` comment with:
 
