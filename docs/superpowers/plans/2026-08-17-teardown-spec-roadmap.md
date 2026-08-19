@@ -6,7 +6,7 @@
 returned 96 matches, so the sweep was live; every feature probe returned zero.
 
 Started as seven specs; spec 6 split during its brainstorm, so it is now **nine**.
-Six are written. **None is implemented.**
+Seven are written. **None is implemented.**
 
 ---
 
@@ -20,7 +20,7 @@ Six are written. **None is implemented.**
 | 4 | Agent visibility | ✅ `2026-08-17-agent-visibility-design.md` | ✗ | `GET /agent-sessions`, BoardColumn/BoardCard |
 | 5 | Hibernation | ✅ `2026-08-17-hibernation-design.md` | ✗ | — |
 | 6 | Dispatch entity and lifecycle | ✅ `2026-08-19-dispatch-entity-design.md` | ✗ | `work-items.delegation`, `dispatcher.ts` |
-| 7 | Worker protocol | ✗ not brainstormed | ✗ | broker relay, `election.ts` AskFactory |
+| 7 | Worker protocol | ✅ `2026-08-19-worker-protocol-design.md` | ✗ | `smith-delegate` shim pattern, broker relay |
 | 8 | Context projection | ✗ not brainstormed | ✗ | documents, work-items, skill emission |
 | 9 | Coordination map | ✗ not brainstormed | ✗ | react-flow MapStage |
 
@@ -48,7 +48,9 @@ Independent and buildable today: **1, 2, 3, 6, 8**.
 3. **Spec 2 — recovery.** Smallest; largely one function and two driver methods.
 4. **Spec 6 — dispatch entity.** Independent, and its both-ids rule is free to
    add now and a migration later.
-5. **Spec 4 — visibility**, then **5 — hibernation**, then **7** and **9**.
+5. **Spec 4 — visibility**, then **5 — hibernation**, then **7 — worker
+   protocol** (which reduces how often spec 1's `blocked` is ever reached), then
+   **9**.
 
 Spec 8 (context projection) is a separate bet and can start at any time.
 
@@ -77,6 +79,11 @@ Every spec's scope moved once the tree was read rather than assumed:
 - **Spec 5 added a dependency and removed a mechanism.** It depends on spec 4,
   whose rollup *is* its safety rule, and adds no wake path — sleeping produces
   exactly spec 2's `resumable` state.
+- **Spec 7 deleted two of its own mechanisms.** No heartbeat — spec 1's hooks
+  already report on every prompt and tool use, so `lastStatusReportAt` is
+  liveness. No durable inbox — the dispatch record is the truth, nothing is
+  consumed, so nothing needs replaying. Orca needs both because its coordinator
+  is a CLI draining mail; here the coordinator reads state.
 - **Spec 6 split, and found the council turn is a different primitive.**
   `councilTurn` fans a *question* and returns positions; a dispatch is durable
   work returning commits. Orca's "Task" already exists here as the work item, so
@@ -92,9 +99,12 @@ Every spec's scope moved once the tree was read rather than assumed:
 - **agy's recovery path ships dormant** (spec 2 §7) until spec 1 lands.
 - **Ad-hoc sessions have no assignee** (spec 5 §9), so nothing sleeps them —
   though nobody is watching them either.
+- **`smith-ask` must not inherit spec 1's `exit 0` convention** (spec 7 §5). The
+  two shims sit in one directory and will be read side by side; making them
+  consistent reintroduces the guessing the ask exists to prevent.
 - **`idleMinutes` default of 30 is inherited from Orca, not measured** (spec 5 §9).
 
 ## Next action
 
-Brainstorm spec 7, 8, or 9 — or take a written spec to `writing-plans` and
+Brainstorm spec 8 or 9 — or take a written spec to `writing-plans` and
 implement. Nothing in the sequence is blocked.
