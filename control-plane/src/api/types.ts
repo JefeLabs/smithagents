@@ -294,8 +294,25 @@ export interface MeRecord {
   /** How far through the welcome wizard this user got, and the preflight
       answers that chose its sequence. Mirrors swarm's `User["setup"]`
       (swarm/src/users.ts) — `voice` was already persisted and returned there;
-      this side had simply not been widened to see it. */
-  setup?: { mode?: "local" | "hosted"; voice?: boolean; step?: string };
+      this side had simply not been widened to see it. `smallTalk`/`worldAware`
+      (*How I talk*) and `remember`/`deeperRecall`/`permissions` (*Remembering,
+      and what I may do*) are the same widening, one step later — each pass
+      through this comment is another answer WizardGate needed to seed a
+      resumed step with, not a shape this side invents on its own. */
+  setup?: {
+    mode?: "local" | "hosted";
+    voice?: boolean;
+    step?: string;
+    smallTalk?: boolean;
+    worldAware?: boolean;
+    remember?: boolean;
+    deeperRecall?: boolean;
+    permissions?: {
+      readFiles: "ask" | "allow" | "never";
+      runCommands: "ask" | "allow" | "never";
+      browseWeb: "ask" | "allow" | "never";
+    };
+  };
   // The engine roles (`brainEngine`, `quickEngine`, `fallbackEngine`) are
   // NOT here, and their absence is deliberate rather than the drift it
   // resembles: this interface mirrors `redactUser`'s output (swarm's

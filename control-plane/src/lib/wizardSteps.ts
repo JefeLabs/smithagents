@@ -30,7 +30,7 @@ export interface WizardPermissions {
 }
 
 /** Every id the host can render, preflight included. */
-export const WIZARD_STEPS = [PREFLIGHT, "sources", "roles", "voice", "talk"] as const;
+export const WIZARD_STEPS = [PREFLIGHT, "sources", "roles", "voice", "talk", "memory"] as const;
 
 export type WizardStep = (typeof WIZARD_STEPS)[number];
 
@@ -136,7 +136,7 @@ export type WizardSaveState = "idle" | "saving" | "failed";
 export function setupStepsFor(setup: Setup): readonly WizardStep[] {
   if (!setup?.mode) return [];
   if (setup.mode === "hosted") return [];
-  return ["sources", "roles", "voice", "talk"];
+  return ["sources", "roles", "voice", "talk", "memory"];
 }
 
 export interface WizardStepDef {
@@ -201,6 +201,19 @@ const STEP_DEFS: Record<Exclude<WizardStep, typeof PREFLIGHT>, Omit<WizardStepDe
     // A partial patch here would leave one of the two standing from an earlier
     // run, which is the answer-flip class `voice` above already guards against.
     skipDefault: () => ({ smallTalk: true, worldAware: false }),
+  },
+  memory: {
+    title: "Remembering, and what I may do",
+    description: "What I keep, and what I may do without asking",
+    skipLabel: "Skip — I'll remember, and ask before doing anything",
+    // Every answer, always. Asking first is the safe stance and the one a user
+    // who never reached this screen would expect; remembering is on because it
+    // already works and costs nothing.
+    skipDefault: () => ({
+      remember: true,
+      deeperRecall: false,
+      permissions: { readFiles: "ask", runCommands: "ask", browseWeb: "ask" },
+    }),
   },
 };
 

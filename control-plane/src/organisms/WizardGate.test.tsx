@@ -432,7 +432,7 @@ describe("WizardGate", () => {
   it("shows honest progress and a skip control that states its default, not the bare word", async () => {
     renderGate({ name: "Edwin", setup: { mode: "local", step: "sources" } });
 
-    expect(await screen.findByText("Step 1 of 4")).toBeInTheDocument();
+    expect(await screen.findByText("Step 1 of 5")).toBeInTheDocument();
     const skip = screen.getByRole("button", { name: /skip/i });
     // Discriminates the same way wizardSteps.test.ts's own check does, one
     // layer up: a control merely labelled "Skip" would satisfy a name-only
@@ -454,7 +454,7 @@ describe("WizardGate", () => {
     const skip = await screen.findByRole("button", { name: /skip/i });
     const row = skip.closest(".wizard-gate__progress");
     expect(row).not.toBeNull();
-    expect(row?.textContent).toMatch(/^Step 1 of 4/);
+    expect(row?.textContent).toMatch(/^Step 1 of 5/);
   });
 
   it("Skip cannot race the write that put the user on the step", async () => {
@@ -526,19 +526,22 @@ describe("WizardGate", () => {
     );
   });
 
-  it("the host's Skip on talk sends BOTH answers explicitly, and finishes setup", async () => {
-    // Talk is the new last step, so its Skip is the one that reaches
-    // SETUP_DONE. Both fields asserted by VALUE: a `skipDefault()` returning a
+  it("the host's Skip on talk sends BOTH answers explicitly, and advances to memory", async () => {
+    // "memory" is the new last step, the same shift voice's own Skip took
+    // when talk was inserted after it — talk's Skip now advances rather than
+    // finishing. Both fields asserted by VALUE: a `skipDefault()` returning a
     // partial patch would leave one answer standing from an earlier run and be
-    // invisible everywhere else, because `step` advances either way.
+    // invisible everywhere else, because `step` advances either way. The
+    // terminal write is asserted on the last-step footer tests below, now
+    // retargeted to "memory".
     const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "talk" } });
 
     await userEvent.click(await screen.findByRole("button", { name: /skip/i }));
 
-    expect(await findHost(container)).toHaveAttribute("data-step", "talk");
+    expect(await findHost(container)).toHaveAttribute("data-step", "memory");
     expect(updateMe).toHaveBeenCalledWith(
       expect.objectContaining({
-        setup: expect.objectContaining({ smallTalk: true, worldAware: false, step: SETUP_DONE }),
+        setup: expect.objectContaining({ smallTalk: true, worldAware: false, step: "memory" }),
       }),
     );
   });
@@ -881,26 +884,26 @@ describe("WizardGate", () => {
   });
 
   it("a refused save on the last step leaves the footer something to click", async () => {
-    // Retargeted again — roles → voice → talk. Each time a step is appended,
-    // `nextStep` stops returning null for the old last one, so this race moves
-    // with the terminal step rather than staying where it was written. "talk"
-    // is reachable on its own defaults (chatty, no news), so it needs no
-    // fixture setup to reach a live Continue.
+    // Retargeted again — roles → voice → talk → memory. Each time a step is
+    // appended, `nextStep` stops returning null for the old last one, so this
+    // race moves with the terminal step rather than staying where it was
+    // written. "memory" is reachable on its own defaults (remember, ask
+    // first), so it needs no fixture setup to reach a live Continue.
     //
     // The refusal shape: `brokerFetch` never throws on a non-2xx, so an origin
     // block, a credential failure, or swarm-side validation all RESOLVE with
     // `{error}`. If Back and Continue are inert too, the last screen of
     // first-run setup has nothing clickable on it at all, and only a page
     // reload nothing mentions gets the user out.
-    const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "talk" } });
-    await screen.findByRole("radio", { name: /stick to what I already know/i });
+    const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "memory" } });
+    await screen.findByRole("radio", { name: /remember me/i });
 
     updateMe.mockResolvedValue({ error: "origin not allowed" });
     await userEvent.click(screen.getByRole("button", { name: "Continue" }));
 
     expect(await screen.findByText(/origin not allowed/i)).toBeInTheDocument();
     // Still here — this is what makes the last step unlike every other one.
-    expect(await findHost(container)).toHaveAttribute("data-step", "talk");
+    expect(await findHost(container)).toHaveAttribute("data-step", "memory");
     expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Back" })).toBeEnabled();
 
@@ -1083,34 +1086,35 @@ describe("WizardGate", () => {
   });
 
   it("a rejected save on the last step leaves the footer something to click too", async () => {
-    // Moved from "roles" to "voice", same reasoning as the refused-save test
-    // above: roles is no longer terminal, so `advance`'s `if (next)
+    // Moved from "talk" to "memory", same reasoning as the refused-save test
+    // above: talk is no longer terminal, so `advance`'s `if (next)
     // setStep(next)` now DOES fire for it regardless of how the write
-    // settles — see "advances from roles into voice..." below, which pins
-    // that transition directly. This test's actual subject — nothing swaps
-    // the screen at all, so the footer has to stay clickable on its own —
-    // only still arises where `next` is genuinely null, which is now here.
+    // settles — see "the host's Skip on talk sends BOTH answers explicitly,
+    // and advances to memory" above, which pins that transition directly.
+    // This test's actual subject — nothing swaps the screen at all, so the
+    // footer has to stay clickable on its own — only still arises where
+    // `next` is genuinely null, which is now here.
     //
     // The shape itself is still NOT interchangeable with the refused one: a
     // network failure rejects rather than resolving, and it takes `advance`'s
     // `.catch` branch, which — unlike the resolved branch — never calls
     // `setStep`. A fix wired only into the resolved branch passes that test
     // and leaves this user just as stuck.
-    const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "talk" } });
-    await screen.findByRole("radio", { name: /stick to what I already know/i });
+    const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "memory" } });
+    await screen.findByRole("radio", { name: /remember me/i });
 
     updateMe.mockRejectedValue(new Error("network error"));
     await userEvent.click(screen.getByRole("button", { name: "Continue" }));
 
     expect(await screen.findByText(/network error/i)).toBeInTheDocument();
-    expect(await findHost(container)).toHaveAttribute("data-step", "talk");
+    expect(await findHost(container)).toHaveAttribute("data-step", "memory");
     expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
 
     // Back is the escape that matters on this shape — a rejection is
     // ambiguous, the write may well have landed, so retrying it is not the
     // only sensible move — and it has to be live, not merely visible.
     await userEvent.click(screen.getByRole("button", { name: "Back" }));
-    expect(await findHost(container)).toHaveAttribute("data-step", "voice");
+    expect(await findHost(container)).toHaveAttribute("data-step", "talk");
   });
 
   // --- The footer's own ranking --------------------------------------------

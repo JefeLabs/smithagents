@@ -60,7 +60,7 @@ describe("WizardMemoryStep", () => {
     await user.click(screen.getByRole("button", { name: /continue/i }));
 
     await waitFor(() => expect(patches).toHaveLength(1));
-    expect(patches[0].setup.permissions).toEqual({
+    expect(patches[0].setup?.permissions).toEqual({
       readFiles: "ask",
       runCommands: "never",
       browseWeb: "ask",

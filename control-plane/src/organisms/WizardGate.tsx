@@ -23,6 +23,7 @@ import { WizardChip } from "../molecules/WizardChip";
 import { useMe, useTopicNames } from "../queries/http";
 import { qk } from "../queries/keys";
 import { WizardGateStep } from "./WizardGateStep";
+import { WizardMemoryStep } from "./WizardMemoryStep";
 import { WizardRolesStep } from "./WizardRolesStep";
 import { WizardSourcesStep } from "./WizardSourcesStep";
 import { WizardTalkStep } from "./WizardTalkStep";
@@ -158,6 +159,9 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
   const [voice, setVoice] = useState(me.setup?.voice);
   const [smallTalk, setSmallTalk] = useState(me.setup?.smallTalk);
   const [worldAware, setWorldAware] = useState(me.setup?.worldAware);
+  const [remember, setRemember] = useState(me.setup?.remember);
+  const [deeperRecall, setDeeperRecall] = useState(me.setup?.deeperRecall);
+  const [permissions, setPermissions] = useState(me.setup?.permissions);
   // Only asked for on the step that shows them — a first run that never reaches
   // "talk" should not spend a request listing topics nobody has created.
   const topicNames = useTopicNames(step === "talk");
@@ -215,6 +219,9 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
     if (patch.setup?.voice !== undefined) setVoice(patch.setup.voice);
     if (patch.setup?.smallTalk !== undefined) setSmallTalk(patch.setup.smallTalk);
     if (patch.setup?.worldAware !== undefined) setWorldAware(patch.setup.worldAware);
+    if (patch.setup?.remember !== undefined) setRemember(patch.setup.remember);
+    if (patch.setup?.deeperRecall !== undefined) setDeeperRecall(patch.setup.deeperRecall);
+    if (patch.setup?.permissions !== undefined) setPermissions(patch.setup.permissions);
     api
       .updateMe({ ...patch, setup: { ...patch.setup, step: next ?? SETUP_DONE } })
       .then((result) => {
@@ -525,6 +532,17 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
               initialSmallTalk={smallTalk}
               initialWorldAware={worldAware}
               initialTopics={topicNames.data ?? []}
+              onDone={advance}
+              onBack={onBack}
+              saveState={saveState}
+            />
+          )}
+          {step === "memory" && (
+            <WizardMemoryStep
+              initialRemember={remember}
+              initialDeeperRecall={deeperRecall}
+              initialPermissions={permissions}
+              storagePath="~/.smithagents"
               onDone={advance}
               onBack={onBack}
               saveState={saveState}
