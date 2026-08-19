@@ -5,7 +5,7 @@
 `broker/src` — not by reading checkboxes. Control term returned 96 matches, so
 the sweep was live; all seven feature probes returned zero.
 
-Four specs are written. **None of the seven is implemented.** Two of them sit on
+Five specs are written. **None of the seven is implemented.** Two of them sit on
 foundations that already exist, which is why their scope is smaller than the
 register implied.
 
@@ -19,7 +19,7 @@ register implied.
 | 2 | Session recovery | ✅ `2026-08-17-session-recovery-design.md` | ✗ | `session-reconcile.ts` (pure policy module) |
 | 3 | Instance provisioning | ✅ `2026-08-17-instance-provisioning-design.md` | ✗ | `workspace-instances.ts` (496 lines, create/destroy/dirty) |
 | 4 | Agent visibility | ✅ `2026-08-17-agent-visibility-design.md` | ✗ | `GET /agent-sessions`, BoardColumn/BoardCard |
-| 5 | Hibernation | ✗ not brainstormed | ✗ | — |
+| 5 | Hibernation | ✅ `2026-08-17-hibernation-design.md` | ✗ | — |
 | 6 | Coordination protocol | ✗ not brainstormed | ✗ | `dispatcher.ts`, broker relay |
 | 7 | Context projection | ✗ not brainstormed | ✗ | documents, work-items, skill emission |
 
@@ -44,8 +44,9 @@ in parallel.
 2. **Spec 1 — status reporting.** Unblocks two downstream specs and closes the
    failure class behind the warm-session incident.
 3. **Spec 2 — recovery.** The smallest of the three; mostly one function.
-4. **Spec 5 — hibernation**, once 1 and 2 exist. It deliberately kills live
-   processes knowing spec 2 can bring them back.
+4. **Spec 5 — hibernation**, once 1, 2, and 4 exist. It deliberately kills live
+   processes knowing spec 2 can bring them back, and borrows its safety rule from
+   spec 4's rollup. Ships off by default.
 5. **Spec 4 — visibility.** Control-plane, so it can run in parallel with any
    swarm work once spec 1 has landed.
 
@@ -77,6 +78,11 @@ Reading the tree before writing each spec moved real scope:
   swarms receive a workspace's work items. A swarm assignee is not a simple
   maximum — any member blocked blocks the work, `done` requires every member, and
   one `unknown` member makes completion unprovable.
+- **Spec 5 added a dependency and removed a mechanism.** It now depends on spec 4
+  as well as 1 and 2, because the assignee rollup *is* its safety rule — one
+  eligibility condition inherits three of Orca's separate checks. And it adds no
+  wake path at all: sleeping produces exactly spec 2's `resumable` state, so
+  waking is spec 2's lazy resume unchanged.
 - **Spec 4 found a route already stranded.** `GET /agent-sessions` has existed
   since the warm-session work; the control-plane has zero references to it. The
   swarm-route-without-broker-proxy bug has shipped twice, so a route-parity test
@@ -95,5 +101,5 @@ Reading the tree before writing each spec moved real scope:
 
 ## Next action
 
-Brainstorm spec 5, 6, or 7 — or take a written spec to `writing-plans` and
+Brainstorm spec 6 or 7 — or take a written spec to `writing-plans` and
 implement. Nothing in the sequence is blocked.
