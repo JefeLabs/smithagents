@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir } from "node:fs/promises";
+import { mkdtemp, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -60,15 +60,11 @@ test("the system prompt carries the persona and the model rides the engine", asy
 });
 
 test("a failed turn persists NOTHING — the transcript is what the model has seen", async () => {
-  const { runtime, dir } = await freshRuntime([
-    new ApiProviderError("billing", "top up"),
-  ]);
+  const { runtime, dir } = await freshRuntime([new ApiProviderError("billing", "top up")]);
   await assert.rejects(() => runtime.runTurn(AGENT, null, "q"), /top up/);
   // No session dir, no half-written file.
   const entries = await readdir(dir).catch(() => []);
-  const files = await Promise.all(
-    entries.map(async (e) => readdir(join(dir, e)).catch(() => [])),
-  );
+  const files = await Promise.all(entries.map(async (e) => readdir(join(dir, e)).catch(() => [])));
   assert.deepEqual(files.flat(), []);
 });
 

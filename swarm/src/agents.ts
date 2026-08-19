@@ -76,8 +76,7 @@ function assertAgent(file: string, v: unknown): ComposedAgent {
   // The kind fork (api-runtime spec 2026-08-13): api needs a provider, cli
   // (and every pre-kind file, where `kind` is absent) needs a cli.
   const kindOk =
-    engine &&
-    (engine.kind === "api" ? typeof engine.provider === "string" : typeof engine.cli === "string");
+    engine && (engine.kind === "api" ? typeof engine.provider === "string" : typeof engine.cli === "string");
   if (!base || !kindOk) {
     throw new Error(
       `Invalid composed-agent file ${file}: requires id, name, role, directives, engine{cli,model} or engine{kind:"api",provider,model}`,

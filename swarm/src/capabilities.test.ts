@@ -612,11 +612,13 @@ test("patchCapability rejects fractional and negative story points; a points cha
     { id: "s2", stepId: "st1", order: 1, text: "two", done: false, updatedAt: "2026-01-01T00:00:00.000Z" },
   ];
   assert.throws(
-    () => patchCapability(cap, { stories: [{ id: "s1", stepId: "st1", order: 0, text: "one", done: false, points: 1.5 }] }),
+    () =>
+      patchCapability(cap, { stories: [{ id: "s1", stepId: "st1", order: 0, text: "one", done: false, points: 1.5 }] }),
     /whole number/,
   );
   assert.throws(
-    () => patchCapability(cap, { stories: [{ id: "s1", stepId: "st1", order: 0, text: "one", done: false, points: -1 }] }),
+    () =>
+      patchCapability(cap, { stories: [{ id: "s1", stepId: "st1", order: 0, text: "one", done: false, points: -1 }] }),
     /whole number/,
   );
   const patched = patchCapability(cap, {
@@ -636,7 +638,17 @@ test("sendSliceToBoard and resyncLinkedCards copy story points onto the card row
   cap.activities = [{ id: "a1", name: "a", order: 0, steps: [{ id: "st1", name: "s", order: 0 }] }];
   cap.stories = [{ id: "s1", stepId: "st1", order: 0, text: "one", done: false, points: 5 }];
   cap.slices = [{ id: "sl1", name: "v1", order: 0, storyIds: ["s1"] }];
-  const board = { id: "b1", name: "plan", type: "plan" as const, workspaceId: "jefelabs", columns: [{ id: "queue", name: "Queue" }, { id: "spec", name: "Spec" }], cards: [] };
+  const board = {
+    id: "b1",
+    name: "plan",
+    type: "plan" as const,
+    workspaceId: "jefelabs",
+    columns: [
+      { id: "queue", name: "Queue" },
+      { id: "spec", name: "Spec" },
+    ],
+    cards: [],
+  };
   const card = sendSliceToBoard(cap, cap.slices[0], board);
   assert.equal(card.stories?.[0].points, 5);
   // Re-estimate, then resync: the linked card's copy follows the map.
@@ -645,6 +657,8 @@ test("sendSliceToBoard and resyncLinkedCards copy story points onto the card row
   await import("node:fs/promises").then((fs) => fs.mkdir(join(dir, "work"), { recursive: true }));
   await writeFile(join(dir, "work", "b1.json"), JSON.stringify(board));
   await resyncLinkedCards([join(dir, "work")], () => join(dir, "work"), cap);
-  const saved = JSON.parse(await import("node:fs/promises").then((fs) => fs.readFile(join(dir, "work", "b1.json"), "utf8")));
+  const saved = JSON.parse(
+    await import("node:fs/promises").then((fs) => fs.readFile(join(dir, "work", "b1.json"), "utf8")),
+  );
   assert.equal(saved.cards[0].stories[0].points, 8);
 });

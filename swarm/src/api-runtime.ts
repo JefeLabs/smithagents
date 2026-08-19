@@ -94,7 +94,9 @@ export class ApiRuntime {
     return JSON.parse(raw) as ApiSession;
   }
 
-  async listSessions(agentId: string): Promise<Array<{ id: string; createdAt: string; updatedAt: string; messageCount: number }>> {
+  async listSessions(
+    agentId: string,
+  ): Promise<Array<{ id: string; createdAt: string; updatedAt: string; messageCount: number }>> {
     let files: string[];
     try {
       files = await readdir(this.agentDir(agentId));
