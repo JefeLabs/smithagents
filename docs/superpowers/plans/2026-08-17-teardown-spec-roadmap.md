@@ -6,7 +6,22 @@
 returned 96 matches, so the sweep was live; every feature probe returned zero.
 
 Started as seven specs; spec 6 split during its brainstorm, so it is now **nine**.
-Seven are written. **None is implemented.**
+Seven are written. **None is implemented.** All merged to `main` @ `6ff1184`.
+
+## The other live threads
+
+This sequence is one of three. Verified in code on 2026-08-19, not from
+checkboxes:
+
+| thread | state |
+| --- | --- |
+| **Welcome wizard** | plans 1–3 shipped; **plan 4 in progress and red** (`broker/src/talk-prefs.test.ts` written, `talk-prefs.ts` absent); plans 5–6 not started |
+| **This sequence** | 7 of 9 designed, 0 implemented |
+| **herdr-web-broker** (separate repo) | substantially built — 302 TS files, 32 test files, daemon/http/auth/policy/projection present; two newer design commits sit on top of its plan |
+
+The herdr-web-broker work is a plugin built *for* herdr, exposing its socket API
+over REST/WS with parent↔child federation. It is not the same question as
+adopting herdr as this system's runtime, which was considered and declined.
 
 ---
 
