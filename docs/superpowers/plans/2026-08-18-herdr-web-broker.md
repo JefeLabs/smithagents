@@ -2385,27 +2385,34 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
 
   const hub = new TunnelHub();
   const handler = createHttpHandler({ registry, local, hub, children, config, adminToken });
-  const server: Server = config.tls
-    ? createHttpsServer(
-        { cert: readFileSync(config.tls.cert), key: readFileSync(config.tls.key) },
-        handler,
-      )
-    : createHttpServer(handler);
-  attachUpgradeHandling(server, {
-    children,
-    hub,
-    registry,
-    config,
-    callInstance: makeCallInstance({ registry, local, hub, remoteDeny: config.policy.remote_deny }),
-  });
-
   const lastColon = config.listen.lastIndexOf(":");
   const host = config.listen.slice(0, lastColon);
   const wantPort = Number(config.listen.slice(lastColon + 1));
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(wantPort, host, resolve);
-  });
+  let server: Server;
+  try {
+    server = config.tls
+      ? createHttpsServer(
+          { cert: readFileSync(config.tls.cert), key: readFileSync(config.tls.key) },
+          handler,
+        )
+      : createHttpServer(handler);
+    attachUpgradeHandling(server, {
+      children,
+      hub,
+      registry,
+      config,
+      callInstance: makeCallInstance({ registry, local, hub, remoteDeny: config.policy.remote_deny }),
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(wantPort, host, resolve);
+    });
+  } catch (e) {
+    // a failed boot (bad cert, EADDRINUSE) must not orphan the already-started
+    // local attach — its live sockets and rescan timer would leak
+    local.stop();
+    throw e;
+  }
   const port = (server.address() as AddressInfo).port;
   writeLock(opts.stateDir, { pid: process.pid, listen: `${host}:${port}` });
 
