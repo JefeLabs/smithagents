@@ -3432,8 +3432,17 @@ interface Ctx {
 function parseArgs(argv: string[]): { command: string; flags: Map<string, string> } {
   const [command = "help", ...rest] = argv;
   const flags = new Map<string, string>();
-  for (let i = 0; i < rest.length; i += 2) {
-    if (rest[i].startsWith("--")) flags.set(rest[i].slice(2), rest[i + 1] ?? "");
+  // value-aware, not positional: `--a --b v` must leave --a empty, not eat "--b"
+  for (let i = 0; i < rest.length; i++) {
+    if (!rest[i].startsWith("--")) continue;
+    const name = rest[i].slice(2);
+    const next = rest[i + 1];
+    if (next !== undefined && !next.startsWith("--")) {
+      flags.set(name, next);
+      i++;
+    } else {
+      flags.set(name, "");
+    }
   }
   return { command, flags };
 }
@@ -3496,8 +3505,13 @@ async function main(): Promise<void> {
   if (command === "issue-secret") {
     const name = need(flags, "name");
     const res = await adminFetch(ctx, "POST", "/admin/children", { name });
-    if (!res || !res.ok) {
+    if (!res) {
       console.error("daemon not running — run the start action first");
+      process.exit(1);
+    }
+    if (!res.ok) {
+      // a live daemon refusing (bad name, auth) is not "not running" — say why
+      console.error(`daemon refused: ${await res.text()}`);
       process.exit(1);
     }
     console.log(JSON.stringify(await res.json()));
@@ -3507,8 +3521,12 @@ async function main(): Promise<void> {
   if (command === "revoke") {
     const name = need(flags, "name");
     const res = await adminFetch(ctx, "DELETE", `/admin/children/${encodeURIComponent(name)}`);
-    if (!res || !res.ok) {
+    if (!res) {
       console.error("daemon not running — run the start action first");
+      process.exit(1);
+    }
+    if (!res.ok) {
+      console.error(`daemon refused: ${await res.text()}`);
       process.exit(1);
     }
     console.log(JSON.stringify(await res.json()));
