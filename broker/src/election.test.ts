@@ -123,7 +123,9 @@ test("parseClaim keeps the raw text as the reason when it cannot parse, for debu
 test("makeClaimAsk: a swarm reply wins and the broker is never asked", async () => {
   const brokerCalls: string[] = [];
   const ask = makeClaimAsk({
-    swarmOneShot: async (agentId) => ({ reply: `{"willing": true, "confidence": 0.8, "reason": "${agentId} says yes"}` }),
+    swarmOneShot: async (agentId) => ({
+      reply: `{"willing": true, "confidence": 0.8, "reason": "${agentId} says yes"}`,
+    }),
     brokerAsk: async ({ system }) => {
       brokerCalls.push(system);
       return "never";
@@ -139,7 +141,10 @@ test("makeClaimAsk: notApiAgent falls back to the broker ask with the member's o
     swarmOneShot: async () => ({ notApiAgent: true }),
     brokerAsk: async ({ system, prompt }) => `broker(${system})[${prompt.slice(0, 4)}]`,
   });
-  assert.equal(await ask({ agentId: "osvaldo", system: "builder persona", prompt: "lead?" }), "broker(builder persona)[lead]");
+  assert.equal(
+    await ask({ agentId: "osvaldo", system: "builder persona", prompt: "lead?" }),
+    "broker(builder persona)[lead]",
+  );
 });
 
 test("makeClaimAsk: any other swarm failure propagates — no second paid ask, and runElection records the reason", async () => {
