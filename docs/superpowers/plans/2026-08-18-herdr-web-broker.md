@@ -16,7 +16,7 @@
 - **Do NOT create a GitHub remote or push.** Publishing (public repo, `herdr-plugin` topic tag) is Edwin's manual step afterward — pushing needs a gh account switch to `ecruz165`.
 - Node floor for users: `"engines": { "node": ">=22" }`. ESM only (`"type": "module"`); every relative import in TS uses the `.js` extension (nodenext resolution).
 - Runtime dependencies exactly: `ws@^8`, `smol-toml@^1`. Dev: `typescript@~6.0.0`, `@types/node@^24`, `@types/ws@^8`. TS 6 requires `"types": ["node"]` in tsconfig.
-- **The type gate is `tsc`** — `npm test` runs `tsc` then `node --test` on `dist/test/`. Never run tests through a type-stripping runner.
+- **The type gate is `tsc`** — `npm test` runs `tsc` then `node --test 'dist/test/**/*.test.js'` (glob form: a bare directory argument fails module resolution on Node 26). Never run tests through a type-stripping runner.
 - Plugin identity: repo `herdr-web-broker`, manifest id `jefelabs.web-broker`, plugin name "Web Broker", `min_herdr_version = "0.8.0"`.
 - Wire constants (defined once in `src/tunnel.ts`, imported everywhere): `PROTO_VERSION = 1`, `DEFAULT_TIMEOUT_MS = 30_000`, `HEARTBEAT_MS = 15_000`.
 - Agent status vocabulary is herdr's, verbatim: `working | blocked | idle`.
@@ -89,7 +89,7 @@ Write `package.json`:
   "engines": { "node": ">=22" },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test dist/test/"
+    "test": "npm run build && node --test 'dist/test/**/*.test.js'"
   },
   "dependencies": {
     "smol-toml": "^1.3.1",
