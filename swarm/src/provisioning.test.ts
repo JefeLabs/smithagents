@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { checkCopyPath, detectPlan } from "./provisioning.js";
+import { applyGuards, checkCopyPath, detectPlan, resolvePlan } from "./provisioning.js";
 
 test("detectPlan: pnpm lockfile copies node_modules and installs frozen", () => {
   const plan = detectPlan(["package.json", "pnpm-lock.yaml"]);
@@ -78,4 +78,49 @@ test("checkCopyPath: refuses a path absent from the source", () => {
   const verdict = checkCopyPath("node_modules", { tracked: false, existsInSource: false });
   assert.equal(verdict.ok, false);
   if (!verdict.ok) assert.match(verdict.reason, /not present/i);
+});
+
+const clean = () => ({ tracked: false, existsInSource: true });
+
+test("resolvePlan: an override REPLACES the detected plan rather than merging", () => {
+  const detected = { copy: ["node_modules"], setup: ["pnpm install --frozen-lockfile"], detectedBy: "pnpm-lock.yaml" };
+  const plan = resolvePlan(detected, { copy: [".cache"], setup: ["make deps"] });
+  assert.deepEqual(plan.copy, [".cache"]);
+  assert.deepEqual(plan.setup, ["make deps"]);
+  assert.equal(plan.detectedBy, "config override");
+});
+
+test("resolvePlan: no override keeps the detected plan untouched", () => {
+  const detected = { copy: ["node_modules"], setup: ["npm ci"], detectedBy: "package-lock.json" };
+  assert.deepEqual(resolvePlan(detected, undefined), detected);
+});
+
+test("applyGuards: a DETECTED plan drops a bad path with a warning and never throws", () => {
+  const plan = { copy: ["node_modules", "gone"], setup: [], detectedBy: "pnpm-lock.yaml" };
+  const facts = (p: string) => ({ tracked: false, existsInSource: p !== "gone" });
+  const result = applyGuards(plan, false, facts);
+  assert.deepEqual(result.plan.copy, ["node_modules"]);
+  assert.equal(result.warnings.length, 1);
+  assert.match(result.warnings[0] ?? "", /not present/i);
+});
+
+test("applyGuards: an OVERRIDE naming .env throws — the asymmetry is the point", () => {
+  // A user who wrote the path meant it and must be told they cannot have it; a
+  // detector that guessed wrong must not fail the instance.
+  const plan = { copy: [".env"], setup: [], detectedBy: "config override" };
+  assert.throws(() => applyGuards(plan, true, clean), /secret/i);
+});
+
+test("applyGuards: a detected plan with an escaping path drops it silently-but-warned", () => {
+  const plan = { copy: ["../escape"], setup: [], detectedBy: "pnpm-lock.yaml" };
+  const result = applyGuards(plan, false, clean);
+  assert.deepEqual(result.plan.copy, []);
+  assert.equal(result.warnings.length, 1);
+});
+
+test("applyGuards: setup and detectedBy survive guarding untouched", () => {
+  const plan = { copy: ["gone"], setup: ["pnpm install"], detectedBy: "pnpm-lock.yaml" };
+  const result = applyGuards(plan, false, () => ({ tracked: false, existsInSource: false }));
+  assert.deepEqual(result.plan.setup, ["pnpm install"]);
+  assert.equal(result.plan.detectedBy, "pnpm-lock.yaml");
 });

@@ -82,3 +82,48 @@ export function checkCopyPath(path: string, facts: { tracked: boolean; existsInS
   }
   return { ok: true };
 }
+
+export interface ProvisionOverride {
+  copy: string[];
+  setup: string[];
+}
+
+/**
+ * An override REPLACES the detected plan; it does not merge with it.
+ *
+ * Merging produces a union nobody wrote in full, and the first surprising copy
+ * sends someone reading detector source to work out where a path came from.
+ * Replacement means the answer to "why is this being copied" is always one
+ * file.
+ */
+export function resolvePlan(detected: ProvisionPlan, override: ProvisionOverride | undefined): ProvisionPlan {
+  if (!override) return detected;
+  return { copy: [...override.copy], setup: [...override.setup], detectedBy: "config override" };
+}
+
+/**
+ * Apply the guards, with a deliberate asymmetry: an override THROWS, a detected
+ * plan warns and drops.
+ *
+ * A user who wrote a path meant it, and silently ignoring it would leave them
+ * believing something is being provisioned that is not. A detector that guessed
+ * wrong must not fail the instance over its own guess.
+ */
+export function applyGuards(
+  plan: ProvisionPlan,
+  isOverride: boolean,
+  factsFor: (path: string) => { tracked: boolean; existsInSource: boolean },
+): { plan: ProvisionPlan; warnings: string[] } {
+  const copy: string[] = [];
+  const warnings: string[] = [];
+  for (const path of plan.copy) {
+    const verdict = checkCopyPath(path, factsFor(path));
+    if (verdict.ok) {
+      copy.push(path);
+      continue;
+    }
+    if (isOverride) throw new Error(`provision override: ${verdict.reason}`);
+    warnings.push(verdict.reason);
+  }
+  return { plan: { ...plan, copy }, warnings };
+}
