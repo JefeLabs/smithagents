@@ -1604,7 +1604,8 @@ export class ChildConnection {
       p.reject(new BrokerError("instance_offline", `tunnel to '${this.name}' closed`));
     }
     this.#pending.clear();
-    this.registry.setOffline(this.name);
+    // setOffline lives in the hub's identity-guarded onGone — a replaced (stale)
+    // connection's async close must not mark the freshly reattached child offline.
     this.onGone();
   }
 
@@ -1659,11 +1660,16 @@ export class TunnelHub {
     return [...this.#children.keys()];
   }
 
-  /** A re-enrolling child replaces its previous connection. */
+  /** A re-enrolling child replaces its previous connection. Only the CURRENT
+   * connection's death marks the instance offline — the replaced connection's
+   * async close arrives after the new tunnel is live and must not flip it. */
   attach(name: string, ws: WebSocket, registry: Registry): ChildConnection {
     this.#children.get(name)?.close();
     const conn = new ChildConnection(name, ws, registry, () => {
-      if (this.#children.get(name) === conn) this.#children.delete(name);
+      if (this.#children.get(name) === conn) {
+        this.#children.delete(name);
+        registry.setOffline(name);
+      }
     });
     this.#children.set(name, conn);
     return conn;
