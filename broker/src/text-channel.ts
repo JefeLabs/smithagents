@@ -9,6 +9,7 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
 import { AuthError, type BrokerAuth, type Identity, parseCookies } from "./auth.ts";
 import type { Blueprint } from "./blueprints.ts";
+import type { BrainPing } from "./brain-ping.ts";
 import type { Doc } from "./documents.ts";
 
 export interface RosterEntry {
@@ -452,6 +453,12 @@ export class TextChannel {
     private readonly machine?: {
       get(): Promise<Record<string, unknown>>;
     },
+    /**
+     * The wizard's closing receipt: ask the broker's own brain a throwaway
+     * question and report how long it took. Optional like every dep above it —
+     * absent simply means the route is not served.
+     */
+    private readonly brainPing?: () => Promise<BrainPing>,
   ) {}
 
   private clientSeq = 0;
@@ -1497,6 +1504,13 @@ export class TextChannel {
           });
           return;
         }
+        // The wizard's closing receipt. POST because it costs a real model call.
+        if (req.method === "POST" && feedUrl.pathname === "/brain/ping" && this.brainPing) {
+          if (feedOriginBlocked()) return;
+          void this.brainPing().then((p) => feedJson(200, p));
+          return;
+        }
+
         // Topics. Sub-routes are matched BEFORE the bare-id route, or it swallows them.
         if (this.topics) {
           const topics = this.topics;

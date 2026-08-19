@@ -16,6 +16,7 @@ import { AvatarGenerator, type AvatarRequest } from "./avatar-generator.ts";
 import { loadBlueprints } from "./blueprints.ts";
 import { BrokerBrain, type StreamFactory } from "./brain.ts";
 import { brainArgvFor, resolvingStreamFactory } from "./brain-engine.ts";
+import { pingBrain } from "./brain-ping.ts";
 import type { RosterState, TurnOrigin, UiRoster } from "./broker.ts";
 import { Broker, TTS_SAMPLE_RATE } from "./broker.ts";
 import { AdapterHub } from "./channels.ts";
@@ -1832,6 +1833,20 @@ const textChannel = new TextChannel(
   brainEngineSetting,
   localModelsSetting,
   machineSetting,
+  // Ask the broker's OWN brain, not a swarm API agent: researchEngine() needs no
+  // agent id and is the engine the user just chose in the wizard, which makes the
+  // tick a receipt for the thing they configured.
+  () =>
+    pingBrain(
+      async (q) => ({
+        reply: await (await researchEngine()).complete({
+          system: "You are answering a one-line setup check. Reply in one short sentence.",
+          prompt: q,
+          maxTokens: 50,
+        }),
+      }),
+      Date.now,
+    ),
 );
 
 /**
