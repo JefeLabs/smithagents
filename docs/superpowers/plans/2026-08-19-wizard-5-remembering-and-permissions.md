@@ -37,7 +37,7 @@ So the screen **records** whether deeper recall is wanted and **renders no downl
 - **No dead controls.** A control that cannot do its job must not render. See ruling 1.
 - **`brokerFetch` resolves on non-2xx.** Any write must check `res.ok`; an unchecked response reports a silent success.
 - **Lint baseline is zero diagnostics**, `biome check` must pass on touched files.
-- **`tsx` strips types in broker/swarm tests**; in control-plane, `pnpm --filter control-plane typecheck` is the type gate.
+- **`tsx` strips types in broker/swarm tests**; in control-plane, `pnpm --filter smithagents-control-plane typecheck` is the type gate.
 - Run one CP test file with: `cd control-plane && npx vitest run src/organisms/<File>.test.tsx`
 - Two CP suite failures (`HomePage` composer, `MapStage` pan-mode) are **pre-existing on main** — verify against main before attributing any failure to this work.
 
@@ -351,7 +351,7 @@ Expected: PASS, 7 tests
 - [ ] **Step 6: Typecheck, lint, commit**
 
 ```bash
-pnpm --filter control-plane typecheck
+pnpm --filter smithagents-control-plane typecheck
 npx biome check --write control-plane/src/organisms/WizardMemoryStep.tsx control-plane/src/organisms/WizardMemoryStep.test.tsx control-plane/src/lib/wizardSteps.ts
 git add control-plane/src/organisms/WizardMemoryStep.tsx control-plane/src/organisms/WizardMemoryStep.test.tsx control-plane/src/lib/wizardSteps.ts
 git commit -m "feat(control-plane): wizard step 5 — remembering, and what I may do"
@@ -504,7 +504,7 @@ Expected: PASS, all three files.
 - [ ] **Step 7: Typecheck, lint, commit**
 
 ```bash
-pnpm --filter control-plane typecheck
+pnpm --filter smithagents-control-plane typecheck
 npx biome check --write control-plane/src/lib/wizardSteps.ts control-plane/src/organisms/WizardGate.tsx control-plane/src/lib/wizardSteps.test.ts control-plane/src/organisms/WizardGate.test.tsx
 git add control-plane/src
 git commit -m "feat(control-plane): wizard — Remembering joins the sequence, Step n of 5"
