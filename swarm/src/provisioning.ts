@@ -47,3 +47,38 @@ export function detectPlan(files: string[]): ProvisionPlan {
   // never mistaken for a detector that did not run.
   return { copy: [], setup: [], detectedBy: "no lockfile" };
 }
+
+export type GuardVerdict = { ok: true } | { ok: false; reason: string };
+
+/**
+ * Secrets are NEVER provisioned.
+ *
+ * §7 of the workspace-instances design decided that credentials are retrieved on
+ * demand and never held by the instance, and its strongest argument is that an
+ * agent told to "stage and commit ALL your changes" cannot commit a secret that
+ * was never on disk. Overrides are user-authored, so someone will eventually
+ * list `.env` — which is why that decision is enforced here rather than
+ * documented and hoped for.
+ */
+const SECRET_PATTERNS: RegExp[] = [/(^|\/)\.env($|\.)/i, /\.pem$/i, /(^|\/)id_rsa/i, /(^|\/)master\.key$/i];
+
+export function checkCopyPath(path: string, facts: { tracked: boolean; existsInSource: boolean }): GuardVerdict {
+  if (SECRET_PATTERNS.some((re) => re.test(path))) {
+    return { ok: false, reason: `"${path}" looks like a secret; secrets are never copied into an instance` };
+  }
+  if (path.startsWith("/")) {
+    return { ok: false, reason: `"${path}" is absolute; only member-relative paths are copied` };
+  }
+  if (path.split("/").includes("..")) {
+    return { ok: false, reason: `"${path}" escapes the member root` };
+  }
+  // A tracked path is already in the worktree; copying over it would shadow the
+  // checkout with a stale copy from the source.
+  if (facts.tracked) {
+    return { ok: false, reason: `"${path}" is tracked by git and is already in the worktree` };
+  }
+  if (!facts.existsInSource) {
+    return { ok: false, reason: `"${path}" is not present in the source checkout` };
+  }
+  return { ok: true };
+}
