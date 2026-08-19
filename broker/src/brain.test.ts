@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { mock, test } from "node:test";
-import { type BrainStreamLike, BrokerBrain, type StreamFactory, type ToolExecutors } from "./brain.ts";
+import {
+  type BrainStreamLike,
+  BrokerBrain,
+  NO_SMALL_TALK,
+  type StreamFactory,
+  type ToolExecutors,
+} from "./brain.ts";
 
 type FinalMsg = Awaited<ReturnType<BrainStreamLike["finalMessage"]>>;
 
@@ -372,4 +378,154 @@ test("track_topic is offered as a tool and its input reaches the executor", asyn
     (calls[0]!.tools as Array<{ name: string }>).some((t) => t.name === "track_topic"),
     true,
   );
+});
+
+// ---- how I talk: setup.smallTalk / setup.worldAware (wizard plan 4, task 1) ----
+
+/** Non-empty on purpose: suppressing an EMPTY digest proves nothing. */
+const LOUD_DIGEST = "\n\nTODAY · 29°C and clear. Fastify 6 shipped this morning.\n";
+
+test("smallTalk:false adds the one no-small-talk line to the system prompt", async () => {
+  const { factory, calls } = scripted([
+    { textDeltas: ["a"], final: { content: [{ type: "text", text: "a" }], stop_reason: "end_turn" } },
+  ]);
+  const brain = new BrokerBrain(factory, FEED_EXEC);
+  await brain.handleUtterance("morning", {
+    roster: "\n\nROSTER: x",
+    prefs: { smallTalk: false },
+    onSpeech: () => {},
+  });
+  assert.ok(String(calls[0]!.system).includes(NO_SMALL_TALK));
+  // One line, not a paragraph of config-speak.
+  assert.equal(NO_SMALL_TALK.trim().split("\n").length, 1);
+});
+
+test("smallTalk:true says hello properly — byte-identical to never having answered", async () => {
+  const { factory, calls } = scripted([
+    { textDeltas: ["a"], final: { content: [{ type: "text", text: "a" }], stop_reason: "end_turn" } },
+    { textDeltas: ["b"], final: { content: [{ type: "text", text: "b" }], stop_reason: "end_turn" } },
+  ]);
+  const brain = new BrokerBrain(factory, FEED_EXEC);
+  await brain.handleUtterance("morning", { roster: "\n\nROSTER: x", prefs: { smallTalk: true }, onSpeech: () => {} });
+  await brain.handleUtterance("morning", { roster: "\n\nROSTER: x", onSpeech: () => {} });
+  assert.equal(calls[0]!.system, calls[1]!.system);
+  assert.ok(!String(calls[0]!.system).includes(NO_SMALL_TALK));
+});
+
+test("worldAware:false suppresses a NON-EMPTY digest and drops the feeds tool", async () => {
+  const { factory, calls } = scripted([
+    { textDeltas: ["a"], final: { content: [{ type: "text", text: "a" }], stop_reason: "end_turn" } },
+  ]);
+  const brain = new BrokerBrain(factory, FEED_EXEC);
+  await brain.handleUtterance("morning", {
+    roster: "\n\nROSTER: x",
+    digest: LOUD_DIGEST,
+    prefs: { worldAware: false },
+    onSpeech: () => {},
+  });
+  const system = String(calls[0]!.system);
+  assert.ok(system.includes("ROSTER: x"), "the roster still rides along");
+  assert.ok(!system.includes("Fastify 6 shipped"), "the digest is gone from the prompt");
+  const tools = calls[0]!.tools as Array<{ name: string }>;
+  assert.equal(
+    tools.some((t) => t.name === "check_feeds"),
+    false,
+    "the read-deeper tool is absent from the list, not merely unused",
+  );
+  // Only that one tool leaves — delegating and the rest are untouched.
+  assert.equal(
+    tools.some((t) => t.name === "delegate"),
+    true,
+  );
+  assert.equal(
+    tools.some((t) => t.name === "track_topic"),
+    true,
+  );
+});
+
+test("the same NON-EMPTY digest survives when worldAware is absent — the control for the suppression", async () => {
+  const { factory, calls } = scripted([
+    { textDeltas: ["a"], final: { content: [{ type: "text", text: "a" }], stop_reason: "end_turn" } },
+    { textDeltas: ["b"], final: { content: [{ type: "text", text: "b" }], stop_reason: "end_turn" } },
+  ]);
+  const brain = new BrokerBrain(factory, FEED_EXEC);
+  await brain.handleUtterance("morning", { roster: "\n\nROSTER: x", digest: LOUD_DIGEST, onSpeech: () => {} });
+  await brain.handleUtterance("morning", {
+    roster: "\n\nROSTER: x",
+    digest: LOUD_DIGEST,
+    prefs: { worldAware: true },
+    onSpeech: () => {},
+  });
+  for (const call of calls) {
+    assert.ok(String(call.system).includes("Fastify 6 shipped"));
+    assert.equal(
+      (call.tools as Array<{ name: string }>).some((t) => t.name === "check_feeds"),
+      true,
+    );
+  }
+});
+
+test("absent prefs change NOTHING — prompt and tool list identical to the build before preferences existed", async () => {
+  const { factory, calls } = scripted([
+    { textDeltas: ["a"], final: { content: [{ type: "text", text: "a" }], stop_reason: "end_turn" } },
+    { textDeltas: ["b"], final: { content: [{ type: "text", text: "b" }], stop_reason: "end_turn" } },
+    { textDeltas: ["c"], final: { content: [{ type: "text", text: "c" }], stop_reason: "end_turn" } },
+  ]);
+  const brain = new BrokerBrain(factory, FEED_EXEC);
+  const base = { roster: "\n\nROSTER: x", digest: LOUD_DIGEST, onSpeech: () => {} };
+  await brain.handleUtterance("morning", base);
+  await brain.handleUtterance("morning", { ...base, prefs: {} });
+  await brain.handleUtterance("morning", { ...base, prefs: { smallTalk: true, worldAware: true } });
+  assert.equal(calls[0]!.system, calls[1]!.system);
+  assert.equal(calls[0]!.system, calls[2]!.system);
+  assert.deepEqual(calls[0]!.tools, calls[1]!.tools);
+  assert.deepEqual(calls[0]!.tools, calls[2]!.tools);
+});
+
+test("both opt-outs together: no digest, no feeds tool, and the no-small-talk line", async () => {
+  const { factory, calls } = scripted([
+    { textDeltas: ["a"], final: { content: [{ type: "text", text: "a" }], stop_reason: "end_turn" } },
+  ]);
+  const brain = new BrokerBrain(factory, FEED_EXEC);
+  await brain.handleUtterance("morning", {
+    roster: "\n\nROSTER: x",
+    digest: LOUD_DIGEST,
+    prefs: { smallTalk: false, worldAware: false },
+    onSpeech: () => {},
+  });
+  const system = String(calls[0]!.system);
+  assert.ok(!system.includes("Fastify 6 shipped"));
+  assert.ok(system.includes(NO_SMALL_TALK));
+  assert.equal(
+    (calls[0]!.tools as Array<{ name: string }>).some((t) => t.name === "check_feeds"),
+    false,
+  );
+});
+
+test("the suppression holds on every tool round, not just the first", async () => {
+  const { factory, calls } = scripted([
+    {
+      textDeltas: [],
+      final: {
+        content: [{ type: "tool_use", id: "t1", name: "delegate", input: { agent: "Manuel", task: "x" } }],
+        stop_reason: "tool_use",
+      },
+    },
+    { textDeltas: ["done"], final: { content: [{ type: "text", text: "done" }], stop_reason: "end_turn" } },
+  ]);
+  const brain = new BrokerBrain(factory, FEED_EXEC);
+  await brain.handleUtterance("go", {
+    roster: "\n\nROSTER: x",
+    digest: LOUD_DIGEST,
+    prefs: { worldAware: false },
+    onSpeech: () => {},
+  });
+  assert.equal(calls.length, 2);
+  for (const call of calls) {
+    assert.ok(!String(call.system).includes("Fastify 6 shipped"));
+    assert.equal(
+      (call.tools as Array<{ name: string }>).some((t) => t.name === "check_feeds"),
+      false,
+    );
+  }
 });
