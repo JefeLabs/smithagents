@@ -1,13 +1,12 @@
-# Borrowed Primitives — the seven-spec sequence
+# Borrowed Primitives — the spec sequence
 
 **Source:** the Hamster / herdr / Orca teardown, 44 findings.
-**Status verified 2026-08-17** (spec 4 added same day) by probing `swarm/src`, `control-plane/src`, and
-`broker/src` — not by reading checkboxes. Control term returned 96 matches, so
-the sweep was live; all seven feature probes returned zero.
+**Status verified 2026-08-17**, renumbered 2026-08-19, by probing `swarm/src`,
+`control-plane/src`, and `broker/src` — not by reading checkboxes. Control term
+returned 96 matches, so the sweep was live; every feature probe returned zero.
 
-Five specs are written. **None of the seven is implemented.** Two of them sit on
-foundations that already exist, which is why their scope is smaller than the
-register implied.
+Started as seven specs; spec 6 split during its brainstorm, so it is now **nine**.
+Six are written. **None is implemented.**
 
 ---
 
@@ -16,90 +15,86 @@ register implied.
 | # | Spec | Design | Built | Foundation already in tree |
 | --- | --- | --- | --- | --- |
 | 1 | Agent status reporting | ✅ `2026-08-16-agent-status-reporting-design.md` | ✗ | `drivers/*.materialize`, `prepareWorkspace` |
-| 2 | Session recovery | ✅ `2026-08-17-session-recovery-design.md` | ✗ | `session-reconcile.ts` (pure policy module) |
-| 3 | Instance provisioning | ✅ `2026-08-17-instance-provisioning-design.md` | ✗ | `workspace-instances.ts` (496 lines, create/destroy/dirty) |
+| 2 | Session recovery | ✅ `2026-08-17-session-recovery-design.md` | ✗ | `session-reconcile.ts` |
+| 3 | Instance provisioning | ✅ `2026-08-17-instance-provisioning-design.md` | ✗ | `workspace-instances.ts` (496 lines) |
 | 4 | Agent visibility | ✅ `2026-08-17-agent-visibility-design.md` | ✗ | `GET /agent-sessions`, BoardColumn/BoardCard |
 | 5 | Hibernation | ✅ `2026-08-17-hibernation-design.md` | ✗ | — |
-| 6 | Coordination protocol | ✗ not brainstormed | ✗ | `dispatcher.ts`, broker relay |
-| 7 | Context projection | ✗ not brainstormed | ✗ | documents, work-items, skill emission |
+| 6 | Dispatch entity and lifecycle | ✅ `2026-08-19-dispatch-entity-design.md` | ✗ | `work-items.delegation`, `dispatcher.ts` |
+| 7 | Worker protocol | ✗ not brainstormed | ✗ | broker relay, `election.ts` AskFactory |
+| 8 | Context projection | ✗ not brainstormed | ✗ | documents, work-items, skill emission |
+| 9 | Coordination map | ✗ not brainstormed | ✗ | react-flow MapStage |
 
 ## Dependencies
 
 ```
-1 status ──┬──► 4 visibility
-           └──► 5 hibernation ◄── 2 recovery
+1 status ──┬──► 4 visibility ──► 5 hibernation ◄── 2 recovery
+           └──────────────────►
+
+6 dispatch ──┬──► 7 worker protocol
+             └──► 9 coordination map
+
 3 provisioning   (independent)
-6 coordination   (independent)
-7 context        (independent)
+8 context        (independent)
 ```
 
-Only 4 and 5 must wait. Specs 1, 2, 3, 6, and 7 can be executed in any order or
-in parallel.
+Independent and buildable today: **1, 2, 3, 6, 8**.
 
 ## Recommended order
 
-1. **Spec 3 — provisioning.** Zero dependencies, and it unblocks the active
-   architectural thread: worktree-per-work-item is theoretical while every
-   instance is born unable to build.
-2. **Spec 1 — status reporting.** Unblocks two downstream specs and closes the
-   failure class behind the warm-session incident.
-3. **Spec 2 — recovery.** The smallest of the three; mostly one function.
-4. **Spec 5 — hibernation**, once 1, 2, and 4 exist. It deliberately kills live
-   processes knowing spec 2 can bring them back, and borrows its safety rule from
-   spec 4's rollup. Ships off by default.
-5. **Spec 4 — visibility.** Control-plane, so it can run in parallel with any
-   swarm work once spec 1 has landed.
+1. **Spec 3 — provisioning.** No dependencies, and worktree-per-work-item stays
+   theoretical while every instance is born unable to build.
+2. **Spec 1 — status reporting.** Unblocks 4 and 5, and closes the failure class
+   behind the warm-session incident.
+3. **Spec 2 — recovery.** Smallest; largely one function and two driver methods.
+4. **Spec 6 — dispatch entity.** Independent, and its both-ids rule is free to
+   add now and a migration later.
+5. **Spec 4 — visibility**, then **5 — hibernation**, then **7** and **9**.
 
-Specs 6 and 7 are separate bets, not continuations. Spec 6 is the largest in the
-set, overlaps spec 1 — giving workers a structured way to *ask* reduces how often
-a blocked state is reached at all — and **now also owns the coordination map**,
-which spec 4 deferred to it.
+Spec 8 (context projection) is a separate bet and can start at any time.
 
-## What the code review changed
+## What reading the code changed
 
-Reading the tree before writing each spec moved real scope:
+Every spec's scope moved once the tree was read rather than assumed:
 
-- **Spec 3 lost two of five register items.** Preserved branches (F3) is moot —
-  `destroyInstance` never deletes branches. Cascade (F5) is done —
-  `listMemberWorktrees` already finds member worktrees on disk. The DWIM trap is
-  handled by `resolveStartPoint`.
+- **Spec 3 lost two of five register items.** Preserved branches is moot —
+  `destroyInstance` never deletes branches. Cascade is done —
+  `listMemberWorktrees` already finds member worktrees on disk. The `worktree
+  add` DWIM trap is handled by `resolveStartPoint`.
 - **Spec 3 gained a constraint.** §7 of the workspace-instances design says
   secrets are retrieved on demand and never held by the instance. Orca copies
-  `.env` into every worktree; that would have retired an approved decision
-  silently. Spec 3 provisions rebuildables and config only.
+  `.env` into every worktree; adopting that would have retired an approved
+  decision silently.
 - **Spec 1 changed mechanism.** The register proposed screen-scraping tmux
-  (herdr's method). All five drivers support native hooks (Orca's method), which
-  is cheaper and authoritative rather than inferred.
+  (herdr's method). All five drivers support native hooks (Orca's), which is
+  cheaper and authoritative rather than inferred.
 - **Spec 2 got smaller.** Session ids are already pinned at launch, so recovery
   is a branch in an existing pure function plus two driver methods.
-- **Spec 4 lost the map and gained a level.** The coordination map draws dispatch
-  lineage that spec 6 has not defined, so it moved there. And the rollup is four
-  levels, not two: session → assignee → work item → workspace, because agents and
-  swarms receive a workspace's work items. A swarm assignee is not a simple
-  maximum — any member blocked blocks the work, `done` requires every member, and
-  one `unknown` member makes completion unprovable.
-- **Spec 5 added a dependency and removed a mechanism.** It now depends on spec 4
-  as well as 1 and 2, because the assignee rollup *is* its safety rule — one
-  eligibility condition inherits three of Orca's separate checks. And it adds no
-  wake path at all: sleeping produces exactly spec 2's `resumable` state, so
-  waking is spec 2's lazy resume unchanged.
+- **Spec 4 lost the map and gained a level.** The rollup is four levels —
+  session → assignee → work item → workspace — because agents and swarms receive
+  a workspace's work items. A swarm assignee is not a simple maximum.
 - **Spec 4 found a route already stranded.** `GET /agent-sessions` has existed
-  since the warm-session work; the control-plane has zero references to it. The
-  swarm-route-without-broker-proxy bug has shipped twice, so a route-parity test
-  is part of that spec rather than a note.
+  since the warm-session work; the control-plane has zero references to it.
+- **Spec 5 added a dependency and removed a mechanism.** It depends on spec 4,
+  whose rollup *is* its safety rule, and adds no wake path — sleeping produces
+  exactly spec 2's `resumable` state.
+- **Spec 6 split, and found the council turn is a different primitive.**
+  `councilTurn` fans a *question* and returns positions; a dispatch is durable
+  work returning commits. Orca's "Task" already exists here as the work item, so
+  only the attempt was missing.
 
 ## Open risks carried by the written specs
 
-- **agy's turn-end hook event is unconfirmed** (spec 1 §9). agy is the one driver
-  where hooks would own turn completion. Confirm before implementation.
+- **agy's turn-end hook event is unconfirmed** (spec 1 §9). It is the one driver
+  where hooks would own turn completion.
 - **`curl` inside the container images is assumed** (spec 1 §9), not verified
   against the tracked Dockerfile.
-- **Codex transcript lookup is a scan, not a stat** (spec 2 §4) — its rollouts
-  are not partitioned by working directory.
-- **agy's recovery path ships dormant** (spec 2 §7) — `create()` refuses agy
-  today, so there are no agy sessions to resume until spec 1 lands.
+- **Codex transcript lookup is a scan, not a stat** (spec 2 §4).
+- **agy's recovery path ships dormant** (spec 2 §7) until spec 1 lands.
+- **Ad-hoc sessions have no assignee** (spec 5 §9), so nothing sleeps them —
+  though nobody is watching them either.
+- **`idleMinutes` default of 30 is inherited from Orca, not measured** (spec 5 §9).
 
 ## Next action
 
-Brainstorm spec 6 or 7 — or take a written spec to `writing-plans` and
+Brainstorm spec 7, 8, or 9 — or take a written spec to `writing-plans` and
 implement. Nothing in the sequence is blocked.
