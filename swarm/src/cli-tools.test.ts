@@ -157,6 +157,27 @@ test("sweepCliTools with `only` re-probes one tool and leaves other entries unto
   assert.equal(file.tools.codex?.authOk, false);
 });
 
+test("sweepCliTools: verifyAuth is invoked ON the driver — a `this`-using probe (copilot's) must work", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "cli-tools-"));
+  const path = join(dir, "cli-tools.json");
+  const driver = {
+    whoami: "logged in as edwin",
+    async verifyAuth(): Promise<{ ok: true; detail: string }> {
+      return { ok: true, detail: this.whoami }; // throws if called unbound
+    },
+  };
+  const deps: SweepDeps = {
+    agentCommands: { copilot: "copilot" },
+    clis: ["copilot"],
+    run: scriptedRun({ "command -v": { code: 0, stdout: "/usr/local/bin/copilot\n" } }),
+    resolveDriver: () => driver,
+    now: fixedNow,
+  };
+  const file = await sweepCliTools(path, deps);
+  assert.equal(file.tools.copilot?.authOk, true);
+  assert.equal(file.tools.copilot?.detail, "logged in as edwin");
+});
+
 test("sweepCliTools: a throwing verifyAuth lands as unknown, never rejects the sweep", async () => {
   const dir = await mkdtemp(join(tmpdir(), "cli-tools-"));
   const path = join(dir, "cli-tools.json");

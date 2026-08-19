@@ -169,9 +169,11 @@ export async function sweepCliTools(path: string, deps: SweepDeps, only?: string
         } else {
           const ver = await run([binary, "--version"], VERSION_TIMEOUT_MS);
           if (ver.code === 0 && ver.stdout.trim()) entry.version = ver.stdout.trim().split("\n")[0];
-          const probe = resolveDriver(cli)?.verifyAuth;
-          if (probe) {
-            const auth = await probe(binary, run, authTimeoutMs);
+          // Call through the driver — an extracted `probe(...)` loses `this`,
+          // and stateful probes (copilot's reads its env/configDir) then throw.
+          const driver = resolveDriver(cli);
+          if (driver?.verifyAuth) {
+            const auth = await driver.verifyAuth(binary, run, authTimeoutMs);
             entry.authOk = auth.ok;
             entry.detail = auth.detail;
             // ok === "unknown" is unconfirmed — never manufacture a class from it.
