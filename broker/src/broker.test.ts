@@ -1191,6 +1191,31 @@ test("a group that dissolves to one member announces nothing — there is no gro
   assert.deepEqual(changed, []);
 });
 
+test("the human's talk preferences reach the brain's turn — the seam that made Task 1 unreachable", async () => {
+  // The whole feature was green across four suites while nothing constructed a
+  // reader or passed `prefs` into a turn: the tests handed it to
+  // handleUtterance directly, and the running broker never did. This asserts
+  // the seam itself.
+  const seen: Array<unknown> = [];
+  const brain: BrainLike = {
+    handleUtterance: async (_text, turn) => void seen.push(turn.prefs),
+    handleSystemNote: async () => {},
+  };
+  const f = makeFakes([]);
+  const withPrefs = new Broker({
+    ...basicDeps(f, new AgentDirectory()),
+    brain,
+    talkPrefs: async () => ({ smallTalk: false, worldAware: false }),
+  });
+  await withPrefs.handleUtterance("morning");
+
+  // Absent provider changes nothing — the build before preferences existed.
+  const without = new Broker({ ...basicDeps(f, new AgentDirectory()), brain });
+  await without.handleUtterance("morning");
+
+  assert.deepEqual(seen, [{ smallTalk: false, worldAware: false }, undefined]);
+});
+
 test("today's digest reaches the brain's turn, and its absence changes nothing", async () => {
   const withDigest: Array<string | undefined> = [];
   const brain: BrainLike = {

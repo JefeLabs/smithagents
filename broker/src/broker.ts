@@ -23,6 +23,7 @@ import type {
   TicketResult,
   VerifyResult,
 } from "./swarm-client.ts";
+import type { TalkPrefs } from "./talk-prefs.ts";
 
 export interface SwarmClientLike {
   listMeetings(): Promise<SwarmMeeting[]>;
@@ -110,6 +111,16 @@ export interface BrokerDeps {
    * feeds existed.
    */
   digest?: () => string;
+  /**
+   * How the human asked to be talked to (*How I talk*). Async because the
+   * answers live behind `/me` and are read through a short-TTL cache
+   * (`talk-prefs.ts`) rather than held at boot — a wizard answer must be
+   * visible on the next turn, not the next restart.
+   *
+   * Absent leaves every turn byte-identical to the build before preferences
+   * existed, the same contract `digest` above already keeps.
+   */
+  talkPrefs?: () => Promise<TalkPrefs>;
   /** Fired the moment a delegated task is bound in the directory — before any narration. Lets an external bridge (e.g. Copilot/Claude, see broker/bin) correlate its own utterance to the resulting taskId. */
   onTaskDispatched?: (d: { taskId: string; agent: string; task: string }) => void;
   /** Fired with every raw swarm event, alongside the broker's own handling (narration, directory updates) — lets a caller react to shapes the broker itself has no opinion on (e.g. relaying a work-board update when a completion event carries a `workCardRef`). */
@@ -423,7 +434,11 @@ export class Broker {
       if (origin) await this.speaking;
       this.deps.onTurnStart?.(origin);
       try {
-        await this.deps.brain.handleUtterance(text, this.makeTurn(text));
+        // Read per turn, not per process: the reader caches on a short TTL, so
+        // this is one HTTP call every so often rather than one per utterance,
+        // and an answer given mid-conversation lands on the next turn.
+        const prefs = await this.deps.talkPrefs?.();
+        await this.deps.brain.handleUtterance(text, this.makeTurn(text, prefs));
       } finally {
         // Same reasoning in reverse: let THIS turn's own speech chunks finish
         // dispatching under its own origin before deactivating it, instead of
@@ -862,10 +877,11 @@ export class Broker {
     return next;
   }
 
-  private makeTurn(utterance?: string): BrainTurn {
+  private makeTurn(utterance?: string, prefs?: TalkPrefs): BrainTurn {
     return {
       roster: this.describeRosterForBrain() + this.describeMemoryForBrain(utterance),
       digest: this.deps.digest?.(),
+      prefs,
       onSpeech: (chunk) => this.enqueueSpeech(chunk),
     };
   }

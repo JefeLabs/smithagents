@@ -84,6 +84,7 @@ import {
   type SwarmWorkspace,
   type WorkspaceBody,
 } from "./swarm-client.ts";
+import { createTalkPrefsReader } from "./talk-prefs.ts";
 import { parseTarget, resolveTarget } from "./targets.ts";
 import { type ChannelFrame, type RosterEntry, TextChannel } from "./text-channel.ts";
 import { mintRoomToken } from "./token.ts";
@@ -2483,6 +2484,15 @@ const rosterStore = {
   },
 };
 
+// *How I talk* — read through a short-TTL cache rather than at boot, so an
+// answer given in the wizard lands on the next turn instead of the next
+// restart. `invalidate()` is the wizard's own write path; the TTL is the floor
+// for everything else.
+const talkPrefsReader = createTalkPrefsReader(async () => {
+  const me = await swarm.getMe();
+  return (me as { setup?: { smallTalk?: boolean; worldAware?: boolean } }).setup;
+});
+
 broker = new Broker(
   {
     swarm,
@@ -2496,6 +2506,7 @@ broker = new Broker(
     rosterStore,
     // Today's world, injected beside the roster so small talk needs no lookup.
     digest: () => currentDigest,
+    talkPrefs: () => talkPrefsReader.get(),
     // A group's membership changed — its members re-claim leadership (spec §5.3).
     onGroupChanged: (groupId) => elections.schedule(groupId),
     makeStt: () => new DeepgramSttStream(makeDeepgramLive),
