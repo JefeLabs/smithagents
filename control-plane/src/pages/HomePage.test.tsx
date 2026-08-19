@@ -365,12 +365,19 @@ describe("HomePage — voice status refresh on Settings close", () => {
 });
 
 describe("HomePage — composer closes when another session is activated", () => {
+  // Relative on purpose. SessionsPanel filters INACTIVE sessions through a
+  // rolling 14-day window resolved against `new Date()` (useRangeBounds ->
+  // effectiveRange default `{kind:"days", days:14}`), exempting only the active
+  // one. Fixed dates therefore age out: this test began failing with no code
+  // change once the clock passed 14 days beyond its fixture. The subject here is
+  // composer/session switching — the dates are incidental and must not decide it.
+  const NOW = Date.now();
   const SESSIONS = [
     {
       id: "s-active",
       title: "Current work",
       workspace: "acme",
-      updatedAt: "2026-08-01T00:00:00Z",
+      updatedAt: new Date(NOW - 60_000).toISOString(),
       active: true,
       runtime: "local-in-process" as const,
     },
@@ -378,7 +385,7 @@ describe("HomePage — composer closes when another session is activated", () =>
       id: "s-other",
       title: "Other work",
       workspace: "acme",
-      updatedAt: "2026-08-02T00:00:00Z",
+      updatedAt: new Date(NOW - 30_000).toISOString(),
       active: false,
       runtime: "local-docker" as const,
     },

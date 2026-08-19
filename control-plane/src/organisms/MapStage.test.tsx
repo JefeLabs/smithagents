@@ -1138,7 +1138,13 @@ describe("MapStage editing", () => {
   });
 
   it("offers a pan-mode toggle in the zoom controls cluster", async () => {
-    renderMapStage();
+    // The zoom cluster lives inside `{cap && (<ReactFlow>…)}`, so with no
+    // capability loaded the canvas — controls included — never renders at all.
+    // This is the same setup every other canvas test in this file performs;
+    // omitting it made the query time out against a tree that was never built.
+    stubFetch();
+    const { client } = renderMapStage();
+    seedSessionFrame(client, { workspace: "skoolscout" });
     const pan = await screen.findByRole("button", { name: /pan mode/i });
     expect(pan.getAttribute("aria-pressed")).toBe("false");
     fireEvent.click(pan);
