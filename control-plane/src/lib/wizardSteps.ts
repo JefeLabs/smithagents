@@ -57,6 +57,14 @@ export type Setup =
        * make the other indistinguishable from a user who answered.
        */
       rolesSkipped?: boolean;
+      /**
+       * *How I talk* — small talk, and whether Anderson keeps up with the
+       * world. Both are sent EXPLICITLY by WizardTalkStep in both directions,
+       * for the same reason `voice` is: the server merges setup, so an omitted
+       * field leaves an earlier run's answer standing.
+       */
+      smallTalk?: boolean;
+      worldAware?: boolean;
     }
   | undefined;
 
