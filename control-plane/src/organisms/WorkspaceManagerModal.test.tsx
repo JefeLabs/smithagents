@@ -120,7 +120,7 @@ describe("WorkspaceManagerModal — connector pickers", () => {
   });
 
   it("picking a connector for a repo and saving includes that repo's connectorId in the saved payload", async () => {
-    const save = vi.fn(async () => ({}));
+    const save = vi.fn(async (_ws: WorkspaceRecord, _isNew: boolean) => ({}));
     render(
       <WorkspaceManagerModal
         open
@@ -188,7 +188,7 @@ describe("WorkspaceManagerModal — connector pickers", () => {
   });
 
   it("editing saves links", async () => {
-    const save = vi.fn(async () => ({}));
+    const save = vi.fn(async (_ws: WorkspaceRecord, _isNew: boolean) => ({}));
     const existing = {
       name: "acme",
       default: true,
@@ -232,7 +232,7 @@ describe("WorkspaceManagerModal — connector pickers", () => {
     // `sources` passthrough line, every save from this modal wipes context
     // sources. Copied from "editing saves links" above, with a `sources`
     // fixture and its deep-equal assertion added.
-    const save = vi.fn(async () => ({}));
+    const save = vi.fn(async (_ws: WorkspaceRecord, _isNew: boolean) => ({}));
     const sources: ContextSourceT[] = [
       {
         id: "src-1",
@@ -273,7 +273,7 @@ describe("WorkspaceManagerModal — connector pickers", () => {
   });
 
   it("editing owner/repo after picking a connector does not wipe the picked connectorId", async () => {
-    const save = vi.fn(async () => ({}));
+    const save = vi.fn(async (_ws: WorkspaceRecord, _isNew: boolean) => ({}));
     render(
       <WorkspaceManagerModal
         open

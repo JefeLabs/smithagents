@@ -23,6 +23,7 @@ describe("StoryNode", () => {
     onRemove: vi.fn(),
     onReveal: vi.fn(),
     selected: false,
+    onSetPoints: vi.fn(),
     dimmed: false,
   };
 

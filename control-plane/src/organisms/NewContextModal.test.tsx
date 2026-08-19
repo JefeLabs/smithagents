@@ -309,7 +309,7 @@ describe("NewContextModal — the members fork (one-context spec 2026-08-13)", (
   });
 
   it("a group submit posts through saveGroup — never save/onCreated — and create enables despite empty repo rows", async () => {
-    const saveGroup = vi.fn(async () => ({}));
+    const saveGroup = vi.fn(async (_ws: WorkspaceRecord, _isNew: boolean) => ({}));
     const save = vi.fn(async () => ({ name: "x" }));
     const onCreated = vi.fn();
     const onClose = vi.fn();
@@ -335,7 +335,7 @@ describe("NewContextModal — the members fork (one-context spec 2026-08-13)", (
   });
 
   it("the sprint half-config refusal fires in group mode too", async () => {
-    const saveGroup = vi.fn(async () => ({}));
+    const saveGroup = vi.fn(async (_ws: WorkspaceRecord, _isNew: boolean) => ({}));
     renderModal({ saveGroup });
     await userEvent.click(screen.getByRole("radio", { name: /workspaces & groups/i }));
     await userEvent.type(screen.getByLabelText("Group name"), "platform");
