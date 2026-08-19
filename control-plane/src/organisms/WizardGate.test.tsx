@@ -15,6 +15,10 @@ vi.mock("../api/broker", () => ({
   // named here — an omission surfaces as "not a function" inside a query,
   // which react-query swallows into an error state rather than a failure.
   getCliTools: vi.fn(),
+  // The ready step asks the brain on mount. Resolved as a failure so the screen
+  // renders its "couldn't get an answer" line rather than hanging — these tests
+  // are about the host's save handling, not about the receipt.
+  pingBrain: vi.fn(async () => ({ ok: false, reason: "not asked in this test" })),
   getApiKeys: vi.fn(),
   getLocalModels: vi.fn(),
   getMachineFacts: vi.fn(),
@@ -432,7 +436,7 @@ describe("WizardGate", () => {
   it("shows honest progress and a skip control that states its default, not the bare word", async () => {
     renderGate({ name: "Edwin", setup: { mode: "local", step: "sources" } });
 
-    expect(await screen.findByText("Step 1 of 5")).toBeInTheDocument();
+    expect(await screen.findByText("Step 1 of 6")).toBeInTheDocument();
     const skip = screen.getByRole("button", { name: /skip/i });
     // Discriminates the same way wizardSteps.test.ts's own check does, one
     // layer up: a control merely labelled "Skip" would satisfy a name-only
@@ -454,7 +458,7 @@ describe("WizardGate", () => {
     const skip = await screen.findByRole("button", { name: /skip/i });
     const row = skip.closest(".wizard-gate__progress");
     expect(row).not.toBeNull();
-    expect(row?.textContent).toMatch(/^Step 1 of 5/);
+    expect(row?.textContent).toMatch(/^Step 1 of 6/);
   });
 
   it("Skip cannot race the write that put the user on the step", async () => {
@@ -895,17 +899,18 @@ describe("WizardGate", () => {
     // `{error}`. If Back and Continue are inert too, the last screen of
     // first-run setup has nothing clickable on it at all, and only a page
     // reload nothing mentions gets the user out.
-    const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "memory" } });
-    await screen.findByRole("radio", { name: /remember me/i });
+    const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "ready" } });
+    await screen.findByText(/ready,/i); // the ready screen has rendered
 
     updateMe.mockResolvedValue({ error: "origin not allowed" });
-    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await userEvent.click(screen.getByRole("button", { name: /let's talk/i }));
 
     expect(await screen.findByText(/origin not allowed/i)).toBeInTheDocument();
     // Still here — this is what makes the last step unlike every other one.
-    expect(await findHost(container)).toHaveAttribute("data-step", "memory");
-    expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Back" })).toBeEnabled();
+    // "ready" has no Back: its per-line revisit controls do that job, so the
+    // finish control is the only thing that must stay live after a refusal.
+    expect(await findHost(container)).toHaveAttribute("data-step", "ready");
+    expect(screen.getByRole("button", { name: /let's talk/i })).toBeEnabled();
 
     // Enabled is not the same as live: in this codebase a button can read as
     // enabled and still eat the click (aria-disabled ⇒ pointer-events: none).
@@ -913,7 +918,7 @@ describe("WizardGate", () => {
     // the state below is the retry's write still in flight.
     updateMe.mockClear();
     updateMe.mockReturnValue(new Promise(() => {}));
-    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await userEvent.click(screen.getByRole("button", { name: /let's talk/i }));
 
     await waitFor(() =>
       expect(updateMe).toHaveBeenCalledWith(
@@ -1100,21 +1105,24 @@ describe("WizardGate", () => {
     // `.catch` branch, which — unlike the resolved branch — never calls
     // `setStep`. A fix wired only into the resolved branch passes that test
     // and leaves this user just as stuck.
-    const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "memory" } });
-    await screen.findByRole("radio", { name: /remember me/i });
+    const { container, updateMe } = renderGate({ name: "Edwin", setup: { mode: "local", step: "ready" } });
+    await screen.findByText(/ready,/i); // the ready screen has rendered
 
     updateMe.mockRejectedValue(new Error("network error"));
-    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await userEvent.click(screen.getByRole("button", { name: /let's talk/i }));
 
     expect(await screen.findByText(/network error/i)).toBeInTheDocument();
-    expect(await findHost(container)).toHaveAttribute("data-step", "memory");
-    expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+    expect(await findHost(container)).toHaveAttribute("data-step", "ready");
+    expect(screen.getByRole("button", { name: /let's talk/i })).toBeEnabled();
 
     // Back is the escape that matters on this shape — a rejection is
     // ambiguous, the write may well have landed, so retrying it is not the
     // only sensible move — and it has to be live, not merely visible.
     await userEvent.click(screen.getByRole("button", { name: "Back" }));
-    expect(await findHost(container)).toHaveAttribute("data-step", "talk");
+    // Back from the terminal step, which is now "ready": prevStep(ready) is
+    // "memory". This literal has migrated once per appended step — roles,
+    // voice, talk, memory, and now this.
+    expect(await findHost(container)).toHaveAttribute("data-step", "memory");
   });
 
   // --- The footer's own ranking --------------------------------------------

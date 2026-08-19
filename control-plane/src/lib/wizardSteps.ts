@@ -30,7 +30,7 @@ export interface WizardPermissions {
 }
 
 /** Every id the host can render, preflight included. */
-export const WIZARD_STEPS = [PREFLIGHT, "sources", "roles", "voice", "talk", "memory"] as const;
+export const WIZARD_STEPS = [PREFLIGHT, "sources", "roles", "voice", "talk", "memory", "ready"] as const;
 
 export type WizardStep = (typeof WIZARD_STEPS)[number];
 
@@ -136,7 +136,7 @@ export type WizardSaveState = "idle" | "saving" | "failed";
 export function setupStepsFor(setup: Setup): readonly WizardStep[] {
   if (!setup?.mode) return [];
   if (setup.mode === "hosted") return [];
-  return ["sources", "roles", "voice", "talk", "memory"];
+  return ["sources", "roles", "voice", "talk", "memory", "ready"];
 }
 
 export interface WizardStepDef {
@@ -214,6 +214,16 @@ const STEP_DEFS: Record<Exclude<WizardStep, typeof PREFLIGHT>, Omit<WizardStepDe
       deeperRecall: false,
       permissions: { readFiles: "ask", runCommands: "ask", browseWeb: "ask" },
     }),
+  },
+  ready: {
+    title: "Before we start",
+    description: "What I understood, and what I checked",
+    skipLabel: "Skip — take me straight in",
+    // The ONLY entry here whose skip writes nothing. Every other one records a
+    // stated default because an omitted field would leave an earlier run's
+    // answer standing — but this screen asks no question, so a default would be
+    // an answer to something never put.
+    skipDefault: () => ({}),
   },
 };
 

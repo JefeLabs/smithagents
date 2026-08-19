@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { pingBrain } from "../api/broker";
 import type { BrainPing } from "../api/types";
-import type { WizardStep } from "../lib/wizardSteps";
+import type { WizardSaveState, WizardStep } from "../lib/wizardSteps";
 import { useCliTools, useVoiceSettings } from "../queries/http";
 
 export interface WizardReadyStepProps {
@@ -9,6 +9,10 @@ export interface WizardReadyStepProps {
   /** Every receipt line jumps back to the step that earned it. */
   onJumpTo: (step: WizardStep) => void;
   onFinish: () => void;
+  /** Absent when there is nothing behind this step — same contract as the others. */
+  onBack?: () => void;
+  /** What became of the host's own PUT for the patch it last sent. */
+  saveState?: WizardSaveState;
 }
 
 /** `812` → `0.8s`. Only ever called with a figure that was measured. */
@@ -28,7 +32,7 @@ function seconds(ms: number): string {
  * is a lie the user eventually catches, and the cheapest way to never ship one
  * is to have no boolean anyone *could* set.
  */
-export function WizardReadyStep({ name, onJumpTo, onFinish }: WizardReadyStepProps) {
+export function WizardReadyStep({ name, onJumpTo, onFinish, onBack, saveState = "idle" }: WizardReadyStepProps) {
   const [ping, setPing] = useState<BrainPing | null>(null);
   const asked = useRef(false);
   const { data: tools = [] } = useCliTools();
@@ -89,11 +93,19 @@ export function WizardReadyStep({ name, onJumpTo, onFinish }: WizardReadyStepPro
         <strong>I think we're ready, {name}.</strong>
       </p>
 
-      {/* Always enabled. This is the last screen of first-run setup: a check
-          that failed must never be the reason someone cannot get in. */}
-      <button type="button" onClick={onFinish}>
-        Let's talk →
-      </button>
+      <footer>
+        {onBack && (
+          <button type="button" onClick={onBack} disabled={saveState === "saving"}>
+            Back
+          </button>
+        )}
+        {/* Inert only while a write is actually in flight. A ping that FAILED
+            must never disable it: this is the last screen of first-run setup,
+            and a failed check cannot be the reason someone cannot get in. */}
+        <button type="button" onClick={onFinish} disabled={saveState === "saving"}>
+          Let's talk →
+        </button>
+      </footer>
     </section>
   );
 }

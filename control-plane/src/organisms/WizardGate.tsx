@@ -24,6 +24,7 @@ import { useMe, useTopicNames } from "../queries/http";
 import { qk } from "../queries/keys";
 import { WizardGateStep } from "./WizardGateStep";
 import { WizardMemoryStep } from "./WizardMemoryStep";
+import { WizardReadyStep } from "./WizardReadyStep";
 import { WizardRolesStep } from "./WizardRolesStep";
 import { WizardSourcesStep } from "./WizardSourcesStep";
 import { WizardTalkStep } from "./WizardTalkStep";
@@ -544,6 +545,18 @@ function WelcomeWizard({ initialStep, me }: { initialStep: WizardStep; me: MeRec
               initialPermissions={permissions}
               storagePath="~/.smithagents"
               onDone={advance}
+              onBack={onBack}
+              saveState={saveState}
+            />
+          )}
+          {/* Terminal. It asks nothing, so its Continue is a finish: an empty
+              patch through `advance` lets nextStep return null and the host
+              write SETUP_DONE, exactly as every other last step has done. */}
+          {step === "ready" && (
+            <WizardReadyStep
+              name={me.name ?? ""}
+              onJumpTo={(to) => setStep(to)}
+              onFinish={() => advance({ setup: {} })}
               onBack={onBack}
               saveState={saveState}
             />

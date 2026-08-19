@@ -13,7 +13,7 @@ describe("preflight", () => {
 
 describe("the sequence derives from the answers", () => {
   it("local mode yields the local sequence", () => {
-    expect([...setupStepsFor({ mode: "local" })]).toEqual(["sources", "roles", "voice", "talk", "memory"]);
+    expect([...setupStepsFor({ mode: "local" })]).toEqual(["sources", "roles", "voice", "talk", "memory", "ready"]);
   });
 
   it("no mode yields no sequence rather than defaulting to local", () => {
@@ -27,14 +27,22 @@ describe("the sequence derives from the answers", () => {
     // `setup.voice` is already `true` or `false` — which would strand a user
     // who has never answered on a sequence one step short of the one the
     // progress indicator (and `resumeStep`) actually walks.
-    expect([...setupStepsFor({ mode: "local" })]).toEqual(["sources", "roles", "voice", "talk", "memory"]);
-    expect([...setupStepsFor({ mode: "local", voice: true })]).toEqual(["sources", "roles", "voice", "talk", "memory"]);
+    expect([...setupStepsFor({ mode: "local" })]).toEqual(["sources", "roles", "voice", "talk", "memory", "ready"]);
+    expect([...setupStepsFor({ mode: "local", voice: true })]).toEqual([
+      "sources",
+      "roles",
+      "voice",
+      "talk",
+      "memory",
+      "ready",
+    ]);
     expect([...setupStepsFor({ mode: "local", voice: false })]).toEqual([
       "sources",
       "roles",
       "voice",
       "talk",
       "memory",
+      "ready",
     ]);
     // "talk" is unconditional for the same reason, and would strand a user the
     // same way: its whole job is to ASK, so a record that already carries an
@@ -45,6 +53,7 @@ describe("the sequence derives from the answers", () => {
       "voice",
       "talk",
       "memory",
+      "ready",
     ]);
   });
 });
@@ -65,6 +74,7 @@ describe("labels match the spec", () => {
       "Talking out loud",
       "How I talk",
       "Remembering, and what I may do",
+      "Before we start",
     ]);
   });
 
@@ -97,16 +107,16 @@ describe("progress is honest", () => {
     expect(of).toBe(stepsFor({ mode: "local" }).length);
   });
 
-  it("the local sequence is honestly 'Step n of 5' now that memory is in it", () => {
+  it("the local sequence is honestly 'Step n of 6' now that ready is in it", () => {
     // Pinned as the literal numbers, not just against `stepsFor(...).length`
     // (which the two checks above already do): a regression that dropped
     // "voice" back out of the sequence would still satisfy those against
     // itself, reporting a self-consistent but wrong "of 2".
-    expect(progressFor("sources", { mode: "local" })).toEqual({ n: 1, of: 5 });
-    expect(progressFor("roles", { mode: "local" })).toEqual({ n: 2, of: 5 });
-    expect(progressFor("voice", { mode: "local" })).toEqual({ n: 3, of: 5 });
-    expect(progressFor("talk", { mode: "local" })).toEqual({ n: 4, of: 5 });
-    expect(progressFor("memory", { mode: "local" })).toEqual({ n: 5, of: 5 });
+    expect(progressFor("sources", { mode: "local" })).toEqual({ n: 1, of: 6 });
+    expect(progressFor("roles", { mode: "local" })).toEqual({ n: 2, of: 6 });
+    expect(progressFor("voice", { mode: "local" })).toEqual({ n: 3, of: 6 });
+    expect(progressFor("talk", { mode: "local" })).toEqual({ n: 4, of: 6 });
+    expect(progressFor("memory", { mode: "local" })).toEqual({ n: 5, of: 6 });
   });
 });
 
@@ -122,9 +132,20 @@ describe("skip applies a stated default", () => {
   it("a skip default sends explicit values, never an empty patch", () => {
     // Setup merges, so `{}` silently keeps whatever was there — which is not
     // "the default", it is "whatever happened before".
+    //
+    // "ready" is exempt, and narrowly: the rule protects an ANSWER from being
+    // left standing, and that screen asks nothing. Satisfying it literally would
+    // mean inventing a setup field that means nothing purely to pass a test, so
+    // the exemption is pinned by the test below rather than assumed here.
     for (const s of stepsFor({ mode: "local" })) {
+      if (s.id === "ready") continue;
       expect(Object.keys(s.skipDefault() ?? {}).length).toBeGreaterThan(0);
     }
+  });
+
+  it("exactly ONE step is exempt from that rule, and it is the one that asks nothing", () => {
+    const empty = stepsFor({ mode: "local" }).filter((s) => Object.keys(s.skipDefault() ?? {}).length === 0);
+    expect(empty.map((s) => s.id)).toEqual(["ready"]);
   });
 });
 
@@ -152,7 +173,8 @@ describe("nextStep", () => {
     expect(nextStep("roles", { mode: "local" })).toBe("voice");
     expect(nextStep("voice", { mode: "local" })).toBe("talk");
     expect(nextStep("talk", { mode: "local" })).toBe("memory");
-    expect(nextStep("memory", { mode: "local" })).toBeNull();
+    expect(nextStep("memory", { mode: "local" })).toBe("ready");
+    expect(nextStep("ready", { mode: "local" })).toBeNull();
   });
 });
 
@@ -225,13 +247,13 @@ describe("How I talk joins the sequence", () => {
     // it — pinned instead against the ORDER, which is what this test is
     // actually about; the sequence's current length has its own test in
     // "Remembering joins the sequence" below.
-    expect(setupStepsFor({ mode: "local" })).toEqual(["sources", "roles", "voice", "talk", "memory"]);
+    expect(setupStepsFor({ mode: "local" })).toEqual(["sources", "roles", "voice", "talk", "memory", "ready"]);
   });
 
-  it("counts as step 4 of 5 — the arithmetic every step's indicator reads", () => {
-    expect(progressFor("talk", { mode: "local" })).toEqual({ n: 4, of: 5 });
-    expect(progressFor("voice", { mode: "local" })).toEqual({ n: 3, of: 5 });
-    expect(progressFor("sources", { mode: "local" })).toEqual({ n: 1, of: 5 });
+  it("counts as step 4 of 6 — the arithmetic every step's indicator reads", () => {
+    expect(progressFor("talk", { mode: "local" })).toEqual({ n: 4, of: 6 });
+    expect(progressFor("voice", { mode: "local" })).toEqual({ n: 3, of: 6 });
+    expect(progressFor("sources", { mode: "local" })).toEqual({ n: 1, of: 6 });
   });
 
   it("carries the spec's own section name", () => {
@@ -263,13 +285,13 @@ describe("How I talk joins the sequence", () => {
 });
 
 describe("Remembering joins the sequence", () => {
-  it("comes after talk, making the local sequence five steps", () => {
-    expect(setupStepsFor({ mode: "local" })).toEqual(["sources", "roles", "voice", "talk", "memory"]);
+  it("comes after talk, making the sequence longer", () => {
+    expect(setupStepsFor({ mode: "local" })).toEqual(["sources", "roles", "voice", "talk", "memory", "ready"]);
   });
 
-  it("counts as step 5 of 5", () => {
-    expect(progressFor("memory", { mode: "local" })).toEqual({ n: 5, of: 5 });
-    expect(progressFor("talk", { mode: "local" })).toEqual({ n: 4, of: 5 });
+  it("counts as step 5 of 6", () => {
+    expect(progressFor("memory", { mode: "local" })).toEqual({ n: 5, of: 6 });
+    expect(progressFor("talk", { mode: "local" })).toEqual({ n: 4, of: 6 });
   });
 
   it("carries the spec's own section name", () => {
@@ -290,6 +312,44 @@ describe("Remembering joins the sequence", () => {
   });
 
   it("is unconditional — the step ASKS, so a record already carrying answers still reaches it", () => {
-    expect(setupStepsFor({ mode: "local", remember: false })).toEqual(["sources", "roles", "voice", "talk", "memory"]);
+    expect(setupStepsFor({ mode: "local", remember: false })).toEqual([
+      "sources",
+      "roles",
+      "voice",
+      "talk",
+      "memory",
+      "ready",
+    ]);
+  });
+});
+
+describe("Before we start closes the sequence", () => {
+  it("comes after memory, making the local sequence six steps", () => {
+    expect([...setupStepsFor({ mode: "local" })]).toEqual(["sources", "roles", "voice", "talk", "memory", "ready"]);
+  });
+
+  it("counts as step 6 of 6 — the spec's own 'Step n of 6'", () => {
+    expect(progressFor("ready", { mode: "local" })).toEqual({ n: 6, of: 6 });
+    expect(progressFor("sources", { mode: "local" })).toEqual({ n: 1, of: 6 });
+  });
+
+  it("is terminal — nothing follows it", () => {
+    expect(nextStep("memory", { mode: "local" })).toBe("ready");
+    expect(nextStep("ready", { mode: "local" })).toBeNull();
+  });
+
+  it("carries the spec's own section name", () => {
+    expect(stepsFor({ mode: "local" }).find((s) => s.id === "ready")?.title).toBe("Before we start");
+  });
+
+  it("its skip writes nothing — this screen asks no question, so it has no answer to default", () => {
+    // Every other entry records a stated default because an omitted field would
+    // leave an earlier run's answer standing. Nothing is asked here, so a
+    // default would be an answer to a question never put.
+    expect(
+      stepsFor({ mode: "local" })
+        .find((s) => s.id === "ready")
+        ?.skipDefault(),
+    ).toEqual({});
   });
 });
