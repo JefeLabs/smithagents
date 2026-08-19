@@ -6,7 +6,7 @@
 returned 96 matches, so the sweep was live; every feature probe returned zero.
 
 Started as seven specs; spec 6 split during its brainstorm, so it is now **nine**.
-Seven are written. **None is implemented.** All merged to `main` @ `6ff1184`.
+Eight are written. **None is implemented.** All merged to `main` @ `6ff1184`.
 
 ## The other live threads
 
@@ -36,7 +36,7 @@ adopting herdr as this system's runtime, which was considered and declined.
 | 5 | Hibernation | ✅ `2026-08-17-hibernation-design.md` | ✗ | — |
 | 6 | Dispatch entity and lifecycle | ✅ `2026-08-19-dispatch-entity-design.md` | ✗ | `work-items.delegation`, `dispatcher.ts` |
 | 7 | Worker protocol | ✅ `2026-08-19-worker-protocol-design.md` | ✗ | `smith-delegate` shim pattern, broker relay |
-| 8 | Context projection | ✗ not brainstormed | ✗ | documents, work-items, skill emission |
+| 8 | Context projection | ✅ `2026-08-19-context-projection-design.md` | ✗ | `driver.materialize()` (projects the persona today) |
 | 9 | Coordination map | ✗ not brainstormed | ✗ | react-flow MapStage |
 
 ## Dependencies
@@ -94,6 +94,13 @@ Every spec's scope moved once the tree was read rather than assumed:
 - **Spec 5 added a dependency and removed a mechanism.** It depends on spec 4,
   whose rollup *is* its safety rule, and adds no wake path — sleeping produces
   exactly spec 2's `resumable` state.
+- **Spec 8 corrected a register error and dropped an item.** The register claimed
+  smithagents already generates skill files; it does not — a whole-tree search for
+  `SKILL.md` returns nothing against a control that matched 15 files. The index is
+  therefore a section appended to the persona file `materialize()` already writes.
+  "Blueprint" also turned out to be taken here for document templates, so the word
+  is avoided. And D3 mostly dissolved: an assignee holds one work item, so
+  excluding finished work is automatic rather than implemented.
 - **Spec 7 deleted two of its own mechanisms.** No heartbeat — spec 1's hooks
   already report on every prompt and tool use, so `lastStatusReportAt` is
   liveness. No durable inbox — the dispatch record is the truth, nothing is
@@ -121,5 +128,5 @@ Every spec's scope moved once the tree was read rather than assumed:
 
 ## Next action
 
-Brainstorm spec 8 or 9 — or take a written spec to `writing-plans` and
+Brainstorm spec 9 — the last one — or take a written spec to `writing-plans` and
 implement. Nothing in the sequence is blocked.
