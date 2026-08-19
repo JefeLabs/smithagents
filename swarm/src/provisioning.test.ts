@@ -124,3 +124,44 @@ test("applyGuards: setup and detectedBy survive guarding untouched", () => {
   assert.deepEqual(result.plan.setup, ["pnpm install"]);
   assert.equal(result.plan.detectedBy, "pnpm-lock.yaml");
 });
+
+test("checkCopyPath: refuses the credential dotfiles a user would plausibly add", () => {
+  // Every one of these is gitignored and sits beside node_modules, and a user
+  // adding an override for private-registry installs would reach for the first.
+  for (const p of [
+    ".npmrc",
+    ".netrc",
+    ".git-credentials",
+    ".pypirc",
+    ".docker/config.json",
+    ".ssh/id_ed25519",
+    ".aws/credentials",
+  ]) {
+    assert.equal(checkCopyPath(p, OK).ok, false, `${p} must be refused`);
+  }
+});
+
+test("checkCopyPath: refuses credential files by extension wherever they sit", () => {
+  for (const p of ["certs/client.p12", "keys/app.key", "a/b/store.jks", "service-account.json", "secrets.yaml"]) {
+    assert.equal(checkCopyPath(p, OK).ok, false, `${p} must be refused`);
+  }
+});
+
+test("checkCopyPath: still admits the dotted build and cache entries the spec wants", () => {
+  for (const p of [".cache", ".turbo", ".next", ".vscode/settings.json", ".yarn/cache"]) {
+    assert.deepEqual(checkCopyPath(p, OK), { ok: true }, `${p} must be allowed`);
+  }
+});
+
+test("checkCopyPath: normalizes before judging — the guard and the copy must not disagree", () => {
+  // Each of these resolves to something the raw-string check could miss.
+  for (const p of ["./.env", "a//../../b", "a\\..\\b", "node_modules/./../../etc"]) {
+    assert.equal(checkCopyPath(p, OK).ok, false, `${p} must be refused`);
+  }
+  // ...while a merely untidy path that resolves somewhere legitimate still passes.
+  assert.deepEqual(checkCopyPath("./node_modules/", OK), { ok: true });
+});
+
+test("checkCopyPath: refuses a Windows-absolute path", () => {
+  assert.equal(checkCopyPath("C:\\secrets\\key", OK).ok, false);
+});

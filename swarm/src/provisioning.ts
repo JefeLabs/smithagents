@@ -57,28 +57,84 @@ export type GuardVerdict = { ok: true } | { ok: false; reason: string };
  * demand and never held by the instance, and its strongest argument is that an
  * agent told to "stage and commit ALL your changes" cannot commit a secret that
  * was never on disk. Overrides are user-authored, so someone will eventually
- * list `.env` — which is why that decision is enforced here rather than
- * documented and hoped for.
+ * list a credential file — which is why that decision is enforced here rather
+ * than documented and hoped for.
+ *
+ * The shape matters. A pure denylist of secret names is underinclusive by
+ * construction: `.npmrc`, `.netrc`, `.git-credentials` and friends are exactly
+ * the gitignored files a user WOULD add to an override, because private-registry
+ * installs need them. So dotted paths are ALLOWLISTED — only known build and
+ * cache directories pass — and everything else is checked against the denylist
+ * below. A new secret-carrying dotfile is refused by default rather than
+ * discovered later.
  */
-const SECRET_PATTERNS: RegExp[] = [/(^|\/)\.env($|\.)/i, /\.pem$/i, /(^|\/)id_rsa/i, /(^|\/)master\.key$/i];
+const SAFE_DOT_ENTRIES = new Set([
+  ".cache",
+  ".turbo",
+  ".next",
+  ".nuxt",
+  ".svelte-kit",
+  ".angular",
+  ".parcel-cache",
+  ".gradle",
+  ".yarn",
+  ".pnpm-store",
+  ".venv",
+  ".vscode",
+  ".idea",
+]);
 
-export function checkCopyPath(path: string, facts: { tracked: boolean; existsInSource: boolean }): GuardVerdict {
-  if (SECRET_PATTERNS.some((re) => re.test(path))) {
-    return { ok: false, reason: `"${path}" looks like a secret; secrets are never copied into an instance` };
-  }
-  if (path.startsWith("/")) {
-    return { ok: false, reason: `"${path}" is absolute; only member-relative paths are copied` };
+/** Names and extensions that carry credentials wherever they appear. */
+const SECRET_PATTERNS: RegExp[] = [
+  /(^|\/)\.env($|\.)/i,
+  /\.(pem|key|p12|pfx|jks|keystore)$/i,
+  /(^|\/)id_(rsa|dsa|ecdsa|ed25519)/i,
+  /(^|\/)(master\.key|credentials|service-account.*\.json|secrets?\.(json|ya?ml|toml))$/i,
+];
+
+/**
+ * Collapse the path to the form the filesystem will act on, so the guard and the
+ * copy cannot disagree. Checking the raw string while `cp` resolves a different
+ * one is how an escape slips past a check that looked right.
+ */
+function normalizePath(path: string): string {
+  return path
+    .replace(/\\/g, "/") // a backslash separator must not hide a `..` segment
+    .replace(/\/{2,}/g, "/")
+    .replace(/(^|\/)\.\//g, "$1")
+    .replace(/\/+$/, "");
+}
+
+export function checkCopyPath(rawPath: string, facts: { tracked: boolean; existsInSource: boolean }): GuardVerdict {
+  const path = normalizePath(rawPath);
+  if (!path) return { ok: false, reason: `"${rawPath}" is empty after normalization` };
+  if (path.startsWith("/") || /^[a-z]:/i.test(path)) {
+    return { ok: false, reason: `"${rawPath}" is absolute; only member-relative paths are copied` };
   }
   if (path.split("/").includes("..")) {
-    return { ok: false, reason: `"${path}" escapes the member root` };
+    return { ok: false, reason: `"${rawPath}" escapes the member root` };
+  }
+  if (SECRET_PATTERNS.some((re) => re.test(path))) {
+    return { ok: false, reason: `"${rawPath}" looks like a secret; secrets are never copied into an instance` };
+  }
+  // Dotted entries are allowlisted rather than denylisted: the credential files
+  // a user is most likely to add are dotfiles, and a denylist cannot enumerate
+  // the ones that do not exist yet.
+  for (const segment of path.split("/")) {
+    if (segment.startsWith(".") && !SAFE_DOT_ENTRIES.has(segment)) {
+      return {
+        ok: false,
+        reason: `"${rawPath}" contains "${segment}"; dotted paths must be a known build or cache entry`,
+      };
+    }
   }
   // A tracked path is already in the worktree; copying over it would shadow the
   // checkout with a stale copy from the source.
   if (facts.tracked) {
-    return { ok: false, reason: `"${path}" is tracked by git and is already in the worktree` };
+    return { ok: false, reason: `"${rawPath}" is tracked by git and is already in the worktree` };
   }
   if (!facts.existsInSource) {
-    return { ok: false, reason: `"${path}" is not present in the source checkout` };
+    return { ok: false, reason: `"${rawPath}" is not present in the source checkout` };
   }
   return { ok: true };
 }
