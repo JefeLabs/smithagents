@@ -6,7 +6,8 @@
 returned 96 matches, so the sweep was live; every feature probe returned zero.
 
 Started as seven specs; spec 6 split during its brainstorm, so it is now **nine**.
-Eight are written. **None is implemented.** All merged to `main` @ `6ff1184`.
+**All nine are written. None is implemented.** The design pass is complete;
+what remains is nine plan-and-build cycles. All merged to `main` @ `6ff1184`.
 
 ## The other live threads
 
@@ -37,7 +38,7 @@ adopting herdr as this system's runtime, which was considered and declined.
 | 6 | Dispatch entity and lifecycle | ✅ `2026-08-19-dispatch-entity-design.md` | ✗ | `work-items.delegation`, `dispatcher.ts` |
 | 7 | Worker protocol | ✅ `2026-08-19-worker-protocol-design.md` | ✗ | `smith-delegate` shim pattern, broker relay |
 | 8 | Context projection | ✅ `2026-08-19-context-projection-design.md` | ✗ | `driver.materialize()` (projects the persona today) |
-| 9 | Coordination map | ✗ not brainstormed | ✗ | react-flow MapStage |
+| 9 | Coordination map | ✅ `2026-08-19-coordination-map-design.md` | ✗ | react-flow `MapStage`, `nodeTypes` registry |
 
 ## Dependencies
 
@@ -94,6 +95,10 @@ Every spec's scope moved once the tree was read rather than assumed:
 - **Spec 5 added a dependency and removed a mechanism.** It depends on spec 4,
   whose rollup *is* its safety rule, and adds no wake path — sleeping produces
   exactly spec 2's `resumable` state.
+- **Spec 9 inherited a test that had already paid for itself.** Spec 4's
+  route-parity test covers the new dispatch route automatically — a route added
+  without its broker passthrough now fails a test rather than shipping as an empty
+  canvas. That is the second spec in the sequence it protects.
 - **Spec 8 corrected a register error and dropped an item.** The register claimed
   smithagents already generates skill files; it does not — a whole-tree search for
   `SKILL.md` returns nothing against a control that matched 15 files. The index is
@@ -128,5 +133,11 @@ Every spec's scope moved once the tree was read rather than assumed:
 
 ## Next action
 
-Brainstorm spec 9 — the last one — or take a written spec to `writing-plans` and
-implement. Nothing in the sequence is blocked.
+Design is done. Take a spec to `writing-plans` and implement it. The recommended
+first build is **spec 3 (provisioning)** — no dependencies, and worktree-per-work-item
+stays theoretical while every instance is born unable to build.
+
+The risk worth naming: nine specs is a lot of intent with nothing behind it. The
+designs assume a tree that keeps moving — spec 4 already found a route stranded
+since the warm-session work. Landing one spec end-to-end would show whether this
+pass produced buildable plans or only coherent documents.
