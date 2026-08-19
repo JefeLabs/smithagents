@@ -1,0 +1,49 @@
+// Provisioning policy — what a fresh instance needs before an agent can work.
+//
+// A new instance is a clean checkout, so everything gitignored is missing:
+// node_modules, caches, local config. The agent cannot build until they exist.
+//
+// Deliberately pure: no fs, no child_process. The caller supplies the facts
+// (which files exist, whether a path is tracked) so every branch is testable
+// without a real checkout — the same discipline session-reconcile.ts keeps, and
+// for the same reason: policy that can only be exercised against a live repo
+// stops being exercised.
+
+export interface ProvisionPlan {
+  /** Gitignored paths to copy from the source checkout. */
+  copy: string[];
+  /** Commands run in the new member after copying. */
+  setup: string[];
+  /** Why this plan exists — a lockfile name, "no lockfile", or "config override". */
+  detectedBy: string;
+}
+
+/**
+ * Ordered because a repo can carry several lockfiles; the first match wins and
+ * names itself in `detectedBy`, so a surprising plan is traceable to one file
+ * without reading this table.
+ *
+ * INVARIANT: every `copy` entry must be reproducible by that row's own `setup`.
+ * Copy is an optimization — a failed one costs a cold build — while setup is the
+ * correctness path. A copy nothing can rebuild turns a recoverable slow path
+ * into a broken instance.
+ */
+const SIGNALS: Array<{ file: string; copy: string[]; setup: string[] }> = [
+  { file: "pnpm-lock.yaml", copy: ["node_modules"], setup: ["pnpm install --frozen-lockfile"] },
+  { file: "package-lock.json", copy: ["node_modules"], setup: ["npm ci"] },
+  { file: "yarn.lock", copy: ["node_modules"], setup: ["yarn install --immutable"] },
+];
+
+/** `files` is a flat list of entry names at the member root. */
+export function detectPlan(files: string[]): ProvisionPlan {
+  const present = new Set(files);
+  for (const signal of SIGNALS) {
+    if (present.has(signal.file)) {
+      return { copy: [...signal.copy], setup: [...signal.setup], detectedBy: signal.file };
+    }
+  }
+  // A repo with no dependencies is correctly provisioned by doing nothing. This
+  // is a plan, not a failure — and it still names why, so an empty result is
+  // never mistaken for a detector that did not run.
+  return { copy: [], setup: [], detectedBy: "no lockfile" };
+}
