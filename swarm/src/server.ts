@@ -1795,7 +1795,12 @@ export class OrchestratorServer {
         if ((err as { code?: string }).code === "tool_launch_failed") {
           // Self-correction (spec: on-failure re-probe): a launch failure is
           // the freshest signal — refresh just this tool, fire-and-forget.
-          void refreshCliTool(this.paths.cliTools, this.orchConfig.agentCommands, agent.engine.cli).catch(() => {});
+          // Only a cli-kind agent has a tool to refresh; an api-kind agent carries a
+          // provider instead and there is nothing on PATH to probe.
+          if (agent.engine.cli) {
+            const cli = agent.engine.cli;
+            void refreshCliTool(this.paths.cliTools, this.orchConfig.agentCommands, cli).catch(() => {});
+          }
         }
         return reply.status(sessionErrorStatus(err)).send({ error: String((err as Error).message) });
       }

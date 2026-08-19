@@ -90,7 +90,7 @@ test("transitionIssue: finds the transition by target status name (case-insensit
 });
 
 test("createIssue POSTs the v3 issue shape and returns key + browse url", async () => {
-  let captured: { url: string; init: RequestInit } | null = null;
+  let captured: { url: string; init: RequestInit | undefined } | null = null;
   const fetchImpl = fetchStub([
     {
       match: /\/rest\/api\/3\/issue$/,
@@ -110,7 +110,7 @@ test("createIssue POSTs the v3 issue shape and returns key + browse url", async 
     fetchImpl,
   );
   assert.deepEqual(res, { key: "PROJ-7", url: "https://acme.atlassian.net/browse/PROJ-7" });
-  const sent = JSON.parse(String(captured!.init.body));
+  const sent = JSON.parse(String(captured!.init?.body));
   assert.equal(sent.fields.project.key, "PROJ");
   assert.equal(sent.fields.summary, "Fix login");
   assert.equal(sent.fields.issuetype.name, "Task");
@@ -125,7 +125,7 @@ test("createIssue throws on a non-2xx response with the status in the message", 
 });
 
 test("commentIssue posts an ADF document, not a bare string", async () => {
-  let captured: { url: string; init: RequestInit } | null = null;
+  let captured: { url: string; init: RequestInit | undefined } | null = null;
   const fetchImpl = fetchStub([
     {
       match: /\/rest\/api\/3\/issue\/P-1\/comment$/,
@@ -140,7 +140,7 @@ test("commentIssue posts an ADF document, not a bare string", async () => {
   await commentIssue("https://x.atlassian.net", "e@x.com", "tok", "P-1", "chasing the flaky suite", fetchImpl);
 
   assert.equal(captured!.url, "https://x.atlassian.net/rest/api/3/issue/P-1/comment");
-  assert.deepEqual(JSON.parse(String(captured!.init.body)), {
+  assert.deepEqual(JSON.parse(String(captured!.init?.body)), {
     body: {
       type: "doc",
       version: 1,

@@ -84,19 +84,32 @@ export class AgentSessionManager {
     repoRoot: string,
     baseBranch: string,
   ): Promise<AgentSessionInfo> {
-    const driver = (this.config.resolveDriver ?? getDriver)(agent.engine.cli);
-    if (!driver) throw new ToolLaunchError(agent.engine.cli, "no driver for this tool — task runs only");
+    // `engine.cli` is optional on the TYPE because an api-kind agent carries a
+    // provider instead (agents.ts:14-21); the loader enforces "cli when kind is
+    // cli-or-absent" at runtime, but the type cannot express it. Narrow once
+    // here rather than asserting at each of the ten uses below — and say the
+    // real reason, which previously surfaced as a confusing "no driver for this
+    // tool" after `undefined` reached getDriver.
+    const cli = agent.engine.cli;
+    if (!cli) {
+      throw new ToolLaunchError(
+        agent.engine.provider ?? "api",
+        "an API agent has no CLI to run a warm session in — warm sessions observe turn completion from a tool's own transcript on disk",
+      );
+    }
+    const driver = (this.config.resolveDriver ?? getDriver)(cli);
+    if (!driver) throw new ToolLaunchError(cli, "no driver for this tool — task runs only");
     if (driver.warmSessionsSupported === false) {
       throw new ToolLaunchError(
-        agent.engine.cli,
+        cli,
         "this tool keeps conversations server-side and persists no local transcript, so turn completion cannot be observed — it supports task runs and steering, not warm sessions",
       );
     }
-    const baseCommand = this.config.agentCommands[agent.engine.cli];
-    if (!baseCommand) throw new ToolLaunchError(agent.engine.cli, "no configured command");
+    const baseCommand = this.config.agentCommands[cli];
+    if (!baseCommand) throw new ToolLaunchError(cli, "no configured command");
 
-    const gate = await this.config.toolGate?.(agent.engine.cli);
-    if (gate) throw new ToolLaunchError(agent.engine.cli, `subscription-inactive: ${gate}`);
+    const gate = await this.config.toolGate?.(cli);
+    if (gate) throw new ToolLaunchError(cli, `subscription-inactive: ${gate}`);
 
     const id = randomUUID();
     const branch = `smith/session-${id}`;
@@ -116,7 +129,7 @@ export class AgentSessionManager {
       id,
       agentId: agent.id,
       agentName: agent.name,
-      tool: agent.engine.cli,
+      tool: cli,
       profileHash: createHash("sha256").update(agentFileRaw).digest("hex").slice(0, 16),
       cwd,
       branch,
@@ -152,7 +165,7 @@ export class AgentSessionManager {
     for (;;) {
       if (!(await this.runtime.exists(state.tmuxSession))) {
         state.status = "dead";
-        throw new ToolLaunchError(agent.engine.cli, "process exited at launch (binary missing or crashed)");
+        throw new ToolLaunchError(cli, "process exited at launch (binary missing or crashed)");
       }
       if (state.sessionFile) {
         // Path is already known; readiness is just "the TUI is up and stays up".
@@ -178,7 +191,7 @@ export class AgentSessionManager {
       if (Date.now() > deadline) {
         await this.runtime.kill(state.tmuxSession).catch(() => {});
         state.status = "dead";
-        throw new ToolLaunchError(agent.engine.cli, "did not become ready in time");
+        throw new ToolLaunchError(cli, "did not become ready in time");
       }
       await this.sleep(this.config.pollIntervalMs ?? DEFAULTS.pollIntervalMs);
     }
