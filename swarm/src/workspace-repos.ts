@@ -6,10 +6,12 @@ import { type GitAuthor, SMITH_IDENTITY } from "./git-author.js";
 import type { SmithPaths } from "./paths.js";
 import { loadRoster, saveRoster } from "./workspace-roster.js";
 import {
+  configDirFor,
   ensureWorkspaceDir,
   isGitRepo,
   loadWorkspaces,
   saveWorkspace,
+  slugForDir,
   type Workspace,
   type WorkspaceRepo,
   workspaceDir,
@@ -24,7 +26,6 @@ const run = promisify(execFile);
  * commit, and `git blame` still names the person.
  */
 const SMITH_COMMITTER = ["-c", `user.name=${SMITH_IDENTITY.name}`, "-c", `user.email=${SMITH_IDENTITY.email}`];
-const AUTHOR = SMITH_COMMITTER; // legacy alias — removed with ensureConfigRepo in the cutover task
 
 /**
  * Strip `user:token@` credentials from a URL embedded in a git error message
@@ -57,38 +58,12 @@ async function hasCommit(dir: string): Promise<boolean> {
 }
 
 /**
- * Make `<workspaceDir>/config` a git repo, committing whatever is already in it
- * (settings.json, boards/). Returns true if it initialised one, false if a repo
- * was already there.
- *
- * Idempotent in the strong sense: an existing repo is never re-initialised and
- * never gets a new commit, so uncommitted edits the user is holding stay
- * uncommitted. Committing on their behalf would put half-finished work into
- * history they did not ask for.
- *
- * Self-healing: if a prior partial init left a `.git` with no commits, this call
- * will complete it. This ensures that git worktree operations against config/ always
- * produce valid worktrees, not silent empty ones.
- */
-export async function ensureConfigRepo(workspaceDir: string): Promise<boolean> {
-  const dir = join(workspaceDir, "config");
-  await mkdir(dir, { recursive: true });
-  if (await hasCommit(dir)) return false;
-
-  if (!(await exists(join(dir, ".git")))) {
-    await run("git", ["init", "-q", "-b", "main"], { cwd: dir });
-  }
-  await run("git", ["add", "-A"], { cwd: dir });
-  await run("git", [...AUTHOR, "commit", "-q", "--allow-empty", "-m", "Workspace config"], { cwd: dir });
-  return true;
-}
-
-/**
  * Make `paths.orgRepo` a git repo holding the org record, committing once.
- * Same contract as the per-workspace `ensureConfigRepo` it replaces: an
- * existing repo with a commit is never re-initialised and never gets a new
- * commit here — subsequent content reaches HEAD through `commitConfigFiles`.
- * Self-healing: a `.git` with no commits (a prior partial init) is completed.
+ * Same contract as the per-workspace config repo it replaced: an existing
+ * repo with a commit is never re-initialised and never gets a new commit
+ * here — subsequent content reaches HEAD through `commitConfigFiles`.
+ * Self-healing: a `.git` with no commits (a prior partial init) is completed,
+ * so a worktree cut from the org repo is never a silently empty one.
  *
  * `org.name` is only written when no settings.json exists yet; an org record
  * the user has edited is never overwritten.
@@ -178,56 +153,13 @@ export async function commitConfigFiles(
   return true;
 }
 
-/** The only files this codebase ever commits into a workspace's config/ repo. */
-const SYSTEM_OWNED_CONFIG_PATHS = ["settings.json", "boards", "roster.json"];
-
-/**
- * Commit whichever of settings.json, boards/, and roster.json currently have
- * uncommitted changes, inside `<workspaceDir>/config`.
- *
- * Unlike `ensureConfigRepo` — which creates the repo and commits exactly
- * once, ever — this is idempotent and meant to be called repeatedly: once
- * right after each of those files is written, and once more on every boot,
- * so a config repo whose one-shot creation commit predates one of them (the
- * normal case: creation makes an empty repo before settings.json or boards/
- * exist; migration writes roster.json only after ensureConfigRepo has
- * already committed) still ends up with that content in HEAD.
- *
- * Stages ONLY these explicit paths — never `-A` — so a file the user drops
- * into config/ by hand is never staged or committed on their behalf, the same
- * guarantee `ensureConfigRepo`'s one-shot contract protects. `git add` with a
- * pathspec that matches nothing fails the whole call, so each candidate is
- * checked with `exists()` first and only the ones actually on disk are
- * passed. Returns whether it made a commit.
- */
-export async function commitLegacyConfigFiles(workspaceDir: string): Promise<boolean> {
-  const dir = join(workspaceDir, "config");
-  const present: string[] = [];
-  for (const path of SYSTEM_OWNED_CONFIG_PATHS) {
-    if (await exists(join(dir, path))) present.push(path);
-  }
-  if (present.length === 0) return false;
-
-  await run("git", ["add", "--", ...present], { cwd: dir });
-  try {
-    // Exit 0 means nothing is staged; a non-zero exit (thrown by execFile)
-    // means there is a staged diff to commit.
-    await run("git", ["diff", "--cached", "--quiet"], { cwd: dir });
-    return false;
-  } catch {
-    /* fall through to commit below */
-  }
-  await run("git", [...AUTHOR, "commit", "-q", "-m", "Update workspace config"], { cwd: dir });
-  return true;
-}
-
 /**
  * Why a repo name cannot become a directory name inside a workspace, or null
  * if it's fine. A path separator or ".." would let `join` climb outside the
  * workspace directory — the repo-name equivalent of the guard `slugForDir`
  * already gives the *workspace* name (workspaces.ts). "." doesn't escape but
  * lands ON the workspace directory itself, merging the clone's own `.git`
- * with its unrelated siblings (config/, .runtime/).
+ * with its unrelated siblings (.runtime/, the other project clones).
  *
  * Shared by `repoDirFor` below (the boot-time guard — no route validation
  * runs on that path) and `workspaceProblems` in server.ts (the route-time
@@ -332,7 +264,8 @@ export async function cloneRepoInto(workspaceDir: string, repo: WorkspaceRepo): 
 
 /**
  * Give a workspace the shape §1.2 requires before it is saved: its own
- * directory, a git config repo, and every project repo present locally.
+ * directory and every project repo present locally. The versioned half needs
+ * no repo of its own — it is a subtree of the org repo, ensured at boot.
  *
  * A repo already at a valid local git path is LEFT THERE. Creation is not the
  * moment to relocate someone's existing checkout — the boot migration handles
@@ -342,7 +275,6 @@ export async function cloneRepoInto(workspaceDir: string, repo: WorkspaceRepo): 
  */
 export async function materializeRepos(paths: SmithPaths, ws: Workspace): Promise<Workspace> {
   const dir = await ensureWorkspaceDir(paths, ws);
-  await ensureConfigRepo(dir);
   const repos: WorkspaceRepo[] = [];
   for (const repo of ws.repos) {
     if (repo.path && (await isGitRepo(repo.path))) {
@@ -439,19 +371,18 @@ export async function migrateReposIntoWorkspace(
 
       if (changed) {
         try {
-          // Save BEFORE the config/ commit below: when config/ is not yet a
-          // repo, its initial commit snapshots whatever is on disk at that
-          // moment. Committing first would capture the pre-migration
-          // settings.json — the external path — instead of the repointed
-          // record this migration exists to produce.
+          // Save BEFORE the commit below: the commit snapshots whatever is on
+          // disk at that moment. Committing first would capture the
+          // pre-migration settings.json — the external path — instead of the
+          // repointed record this migration exists to produce.
           await saveWorkspace(paths, { ...ws, repos });
-          // Confirmed here, independent of ensureConfigRepo below: a clone
-          // whose record was saved IS a completed migration, whether or not
-          // config/ separately becomes a git repo. Reporting it under
-          // `skipped` because of an unrelated config failure would be false
-          // — the boot log's "cloned:" line exists so a silent, successful
-          // migration can be confirmed at all, and a false "could not save"
-          // note would point someone at the wrong problem.
+          // Confirmed here, independent of the commit below: a clone whose
+          // record was saved IS a completed migration, whether or not its
+          // subtree separately reaches the org repo's HEAD. Reporting it
+          // under `skipped` because of an unrelated config failure would be
+          // false — the boot log's "cloned:" line exists so a silent,
+          // successful migration can be confirmed at all, and a false "could
+          // not save" note would point someone at the wrong problem.
           cloned.push(...justCloned);
         } catch (err) {
           skipped.push(...justCloned);
@@ -461,49 +392,38 @@ export async function migrateReposIntoWorkspace(
         }
       }
 
-      // Outside the `changed` gate, and in its own try/catch, deliberately:
-      // this must run every boot, not just the boot that happened to clone
-      // something, so a workspace whose config/ failed to become a repo on
-      // some prior run keeps getting another chance rather than resting
-      // silently unhealed — per ensureConfigRepo's own docstring, a worktree
-      // cut from a repo-less config/ comes out silently empty.
-      try {
-        await ensureConfigRepo(dir);
-      } catch (err) {
-        notes.push(`[repo-migration] ${ws.name}'s config/ could not become a git repo — ${(err as Error).message}`);
-      }
-
       // Record today's assignment — every global agent and squad — so the
       // file exists. This preserves current behaviour exactly; it does not
-      // start gating on the roster. Getting it into HEAD is
-      // commitLegacyConfigFiles' job below, not this write — this only needs
-      // to put the content on disk to be staged. Also outside the `changed`
-      // gate and in its own try/catch, for the same reason as
-      // ensureConfigRepo above: a workspace whose roster failed to save on
-      // some prior run keeps getting another chance.
+      // start gating on the roster. Getting it into HEAD is the commit
+      // below's job, not this write — this only needs to put the content on
+      // disk to be staged. Outside the `changed` gate and in its own
+      // try/catch, deliberately: it must run every boot, so a workspace whose
+      // roster failed to save on some prior run keeps getting another chance
+      // rather than resting silently unhealed.
       //
       // A null or empty globalAgentIds means the caller could not determine
       // — or truly has no — global agents this boot; skip seeding rather
       // than write a roster that looks identical to "deliberately assigned
       // nothing" (see the docstring above). Leaving roster.json absent lets
       // a later boot, once there is a real list, seed it correctly.
+      const configDir = configDirFor(paths, ws);
       try {
-        if (globalAgentIds !== null && globalAgentIds.length > 0 && (await loadRoster(dir)) === null) {
-          await saveRoster(dir, { agents: globalAgentIds, squads: globalSquadIds });
+        if (globalAgentIds !== null && globalAgentIds.length > 0 && (await loadRoster(configDir)) === null) {
+          await saveRoster(configDir, { agents: globalAgentIds, squads: globalSquadIds });
         }
       } catch (err) {
         notes.push(`[repo-migration] ${ws.name}'s roster could not be recorded — ${(err as Error).message}`);
       }
 
-      // Idempotent healing, outside the `changed` gate and in its own
-      // try/catch for the same reason as the two blocks above: ensureConfigRepo
-      // only ever commits once, so whichever of settings.json/boards/roster.json
-      // didn't exist yet at that moment (creation: neither did; migration:
-      // roster.json never does) needs a later, separate commit to ever reach
-      // HEAD. Runs every boot so an already-migrated workspace — one that got
-      // its one-shot commit before this function existed — heals too.
+      // Idempotent healing of this workspace's subtree in the org repo,
+      // outside the `changed` gate and in its own try/catch for the same
+      // reason as the block above. `ensureOrgRepo` (boot) commits the org
+      // repo exactly once, so whichever of settings.json/boards/roster.json
+      // didn't exist yet at that moment — roster.json never does, since it is
+      // written just above — needs a later, separate commit to ever reach
+      // HEAD. Runs every boot so an already-migrated workspace heals too.
       try {
-        await commitLegacyConfigFiles(dir);
+        await commitConfigFiles(paths, slugForDir(ws.name));
       } catch (err) {
         notes.push(`[repo-migration] ${ws.name}'s config files did not get committed — ${(err as Error).message}`);
       }

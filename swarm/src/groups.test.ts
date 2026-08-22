@@ -149,10 +149,10 @@ describe("one context entity (spec 2026-08-13)", () => {
     assert.deepEqual(await migrateGroupsDir(paths), []);
   });
 
-  it("migrateGroupsDir: the collision check sees a workspace that has migrated to config/settings.json, not just flat files", async () => {
+  it("migrateGroupsDir: the collision check sees a workspace that has migrated into the org repo, not just flat files", async () => {
     // Regression for the shape of Plan 5's Critical: taken must be the UNION
     // of dual-source workspaces and flat groups. loadAllContextsFromDir alone
-    // goes blind to "foo" the moment it lives only in config/settings.json —
+    // goes blind to "foo" the moment it lives only in the org repo —
     // the rename would silently stop firing and "foo" (workspace) and
     // "foo" (renamed-nothing group) would collide in the one namespace.
     const { mkdtemp, mkdir, writeFile } = await import("node:fs/promises");
@@ -160,7 +160,7 @@ describe("one context entity (spec 2026-08-13)", () => {
     const { join } = await import("node:path");
     const { smithPaths } = await import("./paths.js");
     const { saveRegistryEntry } = await import("./workspace-registry.js");
-    const { settingsPathFor } = await import("./workspaces.js");
+    const { configDirForName, settingsPathFor } = await import("./workspaces.js");
     const { migrateGroupsDir, loadGroupsFromDir } = await import("./groups.js");
     const base = await mkdtemp(join(tmpdir(), "one-store-mig-union-"));
     const paths = smithPaths(base);
@@ -168,8 +168,9 @@ describe("one context entity (spec 2026-08-13)", () => {
     // "foo" lives ONLY in its own settings.json + the registry — never a
     // flat workspaces/foo.json.
     const fooDir = join(base, "elsewhere", "foo");
-    await mkdir(join(fooDir, "config"), { recursive: true });
-    await writeFile(settingsPathFor(fooDir), JSON.stringify(ws("foo")));
+    const fooCfg = configDirForName(paths, "foo");
+    await mkdir(fooCfg, { recursive: true });
+    await writeFile(settingsPathFor(fooCfg), JSON.stringify(ws("foo")));
     await saveRegistryEntry(paths, "foo", fooDir);
     await writeFile(join(paths.groups, "foo.json"), JSON.stringify({ name: "foo", workspaces: [], groups: [] }));
 

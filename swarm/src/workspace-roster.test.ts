@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -29,7 +29,6 @@ test("loadRoster: an empty roster is a real, distinct value", async () => {
 test("loadRoster: a malformed roster throws rather than looking unrecorded", async () => {
   const ws = mkdtempSync(join(tmpdir(), "roster-bad-"));
   try {
-    mkdirSync(join(ws, "config"), { recursive: true });
     writeFileSync(rosterPathFor(ws), "{not json");
     await assert.rejects(() => loadRoster(ws), /roster/i, "a corrupt roster must never read as a fresh workspace");
   } finally {
@@ -40,7 +39,6 @@ test("loadRoster: a malformed roster throws rather than looking unrecorded", asy
 test("loadRoster: a roster missing its arrays is malformed, not partially valid", async () => {
   const ws = mkdtempSync(join(tmpdir(), "roster-shape-"));
   try {
-    mkdirSync(join(ws, "config"), { recursive: true });
     writeFileSync(rosterPathFor(ws), '{"agents":"fabian"}');
     await assert.rejects(() => loadRoster(ws), /roster/i);
   } finally {
@@ -48,11 +46,11 @@ test("loadRoster: a roster missing its arrays is malformed, not partially valid"
   }
 });
 
-test("saveRoster: round-trips and lands inside config/", async () => {
+test("saveRoster: round-trips and lands directly in the workspace's config subtree", async () => {
   const ws = mkdtempSync(join(tmpdir(), "roster-rt-"));
   try {
     await saveRoster(ws, { agents: ["fabian"], squads: ["core"] });
-    assert.equal(rosterPathFor(ws), join(ws, "config", "roster.json"));
+    assert.equal(rosterPathFor(ws), join(ws, "roster.json"));
     assert.deepEqual(await loadRoster(ws), { agents: ["fabian"], squads: ["core"] });
   } finally {
     rmSync(ws, { recursive: true, force: true });

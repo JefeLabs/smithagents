@@ -278,7 +278,7 @@ test("slugForDir: refuses a name that would escape its parent", () => {
   );
 });
 
-test("ensureWorkspaceDir: creates config/ and .runtime/, and is idempotent", async () => {
+test("ensureWorkspaceDir: creates .runtime/ only — the versioned half lives in the org repo — and is idempotent", async () => {
   const root = mkdtempSync(join(tmpdir(), "ws-dir-"));
   try {
     const paths = smithPaths(root);
@@ -286,13 +286,32 @@ test("ensureWorkspaceDir: creates config/ and .runtime/, and is idempotent", asy
 
     const dir = await ensureWorkspaceDir(paths, ws);
     assert.equal(dir, join(root, "workspaces", "proving-ground"));
-    assert.ok(statSync(join(dir, "config")).isDirectory(), "config/ exists");
     assert.ok(statSync(join(dir, ".runtime")).isDirectory(), ".runtime/ exists");
+    assert.throws(() => statSync(join(dir, "config")), "no per-workspace config dir is created any more");
 
     // Running twice must not throw and must not disturb existing contents.
-    writeFileSync(join(dir, "config", "keep.txt"), "kept");
+    writeFileSync(join(dir, ".runtime", "keep.txt"), "kept");
     await ensureWorkspaceDir(paths, ws);
-    assert.equal(readFileSync(join(dir, "config", "keep.txt"), "utf8"), "kept");
+    assert.ok(statSync(join(dir, ".runtime")).isDirectory(), "idempotent");
+    assert.equal(readFileSync(join(dir, ".runtime", "keep.txt"), "utf8"), "kept");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("saveWorkspace: the record lands in the org repo subtree, not under the runtime dir", async () => {
+  const root = mkdtempSync(join(tmpdir(), "wssave-"));
+  try {
+    const paths = smithPaths(root);
+    await saveWorkspace(paths, { name: "pg", repos: [] } as Workspace);
+    const settings = join(paths.orgRepo, "workspaces", "pg", "settings.json");
+    assert.equal(JSON.parse(readFileSync(settings, "utf8")).name, "pg");
+    assert.throws(() => statSync(join(paths.workspaces, "pg", "config")));
+    assert.deepEqual(
+      (await loadWorkspaces(paths)).map((w) => w.name),
+      ["pg"],
+      "and loads back through the registry",
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -307,7 +326,7 @@ test("ensureWorkspaceDir: honours an explicit dir outside the state root", async
     const dir = await ensureWorkspaceDir(paths, { name: "pg", dir: target, repos: [] } as Workspace);
 
     assert.equal(dir, target);
-    assert.ok(statSync(join(target, "config")).isDirectory(), "config/ created at the explicit dir");
+    assert.ok(statSync(join(target, ".runtime")).isDirectory(), ".runtime/ created at the explicit dir");
     assert.throws(() => statSync(join(root, "workspaces", "pg")), "nothing created under the state root");
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -330,12 +349,12 @@ test("ensureWorkspaceDir: refuses a name that slugs to empty rather than writing
   }
 });
 
-test("boardsDirFor: a workspace's boards live under its own config/", () => {
+test("boardsDirFor: a workspace's boards live under its subtree of the org repo", () => {
   const paths = smithPaths("/state");
   const ws = { name: "proving-ground", repos: [] } as Workspace;
   assert.equal(
     boardsDirFor(paths, [ws], "proving-ground"),
-    join("/state", "workspaces", "proving-ground", "config", "boards"),
+    join("/state", "config", "workspaces", "proving-ground", "boards"),
   );
 });
 
@@ -352,10 +371,10 @@ test("boardsDirFor: an unknown workspace id falls back to the host work dir", ()
   assert.equal(boardsDirFor(paths, [], "deleted-workspace"), paths.work);
 });
 
-test("boardsDirFor: honours an explicit workspace dir", () => {
+test("boardsDirFor: an explicit workspace dir moves the RUNTIME half only — boards stay in the org repo", () => {
   const paths = smithPaths("/state");
   const ws = { name: "pg", dir: "/elsewhere/pg", repos: [] } as Workspace;
-  assert.equal(boardsDirFor(paths, [ws], "pg"), join("/elsewhere/pg", "config", "boards"));
+  assert.equal(boardsDirFor(paths, [ws], "pg"), join("/state", "config", "workspaces", "pg", "boards"));
 });
 
 test("collidingWorkspaceDirs: reports two workspaces that would share one directory", () => {
@@ -383,13 +402,16 @@ test("collidingWorkspaceDirs: silent when every workspace resolves uniquely", ()
   );
 });
 
-test("loadWorkspaces: reads a record from the workspace's own settings.json", async () => {
+test("loadWorkspaces: reads a registered workspace's record from its org-repo subtree", async () => {
   const root = mkdtempSync(join(tmpdir(), "ws-settings-"));
   try {
     const paths = smithPaths(root);
+    // The registry still points at the RUNTIME dir, which may be anywhere;
+    // the record is found through the registry KEY, in the org repo.
     const dir = join(root, "elsewhere", "pg");
-    mkdirSync(join(dir, "config"), { recursive: true });
-    writeFileSync(settingsPathFor(dir), JSON.stringify({ name: "pg", repos: [{ name: "r", path: "/abs/r" }] }));
+    const cfg = configDirForName(paths, "pg");
+    mkdirSync(cfg, { recursive: true });
+    writeFileSync(settingsPathFor(cfg), JSON.stringify({ name: "pg", repos: [{ name: "r", path: "/abs/r" }] }));
     await saveRegistryEntry(paths, "pg", dir);
 
     const all = await loadWorkspaces(paths);
@@ -427,10 +449,11 @@ test("loadWorkspaces: when a record exists in both places, settings.json wins", 
   try {
     const paths = smithPaths(root);
     const dir = join(root, "workspaces", "dup");
-    mkdirSync(join(dir, "config"), { recursive: true });
+    const cfg = configDirForName(paths, "dup");
+    mkdirSync(cfg, { recursive: true });
     mkdirSync(paths.workspaces, { recursive: true });
     writeFileSync(
-      settingsPathFor(dir),
+      settingsPathFor(cfg),
       JSON.stringify({ name: "dup", description: "NEW", repos: [{ name: "r", path: "/abs/r" }] }),
     );
     writeFileSync(
@@ -456,8 +479,9 @@ test("loadWorkspaces: a registered settings.json that validates as a GROUP recor
     // that edit is exactly the mechanism the flat loop below already guards
     // against via loadWorkspacesFromDir's own filter.
     const dir = join(paths.workspaces, "squad");
-    mkdirSync(join(dir, "config"), { recursive: true });
-    writeFileSync(settingsPathFor(dir), JSON.stringify({ name: "squad", members: ["a", "b"], repos: [] }));
+    const cfg = configDirForName(paths, "squad");
+    mkdirSync(cfg, { recursive: true });
+    writeFileSync(settingsPathFor(cfg), JSON.stringify({ name: "squad", members: ["a", "b"], repos: [] }));
     await saveRegistryEntry(paths, "squad", dir);
 
     const all = await loadWorkspaces(paths);
@@ -467,19 +491,20 @@ test("loadWorkspaces: a registered settings.json that validates as a GROUP recor
   }
 });
 
-test("loadWorkspaces: two registry keys pointing at the same directory return the workspace once, not twice", async () => {
+test("loadWorkspaces: two registry keys resolving to one config subtree return the workspace once, not twice", async () => {
   const root = mkdtempSync(join(tmpdir(), "ws-reg-dedup-"));
   try {
     const paths = smithPaths(root);
     const dir = join(paths.workspaces, "ab");
-    mkdirSync(join(dir, "config"), { recursive: true });
-    writeFileSync(settingsPathFor(dir), JSON.stringify({ name: "ab", repos: [{ name: "r", path: "/abs/r" }] }));
-    // A registry can end up with two keys resolving to one directory —
-    // saveWorkspace's new guard prevents new writes from creating this
-    // going forward, but a reader must not double-count a registry that is
-    // already in this shape (e.g. hand-edited).
+    const cfg = configDirForName(paths, "ab");
+    mkdirSync(cfg, { recursive: true });
+    writeFileSync(settingsPathFor(cfg), JSON.stringify({ name: "ab", repos: [{ name: "r", path: "/abs/r" }] }));
+    // A registry can end up with two keys resolving to one subtree — "ab"
+    // and "ab-" both slug to "ab". saveWorkspace's guard prevents new writes
+    // from creating this going forward, but a reader must not double-count a
+    // registry that is already in this shape (e.g. hand-edited).
     await saveRegistryEntry(paths, "ab", dir);
-    await saveRegistryEntry(paths, "ab-stale-alias", dir);
+    await saveRegistryEntry(paths, "ab-", dir);
 
     const all = await loadWorkspaces(paths);
     assert.equal(all.length, 1, "the same settings.json must not be read and pushed twice");
@@ -498,8 +523,8 @@ test("saveWorkspace: writes settings.json and registers the directory", async ()
     await saveWorkspace(paths, ws);
 
     const dir = workspaceDir(paths, ws);
-    assert.ok(statSync(settingsPathFor(dir)).isFile(), "settings.json written");
-    assert.deepEqual(await loadRegistry(paths), { fresh: dir }, "and registered");
+    assert.ok(statSync(settingsPathFor(configDirFor(paths, ws))).isFile(), "settings.json written");
+    assert.deepEqual(await loadRegistry(paths), { fresh: dir }, "and the RUNTIME dir is what gets registered");
     assert.deepEqual(
       (await loadWorkspaces(paths)).map((w) => w.name),
       ["fresh"],
@@ -530,8 +555,7 @@ test("saveWorkspace: refuses to overwrite a DIFFERENT workspace's settings.json 
       },
     );
 
-    const dir = workspaceDir(paths, { name: "ab", repos: [] } as Workspace);
-    const onDisk = JSON.parse(readFileSync(settingsPathFor(dir), "utf8"));
+    const onDisk = JSON.parse(readFileSync(settingsPathFor(configDirForName(paths, "ab")), "utf8"));
     assert.equal(onDisk.name, "ab-", "the existing workspace's record must survive completely untouched");
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -542,13 +566,13 @@ test("saveWorkspace: a missing or corrupt destination is not a collision — an 
   const root = mkdtempSync(join(tmpdir(), "ws-selfheal-"));
   try {
     const paths = smithPaths(root);
-    const dir = workspaceDir(paths, { name: "pg", repos: [] } as Workspace);
-    mkdirSync(join(dir, "config"), { recursive: true });
-    writeFileSync(settingsPathFor(dir), "{not json"); // corrupt — but nobody's identity to protect
+    const cfg = configDirForName(paths, "pg");
+    mkdirSync(cfg, { recursive: true });
+    writeFileSync(settingsPathFor(cfg), "{not json"); // corrupt — but nobody's identity to protect
 
     await saveWorkspace(paths, { name: "pg", description: "healed", repos: [{ name: "r", path: "/abs/r" }] });
 
-    const onDisk = JSON.parse(readFileSync(settingsPathFor(dir), "utf8"));
+    const onDisk = JSON.parse(readFileSync(settingsPathFor(cfg), "utf8"));
     assert.equal(
       onDisk.description,
       "healed",
@@ -587,8 +611,7 @@ test("saveWorkspace: the full ab/ab- sequence — migration then an ordinary edi
       WorkspaceDirCollisionError,
     );
 
-    const dir = workspaceDir(paths, { name: "ab", repos: [] } as Workspace);
-    const onDisk = JSON.parse(readFileSync(settingsPathFor(dir), "utf8"));
+    const onDisk = JSON.parse(readFileSync(settingsPathFor(configDirForName(paths, "ab")), "utf8"));
     assert.equal(onDisk.name, winner, "the winner's record must survive completely untouched by the loser's edit");
     assert.equal(onDisk.description, undefined, "not overwritten by the loser's edit");
   } finally {
@@ -658,8 +681,7 @@ test("saveWorkspace: a slugified submission collides with the legacy record it s
       WorkspaceDirCollisionError,
     );
 
-    const dir = workspaceDir(paths, { name: "foo", repos: [] } as Workspace);
-    const onDisk = JSON.parse(readFileSync(settingsPathFor(dir), "utf8"));
+    const onDisk = JSON.parse(readFileSync(settingsPathFor(configDirForName(paths, "foo")), "utf8"));
     assert.equal(onDisk.name, "Foo", "the legacy workspace's config and boards are never silently adopted");
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -688,13 +710,14 @@ test("loadAllContexts: the ONE namespace across a settings.json-based workspace 
   // The name-collision checks (POST /workspaces, POST /groups, and
   // migrateGroupsDir's `taken` set) need to see BOTH kinds together —
   // loadAllContextsFromDir alone goes blind to a workspace the moment it
-  // moves to config/settings.json.
+  // moves to its settings.json in the org repo.
   const root = mkdtempSync(join(tmpdir(), "ws-allctx-"));
   try {
     const paths = smithPaths(root);
     const dir = join(paths.workspaces, "pg");
-    mkdirSync(join(dir, "config"), { recursive: true });
-    writeFileSync(settingsPathFor(dir), JSON.stringify({ name: "pg", repos: [{ name: "r", path: "/abs/r" }] }));
+    const cfg = configDirForName(paths, "pg");
+    mkdirSync(cfg, { recursive: true });
+    writeFileSync(settingsPathFor(cfg), JSON.stringify({ name: "pg", repos: [{ name: "r", path: "/abs/r" }] }));
     await saveRegistryEntry(paths, "pg", dir);
     mkdirSync(paths.workspaces, { recursive: true });
     writeFileSync(join(paths.workspaces, "a-group.json"), JSON.stringify({ name: "a-group", members: ["pg"] }));
@@ -868,7 +891,11 @@ test("resolveRepo and repoLessRefusal agree on which workspace a nameless reques
 test("configDirForName: a workspace's versioned half is its subtree of the org repo, never its own repo", () => {
   const paths = smithPaths("/state");
   assert.equal(configDirForName(paths, "proving-ground"), join("/state", "config", "workspaces", "proving-ground"));
-  assert.equal(configDirForName(paths, "Proving Ground"), join("/state", "config", "workspaces", "proving-ground"), "slugged like the runtime dir");
+  assert.equal(
+    configDirForName(paths, "Proving Ground"),
+    join("/state", "config", "workspaces", "proving-ground"),
+    "slugged like the runtime dir",
+  );
 });
 
 test("configDirFor: independent of ws.dir — the runtime folder can live anywhere, the subtree never leaves the org repo", () => {

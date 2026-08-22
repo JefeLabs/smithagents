@@ -16,6 +16,7 @@ import { loadBoards } from "./work-items.js";
 import { loadRegistry, registryPath, saveRegistryEntry } from "./workspace-registry.js";
 import { commitConfigFiles } from "./workspace-repos.js";
 import {
+  configDirFor,
   configDirForName,
   ensureWorkspaceDir,
   loadWorkspaceFilesFromDir,
@@ -23,7 +24,6 @@ import {
   settingsPathFor,
   slugForDir,
   type Workspace,
-  workspaceDir,
 } from "./workspaces.js";
 
 /**
@@ -201,7 +201,7 @@ export async function migrateBoards(
       kept.push(board.id);
       continue;
     }
-    const targetDir = join(workspaceDir(paths, ws), "config", "boards");
+    const targetDir = join(configDirFor(paths, ws), "boards");
     await mkdir(targetDir, { recursive: true });
     const from = join(paths.work, `${board.id}.json`);
     const to = join(targetDir, `${board.id}.json`);
@@ -222,10 +222,11 @@ export async function migrateBoards(
 }
 
 /**
- * Move each flat workspace record into its own directory as config/settings.json
- * and register the directory. Write first, verify it reads back and validates,
- * then remove the flat file — a record is never in neither place, and the flat
- * copy is never deleted on the strength of a destination that merely *exists*.
+ * Move each flat workspace record into its subtree of the org repo as
+ * settings.json, and register its runtime directory. Write first, verify it
+ * reads back and validates, then remove the flat file — a record is never in
+ * neither place, and the flat copy is never deleted on the strength of a
+ * destination that merely *exists*.
  *
  * Deletes the exact file each record was read from, never a name-derived path:
  * a record's `name` field is not guaranteed to match its filename (a
@@ -262,7 +263,7 @@ export async function migrateBoards(
  * that already pass `saveWorkspace`'s `^[a-z0-9][a-z0-9-]{0,63}$` check, but
  * `assertContext` does not enforce that format — legacy flat records can
  * carry names like "Foo" and "foo" that differ only by case and slug to the
- * same directory. Whichever name claims the directory first wins it; the
+ * same subtree. Whichever name claims the directory first wins it; the
  * second sees a settings.json that validates fine but names someone else,
  * and must not delete its own flat record on the strength of that — it is
  * left in place, unregistered, for a human to resolve.
@@ -281,7 +282,9 @@ export async function migrateWorkspaceRecords(
   for (const { file: flatFile, ws } of await loadWorkspaceFilesFromDir(paths.workspaces)) {
     try {
       const dir = await ensureWorkspaceDir(paths, ws);
-      const settings = settingsPathFor(dir);
+      const configDir = configDirFor(paths, ws);
+      await mkdir(configDir, { recursive: true });
+      const settings = settingsPathFor(configDir);
       const before = await probeSettings(settings);
 
       if (before.kind === "corrupt") {
@@ -320,7 +323,7 @@ export async function migrateWorkspaceRecords(
         skipped.push(ws.name);
         notes.push(
           `[workspace-migration] ${settings} already holds workspace "${before.value.name}" — ` +
-            `refusing to remove ${flatFile} for "${ws.name}" (both slug to ${dir}); ` +
+            `refusing to remove ${flatFile} for "${ws.name}" (both slug to ${configDir}); ` +
             `rename one of them so they no longer collide; until then this warns on every boot`,
         );
         continue;

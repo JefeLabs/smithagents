@@ -19,7 +19,7 @@ import { smithPaths } from "./paths.js";
 import { createBoard, saveBoard } from "./work-items.js";
 import { loadRegistry, registryPath, saveRegistryEntry } from "./workspace-registry.js";
 import { ensureOrgRepo } from "./workspace-repos.js";
-import { configDirForName, loadWorkspaces, settingsPathFor, type Workspace, workspaceDir } from "./workspaces.js";
+import { configDirFor, configDirForName, loadWorkspaces, settingsPathFor, type Workspace } from "./workspaces.js";
 
 function fixture(): string {
   const dir = mkdtempSync(join(tmpdir(), "smith-mig-"));
@@ -258,7 +258,7 @@ test("migrateBoards: moves a workspace's board into its config, leaves personal 
 
     const result = await migrateBoards(paths, [ws]);
 
-    const target = join(workspaceDir(paths, ws), "config", "boards", "pg-deliver.json");
+    const target = join(configDirFor(paths, ws), "boards", "pg-deliver.json");
     assert.ok(statSync(target).isFile(), "the workspace board moved into its config");
     assert.throws(() => statSync(join(paths.work, "pg-deliver.json")), "and is gone from the host dir");
     assert.ok(statSync(join(paths.work, "personal.json")).isFile(), "personal stayed at host level");
@@ -301,7 +301,7 @@ test("migrateBoards: is idempotent — a second run moves nothing and loses noth
     const second = await migrateBoards(paths, [ws]);
 
     assert.deepEqual(second.moved, [], "nothing left to move");
-    const target = join(workspaceDir(paths, ws), "config", "boards", "pg-deliver.json");
+    const target = join(configDirFor(paths, ws), "boards", "pg-deliver.json");
     assert.ok(statSync(target).isFile(), "and the moved board is still there");
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -322,7 +322,7 @@ test("migrateBoards: a workspace copy already on disk is authoritative — never
 
     // The live copy: written into the workspace dir by a post-Task-2 edit, and
     // therefore the one actually being served by loadAllBoards' workspace-first order.
-    const targetDir = join(workspaceDir(paths, ws), "config", "boards");
+    const targetDir = join(configDirFor(paths, ws), "boards");
     mkdirSync(targetDir, { recursive: true });
     const newerWorkspace = createBoard("deliver", "pg");
     newerWorkspace.name = "NEWER";
@@ -356,8 +356,8 @@ test("migrateWorkspaceRecords: writes settings.json, registers the dir, removes 
     const result = await migrateWorkspaceRecords(paths);
 
     const dir = join(paths.workspaces, "pg");
-    assert.ok(statSync(settingsPathFor(dir)).isFile(), "settings.json written");
-    assert.deepEqual(await loadRegistry(paths), { pg: dir }, "registered");
+    assert.ok(statSync(settingsPathFor(configDirForName(paths, "pg"))).isFile(), "settings.json written");
+    assert.deepEqual(await loadRegistry(paths), { pg: dir }, "the RUNTIME dir is registered");
     assert.throws(() => statSync(join(paths.workspaces, "pg.json")), "flat record removed");
     assert.deepEqual(result.moved, ["pg"]);
   } finally {
@@ -380,11 +380,11 @@ test("migrateWorkspaceRecords: never overwrites an existing settings.json — an
   const root = mkdtempSync(join(tmpdir(), "mig-keep-"));
   try {
     const paths = smithPaths(root);
-    const dir = join(paths.workspaces, "pg");
-    mkdirSync(join(dir, "config"), { recursive: true });
+    const cfg = configDirForName(paths, "pg");
+    mkdirSync(cfg, { recursive: true });
     mkdirSync(paths.workspaces, { recursive: true });
     writeFileSync(
-      settingsPathFor(dir),
+      settingsPathFor(cfg),
       JSON.stringify({ name: "pg", description: "NEWER", repos: [{ name: "r", path: "/abs/r" }] }),
     );
     writeFileSync(
@@ -394,7 +394,7 @@ test("migrateWorkspaceRecords: never overwrites an existing settings.json — an
 
     const result = await migrateWorkspaceRecords(paths);
 
-    const kept = JSON.parse(readFileSync(settingsPathFor(dir), "utf8"));
+    const kept = JSON.parse(readFileSync(settingsPathFor(cfg), "utf8"));
     assert.equal(kept.description, "NEWER", "the existing settings.json is authoritative — never overwritten");
     assert.ok(
       statSync(join(paths.workspaces, "pg.json")).isFile(),
@@ -410,11 +410,11 @@ test("migrateWorkspaceRecords: a flat record byte-identical to an already-migrat
   const root = mkdtempSync(join(tmpdir(), "mig-dup-"));
   try {
     const paths = smithPaths(root);
-    const dir = join(paths.workspaces, "pg");
-    mkdirSync(join(dir, "config"), { recursive: true });
+    const cfg = configDirForName(paths, "pg");
+    mkdirSync(cfg, { recursive: true });
     mkdirSync(paths.workspaces, { recursive: true });
     const record = { name: "pg", description: "SAME", repos: [{ name: "r", path: "/abs/r" }] };
-    writeFileSync(settingsPathFor(dir), JSON.stringify(record));
+    writeFileSync(settingsPathFor(cfg), JSON.stringify(record));
     writeFileSync(join(paths.workspaces, "pg.json"), JSON.stringify(record));
 
     const result = await migrateWorkspaceRecords(paths);
@@ -501,11 +501,11 @@ test("migrateWorkspaceRecords: a settings.json that exists but does not parse is
   const root = mkdtempSync(join(tmpdir(), "mig-corrupt-"));
   try {
     const paths = smithPaths(root);
-    const dir = join(paths.workspaces, "pg");
-    mkdirSync(join(dir, "config"), { recursive: true });
+    const cfg = configDirForName(paths, "pg");
+    mkdirSync(cfg, { recursive: true });
     mkdirSync(paths.workspaces, { recursive: true });
     // A truncated write from a crash mid-migration: the file exists, but does not parse.
-    writeFileSync(settingsPathFor(dir), '{"name": "pg", "repos": [{"nam');
+    writeFileSync(settingsPathFor(cfg), '{"name": "pg", "repos": [{"nam');
     writeFileSync(
       join(paths.workspaces, "pg.json"),
       JSON.stringify({ name: "pg", repos: [{ name: "r", path: "/abs/r" }] }),
@@ -583,7 +583,7 @@ test("migrateWorkspaceRecords: two different names that slug to the same directo
     assert.ok(statSync(join(paths.workspaces, `${loser}.json`)).isFile(), "the loser's flat record survives");
 
     // And the directory holds only whichever workspace actually claimed it.
-    const onDisk = JSON.parse(readFileSync(settingsPathFor(join(paths.workspaces, "foo-bar")), "utf8"));
+    const onDisk = JSON.parse(readFileSync(settingsPathFor(configDirForName(paths, "foo-bar")), "utf8"));
     assert.equal(onDisk.name, winner);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -614,7 +614,7 @@ test("migrateWorkspaceRecords: deletes the file a record was actually read from,
     assert.equal(result.moved.length, 1, "only one of the two same-named records claims the directory");
     assert.equal(result.skipped.length, 1, "the other is never silently merged away");
 
-    const onDisk = JSON.parse(readFileSync(settingsPathFor(join(paths.workspaces, "pg")), "utf8"));
+    const onDisk = JSON.parse(readFileSync(settingsPathFor(configDirForName(paths, "pg")), "utf8"));
     const winnerFile = onDisk.description === "FROM aaa.json" ? "aaa.json" : "pg.json";
     const loserFile = winnerFile === "aaa.json" ? "pg.json" : "aaa.json";
 
@@ -640,15 +640,15 @@ test("migrateWorkspaceRecords: a settings.json that parses but fails validation 
   const root = mkdtempSync(join(tmpdir(), "mig-semivalid-"));
   try {
     const paths = smithPaths(root);
-    const dir = join(paths.workspaces, "pg");
-    mkdirSync(join(dir, "config"), { recursive: true });
+    const cfg = configDirForName(paths, "pg");
+    mkdirSync(cfg, { recursive: true });
     mkdirSync(paths.workspaces, { recursive: true });
     // Parses as JSON and its name matches, but it's missing `repos` — not a
     // valid workspace record. This migration moves records into a
     // human-editable per-workspace file specifically so they can be
     // hand-edited; a bad edit landing in exactly this shape is the designed
     // use case, not an exotic one.
-    writeFileSync(settingsPathFor(dir), JSON.stringify({ name: "pg" }));
+    writeFileSync(settingsPathFor(cfg), JSON.stringify({ name: "pg" }));
     writeFileSync(
       join(paths.workspaces, "pg.json"),
       JSON.stringify({ name: "pg", repos: [{ name: "r", path: "/abs/r" }] }),
@@ -700,7 +700,7 @@ test("migrateWorkspaceRecords: a malformed registry file is blamed correctly —
       "the note names the file that actually failed — the registry — not the flat record",
     );
     // The write to settings.json itself succeeded; only registration failed.
-    assert.ok(statSync(settingsPathFor(join(paths.workspaces, "pg"))).isFile());
+    assert.ok(statSync(settingsPathFor(configDirForName(paths, "pg"))).isFile());
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -727,8 +727,8 @@ test("migrateWorkspaceRecords: a flat group record is never touched — no direc
     );
     assert.ok(!result.moved.includes("squad"), "the group is never reported as moved");
     assert.throws(
-      () => statSync(join(paths.workspaces, "squad", "config", "settings.json")),
-      "no directory was created for the group",
+      () => statSync(join(configDirForName(paths, "squad"), "settings.json")),
+      "no subtree was created for the group",
     );
     assert.deepEqual(
       await loadRegistry(paths),

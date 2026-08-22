@@ -1,7 +1,9 @@
 // Workspaces — named groupings of one or more repos the crew can work in.
-// Each workspace owns a directory under .smith/workspaces/ holding its own
-// config/settings.json, found via a name -> directory registry
-// (workspace-registry.ts); a flat <name>.json record under .smith/workspaces/
+// Each workspace has two halves: a runtime directory under .smith/workspaces/
+// (project clones, .runtime/), registered by name in workspace-registry.ts,
+// and a VERSIONED half — settings.json, roster.json, boards/ — that lives in
+// its own subtree of the ONE org config repo (spec 2026-08-22 §1.1), reached
+// through configDirFor. A flat <name>.json record under .smith/workspaces/
 // directly is the pre-migration legacy shape, still read as a fallback until
 // migrateWorkspaceRecords relocates it. Delegations name a workspace/repo;
 // the dispatcher cuts the task's worktree from that repo.
@@ -271,15 +273,17 @@ export async function loadWorkspacesFromDir(dir: string): Promise<Workspace[]> {
   return (await loadWorkspaceFilesFromDir(dir)).map((c) => c.ws);
 }
 
-/** A workspace's own record, inside its directory. */
-export function settingsPathFor(dir: string): string {
-  return join(dir, "config", "settings.json");
+/** A workspace's own record, inside its org-repo subtree (see configDirFor). */
+export function settingsPathFor(configDir: string): string {
+  return join(configDir, "settings.json");
 }
 
 /**
- * Every workspace: those registered with their own settings.json, plus any flat
- * record under paths.workspaces that has not migrated yet. Reading both is what
- * lets the relocation happen separately — an unmigrated workspace still loads.
+ * Every workspace: those registered, whose record lives in their subtree of
+ * the org repo, plus any flat record under paths.workspaces that has not
+ * migrated yet. Reading both is what lets the relocation happen separately —
+ * an unmigrated workspace still loads. The registry's VALUE (the runtime dir)
+ * is not needed to find the record: the KEY names the subtree.
  *
  * On a duplicate name the settings.json copy wins: it is where writes go, so it
  * is the newer of the two.
@@ -289,17 +293,18 @@ export async function loadWorkspaces(paths: SmithPaths): Promise<Workspace[]> {
   const seen = new Set<string>();
 
   const registry = await loadRegistry(paths);
-  for (const [, dir] of Object.entries(registry)) {
+  for (const name of Object.keys(registry)) {
     try {
-      const raw = await readFile(settingsPathFor(dir), "utf8");
-      const ws = assertContext(settingsPathFor(dir), JSON.parse(raw));
+      const settings = settingsPathFor(configDirForName(paths, name));
+      const raw = await readFile(settings, "utf8");
+      const ws = assertContext(settings, JSON.parse(raw));
       // A hand-editable settings.json can validate as a GROUP record
       // (members, no repos) just as easily as a workspace one — this is the
       // same filter loadWorkspacesFromDir already applies to the flat loop
       // below, so a group never reaches callers of this function as a
       // phantom repo-less workspace.
       if (isGroupRecord(ws)) continue;
-      // Two registry keys can point at the same directory (the exact
+      // Two registry keys can resolve to the same config subtree (the exact
       // collision saveWorkspace now refuses to create, plus any pre-existing
       // one) — without this check the same settings.json would be read and
       // pushed twice.
@@ -415,9 +420,13 @@ export function repoLessRefusal(workspaces: Workspace[], workspaceName?: string)
  * guarantee `ensureWorkspaceDir`'s mkdir failure already gives.
  *
  * `slugForDir` is lossier than the name regex below — "ab" and "ab-" both
- * pass it and both slug to directory "ab" — so an ordinary edit to one can
- * resolve to a directory that already holds a DIFFERENT workspace's
- * settings.json. Reading before writing is what tells them apart: a
+ * pass it and both slug to subtree "workspaces/ab" — so an ordinary edit to
+ * one can resolve to a subtree that already holds a DIFFERENT workspace's
+ * settings.json. This is checked against the CONFIG destination, not the
+ * runtime directory: two workspaces can keep their runtime folders wherever
+ * they like (`ws.dir`) and still share one subtree, since `configDirFor`
+ * ignores `ws.dir` by design. Reading before writing is what tells them
+ * apart: a
  * validated record whose `name` doesn't match `ws.name` is refused rather
  * than silently overwritten. A missing or corrupt destination is not a
  * collision — nobody's record is there to protect, and a corrupt one may be
@@ -429,30 +438,35 @@ export function repoLessRefusal(workspaces: Workspace[], workspaceName?: string)
  * (or doesn't know to make it) is still protected at the point of the write.
  */
 export async function assertNoWorkspaceDirCollision(paths: SmithPaths, ws: Workspace): Promise<void> {
-  const dir = workspaceDir(paths, ws);
-  const existing = await probeSettings(settingsPathFor(dir));
+  const configDir = configDirFor(paths, ws);
+  const existing = await probeSettings(settingsPathFor(configDir));
   if (existing.kind === "parsed" && existing.value.name !== ws.name) {
-    throw new WorkspaceDirCollisionError(ws.name, existing.value.name, dir);
+    throw new WorkspaceDirCollisionError(ws.name, existing.value.name, configDir);
   }
 }
 
-/** Write one workspace to its own directory and register it. Mirror of agents.saveAgent. */
+/**
+ * Write one workspace's record into its subtree of the org repo and register
+ * its runtime directory. Mirror of agents.saveAgent.
+ */
 export async function saveWorkspace(paths: SmithPaths, ws: Workspace): Promise<void> {
   if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(ws.name)) {
     throw new Error(`Invalid workspace name "${ws.name}": use lowercase letters, digits and dashes`);
   }
   await assertNoWorkspaceDirCollision(paths, ws);
   const dir = await ensureWorkspaceDir(paths, ws);
-  const settings = settingsPathFor(dir);
-  await writeFile(settings, `${JSON.stringify(ws, null, 2)}\n`);
+  const configDir = configDirFor(paths, ws);
+  await mkdir(configDir, { recursive: true });
+  await writeFile(settingsPathFor(configDir), `${JSON.stringify(ws, null, 2)}\n`);
   await saveRegistryEntry(paths, ws.name, dir);
 }
 
 /**
  * Deregister a workspace and remove its flat record, if any. The workspace's
- * directory (and any config/settings.json inside it) is deliberately left —
- * this deletes no data. A missing registry entry or flat file is a no-op
- * rather than an error, matching removeRegistryEntry's contract: the caller
+ * directory and its subtree of the org repo (settings.json included) are
+ * deliberately left — this deletes no data. A missing registry entry or flat
+ * file is a no-op rather than an error, matching removeRegistryEntry's
+ * contract: the caller
  * (the DELETE /workspaces route) already checks existence and 404s before
  * calling this, so this function's own job is just to be idempotent.
  */
@@ -535,17 +549,17 @@ export function workspaceDir(paths: SmithPaths, ws: Workspace): string {
 }
 
 /**
- * Create this workspace's directory and its two fixed children, and return the
- * resolved path. `config/` is the versioned half (settings, boards, artifacts);
- * `.runtime/` is the unversioned half (instances, logs, local caches). Both are
- * created empty here — filling them is later work.
+ * Create this workspace's runtime directory and its `.runtime/` child, and
+ * return the resolved path. The versioned half is NOT here — it is the
+ * workspace's subtree of the org repo (`configDirFor`), created by
+ * `saveWorkspace`.
  *
  * Idempotent: `mkdir -p` semantics, existing contents untouched.
  *
  * A name that slugs to the empty string (e.g. "..." or "///") would otherwise
  * make workspaceDir() resolve to `paths.workspaces` itself — the shared parent
  * every workspace directory lives under — and this function would create
- * config/ and .runtime/ directly inside it. Refuse instead of writing there;
+ * `.runtime/` directly inside it. Refuse instead of writing there;
  * a workspace whose name can't become a directory is a caller error to fix,
  * not one to paper over with a substitute name.
  *
@@ -564,22 +578,21 @@ export async function ensureWorkspaceDir(paths: SmithPaths, ws: Workspace): Prom
     );
   }
   const dir = workspaceDir(paths, ws);
-  await mkdir(join(dir, "config"), { recursive: true });
   await mkdir(join(dir, ".runtime"), { recursive: true });
   return dir;
 }
 
 /**
  * Where a board's file lives. A board carrying a known `workspaceId` belongs to
- * that workspace's config; everything else — the workspace-less `personal`
- * board, and any board whose workspace record has been deleted — stays in the
- * host work directory, so an orphan remains loadable instead of pointing at a
- * directory that does not exist.
+ * that workspace's subtree of the org repo; everything else — the
+ * workspace-less `personal` board, and any board whose workspace record has
+ * been deleted — stays in the host work directory, so an orphan remains
+ * loadable instead of pointing at a directory that does not exist.
  */
 export function boardsDirFor(paths: SmithPaths, workspaces: Workspace[], workspaceId: string | undefined): string {
   if (!workspaceId) return paths.work;
   const ws = workspaces.find((w) => w.name === workspaceId);
-  return ws ? join(workspaceDir(paths, ws), "config", "boards") : paths.work;
+  return ws ? join(configDirFor(paths, ws), "boards") : paths.work;
 }
 
 /**

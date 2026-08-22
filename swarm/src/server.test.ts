@@ -50,9 +50,8 @@ import { appendUpdate, feedPath, readFeed } from "./squad-feed.js";
 import type { ConnectorInstance, User } from "./users.js";
 import { loadUsersFromDir, saveUser } from "./users.js";
 import { addCard, createBoard } from "./work-items.js";
-import { ensureConfigRepo } from "./workspace-repos.js";
 import type { Workspace } from "./workspaces.js";
-import { isGitRepo, repoLessRefusal, saveWorkspace, workspaceDir } from "./workspaces.js";
+import { configDirFor, isGitRepo, repoLessRefusal, saveWorkspace } from "./workspaces.js";
 
 const git = promisify(execFile);
 
@@ -496,11 +495,11 @@ test("gitInitRequestedRepos: inits only flagged non-repo paths, leaves existing 
 // every workspace's boards sitting there untouched. archiveWorkspaceBoards is
 // the extracted helper that closes this — pulled out of the route handler so
 // it's unit-testable without booting the server, same as workspaceProblems above.
-test("archiveWorkspaceBoards: renames a workspace's config/boards to a timestamped sibling, mirroring the host archive", async () => {
+test("archiveWorkspaceBoards: renames a workspace's boards to a timestamped sibling, mirroring the host archive", async () => {
   const root = await mkdtemp(join(tmpdir(), "reset-boards-"));
   const paths = smithPaths(root);
   const ws: Workspace = { name: "acme", repos: [{ name: "web", path: root }] };
-  const boardsDir = join(workspaceDir(paths, ws), "config", "boards");
+  const boardsDir = join(configDirFor(paths, ws), "boards");
   await mkdir(boardsDir, { recursive: true });
   await writeFile(join(boardsDir, "acme-plan.json"), "{}");
 
@@ -1068,7 +1067,6 @@ async function makeSquadWorkspace(root: string): Promise<Workspace> {
   const origin = await makeGitOrigin(join(root, "origin"));
   const ws = { name: "pg", repos: [{ name: "app", path: origin, branch: "main" }] } as Workspace;
   await saveWorkspace(paths, ws);
-  await ensureConfigRepo(workspaceDir(paths, ws));
   makeOrgRepo(root, ["pg"]);
   return ws;
 }

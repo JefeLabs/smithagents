@@ -11,9 +11,9 @@ export interface WorkspaceRoster {
   squads: string[];
 }
 
-/** A workspace's roster, inside its config repo. */
-export function rosterPathFor(workspaceDir: string): string {
-  return join(workspaceDir, "config", "roster.json");
+/** A workspace's roster, inside its org-repo subtree (`configDirFor`). */
+export function rosterPathFor(configDir: string): string {
+  return join(configDir, "roster.json");
 }
 
 function assertRoster(file: string, value: unknown): WorkspaceRoster {
@@ -40,8 +40,8 @@ function assertRoster(file: string, value: unknown): WorkspaceRoster {
  * A malformed roster THROWS. Returning null on a parse failure would make a
  * corrupt file indistinguishable from a workspace that never had a roster.
  */
-export async function loadRoster(workspaceDir: string): Promise<WorkspaceRoster | null> {
-  const file = rosterPathFor(workspaceDir);
+export async function loadRoster(configDir: string): Promise<WorkspaceRoster | null> {
+  const file = rosterPathFor(configDir);
   let raw: string;
   try {
     raw = await readFile(file, "utf8");
@@ -58,9 +58,9 @@ export async function loadRoster(workspaceDir: string): Promise<WorkspaceRoster 
   return assertRoster(file, parsed);
 }
 
-export async function saveRoster(workspaceDir: string, roster: WorkspaceRoster): Promise<void> {
-  const file = rosterPathFor(workspaceDir);
-  await mkdir(join(workspaceDir, "config"), { recursive: true });
+export async function saveRoster(configDir: string, roster: WorkspaceRoster): Promise<void> {
+  const file = rosterPathFor(configDir);
+  await mkdir(configDir, { recursive: true });
   const tmp = `${file}.tmp-${process.pid}`;
   await writeFile(tmp, `${JSON.stringify(roster, null, 2)}\n`);
   await rename(tmp, file);

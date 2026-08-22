@@ -109,6 +109,7 @@ import {
   isInitialized,
   legacyStateRoots,
   markInitialized,
+  migrateConfigIntoOrgRepo,
   migrateWorkspaceRecords,
   needsMigration,
 } from "./migrate-state.js";
@@ -190,7 +191,8 @@ import {
 import { WORK_KINDS } from "./work-kinds.js";
 import { addMemberWorktrees, createInstance, memberBranch } from "./workspace-instances.js";
 import {
-  commitLegacyConfigFiles,
+  commitConfigFiles,
+  ensureOrgRepo,
   materializeRepos,
   migrateReposIntoWorkspace,
   repoNameProblem,
@@ -200,6 +202,7 @@ import {
   activeWorkspaces,
   assertNoWorkspaceDirCollision,
   boardsDirFor,
+  configDirFor,
   defaultViolation,
   ensureWorkspaceDir,
   initGitRepo,
@@ -212,6 +215,7 @@ import {
   repoLessRefusal,
   resolveRepo,
   saveWorkspace,
+  slugForDir,
   validSources,
   type Workspace,
   WorkspaceDirCollisionError,
@@ -475,6 +479,32 @@ export class OrchestratorServer {
 
     await this.reconcileSessions();
 
+    // The org config repo (spec 2026-08-22 §1): ONE repo holding every
+    // workspace's versioned half as workspaces/<slug>/. Must exist before any
+    // migration below writes a subtree into it, and the legacy per-workspace
+    // config repos must be imported before anything reads a record through
+    // configDirFor — otherwise this boot would see no workspaces and come up
+    // owning nothing, which is the failure the state-root guard above exists
+    // to prevent.
+    {
+      let orgName = "org";
+      try {
+        const me = resolveCurrentUser(await loadUsersFromDir(this.paths.users));
+        orgName = slugForDir(me?.name ?? "") || "org";
+      } catch (err) {
+        this.app.log.warn(
+          `[org-repo] could not read the user record for the org name — using "org": ${(err as Error).message}`,
+        );
+      }
+      if (await ensureOrgRepo(this.paths, { name: orgName })) {
+        this.app.log.info(`[org-repo] created ${this.paths.orgRepo}`);
+      }
+      const stamp = new Date().toISOString().replace(/[-:]/g, "").slice(0, 15);
+      const { imported, notes } = await migrateConfigIntoOrgRepo(this.paths, stamp);
+      if (imported.length > 0) this.app.log.info(`[org-migration] imported: ${imported.join(", ")}`);
+      for (const note of notes) this.app.log.warn(note);
+    }
+
     // ONE-WAY legacy migration (spec 2026-08-13, one-context-entity): fold
     // .smith/groups/*.json into the one store before anything reads it.
     for (const line of await migrateGroupsDir(this.paths)) {
@@ -482,7 +512,7 @@ export class OrchestratorServer {
     }
 
     // ONE-WAY legacy migration (plan 6, workspace-registry): relocate each
-    // flat workspace record into its own directory as config/settings.json,
+    // flat workspace record into its subtree of the org repo as settings.json,
     // before anything reads the store. Idempotent and cheap once no flat
     // files remain, so no gate is needed — order against migrateGroupsDir
     // above doesn't matter either way, since its own collision check reads
@@ -737,7 +767,7 @@ export class OrchestratorServer {
   /** Every directory boards can live in: each workspace's first, the host dir LAST —
       see loadAllBoards's docblock for why this order is load-bearing, not arbitrary. */
   private boardDirs(): string[] {
-    return [...this.workspaces.map((w) => join(workspaceDir(this.paths, w), "config", "boards")), this.paths.work];
+    return [...this.workspaces.map((w) => join(configDirFor(this.paths, w), "boards")), this.paths.work];
   }
 
   /** Where THIS board's file belongs, from its own workspaceId. */
@@ -2018,8 +2048,7 @@ export class OrchestratorServer {
       // brand new workspace cannot yet have boards sitting anywhere else, so
       // the merged read and the resolved write both collapse to this one
       // directory.
-      const newWorkspaceDir = workspaceDir(this.paths, record);
-      const newWorkspaceBoardsDir = join(newWorkspaceDir, "config", "boards");
+      const newWorkspaceBoardsDir = join(configDirFor(this.paths, record), "boards");
       await ensureWorkspaceBoards(
         [newWorkspaceBoardsDir],
         () => newWorkspaceBoardsDir,
@@ -2030,12 +2059,14 @@ export class OrchestratorServer {
           `Could not provision boards for workspace "${record.name}": ${String((err as Error).message)}`,
         );
       });
-      // materializeRepos' ensureConfigRepo (above) ran before settings.json or
-      // boards/ existed, and only ever commits once — without this, the config
-      // repo it created stays permanently empty. Same treatment as that
-      // ensureConfigRepo call: never fatal to workspace creation, note only;
-      // the next repo-migration boot pass retries it if this fails.
-      await commitLegacyConfigFiles(newWorkspaceDir).catch((err) => {
+      // The org repo was ensured at boot; this gets the new workspace's
+      // subtree — settings.json and the boards just provisioned — into HEAD
+      // now rather than at the next boot's healing pass. Never fatal to
+      // workspace creation, note only; that healing pass retries it if this
+      // fails.
+      await commitConfigFiles(this.paths, slugForDir(record.name), {
+        message: `config(${slugForDir(record.name)}): create`,
+      }).catch((err) => {
         this.app.log.warn(
           `Could not commit config files for workspace "${record.name}": ${String((err as Error).message)}`,
         );
@@ -2152,7 +2183,7 @@ export class OrchestratorServer {
       const all = await loadWorkspaces(this.paths);
       const ws = all.find((w) => w.name === req.params.name);
       if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
-      const roster = await loadRoster(workspaceDir(this.paths, ws));
+      const roster = await loadRoster(configDirFor(this.paths, ws));
       // `recorded: false` is the honest answer for a workspace that has never
       // had a roster: every global agent applies, which is today's behaviour.
       // Returning empty arrays would claim it was assigned nothing.
@@ -3857,15 +3888,15 @@ function squadMemberDirectives(member: SquadMember, all: SquadMember[]): string 
 
 /**
  * Archive every workspace's board directory to a timestamped sibling — the
- * workspace-directory half of POST /reset's scope.agents board archive (see
- * the sibling `rename(this.paths.work, ...)` in the route handler this backs).
+ * org-repo half of POST /reset's scope.agents board archive (see the sibling
+ * `rename(this.paths.work, ...)` in the route handler this backs).
  * Best-effort per workspace, matching every other archive in that handler: a
  * workspace with no boards yet (ENOENT) is not an error. Pulled out of the
  * route handler so it's unit-testable without booting the server.
  */
 export async function archiveWorkspaceBoards(paths: SmithPaths, workspaces: Workspace[], stamp: string): Promise<void> {
   for (const ws of workspaces) {
-    const dir = join(workspaceDir(paths, ws), "config", "boards");
+    const dir = join(configDirFor(paths, ws), "boards");
     await rename(dir, `${dir}-archived-${stamp}`).catch(() => {});
   }
 }
