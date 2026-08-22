@@ -9,6 +9,7 @@ import { emptyCliToolsFile, saveCliToolsFile } from "./cli-tools.js";
 import { loadConfig } from "./config.js";
 import { createLegacyWorktree, Dispatcher, resolveTaskWorktree } from "./dispatcher.js";
 import { ToolLaunchError } from "./drivers/errors.js";
+import { makeGitRepo, makeOrgRepo } from "./org-repo.fixture.js";
 import { smithPaths } from "./paths.js";
 import type { OrchestratorConfig, TaskManifest } from "./types.js";
 import { saveWorkspace, type Workspace } from "./workspaces.js";
@@ -331,37 +332,15 @@ function makeManifest(overrides: { taskId: string; context: TaskManifest["contex
   };
 }
 
-function commit(cwd: string, msg: string): void {
-  execFileSync("git", ["add", "-A"], { cwd });
-  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", msg], { cwd });
-}
-
-/** A plain git repo at `path`, with one commit. */
-function makeGitRepo(path: string): string {
-  execFileSync("git", ["init", "-q", "-b", "main", path]);
-  writeFileSync(join(path, "README.md"), "hi\n");
-  commit(path, "init");
-  return path;
-}
-
 /**
- * A workspace directory whose config/ and named repo are real git repos —
- * same shape as workspace-instances.test.ts's fixture. `ws.dir` is pinned to
- * `dir` explicitly so workspaceDir() resolves to it directly rather than the
- * default under the state root.
+ * A workspace whose subtree lives in an org repo under `root/config` and whose
+ * named repo is a real git repo. `ws.dir` is pinned so workspaceDir() resolves
+ * to it directly rather than the default under the state root.
  */
 function makeWorkspaceFixture(root: string, repoName: string): { dir: string; ws: Workspace } {
+  makeOrgRepo(root, ["proj"]);
   const dir = mkdtempSync(join(root, "ws-"));
-  const cfg = join(dir, "config");
-  execFileSync("git", ["init", "-q", "-b", "main", cfg]);
-  writeFileSync(join(cfg, "settings.json"), "{}\n");
-  commit(cfg, "config");
-
-  const repoPath = join(dir, repoName);
-  execFileSync("git", ["init", "-q", "-b", "main", repoPath]);
-  writeFileSync(join(repoPath, "README.md"), `${repoName}\n`);
-  commit(repoPath, "init");
-
+  const repoPath = makeGitRepo(join(dir, repoName));
   const ws: Workspace = { name: "proj", repos: [{ name: repoName, path: repoPath }], dir };
   return { dir, ws };
 }
@@ -392,7 +371,10 @@ test("resolveTaskWorktree: a workspace-routed task runs inside a workspace-insta
 
     assert.equal(worktree, join(dir, ".runtime", "instances", "t-1", "app"), "runs in the instance's repo worktree");
     assert.ok(created, "createInstance already created this worktree");
-    assert.ok(statSync(join(dir, ".runtime", "instances", "t-1", "config")).isDirectory(), "config/ is alongside it");
+    assert.ok(
+      statSync(join(dir, ".runtime", "instances", "t-1", "config", "workspaces", "proj")).isDirectory(),
+      "config/ is alongside it",
+    );
     assert.ok(!worktree.startsWith(join(root, "worktrees")), "NOT in the detached worktrees directory");
   } finally {
     rmSync(root, { recursive: true, force: true });

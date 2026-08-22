@@ -3818,7 +3818,7 @@ export async function prepareSquadSwarm(
   const resolved = members.map((m) => ({ member: m, driver: driverForMember(m) }));
 
   const dir = workspaceDir(paths, ws);
-  const instance = await createInstance(dir, ws, taskId, [repo.name], { base: repo.branch });
+  const instance = await createInstance(dir, ws, taskId, [repo.name], { base: repo.branch, orgRepo: paths.orgRepo });
   const names = resolved.map((r) => r.member.name.toLowerCase());
   const worktrees = await addMemberWorktrees(instance.dir, repo.path, taskId, names);
 

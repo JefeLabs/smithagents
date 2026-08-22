@@ -4,7 +4,7 @@ import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { repoNameProblem } from "./workspace-repos.js";
-import type { Workspace } from "./workspaces.js";
+import { slugForDir, type Workspace } from "./workspaces.js";
 
 const run = promisify(execFile);
 
@@ -141,18 +141,19 @@ export async function resolveStartPoint(source: string, base: string): Promise<s
  *
  * `opts.base`, when given, is the start-point for each REPO member (the task's
  * base branch — not necessarily wherever that repo's clone currently sits;
- * see `resolveStartPoint`). `config/` never takes a start-point: it is the
- * workspace's own clone and has no base-branch concept, so it is always cut
- * from its own current HEAD. Omitting `opts.base` keeps the pre-existing
- * behavior (every member, including repos, cut from the source's own HEAD) —
- * unchanged for existing callers.
+ * see `resolveStartPoint`). The config member is a sparse worktree of the ORG
+ * repo (`opts.orgRepo`) showing `blueprints/` and this workspace's
+ * `workspaces/<slug>/`; it has no base-branch concept and is cut from the org
+ * repo's own HEAD. Omitting `opts.base` keeps the pre-existing behavior (every
+ * repo member cut from the source's own HEAD) — unchanged for existing
+ * callers.
  */
 export async function createInstance(
   workspaceDir: string,
   ws: Workspace,
   workId: string,
   repoNames: string[],
-  opts: { base?: string } = {},
+  opts: { orgRepo: string; base?: string },
 ): Promise<Instance> {
   const problem = workIdProblem(workId);
   if (problem) throw new Error(`Invalid work id: ${problem}`);
@@ -160,7 +161,12 @@ export async function createInstance(
   const dir = instanceDir(workspaceDir, workId);
   const branch = `smith/${workId}`;
 
-  const sources: Array<{ name: string; source: string }> = [{ name: "config", source: join(workspaceDir, "config") }];
+  // The config member is a SPARSE worktree of the org repo (spec 2026-08-22
+  // §8): this workspace's subtree plus the shared blueprints/, never a
+  // sibling workspace's material. `sparse` is the cone-mode directory list.
+  const sources: Array<{ name: string; source: string; sparse?: string[] }> = [
+    { name: "config", source: opts.orgRepo, sparse: ["blueprints", `workspaces/${slugForDir(ws.name)}`] },
+  ];
   for (const name of repoNames) {
     // Validate repo name before touching the filesystem.
     if (name === "config") {
@@ -176,7 +182,7 @@ export async function createInstance(
 
   await mkdir(dir, { recursive: true });
   const members: InstanceMember[] = [];
-  for (const { name, source } of sources) {
+  for (const { name, source, sparse } of sources) {
     const path = join(dir, name);
     if (!(await isWorktree(path))) {
       // Prune stale worktree registrations in the source repo; a removed worktree
@@ -196,27 +202,35 @@ export async function createInstance(
         // Branch does not exist.
       }
 
+      // Which ref the worktree starts on. Reattaching to an existing branch
+      // takes no start-point; a repo member with a base starts there (see
+      // resolveStartPoint); the config member has no base-branch concept and
+      // is cut from the org repo's own HEAD.
+      let refArgs: string[];
       if (branchExists) {
-        // Reattaching to an existing branch — a start-point would be meaningless.
-        await run("git", ["worktree", "add", "-q", path, branch], { cwd: source });
-      } else if (name !== "config" && opts.base) {
-        // A repo member starts from the task's base branch, not wherever this
-        // clone's HEAD happens to sit (see the doc comment above). `--` guards
-        // against the base being read as a flag; the caller has already
-        // validated it as a well-formed branch name.
+        refArgs = [branch];
+      } else if (!sparse && opts.base) {
         const startPoint = await resolveStartPoint(source, opts.base);
-        try {
-          await run("git", ["worktree", "add", "-q", path, "-b", branch, "--", startPoint], { cwd: source });
-        } catch (err) {
-          throw new Error(
-            `Repo "${name}": could not create a worktree from base "${opts.base}" — ${(err as Error).message}`,
-          );
-        }
+        refArgs = ["-b", branch, "--", startPoint];
       } else {
-        // config/ has no base-branch concept — cut from its own current HEAD.
-        // A repo member with no base (legacy callers, or opts omitted) falls
-        // back the same way.
-        await run("git", ["worktree", "add", "-q", path, "-b", branch], { cwd: source });
+        refArgs = ["-b", branch];
+      }
+
+      try {
+        if (sparse) {
+          // --no-checkout, set the cone, THEN populate: checking out the whole
+          // org repo first and narrowing afterwards would briefly materialise
+          // every workspace's files in this instance.
+          await run("git", ["worktree", "add", "-q", "--no-checkout", path, ...refArgs], { cwd: source });
+          await run("git", ["sparse-checkout", "set", "--cone", ...sparse], { cwd: path });
+          await run("git", ["checkout", "-q", branch], { cwd: path });
+        } else {
+          await run("git", ["worktree", "add", "-q", path, ...refArgs], { cwd: source });
+        }
+      } catch (err) {
+        throw new Error(
+          `Member "${name}": could not create a worktree${opts.base && !sparse ? ` from base "${opts.base}"` : ""} — ${(err as Error).message}`,
+        );
       }
     }
     members.push({ name, path, source });
@@ -429,7 +443,7 @@ export async function destroyInstance(
   ws: Workspace,
   workId: string,
   repoNames: string[],
-  opts: { force?: boolean } = {},
+  opts: { orgRepo: string; force?: boolean },
 ): Promise<void> {
   const problem = workIdProblem(workId);
   if (problem) throw new Error(`Invalid work id: ${problem}`);
@@ -437,7 +451,7 @@ export async function destroyInstance(
   const dir = instanceDir(workspaceDir, workId);
   if (!(await isDir(dir))) return;
 
-  const sources: Array<{ name: string; source: string }> = [{ name: "config", source: join(workspaceDir, "config") }];
+  const sources: Array<{ name: string; source: string }> = [{ name: "config", source: opts.orgRepo }];
   for (const name of repoNames) {
     const repo = ws.repos.find((r) => r.name === name);
     if (repo) sources.push({ name, source: repo.path });

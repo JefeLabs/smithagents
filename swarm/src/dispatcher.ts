@@ -65,6 +65,7 @@ export async function resolveTaskWorktree(
     if (ws) {
       const inst = await createInstance(workspaceDir(paths, ws), ws, manifest.taskId, [repoName], {
         base: manifest.context.branch,
+        orgRepo: paths.orgRepo,
       });
       const member = inst.members.find((m) => m.name === repoName);
       if (member) return { path: member.path, created: true };

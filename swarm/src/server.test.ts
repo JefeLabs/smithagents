@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
 import type { WorkspaceChannels } from "./channels.js";
+import { makeOrgRepo } from "./org-repo.fixture.js";
 import { smithPaths } from "./paths.js";
 import { ENGINES } from "./personas.js";
 import {
@@ -1058,13 +1059,17 @@ async function makeGitOrigin(path: string): Promise<string> {
   return path;
 }
 
-/** A saved workspace whose config/ is a real repo, ready for createInstance. */
+/**
+ * A saved workspace with a real org repo at `paths.orgRepo` holding its
+ * subtree, ready for createInstance's sparse config member.
+ */
 async function makeSquadWorkspace(root: string): Promise<Workspace> {
   const paths = smithPaths(root);
   const origin = await makeGitOrigin(join(root, "origin"));
   const ws = { name: "pg", repos: [{ name: "app", path: origin, branch: "main" }] } as Workspace;
   await saveWorkspace(paths, ws);
   await ensureConfigRepo(workspaceDir(paths, ws));
+  makeOrgRepo(root, ["pg"]);
   return ws;
 }
 

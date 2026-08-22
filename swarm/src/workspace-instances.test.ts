@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { makeGitRepo, makeOrgRepo } from "./org-repo.fixture.js";
 import {
   addMemberWorktrees,
   createInstance,
@@ -54,82 +55,132 @@ test("workIdProblem: rejects control characters that break git refs", () => {
   }
 });
 
-/** A workspace directory whose config/ and one repo are real git repos. */
+/**
+ * A workspace runtime dir plus an org repo holding its subtree AND a sibling
+ * workspace's — so every test can assert the sibling is NOT in the instance.
+ */
 function makeWorkspace(
   label: string,
   repos: string[],
-): { dir: string; ws: { name: string; repos: Array<{ name: string; path: string }> } } {
-  const dir = mkdtempSync(join(tmpdir(), `wsinst-${label}-`));
-  const commit = (cwd: string, msg: string) => {
-    execFileSync("git", ["add", "-A"], { cwd });
-    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", msg], { cwd });
-  };
-  const cfg = join(dir, "config");
-  execFileSync("git", ["init", "-q", "-b", "main", cfg]);
-  writeFileSync(join(cfg, "settings.json"), '{"name":"pg","repos":[]}\n');
-  commit(cfg, "config");
+): { dir: string; orgRepo: string; ws: { name: string; repos: Array<{ name: string; path: string }> } } {
+  const root = mkdtempSync(join(tmpdir(), `wsinst-${label}-`));
+  const orgRepo = makeOrgRepo(root, ["pg", "sibling"]);
+  const dir = join(root, "workspaces", "pg");
   const made: Array<{ name: string; path: string }> = [];
-  for (const name of repos) {
-    const p = join(dir, name);
-    execFileSync("git", ["init", "-q", "-b", "main", p]);
-    writeFileSync(join(p, "README.md"), `${name}\n`);
-    commit(p, "init");
-    made.push({ name, path: p });
-  }
-  return { dir, ws: { name: "pg", repos: made } };
+  for (const name of repos) made.push({ name, path: makeGitRepo(join(dir, name)) });
+  return { dir, orgRepo, ws: { name: "pg", repos: made } };
 }
 
 test("createInstance: worktrees config/ and the named repo on one branch", async () => {
-  const { dir, ws } = makeWorkspace("one", ["app"]);
+  const { dir, orgRepo, ws } = makeWorkspace("one", ["app"]);
   try {
-    const inst = await createInstance(dir, ws as never, "work-42", ["app"]);
+    const inst = await createInstance(dir, ws as never, "work-42", ["app"], { orgRepo });
 
     assert.equal(inst.branch, "smith/work-42");
     assert.deepEqual(inst.members.map((m) => m.name).sort(), ["app", "config"]);
-    assert.ok(statSync(join(inst.dir, "config", "settings.json")).isFile(), "config content is present");
+    assert.ok(
+      statSync(join(inst.dir, "config", "workspaces", "pg", "settings.json")).isFile(),
+      "config content is present",
+    );
     assert.ok(statSync(join(inst.dir, "app", "README.md")).isFile(), "repo content is present");
     for (const m of inst.members) {
       const branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: m.path }).toString().trim();
       assert.equal(branch, "smith/work-42", `${m.name} is on the shared branch`);
     }
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(dir, "..", ".."), { recursive: true, force: true });
+  }
+});
+
+test("createInstance: the config member is a SPARSE worktree — this workspace's subtree and blueprints/, never a sibling workspace", async () => {
+  const { dir, orgRepo, ws } = makeWorkspace("sparse", ["app"]);
+  try {
+    const inst = await createInstance(dir, ws as never, "work-9", ["app"], { orgRepo });
+    const cfg = join(inst.dir, "config");
+    assert.ok(statSync(join(cfg, "workspaces", "pg", "settings.json")).isFile(), "own subtree present");
+    assert.ok(
+      statSync(join(cfg, "settings.json")).isFile(),
+      "root-level files (the org record) are always in a cone checkout",
+    );
+    assert.throws(() => statSync(join(cfg, "workspaces", "sibling")), "the sibling workspace is NOT checked out");
+    const branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: cfg }).toString().trim();
+    assert.equal(branch, "smith/work-9");
+    const sparse = execFileSync("git", ["sparse-checkout", "list"], { cwd: cfg }).toString();
+    assert.match(sparse, /^workspaces\/pg$/m);
+    assert.match(sparse, /^blueprints$/m);
+    const status = execFileSync("git", ["status", "--porcelain"], { cwd: cfg }).toString();
+    assert.equal(status, "", "a fresh sparse worktree is clean — nothing shows as deleted");
+  } finally {
+    rmSync(join(dir, "..", ".."), { recursive: true, force: true });
+  }
+});
+
+test("createInstance: a commit in the sparse config worktree lands on smith/<workId> in the ORG repo", async () => {
+  const { dir, orgRepo, ws } = makeWorkspace("commit", ["app"]);
+  try {
+    const inst = await createInstance(dir, ws as never, "work-10", ["app"], { orgRepo });
+    const cfg = join(inst.dir, "config");
+    writeFileSync(join(cfg, "workspaces", "pg", "roster.json"), '{"agents":[],"squads":[]}\n');
+    execFileSync("git", ["add", "-A"], { cwd: cfg });
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "roster"], { cwd: cfg });
+    const tree = execFileSync("git", ["ls-tree", "-r", "--name-only", "smith/work-10"], { cwd: orgRepo }).toString();
+    assert.match(tree, /^workspaces\/pg\/roster\.json$/m, "visible from the org repo by branch, no push needed");
+    assert.match(
+      tree,
+      /^workspaces\/sibling\/settings\.json$/m,
+      "the sibling's files survive on the branch — sparse hides, it does not delete",
+    );
+  } finally {
+    rmSync(join(dir, "..", ".."), { recursive: true, force: true });
+  }
+});
+
+test("destroyInstance: removes the sparse config worktree and deregisters it from the org repo", async () => {
+  const { dir, orgRepo, ws } = makeWorkspace("destroy", ["app"]);
+  try {
+    await createInstance(dir, ws as never, "work-11", ["app"], { orgRepo });
+    await destroyInstance(dir, ws as never, "work-11", ["app"], { orgRepo });
+    assert.throws(() => statSync(instanceDir(dir, "work-11")));
+    const list = execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: orgRepo }).toString();
+    assert.doesNotMatch(list, /work-11/, "no stale registration");
+  } finally {
+    rmSync(join(dir, "..", ".."), { recursive: true, force: true });
   }
 });
 
 test("createInstance: two repos get the SAME branch name, so cross-repo work is one branch", async () => {
-  const { dir, ws } = makeWorkspace("two", ["api", "web"]);
+  const { dir, orgRepo, ws } = makeWorkspace("two", ["api", "web"]);
   try {
-    const inst = await createInstance(dir, ws as never, "work-7", ["api", "web"]);
+    const inst = await createInstance(dir, ws as never, "work-7", ["api", "web"], { orgRepo });
 
     const branches = inst.members.map((m) =>
       execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: m.path }).toString().trim(),
     );
     assert.deepEqual(new Set(branches), new Set(["smith/work-7"]), "one branch across every member");
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(dir, "..", ".."), { recursive: true, force: true });
   }
 });
 
 test("createInstance: only the named repos are worktreed", async () => {
-  const { dir, ws } = makeWorkspace("subset", ["api", "web"]);
+  const { dir, orgRepo, ws } = makeWorkspace("subset", ["api", "web"]);
   try {
-    const inst = await createInstance(dir, ws as never, "work-8", ["api"]);
+    const inst = await createInstance(dir, ws as never, "work-8", ["api"], { orgRepo });
 
     assert.deepEqual(inst.members.map((m) => m.name).sort(), ["api", "config"]);
     assert.throws(() => statSync(join(inst.dir, "web")), "an untouched repo gets no worktree");
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(dir, "..", ".."), { recursive: true, force: true });
   }
 });
 
 test("createInstance: is idempotent — a second call returns the same instance", async () => {
-  const { dir, ws } = makeWorkspace("twice", ["app"]);
+  const { dir, orgRepo, ws } = makeWorkspace("twice", ["app"]);
   try {
-    const first = await createInstance(dir, ws as never, "work-9", ["app"]);
+    const first = await createInstance(dir, ws as never, "work-9", ["app"], { orgRepo });
     writeFileSync(join(first.dir, "app", "LOCAL.md"), "work in progress\n");
 
-    const second = await createInstance(dir, ws as never, "work-9", ["app"]);
+    const second = await createInstance(dir, ws as never, "work-9", ["app"], { orgRepo });
 
     assert.equal(second.dir, first.dir);
     assert.equal(
@@ -138,33 +189,33 @@ test("createInstance: is idempotent — a second call returns the same instance"
       "an existing instance is reused, not recreated over",
     );
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(dir, "..", ".."), { recursive: true, force: true });
   }
 });
 
 test("createInstance: refuses a work id that would escape", async () => {
-  const { dir, ws } = makeWorkspace("escape", ["app"]);
+  const { dir, orgRepo, ws } = makeWorkspace("escape", ["app"]);
   try {
-    await assert.rejects(() => createInstance(dir, ws as never, "../../pwned", ["app"]), /work id/i);
+    await assert.rejects(() => createInstance(dir, ws as never, "../../pwned", ["app"], { orgRepo }), /work id/i);
     assert.throws(() => statSync(join(dir, "..", "..", "pwned")), "nothing created outside the workspace");
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(dir, "..", ".."), { recursive: true, force: true });
   }
 });
 
 test("createInstance: names a repo that is not in the workspace", async () => {
-  const { dir, ws } = makeWorkspace("missing", ["app"]);
+  const { dir, orgRepo, ws } = makeWorkspace("missing", ["app"]);
   try {
-    await assert.rejects(() => createInstance(dir, ws as never, "work-10", ["nope"]), /nope/);
+    await assert.rejects(() => createInstance(dir, ws as never, "work-10", ["nope"], { orgRepo }), /nope/);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(dir, "..", ".."), { recursive: true, force: true });
   }
 });
 
 test("createInstance: reattaches a worktree whose directory was removed but branch remains", async () => {
-  const { dir, ws } = makeWorkspace("reattach", ["app"]);
+  const { dir, orgRepo, ws } = makeWorkspace("reattach", ["app"]);
   try {
-    const first = await createInstance(dir, ws as never, "work-11", ["app"]);
+    const first = await createInstance(dir, ws as never, "work-11", ["app"], { orgRepo });
     writeFileSync(join(first.dir, "app", "WORK.md"), "committed work\n");
     execFileSync("git", ["add", "WORK.md"], { cwd: join(first.dir, "app") });
     execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "work"], {
@@ -175,7 +226,7 @@ test("createInstance: reattaches a worktree whose directory was removed but bran
     rmSync(join(first.dir, "app"), { recursive: true, force: true });
 
     // Call again — should reattach and restore the committed work.
-    const second = await createInstance(dir, ws as never, "work-11", ["app"]);
+    const second = await createInstance(dir, ws as never, "work-11", ["app"], { orgRepo });
 
     assert.equal(second.dir, first.dir);
     assert.ok(statSync(join(second.dir, "app", "WORK.md")).isFile(), "committed work is back");
@@ -184,12 +235,12 @@ test("createInstance: reattaches a worktree whose directory was removed but bran
       .trim();
     assert.equal(branch, "smith/work-11", "reattached worktree is on the right branch");
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(dir, "..", ".."), { recursive: true, force: true });
   }
 });
 
 test("createInstance: a repo member starts from opts.base, not wherever the clone's HEAD sits", async () => {
-  const { dir, ws } = makeWorkspace("base", ["app"]);
+  const { dir, orgRepo, ws } = makeWorkspace("base", ["app"]);
   try {
     const repoPath = ws.repos[0].path;
     // The user's real clone is mid-work on a feature branch, ahead of main —
@@ -201,26 +252,26 @@ test("createInstance: a repo member starts from opts.base, not wherever the clon
       cwd: repoPath,
     });
 
-    const inst = await createInstance(dir, ws as never, "work-base", ["app"], { base: "main" });
+    const inst = await createInstance(dir, ws as never, "work-base", ["app"], { base: "main", orgRepo });
     const member = inst.members.find((m) => m.name === "app");
     assert.ok(member);
 
     const ahead = execFileSync("git", ["rev-list", "--count", "main..HEAD"], { cwd: member?.path }).toString().trim();
     assert.equal(ahead, "0", "the member is cut from the task's base branch, not the clone's current HEAD");
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(dir, "..", ".."), { recursive: true, force: true });
   }
 });
 
 test("createInstance: config/ ignores opts.base — no base-branch concept, always cut from its own HEAD", async () => {
-  const { dir, ws } = makeWorkspace("base-config", ["app"]);
+  const { dir, orgRepo, ws } = makeWorkspace("base-config", ["app"]);
   try {
-    const inst = await createInstance(dir, ws as never, "work-base-cfg", ["app"], { base: "main" });
+    const inst = await createInstance(dir, ws as never, "work-base-cfg", ["app"], { base: "main", orgRepo });
     const config = inst.members.find((m) => m.name === "config");
     assert.ok(config);
     assert.ok(statSync(join(config?.path ?? "", "settings.json")).isFile());
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(dir, "..", ".."), { recursive: true, force: true });
   }
 });
 
@@ -248,7 +299,7 @@ test("createInstance: a base branch that exists only as a remote-tracking ref st
     execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "config"], { cwd: cfg });
 
     const ws = { name: "pg", repos: [{ name: "app", path: clone }] };
-    const inst = await createInstance(root, ws as never, "work-dwim", ["app"], { base: "main" });
+    const inst = await createInstance(root, ws as never, "work-dwim", ["app"], { base: "main", orgRepo: cfg });
     const member = inst.members.find((m) => m.name === "app");
     assert.ok(member);
 
@@ -262,113 +313,116 @@ test("createInstance: a base branch that exists only as a remote-tracking ref st
 });
 
 test("createInstance: rejects a repo named 'config' because it collides with the workspace config member", async () => {
-  const { dir, ws } = makeWorkspace("config-collision", ["app", "config"]);
+  const { dir, orgRepo, ws } = makeWorkspace("config-collision", ["app", "config"]);
   try {
-    await assert.rejects(() => createInstance(dir, ws as never, "work-12", ["app", "config"]), /config.*collides/i);
+    await assert.rejects(
+      () => createInstance(dir, ws as never, "work-12", ["app", "config"], { orgRepo }),
+      /config.*collides/i,
+    );
     assert.throws(() => statSync(join(dir, ".runtime")), "nothing created under the instance directory");
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(dir, "..", ".."), { recursive: true, force: true });
   }
 });
 
 test("createInstance: rejects a repo whose name would escape the instance directory", async () => {
-  const { dir, ws } = makeWorkspace("path-escape", ["app"]);
+  const { dir, orgRepo, ws } = makeWorkspace("path-escape", ["app"]);
   try {
     // Create a bogus workspace record with an invalid repo name (it won't exist on disk).
     const evilWs = { ...ws, repos: [...ws.repos, { name: "../sibling", path: join(dir, "../sibling") }] };
     await assert.rejects(
-      () => createInstance(dir, evilWs as never, "work-13", ["app", "../sibling"]),
+      () => createInstance(dir, evilWs as never, "work-13", ["app", "../sibling"], { orgRepo }),
       /sibling.*escape/i,
     );
     // Verify the instance directory was not created.
     assert.throws(() => statSync(join(dir, ".runtime")), "instance directory was not created on validation error");
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(dir, "..", ".."), { recursive: true, force: true });
   }
 });
 
 test("listInstances: empty when there are none, sorted when there are", async () => {
-  const { dir, ws } = makeWorkspace("list", ["app"]);
+  const { dir, orgRepo, ws } = makeWorkspace("list", ["app"]);
   try {
     assert.deepEqual(await listInstances(dir), []);
-    await createInstance(dir, ws as never, "b-2", ["app"]);
-    await createInstance(dir, ws as never, "a-1", ["app"]);
+    await createInstance(dir, ws as never, "b-2", ["app"], { orgRepo });
+    await createInstance(dir, ws as never, "a-1", ["app"], { orgRepo });
     assert.deepEqual(await listInstances(dir), ["a-1", "b-2"]);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(dir, "..", ".."), { recursive: true, force: true });
   }
 });
 
 test("instanceIsDirty: names the members holding uncommitted work", async () => {
-  const { dir, ws } = makeWorkspace("dirty", ["app"]);
+  const { dir, orgRepo, ws } = makeWorkspace("dirty", ["app"]);
   try {
-    const inst = await createInstance(dir, ws as never, "work-1", ["app"]);
+    const inst = await createInstance(dir, ws as never, "work-1", ["app"], { orgRepo });
     assert.deepEqual(await instanceIsDirty(inst), [], "a fresh instance is clean");
 
     writeFileSync(join(inst.dir, "app", "NEW.md"), "unsaved\n");
     assert.deepEqual(await instanceIsDirty(inst), ["app"]);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(dir, "..", ".."), { recursive: true, force: true });
   }
 });
 
 test("destroyInstance: REFUSES to discard uncommitted work", async () => {
-  const { dir, ws } = makeWorkspace("refuse", ["app"]);
+  const { dir, orgRepo, ws } = makeWorkspace("refuse", ["app"]);
   try {
-    const inst = await createInstance(dir, ws as never, "work-2", ["app"]);
+    const inst = await createInstance(dir, ws as never, "work-2", ["app"], { orgRepo });
     writeFileSync(join(inst.dir, "app", "PRECIOUS.md"), "not committed\n");
 
-    await assert.rejects(() => destroyInstance(dir, ws as never, "work-2", ["app"]), /uncommitted/i);
+    await assert.rejects(() => destroyInstance(dir, ws as never, "work-2", ["app"], { orgRepo }), /uncommitted/i);
 
     assert.ok(statSync(join(inst.dir, "app", "PRECIOUS.md")).isFile(), "THE WORK SURVIVES");
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(dir, "..", ".."), { recursive: true, force: true });
   }
 });
 
 test("destroyInstance: removes a clean instance and deregisters its worktrees", async () => {
-  const { dir, ws } = makeWorkspace("clean", ["app"]);
+  const { dir, orgRepo, ws } = makeWorkspace("clean", ["app"]);
   try {
-    const inst = await createInstance(dir, ws as never, "work-3", ["app"]);
+    const inst = await createInstance(dir, ws as never, "work-3", ["app"], { orgRepo });
 
-    await destroyInstance(dir, ws as never, "work-3", ["app"]);
+    await destroyInstance(dir, ws as never, "work-3", ["app"], { orgRepo });
 
     assert.throws(() => statSync(inst.dir), "the instance directory is gone");
     const listed = execFileSync("git", ["worktree", "list"], { cwd: ws.repos[0].path }).toString();
     assert.doesNotMatch(listed, /work-3/, "git no longer lists the worktree");
     assert.deepEqual(await listInstances(dir), []);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(dir, "..", ".."), { recursive: true, force: true });
   }
 });
 
 test("destroyInstance: force discards, but only when asked", async () => {
-  const { dir, ws } = makeWorkspace("force", ["app"]);
+  const { dir, orgRepo, ws } = makeWorkspace("force", ["app"]);
   try {
-    const inst = await createInstance(dir, ws as never, "work-4", ["app"]);
+    const inst = await createInstance(dir, ws as never, "work-4", ["app"], { orgRepo });
     writeFileSync(join(inst.dir, "app", "SCRATCH.md"), "throwaway\n");
 
-    await destroyInstance(dir, ws as never, "work-4", ["app"], { force: true });
+    await destroyInstance(dir, ws as never, "work-4", ["app"], { force: true, orgRepo });
 
     assert.throws(() => statSync(inst.dir));
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(dir, "..", ".."), { recursive: true, force: true });
   }
 });
 
 test("destroyInstance: an absent instance is a no-op, not an error", async () => {
-  const { dir, ws } = makeWorkspace("absent", ["app"]);
+  const { dir, orgRepo, ws } = makeWorkspace("absent", ["app"]);
   try {
-    await destroyInstance(dir, ws as never, "never-existed", ["app"]);
+    await destroyInstance(dir, ws as never, "never-existed", ["app"], { orgRepo });
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(dir, "..", ".."), { recursive: true, force: true });
   }
 });
 
 test("instanceIsDirty: detects ignored files with real content", async () => {
-  const { dir, ws } = makeWorkspace("ignored", ["app"]);
+  const { dir, orgRepo, ws } = makeWorkspace("ignored", ["app"]);
   try {
-    const inst = await createInstance(dir, ws as never, "work-5", ["app"]);
+    const inst = await createInstance(dir, ws as never, "work-5", ["app"], { orgRepo });
 
     // Add .gitignore to exclude .env, then write a real .env file
     writeFileSync(join(inst.dir, "app", ".gitignore"), ".env\n");
@@ -380,14 +434,14 @@ test("instanceIsDirty: detects ignored files with real content", async () => {
     writeFileSync(join(inst.dir, "app", ".env"), "SECRET=xyz\n");
     assert.deepEqual(await instanceIsDirty(inst), ["app"], "ignored file with content counts as dirty");
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(dir, "..", ".."), { recursive: true, force: true });
   }
 });
 
 test("destroyInstance: REFUSES to discard ignored content and says so clearly", async () => {
-  const { dir, ws } = makeWorkspace("ignored-refuse", ["app"]);
+  const { dir, orgRepo, ws } = makeWorkspace("ignored-refuse", ["app"]);
   try {
-    const inst = await createInstance(dir, ws as never, "work-6", ["app"]);
+    const inst = await createInstance(dir, ws as never, "work-6", ["app"], { orgRepo });
 
     // Set up gitignore with a real .env file
     writeFileSync(join(inst.dir, "app", ".gitignore"), ".env\n");
@@ -400,7 +454,7 @@ test("destroyInstance: REFUSES to discard ignored content and says so clearly", 
     // Destroy should refuse with a message that mentions ignored content
     let errMessage = "";
     try {
-      await destroyInstance(dir, ws as never, "work-6", ["app"]);
+      await destroyInstance(dir, ws as never, "work-6", ["app"], { orgRepo });
       assert.fail("should have rejected");
     } catch (e) {
       errMessage = (e as Error).message;
@@ -410,14 +464,14 @@ test("destroyInstance: REFUSES to discard ignored content and says so clearly", 
     // The file must survive
     assert.ok(statSync(join(inst.dir, "app", ".env")).isFile(), "THE IGNORED FILE SURVIVES");
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(dir, "..", ".."), { recursive: true, force: true });
   }
 });
 
 test("destroyInstance: force discards ignored content too", async () => {
-  const { dir, ws } = makeWorkspace("ignored-force", ["app"]);
+  const { dir, orgRepo, ws } = makeWorkspace("ignored-force", ["app"]);
   try {
-    const inst = await createInstance(dir, ws as never, "work-7", ["app"]);
+    const inst = await createInstance(dir, ws as never, "work-7", ["app"], { orgRepo });
 
     // Set up gitignore with real content
     writeFileSync(join(inst.dir, "app", ".gitignore"), ".env\n");
@@ -427,18 +481,18 @@ test("destroyInstance: force discards ignored content too", async () => {
     });
     writeFileSync(join(inst.dir, "app", ".env"), "SECRET=xyz\n");
 
-    await destroyInstance(dir, ws as never, "work-7", ["app"], { force: true });
+    await destroyInstance(dir, ws as never, "work-7", ["app"], { force: true, orgRepo });
 
     assert.throws(() => statSync(inst.dir), "the instance directory is gone");
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(dir, "..", ".."), { recursive: true, force: true });
   }
 });
 
 test("addMemberWorktrees: each member gets its own worktree on its own branch", async () => {
-  const { dir, ws } = makeWorkspace("mem", ["app"]);
+  const { dir, orgRepo, ws } = makeWorkspace("mem", ["app"]);
   try {
-    const inst = await createInstance(dir, ws as never, "w-1", ["app"]);
+    const inst = await createInstance(dir, ws as never, "w-1", ["app"], { orgRepo });
     const repo = inst.members.find((m) => m.name === "app");
 
     const members = await addMemberWorktrees(inst.dir, repo!.source, "w-1", ["fabian", "santiago"]);
@@ -450,14 +504,14 @@ test("addMemberWorktrees: each member gets its own worktree on its own branch", 
       assert.ok(statSync(join(m.path, "README.md")).isFile(), "real content");
     }
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(dir, "..", ".."), { recursive: true, force: true });
   }
 });
 
 test("addMemberWorktrees: members are isolated — one's edit is invisible to the other", async () => {
-  const { dir, ws } = makeWorkspace("iso", ["app"]);
+  const { dir, orgRepo, ws } = makeWorkspace("iso", ["app"]);
   try {
-    const inst = await createInstance(dir, ws as never, "w-2", ["app"]);
+    const inst = await createInstance(dir, ws as never, "w-2", ["app"], { orgRepo });
     const repo = inst.members.find((m) => m.name === "app");
     const [a, b] = await addMemberWorktrees(inst.dir, repo!.source, "w-2", ["fabian", "santiago"]);
 
@@ -465,14 +519,14 @@ test("addMemberWorktrees: members are isolated — one's edit is invisible to th
 
     assert.throws(() => statSync(join(b.path, "DRAFT.md")), "uncommitted work does not leak between members");
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(dir, "..", ".."), { recursive: true, force: true });
   }
 });
 
 test("addMemberWorktrees: a peer's COMMIT is instantly visible, with no push", async () => {
-  const { dir, ws } = makeWorkspace("share", ["app"]);
+  const { dir, orgRepo, ws } = makeWorkspace("share", ["app"]);
   try {
-    const inst = await createInstance(dir, ws as never, "w-3", ["app"]);
+    const inst = await createInstance(dir, ws as never, "w-3", ["app"], { orgRepo });
     const repo = inst.members.find((m) => m.name === "app");
     const [a, b] = await addMemberWorktrees(inst.dir, repo!.source, "w-3", ["fabian", "santiago"]);
 
@@ -484,14 +538,14 @@ test("addMemberWorktrees: a peer's COMMIT is instantly visible, with no push", a
 
     assert.match(seen, /the interface/, "peers share one object store — commit is the handoff");
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(dir, "..", ".."), { recursive: true, force: true });
   }
 });
 
 test("addMemberWorktrees: is idempotent", async () => {
-  const { dir, ws } = makeWorkspace("mem2", ["app"]);
+  const { dir, orgRepo, ws } = makeWorkspace("mem2", ["app"]);
   try {
-    const inst = await createInstance(dir, ws as never, "w-4", ["app"]);
+    const inst = await createInstance(dir, ws as never, "w-4", ["app"], { orgRepo });
     const repo = inst.members.find((m) => m.name === "app");
     const first = await addMemberWorktrees(inst.dir, repo!.source, "w-4", ["fabian"]);
     writeFileSync(join(first[0].path, "WIP.md"), "in progress\n");
@@ -501,54 +555,54 @@ test("addMemberWorktrees: is idempotent", async () => {
     assert.equal(again[0].path, first[0].path);
     assert.ok(statSync(join(again[0].path, "WIP.md")).isFile(), "existing work untouched");
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(dir, "..", ".."), { recursive: true, force: true });
   }
 });
 
 test("addMemberWorktrees: refuses a member name that would escape", async () => {
-  const { dir, ws } = makeWorkspace("mem-esc", ["app"]);
+  const { dir, orgRepo, ws } = makeWorkspace("mem-esc", ["app"]);
   try {
-    const inst = await createInstance(dir, ws as never, "w-5", ["app"]);
+    const inst = await createInstance(dir, ws as never, "w-5", ["app"], { orgRepo });
     const repo = inst.members.find((m) => m.name === "app");
     await assert.rejects(() => addMemberWorktrees(inst.dir, repo!.source, "w-5", ["../evil"]), /name/i);
     assert.throws(() => statSync(join(inst.dir, "..", "evil")));
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(dir, "..", ".."), { recursive: true, force: true });
   }
 });
 
 test("destroyInstance: refuses when a MEMBER worktree holds uncommitted work", async () => {
-  const { dir, ws } = makeWorkspace("mem-dirty", ["app"]);
+  const { dir, orgRepo, ws } = makeWorkspace("mem-dirty", ["app"]);
   try {
-    const inst = await createInstance(dir, ws as never, "w-6", ["app"]);
+    const inst = await createInstance(dir, ws as never, "w-6", ["app"], { orgRepo });
     const repo = inst.members.find((m) => m.name === "app");
     const [fabian] = await addMemberWorktrees(inst.dir, repo!.source, "w-6", ["fabian"]);
     writeFileSync(join(fabian.path, "PRECIOUS.md"), "work that exists nowhere else\n");
 
     await assert.rejects(
-      () => destroyInstance(dir, ws as never, "w-6", ["app"]),
+      () => destroyInstance(dir, ws as never, "w-6", ["app"], { orgRepo }),
       /fabian/i,
       "the refusal names the member holding the work",
     );
     assert.ok(statSync(join(fabian.path, "PRECIOUS.md")).isFile(), "the work survives the refusal");
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(dir, "..", ".."), { recursive: true, force: true });
   }
 });
 
 test("destroyInstance: force removes member worktrees and leaves no stale registration", async () => {
-  const { dir, ws } = makeWorkspace("mem-force", ["app"]);
+  const { dir, orgRepo, ws } = makeWorkspace("mem-force", ["app"]);
   try {
-    const inst = await createInstance(dir, ws as never, "w-7", ["app"]);
+    const inst = await createInstance(dir, ws as never, "w-7", ["app"], { orgRepo });
     const repo = inst.members.find((m) => m.name === "app");
     await addMemberWorktrees(inst.dir, repo!.source, "w-7", ["fabian"]);
 
-    await destroyInstance(dir, ws as never, "w-7", ["app"], { force: true });
+    await destroyInstance(dir, ws as never, "w-7", ["app"], { force: true, orgRepo });
 
     assert.throws(() => statSync(inst.dir), "the instance directory is gone");
     const list = execFileSync("git", ["worktree", "list"], { cwd: repo!.source }).toString();
     assert.doesNotMatch(list, /members\/fabian/, "no stale worktree registration is left behind");
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(dir, "..", ".."), { recursive: true, force: true });
   }
 });
