@@ -7,9 +7,10 @@
 // instead MOVE individual records within the current root — copy/write,
 // verify, then remove the source — since there is no second root to roll
 // back to for those.
+import { execFile } from "node:child_process";
 import { cp, mkdir, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
-import { isDeepStrictEqual } from "node:util";
+import { isDeepStrictEqual, promisify } from "node:util";
 import type { SmithPaths } from "./paths.js";
 import { loadBoards } from "./work-items.js";
 import { loadRegistry, registryPath, saveRegistryEntry } from "./workspace-registry.js";
@@ -367,6 +368,25 @@ export async function migrateWorkspaceRecords(
   return { moved, skipped, notes };
 }
 
+const run = promisify(execFile);
+
+/**
+ * Whether `workspaces/<slug>/settings.json` is present in the org repo's
+ * HEAD — the authority for "this workspace has actually been imported",
+ * as opposed to "a file happens to sit at its target path". `ensureOrgRepo`
+ * always leaves at least one (possibly empty) commit, so HEAD always
+ * resolves by the time this is called; a non-existent path under a valid
+ * HEAD is simply a non-zero exit, not a thrown error about a missing ref.
+ */
+async function importedInOrgRepo(paths: SmithPaths, slug: string): Promise<boolean> {
+  try {
+    await run("git", ["cat-file", "-e", `HEAD:workspaces/${slug}/settings.json`], { cwd: paths.orgRepo });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * ONE-WAY migration (spec 2026-08-22 §9.2): each workspace's own `config/`
  * git repo becomes the `workspaces/<slug>/` subtree of the org repo.
@@ -388,6 +408,15 @@ export async function migrateWorkspaceRecords(
  * newer one. A registered workspace with config in neither place is noted:
  * that install would otherwise boot owning a workspace it cannot load.
  *
+ * "Already imported" is asked of git, not the filesystem: a bare `exists()`
+ * on `target/settings.json` would be fooled by an uncommitted partial copy
+ * left behind by a run that failed after `cp` but before the commit — the
+ * very next boot would then read that leftover as proof of a completed
+ * import and archive the still-broken legacy source out from under it.
+ * `importedInOrgRepo` instead asks whether the path is in the org repo's
+ * HEAD, which is only ever true once `commitConfigFiles` has actually
+ * succeeded.
+ *
  * One workspace's failure never stops the others — this runs at boot.
  */
 export async function migrateConfigIntoOrgRepo(
@@ -404,7 +433,7 @@ export async function migrateConfigIntoOrgRepo(
       const slug = slugForDir(name);
       const hasLegacy = await exists(join(legacy, "settings.json"));
 
-      if (await exists(join(target, "settings.json"))) {
+      if (await importedInOrgRepo(paths, slug)) {
         if (hasLegacy) {
           const archived = `${legacy}-archived-${stamp}`;
           await rename(legacy, archived);
@@ -428,13 +457,28 @@ export async function migrateConfigIntoOrgRepo(
 
       const probe = await probeSettings(join(target, "settings.json"));
       if (probe.kind !== "parsed") {
+        // This removes the COPY, never the legacy source — "nothing is ever
+        // deleted" still holds for the one copy of this data that actually
+        // exists. A copy left behind here would sit uncommitted at `target`
+        // forever: invisible, and — since `importedInOrgRepo` now only
+        // trusts HEAD — no longer even able to fake a completed import, but
+        // still clutter a retry has no reason to carry.
+        await rm(target, { recursive: true, force: true });
         notes.push(
           `[org-migration] ${name}: copied config does not verify at ${join(target, "settings.json")} — ` +
             `leaving ${legacy} in place; fix the record so this can complete`,
         );
         continue;
       }
-      await commitConfigFiles(paths, slug, { message: `Import workspace ${slug}` });
+      try {
+        await commitConfigFiles(paths, slug, { message: `Import workspace ${slug}` });
+      } catch (err) {
+        // Same reasoning as the probe-failure branch: nothing reached HEAD,
+        // so the copy at `target` must not survive to be mistaken for a
+        // completed import on the next run.
+        await rm(target, { recursive: true, force: true });
+        throw err;
+      }
       await rename(legacy, `${legacy}-archived-${stamp}`);
       imported.push(name);
     } catch (err) {

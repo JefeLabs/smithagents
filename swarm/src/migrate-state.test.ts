@@ -867,3 +867,63 @@ test("migrateConfigIntoOrgRepo: one bad workspace never stops the others — it 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("migrateConfigIntoOrgRepo: a probe failure never poisons the 'already imported' gate — retrying re-reports the same failure, never archives the legacy copy, and leaves no stray partial copy at target", async () => {
+  const root = mkdtempSync(join(tmpdir(), "orgmig-retry-"));
+  try {
+    const paths = smithPaths(root);
+    await ensureOrgRepo(paths, { name: "acme" });
+    const bad = join(paths.workspaces, "bad");
+    mkdirSync(join(bad, "config"), { recursive: true });
+    writeFileSync(join(bad, "config", "settings.json"), "{ not json");
+    await saveRegistryEntry(paths, "bad", bad);
+
+    const first = await migrateConfigIntoOrgRepo(paths, "20260822T120000");
+    assert.deepEqual(first.imported, []);
+    assert.ok(
+      first.notes.some((n) => n.includes("bad") && n.includes("does not verify")),
+      first.notes.join(" | "),
+    );
+
+    const second = await migrateConfigIntoOrgRepo(paths, "20260822T120100");
+    assert.deepEqual(second.imported, []);
+    assert.ok(
+      second.notes.some((n) => n.includes("bad") && n.includes("does not verify")),
+      second.notes.join(" | "),
+    );
+    assert.ok(
+      !second.notes.some((n) => n.includes("already imported")),
+      `a failed, uncommitted copy must never be reported as already imported: ${second.notes.join(" | ")}`,
+    );
+    assert.ok(
+      statSync(join(bad, "config", "settings.json")).isFile(),
+      "the unverifiable legacy copy is still in place, never archived",
+    );
+    assert.throws(
+      () => statSync(join(configDirForName(paths, "bad"), "settings.json")),
+      "no stray partial copy is left at target after a failed probe",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("migrateConfigIntoOrgRepo: after a successful import, the org repo's HEAD is genuinely the gate — git cat-file confirms the content is committed", async () => {
+  const root = mkdtempSync(join(tmpdir(), "orgmig-cat-file-"));
+  try {
+    const paths = smithPaths(root);
+    await ensureOrgRepo(paths, { name: "acme" });
+    const dir = join(paths.workspaces, "pg");
+    makeLegacyConfig(dir, "pg");
+    await saveRegistryEntry(paths, "pg", dir);
+
+    await migrateConfigIntoOrgRepo(paths, "20260822T120000");
+
+    assert.doesNotThrow(
+      () => execFileSync("git", ["cat-file", "-e", "HEAD:workspaces/pg/settings.json"], { cwd: paths.orgRepo }),
+      "the imported settings.json is present in the org repo's HEAD, not merely on disk",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
