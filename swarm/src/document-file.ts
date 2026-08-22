@@ -81,6 +81,16 @@ function sectionSlug(text: string, index: number): string {
 }
 
 /**
+ * The total slugger, for callers that have no section index — a document's
+ * `effort`, a title. Never throws and always returns a value matching
+ * SECTION_ID_RE (unlike capabilities.ts's slugify, which throws): an input
+ * that reduces to nothing yields `section-0`, so callers need no fallback.
+ */
+export function slugify(text: string): string {
+  return sectionSlug(text, 0);
+}
+
+/**
  * `key: scalar` and `key: [a, b]` only. Anything else is a problem that
  * names the key, so a hand edit that drifts into YAML proper is refused by
  * name rather than silently misread. `#` is ordinary text in a value — the
@@ -125,6 +135,7 @@ export function parseFrontmatter(block: string): {
     }
     if (rest === "" && !LIST_KEYS.has(key)) {
       problems.push({ where: `frontmatter.${key}`, message: "nested values are not supported" });
+      inNestedBlock = true;
       continue;
     }
     if (LIST_KEYS.has(key)) {
@@ -256,14 +267,39 @@ export function parseDocumentFile(text: string): { doc: ParsedDocument | null; p
   return { doc: { frontmatter: fm, sections: splitSections(m[2]) }, problems: [] };
 }
 
-/** The canonical file: keys in FRONTMATTER_KEYS order (absent optionals omitted), then `## Heading {#id}` + body per section. Throws if a section's id is not `""` (preamble) and does not match `SECTION_ID_RE` — nothing on the parse path can produce such an id, but a caller constructing a `DocSection` by hand could, and writing it would silently corrupt the heading on the next read. */
+/**
+ * The canonical file: keys in FRONTMATTER_KEYS order (absent optionals
+ * omitted), then `## Heading {#id}` + body per section. An empty or
+ * whitespace-only scalar is refused the same way a bad section id is: an
+ * OPTIONAL scalar (`spec`) is dropped exactly like `undefined` — a caller
+ * clearing it with `""` gets the same result as clearing it with
+ * `undefined` — but a REQUIRED scalar (title, blueprint, workType, status,
+ * effort, createdAt, updatedAt) throws naming the key, because `key: `
+ * would re-parse as `doc: null`: serialize must never emit frontmatter that
+ * `parseDocumentFile` then refuses.
+ * Throws if a section's id is not `""` (preamble) and does not match
+ * `SECTION_ID_RE` — nothing on the parse path can produce such an id, but a
+ * caller constructing a `DocSection` by hand could, and writing it would
+ * silently corrupt the heading on the next read.
+ */
 export function serializeDocumentFile(doc: ParsedDocument): string {
   const fm = doc.frontmatter;
   const lines: string[] = ["---"];
   for (const key of FRONTMATTER_KEYS) {
     const v = (fm as unknown as Record<string, unknown>)[key];
     if (v === undefined) continue;
-    lines.push(Array.isArray(v) ? `${key}: [${v.join(", ")}]` : `${key}: ${v}`);
+    if (Array.isArray(v)) {
+      lines.push(`${key}: [${v.join(", ")}]`);
+      continue;
+    }
+    const scalar = v as string;
+    if (scalar.trim() === "") {
+      if (REQUIRED_KEYS.includes(key)) {
+        throw new Error(`serializeDocumentFile: required key "${key}" is empty`);
+      }
+      continue;
+    }
+    lines.push(`${key}: ${scalar}`);
   }
   lines.push("---", "");
   for (const s of doc.sections) {

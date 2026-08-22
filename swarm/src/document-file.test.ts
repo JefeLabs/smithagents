@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { DocFrontmatter } from "./document-file.js";
 import {
   documentFileId,
   parseDocumentFile,
   parseFrontmatter,
   serializeDocumentFile,
+  slugify,
   splitSections,
 } from "./document-file.js";
 
@@ -49,6 +51,23 @@ updatedAt: 2026-01-01T00:00:00.000Z
 ---
 
 ${sectionsMd}`;
+}
+
+/** A minimal valid frontmatter object for tests that call serializeDocumentFile directly. */
+function baseFrontmatter(overrides: Partial<DocFrontmatter> = {}): DocFrontmatter {
+  return {
+    title: "T",
+    blueprint: "spec",
+    workType: "feature",
+    status: "drafting",
+    effort: "t",
+    slices: [],
+    participants: [],
+    pins: [],
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    ...overrides,
+  };
 }
 
 test("parseDocumentFile: frontmatter, marked sections, and an unmarked section with a slug id", () => {
@@ -98,6 +117,15 @@ test("parseFrontmatter: nesting is reported against the key whose line opened it
     `an unrelated well-formed key must not be blamed: ${JSON.stringify(problems)}`,
   );
   assert.ok(problems.some((p) => p.where === "frontmatter.bogus" && /unknown/.test(p.message)));
+});
+
+test("parseFrontmatter: a key with no value immediately followed by an indented line reports the nested block once, not twice", () => {
+  // Residual from fix round 1: the `rest === ""` branch (a non-list key with
+  // nothing after the colon) pushed its own nested-value problem but never
+  // set inNestedBlock, so the very next indented line pushed a second,
+  // identical problem for the same key.
+  const { problems } = parseFrontmatter("blueprint:\n  a: b");
+  assert.deepEqual(problems, [{ where: "frontmatter.blueprint", message: "nested values are not supported" }]);
 });
 
 test("parseFrontmatter: an unknown key with an underscore is named, not swallowed by the catch-all line message", () => {
@@ -193,6 +221,18 @@ test("splitSections: a heading that would break capabilities.ts's slugify (long,
   assert.equal(s[2].id, "section-2");
 });
 
+test("slugify: total for callers with no section index (effort, title) — always matches the canonical id shape, never throws", () => {
+  for (const input of ["", "!!!", "日本語", "A".repeat(200), "Instance provisioning"]) {
+    const id = slugify(input);
+    assert.match(id, /^[a-z0-9][a-z0-9-]*$/, `${JSON.stringify(input)} -> ${JSON.stringify(id)}`);
+    assert.ok(id.length <= 64, `${JSON.stringify(input)} -> ${JSON.stringify(id)} must be capped at 64 chars`);
+  }
+  assert.equal(slugify(""), "section-0");
+  assert.equal(slugify("!!!"), "section-0");
+  assert.equal(slugify("日本語"), "section-0");
+  assert.equal(slugify("Instance provisioning"), "instance-provisioning");
+});
+
 test("splitSections: two computed ids that collide after 64-char truncation are de-duplicated", () => {
   const a = "a".repeat(70);
   const b = "a".repeat(90);
@@ -231,6 +271,31 @@ test("serializeDocumentFile: refuses a section id that does not match the canoni
       }),
     /Open Questions/,
   );
+});
+
+test("serializeDocumentFile: an empty or whitespace-only OPTIONAL scalar is omitted like undefined", () => {
+  const doc = { frontmatter: baseFrontmatter({ spec: "" }), sections: [] };
+  const out = serializeDocumentFile(doc);
+  assert.doesNotMatch(out, /^spec:/m);
+  const again = parseDocumentFile(out);
+  assert.ok(again.doc, JSON.stringify(again.problems));
+  assert.equal(again.doc.frontmatter.spec, undefined);
+
+  const outWhitespace = serializeDocumentFile({ frontmatter: baseFrontmatter({ spec: "   " }), sections: [] });
+  assert.doesNotMatch(outWhitespace, /^spec:/m);
+});
+
+test("serializeDocumentFile: every required scalar throws when empty or whitespace-only, naming itself", () => {
+  for (const key of ["title", "blueprint", "workType", "status", "effort", "createdAt", "updatedAt"] as const) {
+    for (const bad of ["", "   "]) {
+      const frontmatter = { ...baseFrontmatter(), [key]: bad } as DocFrontmatter;
+      assert.throws(
+        () => serializeDocumentFile({ frontmatter, sections: [] }),
+        new RegExp(key),
+        `${key} = ${JSON.stringify(bad)} should throw naming "${key}"`,
+      );
+    }
+  }
 });
 
 test("documentFileId: UTC minute + effort, -design only for spec", () => {
