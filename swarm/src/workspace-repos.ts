@@ -48,6 +48,23 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
+/**
+ * True only for a regular file — a directory (including `.` itself) or a
+ * missing path both return false. Subsumes `exists()` for `commitPaths`:
+ * one predicate instead of an existence check plus a separate type check,
+ * so a caller that accidentally names a directory gets the same "does not
+ * exist" refusal as a caller that names a typo'd path, rather than quietly
+ * staging that directory's whole subtree.
+ */
+async function isFile(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isFile();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw err;
+  }
+}
+
 async function hasCommit(dir: string): Promise<boolean> {
   try {
     await run("git", ["rev-parse", "--verify", "HEAD"], { cwd: dir });
@@ -119,10 +136,9 @@ const ORG_CONFIG_PATHS = ["settings.json", "blueprints"];
  * silently breaks the `--author` guarantee spec §1.4 exists to provide.
  * Worst case the two race for `.git/index.lock` and one simply throws.
  *
- * In-process only, and deliberately so: this is the small version of the
- * per-repo write queue Plan 2 owns, which will subsume it. It does not
- * protect against a second swarm process on the same org repo — nothing
- * short of a lock file would, and that is Plan 2's call to make.
+ * In-process only, and deliberately so: it does not protect against a
+ * second swarm process on the same org repo — nothing short of a lock file
+ * would, and that is a call for whichever task needs multi-process safety.
  */
 const orgRepoQueues = new Map<string, Promise<unknown>>();
 
@@ -234,8 +250,10 @@ async function stageAndCommit(
  * document store's write path. Unlike commitConfigFiles there is no
  * allowlist: the caller names the file it just wrote. Paths are checked
  * before any git call: absolute or `..` paths can name files outside the
- * repo, and a path that does not exist would make `git add` fail the whole
- * call with a message that names git instead of the caller's mistake.
+ * repo, and a path that is not a regular file — missing, or a directory
+ * (including `.` itself) — would either make `git add` fail with a message
+ * that names git instead of the caller's mistake, or, worse, silently stage
+ * a whole subtree including anything dropped in by hand.
  */
 export function commitPaths(
   paths: SmithPaths,
@@ -246,7 +264,7 @@ export function commitPaths(
     for (const p of relPaths) {
       if (isAbsolute(p)) throw new Error(`commitPaths: "${p}" must be relative to the org repo`);
       if (p.split(/[\\/]/).includes("..")) throw new Error(`commitPaths: "${p}" contains ".."`);
-      if (!(await exists(join(paths.orgRepo, p))))
+      if (!(await isFile(join(paths.orgRepo, p))))
         throw new Error(`commitPaths: "${p}" does not exist in the org repo`);
     }
     return stageAndCommitPaths(paths.orgRepo, relPaths, opts);

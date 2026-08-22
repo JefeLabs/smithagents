@@ -871,6 +871,43 @@ test("commitPaths: refuses an absolute path, a .. path, and a path that does not
   }
 });
 
+test('commitPaths: refuses a directory — including "." itself — so a hand-dropped file is never swept into the subtree', async () => {
+  const root = mkdtempSync(join(tmpdir(), "commitpaths-dir-"));
+  try {
+    const paths = smithPaths(root);
+    makeOrgRepo(root, ["pg"]);
+    mkdirSync(join(paths.orgRepo, "workspaces", "pg", "specs"), { recursive: true });
+    writeFileSync(join(paths.orgRepo, "workspaces", "pg", "specs", "a.md"), "a\n");
+    writeFileSync(join(paths.orgRepo, "hand-dropped.txt"), "not staged on your behalf\n");
+    const author = { name: "x", email: "x@x" };
+
+    await assert.rejects(
+      () => commitPaths(paths, ["."], { author, message: "m" }),
+      /does not exist/,
+      "the whole repo root is not a file",
+    );
+    await assert.rejects(
+      () => commitPaths(paths, ["workspaces/pg/specs"], { author, message: "m" }),
+      /does not exist/,
+      "a directory is not a file, even though it exists",
+    );
+
+    assert.doesNotThrow(
+      () => execFileSync("git", ["diff", "--cached", "--quiet"], { cwd: paths.orgRepo }),
+      "nothing is staged — neither call reached git add, so the hand-dropped file was never swept in",
+    );
+    const untracked = execFileSync("git", ["status", "--porcelain"], { cwd: paths.orgRepo }).toString();
+    assert.match(untracked, /^\?\? hand-dropped\.txt$/m, "the hand-dropped file is still untracked, not staged");
+    assert.match(
+      untracked,
+      /^\?\? workspaces\/pg\/specs\/$/m,
+      "the new subtree — including a.md — is still untracked too, collapsed by git as one line",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("withOrgRepoQueue: tasks on one repo run strictly one after another, and a rejection does not wedge the queue", async () => {
   const order: string[] = [];
   const slow = withOrgRepoQueue("/repo/q", async () => {
