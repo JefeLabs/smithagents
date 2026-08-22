@@ -6,7 +6,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { SmithPaths } from "./paths.js";
-import { configDirForName } from "./workspaces.js";
+import { configDirForName, slugForDir } from "./workspaces.js";
 
 export type SectionShape = "prose" | "checklist" | "mermaid";
 export type BlueprintFolder = "specs" | "plans" | "dashboards";
@@ -175,11 +175,19 @@ async function readBlueprintDir(dir: string, into: Map<string, Blueprint>): Prom
   }
 }
 
-/** Resolution: workspace over org over defaults (spec §6.1). */
+/**
+ * Resolution: workspace over org over defaults (spec §6.1). A workspaceName
+ * that slugs to nothing (e.g. "!!!") has no config subtree — configDirForName
+ * would throw; loadWorkspaces (workspaces.ts:298-304) already established the
+ * precedent for this exact input class: skip rather than take the whole read
+ * down, so this degrades to org+defaults instead of rejecting the caller.
+ */
 export async function loadBlueprintsFor(paths: SmithPaths, workspaceName?: string): Promise<Blueprint[]> {
   const byId = new Map<string, Blueprint>(DEFAULT_BLUEPRINTS.map((b) => [b.id, b]));
   await readBlueprintDir(join(paths.orgRepo, "blueprints"), byId);
-  if (workspaceName) await readBlueprintDir(join(configDirForName(paths, workspaceName), "blueprints"), byId);
+  if (workspaceName && slugForDir(workspaceName)) {
+    await readBlueprintDir(join(configDirForName(paths, workspaceName), "blueprints"), byId);
+  }
   return [...byId.values()];
 }
 

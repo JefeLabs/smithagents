@@ -71,6 +71,48 @@ test("loadBlueprintsFor: org files override defaults by id, workspace files over
   }
 });
 
+test("loadBlueprintsFor: a workspaceName that slugs to nothing degrades to org+defaults instead of throwing", async () => {
+  const root = mkdtempSync(join(tmpdir(), "bp-badname-"));
+  try {
+    const paths = smithPaths(root);
+    mkdirSync(join(paths.orgRepo, "blueprints"), { recursive: true });
+    writeFileSync(
+      join(paths.orgRepo, "blueprints", "spec.json"),
+      JSON.stringify({
+        id: "spec",
+        name: "Org Spec",
+        family: "document",
+        workTypes: ["feature"],
+        folder: "specs",
+        sections: [{ id: "overview", heading: "Overview", required: true }],
+      }),
+    );
+    const all = await loadBlueprintsFor(paths, "!!!");
+    assert.equal(all.find((b) => b.id === "spec")?.name, "Org Spec", "org override still applies");
+    for (const id of ["spec", "implementation-plan", "er", "sequence", "dashboard"]) {
+      assert.ok(
+        all.some((b) => b.id === id),
+        `default ${id} present`,
+      );
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("loadBlueprintsFor: neither org nor workspace blueprints directory exists — exactly the five defaults come back", async () => {
+  const root = mkdtempSync(join(tmpdir(), "bp-nodirs-"));
+  try {
+    const paths = smithPaths(root);
+    const org = await loadBlueprintsFor(paths);
+    assert.deepEqual(org.map((b) => b.id).sort(), DEFAULT_BLUEPRINTS.map((b) => b.id).sort());
+    const ws = await loadBlueprintsFor(paths, "pg");
+    assert.deepEqual(ws.map((b) => b.id).sort(), DEFAULT_BLUEPRINTS.map((b) => b.id).sort());
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("loadBlueprintsFor: a user file with an invalid folder or shape is skipped, not coerced", async () => {
   const root = mkdtempSync(join(tmpdir(), "bp-bad-"));
   try {
