@@ -52,6 +52,11 @@ test("smithPaths: the returned object is frozen — callers cannot repoint state
   }, TypeError);
 });
 
+test("smithPaths: the org config repo is ONE directory under the root, named config", () => {
+  const paths = smithPaths("/state");
+  assert.equal(paths.orgRepo, join("/state", "config"));
+});
+
 /**
  * The refactor this guards is easy to undo one line at a time: the next feature
  * that needs a state path will reach back for process.cwd() and rebuild a

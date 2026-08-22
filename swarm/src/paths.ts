@@ -33,6 +33,13 @@ export interface SmithPaths {
   /** Legacy markers: present only to warn that projects were replaced by workspaces. */
   readonly legacyProjectFile: string;
   readonly legacyProjectsDir: string;
+  /**
+   * The org config repo: ONE git repo holding every workspace's versioned
+   * half as a `workspaces/<slug>/` subtree (spec 2026-08-22 §1). A company by
+   * default, a department where an enterprise justifies it; a solo user is
+   * an org of one. There is no per-workspace mode.
+   */
+  readonly orgRepo: string;
   /** Timestamped archive sibling, e.g. work-archived-20260816T120000. */
   archived(kind: ArchivableKind, stamp: string): string;
 }
@@ -63,6 +70,7 @@ export function smithPaths(root: string): SmithPaths {
     groups: join(resolvedRoot, "groups"),
     legacyProjectFile: join(resolvedRoot, "project.json"),
     legacyProjectsDir: join(resolvedRoot, "projects"),
+    orgRepo: join(resolvedRoot, "config"),
     archived(kind: ArchivableKind, stamp: string): string {
       return join(resolvedRoot, `${kind}-archived-${stamp}`);
     },

@@ -504,6 +504,29 @@ export function slugForDir(name: string): string {
 }
 
 /**
+ * Where a workspace's VERSIONED half lives: its subtree of the org config
+ * repo (spec 2026-08-22 §1.1). Every workspace is a `workspaces/<slug>/`
+ * subtree of ONE repo — there is no per-workspace mode, so this never
+ * consults `ws.dir`: the runtime folder can live anywhere, the subtree never
+ * leaves the org repo.
+ *
+ * Throws on a name that slugs to nothing, for the reason ensureWorkspaceDir
+ * refuses the same name: the result would be the shared `workspaces/` parent
+ * itself, and a write there would land on every workspace at once.
+ */
+export function configDirForName(paths: SmithPaths, name: string): string {
+  const slug = slugForDir(name);
+  if (!slug) {
+    throw new Error(`Workspace name "${name}" has no characters usable in a directory name — it has no config subtree`);
+  }
+  return join(paths.orgRepo, "workspaces", slug);
+}
+
+export function configDirFor(paths: SmithPaths, ws: Workspace): string {
+  return configDirForName(paths, ws.name);
+}
+
+/**
  * Where this workspace's directory is. An explicit `dir` wins and is resolved to
  * absolute; otherwise it defaults under the state root, named from the slug.
  */

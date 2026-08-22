@@ -15,6 +15,8 @@ import {
   assertNoWorkspaceDirCollision,
   boardsDirFor,
   collidingWorkspaceDirs,
+  configDirFor,
+  configDirForName,
   defaultViolation,
   ensureWorkspaceDir,
   initGitRepo,
@@ -861,4 +863,20 @@ test("resolveRepo and repoLessRefusal agree on which workspace a nameless reques
   assert.equal(resolveRepo(wss, undefined), null, "resolveRepo finds no repo in the repo-less default");
   const refusal = repoLessRefusal(wss, undefined);
   assert.match(refusal as string, /"design"/, "repoLessRefusal must name that same default workspace, not another");
+});
+
+test("configDirForName: a workspace's versioned half is its subtree of the org repo, never its own repo", () => {
+  const paths = smithPaths("/state");
+  assert.equal(configDirForName(paths, "proving-ground"), join("/state", "config", "workspaces", "proving-ground"));
+  assert.equal(configDirForName(paths, "Proving Ground"), join("/state", "config", "workspaces", "proving-ground"), "slugged like the runtime dir");
+});
+
+test("configDirFor: independent of ws.dir — the runtime folder can live anywhere, the subtree never leaves the org repo", () => {
+  const paths = smithPaths("/state");
+  const ws = { name: "pg", repos: [], dir: "/Users/me/code/pg" } as Workspace;
+  assert.equal(configDirFor(paths, ws), join("/state", "config", "workspaces", "pg"));
+});
+
+test("configDirForName: refuses a name that slugs to nothing rather than naming the shared workspaces/ parent", () => {
+  assert.throws(() => configDirForName(smithPaths("/state"), "..."), /"\.\.\."/);
 });
