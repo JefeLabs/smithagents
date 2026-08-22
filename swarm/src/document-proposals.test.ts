@@ -273,3 +273,234 @@ test("createProposal: concurrent proposals on one document get distinct ids", as
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// --- fix round 1 (task-6 review) ------------------------------------------
+
+test("createProposal: a CRLF document proposal only diffs the changed section — hash-object goes through the path's filters (I1)", async () => {
+  const { root, paths } = setup("crlf");
+  try {
+    // core.autocrlf=input strips CR on the way into the object store — the
+    // same filter `git add`/`git commit` would run. Set explicitly so this
+    // test does not depend on the ambient machine's git config.
+    execFileSync("git", ["config", "core.autocrlf", "input"], { cwd: paths.orgRepo });
+    const crlfNewText = DOC.replace("old approach", "new approach").replace(/\n/g, "\r\n");
+
+    await createProposal(paths, {
+      slug: "pg",
+      docId: ID,
+      relPath: REL,
+      newFileText: crlfNewText,
+      sectionId: "approach",
+      author: ANDERSON,
+      rationale: "tighter",
+    });
+
+    const numstat = execFileSync("git", ["diff", "--numstat", "main", proposalRef("pg", ID, 1)], {
+      cwd: paths.orgRepo,
+    })
+      .toString()
+      .trim();
+    const [added, removed] = numstat.split(/\s+/).map(Number);
+    // Only the "approach" section's one line actually changed. Without
+    // --path, hash-object hashes the raw CRLF bytes verbatim, main's blob
+    // (committed through the normal filtered path) has no CR at all, and
+    // the two blobs differ on every single line.
+    assert.ok(
+      added <= 2 && removed <= 2,
+      `expected a small, section-scoped diff (only "approach" changed), got --numstat: "${numstat}"`,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("deleteProposal: rejects id aliases Number() would coerce onto the real id, and never deletes it (I2)", async () => {
+  const { root, paths } = setup("id-alias-delete");
+  try {
+    await createProposal(paths, {
+      slug: "pg",
+      docId: ID,
+      relPath: REL,
+      newFileText: DOC.replace("old approach", "new approach"),
+      sectionId: "approach",
+      author: ANDERSON,
+      rationale: "r",
+    });
+
+    for (const alias of ["1.0", "+1", " 1", "01", "1e0"]) {
+      assert.equal(
+        await deleteProposal(paths, { slug: "pg", docId: ID, id: alias }),
+        false,
+        `"${alias}" must not be accepted as an id`,
+      );
+    }
+    const still = await listProposals(paths, { slug: "pg", docId: ID, relPath: REL, currentFileText: DOC });
+    assert.equal(still.length, 1, "the real proposal survives every alias delete attempt");
+    assert.equal(still[0].id, "1");
+
+    assert.equal(await deleteProposal(paths, { slug: "pg", docId: ID, id: "1" }), true, "the canonical id still works");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("proposalFileText: rejects the same non-canonical id aliases (I2)", async () => {
+  const { root, paths } = setup("id-alias-filetext");
+  try {
+    await createProposal(paths, {
+      slug: "pg",
+      docId: ID,
+      relPath: REL,
+      newFileText: DOC.replace("old approach", "new approach"),
+      sectionId: "approach",
+      author: ANDERSON,
+      rationale: "r",
+    });
+
+    for (const alias of ["1.0", "+1", " 1", "01"]) {
+      assert.equal(
+        await proposalFileText(paths, { slug: "pg", docId: ID, id: alias, relPath: REL }),
+        null,
+        `"${alias}" must not resolve to the real proposal`,
+      );
+    }
+    assert.ok(
+      await proposalFileText(paths, { slug: "pg", docId: ID, id: "1", relPath: REL }),
+      "the real id still works",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("createProposal: a hand-made ref at a non-canonical id like 1e21 never collides with real allocation (I3)", async () => {
+  const { root, paths } = setup("huge-alias");
+  try {
+    const head = execFileSync("git", ["rev-parse", "main"], { cwd: paths.orgRepo }).toString().trim();
+    execFileSync("git", ["update-ref", `refs/heads/proposals/pg/${ID}/1e21`, head], { cwd: paths.orgRepo });
+
+    const p1 = await createProposal(paths, {
+      slug: "pg",
+      docId: ID,
+      relPath: REL,
+      newFileText: DOC.replace("old approach", "a"),
+      sectionId: "approach",
+      author: ANDERSON,
+      rationale: "a",
+    });
+    const p2 = await createProposal(paths, {
+      slug: "pg",
+      docId: ID,
+      relPath: REL,
+      newFileText: DOC.replace("old approach", "b"),
+      sectionId: "approach",
+      author: ANDERSON,
+      rationale: "b",
+    });
+
+    assert.deepEqual(
+      [p1.id, p2.id],
+      ["1", "2"],
+      "the hand-made 1e21 ref is ignored by allocation, not treated as id 1",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("listProposals: aliased ref segments collapse to nothing, never a duplicate of the real proposal's id (I4)", async () => {
+  const { root, paths } = setup("alias-listing");
+  try {
+    await createProposal(paths, {
+      slug: "pg",
+      docId: ID,
+      relPath: REL,
+      newFileText: DOC.replace("old approach", "new approach"),
+      sectionId: "approach",
+      author: ANDERSON,
+      rationale: "r",
+    });
+    const head = execFileSync("git", ["rev-parse", "main"], { cwd: paths.orgRepo }).toString().trim();
+    for (const alias of ["1.0", "01", "+1"]) {
+      execFileSync("git", ["update-ref", `refs/heads/proposals/pg/${ID}/${alias}`, head], { cwd: paths.orgRepo });
+    }
+
+    const open = await listProposals(paths, { slug: "pg", docId: ID, relPath: REL, currentFileText: DOC });
+    assert.equal(open.length, 1, "only the one real, canonically-numbered proposal is listed");
+    assert.equal(open[0].id, "1");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("listProposals: a branch with no shared history with main is skipped, not misattributed as a whole-document edit (M5)", async () => {
+  const { root, paths } = setup("no-merge-base");
+  try {
+    await createProposal(paths, {
+      slug: "pg",
+      docId: ID,
+      relPath: REL,
+      newFileText: DOC.replace("old approach", "new approach"),
+      sectionId: "approach",
+      author: ANDERSON,
+      rationale: "r",
+    });
+
+    // A hand-made ref #2: a real file at relPath, but an ORPHAN commit with
+    // no parent at all — no merge-base with main exists. Before the fix,
+    // this fell back to treating every section as "changed against an
+    // empty base" and surfaced the branch's FIRST section as a fabricated
+    // proposal.
+    const blob = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: paths.orgRepo, input: DOC })
+      .toString()
+      .trim();
+    const scratchIndexEnv = { ...process.env, GIT_INDEX_FILE: join(root, "scratch-index-orphan") };
+    execFileSync("git", ["read-tree", "--empty"], { cwd: paths.orgRepo, env: scratchIndexEnv });
+    execFileSync("git", ["update-index", "--add", "--cacheinfo", `100644,${blob},${REL}`], {
+      cwd: paths.orgRepo,
+      env: scratchIndexEnv,
+    });
+    const tree = execFileSync("git", ["write-tree"], { cwd: paths.orgRepo, env: scratchIndexEnv }).toString().trim();
+    const orphan = execFileSync("git", ["commit-tree", tree, "-m", "unrelated history, but has the file"], {
+      cwd: paths.orgRepo,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "ghost",
+        GIT_AUTHOR_EMAIL: "ghost@example.com",
+        GIT_COMMITTER_NAME: "t",
+        GIT_COMMITTER_EMAIL: "t@t",
+      },
+    })
+      .toString()
+      .trim();
+    execFileSync("git", ["update-ref", `refs/heads/proposals/pg/${ID}/2`, orphan], { cwd: paths.orgRepo });
+
+    const open = await listProposals(paths, { slug: "pg", docId: ID, relPath: REL, currentFileText: DOC });
+    assert.equal(open.length, 1, "the orphan ref #2 has no merge-base with main and is skipped entirely");
+    assert.equal(open[0].id, "1");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("listProposals: a proposal that empties the document's file text is still listed, not conflated with a missing file (M6)", async () => {
+  const { root, paths } = setup("emptied");
+  try {
+    await createProposal(paths, {
+      slug: "pg",
+      docId: ID,
+      relPath: REL,
+      newFileText: "",
+      sectionId: "approach",
+      author: ANDERSON,
+      rationale: "wipe it",
+    });
+
+    const open = await listProposals(paths, { slug: "pg", docId: ID, relPath: REL, currentFileText: DOC });
+    assert.equal(open.length, 1, "an emptied file is a real, listable proposal — not the same as 'file absent'");
+    assert.equal(open[0].id, "1");
+    assert.equal(open[0].newBody, "");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

@@ -27,6 +27,18 @@ export interface ProposalWire {
   createdAt: string;
 }
 
+/**
+ * The only shape a real, machine-allocated proposal number can take as a ref
+ * segment or a caller-supplied id: no fractional forms, no leading zero, no
+ * leading `+`, no leading/trailing whitespace, no scientific notation.
+ * `Number()` coerces every one of those aliases to the SAME integer a real id
+ * could have (`Number("1.0") === 1`, `Number(" 1") === 1`, …), so validation
+ * has to reject the STRING before it ever reaches `Number()` — checking
+ * `Number.isInteger()` after the fact is too late, because the alias and the
+ * real id are, by then, indistinguishable (task-6 review, Important #2–#4).
+ */
+const PROPOSAL_ID_RE = /^[1-9]\d*$/;
+
 export function proposalRef(slug: string, docId: string, n: number): string {
   return `refs/heads/proposals/${slug}/${docId}/${n}`;
 }
@@ -54,14 +66,23 @@ async function git(cwd: string, args: string[], env?: NodeJS.ProcessEnv, input?:
   return (await child).stdout.toString();
 }
 
+/**
+ * The proposal numbers that actually exist under this document's ref prefix.
+ * Each ref segment is validated as a STRING against `PROPOSAL_ID_RE` before
+ * `Number()` ever sees it — a hand-made ref named `1.0`, `+1`, `01`, or
+ * `1e21` is dropped here, never counted for `<n>` allocation and never
+ * listed as a duplicate of the real proposal it would otherwise alias onto
+ * (task-6 review, Important #3–#4).
+ */
 async function existingNumbers(dir: string, slug: string, docId: string): Promise<number[]> {
   const prefix = proposalPrefix(slug, docId);
   const out = await git(dir, ["for-each-ref", "--format=%(refname)", prefix]);
   return out
     .split("\n")
     .filter(Boolean)
-    .map((ref) => Number(ref.slice(prefix.length)))
-    .filter((n) => Number.isInteger(n));
+    .map((ref) => ref.slice(prefix.length))
+    .filter((segment) => PROPOSAL_ID_RE.test(segment))
+    .map(Number);
 }
 
 /** The rationale is the commit subject; the section id rides as a trailer so listing never has to diff to find it. */
@@ -89,7 +110,16 @@ export async function createProposal(
     // createProposal calls on the same document must never see the same
     // existingNumbers() snapshot.
     const n = Math.max(0, ...(await existingNumbers(dir, p.slug, p.docId))) + 1;
-    const blob = (await git(dir, ["hash-object", "-w", "--stdin"], undefined, p.newFileText)).trim();
+    // `--path` runs the blob through the SAME clean/eol filters as adding at
+    // this path would (core.autocrlf, .gitattributes) — without it, a CRLF
+    // body hashes to a different blob than committing the same text
+    // normally would, so a diff against main reports the whole file as
+    // changed instead of just the proposed section (task-6 review,
+    // Important #1). The bare hash-object step never touched the index
+    // anyway, so this stays outside the private-index scope below.
+    const blob = (
+      await git(dir, ["hash-object", "-w", "--path", p.relPath, "--stdin"], undefined, p.newFileText)
+    ).trim();
     // A private index: read main's tree into it, swap the one blob, write the
     // tree. The repo's own index — and the live checkout — never see any of it.
     const tmp = await mkdtemp(join(tmpdir(), "proposal-index-"));
@@ -118,9 +148,20 @@ function sectionBody(text: string, sectionId: string): string | undefined {
   return splitSections(text.replace(/^---\n[\s\S]*?\n---\n?/, "")).find((s) => s.id === sectionId)?.body;
 }
 
-/** `git show <sha>:<relPath>`, degrading to `""` when the path or ref cannot be read at that point — a hand-made branch may not carry the file at all. */
-async function showFile(dir: string, sha: string, relPath: string): Promise<string> {
-  return git(dir, ["show", `${sha}:${relPath}`]).catch(() => "");
+/**
+ * Show the file's text at one point, returning `null` — never `""` — when
+ * the path or ref cannot be read there. `null` and `""` are NOT the same
+ * thing: `""` is a legitimate (if unusual) file body, e.g. a proposal that
+ * empties the document; only `null` means "this point does not carry the
+ * file at all." Conflating the two used to silently drop a real, emptying
+ * proposal from the listing (task-6 review, Minor #6).
+ */
+async function showFile(dir: string, sha: string, relPath: string): Promise<string | null> {
+  try {
+    return await git(dir, ["show", `${sha}:${relPath}`]);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -148,9 +189,17 @@ async function readProposal(
     const base = await git(dir, ["merge-base", "refs/heads/main", sha])
       .then((s) => s.trim())
       .catch(() => null);
+    // No merge-base with main means no shared history at all — by spec §4 a
+    // proposal's parent IS main, so a ref with none cannot be a real
+    // proposal. Falling through used to default `baseText` to `""`, which
+    // made every section "differ" and misattributed the branch's FIRST
+    // section as the proposed edit — text nobody proposed (task-6 review,
+    // Minor #5). Skip the ref outright instead.
+    if (base === null) return null;
     const branchText = await showFile(dir, sha, relPath);
-    if (!branchText) return null; // nothing to show — the file does not exist on this branch
-    const baseText = base ? await showFile(dir, base, relPath) : "";
+    if (branchText === null) return null; // the file does not exist on this branch at all
+    const baseText = await showFile(dir, base, relPath);
+    if (baseText === null) return null; // the file did not exist yet at the branch point — nothing to diff against
     // Without a trailer (a hand-made branch), find the one section that changed.
     const changed =
       sectionId ??
@@ -195,8 +244,9 @@ export async function proposalFileText(
   p: { slug: string; docId: string; id: string; relPath: string },
 ): Promise<{ branchText: string; baseText: string } | null> {
   const dir = paths.orgRepo;
+  // Validate the STRING before it ever reaches Number() — see PROPOSAL_ID_RE.
+  if (!PROPOSAL_ID_RE.test(p.id)) return null;
   const n = Number(p.id);
-  if (!Number.isInteger(n)) return null;
   const ref = proposalRef(p.slug, p.docId, n);
   let sha: string;
   try {
@@ -208,9 +258,11 @@ export async function proposalFileText(
   const base = await git(dir, ["merge-base", "refs/heads/main", sha])
     .then((s) => s.trim())
     .catch(() => null);
-  const branchText = await git(dir, ["show", `${sha}:${p.relPath}`]).catch(() => null);
+  if (base === null) return null; // no shared history with main — not a real proposal (spec §4)
+  const branchText = await showFile(dir, sha, p.relPath);
   if (branchText === null) return null; // the branch does not carry this file — nothing to show
-  const baseText = base ? await showFile(dir, base, p.relPath) : "";
+  const baseText = await showFile(dir, base, p.relPath);
+  if (baseText === null) return null;
   return { branchText, baseText };
 }
 
@@ -220,8 +272,12 @@ export async function deleteProposal(
   p: { slug: string; docId: string; id: string },
 ): Promise<boolean> {
   return withOrgRepoQueue(paths.orgRepo, async () => {
+    // Validate the STRING before it ever reaches Number() — see
+    // PROPOSAL_ID_RE. Delete is the destructive verb: Number("1.0") and
+    // Number("1") are the same value, so without this an alias id deletes
+    // the real proposal (task-6 review, Important #2).
+    if (!PROPOSAL_ID_RE.test(p.id)) return false;
     const n = Number(p.id);
-    if (!Number.isInteger(n)) return false;
     const ref = proposalRef(p.slug, p.docId, n);
     try {
       const sha = (await git(paths.orgRepo, ["rev-parse", "--verify", "--quiet", ref])).trim();
