@@ -153,7 +153,7 @@ export function parseFrontmatter(block: string): { values: Record<string, string
 export function parseDocumentFile(text: string): { doc: ParsedDocument | null; problems: ParseProblem[] };
 export function serializeDocumentFile(doc: ParsedDocument): string;
 export function splitSections(markdown: string): DocSection[];
-export function slugify(text: string): string;                       // re-export of capabilities.ts's slugify
+export function slugify(text: string): string;                       // TOTAL: never throws; an unslugifiable input yields `section-0` (NOT capabilities.ts's slugify, which throws)
 export function documentFileId(createdAt: string, effort: string, blueprintId: string): string;
 export const FRONTMATTER_KEYS: readonly string[];
 ```
@@ -496,7 +496,7 @@ export function documentFileId(createdAt: string, effort: string, blueprintId: s
   const d = new Date(createdAt);
   const pad = (n: number) => String(n).padStart(2, "0");
   const stamp = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}-${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}`;
-  const slug = slugify(effort) || "document";
+  const slug = slugify(effort); // total: an unslugifiable effort yields "section-0", never empty
   return `${stamp}-${slug}${blueprintId === "spec" ? "-design" : ""}`;
 }
 ```
@@ -1993,7 +1993,7 @@ export async function createDocument(
   if (!sections) return { error: `workType must be one of: ${bp.workTypes.join(", ")}`, status: 400 };
   const now = (input.now ?? nowIso)();
   const title = input.title?.replace(/\s+/g, " ").trim() || bp.name;
-  const effort = slugify(input.effort?.trim() || title) || "document";
+  const effort = slugify(input.effort?.trim() || title); // slugify is TOTAL (document-file.ts) — no fallback needed
   const id = await freeId(paths, ws, bp.folder, documentFileId(now, effort, bp.id));
   const doc: ParsedDocument = {
     frontmatter: { title, blueprint: bp.id, workType, status: "drafting", effort, slices: [], participants: [], pins: [], createdAt: now, updatedAt: now },
@@ -2007,7 +2007,7 @@ export async function importDocument(paths: SmithPaths, ws: Workspace, legacy: L
   const bp = await blueprintFor(paths, ws, legacy.blueprintId);
   if (!bp) return { error: `unknown blueprint: ${legacy.blueprintId}`, status: 400 };
   const title = legacy.title.replace(/\s+/g, " ").trim() || bp.name;
-  const effort = slugify(title) || "document";
+  const effort = slugify(title); // slugify is TOTAL (document-file.ts) — no fallback needed
   const id = documentFileId(legacy.createdAt, effort, bp.id);
   const loc = located(paths, ws, bp.folder, id);
   if (await readParsed(loc)) return { error: `already imported as ${id}`, status: 409 };
