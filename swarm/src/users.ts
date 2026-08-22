@@ -27,6 +27,8 @@ export interface VoiceSettings {
 export interface User {
   id: string;
   name: string;
+  /** Git author email for commits made on this user's behalf (spec 2026-08-22 §1.4). Absent → <slug>@users.smithagents. */
+  email?: string;
   /** Mirrors Workspace's default-invariant pattern; single default user today. */
   default?: boolean;
   connectors?: ConnectorInstance[];

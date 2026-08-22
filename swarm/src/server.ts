@@ -189,7 +189,12 @@ import {
 } from "./work-items.js";
 import { WORK_KINDS } from "./work-kinds.js";
 import { addMemberWorktrees, createInstance, memberBranch } from "./workspace-instances.js";
-import { commitConfigFiles, materializeRepos, migrateReposIntoWorkspace, repoNameProblem } from "./workspace-repos.js";
+import {
+  commitLegacyConfigFiles,
+  materializeRepos,
+  migrateReposIntoWorkspace,
+  repoNameProblem,
+} from "./workspace-repos.js";
 import { loadRoster } from "./workspace-roster.js";
 import {
   activeWorkspaces,
@@ -2030,7 +2035,7 @@ export class OrchestratorServer {
       // repo it created stays permanently empty. Same treatment as that
       // ensureConfigRepo call: never fatal to workspace creation, note only;
       // the next repo-migration boot pass retries it if this fails.
-      await commitConfigFiles(newWorkspaceDir).catch((err) => {
+      await commitLegacyConfigFiles(newWorkspaceDir).catch((err) => {
         this.app.log.warn(
           `Could not commit config files for workspace "${record.name}": ${String((err as Error).message)}`,
         );

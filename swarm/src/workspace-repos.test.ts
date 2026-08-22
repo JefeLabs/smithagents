@@ -10,11 +10,14 @@ import {
   cloneExecOptions,
   cloneRepoInto,
   commitConfigFiles,
+  commitLegacyConfigFiles,
   ensureConfigRepo,
+  ensureOrgRepo,
   materializeRepos,
   migrateReposIntoWorkspace,
   repoDirFor,
   repoNameProblem,
+  workspaceConfigPaths,
 } from "./workspace-repos.js";
 import { loadRoster } from "./workspace-roster.js";
 import { loadWorkspaces, saveWorkspace } from "./workspaces.js";
@@ -647,7 +650,7 @@ test("commitConfigFiles: commits settings.json and boards/ written after ensureC
     writeFileSync(join(ws, "config", "settings.json"), '{"name":"pg","repos":[]}\n');
     writeFileSync(join(ws, "config", "boards", "personal.json"), '{"id":"personal"}\n');
 
-    const committed = await commitConfigFiles(ws);
+    const committed = await commitLegacyConfigFiles(ws);
 
     assert.equal(committed, true, "reports that it made a commit");
     const tree = execFileSync("git", ["ls-tree", "-r", "--name-only", "HEAD"], { cwd: join(ws, "config") }).toString();
@@ -667,12 +670,12 @@ test("commitConfigFiles: a second call with nothing new staged commits nothing",
   try {
     await ensureConfigRepo(ws);
     writeFileSync(join(ws, "config", "settings.json"), '{"name":"pg","repos":[]}\n');
-    await commitConfigFiles(ws);
+    await commitLegacyConfigFiles(ws);
     const first = execFileSync("git", ["rev-parse", "HEAD"], { cwd: join(ws, "config") })
       .toString()
       .trim();
 
-    const committed = await commitConfigFiles(ws);
+    const committed = await commitLegacyConfigFiles(ws);
 
     assert.equal(committed, false, "reports it made no commit");
     const second = execFileSync("git", ["rev-parse", "HEAD"], { cwd: join(ws, "config") })
@@ -691,7 +694,7 @@ test("commitConfigFiles: an unrelated user file dropped in config/ is never stag
     writeFileSync(join(ws, "config", "settings.json"), '{"name":"pg","repos":[]}\n');
     writeFileSync(join(ws, "config", "notes.txt"), "personal scratch notes\n");
 
-    await commitConfigFiles(ws);
+    await commitLegacyConfigFiles(ws);
 
     const tracked = execFileSync("git", ["ls-files"], { cwd: join(ws, "config") }).toString();
     assert.doesNotMatch(tracked, /notes\.txt/, "explicit pathspecs mean it was never staged in the first place");
@@ -713,7 +716,7 @@ test("commitConfigFiles: an already-committed config repo heals when roster.json
     await ensureConfigRepo(ws);
     writeFileSync(join(ws, "config", "roster.json"), '{"agents":["fabian"],"squads":[]}\n');
 
-    const committed = await commitConfigFiles(ws);
+    const committed = await commitLegacyConfigFiles(ws);
 
     assert.equal(committed, true, "the healing commit happens even though config/ already had a commit");
     const tree = execFileSync("git", ["ls-tree", "-r", "--name-only", "HEAD"], { cwd: join(ws, "config") }).toString();
@@ -728,10 +731,103 @@ test("commitConfigFiles: an empty config/ (nothing system-owned exists yet) comm
   try {
     await ensureConfigRepo(ws);
 
-    const committed = await commitConfigFiles(ws);
+    const committed = await commitLegacyConfigFiles(ws);
 
     assert.equal(committed, false, "no candidate files exist on disk, so there is nothing to stage");
   } finally {
     rmSync(ws, { recursive: true, force: true });
   }
+});
+
+test("ensureOrgRepo: creates the org repo with settings.json committed; a second call is a no-op", async () => {
+  const root = mkdtempSync(join(tmpdir(), "orgrepo-"));
+  try {
+    const paths = smithPaths(root);
+    assert.equal(await ensureOrgRepo(paths, { name: "acme" }), true);
+    assert.deepEqual(JSON.parse(readFileSync(join(paths.orgRepo, "settings.json"), "utf8")), { name: "acme" });
+    const tracked = execFileSync("git", ["ls-files"], { cwd: paths.orgRepo }).toString();
+    assert.match(tracked, /^settings\.json$/m, "the org record is in HEAD");
+    const first = execFileSync("git", ["rev-parse", "HEAD"], { cwd: paths.orgRepo }).toString().trim();
+
+    assert.equal(await ensureOrgRepo(paths, { name: "acme" }), false);
+    const second = execFileSync("git", ["rev-parse", "HEAD"], { cwd: paths.orgRepo }).toString().trim();
+    assert.equal(first, second, "never a second commit");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("ensureOrgRepo: heals a repo that was git-init'd but never committed", async () => {
+  const root = mkdtempSync(join(tmpdir(), "orgrepo-heal-"));
+  try {
+    const paths = smithPaths(root);
+    mkdirSync(paths.orgRepo, { recursive: true });
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: paths.orgRepo });
+    assert.equal(await ensureOrgRepo(paths, { name: "acme" }), true);
+    execFileSync("git", ["rev-parse", "--verify", "HEAD"], { cwd: paths.orgRepo });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("workspaceConfigPaths: every allowlisted path is under the workspace's own subtree", () => {
+  for (const p of workspaceConfigPaths("pg")) assert.ok(p.startsWith("workspaces/pg/"), p);
+  assert.ok(workspaceConfigPaths("pg").includes("workspaces/pg/settings.json"));
+  assert.ok(workspaceConfigPaths("pg").includes("workspaces/pg/boards"));
+  assert.ok(workspaceConfigPaths("pg").includes("workspaces/pg/roster.json"));
+});
+
+test("commitConfigFiles: stages ONLY the allowlisted paths of ONE subtree — a stray file and a sibling workspace are never committed", async () => {
+  const root = mkdtempSync(join(tmpdir(), "orgcommit-"));
+  try {
+    const paths = smithPaths(root);
+    await ensureOrgRepo(paths, { name: "acme" });
+    const pg = join(paths.orgRepo, "workspaces", "pg");
+    const other = join(paths.orgRepo, "workspaces", "other");
+    mkdirSync(join(pg, "boards"), { recursive: true });
+    mkdirSync(other, { recursive: true });
+    writeFileSync(join(pg, "settings.json"), '{"name":"pg","repos":[]}\n');
+    writeFileSync(join(pg, "boards", "pg-plan.json"), '{"id":"pg-plan"}\n');
+    writeFileSync(join(pg, "scratch.txt"), "dropped in by hand\n");
+    writeFileSync(join(other, "settings.json"), '{"name":"other","repos":[]}\n');
+
+    assert.equal(await commitConfigFiles(paths, "pg"), true);
+
+    const tree = execFileSync("git", ["ls-tree", "-r", "--name-only", "HEAD"], { cwd: paths.orgRepo }).toString();
+    assert.match(tree, /^workspaces\/pg\/settings\.json$/m);
+    assert.match(tree, /^workspaces\/pg\/boards\/pg-plan\.json$/m);
+    assert.doesNotMatch(tree, /scratch\.txt/, "a hand-dropped file is never staged on the user's behalf");
+    assert.doesNotMatch(tree, /workspaces\/other/, "another workspace's subtree is not this commit's business");
+    assert.equal(await commitConfigFiles(paths, "pg"), false, "nothing changed → no commit");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("commitConfigFiles: the AUTHOR is whoever acted, the COMMITTER is always the tool", async () => {
+  const root = mkdtempSync(join(tmpdir(), "orgauthor-"));
+  try {
+    const paths = smithPaths(root);
+    await ensureOrgRepo(paths, { name: "acme" });
+    const pg = join(paths.orgRepo, "workspaces", "pg");
+    mkdirSync(pg, { recursive: true });
+    writeFileSync(join(pg, "settings.json"), '{"name":"pg","repos":[]}\n');
+
+    await commitConfigFiles(paths, "pg", {
+      author: { name: "Edwin Cruz", email: "e@example.com" },
+      message: "config(pg): create",
+    });
+
+    const line = execFileSync("git", ["log", "-1", "--format=%an <%ae>|%cn <%ce>|%s"], { cwd: paths.orgRepo })
+      .toString()
+      .trim();
+    assert.equal(line, "Edwin Cruz <e@example.com>|smithagents <smithagents@localhost>|config(pg): create");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("commitConfigFiles: refuses a slug that is not a slug — a path could otherwise escape the subtree", async () => {
+  const paths = smithPaths(mkdtempSync(join(tmpdir(), "orgslug-")));
+  await assert.rejects(() => commitConfigFiles(paths, "../escape"), /slug/);
 });

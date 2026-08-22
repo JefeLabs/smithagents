@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process";
-import { mkdir, readdir, stat } from "node:fs/promises";
+import { mkdir, readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { type GitAuthor, SMITH_IDENTITY } from "./git-author.js";
 import type { SmithPaths } from "./paths.js";
 import { loadRoster, saveRoster } from "./workspace-roster.js";
 import {
@@ -17,11 +18,13 @@ import {
 const run = promisify(execFile);
 
 /**
- * Commit identity for repos this code creates on the user's behalf. Their own
- * commits use their own identity; this only labels the initial import so a
- * machine with no global git identity does not fail to initialise a workspace.
+ * Commit identity for commits this code makes. The tool is always the
+ * COMMITTER; the AUTHOR is whoever acted (spec 2026-08-22 §1.4), passed per
+ * call. A machine with no global git identity therefore never fails to
+ * commit, and `git blame` still names the person.
  */
-const AUTHOR = ["-c", "user.name=smithagents", "-c", "user.email=smithagents@localhost"];
+const SMITH_COMMITTER = ["-c", `user.name=${SMITH_IDENTITY.name}`, "-c", `user.email=${SMITH_IDENTITY.email}`];
+const AUTHOR = SMITH_COMMITTER; // legacy alias — removed with ensureConfigRepo in the cutover task
 
 /**
  * Strip `user:token@` credentials from a URL embedded in a git error message
@@ -80,6 +83,101 @@ export async function ensureConfigRepo(workspaceDir: string): Promise<boolean> {
   return true;
 }
 
+/**
+ * Make `paths.orgRepo` a git repo holding the org record, committing once.
+ * Same contract as the per-workspace `ensureConfigRepo` it replaces: an
+ * existing repo with a commit is never re-initialised and never gets a new
+ * commit here — subsequent content reaches HEAD through `commitConfigFiles`.
+ * Self-healing: a `.git` with no commits (a prior partial init) is completed.
+ *
+ * `org.name` is only written when no settings.json exists yet; an org record
+ * the user has edited is never overwritten.
+ */
+export async function ensureOrgRepo(paths: SmithPaths, org: { name: string }): Promise<boolean> {
+  const dir = paths.orgRepo;
+  await mkdir(dir, { recursive: true });
+  if (await hasCommit(dir)) return false;
+
+  if (!(await exists(join(dir, ".git")))) {
+    await run("git", ["init", "-q", "-b", "main"], { cwd: dir });
+  }
+  if (!(await exists(join(dir, "settings.json")))) {
+    await writeFile(join(dir, "settings.json"), `${JSON.stringify({ name: org.name }, null, 2)}\n`);
+  }
+  await run("git", ["add", "-A"], { cwd: dir });
+  await run("git", [...SMITH_COMMITTER, "commit", "-q", "--allow-empty", "-m", "Org config"], { cwd: dir });
+  return true;
+}
+
+/**
+ * The only paths this codebase ever commits for ONE workspace, relative to
+ * the org repo root. `specs`, `plans`, `dashboards`, `blueprints` are written
+ * by later plans; listing them now costs nothing (absent paths are skipped)
+ * and means the allowlist matches the spec's §1.4 in one place.
+ */
+export function workspaceConfigPaths(slug: string): string[] {
+  return ["settings.json", "roster.json", "boards", "blueprints", "specs", "plans", "dashboards"].map(
+    (p) => `workspaces/${slug}/${p}`,
+  );
+}
+
+/** Org-level paths this codebase commits. */
+const ORG_CONFIG_PATHS = ["settings.json", "blueprints"];
+
+/**
+ * Commit whichever allowlisted paths of `slug`'s subtree (plus the org-level
+ * record) currently have uncommitted changes, inside the org repo.
+ *
+ * Stages ONLY these explicit paths — never `-A` — so a file the user drops
+ * into the repo by hand is never staged or committed on their behalf. `git
+ * add` with a pathspec that matches nothing fails the whole call, so each
+ * candidate is checked with `exists()` first. A path that was DELETED on
+ * disk (an archived boards/ dir) is therefore not staged either; its
+ * deletion reaches HEAD only when something else under it is next committed.
+ *
+ * `opts.author` is whoever acted; absent means the tool healed something on
+ * its own (boot). Returns whether it made a commit.
+ */
+export async function commitConfigFiles(
+  paths: SmithPaths,
+  slug: string,
+  opts: { author?: GitAuthor; message?: string } = {},
+): Promise<boolean> {
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(slug)) {
+    throw new Error(`"${slug}" is not a workspace slug — refusing to build a commit pathspec from it`);
+  }
+  const dir = paths.orgRepo;
+  const present: string[] = [];
+  for (const path of [...ORG_CONFIG_PATHS, ...workspaceConfigPaths(slug)]) {
+    if (await exists(join(dir, path))) present.push(path);
+  }
+  if (present.length === 0) return false;
+
+  await run("git", ["add", "--", ...present], { cwd: dir });
+  try {
+    // Exit 0 means nothing is staged; a non-zero exit (thrown by execFile)
+    // means there is a staged diff to commit.
+    await run("git", ["diff", "--cached", "--quiet"], { cwd: dir });
+    return false;
+  } catch {
+    /* fall through to commit below */
+  }
+  const author = opts.author ?? SMITH_IDENTITY;
+  await run(
+    "git",
+    [
+      ...SMITH_COMMITTER,
+      "commit",
+      "-q",
+      "-m",
+      opts.message ?? `config(${slug}): update`,
+      `--author=${author.name} <${author.email}>`,
+    ],
+    { cwd: dir },
+  );
+  return true;
+}
+
 /** The only files this codebase ever commits into a workspace's config/ repo. */
 const SYSTEM_OWNED_CONFIG_PATHS = ["settings.json", "boards", "roster.json"];
 
@@ -102,7 +200,7 @@ const SYSTEM_OWNED_CONFIG_PATHS = ["settings.json", "boards", "roster.json"];
  * checked with `exists()` first and only the ones actually on disk are
  * passed. Returns whether it made a commit.
  */
-export async function commitConfigFiles(workspaceDir: string): Promise<boolean> {
+export async function commitLegacyConfigFiles(workspaceDir: string): Promise<boolean> {
   const dir = join(workspaceDir, "config");
   const present: string[] = [];
   for (const path of SYSTEM_OWNED_CONFIG_PATHS) {
@@ -378,8 +476,8 @@ export async function migrateReposIntoWorkspace(
       // Record today's assignment — every global agent and squad — so the
       // file exists. This preserves current behaviour exactly; it does not
       // start gating on the roster. Getting it into HEAD is
-      // commitConfigFiles' job below, not this write — this only needs to
-      // put the content on disk to be staged. Also outside the `changed`
+      // commitLegacyConfigFiles' job below, not this write — this only needs
+      // to put the content on disk to be staged. Also outside the `changed`
       // gate and in its own try/catch, for the same reason as
       // ensureConfigRepo above: a workspace whose roster failed to save on
       // some prior run keeps getting another chance.
@@ -405,7 +503,7 @@ export async function migrateReposIntoWorkspace(
       // HEAD. Runs every boot so an already-migrated workspace — one that got
       // its one-shot commit before this function existed — heals too.
       try {
-        await commitConfigFiles(dir);
+        await commitLegacyConfigFiles(dir);
       } catch (err) {
         notes.push(`[repo-migration] ${ws.name}'s config files did not get committed — ${(err as Error).message}`);
       }
