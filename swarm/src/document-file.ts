@@ -2,9 +2,8 @@
 // section, each heading carrying its stable id as `{#id}`. Pure: no fs, no
 // git — the store (document-store.ts) reads and writes, this module only
 // understands the text. Kept deliberately small: the frontmatter grammar is
-// a flat subset (scalars and [a, b] lists, no nesting, no comments) because
-// a parser would be more surface than the data.
-import { slugify as capSlugify } from "./capabilities.js";
+// a flat subset (scalars and [a, b] lists, no nesting) because a parser
+// would be more surface than the data.
 
 export type DocStatus = "drafting" | "review" | "final";
 export const DOC_STATUSES: readonly DocStatus[] = ["drafting", "review", "final"];
@@ -25,6 +24,7 @@ export interface DocFrontmatter {
 }
 
 export interface DocSection {
+  /** `""` marks the preamble (text before the first heading — no `## ` line is written for it). Otherwise must match `SECTION_ID_RE`. */
   id: string;
   heading: string;
   body: string;
@@ -56,13 +56,36 @@ export const FRONTMATTER_KEYS: readonly string[] = [
 const REQUIRED_KEYS = ["title", "blueprint", "workType", "status", "effort", "createdAt", "updatedAt"];
 const LIST_KEYS = new Set(["slices", "participants", "pins"]);
 
-export const slugify = capSlugify;
+/** A section id must match this to be written; the empty string is reserved for the preamble. */
+const SECTION_ID_RE = /^[a-z0-9][a-z0-9-]*$/;
+
+/**
+ * A total, local slugifier for section headings and the `effort` slug:
+ * always returns a string matching `SECTION_ID_RE`, never throws. Not
+ * `capabilities.ts`'s `slugify`, which throws on anything that doesn't
+ * already reduce to a usable id — non-Latin text, an emoji-led heading,
+ * plain English prose over 64 chars are all ordinary in a model-authored
+ * document, and one bad heading must not break parsing the rest of the
+ * file, let alone a caller listing a whole workspace's documents. `index`
+ * seeds the fallback (`section-<index>`) when the text carries no usable
+ * `[a-z0-9]` characters at all.
+ */
+function sectionSlug(text: string, index: number): string {
+  let s = text
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (s.length > 64) s = s.slice(0, 64).replace(/-+$/g, "");
+  return s || `section-${index}`;
+}
 
 /**
  * `key: scalar` and `key: [a, b]` only. Anything else is a problem that
  * names the key, so a hand edit that drifts into YAML proper is refused by
- * name rather than silently misread. Comments are refused too: `#` is legal
- * inside a title, so the only safe rule is "no comments at all".
+ * name rather than silently misread. `#` is ordinary text in a value — the
+ * frontmatter block is delimited by `---`, so there is no comment syntax to
+ * disambiguate and nothing to refuse.
  */
 export function parseFrontmatter(block: string): {
   values: Record<string, string | string[]>;
@@ -70,18 +93,32 @@ export function parseFrontmatter(block: string): {
 } {
   const values: Record<string, string | string[]> = {};
   const problems: ParseProblem[] = [];
+  let lastSeenKey: string | undefined;
+  let inNestedBlock = false;
   for (const raw of block.split("\n")) {
-    if (!raw.trim()) continue;
-    if (/^\s/.test(raw)) {
-      problems.push({ where: `frontmatter.${lastKey(values) ?? "?"}`, message: "nested values are not supported" });
+    if (!raw.trim()) {
+      inNestedBlock = false;
       continue;
     }
-    const m = /^([A-Za-z][A-Za-z0-9]*):\s*(.*)$/.exec(raw);
+    if (/^\s/.test(raw)) {
+      // One problem per nested block, not one per indented line, and
+      // attributed to the key whose line opened it — even a key that was
+      // itself rejected (unknown, malformed) — never to some unrelated key
+      // that happened to parse cleanly earlier.
+      if (!inNestedBlock) {
+        problems.push({ where: `frontmatter.${lastSeenKey ?? "?"}`, message: "nested values are not supported" });
+        inNestedBlock = true;
+      }
+      continue;
+    }
+    inNestedBlock = false;
+    const m = /^([A-Za-z][A-Za-z0-9_-]*):\s*(.*)$/.exec(raw);
     if (!m) {
       problems.push({ where: "frontmatter", message: `cannot read line: ${raw}` });
       continue;
     }
     const [, key, rest] = m;
+    lastSeenKey = key;
     if (!FRONTMATTER_KEYS.includes(key)) {
       problems.push({ where: `frontmatter.${key}`, message: "unknown key" });
       continue;
@@ -90,16 +127,14 @@ export function parseFrontmatter(block: string): {
       problems.push({ where: `frontmatter.${key}`, message: "nested values are not supported" });
       continue;
     }
-    if (/\s#/.test(rest) || rest.startsWith("#")) {
-      problems.push({ where: `frontmatter.${key}`, message: "comments are not supported" });
-      continue;
-    }
     if (LIST_KEYS.has(key)) {
       const list = /^\[(.*)\]$/.exec(rest.trim());
       if (!list) {
         problems.push({ where: `frontmatter.${key}`, message: "must be a list like [a, b]" });
         continue;
       }
+      // Split on every comma — list elements (agent ids, slice ids) never
+      // contain one, so this is not a real quoting gap for today's data.
       values[key] = list[1]
         .split(",")
         .map((s) => s.trim())
@@ -111,35 +146,59 @@ export function parseFrontmatter(block: string): {
   return { values, problems };
 }
 
-function lastKey(values: Record<string, unknown>): string | undefined {
-  const keys = Object.keys(values);
-  return keys[keys.length - 1];
-}
-
 /**
  * Split a markdown body into sections at top-level `## ` headings, fence-aware:
- * a `##` inside a ``` or ~~~ block is body. A heading's `{#id}` marker is the
- * section id; a heading without one gets `slugify(heading)`. Text before the
- * first heading is a `preamble` section (kept, so nothing a hand editor
- * writes above the first heading is dropped).
+ * a `##` inside a ``` or ~~~ block is body. A closing fence must be at least
+ * as long as its opener (CommonMark) — a shorter run of the same character
+ * inside a longer fence is content, not a close. An unclosed fence swallows
+ * every following heading into the current section's body; nothing is lost
+ * (the text round-trips verbatim) but no problem is reported for it — a
+ * `problems` channel for this function is a later task's design call.
+ * A heading's `{#id}` marker is the section id; a heading without one gets a
+ * total, local slug (`sectionSlug`), de-duplicated against ids already used
+ * in this document by appending `-2`, `-3`, … Text before the first heading
+ * is kept as a section with id `""` (kept, so nothing a hand editor writes
+ * above the first heading is dropped) — never the string `"preamble"`,
+ * which is an ordinary id an actual `## Preamble` heading can take.
  */
 export function splitSections(markdown: string): DocSection[] {
   const out: DocSection[] = [];
+  const usedIds = new Set<string>();
   let current: DocSection | null = null;
   const preamble: string[] = [];
   let fence: string | null = null;
+  let fenceLen = 0;
+  let headingIndex = 0;
   const lines = markdown.replace(/\r\n/g, "\n").split("\n");
   for (const line of lines) {
     const fenceMatch = /^(```+|~~~+)/.exec(line);
     if (fenceMatch) {
-      if (!fence) fence = fenceMatch[1][0] === "`" ? "`" : "~";
-      else if (line.startsWith(fence.repeat(3))) fence = null;
+      const marker = fenceMatch[1][0];
+      const len = fenceMatch[1].length;
+      if (!fence) {
+        fence = marker;
+        fenceLen = len;
+      } else if (marker === fence && len >= fenceLen) {
+        fence = null;
+        fenceLen = 0;
+      }
     }
     const heading = !fence && /^## (.*?)(?:\s*\{#([a-z0-9][a-z0-9-]*)\})?\s*$/.exec(line);
     if (heading) {
       if (current) out.push(finish(current));
       const text = heading[1].trim();
-      current = { id: heading[2] ?? slugify(text), heading: text, body: "" };
+      let id = heading[2];
+      if (!id) {
+        id = sectionSlug(text, headingIndex);
+        if (usedIds.has(id)) {
+          let n = 2;
+          while (usedIds.has(`${id}-${n}`)) n++;
+          id = `${id}-${n}`;
+        }
+      }
+      usedIds.add(id);
+      headingIndex++;
+      current = { id, heading: text, body: "" };
       continue;
     }
     if (current) current.body += `${line}\n`;
@@ -147,7 +206,7 @@ export function splitSections(markdown: string): DocSection[] {
   }
   if (current) out.push(finish(current));
   const pre = preamble.join("\n").trim();
-  if (pre) out.unshift({ id: "preamble", heading: "", body: pre });
+  if (pre) out.unshift({ id: "", heading: "", body: pre });
   return out;
 }
 
@@ -155,14 +214,20 @@ function finish(s: DocSection): DocSection {
   return { ...s, body: s.body.trim() };
 }
 
-/** `{ doc, problems }` — `doc` is null when the frontmatter is missing or fails its fixed checks. */
+/** `{ doc, problems }` — `doc` is null when the frontmatter is missing or fails its fixed checks. Total: never throws. */
 export function parseDocumentFile(text: string): { doc: ParsedDocument | null; problems: ParseProblem[] } {
   const m = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(text.replace(/\r\n/g, "\n"));
   if (!m)
     return { doc: null, problems: [{ where: "frontmatter", message: "no frontmatter block at the top of the file" }] };
   const { values, problems } = parseFrontmatter(m[1]);
+  // A key already carrying a problem (unknown, nested, malformed list) must
+  // not also be reported "required" — it was seen, just rejected for a
+  // different reason, and "required" would be a lie next to that problem.
+  const problemKeys = new Set(
+    problems.map((p) => (p.where.startsWith("frontmatter.") ? p.where.slice("frontmatter.".length) : undefined)),
+  );
   for (const key of REQUIRED_KEYS) {
-    if (!(key in values)) problems.push({ where: `frontmatter.${key}`, message: "required" });
+    if (!(key in values) && !problemKeys.has(key)) problems.push({ where: `frontmatter.${key}`, message: "required" });
   }
   const status = values.status as string | undefined;
   if (status !== undefined && !DOC_STATUSES.includes(status as DocStatus)) {
@@ -191,7 +256,7 @@ export function parseDocumentFile(text: string): { doc: ParsedDocument | null; p
   return { doc: { frontmatter: fm, sections: splitSections(m[2]) }, problems: [] };
 }
 
-/** The canonical file: keys in FRONTMATTER_KEYS order (absent optionals omitted), then `## Heading {#id}` + body per section. */
+/** The canonical file: keys in FRONTMATTER_KEYS order (absent optionals omitted), then `## Heading {#id}` + body per section. Throws if a section's id is not `""` (preamble) and does not match `SECTION_ID_RE` — nothing on the parse path can produce such an id, but a caller constructing a `DocSection` by hand could, and writing it would silently corrupt the heading on the next read. */
 export function serializeDocumentFile(doc: ParsedDocument): string {
   const fm = doc.frontmatter;
   const lines: string[] = ["---"];
@@ -202,9 +267,12 @@ export function serializeDocumentFile(doc: ParsedDocument): string {
   }
   lines.push("---", "");
   for (const s of doc.sections) {
-    if (s.id === "preamble") {
+    if (s.id === "") {
       lines.push(s.body, "");
       continue;
+    }
+    if (!SECTION_ID_RE.test(s.id)) {
+      throw new Error(`serializeDocumentFile: section id ${JSON.stringify(s.id)} does not match ${SECTION_ID_RE}`);
     }
     lines.push(`## ${s.heading} {#${s.id}}`, "");
     if (s.body) lines.push(s.body, "");
@@ -212,11 +280,21 @@ export function serializeDocumentFile(doc: ParsedDocument): string {
   return `${lines.join("\n").trimEnd()}\n`;
 }
 
-/** `{YYYY-MM-DD-HHMM}-{effort}[-design]`, UTC (spec §2.1). */
+/**
+ * `{YYYY-MM-DD-HHMM}-{effort}[-design]`, UTC (spec §2.1). The id is minted
+ * once and never renamed (§2.1), so an invalid `createdAt` must fail loudly
+ * here rather than mint `NaN-NaN-NaN-NaNNaN-…` as a permanent filename. An
+ * unslugifiable `effort` does not throw: it degrades to `section-0` via the
+ * same total slugger sections use, at a fixed index since there is only one
+ * effort per document id.
+ */
 export function documentFileId(createdAt: string, effort: string, blueprintId: string): string {
   const d = new Date(createdAt);
+  if (Number.isNaN(d.getTime())) {
+    throw new Error(`documentFileId: createdAt ${JSON.stringify(createdAt)} is not a valid date`);
+  }
   const pad = (n: number) => String(n).padStart(2, "0");
   const stamp = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}-${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}`;
-  const slug = slugify(effort) || "document";
+  const slug = sectionSlug(effort, 0);
   return `${stamp}-${slug}${blueprintId === "spec" ? "-design" : ""}`;
 }
