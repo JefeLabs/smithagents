@@ -5,38 +5,25 @@
 // set of per-section checks the rules module can enforce.
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import {
+  activeSections,
+  type Blueprint,
+  type BlueprintFolder,
+  type BlueprintSection,
+  type SectionShape,
+} from "./blueprint-schema.js";
 import type { SmithPaths } from "./paths.js";
 import { configDirForName, slugForDir } from "./workspaces.js";
 
-export type SectionShape = "prose" | "checklist" | "mermaid";
-export type BlueprintFolder = "specs" | "plans" | "dashboards";
+// Re-exported so no existing importer of blueprints.js has to change —
+// the types and activeSections now live in the pure blueprint-schema.ts
+// (document-rules.ts imports straight from there instead, so its module
+// graph never reaches the fs/child_process this file needs below).
+export type { Blueprint, BlueprintFolder, BlueprintSection, SectionShape };
+export { activeSections };
+
 const SHAPES = new Set<string>(["prose", "checklist", "mermaid"]);
 const FOLDERS = new Set<string>(["specs", "plans", "dashboards"]);
-
-export interface BlueprintSection {
-  id: string;
-  heading: string;
-  /** Author guidance shown as the empty-section placeholder. */
-  hint?: string;
-  /** Seed body a fresh document opens with (e.g. a starter Mermaid block). Absent = empty. */
-  starter?: string;
-  /** Absent = always present. */
-  when?: { workType: string[] };
-  required?: boolean;
-  /** Closed set; absent = prose. A regex field was rejected on purpose — a rule nobody can read back is not a rule. */
-  shape?: SectionShape;
-}
-
-export interface Blueprint {
-  id: string;
-  name: string;
-  /** Render family — prose documents, Mermaid diagrams, or spec-driven dashboards. The composer groups by it. */
-  family: "document" | "diagram" | "dashboard";
-  workTypes: string[];
-  sections: BlueprintSection[];
-  /** Which workspace folder this blueprint's documents live in. */
-  folder: BlueprintFolder;
-}
 
 export const DEFAULT_BLUEPRINTS: Blueprint[] = [
   {
@@ -189,10 +176,6 @@ export async function loadBlueprintsFor(paths: SmithPaths, workspaceName?: strin
     await readBlueprintDir(join(configDirForName(paths, workspaceName), "blueprints"), byId);
   }
   return [...byId.values()];
-}
-
-export function activeSections(bp: Blueprint, workType: string): BlueprintSection[] {
-  return bp.sections.filter((s) => !s.when || s.when.workType.includes(workType));
 }
 
 /** Sections active for a work type, with starter bodies; null = workType not declared by the blueprint. */

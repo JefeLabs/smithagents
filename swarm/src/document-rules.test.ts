@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { DEFAULT_BLUEPRINTS } from "./blueprints.js";
-import type { ParsedDocument } from "./document-file.js";
+import type { DocStatus, ParsedDocument } from "./document-file.js";
 import {
   type RuleResolvers,
   shapeProblem,
@@ -12,6 +12,7 @@ import {
 
 const spec = DEFAULT_BLUEPRINTS.find((b) => b.id === "spec")!;
 const plan = DEFAULT_BLUEPRINTS.find((b) => b.id === "implementation-plan")!;
+const er = DEFAULT_BLUEPRINTS.find((b) => b.id === "er")!;
 
 function doc(over: Partial<ParsedDocument["frontmatter"]> = {}, sections = defaultSections()): ParsedDocument {
   return {
@@ -115,4 +116,73 @@ test("positive control: a deliberately invalid document fails every gate", async
   const broken = doc({ workType: "nope" }, []);
   assert.ok(structuralProblems(spec, broken).length > 0);
   assert.ok((await transitionProblems(spec, broken, "review", R)).length > 0);
+});
+
+test("structuralProblems/transitionProblems: a duplicate {#id} is first-wins, reported once, and the verdict does not depend on order", async () => {
+  const rest = plan.sections.filter((s) => s.id !== "tasks").map((s) => ({ id: s.id, heading: s.heading, body: "x" }));
+  const proseThenChecklist = [
+    ...rest,
+    { id: "tasks", heading: "Tasks", body: "prose" },
+    { id: "tasks", heading: "Tasks", body: "- [ ] t" },
+  ];
+  const checklistThenProse = [
+    ...rest,
+    { id: "tasks", heading: "Tasks", body: "- [ ] t" },
+    { id: "tasks", heading: "Tasks", body: "prose" },
+  ];
+  const a = doc({ blueprint: "implementation-plan" }, proseThenChecklist);
+  const b = doc({ blueprint: "implementation-plan" }, checklistThenProse);
+  const probsA = structuralProblems(plan, a);
+  const probsB = structuralProblems(plan, b);
+  // Both orderings must refuse — a duplicate id is a problem in its own
+  // right, regardless of which copy's shape happens to govern (first-wins).
+  assert.ok(
+    probsA.some((p) => p.where === "section:tasks" && /duplicate/.test(p.message)),
+    "prose-then-checklist reports the duplicate",
+  );
+  assert.ok(
+    probsB.some((p) => p.where === "section:tasks" && /duplicate/.test(p.message)),
+    "checklist-then-prose reports the duplicate",
+  );
+  // First-wins: the FIRST copy's shape is the one that governs.
+  assert.ok(
+    probsA.some((p) => p.where === "section:tasks" && /checklist item/.test(p.message)),
+    "first copy is prose — a shape violation",
+  );
+  assert.ok(
+    !probsB.some((p) => p.where === "section:tasks" && /checklist item/.test(p.message)),
+    "first copy is a valid checklist — no shape violation",
+  );
+  // Same verdict either way at the gate that matters: → review refuses both.
+  assert.ok((await transitionProblems(plan, a, "review", R)).length > 0);
+  assert.ok((await transitionProblems(plan, b, "review", R)).length > 0);
+});
+
+test("transitionProblems: a plan naming no spec reaches final — the spec gate is opt-in, only for plans that link one", async () => {
+  const planSections = plan.sections.map((s) => ({
+    id: s.id,
+    heading: s.heading,
+    body: s.id === "tasks" ? "- [ ] t" : "x",
+  }));
+  const planDoc = doc({ blueprint: "implementation-plan" }, planSections); // no `spec` field at all
+  assert.deepEqual(await transitionProblems(plan, planDoc, "final", R), []);
+});
+
+test("transitionProblems: → drafting is unconditional even for a wrecked document", async () => {
+  const wreck = doc({ status: "final", workType: "nope" }, []);
+  assert.deepEqual(await transitionProblems(spec, wreck, "drafting", R), []);
+});
+
+test("transitionProblems: an unrecognized destination status reports frontmatter.status instead of proceeding", async () => {
+  const problems = await transitionProblems(spec, doc(), "bogus" as DocStatus, R);
+  assert.ok(problems.some((p) => p.where === "frontmatter.status"));
+});
+
+test("structuralProblems: a blueprint/document id mismatch is reported", () => {
+  assert.ok(structuralProblems(plan, doc()).some((p) => p.where === "frontmatter.blueprint"));
+});
+
+test("transitionProblems: an er document with an empty (not yet drawn) diagram section still passes → review", async () => {
+  const erDoc = doc({ blueprint: "er", workType: "feature" }, [{ id: "diagram", heading: "Diagram", body: "" }]);
+  assert.deepEqual(await transitionProblems(er, erDoc, "review", R), []);
 });

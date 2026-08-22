@@ -1,9 +1,13 @@
-// Rules and validation (spec 2026-08-22 §6). Pure: no fs, no git — the
-// cross-document facts come in as resolvers, so every rule is testable
-// against literal documents (the provisioning.ts discipline). Rules BITE at
-// status transitions only; writes always succeed and report problems.
-import { activeSections, type Blueprint, type SectionShape } from "./blueprints.js";
-import { DOC_STATUSES, type DocStatus, type ParsedDocument } from "./document-file.js";
+// Rules and validation (spec 2026-08-22 §6). Pure: no fs, no git, no
+// child_process — directly or transitively. The cross-document facts come
+// in as resolvers, so every rule is testable against literal documents (the
+// provisioning.ts discipline). Rules BITE at status transitions only;
+// writes always succeed and report problems. Types and `activeSections`
+// come from blueprint-schema.ts rather than blueprints.ts — the latter
+// pulls in node:fs/promises and (via workspaces.ts) node:child_process for
+// its file-loading duties, which this module must never reach.
+import { activeSections, type Blueprint, type SectionShape } from "./blueprint-schema.js";
+import { DOC_STATUSES, type DocSection, type DocStatus, type ParsedDocument } from "./document-file.js";
 
 export interface Problem {
   where: string;
@@ -25,18 +29,53 @@ export function shapeProblem(shape: SectionShape | undefined, body: string): str
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         if (!line.trim()) continue;
-        if (!/^\s*- \[[ xX]\] /.test(line)) return `line ${i + 1} is not a checklist item (- [ ] …)`;
+        if (!/^\s*- \[[ xX]\](?:\s|$)/.test(line)) return `line ${i + 1} is not a checklist item (- [ ] …)`;
       }
       return null;
     }
     case "mermaid": {
-      const fences = body.match(/^```mermaid\s*$/gm) ?? [];
-      if (fences.length === 0) return "must be one fenced mermaid block (```mermaid … ```)";
+      // Up to 3 leading spaces on the fence — CommonMark permits it, and
+      // document-file.ts's own fence detection already tolerates it.
+      const openFence = /^ {0,3}```mermaid\s*$/gm;
+      const fences = body.match(openFence) ?? [];
+      if (fences.length === 0) {
+        if (/^ {0,3}```mermaid\S/m.test(body)) {
+          return 'the mermaid fence must be "```mermaid" alone on its line — no info string after it';
+        }
+        return "must be one fenced mermaid block (```mermaid … ```)";
+      }
       if (fences.length > 1) return "must be exactly one fenced mermaid block";
-      const outside = body.replace(/```mermaid[\s\S]*?```/, "").trim();
+      const block = /^ {0,3}```mermaid\s*\n[\s\S]*?\n {0,3}```\s*$/m;
+      if (!block.test(body)) return 'the mermaid fence is opened but never closed with a matching "```"';
+      const outside = body.replace(block, "").trim();
       return outside ? "nothing may sit outside the mermaid block" : null;
     }
+    default:
+      return null;
   }
+}
+
+/**
+ * First-wins over `doc.sections` by id: a hand-edited file can carry the
+ * same explicit `{#id}` marker twice (document-file.ts only de-duplicates
+ * *auto*-slugged ids — an explicit marker written twice survives verbatim).
+ * Reading order — the first occurrence — is what a human editing the file
+ * sees, so that copy is the one every rule below checks. The duplicate
+ * itself is reported by `structuralProblems`, so which copy happens to be
+ * valid never decides whether the document can reach `final`: a document
+ * with a duplicated id always refuses, in either order.
+ */
+function presentSections(doc: ParsedDocument): { present: Map<string, DocSection>; duplicateIds: string[] } {
+  const present = new Map<string, DocSection>();
+  const duplicateIds: string[] = [];
+  for (const s of doc.sections) {
+    if (present.has(s.id)) {
+      if (!duplicateIds.includes(s.id)) duplicateIds.push(s.id);
+    } else {
+      present.set(s.id, s);
+    }
+  }
+  return { present, duplicateIds };
 }
 
 /** Blueprint/workType agree, every section the blueprint activates is present, and each NON-EMPTY present section's shape holds. */
@@ -52,7 +91,10 @@ export function structuralProblems(bp: Blueprint, doc: ParsedDocument): Problem[
     problems.push({ where: "frontmatter.workType", message: `must be one of ${bp.workTypes.join(", ")}` });
     return problems;
   }
-  const present = new Map(doc.sections.map((s) => [s.id, s]));
+  const { present, duplicateIds } = presentSections(doc);
+  for (const id of duplicateIds) {
+    problems.push({ where: `section:${id}`, message: "duplicate section id — only the first occurrence is checked" });
+  }
   for (const s of activeSections(bp, doc.frontmatter.workType)) {
     const have = present.get(s.id);
     if (!have) {
@@ -106,12 +148,24 @@ export async function transitionProblems(
   if (to === "drafting") return [];
   const problems = await validateDocument(bp, doc, r);
   if (to === "final") {
-    const present = new Map(doc.sections.map((s) => [s.id, s]));
+    const { present } = presentSections(doc);
     for (const s of activeSections(bp, doc.frontmatter.workType)) {
-      if (s.required && !present.get(s.id)?.body.trim()) {
+      if (!s.required) continue;
+      const have = present.get(s.id);
+      // A MISSING required section is already reported above by
+      // structuralProblems ("missing — … is part of this blueprint"); only
+      // a PRESENT-but-empty section gets this distinct "must not be empty"
+      // problem, so one cause never produces two problems in the list.
+      if (have && !have.body.trim()) {
         problems.push({ where: `section:${s.id}`, message: `required — "${s.heading}" must not be empty to be final` });
       }
     }
+    // A plan naming no `spec` is legal — §6.2 makes `spec` optional and
+    // §6.3 never requires a plan to link one, so a standalone plan with no
+    // spec is allowed to reach final. The delivery gate (spec §7) keys off
+    // the SPEC document's own status, not the plan's, so this check applies
+    // only when the plan HAS linked a spec; omitting `spec` is not a way to
+    // dodge a gate that never applied to it.
     if (bp.folder === "plans" && doc.frontmatter.spec !== undefined) {
       const status = await r.specStatus(doc.frontmatter.spec);
       if (status !== null && status !== "final") {
