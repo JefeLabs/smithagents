@@ -123,7 +123,7 @@ export async function removeGroupFile(dir: string, name: string): Promise<void> 
  *
  * `taken` is the ONE NAMESPACE — every context name already in use — so it
  * must come from loadAllContexts, not loadAllContextsFromDir. A workspace
- * that has migrated to its own config/settings.json is invisible to the flat
+ * whose record has migrated into the org repo is invisible to the flat
  * directory alone; missing it here would let a legacy group silently reuse
  * that workspace's name instead of renaming.
  */

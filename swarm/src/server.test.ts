@@ -510,6 +510,23 @@ test("archiveWorkspaceBoards: renames a workspace's boards to a timestamped sibl
   assert.equal(await readFile(join(`${boardsDir}-archived-${stamp}`, "acme-plan.json"), "utf8"), "{}");
 });
 
+test("archiveWorkspaceBoards: a workspace whose name slugs to nothing is skipped, not a 500 — the sync throw the rename's .catch cannot cover", async () => {
+  const root = await mkdtemp(join(tmpdir(), "reset-boards-noslug-"));
+  const paths = smithPaths(root);
+  // configDirFor throws synchronously on this name, OUTSIDE the rename's
+  // .catch — without the skip, POST /reset 500s and no workspace gets
+  // archived, not even the healthy one beside it.
+  const dots: Workspace = { name: "...", repos: [] };
+  const acme: Workspace = { name: "acme", repos: [] };
+  const boardsDir = join(configDirFor(paths, acme), "boards");
+  await mkdir(boardsDir, { recursive: true });
+  await writeFile(join(boardsDir, "acme-plan.json"), "{}");
+
+  await assert.doesNotReject(archiveWorkspaceBoards(paths, [dots, acme], "20260822T000000"));
+
+  await assert.rejects(stat(boardsDir), /ENOENT/, "the healthy workspace beside it was still archived");
+});
+
 test("archiveWorkspaceBoards: a workspace with no boards yet is not an error (best-effort, matches the sibling archives)", async () => {
   const root = await mkdtemp(join(tmpdir(), "reset-boards-empty-"));
   const paths = smithPaths(root);

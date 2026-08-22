@@ -19,7 +19,14 @@ import { smithPaths } from "./paths.js";
 import { createBoard, saveBoard } from "./work-items.js";
 import { loadRegistry, registryPath, saveRegistryEntry } from "./workspace-registry.js";
 import { ensureOrgRepo } from "./workspace-repos.js";
-import { configDirFor, configDirForName, loadWorkspaces, settingsPathFor, type Workspace } from "./workspaces.js";
+import {
+  configDirFor,
+  configDirForName,
+  loadWorkspaces,
+  saveWorkspace,
+  settingsPathFor,
+  type Workspace,
+} from "./workspaces.js";
 
 function fixture(): string {
   const dir = mkdtempSync(join(tmpdir(), "smith-mig-"));
@@ -836,6 +843,30 @@ test("migrateConfigIntoOrgRepo: a registered workspace with config in NEITHER pl
     assert.ok(
       result.notes.some((n) => n.includes("ghost") && n.includes("no settings.json")),
       result.notes.join(" | "),
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("migrateConfigIntoOrgRepo: a subtree that exists but was never committed is left for the healing pass — not warned about as 'no config anywhere'", async () => {
+  const root = mkdtempSync(join(tmpdir(), "orgmig-uncommitted-"));
+  try {
+    const paths = smithPaths(root);
+    await ensureOrgRepo(paths, { name: "acme" });
+    // Exactly the state POST /workspaces leaves behind when its
+    // commitConfigFiles call fails: the record is written into the subtree,
+    // but nothing reached HEAD. importedInOrgRepo asks git, so it says false
+    // — and the same boot's healing pass will commit it a few steps later.
+    await saveWorkspace(paths, { name: "pg", repos: [] } as Workspace);
+
+    const result = await migrateConfigIntoOrgRepo(paths, "20260822T120000");
+
+    assert.deepEqual(result.imported, [], "there is nothing to import — the record is already in the subtree");
+    assert.deepEqual(result.notes, [], `an uncommitted subtree must not warn: ${result.notes.join(" | ")}`);
+    assert.ok(
+      statSync(join(configDirForName(paths, "pg"), "settings.json")).isFile(),
+      "and the record is still there, untouched",
     );
   } finally {
     rmSync(root, { recursive: true, force: true });

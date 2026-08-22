@@ -173,8 +173,8 @@ export async function migrateState(from: string, to: string): Promise<{ copied: 
 
 /**
  * Relocate each workspace-owned board out of the flat host directory and into
- * its workspace's config/boards. Copy first, verify, then remove the source —
- * a board is never in neither place.
+ * `boards/` in its workspace's subtree of the org repo. Copy first, verify,
+ * then remove the source — a board is never in neither place.
  *
  * Two kinds of board deliberately stay put: the workspace-less `personal`
  * board, and any board whose workspace record no longer exists. Dropping an
@@ -445,10 +445,20 @@ export async function migrateConfigIntoOrgRepo(
         continue;
       }
       if (!hasLegacy) {
-        notes.push(
-          `[org-migration] ${name}: no settings.json at ${legacy} or ${target} — the workspace is registered but has ` +
-            `no config anywhere; re-create it, or remove it from ${registryPath(paths)}`,
-        );
+        // An uncommitted subtree is NOT "no config anywhere": POST
+        // /workspaces writes the record and only then commits, so a failed
+        // commit there (caught and warned by server.ts) leaves settings.json
+        // sitting at `target`, untracked. `importedInOrgRepo` asks git, so it
+        // says false — but the very same boot's healing pass
+        // (`migrateReposIntoWorkspace` → `commitConfigFiles`) commits it a
+        // few steps later. Warning here would be false, and would repeat at
+        // warn on every boot until then.
+        if (!(await exists(join(target, "settings.json")))) {
+          notes.push(
+            `[org-migration] ${name}: no settings.json at ${legacy} or ${target} — the workspace is registered but ` +
+              `has no config anywhere; re-create it, or remove it from ${registryPath(paths)}`,
+          );
+        }
         continue;
       }
 

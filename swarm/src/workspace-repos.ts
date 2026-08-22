@@ -406,8 +406,14 @@ export async function migrateReposIntoWorkspace(
       // than write a roster that looks identical to "deliberately assigned
       // nothing" (see the docstring above). Leaving roster.json absent lets
       // a later boot, once there is a real list, seed it correctly.
-      const configDir = configDirFor(paths, ws);
+      //
+      // `configDirFor` is resolved INSIDE this try, not above it: it throws on
+      // a name that slugs to nothing, and out here that throw would escape to
+      // the per-workspace catch below, which re-reports every one of this
+      // workspace's repos as skipped — including ones the inner catch has
+      // already reported. Each of these two blocks isolates its own failure.
       try {
+        const configDir = configDirFor(paths, ws);
         if (globalAgentIds !== null && globalAgentIds.length > 0 && (await loadRoster(configDir)) === null) {
           await saveRoster(configDir, { agents: globalAgentIds, squads: globalSquadIds });
         }

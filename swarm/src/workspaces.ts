@@ -294,6 +294,15 @@ export async function loadWorkspaces(paths: SmithPaths): Promise<Workspace[]> {
 
   const registry = await loadRegistry(paths);
   for (const name of Object.keys(registry)) {
+    // A key that slugs to nothing names no subtree, and `configDirForName`
+    // refuses to invent one — deliberately, since the result would be the
+    // shared `workspaces/` parent. Skipped here rather than left to throw:
+    // workspaces.json is hand-editable, and one bad key must not take out
+    // every OTHER workspace with it, which is what an escaping throw would
+    // do — `reloadWorkspaces` has no catch, so it would abort the boot. Same
+    // tolerance the ENOENT branch below gives a missing record: the flat
+    // fallback still gets its chance at this name.
+    if (!slugForDir(name)) continue;
     try {
       const settings = settingsPathFor(configDirForName(paths, name));
       const raw = await readFile(settings, "utf8");
@@ -333,8 +342,8 @@ export async function loadWorkspaces(paths: SmithPaths): Promise<Workspace[]> {
  * they are read straight off loadAllContextsFromDir; only the workspace half
  * needs the dual-source read. Namespace-collision checks (workspace/group
  * creation, migrateGroupsDir's rename-on-collision) need this union:
- * loadAllContextsFromDir alone goes blind to a workspace the moment it
- * migrates to config/settings.json.
+ * loadAllContextsFromDir alone goes blind to a workspace the moment its
+ * record moves into the org repo.
  */
 export async function loadAllContexts(paths: SmithPaths): Promise<Workspace[]> {
   const groups = (await loadAllContextsFromDir(paths.workspaces)).filter(isGroupRecord);
@@ -584,15 +593,24 @@ export async function ensureWorkspaceDir(paths: SmithPaths, ws: Workspace): Prom
 
 /**
  * Where a board's file lives. A board carrying a known `workspaceId` belongs to
- * that workspace's subtree of the org repo; everything else — the
- * workspace-less `personal` board, and any board whose workspace record has
- * been deleted — stays in the host work directory, so an orphan remains
- * loadable instead of pointing at a directory that does not exist.
+ * that workspace's subtree of the org repo; everything else stays in the host
+ * work directory, so an orphan remains loadable instead of pointing at a
+ * directory that does not exist. Three cases fall back:
+ *
+ * - the workspace-less `personal` board;
+ * - a board whose workspace record has been deleted;
+ * - a workspace whose name slugs to nothing, and so HAS no subtree —
+ *   `configDirFor` throws on those by design, and this is a read path that
+ *   must not throw. Such a record is one the codebase deliberately tolerates
+ *   (`migrateWorkspaceRecords` skips it and leaves its flat file in place),
+ *   so it does reach here; `server.ts`'s `boardDirs()` maps over EVERY
+ *   workspace, so letting one throw would take down every board read, not
+ *   just this workspace's.
  */
 export function boardsDirFor(paths: SmithPaths, workspaces: Workspace[], workspaceId: string | undefined): string {
   if (!workspaceId) return paths.work;
   const ws = workspaces.find((w) => w.name === workspaceId);
-  return ws ? join(configDirFor(paths, ws), "boards") : paths.work;
+  return ws && slugForDir(ws.name) ? join(configDirFor(paths, ws), "boards") : paths.work;
 }
 
 /**

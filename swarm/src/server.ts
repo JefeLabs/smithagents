@@ -385,9 +385,11 @@ export class OrchestratorServer {
   }
 
   /**
-   * Reload every workspace: each registered directory's config/settings.json,
-   * plus any flat `.smith/workspaces/*.json` record not yet migrated there —
-   * called at boot and after every mutation below.
+   * Reload every workspace: for each registry KEY, the record at
+   * `<orgRepo>/workspaces/<slug>/settings.json`, plus any flat
+   * `.smith/workspaces/*.json` record not yet migrated there — called at boot
+   * and after every mutation below. The registry's VALUE is the RUNTIME
+   * directory and holds no record; it is the key that locates the subtree.
    */
   private async reloadWorkspaces(): Promise<void> {
     this.workspaces = await loadWorkspaces(this.paths);
@@ -496,8 +498,19 @@ export class OrchestratorServer {
           `[org-repo] could not read the user record for the org name — using "org": ${(err as Error).message}`,
         );
       }
-      if (await ensureOrgRepo(this.paths, { name: orgName })) {
-        this.app.log.info(`[org-repo] created ${this.paths.orgRepo}`);
+      // Deliberately NOT isolated: booting past an org repo that could not be
+      // initialised means booting owning nothing, which is the failure the
+      // state-root guard above exists to prevent. Rethrown with the path and
+      // the remedy, because git's own "Command failed" says neither.
+      try {
+        if (await ensureOrgRepo(this.paths, { name: orgName })) {
+          this.app.log.info(`[org-repo] created ${this.paths.orgRepo}`);
+        }
+      } catch (err) {
+        throw new Error(
+          `The org config repo at ${this.paths.orgRepo} could not be initialised — ${(err as Error).message}; ` +
+            `fix that repo (or move it aside so a fresh one can be created), then restart`,
+        );
       }
       const stamp = new Date().toISOString().replace(/[-:]/g, "").slice(0, 15);
       const { imported, notes } = await migrateConfigIntoOrgRepo(this.paths, stamp);
@@ -765,9 +778,15 @@ export class OrchestratorServer {
   }
 
   /** Every directory boards can live in: each workspace's first, the host dir LAST —
-      see loadAllBoards's docblock for why this order is load-bearing, not arbitrary. */
+      see loadAllBoards's docblock for why this order is load-bearing, not arbitrary.
+      A workspace whose name slugs to nothing has no subtree and is filtered out:
+      `configDirFor` throws on those by design, and one such record — a shape
+      `migrateWorkspaceRecords` deliberately tolerates — would otherwise make
+      EVERY board read throw, not just its own. Its boards, if any, are still
+      reachable through the host dir, which `boardsDirFor` falls back to. */
   private boardDirs(): string[] {
-    return [...this.workspaces.map((w) => join(configDirFor(this.paths, w), "boards")), this.paths.work];
+    const withSubtree = this.workspaces.filter((w) => slugForDir(w.name));
+    return [...withSubtree.map((w) => join(configDirFor(this.paths, w), "boards")), this.paths.work];
   }
 
   /** Where THIS board's file belongs, from its own workspaceId. */
@@ -777,9 +796,10 @@ export class OrchestratorServer {
 
   /**
    * Delete a board's file from every directory it could be sitting in: its
-   * resolved workspace directory AND the host directory. A board mid-migration
-   * (Task 3) can have a copy in both — deleting only the resolved one would
-   * leave the other behind to resurface as "the board" on the very next load.
+   * resolved workspace subtree in the org repo AND the host directory. A board
+   * mid-migration (Task 3) can have a copy in both — deleting only the
+   * resolved one would leave the other behind to resurface as "the board" on
+   * the very next load.
    * A missing file in either location is not an error; most boards only ever
    * have one copy.
    */
@@ -2153,14 +2173,14 @@ export class OrchestratorServer {
           .status(409)
           .send({ error: `Workspace "${ws.name}" has ${activeTasks} running task(s) — archive instead` });
       }
-      // This deletes no data: the record is removed but ws's directory is
+      // This deletes no data: the record is removed but ws's runtime directory
+      // AND its subtree of the org repo (settings.json, boards/) are both
       // deliberately left on disk. Recreating "ws.name" later passes the
-      // collision check (records-only) and ensureWorkspaceDir's mkdir -p
-      // silently adopts the survivor with its contents intact — every
-      // workspace now owns a config/settings.json (and often config/boards)
-      // by the time this could run, so this is a live provenance hazard, not
-      // a hypothetical one. Not addressed here — parked as a follow-up,
-      // same as loadWorkspaces() throwing on an invalid registered record
+      // collision check (records-only) and silently adopts BOTH survivors with
+      // their contents intact — the subtree is where the record and boards
+      // live, so this is a live provenance hazard, not a hypothetical one.
+      // Not addressed here — parked as a follow-up, same as
+      // loadWorkspaces() throwing on an invalid registered record
       // (see task-3-report.md, "NOT in this wave").
       await removeWorkspaceFile(this.paths, ws.name);
       await this.reloadWorkspaces();
@@ -3896,6 +3916,11 @@ function squadMemberDirectives(member: SquadMember, all: SquadMember[]): string 
  */
 export async function archiveWorkspaceBoards(paths: SmithPaths, workspaces: Workspace[], stamp: string): Promise<void> {
   for (const ws of workspaces) {
+    // A name that slugs to nothing has no subtree, and `configDirFor` throws
+    // on it — SYNCHRONOUSLY, so the rename's `.catch` below would not cover
+    // it and POST /reset would 500 instead of archiving the other workspaces.
+    // Nothing to archive for such a record anyway: it never had a subtree.
+    if (!slugForDir(ws.name)) continue;
     const dir = join(configDirFor(paths, ws), "boards");
     await rename(dir, `${dir}-archived-${stamp}`).catch(() => {});
   }

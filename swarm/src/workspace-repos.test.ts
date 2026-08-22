@@ -451,6 +451,49 @@ test("migrateReposIntoWorkspace: a clone failure note redacts credentials embedd
   }
 });
 
+test("migrateReposIntoWorkspace: a healing-commit failure after a successful save is not a false 'could not save', and retries next boot", async () => {
+  const root = mkdtempSync(join(tmpdir(), "migrepo-cfgfail-"));
+  const origin = makeOrigin("n");
+  try {
+    const paths = smithPaths(root);
+    await ensureOrgRepo(paths, { name: "t" });
+    await saveWorkspace(paths, { name: "pg", repos: [{ name: "app", path: origin, repository: origin }] });
+
+    // Break the ORG repo without any network: replace its .git directory with
+    // a plain file, which is not a valid gitfile — every git command in it
+    // then fails locally with "invalid gitfile format". The clone (into the
+    // workspace's runtime dir) and the save (a plain write into the subtree)
+    // both still succeed, so this isolates the healing commit and nothing else.
+    rmSync(join(paths.orgRepo, ".git"), { recursive: true, force: true });
+    writeFileSync(join(paths.orgRepo, ".git"), "not a real gitdir\n");
+
+    const first = await migrateReposIntoWorkspace(paths, [], []);
+
+    assert.ok(first.cloned.includes("pg/app"), "the clone and save succeeded — must be reported cloned, not skipped");
+    assert.ok(!first.skipped.includes("pg/app"), "a commit failure must not demote a genuine migration");
+    assert.ok(
+      first.notes.some((n) => n.includes("pg") && /config/i.test(n) && !/could not save/i.test(n)),
+      `the note names the config commit, not a false "could not save the record": ${first.notes.join(" | ")}`,
+    );
+    const [ws] = await loadWorkspaces(paths);
+    assert.equal(
+      ws.repos[0].path,
+      join(paths.workspaces, "pg", "app"),
+      "the record is repointed despite the commit failure",
+    );
+
+    const second = await migrateReposIntoWorkspace(paths, [], []);
+
+    assert.ok(
+      second.notes.some((n) => /config/i.test(n)),
+      "a second run still attempts the healing commit rather than resting silently unhealed",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(origin, { recursive: true, force: true });
+  }
+});
+
 // --- fix round (final review) ---------------------------------------------
 
 test("repoNameProblem: an empty or whitespace-only name gets its own message, not the escape one", () => {

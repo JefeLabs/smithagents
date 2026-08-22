@@ -1,9 +1,18 @@
-// The workspace registry: name -> absolute directory.
+// The workspace registry: name -> absolute RUNTIME directory.
 //
-// It exists to solve a bootstrap problem. A workspace's record is moving into
-// its own directory (<dir>/config/settings.json), so the directory has to be
-// known BEFORE the record can be read. The registry is the one thing findable
-// without knowing anything else.
+// Its two halves now do different jobs (spec 2026-08-22 §1.1). The KEY is
+// what locates a workspace's record: `configDirForName` slugs it into
+// `<orgRepo>/workspaces/<slug>/settings.json`, so the registry is the list of
+// which workspaces exist — the one thing findable without knowing anything
+// else. The VALUE is the local runtime folder (project clones, .runtime/),
+// which can live anywhere the user keeps code; it is consumed by
+// `workspaceDir`-based paths and by `migrateConfigIntoOrgRepo`, which needs
+// it to find the legacy per-workspace `config/` repo it imports.
+//
+// It originally existed to solve a bootstrap problem — the record lived at
+// `<dir>/config/settings.json`, so the directory had to be known before the
+// record could be read. That is no longer why: reading a record needs only
+// the name.
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { SmithPaths } from "./paths.js";

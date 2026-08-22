@@ -8,7 +8,7 @@ import { test } from "node:test";
 import { promisify } from "node:util";
 import { migrateWorkspaceRecords } from "./migrate-state.js";
 import { smithPaths } from "./paths.js";
-import { loadRegistry, saveRegistryEntry } from "./workspace-registry.js";
+import { loadRegistry, registryPath, saveRegistryEntry } from "./workspace-registry.js";
 import type { Workspace } from "./workspaces.js";
 import {
   assertContext,
@@ -371,6 +371,17 @@ test("boardsDirFor: an unknown workspace id falls back to the host work dir", ()
   assert.equal(boardsDirFor(paths, [], "deleted-workspace"), paths.work);
 });
 
+test("boardsDirFor: a workspace whose name slugs to nothing has no subtree — falls back to the host dir instead of throwing", () => {
+  const paths = smithPaths("/state");
+  // migrateWorkspaceRecords deliberately SKIPS a record like this and leaves
+  // its flat file in place, so it really does reach here through
+  // loadWorkspaces' flat fallback. configDirFor throws on it by design;
+  // server.ts's boardDirs() maps over EVERY workspace, so a throw here would
+  // take down every board read on the install, not just this one's.
+  const ws = { name: "...", repos: [] } as Workspace;
+  assert.equal(boardsDirFor(paths, [ws], "..."), paths.work);
+});
+
 test("boardsDirFor: an explicit workspace dir moves the RUNTIME half only — boards stay in the org repo", () => {
   const paths = smithPaths("/state");
   const ws = { name: "pg", dir: "/elsewhere/pg", repos: [] } as Workspace;
@@ -509,6 +520,30 @@ test("loadWorkspaces: two registry keys resolving to one config subtree return t
     const all = await loadWorkspaces(paths);
     assert.equal(all.length, 1, "the same settings.json must not be read and pushed twice");
     assert.equal(all[0]?.name, "ab");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("loadWorkspaces: a registry key that slugs to nothing is skipped, never fatal to every OTHER workspace", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ws-reg-noslug-"));
+  try {
+    const paths = smithPaths(root);
+    await saveWorkspace(paths, { name: "good", repos: [{ name: "r", path: "/abs/r" }] });
+    // Hand-edited workspaces.json — no code path creates such a key
+    // (saveWorkspace's name regex, and migrateWorkspaceRecords resolves the
+    // subtree before registering), but the file is the user's to edit. An
+    // escaping throw here would abort reloadWorkspaces(), and with it boot.
+    const registry = await loadRegistry(paths);
+    writeFileSync(registryPath(paths), JSON.stringify({ ...registry, "...": join(paths.workspaces, "dots") }));
+
+    const all = await loadWorkspaces(paths);
+
+    assert.deepEqual(
+      all.map((w) => w.name),
+      ["good"],
+      "the good workspace still loads; the unslugable key is skipped, not thrown on",
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
