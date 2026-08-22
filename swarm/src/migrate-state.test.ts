@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +9,7 @@ import {
   isInitialized,
   markInitialized,
   migrateBoards,
+  migrateConfigIntoOrgRepo,
   migrateState,
   migrateWorkspaceRecords,
   needsMigration,
@@ -15,8 +17,9 @@ import {
 } from "./migrate-state.js";
 import { smithPaths } from "./paths.js";
 import { createBoard, saveBoard } from "./work-items.js";
-import { loadRegistry, registryPath } from "./workspace-registry.js";
-import { loadWorkspaces, settingsPathFor, type Workspace, workspaceDir } from "./workspaces.js";
+import { loadRegistry, registryPath, saveRegistryEntry } from "./workspace-registry.js";
+import { ensureOrgRepo } from "./workspace-repos.js";
+import { configDirForName, loadWorkspaces, settingsPathFor, type Workspace, workspaceDir } from "./workspaces.js";
 
 function fixture(): string {
   const dir = mkdtempSync(join(tmpdir(), "smith-mig-"));
@@ -732,6 +735,134 @@ test("migrateWorkspaceRecords: a flat group record is never touched — no direc
       { pg: join(paths.workspaces, "pg") },
       "only the workspace got a registry entry",
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/** A legacy per-workspace config repo at <dir>/config, committed, with boards and a roster. */
+function makeLegacyConfig(dir: string, name: string): string {
+  const cfg = join(dir, "config");
+  mkdirSync(join(cfg, "boards"), { recursive: true });
+  writeFileSync(join(cfg, "settings.json"), `${JSON.stringify({ name, repos: [] })}\n`);
+  writeFileSync(join(cfg, "roster.json"), '{"agents":["anderson"],"squads":[]}\n');
+  writeFileSync(join(cfg, "boards", `${name}-plan.json`), `{"id":"${name}-plan"}\n`);
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: cfg });
+  execFileSync("git", ["add", "-A"], { cwd: cfg });
+  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "legacy"], { cwd: cfg });
+  return cfg;
+}
+
+test("migrateConfigIntoOrgRepo: copies a legacy config/ into workspaces/<slug>/, commits it, and ARCHIVES the old repo", async () => {
+  const root = mkdtempSync(join(tmpdir(), "orgmig-"));
+  try {
+    const paths = smithPaths(root);
+    await ensureOrgRepo(paths, { name: "acme" });
+    const dir = join(paths.workspaces, "pg");
+    makeLegacyConfig(dir, "pg");
+    await saveRegistryEntry(paths, "pg", dir);
+
+    const result = await migrateConfigIntoOrgRepo(paths, "20260822T120000");
+
+    assert.deepEqual(result.imported, ["pg"]);
+    const target = configDirForName(paths, "pg");
+    assert.equal(JSON.parse(readFileSync(join(target, "settings.json"), "utf8")).name, "pg");
+    assert.ok(statSync(join(target, "roster.json")).isFile());
+    assert.ok(statSync(join(target, "boards", "pg-plan.json")).isFile());
+    assert.throws(() => statSync(join(target, ".git")), "the legacy repo's .git is NOT copied into the org repo");
+    const tree = execFileSync("git", ["ls-tree", "-r", "--name-only", "HEAD"], { cwd: paths.orgRepo }).toString();
+    assert.match(tree, /^workspaces\/pg\/settings\.json$/m, "imported content is in the org repo's HEAD");
+    assert.match(tree, /^workspaces\/pg\/boards\/pg-plan\.json$/m);
+    const subject = execFileSync("git", ["log", "-1", "--format=%s"], { cwd: paths.orgRepo }).toString().trim();
+    assert.equal(subject, "Import workspace pg");
+    assert.ok(
+      statSync(join(dir, "config-archived-20260822T120000", ".git")).isDirectory(),
+      "old repo archived, not deleted",
+    );
+    assert.throws(() => statSync(join(dir, "config")), "nothing is left at the old location to be read by mistake");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("migrateConfigIntoOrgRepo: a second run is a no-op, and a legacy dir that reappears beside an imported subtree is archived, never re-imported over it", async () => {
+  const root = mkdtempSync(join(tmpdir(), "orgmig-twice-"));
+  try {
+    const paths = smithPaths(root);
+    await ensureOrgRepo(paths, { name: "acme" });
+    const dir = join(paths.workspaces, "pg");
+    makeLegacyConfig(dir, "pg");
+    await saveRegistryEntry(paths, "pg", dir);
+    await migrateConfigIntoOrgRepo(paths, "20260822T120000");
+    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: paths.orgRepo }).toString().trim();
+
+    const again = await migrateConfigIntoOrgRepo(paths, "20260822T120100");
+    assert.deepEqual(again.imported, []);
+    assert.deepEqual(again.notes, []);
+    assert.equal(execFileSync("git", ["rev-parse", "HEAD"], { cwd: paths.orgRepo }).toString().trim(), head);
+
+    // A stale legacy copy shows up again (restored from a backup, say).
+    // The imported subtree is authoritative — writes have been landing there.
+    writeFileSync(
+      join(configDirForName(paths, "pg"), "settings.json"),
+      '{"name":"pg","repos":[],"description":"NEWER"}\n',
+    );
+    makeLegacyConfig(dir, "pg");
+    const third = await migrateConfigIntoOrgRepo(paths, "20260822T120200");
+    assert.deepEqual(third.imported, []);
+    assert.equal(
+      JSON.parse(readFileSync(join(configDirForName(paths, "pg"), "settings.json"), "utf8")).description,
+      "NEWER",
+      "never overwritten",
+    );
+    assert.ok(statSync(join(dir, "config-archived-20260822T120200")).isDirectory(), "the stale copy is archived");
+    assert.ok(
+      third.notes.some((n) => n.includes("archived")),
+      third.notes.join(" | "),
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("migrateConfigIntoOrgRepo: a registered workspace with config in NEITHER place is reported, not silently skipped", async () => {
+  const root = mkdtempSync(join(tmpdir(), "orgmig-none-"));
+  try {
+    const paths = smithPaths(root);
+    await ensureOrgRepo(paths, { name: "acme" });
+    await saveRegistryEntry(paths, "ghost", join(paths.workspaces, "ghost"));
+    const result = await migrateConfigIntoOrgRepo(paths, "20260822T120000");
+    assert.deepEqual(result.imported, []);
+    assert.ok(
+      result.notes.some((n) => n.includes("ghost") && n.includes("no settings.json")),
+      result.notes.join(" | "),
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("migrateConfigIntoOrgRepo: one bad workspace never stops the others — it is noted and the loop continues", async () => {
+  const root = mkdtempSync(join(tmpdir(), "orgmig-isolate-"));
+  try {
+    const paths = smithPaths(root);
+    await ensureOrgRepo(paths, { name: "acme" });
+    const bad = join(paths.workspaces, "bad");
+    mkdirSync(join(bad, "config"), { recursive: true });
+    writeFileSync(join(bad, "config", "settings.json"), "{ not json");
+    await saveRegistryEntry(paths, "bad", bad);
+    const good = join(paths.workspaces, "good");
+    makeLegacyConfig(good, "good");
+    await saveRegistryEntry(paths, "good", good);
+
+    const result = await migrateConfigIntoOrgRepo(paths, "20260822T120000");
+
+    assert.deepEqual(result.imported, ["good"]);
+    assert.ok(
+      result.notes.some((n) => n.includes("bad")),
+      result.notes.join(" | "),
+    );
+    assert.ok(statSync(join(bad, "config", "settings.json")).isFile(), "the unverifiable legacy copy is left in place");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -7,17 +7,20 @@
 // instead MOVE individual records within the current root — copy/write,
 // verify, then remove the source — since there is no second root to roll
 // back to for those.
-import { cp, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { cp, mkdir, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { basename, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type { SmithPaths } from "./paths.js";
 import { loadBoards } from "./work-items.js";
-import { registryPath, saveRegistryEntry } from "./workspace-registry.js";
+import { loadRegistry, registryPath, saveRegistryEntry } from "./workspace-registry.js";
+import { commitConfigFiles } from "./workspace-repos.js";
 import {
+  configDirForName,
   ensureWorkspaceDir,
   loadWorkspaceFilesFromDir,
   probeSettings,
   settingsPathFor,
+  slugForDir,
   type Workspace,
   workspaceDir,
 } from "./workspaces.js";
@@ -362,4 +365,81 @@ export async function migrateWorkspaceRecords(
     }
   }
   return { moved, skipped, notes };
+}
+
+/**
+ * ONE-WAY migration (spec 2026-08-22 §9.2): each workspace's own `config/`
+ * git repo becomes the `workspaces/<slug>/` subtree of the org repo.
+ *
+ * Reads the legacy location by its literal name — after the cutover no other
+ * code knows `<dir>/config` ever existed — and writes through
+ * `configDirForName`, so this is the one place both layouts meet.
+ *
+ * Copy, verify, commit, THEN archive: the legacy repo is renamed to
+ * `config-archived-<stamp>` beside the workspace only after its content is
+ * verified readable in the subtree and in the org repo's HEAD. Nothing is
+ * ever deleted. History is not rewritten into the org repo — a single-user
+ * install has a handful of "Update workspace config" commits, and a
+ * filter-repo pass is not worth its risk; the archived repo keeps it.
+ *
+ * Idempotent: an already-imported workspace is skipped. A legacy copy found
+ * beside an imported subtree (restored from a backup) is archived, never
+ * re-imported — the subtree is where writes have been landing, so it is the
+ * newer one. A registered workspace with config in neither place is noted:
+ * that install would otherwise boot owning a workspace it cannot load.
+ *
+ * One workspace's failure never stops the others — this runs at boot.
+ */
+export async function migrateConfigIntoOrgRepo(
+  paths: SmithPaths,
+  stamp: string,
+): Promise<{ imported: string[]; notes: string[] }> {
+  const imported: string[] = [];
+  const notes: string[] = [];
+
+  for (const [name, dir] of Object.entries(await loadRegistry(paths))) {
+    try {
+      const legacy = join(dir, "config");
+      const target = configDirForName(paths, name);
+      const slug = slugForDir(name);
+      const hasLegacy = await exists(join(legacy, "settings.json"));
+
+      if (await exists(join(target, "settings.json"))) {
+        if (hasLegacy) {
+          const archived = `${legacy}-archived-${stamp}`;
+          await rename(legacy, archived);
+          notes.push(`[org-migration] ${name}: already imported — archived a stale legacy config at ${archived}`);
+        }
+        continue;
+      }
+      if (!hasLegacy) {
+        notes.push(
+          `[org-migration] ${name}: no settings.json at ${legacy} or ${target} — the workspace is registered but has ` +
+            `no config anywhere; re-create it, or remove it from ${registryPath(paths)}`,
+        );
+        continue;
+      }
+
+      await mkdir(target, { recursive: true });
+      // The legacy repo's own .git must not come along: the subtree belongs to
+      // the ORG repo's history from here on, and a nested .git would make git
+      // treat the subtree as an embedded repository and refuse to track it.
+      await cp(legacy, target, { recursive: true, filter: (src) => basename(src) !== ".git" });
+
+      const probe = await probeSettings(join(target, "settings.json"));
+      if (probe.kind !== "parsed") {
+        notes.push(
+          `[org-migration] ${name}: copied config does not verify at ${join(target, "settings.json")} — ` +
+            `leaving ${legacy} in place; fix the record so this can complete`,
+        );
+        continue;
+      }
+      await commitConfigFiles(paths, slug, { message: `Import workspace ${slug}` });
+      await rename(legacy, `${legacy}-archived-${stamp}`);
+      imported.push(name);
+    } catch (err) {
+      notes.push(`[org-migration] ${name}: could not be imported — ${(err as Error).message}`);
+    }
+  }
+  return { imported, notes };
 }
