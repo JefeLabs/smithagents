@@ -1803,12 +1803,13 @@ import {
   serializeDocumentFile,
   slugify,
 } from "./document-file.js";
-import { createProposal, deleteProposal, listProposals, proposalFileText, type ProposalWire } from "./document-proposals.js";
+import { createProposal, deleteProposal, listProposals, type ProposalWire } from "./document-proposals.js";
 import { type Problem, type RuleResolvers, transitionProblems, validateDocument } from "./document-rules.js";
 import { agentAuthor, type GitAuthor, SMITH_IDENTITY } from "./git-author.js";
 import { normalizeMarkdown } from "./markdown-normalize.js";
 import type { SmithPaths } from "./paths.js";
-import { activeWorkspaces, commitPaths, configDirFor, slugForDir, type Workspace } from "./workspaces-and-repos.js"; // see note below
+import { commitPaths } from "./workspace-repos.js";
+import { activeWorkspaces, configDirFor, slugForDir, type Workspace } from "./workspaces.js";
 
 export interface DocWire {
   id: string;
@@ -2147,7 +2148,7 @@ export async function rejectProposal(paths: SmithPaths, workspaces: Workspace[],
 }
 ```
 
-Import note: the line marked "see note below" is illustrative — import `activeWorkspaces, configDirFor, slugForDir, type Workspace` from `./workspaces.js` and `commitPaths` from `./workspace-repos.js`. Check `workspaceProblems`/`capabilities.ts` for the `Capability.slices` field name before relying on it (it is `slices: CapSlice[]` with `id`).
+Import note: the import block above is correct as written (an earlier draft named a module `./workspaces-and-repos.js` that does not exist). `Capability.slices` is `CapSlice[]` with an `id` field — verified in `capabilities.ts`.
 
 `proposalFileText` is imported for completeness of the module contract; if biome flags it unused, drop the import (the accept path derives the body from `listProposals`).
 
