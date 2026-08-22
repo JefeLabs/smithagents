@@ -11,12 +11,19 @@ export function gitCommitAll(cwd: string, msg: string): void {
   });
 }
 
-/** An org config repo at `<root>/config` with one committed `workspaces/<slug>/settings.json` per slug. */
+/**
+ * An org config repo at `<root>/config` with one committed
+ * `workspaces/<slug>/settings.json` per slug, plus a committed
+ * `blueprints/spec.json` — so a sparse checkout's `blueprints` cone can be
+ * verified at content level, not just as a pattern the checkout echoes back.
+ */
 export function makeOrgRepo(root: string, slugs: string[]): string {
   const repo = join(root, "config");
   mkdirSync(repo, { recursive: true });
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
   writeFileSync(join(repo, "settings.json"), '{"name":"test-org"}\n');
+  mkdirSync(join(repo, "blueprints"), { recursive: true });
+  writeFileSync(join(repo, "blueprints", "spec.json"), '{"id":"spec"}\n');
   for (const slug of slugs) {
     mkdirSync(join(repo, "workspaces", slug), { recursive: true });
     writeFileSync(join(repo, "workspaces", slug, "settings.json"), `${JSON.stringify({ name: slug, repos: [] })}\n`);

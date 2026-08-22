@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -98,6 +98,7 @@ test("createInstance: the config member is a SPARSE worktree — this workspace'
     const inst = await createInstance(dir, ws as never, "work-9", ["app"], { orgRepo });
     const cfg = join(inst.dir, "config");
     assert.ok(statSync(join(cfg, "workspaces", "pg", "settings.json")).isFile(), "own subtree present");
+    assert.ok(statSync(join(cfg, "blueprints", "spec.json")).isFile(), "the shared blueprints/ is also present");
     assert.ok(
       statSync(join(cfg, "settings.json")).isFile(),
       "root-level files (the org record) are always in a cone checkout",
@@ -144,6 +145,49 @@ test("destroyInstance: removes the sparse config worktree and deregisters it fro
     const list = execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: orgRepo }).toString();
     assert.doesNotMatch(list, /work-11/, "no stale registration");
   } finally {
+    rmSync(join(dir, "..", ".."), { recursive: true, force: true });
+  }
+});
+
+test("createInstance: a failure between 'worktree add --no-checkout' and 'checkout' tears the half-made config worktree down, so a retry starts clean", async () => {
+  const { dir, orgRepo, ws } = makeWorkspace("sparse-retry", ["app"]);
+  // A `git` shim that fails ONLY the first `sparse-checkout` invocation (then
+  // deletes itself so every later call — including the retry — reaches the
+  // real git), standing in for e.g. `sparse-checkout` being unavailable on an
+  // older git the first time this instance is created. This targets the exact
+  // gap: `worktree add --no-checkout` (the step that writes `path/.git`, the
+  // marker `isWorktree` checks) has already succeeded by the time this fails.
+  const shimDir = mkdtempSync(join(tmpdir(), "fakegit-"));
+  const marker = join(shimDir, "tripped");
+  const realGit = execFileSync("which", ["git"]).toString().trim();
+  writeFileSync(
+    join(shimDir, "git"),
+    `#!/bin/sh\nif [ "$1" = "sparse-checkout" ] && [ ! -f "${marker}" ]; then\n  touch "${marker}"\n  exit 1\nfi\nexec "${realGit}" "$@"\n`,
+  );
+  chmodSync(join(shimDir, "git"), 0o755);
+  const cfg = join(instanceDir(dir, "work-retry"), "config");
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${shimDir}:${originalPath}`;
+  try {
+    await assert.rejects(
+      () => createInstance(dir, ws as never, "work-retry", ["app"], { orgRepo }),
+      /could not create a worktree/,
+      "the first attempt surfaces the failure",
+    );
+    assert.throws(() => statSync(join(cfg, ".git")), "the half-made worktree's .git marker is gone");
+    const listAfterFailure = execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: orgRepo }).toString();
+    assert.doesNotMatch(listAfterFailure, /work-retry/, "no stale registration for the next isWorktree check to trust");
+
+    const inst = await createInstance(dir, ws as never, "work-retry", ["app"], { orgRepo });
+    const retried = inst.members.find((m) => m.name === "config");
+    assert.ok(retried);
+    assert.ok(
+      statSync(join(retried!.path, "workspaces", "pg", "settings.json")).isFile(),
+      "the retry is a fully populated sparse worktree, not another silent half-made one",
+    );
+  } finally {
+    process.env.PATH = originalPath;
+    rmSync(shimDir, { recursive: true, force: true });
     rmSync(join(dir, "..", ".."), { recursive: true, force: true });
   }
 });
@@ -309,6 +353,18 @@ test("createInstance: a base branch that exists only as a remote-tracking ref st
     assert.equal(actualBranch, "smith/work-dwim", "the requested branch name is honored, not overridden by git's DWIM");
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("createInstance: refuses a workspace name that slugs to nothing — it would cone in workspaces/ itself, exposing every workspace", async () => {
+  const { dir, orgRepo } = makeWorkspace("empty-slug", []);
+  try {
+    await assert.rejects(
+      () => createInstance(dir, { name: "...", repos: [] } as never, "w", [], { orgRepo }),
+      /"\.\.\."/,
+    );
+  } finally {
+    rmSync(join(dir, "..", ".."), { recursive: true, force: true });
   }
 });
 

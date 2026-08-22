@@ -164,8 +164,18 @@ export async function createInstance(
   // The config member is a SPARSE worktree of the org repo (spec 2026-08-22
   // §8): this workspace's subtree plus the shared blueprints/, never a
   // sibling workspace's material. `sparse` is the cone-mode directory list.
+  //
+  // A name that slugs to nothing would cone in `workspaces/` itself — the
+  // shared parent of every workspace's subtree, i.e. exactly the leak this
+  // sparse checkout exists to prevent. Mirrors configDirForName's guard.
+  const slug = slugForDir(ws.name);
+  if (!slug) {
+    throw new Error(
+      `Workspace name "${ws.name}" has no characters usable in a directory name — refusing a cone that would expose every workspace`,
+    );
+  }
   const sources: Array<{ name: string; source: string; sparse?: string[] }> = [
-    { name: "config", source: opts.orgRepo, sparse: ["blueprints", `workspaces/${slugForDir(ws.name)}`] },
+    { name: "config", source: opts.orgRepo, sparse: ["blueprints", `workspaces/${slug}`] },
   ];
   for (const name of repoNames) {
     // Validate repo name before touching the filesystem.
@@ -205,13 +215,17 @@ export async function createInstance(
       // Which ref the worktree starts on. Reattaching to an existing branch
       // takes no start-point; a repo member with a base starts there (see
       // resolveStartPoint); the config member has no base-branch concept and
-      // is cut from the org repo's own HEAD.
+      // is cut from the org repo's own HEAD. `usedBase` tracks exactly the
+      // branch that actually consumed `opts.base`, so a failure elsewhere
+      // (reattach, or the config member) never misattributes itself to it.
       let refArgs: string[];
+      let usedBase = false;
       if (branchExists) {
         refArgs = [branch];
       } else if (!sparse && opts.base) {
         const startPoint = await resolveStartPoint(source, opts.base);
         refArgs = ["-b", branch, "--", startPoint];
+        usedBase = true;
       } else {
         refArgs = ["-b", branch];
       }
@@ -222,14 +236,30 @@ export async function createInstance(
           // org repo first and narrowing afterwards would briefly materialise
           // every workspace's files in this instance.
           await run("git", ["worktree", "add", "-q", "--no-checkout", path, ...refArgs], { cwd: source });
-          await run("git", ["sparse-checkout", "set", "--cone", ...sparse], { cwd: path });
-          await run("git", ["checkout", "-q", branch], { cwd: path });
+          try {
+            await run("git", ["sparse-checkout", "set", "--cone", ...sparse], { cwd: path });
+            await run("git", ["checkout", "-q", branch], { cwd: path });
+          } catch (err) {
+            // `worktree add` already wrote `path/.git`, so isWorktree(path)
+            // would read this half-made worktree as done on the next call —
+            // silently, since isWorktree only checks that `.git` exists. Left
+            // in place, a retry (the normal path: dispatcher.ts calls
+            // createInstance on every dispatch of the same taskId) would hand
+            // back an empty, unconfigured config member with no error at all,
+            // and a caller committing into it would record a commit that
+            // deletes the entire org tree on this branch. Tear the half-made
+            // worktree down so a retry starts clean. Best-effort: swallow
+            // teardown failures so the ORIGINAL error is what propagates.
+            await run("git", ["worktree", "remove", "--force", path], { cwd: source }).catch(() => {});
+            await run("git", ["worktree", "prune"], { cwd: source }).catch(() => {});
+            throw err;
+          }
         } else {
           await run("git", ["worktree", "add", "-q", path, ...refArgs], { cwd: source });
         }
       } catch (err) {
         throw new Error(
-          `Member "${name}": could not create a worktree${opts.base && !sparse ? ` from base "${opts.base}"` : ""} — ${(err as Error).message}`,
+          `Member "${name}": could not create a worktree${usedBase ? ` from base "${opts.base}"` : ""} — ${(err as Error).message}`,
         );
       }
     }
