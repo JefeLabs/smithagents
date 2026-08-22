@@ -1333,3 +1333,17 @@ test("redactUser: still never leaks a connector secret", () => {
   } as never);
   assert.equal(JSON.stringify(u).includes("SECRET"), false, "redaction is not weakened by the new fields");
 });
+
+test("buildUserUpdate: sets, keeps, and clears the email — an empty string clears, absence keeps", () => {
+  const set = buildUserUpdate({ id: "me", name: "Edwin" } as never, { email: " e@example.com " });
+  assert.equal(set.email, "e@example.com");
+  const kept = buildUserUpdate(set, { name: "Edwin C" });
+  assert.equal(kept.email, "e@example.com", "absent means unchanged — same merge rule as every other field");
+  const cleared = buildUserUpdate(set, { email: "" });
+  assert.equal(cleared.email, undefined);
+});
+
+test("redactUser: the email is not a secret — it is returned so Settings can show what commits will say", () => {
+  const real = redactUser({ id: "me", name: "Edwin", email: "e@example.com" } as never);
+  assert.equal(real.email, "e@example.com");
+});

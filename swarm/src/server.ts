@@ -74,6 +74,7 @@ import { buildExecutionModes, loadContainersFile, probeDocker, saveContainersFil
 import { DeviceRegistry } from "./device-registry.js";
 import { driverIds, getDriver } from "./drivers/index.js";
 import { isValidModelId } from "./drivers/model-flag.js";
+import { userAuthor } from "./git-author.js";
 import {
   assertGroup,
   expandGroup,
@@ -2084,9 +2085,9 @@ export class OrchestratorServer {
       // now rather than at the next boot's healing pass. Never fatal to
       // workspace creation, note only; that healing pass retries it if this
       // fails.
-      await commitConfigFiles(this.paths, slugForDir(record.name), {
-        message: `config(${slugForDir(record.name)}): create`,
-      }).catch((err) => {
+      const author = userAuthor(resolveCurrentUser(await loadUsersFromDir(this.paths.users).catch(() => [])));
+      const slug = slugForDir(record.name);
+      await commitConfigFiles(this.paths, slug, { author, message: `config(${slug}): create` }).catch((err) => {
         this.app.log.warn(
           `Could not commit config files for workspace "${record.name}": ${String((err as Error).message)}`,
         );
@@ -2135,6 +2136,13 @@ export class OrchestratorServer {
         }
         throw err;
       }
+      const author = userAuthor(resolveCurrentUser(await loadUsersFromDir(this.paths.users).catch(() => [])));
+      const slug = slugForDir(merged.name);
+      await commitConfigFiles(this.paths, slug, { author, message: `config(${slug}): update` }).catch((err) => {
+        this.app.log.warn(
+          `Could not commit config files for workspace "${merged.name}": ${String((err as Error).message)}`,
+        );
+      });
       await this.reloadWorkspaces();
       return merged;
     });
@@ -2338,7 +2346,10 @@ export class OrchestratorServer {
     });
 
     this.app.put("/me", async (req, reply) => {
-      const b = req.body as { name?: string; setup?: User["setup"] };
+      const b = req.body as { name?: string; email?: string; setup?: User["setup"] };
+      if (b.email !== undefined && b.email.trim() !== "" && !/^[^\s@]+@[^\s@]+$/.test(b.email.trim())) {
+        return reply.status(400).send({ error: `"${b.email}" is not an email address` });
+      }
       const dir = this.paths.users;
       const users = await loadUsersFromDir(dir);
       const existing = resolveCurrentUser(users);
@@ -4127,6 +4138,7 @@ export function redactUser(u: User | null) {
   return {
     id: u?.id ?? "me",
     name: u?.name ?? "You",
+    email: u?.email,
     connectors: (u?.connectors ?? []).map(redactConnector),
     placeholder: u === null,
     setup: u?.setup,
@@ -4217,14 +4229,24 @@ export async function runJiraSearch(
  * steps later. Enumerating fields here has now cost this codebase three
  * separate bugs; spread and override.
  */
-export function buildUserUpdate(existing: User | null, body: { name?: string; setup?: User["setup"] }): User {
-  return {
+export function buildUserUpdate(
+  existing: User | null,
+  body: { name?: string; email?: string; setup?: User["setup"] },
+): User {
+  const base: User = {
     ...(existing ?? {}),
     id: existing?.id ?? "me",
     name: body.name?.trim() || existing?.name || "You",
     default: true,
     ...(body.setup !== undefined ? { setup: { ...existing?.setup, ...body.setup } } : {}),
   };
+  if (body.email === undefined) return base;
+  const email = body.email.trim();
+  if (!email) {
+    const { email: _cleared, ...rest } = base;
+    return rest;
+  }
+  return { ...base, email };
 }
 
 /**
