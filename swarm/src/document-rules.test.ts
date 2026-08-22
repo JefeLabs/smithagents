@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { DEFAULT_BLUEPRINTS } from "./blueprints.js";
-import type { DocStatus, ParsedDocument } from "./document-file.js";
+import { type DocStatus, type ParsedDocument, splitSections } from "./document-file.js";
 import {
   type RuleResolvers,
   shapeProblem,
@@ -185,4 +185,39 @@ test("structuralProblems: a blueprint/document id mismatch is reported", () => {
 test("transitionProblems: an er document with an empty (not yet drawn) diagram section still passes → review", async () => {
   const erDoc = doc({ blueprint: "er", workType: "feature" }, [{ id: "diagram", heading: "Diagram", body: "" }]);
   assert.deepEqual(await transitionProblems(er, erDoc, "review", R), []);
+});
+
+test("shapeProblem: an empty-but-closed mermaid fence is VALID (a cleared diagram is a legitimate draft state); a genuinely unclosed one still fails with the unclosed message", () => {
+  assert.equal(shapeProblem("mermaid", "```mermaid\n```"), null, "zero content lines between open and close");
+  assert.match(shapeProblem("mermaid", "```mermaid\ngraph TD")!, /never closed/, "genuinely unclosed still fails");
+  // The tightening this fix round keeps: a closing fence glued to content is not a close (CommonMark).
+  assert.match(shapeProblem("mermaid", "```mermaid\ngraph TD```")!, /never closed/);
+});
+
+test("shapeProblem: an info string after the mermaid marker is reported by name, not as a missing fence", () => {
+  assert.match(shapeProblem("mermaid", "```mermaid title\ngraph TD\n```")!, /info string \("title"\)/);
+  assert.match(shapeProblem("mermaid", "```mermaidTitle\ngraph TD\n```")!, /info string \("Title"\)/);
+});
+
+test("shapeProblem vs document-file.splitSections: mermaid fence recognition agrees with the parser — a fence indented past column 0 is a fence to NEITHER module", () => {
+  // The reviewer's exact fixture: a 3-space-indented fence with a column-0
+  // `## ` line inside it. Before this fix round, shapeProblem tolerated the
+  // indent (treating this as one valid block) while splitSections does not
+  // (it never suppresses heading detection inside an unrecognized fence),
+  // so the two modules disagreed about whether this body is one block or
+  // two sections. After the fix, neither treats the indented fence as real:
+  // shapeProblem refuses it, and splitSections still splits on the embedded
+  // heading — same verdict (not one clean block) from both.
+  const body = "   ```mermaid\ngraph TD\n## Orders is a table\n   ```";
+  assert.notEqual(
+    shapeProblem("mermaid", body),
+    null,
+    "document-rules does not recognize the indented fence as a valid mermaid block",
+  );
+  const sections = splitSections(`## Diagram {#diagram}\n\n${body}\n`);
+  assert.equal(
+    sections.length,
+    2,
+    "document-file also does not treat the indented fence as suppressing the embedded ## heading",
+  );
 });

@@ -34,21 +34,40 @@ export function shapeProblem(shape: SectionShape | undefined, body: string): str
       return null;
     }
     case "mermaid": {
-      // Up to 3 leading spaces on the fence — CommonMark permits it, and
-      // document-file.ts's own fence detection already tolerates it.
-      const openFence = /^ {0,3}```mermaid\s*$/gm;
-      const fences = body.match(openFence) ?? [];
-      if (fences.length === 0) {
-        if (/^ {0,3}```mermaid\S/m.test(body)) {
-          return 'the mermaid fence must be "```mermaid" alone on its line — no info string after it';
+      // Fence recognition here MUST stay in lockstep with document-file.ts's
+      // splitSections (its fence-tracking loop) — that function decides what
+      // a section even IS, so a fence this check accepts but splitSections
+      // doesn't (or vice versa) can silently split a document mid-block.
+      // splitSections only recognizes a fence marker at column 0 (no indent
+      // tolerance: `/^(```+|~~~+)/`), so line-based, column-0-only matching
+      // here is deliberate, not an oversight — do not add indent leniency
+      // without changing splitSections to match.
+      const lines = body.split("\n");
+      const openLine = lines.findIndex((l) => /^```mermaid\s*$/.test(l));
+      if (openLine === -1) {
+        // Starts with the marker but isn't just the marker (plus trailing
+        // whitespace) — an info string, glued ("```mermaidTitle") or
+        // space-separated ("```mermaid title"), is the likely cause.
+        const infoLine = lines.find((l) => /^```mermaid/.test(l) && !/^```mermaid\s*$/.test(l));
+        if (infoLine !== undefined) {
+          const info = infoLine.replace(/^```mermaid/, "").trim();
+          return `the mermaid fence has an info string ("${info}") — it must be "\`\`\`mermaid" alone on its line`;
         }
         return "must be one fenced mermaid block (```mermaid … ```)";
       }
-      if (fences.length > 1) return "must be exactly one fenced mermaid block";
-      const block = /^ {0,3}```mermaid\s*\n[\s\S]*?\n {0,3}```\s*$/m;
-      if (!block.test(body)) return 'the mermaid fence is opened but never closed with a matching "```"';
-      const outside = body.replace(block, "").trim();
-      return outside ? "nothing may sit outside the mermaid block" : null;
+      if (lines.findIndex((l, i) => i > openLine && /^```mermaid\s*$/.test(l)) !== -1) {
+        return "must be exactly one fenced mermaid block";
+      }
+      // A closing fence must be its own line (CommonMark) — content glued to
+      // the closing ``` (e.g. "graph TD```") does not close the block.
+      const closeLine = lines.findIndex((l, i) => i > openLine && /^```\s*$/.test(l));
+      if (closeLine === -1) return 'the mermaid fence is opened but never closed with a matching "```"';
+      const before = lines.slice(0, openLine).join("\n").trim();
+      const after = lines
+        .slice(closeLine + 1)
+        .join("\n")
+        .trim();
+      return before || after ? "nothing may sit outside the mermaid block" : null;
     }
     default:
       return null;
