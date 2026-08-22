@@ -32,6 +32,7 @@
 - **Document id** = `{YYYY-MM-DD-HHMM}-{effort}[-design]` (UTC; `-design` only for blueprint `spec`), `-2`/`-3`… on collision; never renamed. Folder from the blueprint's `folder` (`specs` | `plans` | `dashboards`); defaults: `spec`, `er`, `sequence` → `specs`; `implementation-plan` → `plans`; `dashboard` → `dashboards`.
 - **Gates bite on status transitions only** (§6.3): `drafting → review` needs frontmatter valid + every active section present + shapes valid; `review → final` adds every `required` section non-empty + a plan's `spec` is `final`; `final → drafting` always allowed. Writes never refuse; they return `problems[]`.
 - Never delete user data (archive); the swarm never force-pushes or rewrites `main`. Every git call via `execFile` with `cwd`. No new absolute machine paths written into files inside the org repo.
+- **Reading test results:** `node --test` here uses the SPEC reporter, not TAP — there are no `ok`/`not ok` lines. Confirm a run by `ℹ fail 0` **and** a non-zero `ℹ pass`; a silent grep is not evidence that anything ran (a filter matching nothing looks identical to a clean pass). Read exit codes by redirect, never through a pipe.
 - Commit messages end with `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
 
 ---
@@ -108,7 +109,7 @@ test("normalizeMarkdown: blank input is empty, unparseable input is returned ver
 
 - [ ] **Step 3: Run it to verify it fails**
 
-Run: `cd swarm && SMITH_STATE_ROOT=$(mktemp -d) node --import tsx --test --test-timeout 60000 'src/markdown-normalize.test.ts' 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^not ok|# (pass|fail)|Cannot find'`
+Run: `cd swarm && SMITH_STATE_ROOT=$(mktemp -d) node --import tsx --test --test-timeout 60000 'src/markdown-normalize.test.ts' > /tmp/t.txt 2>&1; echo "exit $?"; grep -E '^ℹ (tests|pass|fail)' /tmp/t.txt; grep -E '✖|AssertionError|Cannot find' /tmp/t.txt | head`
 Expected: fails to load — `Cannot find module './markdown-normalize.js'`.
 
 - [ ] **Step 4: Implement**
@@ -269,7 +270,7 @@ test("documentFileId: UTC minute + effort, -design only for spec", () => {
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `cd swarm && SMITH_STATE_ROOT=$(mktemp -d) node --import tsx --test --test-timeout 60000 'src/document-file.test.ts' 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^not ok|# (pass|fail)|Cannot find'`
+Run: `cd swarm && SMITH_STATE_ROOT=$(mktemp -d) node --import tsx --test --test-timeout 60000 'src/document-file.test.ts' > /tmp/t.txt 2>&1; echo "exit $?"; grep -E '^ℹ (tests|pass|fail)' /tmp/t.txt; grep -E '✖|AssertionError|Cannot find' /tmp/t.txt | head`
 Expected: module not found.
 
 - [ ] **Step 3: Implement**
@@ -620,7 +621,7 @@ test("instantiateSections / activeSections: per-workType activation, starters as
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `cd swarm && SMITH_STATE_ROOT=$(mktemp -d) node --import tsx --test --test-timeout 60000 'src/blueprints.test.ts' 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^not ok|# (pass|fail)|Cannot find'`
+Run: `cd swarm && SMITH_STATE_ROOT=$(mktemp -d) node --import tsx --test --test-timeout 60000 'src/blueprints.test.ts' > /tmp/t.txt 2>&1; echo "exit $?"; grep -E '^ℹ (tests|pass|fail)' /tmp/t.txt; grep -E '✖|AssertionError|Cannot find' /tmp/t.txt | head`
 Expected: module not found.
 
 - [ ] **Step 3: Implement**
@@ -844,7 +845,7 @@ test("positive control: a deliberately invalid document fails every gate", async
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `cd swarm && SMITH_STATE_ROOT=$(mktemp -d) node --import tsx --test --test-timeout 60000 'src/document-rules.test.ts' 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^not ok|# (pass|fail)|Cannot find'`
+Run: `cd swarm && SMITH_STATE_ROOT=$(mktemp -d) node --import tsx --test --test-timeout 60000 'src/document-rules.test.ts' > /tmp/t.txt 2>&1; echo "exit $?"; grep -E '^ℹ (tests|pass|fail)' /tmp/t.txt; grep -E '✖|AssertionError|Cannot find' /tmp/t.txt | head`
 Expected: module not found.
 
 - [ ] **Step 3: Implement**
@@ -1065,8 +1066,8 @@ test("withOrgRepoQueue: tasks on one repo run strictly one after another, and a 
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `cd swarm && SMITH_STATE_ROOT=$(mktemp -d) node --import tsx --test --test-timeout 60000 'src/git-author.test.ts' 'src/workspace-repos.test.ts' 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^not ok|# (pass|fail)'`
-Expected: the four new tests `not ok` (`agentAuthor`/`commitPaths`/`withOrgRepoQueue` are not exported).
+Run: `cd swarm && SMITH_STATE_ROOT=$(mktemp -d) node --import tsx --test --test-timeout 60000 'src/git-author.test.ts' 'src/workspace-repos.test.ts' > /tmp/t.txt 2>&1; echo "exit $?"; grep -E '^ℹ (tests|pass|fail)' /tmp/t.txt; grep -E '✖|AssertionError|Cannot find' /tmp/t.txt | head`
+Expected: the four new tests FAIL (`✖` lines; `agentAuthor`/`commitPaths`/`withOrgRepoQueue` are not exported).
 
 - [ ] **Step 3: Implement**
 
@@ -1307,7 +1308,7 @@ test("createProposal: concurrent proposals on one document get distinct ids", as
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `cd swarm && SMITH_STATE_ROOT=$(mktemp -d) node --import tsx --test --test-timeout 60000 'src/document-proposals.test.ts' 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^not ok|# (pass|fail)|Cannot find'`
+Run: `cd swarm && SMITH_STATE_ROOT=$(mktemp -d) node --import tsx --test --test-timeout 60000 'src/document-proposals.test.ts' > /tmp/t.txt 2>&1; echo "exit $?"; grep -E '^ℹ (tests|pass|fail)' /tmp/t.txt; grep -E '✖|AssertionError|Cannot find' /tmp/t.txt | head`
 Expected: module not found.
 
 - [ ] **Step 3: Implement**
@@ -1776,7 +1777,7 @@ test("importDocument: a legacy broker Doc becomes a file with its sections, pins
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `cd swarm && SMITH_STATE_ROOT=$(mktemp -d) node --import tsx --test --test-timeout 60000 'src/document-store.test.ts' 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^not ok|# (pass|fail)|Cannot find'`
+Run: `cd swarm && SMITH_STATE_ROOT=$(mktemp -d) node --import tsx --test --test-timeout 60000 'src/document-store.test.ts' > /tmp/t.txt 2>&1; echo "exit $?"; grep -E '^ℹ (tests|pass|fail)' /tmp/t.txt; grep -E '✖|AssertionError|Cannot find' /tmp/t.txt | head`
 Expected: module not found.
 
 - [ ] **Step 3: Implement**
@@ -2263,8 +2264,8 @@ test("document methods hit the swarm's document routes with the right verbs, bod
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `cd swarm && SMITH_STATE_ROOT=$(mktemp -d) node --import tsx --test --test-timeout 60000 'src/server.test.ts' 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^not ok|# (pass|fail)'` and `cd broker && node --import tsx --test 'src/swarm-client.test.ts' 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^not ok|# (pass|fail)'`
-Expected: the new tests `not ok` (missing export / missing methods).
+Run: `cd swarm && SMITH_STATE_ROOT=$(mktemp -d) node --import tsx --test --test-timeout 60000 'src/server.test.ts' > /tmp/t.txt 2>&1; echo "exit $?"; grep -E '^ℹ (tests|pass|fail)' /tmp/t.txt; grep -E '✖|AssertionError|Cannot find' /tmp/t.txt | head` and `cd broker && node --import tsx --test 'src/swarm-client.test.ts' > /tmp/t.txt 2>&1; echo "exit $?"; grep -E '^ℹ (tests|pass|fail)' /tmp/t.txt; grep -E '✖|AssertionError|Cannot find' /tmp/t.txt | head`
+Expected: the new tests FAIL (`✖` lines; missing export / missing methods).
 
 - [ ] **Step 3: Implement — swarm**
 
@@ -2458,8 +2459,8 @@ test("document handlers may be async: PATCH section and proposal decisions await
 
 - [ ] **Step 2: Run it to verify it fails**
 
-Run: `cd broker && node --import tsx --test 'src/text-channel.test.ts' 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^not ok|# (pass|fail)'`
-Expected: the new test `not ok` — a promise is truthy, so the sync routes treat every async handler's return as an error (PATCH answers 404, the blueprints route serializes a Promise).
+Run: `cd broker && node --import tsx --test 'src/text-channel.test.ts' > /tmp/t.txt 2>&1; echo "exit $?"; grep -E '^ℹ (tests|pass|fail)' /tmp/t.txt; grep -E '✖|AssertionError|Cannot find' /tmp/t.txt | head`
+Expected: the new test FAILS (`✖`) — a promise is truthy, so the sync routes treat every async handler's return as an error (PATCH answers 404, the blueprints route serializes a Promise).
 
 - [ ] **Step 3: Implement — `text-channel.ts`**
 
@@ -2669,7 +2670,7 @@ test("importLegacyDocuments: an absent documents dir is a no-op", async () => {
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `cd broker && node --import tsx --test 'src/documents-import.test.ts' 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^not ok|# (pass|fail)|Cannot find'`
+Run: `cd broker && node --import tsx --test 'src/documents-import.test.ts' > /tmp/t.txt 2>&1; echo "exit $?"; grep -E '^ℹ (tests|pass|fail)' /tmp/t.txt; grep -E '✖|AssertionError|Cannot find' /tmp/t.txt | head`
 Expected: module not found.
 
 - [ ] **Step 3: Implement**
@@ -2810,7 +2811,7 @@ where `documentsDir` is the former `process.env.BROKER_DOCUMENTS_DIR ?? ".smith/
 - [ ] **Step 4: Tests; typecheck; lint; commit**
 
 ```bash
-cd broker && node --import tsx --test 'src/documents-import.test.ts' 'src/swarm-client.test.ts' 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^not ok|# (pass|fail)'
+cd broker && node --import tsx --test 'src/documents-import.test.ts' 'src/swarm-client.test.ts' > /tmp/t.txt 2>&1; echo "exit $?"; grep -E '^ℹ (tests|pass|fail)' /tmp/t.txt; grep -E '✖|AssertionError|Cannot find' /tmp/t.txt | head
 pnpm --config.verify-deps-before-run=false -C broker typecheck && pnpm --config.verify-deps-before-run=false -C broker lint
 git add broker/src/documents-import.ts broker/src/documents-import.test.ts broker/src/main.ts broker/src/swarm-client.ts
 git commit -m "feat(broker): import legacy JSON documents into the swarm at boot, remap session artifacts, archive
