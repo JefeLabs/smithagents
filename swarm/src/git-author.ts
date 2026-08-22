@@ -25,3 +25,8 @@ export function userAuthor(user: User | null): GitAuthor {
   const email = user.email?.trim() || `${slugForDir(name) || user.id}@users.smithagents`;
   return { name, email };
 }
+
+/** An agent as a git author (spec §1.4): its id, under a domain that can never collide with a person's. */
+export function agentAuthor(agentId: string): GitAuthor {
+  return { name: agentId, email: `${agentId}@agents.smithagents` };
+}

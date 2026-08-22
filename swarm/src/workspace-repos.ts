@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { mkdir, readdir, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
 import { type GitAuthor, SMITH_IDENTITY } from "./git-author.js";
 import type { SmithPaths } from "./paths.js";
@@ -108,14 +108,16 @@ export function workspaceConfigPaths(slug: string): string[] {
 const ORG_CONFIG_PATHS = ["settings.json", "blueprints"];
 
 /**
- * One promise tail per org repo path. `commitConfigFiles` is `add` → `diff
- * --cached` → `commit` against ONE shared index, so two concurrent calls for
- * different workspaces would otherwise interleave: A stages its paths, B
- * stages its own, A's `diff --cached` sees BOTH and commits them under A's
- * author and A's message, and B — finding a clean index — returns `false`
- * having in fact had its change committed by someone else. That silently
- * breaks the `--author` guarantee spec §1.4 exists to provide. Worst case
- * the two race for `.git/index.lock` and one simply throws.
+ * The per-org-repo write queue (spec 2026-08-22 §4): every mutation of one
+ * org repo — config commits, document writes, proposal branches, accepts —
+ * runs through here, strictly one at a time. `commitConfigFiles` is `add` →
+ * `diff --cached` → `commit` against ONE shared index, so two concurrent
+ * calls for different workspaces would otherwise interleave: A stages its
+ * paths, B stages its own, A's `diff --cached` sees BOTH and commits them
+ * under A's author and A's message, and B — finding a clean index — returns
+ * `false` having in fact had its change committed by someone else. That
+ * silently breaks the `--author` guarantee spec §1.4 exists to provide.
+ * Worst case the two race for `.git/index.lock` and one simply throws.
  *
  * In-process only, and deliberately so: this is the small version of the
  * per-repo write queue Plan 2 owns, which will subsume it. It does not
@@ -124,7 +126,7 @@ const ORG_CONFIG_PATHS = ["settings.json", "blueprints"];
  */
 const orgRepoQueues = new Map<string, Promise<unknown>>();
 
-function serializePerOrgRepo<T>(orgRepo: string, task: () => Promise<T>): Promise<T> {
+export function withOrgRepoQueue<T>(orgRepo: string, task: () => Promise<T>): Promise<T> {
   const tail = orgRepoQueues.get(orgRepo) ?? Promise.resolve();
   // `then(task, task)` so a rejected predecessor still lets the next call
   // run — one failed commit must not wedge every later one.
@@ -154,7 +156,7 @@ function serializePerOrgRepo<T>(orgRepo: string, task: () => Promise<T>): Promis
  * its own (boot).
  *
  * GUARANTEES, now that calls are serialized per org repo (see
- * `serializePerOrgRepo`): the returned boolean is about THIS slug's call —
+ * `withOrgRepoQueue`): the returned boolean is about THIS slug's call —
  * `false` means nothing of what this call staged differed from HEAD — and
  * the commit it makes carries the author it was given and nobody else's. A
  * `commit` that fails after `add` unstages what it added before rethrowing,
@@ -165,21 +167,19 @@ export function commitConfigFiles(
   slug: string,
   opts: { author?: GitAuthor; message?: string } = {},
 ): Promise<boolean> {
-  return serializePerOrgRepo(paths.orgRepo, () => stageAndCommit(paths, slug, opts));
+  return withOrgRepoQueue(paths.orgRepo, () => stageAndCommit(paths, slug, opts));
 }
 
-async function stageAndCommit(
-  paths: SmithPaths,
-  slug: string,
-  opts: { author?: GitAuthor; message?: string },
+/**
+ * Stage exactly `present` (paths relative to the org repo root, all known to
+ * exist), commit if anything differs from HEAD, unstage on failure. The one
+ * place `git add`/`commit` happen for the org repo. Callers serialize.
+ */
+async function stageAndCommitPaths(
+  dir: string,
+  present: string[],
+  opts: { author?: GitAuthor; message: string },
 ): Promise<boolean> {
-  const dir = paths.orgRepo;
-  const present: string[] = [];
-  // workspaceConfigPaths() carries the slug guard, so an escaping slug
-  // throws here — before any git call.
-  for (const path of [...ORG_CONFIG_PATHS, ...workspaceConfigPaths(slug)]) {
-    if (await exists(join(dir, path))) present.push(path);
-  }
   if (present.length === 0) return false;
 
   await run("git", ["add", "--", ...present], { cwd: dir });
@@ -198,27 +198,59 @@ async function stageAndCommit(
   try {
     await run(
       "git",
-      [
-        ...SMITH_COMMITTER,
-        "commit",
-        "-q",
-        "-m",
-        opts.message ?? `config(${slug}): update`,
-        `--author=${author.name} <${author.email}>`,
-      ],
+      [...SMITH_COMMITTER, "commit", "-q", "-m", opts.message, `--author=${author.name} <${author.email}>`],
       { cwd: dir },
     );
   } catch (err) {
-    // A commit that throws after `add` succeeded would otherwise leave this
-    // slug's paths staged in the shared index. The NEXT commitConfigFiles —
-    // for a different workspace, with a different author and message —
-    // would then sweep them into its own commit. Unstage exactly what was
+    // A commit that throws after `add` succeeded would otherwise leave these
+    // paths staged in the shared index. The NEXT queued write — for a
+    // different workspace or document, with a different author and message
+    // — would then sweep them into its own commit. Unstage exactly what was
     // added (best-effort: a reset that itself fails must not replace the
     // real error with its own).
     await run("git", ["reset", "-q", "--", ...present], { cwd: dir }).catch(() => {});
     throw err;
   }
   return true;
+}
+
+async function stageAndCommit(
+  paths: SmithPaths,
+  slug: string,
+  opts: { author?: GitAuthor; message?: string },
+): Promise<boolean> {
+  const dir = paths.orgRepo;
+  const present: string[] = [];
+  // workspaceConfigPaths() carries the slug guard, so an escaping slug
+  // throws here — before any git call.
+  for (const path of [...ORG_CONFIG_PATHS, ...workspaceConfigPaths(slug)]) {
+    if (await exists(join(dir, path))) present.push(path);
+  }
+  return stageAndCommitPaths(dir, present, { author: opts.author, message: opts.message ?? `config(${slug}): update` });
+}
+
+/**
+ * Commit exactly the named files (relative to the org repo root) — the
+ * document store's write path. Unlike commitConfigFiles there is no
+ * allowlist: the caller names the file it just wrote. Paths are checked
+ * before any git call: absolute or `..` paths can name files outside the
+ * repo, and a path that does not exist would make `git add` fail the whole
+ * call with a message that names git instead of the caller's mistake.
+ */
+export function commitPaths(
+  paths: SmithPaths,
+  relPaths: string[],
+  opts: { author: GitAuthor; message: string },
+): Promise<boolean> {
+  return withOrgRepoQueue(paths.orgRepo, async () => {
+    for (const p of relPaths) {
+      if (isAbsolute(p)) throw new Error(`commitPaths: "${p}" must be relative to the org repo`);
+      if (p.split(/[\\/]/).includes("..")) throw new Error(`commitPaths: "${p}" contains ".."`);
+      if (!(await exists(join(paths.orgRepo, p))))
+        throw new Error(`commitPaths: "${p}" does not exist in the org repo`);
+    }
+    return stageAndCommitPaths(paths.orgRepo, relPaths, opts);
+  });
 }
 
 /**
