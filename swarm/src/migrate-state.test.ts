@@ -1104,8 +1104,19 @@ test("migrateConfigIntoOrgRepo: a workspace registered by migrateWorkspaceRecord
     await ensureOrgRepo(paths, { name: "acme" });
     const dir = join(paths.workspaces, "pg");
     makeLegacyConfig(dir, "pg");
+    // The two records must be DISTINGUISHABLE. migrateWorkspaceRecords writes
+    // the flat one into the subtree and deletes the flat file, so from that
+    // moment the subtree copy is the only copy of it — the legacy config's
+    // own settings.json must never be copied over it.
+    writeFileSync(
+      join(dir, "config", "settings.json"),
+      `${JSON.stringify({ name: "pg", repos: [], description: "LEGACY" })}\n`,
+    );
     mkdirSync(paths.workspaces, { recursive: true });
-    writeFileSync(join(paths.workspaces, "pg.json"), `${JSON.stringify({ name: "pg", repos: [] })}\n`);
+    writeFileSync(
+      join(paths.workspaces, "pg.json"),
+      `${JSON.stringify({ name: "pg", repos: [], description: "FLAT" })}\n`,
+    );
 
     // The boot order server.ts runs: org migration, the record migration that
     // REGISTERS this workspace, then the org migration a second time.
@@ -1116,10 +1127,72 @@ test("migrateConfigIntoOrgRepo: a workspace registered by migrateWorkspaceRecord
 
     assert.deepEqual(second.imported, ["pg"]);
     const target = configDirForName(paths, "pg");
-    assert.ok(statSync(join(target, "boards", "pg-plan.json")).isFile());
+    assert.equal(
+      JSON.parse(readFileSync(join(target, "settings.json"), "utf8")).description,
+      "FLAT",
+      "the record this boot just wrote is kept — the legacy copy never overwrites it",
+    );
+    assert.ok(statSync(join(target, "boards", "pg-plan.json")).isFile(), "the legacy boards still arrive");
+    assert.ok(statSync(join(target, "roster.json")).isFile(), "and the legacy roster");
     const tree = execFileSync("git", ["ls-tree", "-r", "--name-only", "HEAD"], { cwd: paths.orgRepo }).toString();
     assert.match(tree, /^workspaces\/pg\/boards\/pg-plan\.json$/m);
+    assert.match(tree, /^workspaces\/pg\/roster\.json$/m);
+    assert.match(tree, /^workspaces\/pg\/settings\.json$/m);
+    assert.equal(
+      execFileSync("git", ["show", "HEAD:workspaces/pg/settings.json"], { cwd: paths.orgRepo })
+        .toString()
+        .includes("FLAT"),
+      true,
+      "and it is the kept record that reached HEAD",
+    );
     assert.ok(statSync(join(dir, "config-archived-20260822T120000")).isDirectory());
+    assert.ok(
+      second.notes.some((n) => n.includes("pg") && n.includes("DIFFERS")),
+      `the note must say the archived legacy record differed: ${second.notes.join(" | ")}`,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("migrateConfigIntoOrgRepo: an UNREADABLE legacy settings.json beside a subtree record this boot wrote never removes that subtree", async () => {
+  const root = mkdtempSync(join(tmpdir(), "orgmig-midboot-corrupt-"));
+  try {
+    const paths = smithPaths(root);
+    await ensureOrgRepo(paths, { name: "acme" });
+    const dir = join(paths.workspaces, "pg");
+    makeLegacyConfig(dir, "pg");
+    writeFileSync(join(dir, "config", "settings.json"), "{ not json");
+    mkdirSync(paths.workspaces, { recursive: true });
+    writeFileSync(
+      join(paths.workspaces, "pg.json"),
+      `${JSON.stringify({ name: "pg", repos: [], description: "FLAT" })}\n`,
+    );
+
+    await migrateWorkspaceRecords(paths);
+    const result = await migrateConfigIntoOrgRepo(paths, "20260822T120000");
+
+    const target = configDirForName(paths, "pg");
+    assert.equal(
+      JSON.parse(readFileSync(join(target, "settings.json"), "utf8")).description,
+      "FLAT",
+      "the subtree this boot wrote is still there — an unreadable legacy record must never delete it",
+    );
+    assert.ok(statSync(join(target, "boards", "pg-plan.json")).isFile(), "the readable legacy files were rescued");
+    assert.ok(statSync(join(target, "roster.json")).isFile());
+    const tree = execFileSync("git", ["ls-tree", "-r", "--name-only", "HEAD"], { cwd: paths.orgRepo }).toString();
+    assert.match(tree, /^workspaces\/pg\/boards\/pg-plan\.json$/m);
+    // Archived, not left in place: the subtree already holds a VALID record,
+    // so the unreadable legacy copy is not the last copy of anything — and
+    // leaving it would re-run and re-warn on every boot forever.
+    assert.ok(
+      statSync(join(dir, "config-archived-20260822T120000", "settings.json")).isFile(),
+      "the unreadable legacy config is archived, never deleted",
+    );
+    assert.ok(
+      result.notes.some((n) => n.includes("pg") && n.includes("could not be read")),
+      `the note must say the legacy record was unreadable: ${result.notes.join(" | ")}`,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

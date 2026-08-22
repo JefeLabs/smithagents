@@ -21,6 +21,7 @@ import {
   ensureWorkspaceDir,
   loadWorkspaceFilesFromDir,
   probeSettings,
+  type SettingsProbe,
   settingsPathFor,
   slugForDir,
   type Workspace,
@@ -425,27 +426,21 @@ async function mayImportLegacyConfig(paths: SmithPaths, rawDir: string, runtimeD
 }
 
 /**
- * Import the allowlisted entries of a legacy config that are MISSING from a
- * subtree already in HEAD, and commit them.
+ * Copy the allowlisted entries of a legacy config that are MISSING from a
+ * subtree which already holds this workspace's record. Fills gaps only: an
+ * entry present at `target` is never touched, and nothing is committed here
+ * (each caller commits with its own message).
  *
- * `settings.json` is deliberately excluded: the subtree's copy is the one
- * writes have been landing in, so it is the newer of the two (the same rule
- * the "already imported" branch applies to the directory as a whole). What
- * this rescues is everything the subtree never received — typically
- * `boards/` and `roster.json` for a workspace that reached the org repo
- * through `migrateWorkspaceRecords` (a flat record, settings.json only)
- * rather than through the import path below. Without this, the very next
- * boot archives those files unread and the note claims an import that never
- * happened.
+ * `settings.json` is deliberately excluded. The subtree's copy is the one
+ * writes have been landing in, so it is the newer of the two — and, when it
+ * was written by `migrateWorkspaceRecords` earlier in this same boot, it is
+ * the ONLY copy left, because that migration deletes the flat file it came
+ * from. What this rescues is everything the subtree never received:
+ * typically `boards/` and `roster.json`, which a flat record never carried.
  *
- * Returns the entry names actually imported, so the note can say what it did.
+ * Returns the entry names actually copied, so the note can say what it did.
  */
-async function importRemainingLegacyFiles(
-  paths: SmithPaths,
-  legacy: string,
-  target: string,
-  slug: string,
-): Promise<string[]> {
+async function copyRemainingLegacyFiles(legacy: string, target: string, slug: string): Promise<string[]> {
   const copied: string[] = [];
   for (const path of workspaceConfigPaths(slug)) {
     const entry = basename(path);
@@ -459,10 +454,28 @@ async function importRemainingLegacyFiles(
     });
     copied.push(entry);
   }
-  if (copied.length > 0) {
-    await commitConfigFiles(paths, slug, { message: `Import workspace ${slug} (remaining files)` });
-  }
   return copied;
+}
+
+/**
+ * What to add to a note when a legacy config is archived beside a subtree
+ * record that was KEPT — the reader needs to know whether anything was lost
+ * to that choice, and where to look if it was.
+ */
+function recordComparisonNote(kept: SettingsProbe, legacyRecord: SettingsProbe, archived: string): string {
+  if (kept.kind === "corrupt") {
+    return (
+      `; the record kept there does not parse — the legacy copy is at ` +
+      `${join(archived, "settings.json")} if you need to restore it`
+    );
+  }
+  if (legacyRecord.kind !== "parsed") {
+    return `; the legacy settings.json could not be read, so only the kept record survives — the unreadable copy is in the archive`;
+  }
+  if (kept.kind === "parsed" && !isDeepStrictEqual(kept.value, legacyRecord.value)) {
+    return `; the archived legacy settings.json DIFFERS from the record that was kept — diff it at ${join(archived, "settings.json")}`;
+  }
+  return "";
 }
 
 /**
@@ -485,12 +498,16 @@ async function importRemainingLegacyFiles(
  * outside this state root is refused outright — see `mayImportLegacyConfig`.
  *
  * Idempotent: an already-imported workspace is skipped. A legacy copy found
- * beside an imported subtree (restored from a backup, or left by an earlier
- * flat-record migration that only ever moved settings.json) has whatever the
- * subtree is MISSING imported from it and is then archived; its settings.json
- * is never re-imported — the subtree is where writes have been landing, so it
- * is the newer one. A registered workspace with config in neither place is
- * noted: that install would otherwise boot owning a workspace it cannot load.
+ * beside a subtree that ALREADY holds this workspace's record — whether that
+ * record is in HEAD (restored from a backup) or merely on disk (written by
+ * `migrateWorkspaceRecords` earlier in this same boot, whose flat source is
+ * already deleted) — has whatever the subtree is MISSING copied from it and
+ * is then archived; its settings.json is never copied over the record that
+ * is there, because the subtree is where writes have been landing, so it is
+ * the newer one. Only a subtree with NO record at all is populated by
+ * copying the legacy config wholesale. A registered workspace with config in
+ * neither place is noted: that install would otherwise boot owning a
+ * workspace it cannot load.
  *
  * "Already imported" is asked of git, not the filesystem: a bare `exists()`
  * on `target/settings.json` would be fooled by an uncommitted partial copy
@@ -542,7 +559,10 @@ export async function migrateConfigIntoOrgRepo(
           // Rescue whatever the subtree never received BEFORE archiving, so
           // "already imported" is true of the whole legacy config and not
           // just of its settings.json.
-          const rescued = await importRemainingLegacyFiles(paths, legacy, target, slug);
+          const rescued = await copyRemainingLegacyFiles(legacy, target, slug);
+          if (rescued.length > 0) {
+            await commitConfigFiles(paths, slug, { message: `Import workspace ${slug} (remaining files)` });
+          }
           const archived = `${legacy}-archived-${stamp}`;
           await rename(legacy, archived);
           const also = rescued.length > 0 ? ` (imported ${rescued.join(", ")} first)` : "";
@@ -570,6 +590,40 @@ export async function migrateConfigIntoOrgRepo(
         continue;
       }
 
+      // A record may ALREADY be sitting in the subtree, uncommitted — which
+      // is exactly why `importedInOrgRepo` said false. `migrateWorkspaceRecords`
+      // writes one there earlier in this same boot and DELETES the flat file
+      // it came from, so from that moment the subtree copy is the only copy
+      // of that record. Blind-copying the legacy config over it would destroy
+      // it, and the failure cleanup below would `rm -r` it outright. So when
+      // there is something to preserve, keep it and fill the gaps instead:
+      // same rescue semantics as the "already imported" branch above, which
+      // makes "the subtree is where writes have been landing, so it is the
+      // newer one" true on both branches rather than only one.
+      const kept = await probeSettings(join(target, "settings.json"));
+      if (kept.kind !== "missing") {
+        const legacyRecord = await probeSettings(join(legacy, "settings.json"));
+        const rescued = await copyRemainingLegacyFiles(legacy, target, slug);
+        // Unconditional, unlike the branch above: the kept record itself is
+        // not in HEAD yet (that is what got us here), so there is always
+        // something to commit.
+        await commitConfigFiles(paths, slug, { message: `Import workspace ${slug}` });
+        const archived = `${legacy}-archived-${stamp}`;
+        // Archived even when its settings.json is unreadable — unlike the
+        // copy-and-verify path below, the subtree here already holds this
+        // workspace's record, so the legacy copy is not the last copy of
+        // anything, and leaving it would re-warn on every boot forever.
+        // Archive, never delete: the unreadable file goes with it.
+        await rename(legacy, archived);
+        notes.push(
+          `[org-migration] ${name}: a record was already in ${target} — kept it, imported ` +
+            `${rescued.length > 0 ? rescued.join(", ") : "nothing further"} from ${legacy}, and archived that ` +
+            `legacy config at ${archived}${recordComparisonNote(kept, legacyRecord, archived)}`,
+        );
+        imported.push(name);
+        continue;
+      }
+
       await mkdir(target, { recursive: true });
       // The legacy repo's own .git must not come along: the subtree belongs to
       // the ORG repo's history from here on, and a nested .git would make git
@@ -580,10 +634,14 @@ export async function migrateConfigIntoOrgRepo(
       if (probe.kind !== "parsed") {
         // This removes the COPY, never the legacy source — "nothing is ever
         // deleted" still holds for the one copy of this data that actually
-        // exists. A copy left behind here would sit uncommitted at `target`
-        // forever: invisible, and — since `importedInOrgRepo` now only
-        // trusts HEAD — no longer even able to fake a completed import, but
-        // still clutter a retry has no reason to carry.
+        // exists. Reachable only when `target` held no settings.json before
+        // this call (the branch above claims every other case), so what is
+        // removed here is exactly what the `cp` above just created and
+        // nothing a previous step wrote. A copy left behind here would sit
+        // uncommitted at `target` forever: invisible, and — since
+        // `importedInOrgRepo` now only trusts HEAD — no longer even able to
+        // fake a completed import, but still clutter a retry has no reason
+        // to carry.
         await rm(target, { recursive: true, force: true });
         notes.push(
           `[org-migration] ${name}: copied config does not verify at ${join(target, "settings.json")} — ` +
