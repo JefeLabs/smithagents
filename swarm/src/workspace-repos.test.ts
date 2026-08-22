@@ -4,17 +4,20 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writ
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { makeOrgRepo } from "./org-repo.fixture.js";
 import { smithPaths } from "./paths.js";
 import {
   CLONE_TIMEOUT_MS,
   cloneExecOptions,
   cloneRepoInto,
   commitConfigFiles,
+  commitPaths,
   ensureOrgRepo,
   materializeRepos,
   migrateReposIntoWorkspace,
   repoDirFor,
   repoNameProblem,
+  withOrgRepoQueue,
   workspaceConfigPaths,
 } from "./workspace-repos.js";
 import { loadRoster } from "./workspace-roster.js";
@@ -817,4 +820,112 @@ test("commitConfigFiles: a commit that fails AFTER git add leaves the index clea
 test("workspaceConfigPaths: refuses a slug that is not a slug, so no caller can build an escaping pathspec from it", () => {
   assert.throws(() => workspaceConfigPaths("../escape"), /slug/);
   assert.throws(() => workspaceConfigPaths(""), /slug/);
+});
+
+test("commitPaths: commits exactly the named files under the org repo, with the given author and message", async () => {
+  const root = mkdtempSync(join(tmpdir(), "commitpaths-"));
+  try {
+    const paths = smithPaths(root);
+    makeOrgRepo(root, ["pg"]);
+    mkdirSync(join(paths.orgRepo, "workspaces", "pg", "specs"), { recursive: true });
+    writeFileSync(join(paths.orgRepo, "workspaces", "pg", "specs", "a.md"), "a\n");
+    writeFileSync(join(paths.orgRepo, "workspaces", "pg", "specs", "b.md"), "b\n");
+
+    assert.equal(
+      await commitPaths(paths, ["workspaces/pg/specs/a.md"], {
+        author: { name: "anderson", email: "anderson@agents.smithagents" },
+        message: "spec(x): approach",
+      }),
+      true,
+    );
+    const line = execFileSync("git", ["log", "-1", "--format=%an|%s", "--name-only"], {
+      cwd: paths.orgRepo,
+    }).toString();
+    assert.match(line, /^anderson\|spec\(x\): approach/);
+    assert.match(line, /workspaces\/pg\/specs\/a\.md/);
+    assert.doesNotMatch(line, /b\.md/, "b.md was never named, so it is not in this commit");
+    assert.equal(
+      await commitPaths(paths, ["workspaces/pg/specs/a.md"], { author: { name: "x", email: "x@x" }, message: "again" }),
+      false,
+      "nothing changed → no commit",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("commitPaths: refuses an absolute path, a .. path, and a path that does not exist", async () => {
+  const root = mkdtempSync(join(tmpdir(), "commitpaths-bad-"));
+  try {
+    const paths = smithPaths(root);
+    makeOrgRepo(root, ["pg"]);
+    const author = { name: "x", email: "x@x" };
+    await assert.rejects(() => commitPaths(paths, ["/etc/passwd"], { author, message: "m" }), /relative/);
+    await assert.rejects(() => commitPaths(paths, ["../outside.md"], { author, message: "m" }), /\.\./);
+    await assert.rejects(
+      () => commitPaths(paths, ["workspaces/pg/specs/missing.md"], { author, message: "m" }),
+      /does not exist/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('commitPaths: refuses a directory — including "." itself — so a hand-dropped file is never swept into the subtree', async () => {
+  const root = mkdtempSync(join(tmpdir(), "commitpaths-dir-"));
+  try {
+    const paths = smithPaths(root);
+    makeOrgRepo(root, ["pg"]);
+    mkdirSync(join(paths.orgRepo, "workspaces", "pg", "specs"), { recursive: true });
+    writeFileSync(join(paths.orgRepo, "workspaces", "pg", "specs", "a.md"), "a\n");
+    writeFileSync(join(paths.orgRepo, "hand-dropped.txt"), "not staged on your behalf\n");
+    const author = { name: "x", email: "x@x" };
+
+    await assert.rejects(
+      () => commitPaths(paths, ["."], { author, message: "m" }),
+      /does not exist/,
+      "the whole repo root is not a file",
+    );
+    await assert.rejects(
+      () => commitPaths(paths, ["workspaces/pg/specs"], { author, message: "m" }),
+      /does not exist/,
+      "a directory is not a file, even though it exists",
+    );
+
+    assert.doesNotThrow(
+      () => execFileSync("git", ["diff", "--cached", "--quiet"], { cwd: paths.orgRepo }),
+      "nothing is staged — neither call reached git add, so the hand-dropped file was never swept in",
+    );
+    const untracked = execFileSync("git", ["status", "--porcelain"], { cwd: paths.orgRepo }).toString();
+    assert.match(untracked, /^\?\? hand-dropped\.txt$/m, "the hand-dropped file is still untracked, not staged");
+    assert.match(
+      untracked,
+      /^\?\? workspaces\/pg\/specs\/$/m,
+      "the new subtree — including a.md — is still untracked too, collapsed by git as one line",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("withOrgRepoQueue: tasks on one repo run strictly one after another, and a rejection does not wedge the queue", async () => {
+  const order: string[] = [];
+  const slow = withOrgRepoQueue("/repo/q", async () => {
+    order.push("slow-start");
+    await new Promise((r) => setTimeout(r, 30));
+    order.push("slow-end");
+    return 1;
+  });
+  const failing = withOrgRepoQueue("/repo/q", async () => {
+    order.push("fail");
+    throw new Error("boom");
+  });
+  const fast = withOrgRepoQueue("/repo/q", async () => {
+    order.push("fast");
+    return 3;
+  });
+  assert.equal(await slow, 1);
+  await assert.rejects(failing, /boom/);
+  assert.equal(await fast, 3);
+  assert.deepEqual(order, ["slow-start", "slow-end", "fail", "fast"]);
 });

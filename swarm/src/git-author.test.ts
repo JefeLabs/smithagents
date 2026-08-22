@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { userAuthor } from "./git-author.js";
+import { agentAuthor, userAuthor } from "./git-author.js";
 
 test("userAuthor: a user with an email is themselves", () => {
   assert.deepEqual(userAuthor({ id: "me", name: "Edwin Cruz", email: "e@example.com" } as never), {
@@ -18,4 +18,8 @@ test("userAuthor: no email → a deterministic address under users.smithagents, 
 
 test("userAuthor: no user at all → the tool itself, never a fabricated person", () => {
   assert.deepEqual(userAuthor(null), { name: "smithagents", email: "smithagents@localhost" });
+});
+
+test("agentAuthor: an agent is named by its id under agents.smithagents, so blame tells Anderson from Edwin", () => {
+  assert.deepEqual(agentAuthor("anderson"), { name: "anderson", email: "anderson@agents.smithagents" });
 });
