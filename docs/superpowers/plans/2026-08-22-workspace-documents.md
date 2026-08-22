@@ -2466,7 +2466,10 @@ Expected: the new test FAILS (`✖`) — a promise is truthy, so the sync routes
 - [ ] **Step 3: Implement — `text-channel.ts`**
 
 - In the constructor's `documents` option type, change every `: string | null;` return to `: string | null | Promise<string | null>;` (rename, changeBlueprint, patchSection, acceptProposal, rejectProposal, pin, unpin). Change `blueprints?: () => Blueprint[]` to `blueprints?: () => Blueprint[] | Promise<Blueprint[]>`. Import `Blueprint` and `Doc` from `./swarm-client.ts` instead of `./blueprints.ts` / `./documents.ts`.
-- Find every call site with `grep -n 'documents\.\(rename\|changeBlueprint\|patchSection\|acceptProposal\|rejectProposal\|pin\|unpin\)' src/text-channel.ts` and `grep -n 'this.blueprints()' src/text-channel.ts`. At each: `const error = await documents.X(...)`. Where the call sits inside a `req.on("end", () => { … })` callback, make that callback `async () => { … }` and `await` inside it. The `GET /blueprints` route: `const blueprints = await this.blueprints();` before serializing. Nothing else changes — status mapping stays `error ? 404 : 200`.
+- Find every call site with `grep -n 'documents\.\(rename\|changeBlueprint\|patchSection\|acceptProposal\|rejectProposal\|pin\|unpin\)' src/text-channel.ts` and `grep -n 'this.blueprints()' src/text-channel.ts`. At each: `const error = await documents.X(...)`. Where the call sits inside a `req.on("end", () => { … })` callback, make that callback `async () => { … }` and `await` inside it. The `GET /blueprints` route: `const blueprints = await this.blueprints();` before serializing.
+  **Two things this list gets wrong if you apply it mechanically — verified against the real file:**
+  1. One call site combines TWO handlers in a ternary (`const error = title ? documents.rename(docId, title) : documents.changeBlueprint(docId, blueprintId);`, around `text-channel.ts:1730`). Await the whole expression — `const error = await (title ? … : …)` — not one branch of it.
+  2. Status mapping is NOT uniformly `error ? 404 : 200`. That same rename/changeBlueprint route answers `error ? 409 : 200` (409 because the usual cause is a document that already has content). PRESERVE each route's existing status; do not normalise them.
 
 - [ ] **Step 4: Implement — `main.ts`**
 
