@@ -1890,14 +1890,25 @@ async function readParsed(loc: Located): Promise<{ text: string; doc: ParsedDocu
 }
 
 function resolvers(paths: SmithPaths, ws: Workspace): RuleResolvers {
+  // One capability read per resolvers() call, lazily, shared by every
+  // sliceExists on that call. A fresh resolvers() per store operation keeps
+  // truth on the disk (no cross-request cache).
+  let slices: Promise<Set<string>> | undefined;
   return {
     async specStatus(docId) {
       const r = await readParsed(located(paths, ws, "specs", docId));
       return r ? r.doc.frontmatter.status : null;
     },
     async sliceExists(sliceId) {
-      const { capabilities } = await loadCapabilities(paths.workCapabilities);
-      return capabilities.some((c) => c.workspaceId === ws.name && c.slices.some((s) => s.id === sliceId));
+      // Memoized per resolvers() call: `listWorkspaceDocuments` validates every
+      // document, and each document may name several slices — without this,
+      // listing N documents with M slices each is N*M full reads of the
+      // capability directory on one request.
+      slices ??= loadCapabilities(paths.workCapabilities).then(
+        ({ capabilities }) =>
+          new Set(capabilities.filter((c) => c.workspaceId === ws.name).flatMap((c) => c.slices.map((s) => s.id))),
+      );
+      return (await slices).has(sliceId);
     },
   };
 }
