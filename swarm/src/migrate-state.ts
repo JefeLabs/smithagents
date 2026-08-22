@@ -9,12 +9,12 @@
 // back to for those.
 import { execFile } from "node:child_process";
 import { cp, mkdir, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { isDeepStrictEqual, promisify } from "node:util";
 import type { SmithPaths } from "./paths.js";
 import { loadBoards } from "./work-items.js";
 import { loadRegistry, registryPath, saveRegistryEntry } from "./workspace-registry.js";
-import { commitConfigFiles } from "./workspace-repos.js";
+import { commitConfigFiles, workspaceConfigPaths } from "./workspace-repos.js";
 import {
   configDirFor,
   configDirForName,
@@ -391,6 +391,81 @@ async function importedInOrgRepo(paths: SmithPaths, slug: string): Promise<boole
 }
 
 /**
+ * Whether this migration may act — destructively — on the legacy config at
+ * `<runtimeDir>/config`, where `runtimeDir` came out of the registry.
+ *
+ * The registry's VALUES are arbitrary data: absolute paths written by
+ * whichever install created the workspace. This function is the only thing
+ * standing between that data and a `rename` of a directory the running
+ * install may not own. Booting a COPY of a state root (`cp -R ~/.smithagents
+ * $SMOKE; SMITH_STATE_ROOT=$SMOKE …`) reads the copy's registry, which still
+ * points back into the ORIGINAL install — and without this guard the copy's
+ * boot archives the original's config out from under it. That happened for
+ * real, to the live install, following this plan's own smoke procedure.
+ *
+ * Two ways to be eligible:
+ *
+ * 1. `runtimeDir` is inside this state root. A state root is self-contained
+ *    for anything destructive.
+ * 2. The legacy record's OWN `dir` field names `runtimeDir`. That is a
+ *    workspace the user deliberately keeps beside their code (`ws.dir`), and
+ *    the claim comes from the record being imported rather than from a
+ *    registry entry that may be a copy's stale echo.
+ *
+ * A RELATIVE registry value is never eligible and is never resolved against
+ * `process.cwd()` — cwd is the swarm's own checkout, not any state root, and
+ * `workspaces.json` is documented as hand-editable.
+ */
+async function mayImportLegacyConfig(paths: SmithPaths, rawDir: string, runtimeDir: string): Promise<boolean> {
+  if (!isAbsolute(rawDir)) return false;
+  const rel = relative(paths.root, runtimeDir);
+  if (!rel.startsWith("..") && !isAbsolute(rel)) return true;
+  const probe = await probeSettings(join(runtimeDir, "config", "settings.json"));
+  return probe.kind === "parsed" && probe.value.dir !== undefined && resolve(probe.value.dir) === runtimeDir;
+}
+
+/**
+ * Import the allowlisted entries of a legacy config that are MISSING from a
+ * subtree already in HEAD, and commit them.
+ *
+ * `settings.json` is deliberately excluded: the subtree's copy is the one
+ * writes have been landing in, so it is the newer of the two (the same rule
+ * the "already imported" branch applies to the directory as a whole). What
+ * this rescues is everything the subtree never received — typically
+ * `boards/` and `roster.json` for a workspace that reached the org repo
+ * through `migrateWorkspaceRecords` (a flat record, settings.json only)
+ * rather than through the import path below. Without this, the very next
+ * boot archives those files unread and the note claims an import that never
+ * happened.
+ *
+ * Returns the entry names actually imported, so the note can say what it did.
+ */
+async function importRemainingLegacyFiles(
+  paths: SmithPaths,
+  legacy: string,
+  target: string,
+  slug: string,
+): Promise<string[]> {
+  const copied: string[] = [];
+  for (const path of workspaceConfigPaths(slug)) {
+    const entry = basename(path);
+    if (entry === "settings.json") continue;
+    if (!(await exists(join(legacy, entry)))) continue;
+    if (await exists(join(target, entry))) continue;
+    await mkdir(target, { recursive: true });
+    await cp(join(legacy, entry), join(target, entry), {
+      recursive: true,
+      filter: (src) => basename(src) !== ".git",
+    });
+    copied.push(entry);
+  }
+  if (copied.length > 0) {
+    await commitConfigFiles(paths, slug, { message: `Import workspace ${slug} (remaining files)` });
+  }
+  return copied;
+}
+
+/**
  * ONE-WAY migration (spec 2026-08-22 §9.2): each workspace's own `config/`
  * git repo becomes the `workspaces/<slug>/` subtree of the org repo.
  *
@@ -405,11 +480,17 @@ async function importedInOrgRepo(paths: SmithPaths, slug: string): Promise<boole
  * install has a handful of "Update workspace config" commits, and a
  * filter-repo pass is not worth its risk; the archived repo keeps it.
  *
+ * The registry's value is arbitrary data and this function is the only code
+ * in the swarm that RENAMES a directory it found through it, so a legacy path
+ * outside this state root is refused outright — see `mayImportLegacyConfig`.
+ *
  * Idempotent: an already-imported workspace is skipped. A legacy copy found
- * beside an imported subtree (restored from a backup) is archived, never
- * re-imported — the subtree is where writes have been landing, so it is the
- * newer one. A registered workspace with config in neither place is noted:
- * that install would otherwise boot owning a workspace it cannot load.
+ * beside an imported subtree (restored from a backup, or left by an earlier
+ * flat-record migration that only ever moved settings.json) has whatever the
+ * subtree is MISSING imported from it and is then archived; its settings.json
+ * is never re-imported — the subtree is where writes have been landing, so it
+ * is the newer one. A registered workspace with config in neither place is
+ * noted: that install would otherwise boot owning a workspace it cannot load.
  *
  * "Already imported" is asked of git, not the filesystem: a bare `exists()`
  * on `target/settings.json` would be fooled by an uncommitted partial copy
@@ -431,16 +512,43 @@ export async function migrateConfigIntoOrgRepo(
 
   for (const [name, dir] of Object.entries(await loadRegistry(paths))) {
     try {
-      const legacy = join(dir, "config");
+      // resolve(), never join() on the raw value: `workspaceDir()` resolves
+      // and this must agree with it, and a relative value must never become
+      // a path under the process's cwd (see mayImportLegacyConfig).
+      const runtimeDir = resolve(dir);
+      const legacy = join(runtimeDir, "config");
       const target = configDirForName(paths, name);
       const slug = slugForDir(name);
       const hasLegacy = await exists(join(legacy, "settings.json"));
+      const alreadyImported = await importedInOrgRepo(paths, slug);
 
-      if (await importedInOrgRepo(paths, slug)) {
+      if (!(await mayImportLegacyConfig(paths, dir, runtimeDir))) {
+        // Silent when there is nothing at that path to act on AND the
+        // workspace is already in the org repo. That is the steady state of
+        // a relocated workspace once its legacy config has been imported and
+        // archived (the archive is what makes it stop looking eligible), and
+        // warning on every boot forever would be noise that is also false.
+        if (hasLegacy || !alreadyImported) {
+          notes.push(
+            `[org-migration] ${name}: registry points at ${runtimeDir}, outside this state root — skipping; ` +
+              `copy the config in by hand if this is intentional`,
+          );
+        }
+        continue;
+      }
+
+      if (alreadyImported) {
         if (hasLegacy) {
+          // Rescue whatever the subtree never received BEFORE archiving, so
+          // "already imported" is true of the whole legacy config and not
+          // just of its settings.json.
+          const rescued = await importRemainingLegacyFiles(paths, legacy, target, slug);
           const archived = `${legacy}-archived-${stamp}`;
           await rename(legacy, archived);
-          notes.push(`[org-migration] ${name}: already imported — archived a stale legacy config at ${archived}`);
+          const also = rescued.length > 0 ? ` (imported ${rescued.join(", ")} first)` : "";
+          notes.push(
+            `[org-migration] ${name}: already imported — archived a stale legacy config at ${archived}${also}`,
+          );
         }
         continue;
       }

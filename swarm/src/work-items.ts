@@ -537,7 +537,8 @@ export async function loadBoards(
 
 /**
  * Every board across several directories — normally each workspace's
- * config/boards plus the host work dir. Reading all of them is what lets
+ * `workspaces/<slug>/boards` in the org config repo, plus the host work dir.
+ * Reading all of them is what lets
  * boards move gradually: a board that has not been migrated yet still loads
  * from wherever it currently sits.
  *

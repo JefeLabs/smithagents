@@ -17,6 +17,8 @@
 1. **Registry shape stays `name → dir` (spec §1.3 wanted `name → { dir, configRepo }`).** The org repo resolves from the state root (`paths.orgRepo = <root>/config`). A `configRepo` field would be written by this plan and read by nothing until a second org is wanted — exactly the "shipped a dead feature" trap recorded in memory. When a second org is needed, add the field and make `configDirForName` consult it; every call site already goes through that one function.
 2. **The Settings UI email field (spec §1.4) is deferred to Plan 3** (the UI plan). This plan adds `User.email`, `PUT /me` accepting it, and the `<slug>@users.smithagents` fallback, so authorship is correct from day one and the field is a one-line addition where the name field lives.
 3. **Org name:** the spec says the wizard asks. Until it does, `ensureOrgRepo` uses `slugForDir(currentUser.name) || "org"`. The wizard step is Plan 3.
+4. **`blueprints/` seeding from `broker/.smith/blueprints/*.json` (spec §9.1) moves to Plan 2**, with the blueprint code that reads them. `broker/.smith/` holds only `identity.json` today, so there is nothing to seed and the seeding code would have no reader — the "shipped a dead feature" trap again. `workspaceConfigPaths` already lists `blueprints` in the allowlist, so nothing has to change here when Plan 2 writes them.
+5. **Per-mutation commits for board writes land with Plan 2's write queue.** Spec §1.4 wants a commit per mutation; this plan commits on workspace create/update/archive only. Board writes (`saveBoard` into `<orgRepo>/workspaces/<slug>/boards/`) go to the live tree and are not safe to commit one-by-one until Plan 2's per-repo write queue exists. Until then boards reach HEAD at the next boot's healing pass or the next workspace create/update/archive — and `createInstance`'s config member, which is cut from HEAD, shows that state (recorded in its docblock).
 
 ## Global Constraints
 
@@ -1464,8 +1466,13 @@ Expected: `tsc 0`, `test 0` with `# fail 0`, biome finding count ≤ baseline, b
 
 - [ ] **Step 2: Live smoke against a COPY of the real state — never the live root**
 
+**A copied state root is not an isolated install until you rewrite its paths.** `workspaces.json` maps each name to an ABSOLUTE runtime directory, and each `settings.json` carries absolute `dir` / `repos[].path` values — all of them pointing back into the ORIGINAL install. `migrateConfigIntoOrgRepo` archives the legacy `config/` at the registry's path, so booting the copy unrewritten renames the *original's* config out from under it while writing the imported subtree into the copy. That is exactly what happened to `~/.smithagents` once. (The migration now refuses a registry path outside its own state root and notes it instead — so an unrewritten copy no longer destroys anything, but it also imports nothing, and the smoke below proves nothing.) Rewrite first:
+
 ```bash
 SMOKE=$(mktemp -d)/state && cp -R ~/.smithagents "$SMOKE"
+ORIG="$HOME/.smithagents"
+grep -rl "$ORIG" "$SMOKE" --include='*.json' | xargs sed -i '' "s#$ORIG#$SMOKE#g"
+grep -rn "$ORIG" "$SMOKE" --include='*.json'   # expect: nothing
 ls "$SMOKE/workspaces/proving-ground"                     # expect: config  smith-agent-proving-ground  .runtime
 cd swarm && SMITH_STATE_ROOT="$SMOKE" node --import tsx src/server.ts --port 7781 > /tmp/smoke-boot.txt 2>&1 &
 SWARM_PID=$!; sleep 8

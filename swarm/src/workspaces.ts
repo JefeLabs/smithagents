@@ -113,9 +113,10 @@ export interface Workspace {
   members?: string[];
   /**
    * Absolute path to this workspace's own directory — the container for its
-   * config repo, project repos, and ephemeral instances. Absent means the
-   * default under the state root; set explicitly to keep a workspace where the
-   * user keeps code.
+   * project repos, uploads, and `.runtime/` (ephemeral instances). Its
+   * VERSIONED half is not here: that is the `workspaces/<slug>/` subtree of
+   * the org config repo (`configDirFor`). Absent means the default under the
+   * state root; set explicitly to keep a workspace where the user keeps code.
    */
   dir?: string;
   /**

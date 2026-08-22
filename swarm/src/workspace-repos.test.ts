@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -679,4 +679,142 @@ test("commitConfigFiles: the AUTHOR is whoever acted, the COMMITTER is always th
 test("commitConfigFiles: refuses a slug that is not a slug — a path could otherwise escape the subtree", async () => {
   const paths = smithPaths(mkdtempSync(join(tmpdir(), "orgslug-")));
   await assert.rejects(() => commitConfigFiles(paths, "../escape"), /slug/);
+});
+
+test("ensureOrgRepo: an existing repo with a commit and uncommitted edits is left completely alone", async () => {
+  const root = mkdtempSync(join(tmpdir(), "orgrepo-dirty-"));
+  try {
+    const paths = smithPaths(root);
+    await ensureOrgRepo(paths, { name: "acme" });
+    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: paths.orgRepo }).toString().trim();
+    writeFileSync(join(paths.orgRepo, "settings.json"), '{"name":"acme","edited":true}\n');
+    writeFileSync(join(paths.orgRepo, "scratch.txt"), "work in progress\n");
+
+    assert.equal(await ensureOrgRepo(paths, { name: "acme" }), false);
+
+    assert.equal(
+      execFileSync("git", ["rev-parse", "HEAD"], { cwd: paths.orgRepo }).toString().trim(),
+      head,
+      "no second commit",
+    );
+    const status = execFileSync("git", ["status", "--porcelain"], { cwd: paths.orgRepo }).toString();
+    assert.match(status, /settings\.json/, "the edit is still uncommitted");
+    assert.match(status, /scratch\.txt/, "and the untracked file is still untracked");
+    assert.deepEqual(
+      JSON.parse(readFileSync(join(paths.orgRepo, "settings.json"), "utf8")),
+      { name: "acme", edited: true },
+      "an org record the user edited is never overwritten",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("commitConfigFiles: nothing present under the slug returns false WITHOUT invoking git", async () => {
+  const root = mkdtempSync(join(tmpdir(), "orgempty-"));
+  const shimDir = mkdtempSync(join(tmpdir(), "nogit-"));
+  const originalPath = process.env.PATH;
+  try {
+    const paths = smithPaths(root);
+    // An org repo with a commit but no settings.json, no blueprints/ and no
+    // subtree for this slug — every allowlisted path is absent.
+    mkdirSync(paths.orgRepo, { recursive: true });
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: paths.orgRepo });
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "empty"], {
+      cwd: paths.orgRepo,
+    });
+    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: paths.orgRepo }).toString().trim();
+
+    // `git add --` with an EMPTY pathspec list is not a no-op, so the early
+    // return has to happen before git is reached at all. A `git` shim that
+    // fails every invocation is what proves it did.
+    writeFileSync(join(shimDir, "git"), "#!/bin/sh\nexit 1\n");
+    chmodSync(join(shimDir, "git"), 0o755);
+    process.env.PATH = `${shimDir}:${originalPath}`;
+
+    assert.equal(await commitConfigFiles(paths, "ghost"), false, "no paths present → false, and git was never called");
+
+    process.env.PATH = originalPath;
+    assert.equal(
+      execFileSync("git", ["rev-parse", "HEAD"], { cwd: paths.orgRepo }).toString().trim(),
+      head,
+      "and no commit was made",
+    );
+  } finally {
+    process.env.PATH = originalPath;
+    rmSync(root, { recursive: true, force: true });
+    rmSync(shimDir, { recursive: true, force: true });
+  }
+});
+
+test("commitConfigFiles: concurrent commits for different workspaces are serialized — each commit holds only its own subtree, under its own author", async () => {
+  const root = mkdtempSync(join(tmpdir(), "orgconcurrent-"));
+  try {
+    const paths = smithPaths(root);
+    await ensureOrgRepo(paths, { name: "acme" });
+    for (const slug of ["alpha", "bravo"]) {
+      mkdirSync(join(paths.orgRepo, "workspaces", slug), { recursive: true });
+      writeFileSync(join(paths.orgRepo, "workspaces", slug, "settings.json"), `{"name":"${slug}","repos":[]}\n`);
+    }
+
+    // Two routes acting at once on the ONE org repo. Interleaved
+    // add → diff --cached → commit against a shared index means one call
+    // commits the other's staged paths, under its own author and message,
+    // and the other returns false having "committed nothing".
+    const [alpha, bravo] = await Promise.all([
+      commitConfigFiles(paths, "alpha", { author: { name: "Ann", email: "ann@x" }, message: "config(alpha): update" }),
+      commitConfigFiles(paths, "bravo", { author: { name: "Bob", email: "bob@x" }, message: "config(bravo): update" }),
+    ]);
+    assert.equal(alpha, true, "alpha's call committed alpha's change");
+    assert.equal(bravo, true, "bravo's call committed bravo's change");
+
+    const log = execFileSync("git", ["log", "-2", "--format=%H|%an|%s"], { cwd: paths.orgRepo })
+      .toString()
+      .trim()
+      .split("\n");
+    assert.equal(log.length, 2, "two commits, not one that swallowed both subtrees");
+    for (const line of log) {
+      const [sha, author, subject] = line.split("|");
+      const slug = subject.slice("config(".length, subject.indexOf(")"));
+      const other = slug === "alpha" ? "bravo" : "alpha";
+      assert.equal(author, slug === "alpha" ? "Ann" : "Bob", `${subject} carries its own author`);
+      const files = execFileSync("git", ["show", "--name-only", "--format=", sha], { cwd: paths.orgRepo }).toString();
+      assert.match(files, new RegExp(`^workspaces/${slug}/settings\\.json$`, "m"), `${subject} holds its own record`);
+      assert.doesNotMatch(files, new RegExp(`workspaces/${other}`), `${subject} must not hold ${other}'s`);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("commitConfigFiles: a commit that fails AFTER git add leaves the index clean — no staged paths for the next slug to sweep up", async () => {
+  const root = mkdtempSync(join(tmpdir(), "orgindex-"));
+  try {
+    const paths = smithPaths(root);
+    await ensureOrgRepo(paths, { name: "acme" });
+    const pg = join(paths.orgRepo, "workspaces", "pg");
+    mkdirSync(pg, { recursive: true });
+    writeFileSync(join(pg, "settings.json"), '{"name":"pg","repos":[]}\n');
+    // A refusing pre-commit hook is the cheapest real way to fail `git
+    // commit` at the one point that matters: after `git add` has already
+    // staged this slug's paths.
+    const hooks = join(paths.orgRepo, ".git", "hooks");
+    mkdirSync(hooks, { recursive: true });
+    writeFileSync(join(hooks, "pre-commit"), "#!/bin/sh\nexit 1\n");
+    chmodSync(join(hooks, "pre-commit"), 0o755);
+
+    await assert.rejects(() => commitConfigFiles(paths, "pg"), "the failure is reported, not swallowed");
+
+    assert.doesNotThrow(
+      () => execFileSync("git", ["diff", "--cached", "--quiet"], { cwd: paths.orgRepo }),
+      "nothing is left staged — the next commit for a different slug cannot smear this one into it",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("workspaceConfigPaths: refuses a slug that is not a slug, so no caller can build an escaping pathspec from it", () => {
+  assert.throws(() => workspaceConfigPaths("../escape"), /slug/);
+  assert.throws(() => workspaceConfigPaths(""), /slug/);
 });

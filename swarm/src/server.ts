@@ -74,7 +74,7 @@ import { buildExecutionModes, loadContainersFile, probeDocker, saveContainersFil
 import { DeviceRegistry } from "./device-registry.js";
 import { driverIds, getDriver } from "./drivers/index.js";
 import { isValidModelId } from "./drivers/model-flag.js";
-import { userAuthor } from "./git-author.js";
+import { type GitAuthor, SMITH_IDENTITY, userAuthor } from "./git-author.js";
 import {
   assertGroup,
   expandGroup,
@@ -396,6 +396,28 @@ export class OrchestratorServer {
     this.workspaces = await loadWorkspaces(this.paths);
   }
 
+  /**
+   * Who a config-repo commit made on this request is BY (spec §1.4). One
+   * place, because every route that writes into the org repo needs it and
+   * they must all attribute the same way.
+   *
+   * A read failure falls back to the tool's own identity rather than failing
+   * the request — but says so at warn. Silently downgrading authorship is the
+   * one outcome worth noticing: `git blame` would name `smithagents` forever
+   * afterwards, with nothing anywhere recording that a person actually acted.
+   */
+  private async actingAuthor(): Promise<GitAuthor> {
+    try {
+      return userAuthor(resolveCurrentUser(await loadUsersFromDir(this.paths.users)));
+    } catch (err) {
+      this.app.log.warn(
+        `Could not read the user record for commit authorship — attributing this commit to ` +
+          `${SMITH_IDENTITY.name}: ${String((err as Error).message)}`,
+      );
+      return userAuthor(null);
+    }
+  }
+
   /** Group VIEWS over the one context store (spec 2026-08-13) — boot and after every /groups mutation. */
   private async reloadGroups(): Promise<void> {
     this.groups = await loadGroupsFromDir(this.paths.workspaces);
@@ -482,6 +504,11 @@ export class OrchestratorServer {
 
     await this.reconcileSessions();
 
+    // Shared by both passes of the org migration below, so a workspace
+    // imported on the second pass archives to the same stamped name it would
+    // have got on the first.
+    const orgStamp = new Date().toISOString().replace(/[-:]/g, "").slice(0, 15);
+
     // The org config repo (spec 2026-08-22 §1): ONE repo holding every
     // workspace's versioned half as workspaces/<slug>/. Must exist before any
     // migration below writes a subtree into it, and the legacy per-workspace
@@ -513,8 +540,7 @@ export class OrchestratorServer {
             `fix that repo (or move it aside so a fresh one can be created), then restart`,
         );
       }
-      const stamp = new Date().toISOString().replace(/[-:]/g, "").slice(0, 15);
-      const { imported, notes } = await migrateConfigIntoOrgRepo(this.paths, stamp);
+      const { imported, notes } = await migrateConfigIntoOrgRepo(this.paths, orgStamp);
       if (imported.length > 0) this.app.log.info(`[org-migration] imported: ${imported.join(", ")}`);
       for (const note of notes) this.app.log.warn(note);
     }
@@ -540,6 +566,20 @@ export class OrchestratorServer {
       for (const note of notes) {
         this.app.log.warn(note);
       }
+    }
+
+    // The org migration AGAIN, on purpose. It iterates the registry, and the
+    // block above is what ADDS registry entries for records that were still
+    // flat — so on the first pass those workspaces were invisible to it and
+    // their legacy `<dir>/config` (boards, roster) got no import window at
+    // all. Left to the next boot, the subtree would by then hold a committed
+    // settings.json and the legacy repo would be archived as "already
+    // imported" with its boards never read. Idempotent and cheap: one `git
+    // cat-file` per workspace when there is nothing to do.
+    {
+      const { imported, notes } = await migrateConfigIntoOrgRepo(this.paths, orgStamp);
+      if (imported.length > 0) this.app.log.info(`[org-migration] imported: ${imported.join(", ")}`);
+      for (const note of notes) this.app.log.warn(note);
     }
 
     // ONE-WAY migration (plan §4, workspace-owns-its-repos): relocate any
@@ -1964,9 +2004,10 @@ export class OrchestratorServer {
         // Portraits ride with the roster: archived beside it, never deleted.
         await rename(this.paths.avatars, this.paths.archived("avatars", stamp)).catch(() => {});
         // Work boards are user data too: archived beside the roster, never deleted —
-        // the host directory AND every workspace's own config/boards (boards-into-
-        // workspaces moved most of them there; leaving those out of a reset the user
-        // explicitly asked for would mean most boards silently survive it).
+        // the host directory AND every workspace's `workspaces/<slug>/boards` in the
+        // org config repo (boards-into-workspaces moved most of them there; leaving
+        // those out of a reset the user explicitly asked for would mean most boards
+        // silently survive it).
         await rename(this.paths.work, this.paths.archived("work", stamp)).catch(() => {});
         await archiveWorkspaceBoards(this.paths, this.workspaces, stamp);
         const squadsDir = this.paths.squads;
@@ -2085,7 +2126,7 @@ export class OrchestratorServer {
       // now rather than at the next boot's healing pass. Never fatal to
       // workspace creation, note only; that healing pass retries it if this
       // fails.
-      const author = userAuthor(resolveCurrentUser(await loadUsersFromDir(this.paths.users).catch(() => [])));
+      const author = await this.actingAuthor();
       const slug = slugForDir(record.name);
       await commitConfigFiles(this.paths, slug, { author, message: `config(${slug}): create` }).catch((err) => {
         this.app.log.warn(
@@ -2136,7 +2177,7 @@ export class OrchestratorServer {
         }
         throw err;
       }
-      const author = userAuthor(resolveCurrentUser(await loadUsersFromDir(this.paths.users).catch(() => [])));
+      const author = await this.actingAuthor();
       const slug = slugForDir(merged.name);
       await commitConfigFiles(this.paths, slug, { author, message: `config(${slug}): update` }).catch((err) => {
         this.app.log.warn(
@@ -2161,6 +2202,16 @@ export class OrchestratorServer {
         }
         throw err;
       }
+      // Same as POST/PUT above: get the archive flag into HEAD now, under the
+      // identity that pressed the button, rather than at the next boot's
+      // healing pass under `smithagents`. Never fatal to the archive itself.
+      const author = await this.actingAuthor();
+      const slug = slugForDir(ws.name);
+      await commitConfigFiles(this.paths, slug, { author, message: `config(${slug}): archive` }).catch((err) => {
+        this.app.log.warn(
+          `Could not commit config files for workspace "${ws.name}": ${String((err as Error).message)}`,
+        );
+      });
       await this.reloadWorkspaces();
       return { ok: true, archived: ws.name };
     });

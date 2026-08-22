@@ -147,6 +147,12 @@ export async function resolveStartPoint(source: string, base: string): Promise<s
  * repo's own HEAD. Omitting `opts.base` keeps the pre-existing behavior (every
  * repo member cut from the source's own HEAD) — unchanged for existing
  * callers.
+ *
+ * The config member therefore reflects the org repo's HEAD, not its live
+ * tree: writes that have not been committed (board edits, archive flags) are
+ * not visible in an instance until the next commit. Per-mutation commits for
+ * board writes land with Plan 2's write queue; until then boards reach HEAD
+ * at the next boot's healing pass or the next workspace create/update/archive.
  */
 export async function createInstance(
   workspaceDir: string,
