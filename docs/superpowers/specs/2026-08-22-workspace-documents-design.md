@@ -293,6 +293,20 @@ refs/heads/proposals/<slug>/<docId>/<n>       one open proposal = one branch, on
   proposal. Wiring that surfacing is a follow-on; the shape makes it free.
 - If rejected proposals ever need to be durable, `refs/rejected/…` instead of
   delete is the one-line change.
+- **Writes to one org repo are serialized through a per-repo write queue**
+  (Edwin, 2026-08-22). Several agents can submit proposals — and a user can
+  accept one — at the same moment; git's ref store tolerates concurrent
+  branch creation, but `<n>` allocation, any `git merge` into `main`, and
+  every `commitConfigFiles` touch shared state (the index, HEAD, the live
+  tree) and must not interleave. The swarm keeps ONE in-process FIFO per org
+  repo: every mutation (create proposal, accept, reject, section write +
+  commit) is enqueued and runs to completion before the next starts; `<n>`
+  is allocated inside the queue. Back-pressure is the queue length: a
+  request waits its turn rather than racing, and the route reports `queued`
+  position when it is not immediate. Reads never queue. Cross-process
+  safety (two swarms on one repo) is out of scope — one swarm owns an org
+  repo — and git's own `index.lock` is the backstop if that assumption is
+  ever violated.
 
 ## 5. Uploads
 
