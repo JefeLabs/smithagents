@@ -2821,7 +2821,12 @@ In `broker/src/main.ts`, right after the boot-time `await refreshDocuments()` fr
     if (r.imported.length > 0) await refreshDocuments();
   }
 ```
-where `documentsDir` is the former `process.env.BROKER_DOCUMENTS_DIR ?? ".smith/documents"` (keep that constant for this purpose) and `sessionsDir` is the existing constant. `SwarmClient` satisfies `ImportClient` structurally (`listWorkspaces` returns records with `name`/`default`/`archived`; `importDocument` returns a `Doc`, which has `id`).
+where `sessionsDir` is the existing constant and `documentsDir` **no longer exists** — Task 9 deleted it along with the JSON store, so you must DECLARE it in this task:
+```ts
+// The legacy store's location, kept only so this migration can find and archive it.
+const documentsDir = process.env.BROKER_DOCUMENTS_DIR ?? ".smith/documents";
+```
+Reading the plan alone would give you a `ReferenceError` at typecheck. `SwarmClient` satisfies `ImportClient` structurally (`listWorkspaces` returns records with `name`/`default`/`archived`; `importDocument` returns a `Doc`, which has `id`).
 
 - [ ] **Step 4: Tests; typecheck; lint; commit**
 
