@@ -1588,3 +1588,71 @@ test("PATCH /documents/:id: more than one recognised field refuses (400) rather 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("POST /documents/:id/proposals: agentId is validated at the route — git must never silently mutate the recorded identity (final-review Minor 5)", async () => {
+  const root = await mkdtemp(join(tmpdir(), "smith-doc-agentid-"));
+  const port = 18976;
+  const server = new OrchestratorServer({ port, host: "127.0.0.1", orchestrator: { smithRoot: root } });
+  const base = `http://127.0.0.1:${port}`;
+  const propose = (id: string, agentId: string) =>
+    fetch(`${base}/documents/${id}/proposals`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sectionId: "overview", newBody: "proposed", agentId, rationale: "r" }),
+    });
+  try {
+    await server.start();
+    assert.equal(
+      (
+        await fetch(`${base}/workspaces`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name: "pg", repos: [] }),
+        })
+      ).status,
+      201,
+    );
+    const createRes = await fetch(`${base}/workspaces/pg/documents`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ blueprintId: "spec", title: "Authored", effort: "authored" }),
+    });
+    assert.equal(createRes.status, 201);
+    const doc = (await createRes.json()) as { id: string };
+
+    // `agentId` goes straight into GIT_AUTHOR_NAME, and the id is read back
+    // out of `%an`. git strips what it cannot carry in an ident, so "a\nb" was
+    // ACCEPTED and recorded as "ab" — and `acceptProposal` re-derives the
+    // author from the recorded name, so an accept committed under a MUTATED
+    // identity. "  " threw out of `git commit-tree` as an unhandled 500.
+    for (const [label, agentId] of [
+      ["a newline", "a\nb"],
+      ["angle brackets", "a<b>c"],
+      ["whitespace only", "  "],
+      ["empty", ""],
+      ["a space", "ander son"],
+      ["uppercase", "Anderson"],
+      ["a leading dash", "-anderson"],
+    ] as const) {
+      const res = await propose(doc.id, agentId);
+      const json = (await res.json()) as { error?: string };
+      assert.equal(res.status, 400, `${label} (${JSON.stringify(agentId)}) → ${res.status}: ${JSON.stringify(json)}`);
+      assert.match(json.error ?? "", /agentId/, label);
+    }
+
+    // A registry-shaped id (swarm/src/agents.ts) is still accepted, and is the
+    // only proposal on the document — nothing the route refused reached git.
+    const ok = await propose(doc.id, "anderson-2");
+    assert.equal(ok.status, 201, JSON.stringify(await ok.clone().json()));
+    const after = (await (await fetch(`${base}/documents/${doc.id}`)).json()) as {
+      proposals: Array<{ id: string; agentId: string }>;
+    };
+    assert.deepEqual(
+      after.proposals.map((p) => [p.id, p.agentId]),
+      [["1", "anderson-2"]],
+    );
+  } finally {
+    await server.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});

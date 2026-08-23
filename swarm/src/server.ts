@@ -22,7 +22,7 @@ import websocket from "@fastify/websocket";
 import Fastify, { type FastifyReply } from "fastify";
 import { WebSocket } from "ws";
 import { AgentSessionManager } from "./agent-sessions.js";
-import { type ComposedAgent, findAgent, loadAgents, saveAgent } from "./agents.js";
+import { AGENT_ID_RE, type ComposedAgent, findAgent, loadAgents, saveAgent } from "./agents.js";
 import {
   type ApiKeyOpResult,
   apiKeyEngineGate,
@@ -2407,6 +2407,17 @@ export class OrchestratorServer {
     this.app.post<{ Params: { id: string } }>("/documents/:id/proposals", async (req, reply) => {
       const p = (req.body ?? {}) as { sectionId?: string; newBody?: string; agentId?: string; rationale?: string };
       if (!p.sectionId || !p.agentId) return reply.status(400).send({ error: "sectionId and agentId are required" });
+      // `agentId` becomes GIT_AUTHOR_NAME and is read back out of `%an`, so an
+      // unvalidated one is recorded MUTATED — git strips what it cannot carry
+      // in an ident, so "a\nb" was accepted and stored as "ab", and an accept
+      // then commits under that mutated identity. "  " threw out of
+      // `git commit-tree` as an unhandled 500. Guarded here against the
+      // registry's own rule (final-review Minor 5): the broker only ever
+      // passes a registry id, but the route is open to anyone on the port.
+      if (!AGENT_ID_RE.test(p.agentId))
+        return reply
+          .status(400)
+          .send({ error: `agentId "${p.agentId}" is not an agent id: use lowercase letters, digits and dashes` });
       return docRoute(
         reply,
         (w) =>

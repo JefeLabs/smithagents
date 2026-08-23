@@ -108,9 +108,18 @@ export async function loadAgents(dir: string): Promise<ComposedAgent[]> {
   return agents;
 }
 
+/**
+ * What an agent id may be. Exported because it is also what any ROUTE taking an
+ * agent id has to enforce: an id that never passes through `saveAgent` still
+ * reaches `agentAuthor` → `GIT_AUTHOR_NAME`, where git silently strips whatever
+ * it cannot carry in an ident and the id is read back out mutated
+ * (final-review Minor 5). One rule, one place, so the two cannot drift.
+ */
+export const AGENT_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
 /** Write one composed agent to `dir`. Used by the creation wizard. */
 export async function saveAgent(dir: string, agent: ComposedAgent): Promise<void> {
-  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(agent.id)) {
+  if (!AGENT_ID_RE.test(agent.id)) {
     throw new Error(`Invalid agent id "${agent.id}": use lowercase letters, digits and dashes`);
   }
   await mkdir(dir, { recursive: true });
