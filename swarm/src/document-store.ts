@@ -249,17 +249,26 @@ async function isDirty(orgRepo: string, relPath: string): Promise<boolean> {
   return stdout.toString().trim() !== "";
 }
 
+/** What a mutation produced: the file's bytes as re-read from disk, pinned inside the queue. */
+interface WrittenDoc {
+  loc: Located;
+  text: string;
+  doc: ParsedDocument;
+}
+
 /**
  * THE CALLER MUST ALREADY HOLD THE ORG-REPO QUEUE (see `mutate`). Write the
- * file and commit exactly it, then return the document AS RE-READ FROM DISK.
+ * file, commit exactly it, and return its BYTES as re-read from disk.
  *
- * Both halves matter. The write and the commit must sit in ONE queue slot: a
- * second writer landing between them clobbers the file, and the commit then
- * carries that writer's content under this caller's author and message — which
- * is why this uses `commitPathsInQueue` and must never be reached from outside
- * the queue. And the return value is re-read rather than built from `doc`,
- * because the in-memory copy is what the caller *asked* for, not what the disk
- * now holds (task-7 review, C1 defect 3).
+ * The write and the commit must sit in ONE queue slot: a second writer landing
+ * between them clobbers the file, and the commit then carries that writer's
+ * content under this caller's author and message — which is why this uses
+ * `commitPathsInQueue` and must never be reached from outside the queue.
+ *
+ * The re-read is here, not in the caller, because THAT is what makes the
+ * return value honest: these bytes are the ones this mutation put on disk, not
+ * the in-memory copy the caller asked for (task-7 review, C1 defect 3). What
+ * is deliberately NOT here is the wire projection — see `project`.
  */
 async function writeDocInQueue(
   paths: SmithPaths,
@@ -267,7 +276,7 @@ async function writeDocInQueue(
   doc: ParsedDocument,
   author: GitAuthor,
   message: string,
-): Promise<StoreResult> {
+): Promise<WrittenDoc | { error: string; status: number }> {
   const serialized = serializeOrRefuse(doc);
   if ("error" in serialized) return serialized;
   await mkdir(dirname(loc.absPath), { recursive: true });
@@ -275,7 +284,32 @@ async function writeDocInQueue(
   await commitPathsInQueue(paths, [loc.relPath], { author, message });
   const fresh = await readParsed(loc);
   if (!fresh) return { error: `${loc.relPath} did not read back after being written`, status: 500 };
-  return toWire(paths, loc, fresh.text, fresh.doc, await blueprintFor(paths, loc.ws, fresh.doc.frontmatter.blueprint));
+  return { loc, text: fresh.text, doc: fresh.doc };
+}
+
+/**
+ * The wire projection — **run this AFTER releasing the queue, never inside it.**
+ *
+ * Why it is safe out here: the document's own bytes were pinned inside the
+ * queue by `writeDocInQueue`, so `sections`, `title`, `status` and the rest are
+ * exactly what this mutation wrote and cannot drift. The two DERIVED fields are
+ * independently mutable and always have been — `proposals` reads branches under
+ * `refs/heads/proposals/`, which move without touching `main`, and `problems` is
+ * advisory validation over cross-document facts that can change a millisecond
+ * later either way. `getDocument` already computes both outside any lock, so
+ * running them inside the critical section buys no consistency a caller could
+ * rely on.
+ *
+ * Why it MATTERS that it is out here: `listProposals` spawns several git
+ * subprocesses per open proposal. Measured, it added ~28ms per open proposal to
+ * the time the queue was HELD — 42ms with none, 269ms with eight — and the
+ * org-repo queue is global, so every other workspace's mutation waited behind
+ * it. If you are tempted to move this back inside for tidiness, re-read this
+ * paragraph first.
+ */
+async function project(paths: SmithPaths, written: WrittenDoc): Promise<DocWire> {
+  const { loc, text, doc } = written;
+  return toWire(paths, loc, text, doc, await blueprintFor(paths, loc.ws, doc.frontmatter.blueprint));
 }
 
 export async function listWorkspaceDocuments(paths: SmithPaths, ws: Workspace): Promise<DocWire[]> {
@@ -384,7 +418,7 @@ export async function createDocument(
   // same queue slot as the write. Outside it, two creates for one effort in
   // the same minute both see the base id free, both mint it, and the second
   // write destroys the first document outright (task-7 review: 20/20).
-  return withOrgRepoQueue(paths.orgRepo, async () => {
+  const written = await withOrgRepoQueue(paths.orgRepo, async () => {
     const id = await freeId(paths, ws, bp.folder, base);
     return writeDocInQueue(
       paths,
@@ -394,6 +428,8 @@ export async function createDocument(
       `${kindOf(bp.folder)}(${effort}): create`,
     );
   });
+  // Queue released. The derived fields are computed out here — see `project`.
+  return "error" in written ? written : project(paths, written);
 }
 
 /**
@@ -516,7 +552,7 @@ export async function importDocument(
  * commits as the proposing agent, whose identity is only known once the
  * proposal has been read inside the queue).
  */
-function mutate(
+async function mutate(
   paths: SmithPaths,
   workspaces: Workspace[],
   id: string,
@@ -532,17 +568,27 @@ function mutate(
     | null
   >,
 ): Promise<StoreResult | null> {
-  return withOrgRepoQueue(paths.orgRepo, async () => {
-    const loc = await resolveDocument(paths, workspaces, id);
-    const r = loc && (await readParsed(loc));
-    if (!loc || !r) return null;
-    const bp = await blueprintFor(paths, loc.ws, r.doc.frontmatter.blueprint);
-    const result = await change(structuredClone(r.doc), loc, bp, r.text);
-    if (result === null) return null;
-    if ("error" in result) return result;
-    result.doc.frontmatter.updatedAt = nowIso();
-    return writeDocInQueue(paths, loc, result.doc, result.author ?? author, result.message);
-  });
+  const written = await withOrgRepoQueue<WrittenDoc | { error: string; status: number; problems?: Problem[] } | null>(
+    paths.orgRepo,
+    async () => {
+      const loc = await resolveDocument(paths, workspaces, id);
+      const r = loc && (await readParsed(loc));
+      if (!loc || !r) return null;
+      const bp = await blueprintFor(paths, loc.ws, r.doc.frontmatter.blueprint);
+      const result = await change(structuredClone(r.doc), loc, bp, r.text);
+      if (result === null) return null;
+      if ("error" in result) return result;
+      result.doc.frontmatter.updatedAt = nowIso();
+      return writeDocInQueue(paths, loc, result.doc, result.author ?? author, result.message);
+    },
+  );
+  // The queue is RELEASED here: `withOrgRepoQueue` resolves when its task
+  // resolves, and the next queued task is chained on exactly that promise. So
+  // everything below runs concurrently with whoever was waiting — which is the
+  // whole point of doing the projection out here. See `project`.
+  if (written === null) return null;
+  if ("error" in written) return written;
+  return project(paths, written);
 }
 
 export function patchSection(

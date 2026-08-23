@@ -280,6 +280,14 @@ export function commitPaths(
  * second writer clobbers the file between the two. `withOrgRepoQueue` is a
  * plain promise chain, so such a caller CANNOT reach `commitPaths`: the inner
  * task would chain after its own enclosing task's completion and deadlock.
+ *
+ * IF YOU ARE MID-REFACTOR, READ THIS: an INCOMPLETE revert of this pattern
+ * does not fail loudly, it HANGS. Swap this call back to `commitPaths` while
+ * any caller still holds the queue around it and that path deadlocks to your
+ * test timeout — observed as two 60-second timeouts, not an exception, when
+ * exactly that half-revert was tried. A stack trace would have named the
+ * problem in a second; a hang names nothing. So change the queueing of the
+ * callers and this call together, or not at all.
  */
 export async function commitPathsInQueue(
   paths: SmithPaths,

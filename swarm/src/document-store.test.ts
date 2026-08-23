@@ -306,6 +306,36 @@ test("setStatus: the gates bite — final refuses an empty required section; reo
   }
 });
 
+test("§6.3: a write never refuses — the violation comes back as problems[] on the write's OWN result", async () => {
+  const { root, paths } = setup("write-problems");
+  try {
+    const doc = (await createDocument(paths, PG, {
+      blueprintId: "er",
+      workType: "feature",
+      effort: "x",
+      author: EDWIN,
+      now: NOW,
+    })) as DocWire;
+    // The derived half of a mutation's return value is computed after the
+    // org-repo queue is released; this pins that it is still computed, and
+    // computed against what the write actually put on disk.
+    const r = await patchSection(paths, WS, doc.id, "diagram", "not a fenced diagram at all", EDWIN);
+    assert.ok(isDoc(r), JSON.stringify(r));
+    assert.ok(
+      r.problems.some((p) => p.where === "section:diagram" && /mermaid/.test(p.message)),
+      `expected a mermaid shape problem, got ${JSON.stringify(r.problems)}`,
+    );
+    assert.equal(
+      r.sections.find((s) => s.id === "diagram")?.body,
+      "not a fenced diagram at all",
+      "the write still landed — only status transitions refuse",
+    );
+    assert.deepEqual(r.problems, (await getDocument(paths, WS, doc.id))?.problems, "same projection as a plain read");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("setStatus: a shape violation blocks review — the document keeps its status on disk", async () => {
   const { root, paths } = setup("shape");
   try {
