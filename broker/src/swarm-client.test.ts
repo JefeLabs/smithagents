@@ -475,25 +475,36 @@ test("document methods hit the swarm's document routes with the right verbs, bod
   };
   const c = new SwarmClient({ baseUrl: "http://x", fetchImpl: fetch as unknown as typeof globalThis.fetch });
 
-  assert.deepEqual(await c.listBlueprints("my ws"), [{ id: "spec" }]);
+  // Ids deliberately carry characters (' ', '/', '#') that a dropped
+  // encodeURIComponent would corrupt into a different route entirely — a
+  // document/section/proposal id needs escaping just as much as a workspace
+  // name does (task-8-review.md M7: the original test escaped only the
+  // workspace name, so a dropped encodeURIComponent on any OTHER id would
+  // have passed the suite).
+  const workspace = "my ws/2";
+  const docId = "a b/c#d";
+  const sectionId = "sec tion/1";
+  const proposalId = "p 1/2";
+
+  assert.deepEqual(await c.listBlueprints(workspace), [{ id: "spec" }]);
   assert.deepEqual(await c.listDocuments(), [{ id: "d" }]);
   await c.createDocument("pg", { blueprintId: "spec", title: "T" });
-  await c.putSection("2026-x", "approach", "* a");
-  await c.patchDocument("2026-x", { status: "review" });
-  await c.addProposal("2026-x", { sectionId: "approach", newBody: "b", agentId: "anderson", rationale: "r" });
-  await c.decideProposal("2026-x", "3", "accept");
+  await c.putSection(docId, sectionId, "* a");
+  await c.patchDocument(docId, { status: "review" });
+  await c.addProposal(docId, { sectionId: "approach", newBody: "b", agentId: "anderson", rationale: "r" });
+  await c.decideProposal(docId, proposalId, "accept");
   assert.equal(await c.getDocument("missing"), null);
 
   assert.deepEqual(
     calls.map((k) => `${k.method ?? "GET"} ${k.url.replace("http://x", "")}`),
     [
-      "GET /blueprints?workspace=my%20ws",
+      `GET /blueprints?workspace=${encodeURIComponent(workspace)}`,
       "GET /documents",
       "POST /workspaces/pg/documents",
-      "PUT /documents/2026-x/sections/approach",
-      "PATCH /documents/2026-x",
-      "POST /documents/2026-x/proposals",
-      "POST /documents/2026-x/proposals/3/accept",
+      `PUT /documents/${encodeURIComponent(docId)}/sections/${encodeURIComponent(sectionId)}`,
+      `PATCH /documents/${encodeURIComponent(docId)}`,
+      `POST /documents/${encodeURIComponent(docId)}/proposals`,
+      `POST /documents/${encodeURIComponent(docId)}/proposals/${encodeURIComponent(proposalId)}/accept`,
       "GET /documents/missing",
     ],
   );

@@ -11,6 +11,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
 import type { WorkspaceChannels } from "./channels.js";
+import { createDocument } from "./document-store.js";
+import { SMITH_IDENTITY } from "./git-author.js";
 import { makeOrgRepo } from "./org-repo.fixture.js";
 import { smithPaths } from "./paths.js";
 import { ENGINES } from "./personas.js";
@@ -30,6 +32,7 @@ import {
   clearVoiceReferences,
   gitInitRequestedRepos,
   isValidWorkspaceCreateRepos,
+  OrchestratorServer,
   prepareSquadSwarm,
   redactBrainEngine,
   redactConnector,
@@ -1358,4 +1361,226 @@ test("storeReply: null is 404, a store error keeps its status and problems, a do
   const doc = { id: "x" } as never;
   assert.deepEqual(storeReply(doc), { status: 200, body: doc });
   assert.deepEqual(storeReply(doc, true), { status: 201, body: doc });
+});
+
+// ── Document routes: booted against a REAL fastify server (task-8-review.md fix round 1) ──
+// These three boot the actual OrchestratorServer on a spare loopback port far
+// from 7777/7781/7790, rather than calling the extracted pure helpers — the
+// bugs they guard (a swallowed ambiguity throw, a silent section erasure, a
+// silent partial PATCH) live in the ROUTE bodies themselves, not in any
+// function these tests could otherwise import directly.
+
+test("AmbiguousDocumentError is a 409 on every id-addressed document route, not a 500 (task-8 review I1)", async () => {
+  const root = await mkdtemp(join(tmpdir(), "smith-doc-ambig-"));
+  const port = 18973;
+  const server = new OrchestratorServer({ port, host: "127.0.0.1", orchestrator: { smithRoot: root } });
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    await server.start();
+
+    for (const name of ["pg", "other"]) {
+      const res = await fetch(`${base}/workspaces`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name, repos: [] }),
+      });
+      assert.equal(res.status, 201, `creating workspace "${name}"`);
+    }
+
+    // The same effort + blueprint, minted at the same instant, in two
+    // different workspaces: documentFileId is workspace-agnostic and
+    // freeId only checks ITS OWN workspace's folder, so both mint the
+    // identical id — the real, on-disk ambiguity the route must catch.
+    const paths = smithPaths(root);
+    const now = () => "2026-01-01T00:00:00.000Z";
+    let id = "";
+    for (const name of ["pg", "other"]) {
+      const r = await createDocument(paths, { name, repos: [] } as unknown as Workspace, {
+        blueprintId: "spec",
+        title: "Duplicate",
+        effort: "dup-doc",
+        author: SMITH_IDENTITY,
+        now,
+      });
+      assert.ok(r && "id" in r, `document create in "${name}" failed: ${JSON.stringify(r)}`);
+      const docId = (r as { id: string }).id;
+      if (id) assert.equal(docId, id, "both workspaces must mint the SAME id for this test to be meaningful");
+      id = docId;
+    }
+
+    const requests: Array<[string, string, unknown?]> = [
+      ["GET", `/documents/${id}`, undefined],
+      ["PATCH", `/documents/${id}`, { title: "New title" }],
+      ["PUT", `/documents/${id}/sections/overview`, { body: "* x" }],
+      [
+        "POST",
+        `/documents/${id}/proposals`,
+        { sectionId: "overview", agentId: "anderson", newBody: "b", rationale: "r" },
+      ],
+      ["POST", `/documents/${id}/proposals/1/accept`, undefined],
+    ];
+    for (const [method, path, body] of requests) {
+      const res = await fetch(`${base}${path}`, {
+        method,
+        headers: body !== undefined ? { "content-type": "application/json" } : {},
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+      });
+      const json = (await res.json()) as { error?: string };
+      assert.equal(res.status, 409, `${method} ${path} → expected 409, got ${res.status}: ${JSON.stringify(json)}`);
+      assert.match(json.error ?? "", /exists in more than one place/, `${method} ${path} error message`);
+    }
+  } finally {
+    await server.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("PUT .../sections/:sid: an absent body field refuses (400) rather than erasing the section; an explicit empty string still clears it (task-8 review I2)", async () => {
+  const root = await mkdtemp(join(tmpdir(), "smith-doc-section-"));
+  const port = 18974;
+  const server = new OrchestratorServer({ port, host: "127.0.0.1", orchestrator: { smithRoot: root } });
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    await server.start();
+    assert.equal(
+      (
+        await fetch(`${base}/workspaces`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name: "pg", repos: [] }),
+        })
+      ).status,
+      201,
+    );
+    const createRes = await fetch(`${base}/workspaces/pg/documents`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ blueprintId: "spec", title: "Sectioned", effort: "sectioned" }),
+    });
+    assert.equal(createRes.status, 201);
+    const doc = (await createRes.json()) as { id: string };
+
+    // Seed real content — "overview" ships with no starter, so this is the
+    // paragraph a human is standing in for.
+    const seedRes = await fetch(`${base}/documents/${doc.id}/sections/overview`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ body: "A human wrote this paragraph." }),
+    });
+    assert.equal(seedRes.status, 200);
+    const before = ((await seedRes.json()) as { sections: Array<{ id: string; body: string }> }).sections.find(
+      (s) => s.id === "overview",
+    )?.body;
+    assert.equal(before, "A human wrote this paragraph.");
+
+    // Absent `body` field: a truncated/mis-shaped request must not silently erase it.
+    const absentRes = await fetch(`${base}/documents/${doc.id}/sections/overview`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(absentRes.status, 400);
+    assert.match(((await absentRes.json()) as { error?: string }).error ?? "", /body/i);
+
+    // A wrong-typed body ({body: 42}) must be refused the same way.
+    const wrongTypeRes = await fetch(`${base}/documents/${doc.id}/sections/overview`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ body: 42 }),
+    });
+    assert.equal(wrongTypeRes.status, 400);
+
+    // The section is UNCHANGED on disk after both refusals.
+    const afterRefusal = (await (await fetch(`${base}/documents/${doc.id}`)).json()) as {
+      sections: Array<{ id: string; body: string }>;
+    };
+    assert.equal(afterRefusal.sections.find((s) => s.id === "overview")?.body, before);
+
+    // An EXPLICIT empty string is correct PUT semantics and must still clear the section.
+    const clearRes = await fetch(`${base}/documents/${doc.id}/sections/overview`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ body: "" }),
+    });
+    assert.equal(clearRes.status, 200);
+    const cleared = (await clearRes.json()) as { sections: Array<{ id: string; body: string }> };
+    assert.equal(cleared.sections.find((s) => s.id === "overview")?.body, "");
+  } finally {
+    await server.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("PATCH /documents/:id: more than one recognised field refuses (400) rather than silently applying the first; a single field still works; blueprintId+workType is ONE field pair (task-8 review I3)", async () => {
+  const root = await mkdtemp(join(tmpdir(), "smith-doc-patch-"));
+  const port = 18975;
+  const server = new OrchestratorServer({ port, host: "127.0.0.1", orchestrator: { smithRoot: root } });
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    await server.start();
+    assert.equal(
+      (
+        await fetch(`${base}/workspaces`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name: "pg", repos: [] }),
+        })
+      ).status,
+      201,
+    );
+    const createRes = await fetch(`${base}/workspaces/pg/documents`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ blueprintId: "spec", title: "Original title", effort: "multi-patch" }),
+    });
+    assert.equal(createRes.status, 201);
+    const doc = (await createRes.json()) as { id: string; title: string; status: string };
+    assert.equal(doc.title, "Original title");
+    assert.equal(doc.status, "drafting");
+
+    // Two recognised fields at once must be refused, not partially applied.
+    const multiRes = await fetch(`${base}/documents/${doc.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "New title", status: "review" }),
+    });
+    assert.equal(multiRes.status, 400);
+    const multiJson = (await multiRes.json()) as { error?: string };
+    assert.match(multiJson.error ?? "", /title/);
+    assert.match(multiJson.error ?? "", /status/);
+
+    // Nothing changed on disk.
+    const after = (await (await fetch(`${base}/documents/${doc.id}`)).json()) as { title: string; status: string };
+    assert.equal(after.title, "Original title");
+    assert.equal(after.status, "drafting");
+
+    // Each single field still works.
+    const titleRes = await fetch(`${base}/documents/${doc.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "New title" }),
+    });
+    assert.equal(titleRes.status, 200);
+    assert.equal(((await titleRes.json()) as { title: string }).title, "New title");
+
+    const pinsRes = await fetch(`${base}/documents/${doc.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pins: ["pg"] }),
+    });
+    assert.equal(pinsRes.status, 200);
+    assert.deepEqual(((await pinsRes.json()) as { pins: string[] }).pins, ["pg"]);
+
+    // workType riding along with blueprintId is ONE recognised field-pair, not two.
+    const bpRes = await fetch(`${base}/documents/${doc.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ blueprintId: "er", workType: "feature" }),
+    });
+    const bpJson = await bpRes.json();
+    assert.equal(bpRes.status, 200, `blueprintId+workType must count as one field pair: ${JSON.stringify(bpJson)}`);
+  } finally {
+    await server.stop();
+    await rm(root, { recursive: true, force: true });
+  }
 });

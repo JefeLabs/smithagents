@@ -73,7 +73,7 @@ import { loadLiveKitConfig } from "./config.js";
 import { findVendor, VENDORS, verifyBeforeSave } from "./connectors.js";
 import { buildExecutionModes, loadContainersFile, probeDocker, saveContainersFile } from "./containers.js";
 import { DeviceRegistry } from "./device-registry.js";
-import type { DocStatus } from "./document-file.js";
+import { DOC_STATUSES, type DocStatus } from "./document-file.js";
 import {
   AmbiguousDocumentError,
   acceptProposal,
@@ -337,6 +337,8 @@ export class OrchestratorServer {
   // UDP
   private udpSocket: DgramSocket | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  /** The 1s task-queue poll started by startQueueWorker() — cleared in stop() like every other background timer here. */
+  private queueWorkerTimer: ReturnType<typeof setInterval> | null = null;
 
   // Auth — bearer token from SMITH_API_TOKEN; null means loopback-only dev mode
   private readonly apiToken: string | null;
@@ -745,6 +747,7 @@ export class OrchestratorServer {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     if (this.reapTimer) clearInterval(this.reapTimer);
     if (this.sweepTimer) clearTimeout(this.sweepTimer);
+    if (this.queueWorkerTimer) clearInterval(this.queueWorkerTimer);
     if (this.udpSocket) this.udpSocket.close();
     for (const ws of this.wsClients) ws.close();
     await this.app.close();
@@ -2290,9 +2293,16 @@ export class OrchestratorServer {
     });
 
     // ── Documents (spec 2026-08-22 §3) — the broker is the only caller ──
-    this.app.get<{ Querystring: { workspace?: string } }>("/blueprints", async (req) => ({
-      blueprints: await loadBlueprintsFor(this.paths, req.query.workspace || undefined),
-    }));
+    this.app.get<{ Querystring: { workspace?: string | string[] } }>("/blueprints", async (req) => {
+      // Fastify hands an array for a repeated `?workspace=`; slugForDir (via
+      // loadBlueprintsFor) calls .toLowerCase() and 500s on one. Not
+      // reachable through the broker (task-8-review.md M4) — normalised
+      // rather than rejected, first value wins, same tolerance loadWorkspaces
+      // already gives a bad registry key.
+      const q = req.query.workspace;
+      const workspace = Array.isArray(q) ? q[0] : q;
+      return { blueprints: await loadBlueprintsFor(this.paths, workspace || undefined) };
+    });
     this.app.get("/documents", async () => ({
       documents: await listDocuments(this.paths, await loadWorkspaces(this.paths)),
     }));
@@ -2347,11 +2357,31 @@ export class OrchestratorServer {
         workType?: string;
         pins?: string[];
       };
+      // One PATCH is one commit (spec §1.4) — a body naming more than one
+      // recognised field applied only the first and returned 200 as though
+      // the rest had happened too (task-8-review.md I3). `workType` rides
+      // with `blueprintId` as ONE field pair, not a second field: it has no
+      // meaning without a blueprintId to activate it against.
+      const present = [
+        b.title !== undefined && "title",
+        b.status !== undefined && "status",
+        b.blueprintId !== undefined && "blueprintId",
+        Array.isArray(b.pins) && "pins",
+      ].filter((f): f is string => f !== false);
+      if (present.length > 1) {
+        return reply.status(400).send({ error: `a PATCH changes one thing at a time — got ${present.join(", ")}` });
+      }
       const author = await this.actingAuthor();
       if (b.title !== undefined)
         return docRoute(reply, (w) => renameDocument(this.paths, w, req.params.id, b.title as string, author));
-      if (b.status !== undefined)
+      if (b.status !== undefined) {
+        // Unvalidated, this reached the store and came back 409 (a wrong
+        // status class for a malformed enum, task-8-review.md M6) instead of
+        // a 400 naming the closed set.
+        if (!DOC_STATUSES.includes(b.status))
+          return reply.status(400).send({ error: `status must be one of ${DOC_STATUSES.join(" | ")}` });
         return docRoute(reply, (w) => setStatus(this.paths, w, req.params.id, b.status as DocStatus, author));
+      }
       if (b.blueprintId !== undefined)
         return docRoute(reply, (w) =>
           changeBlueprint(this.paths, w, req.params.id, b.blueprintId as string, b.workType, author),
@@ -2361,9 +2391,14 @@ export class OrchestratorServer {
       return reply.status(400).send({ error: "nothing to change: give title, status, blueprintId, or pins" });
     });
     this.app.put<{ Params: { id: string; sid: string } }>("/documents/:id/sections/:sid", async (req, reply) => {
-      const body = String((req.body as { body?: unknown })?.body ?? "");
+      const raw = (req.body as { body?: unknown } | undefined)?.body;
+      // An absent or wrong-typed `body` coerced to "" and wrote it, silently
+      // erasing a section a human wrote (task-8-review.md I2). An EXPLICIT
+      // `{body: ""}` is correct PUT semantics and must still clear it — only
+      // the type is checked, not truthiness.
+      if (typeof raw !== "string") return reply.status(400).send({ error: "body must be a string" });
       const author = await this.actingAuthor();
-      return docRoute(reply, (w) => patchSection(this.paths, w, req.params.id, req.params.sid, body, author));
+      return docRoute(reply, (w) => patchSection(this.paths, w, req.params.id, req.params.sid, raw, author));
     });
     this.app.post<{ Params: { id: string } }>("/documents/:id/proposals", async (req, reply) => {
       const p = (req.body ?? {}) as { sectionId?: string; newBody?: string; agentId?: string; rationale?: string };
@@ -3700,7 +3735,7 @@ export class OrchestratorServer {
     };
 
     // Poll every second
-    setInterval(() => tick().catch((e) => this.app.log.error(e)), 1_000);
+    this.queueWorkerTimer = setInterval(() => tick().catch((e) => this.app.log.error(e)), 1_000);
   }
 
   /**
