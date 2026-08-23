@@ -604,6 +604,66 @@ test("proposals: a human write stales the open proposal; accepting a stale one i
   }
 });
 
+test("proposals: accepting one STALES its siblings on the same section — the deleted DocumentManager deliberately did the opposite", async () => {
+  const { root, paths } = setup("siblings");
+  try {
+    const doc = (await createDocument(paths, PG, WS, {
+      blueprintId: "spec",
+      workType: "feature",
+      effort: "x",
+      author: EDWIN,
+      now: NOW,
+    })) as DocWire;
+    for (const [agentId, body] of [
+      ["anderson", "a"],
+      ["morpheus", "b"],
+    ] as const) {
+      await addProposal(paths, WS, doc.id, { sectionId: "overview", newBody: body, agentId, rationale: "r" });
+    }
+    const before = asDoc(await getDocument(paths, WS, doc.id));
+    assert.deepEqual(
+      before.proposals.map((p) => [p.id, p.newBody, p.state]),
+      [
+        ["1", "a", "open"],
+        ["2", "b", "open"],
+      ],
+    );
+
+    // No human write anywhere in this sequence — the accept's OWN write is
+    // what stales the sibling, because `stale` is a comparison of the
+    // section's body at the merge-base against the file now.
+    const accepted = (await acceptProposal(paths, WS, doc.id, "1")) as DocWire;
+    assert.deepEqual(
+      accepted.proposals.map((p) => [p.id, p.state]),
+      [["2", "stale"]],
+    );
+
+    // This REVERSES `DocumentManager.acceptProposal`, deleted in f249551,
+    // which bypassed staling on purpose ("accepting one suggestion must not
+    // kill its siblings before the human has looked at them") and had a test
+    // asserting it. The new behaviour stands deliberately (see the docblock on
+    // `acceptProposal`) and this is the test that pins it: the sibling is
+    // refused, loudly and actionably, rather than silently discarding the text
+    // just accepted.
+    const refused = await acceptProposal(paths, WS, doc.id, "2");
+    assert.equal(asError(refused).status, 409);
+    assert.match(asError(refused).error, /stale/);
+    assert.match(asError(refused).error, /overview/, "the message names the section that moved");
+    assert.match(asError(refused).error, /reject it or ask for a new one/, "and says what to do about it");
+
+    // The accepted text survived the refusal, and the sibling's branch is
+    // still there for a human to look at.
+    const after = asDoc(await getDocument(paths, WS, doc.id));
+    assert.equal(after.sections.find((s) => s.id === "overview")?.body, "a");
+    assert.deepEqual(
+      after.proposals.map((p) => p.id),
+      ["2"],
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("renameDocument / setPins: title and pins change, the file does not move, nothing unparseable is written", async () => {
   const { root, paths } = setup("rename");
   try {

@@ -852,6 +852,19 @@ export async function addProposal(
  * queue itself (see the deadlock discipline on `mutate`). The document is then
  * re-read, because `mutate`'s wire shape was built while the branch still
  * existed and would still list the accepted proposal.
+ *
+ * ACCEPTING ONE PROPOSAL STALES ITS SIBLINGS ON THAT SECTION, and that is a
+ * DECISION, not an accident of the git model. It REVERSES the deleted
+ * `DocumentManager.acceptProposal`, which bypassed staling on purpose — its
+ * comment read "accepting one suggestion must not kill its siblings before the
+ * human has looked at them", and a test asserted it (final-review Minor 2).
+ * The reversal is deliberate because under this model the accept's own write
+ * IS the change the sibling was written against: accepting the sibling next
+ * would silently discard the text just accepted, which is worse than refusing.
+ * Nothing is destroyed — the sibling's branch stays, it is still readable, and
+ * the refusal names the section and says to reject it or ask for a new one.
+ * A human who wants both merges them by hand or asks for a fresh proposal.
+ * Pinned by "proposals: accepting one STALES its siblings on the same section".
  */
 export async function acceptProposal(
   paths: SmithPaths,
