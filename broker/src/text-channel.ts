@@ -199,11 +199,24 @@ export function workUpdateFrames(
 export class TextChannel {
   private server: Server | null = null;
   private wss: WebSocketServer | null = null;
+  /**
+   * Clients whose hello frames are still being built, each with the broadcasts
+   * that arrived meanwhile. A hello may be async now (it re-reads documents
+   * from the swarm, spec 2026-08-22 §3), and a live frame overtaking it would
+   * be undone by the older snapshot landing after it. Buffer, then flush in
+   * order — a client's first frames are its hello, always.
+   */
+  private readonly pendingHello = new Map<WebSocket, string[]>();
 
   constructor(
     private readonly onUtterance: (text: string) => void,
-    /** Frames sent to each client the moment it connects (e.g. roster snapshot). */
-    private readonly helloFrames: () => ChannelFrame[] = () => [],
+    /**
+     * Frames sent to each client the moment it connects (e.g. roster
+     * snapshot). May be async: a connection is a READ, and the documents
+     * frame is re-read from the swarm before it is served, so a change made
+     * behind the broker's back still reaches a newly connected client.
+     */
+    private readonly helloFrames: () => ChannelFrame[] | Promise<ChannelFrame[]> = () => [],
     /** Roster composition handler (POST /compose). Returns an error string or null. */
     private readonly onCompose: (body: unknown) => string | null = () => "composition not supported",
     /** Work inspection/control for busy agents and squads. */
@@ -2027,7 +2040,32 @@ export class TextChannel {
       const kind: Identity["kind"] = identity?.kind ?? "human"; // open mode = local human
       const clientId = ++this.clientSeq;
       this.clientKinds.set(clientId, kind);
-      for (const frame of this.helloFrames()) client.send(JSON.stringify(frame));
+      // Hello may be async (it re-reads documents). Hold live frames for this
+      // client until it has been sent, so it can never receive a snapshot
+      // older than a frame it has already seen. Message/close listeners are
+      // registered synchronously below — an early client frame must not be
+      // dropped while the hello resolves.
+      const buffered: string[] = [];
+      this.pendingHello.set(client, buffered);
+      // Deliberately cannot throw: it is the sole settler of the promise
+      // below, so a send failure here must not become an unhandled rejection.
+      const flushHello = (frames: ChannelFrame[]): void => {
+        this.pendingHello.delete(client);
+        if (client.readyState !== WebSocket.OPEN) return;
+        try {
+          for (const frame of frames) client.send(JSON.stringify(frame));
+          for (const data of buffered) client.send(data);
+        } catch (err) {
+          console.error("[channel] could not deliver hello frames:", err);
+        } finally {
+          buffered.length = 0;
+        }
+      };
+      void Promise.resolve(this.helloFrames()).then(flushHello, (err: unknown) => {
+        // Never strand a client: it still gets whatever arrived while we tried.
+        console.error("[channel] hello frames failed:", err);
+        flushHello([]);
+      });
       client.on("message", (data, isBinary) => {
         if (!this.mic) return;
         // The mic is a human affordance — a bridge never opens an audio session.
@@ -2047,6 +2085,7 @@ export class TextChannel {
       client.on("close", () => {
         this.mic?.stop(clientId);
         this.clientKinds.delete(clientId);
+        this.pendingHello.delete(client);
       });
     });
     this.server = server;
@@ -2069,7 +2108,12 @@ export class TextChannel {
     if (!this.wss) return;
     const data = JSON.stringify(frame);
     for (const client of this.wss.clients) {
-      if (client.readyState === WebSocket.OPEN) client.send(data);
+      if (client.readyState !== WebSocket.OPEN) continue;
+      // Still assembling this client's hello — queue behind it rather than
+      // racing ahead of a snapshot it has not seen yet.
+      const buffered = this.pendingHello.get(client);
+      if (buffered) buffered.push(data);
+      else client.send(data);
     }
   }
 

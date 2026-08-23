@@ -31,6 +31,7 @@ import type { createDiscordVoiceSurface } from "./discord-voice.ts";
 import { createDiscordVoiceLifecycle } from "./discord-voice-lifecycle.ts";
 import { createDiscordWorkspaceSwitcher } from "./discord-workspace-switcher.ts";
 import { runDocEditTurn } from "./doc-edit.ts";
+import { DocumentsCache, makeSerialQueue, nextDefaultTitle } from "./documents-cache.ts";
 import { type AskFactory, ElectionScheduler, makeClaimAsk, runElection } from "./election.ts";
 import { EXEC_TO_RUNTIME, isExecutionMode } from "./execution-modes.ts";
 import { analyzeBrief, workItemsFrom } from "./feeds/analyze.ts";
@@ -66,7 +67,6 @@ import { loadIdentity, promptInfo } from "./identity.ts";
 import { LocalMemory, type MemoryEntry } from "./memory.ts";
 import { MicSessionGate } from "./mic-gate.ts";
 import { draftToAgentBody, type PersonaDraft, PersonaGenerator } from "./persona-generator.ts";
-import { docSeedsInWorkspace } from "./pins.ts";
 import { polishText } from "./polish.ts";
 import { createRemovalService } from "./removal.ts";
 import { defaultSpawner, type ResearchEngine } from "./research.ts";
@@ -766,23 +766,29 @@ function sessionFrame() {
   };
 }
 
-// Documents live in the swarm now (spec 2026-08-22 §3): this is a last-frame
-// cache, refreshed after every mutation we make and once at boot. The UI
-// contract (a full `documents` frame on change) is unchanged.
-let documentsCache: Doc[] = [];
-async function refreshDocuments(): Promise<void> {
-  try {
-    documentsCache = await swarm.listDocuments();
-  } catch (err) {
-    // Degrade, never blank: a refresh feeds every UI redraw, so an
-    // unreachable swarm must leave the last known list on screen.
-    console.warn(`[documents] could not refresh from the swarm — keeping the last frame: ${(err as Error).message}`);
-  }
-}
+// Documents live in the swarm now (spec 2026-08-22 §3). Truth is the disk, so
+// this is only a last-frame cache: it is re-read on every path where a client
+// is about to READ (the hello frame, a workspace/group change) as well as
+// after every mutation we make. That is what lets an edit made behind the
+// broker's back — a hand edit, a merged instance branch (§4) — reach the UI.
+// `documentsFrame()` itself stays synchronous on purpose: it is broadcast from
+// many unrelated places and must not put a swarm round trip on each of them.
+const documents = new DocumentsCache({
+  list: () => swarm.listDocuments(),
+  seed: (sessionId, docId) => sessionManager.addArtifact(sessionId, docId),
+  groups: () => groupRecords,
+  warn: (line) => console.warn(line),
+  onSeeded: (sessions) => {
+    console.log(`[documents] seeded ${sessions} session(s) that opened before the document list loaded`);
+    // Their shelves changed after the session frame that announced them.
+    textChannel.broadcast(sessionFrame());
+  },
+});
+const refreshDocuments = (): Promise<boolean> => documents.refresh();
 
 /** Full-frame-on-change, like `sessionFrame()` — every document, not a diff. */
 function documentsFrame() {
-  return { type: "documents" as const, documents: documentsCache };
+  return { type: "documents" as const, documents: documents.list() };
 }
 
 /** After a mutation: refresh, then push the frame. */
@@ -802,6 +808,27 @@ async function viaSwarm(op: () => Promise<Doc>): Promise<string | null> {
   return null;
 }
 
+/** pin/unpin read-modify-write the whole `pins` array — see makeSerialQueue. */
+const serializePinWrite = makeSerialQueue();
+
+/**
+ * A name for a document the user did not name. `undefined` lets the swarm keep
+ * its own fallback — the blueprint may be unknown to us, in which case the
+ * create is about to fail with the swarm's message anyway. The workspace is
+ * passed so a per-workspace blueprint override's name is the one we number.
+ */
+async function defaultTitleFor(workspace: string, blueprintId: string): Promise<string | undefined> {
+  const name = (await swarm.listBlueprints(workspace).catch(() => [])).find((b) => b.id === blueprintId)?.name;
+  if (!name) return undefined;
+  // Scoped to the workspace: two workspaces each having a "Design Spec 1" is
+  // fine, two documents in one workspace sharing it is what confuses a shelf.
+  const taken = documents
+    .list()
+    .filter((d) => d.workspace === workspace)
+    .map((d) => d.title);
+  return nextDefaultTitle(name, taken);
+}
+
 // Re-fetch workspace records (active only — archived workspaces can't host new
 // sessions) and re-push the session frame that carries them to every client.
 async function refreshWorkspaceNames(): Promise<void> {
@@ -811,6 +838,10 @@ async function refreshWorkspaceNames(): Promise<void> {
   workspaceNames = workspaceRecords.map((w) => w.name);
   defaultWorkspaceName = workspaceRecords.find((w) => w.default)?.name ?? workspaceNames[0] ?? "default";
   await broker.refreshWorkspaces();
+  // Documents ride along: this is the other moment the broker re-reads shared
+  // state on a client's behalf, and group expansions here decide which pinned
+  // documents a workspace inherits. Degrades like every other refresh.
+  await documentsChanged();
   textChannel.broadcast(sessionFrame());
 }
 
@@ -835,12 +866,10 @@ function startSession(
   // A workspace's OWN documents are its standing context (spec 2026-08-22 §7:
   // "the session's workspace documents plus pinned ones") — plus anything
   // pinned here from elsewhere (spec: dashboards-as-documents, pin model v2).
-  // A new session opens with them already on its shelf.
-  for (const doc of documentsCache) {
-    if (doc.workspace === workspace || docSeedsInWorkspace(doc.pins, workspace, groupRecords)) {
-      sessionManager.addArtifact(s.id, doc.id);
-    }
-  }
+  // A new session opens with them already on its shelf. If the document list
+  // has never loaded, this DEFERS rather than persisting an empty shelf: a
+  // session's artifacts are written once at birth and never re-derived.
+  documents.seedSession(s.id, workspace);
   switchDiscord(workspace);
   textChannel.broadcast(sessionFrame());
   return s;
@@ -1367,12 +1396,19 @@ if (config.auth.required) console.log("[broker] inbound auth REQUIRED — passke
 
 const textChannel = new TextChannel(
   handleUserText,
-  () => [
-    { type: "config", audio: voiceKeys.statusSync().tts },
-    rosterFrame(broker.uiRoster()),
-    sessionFrame(),
-    documentsFrame(),
-  ],
+  // A connection is a READ, and spec 2026-08-22 §3 puts truth on the swarm's
+  // disk: re-read documents here so an edit made with no broker involvement —
+  // a hand edit, an instance merging its proposal branch (§4) — is on the
+  // first frame the client ever sees. Failure degrades to the last frame.
+  async () => {
+    await refreshDocuments();
+    return [
+      { type: "config", audio: voiceKeys.statusSync().tts },
+      rosterFrame(broker.uiRoster()),
+      sessionFrame(),
+      documentsFrame(),
+    ];
+  },
   (body) => {
     const op = body as { op?: string; agents?: unknown; target?: unknown; agent?: unknown };
     if (op.op === "form" && Array.isArray(op.agents) && op.agents.every((a) => typeof a === "string")) {
@@ -1583,15 +1619,18 @@ const textChannel = new TextChannel(
       const workspace = active?.workspace ?? defaultWorkspaceName;
       const text = (body.text ?? "").trim();
       // Empty text is a composer instantiation: the doc scaffolds from the
-      // blueprint's starters and auto-names itself (the swarm falls back to
-      // the blueprint's name — truncateTitle would mislabel it "New
-      // session"), and no utterance enters the room.
+      // blueprint's starters and is auto-named, and no utterance enters the
+      // room. The swarm's own fallback is the blueprint's NAME, so three blank
+      // specs would all read "Design Spec" on the shelf — number the defaulted
+      // title here, the way DocumentManager used to. A title the user typed is
+      // passed through untouched and is never numbered.
+      const title = text ? truncateTitle(text) : await defaultTitleFor(workspace, body.blueprintId);
       let doc: Doc;
       try {
         doc = await swarm.createDocument(workspace, {
           blueprintId: body.blueprintId,
           workType: body.workType,
-          title: text ? truncateTitle(text) : undefined,
+          title,
         });
       } catch (err) {
         // The swarm validates the blueprint and the work type; its message is
@@ -1616,18 +1655,25 @@ const textChannel = new TextChannel(
     },
     rename: (docId, title) => viaSwarm(() => swarm.patchDocument(docId, { title })),
     changeBlueprint: (docId, blueprintId) => viaSwarm(() => swarm.patchDocument(docId, { blueprintId })),
+    // Read-modify-write across two calls (the swarm's PATCH replaces the whole
+    // array), so both go through the queue: overlapping pins would otherwise
+    // lose one. See makeSerialQueue for what this does and does not cover.
     pin: (docId, target) =>
-      viaSwarm(async () => {
-        const doc = await swarm.getDocument(docId);
-        if (!doc) throw new Error(`unknown document: ${docId}`);
-        return swarm.patchDocument(docId, { pins: [...new Set([...doc.pins, target])] });
-      }),
+      viaSwarm(() =>
+        serializePinWrite(async () => {
+          const doc = await swarm.getDocument(docId);
+          if (!doc) throw new Error(`unknown document: ${docId}`);
+          return swarm.patchDocument(docId, { pins: [...new Set([...doc.pins, target])] });
+        }),
+      ),
     unpin: (docId, target) =>
-      viaSwarm(async () => {
-        const doc = await swarm.getDocument(docId);
-        if (!doc) throw new Error(`unknown document: ${docId}`);
-        return swarm.patchDocument(docId, { pins: doc.pins.filter((t) => t !== target) });
-      }),
+      viaSwarm(() =>
+        serializePinWrite(async () => {
+          const doc = await swarm.getDocument(docId);
+          if (!doc) throw new Error(`unknown document: ${docId}`);
+          return swarm.patchDocument(docId, { pins: doc.pins.filter((t) => t !== target) });
+        }),
+      ),
     acceptProposal: (docId, proposalId) => viaSwarm(() => swarm.decideProposal(docId, proposalId, "accept")),
     rejectProposal: (docId, proposalId) => viaSwarm(() => swarm.decideProposal(docId, proposalId, "reject")),
     patchSection: (docId, sectionId, body) => viaSwarm(() => swarm.putSection(docId, sectionId, body)),

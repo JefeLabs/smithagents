@@ -2256,6 +2256,111 @@ test("document handlers may be async: every documents route awaits a promise-ret
   }
 });
 
+/**
+ * `nextFrame` with a deadline. A hello regression delivers NOTHING rather than
+ * something wrong, so an unbounded wait would hang the suite instead of
+ * failing it.
+ */
+const frameWithin = (ws: WebSocket, ms: number): Promise<ChannelFrame> =>
+  Promise.race([
+    nextFrame(ws),
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`no frame within ${ms}ms`)), ms)),
+  ]);
+
+/** The one field these hello-frame tests read; the rest of `Doc` is noise here. */
+const docTitled = (title: string) =>
+  ({
+    id: "d1",
+    workspace: "ops",
+    title,
+    blueprintId: "spec",
+    workType: "feature",
+    effort: "e",
+    sections: [],
+    participants: [],
+    proposals: [],
+    pins: [],
+    status: "drafting",
+    createdAt: "t",
+    updatedAt: "t",
+    problems: [],
+  }) as never;
+
+// Spec 2026-08-22 §3: "Truth is the disk, not a cache … External edits (hand
+// edits, merged instance branches) appear on the next read." A connection IS
+// a read, so the hello closure may be async and is awaited.
+test("hello frames may be async: a document changed behind the broker's back reaches a newly connected client with no broker-side mutation", async () => {
+  // Stands in for the swarm's disk. Nothing in this test goes through a
+  // broker mutation — `disk` is the only writer, as an instance merging its
+  // proposal branch would be.
+  let disk = "v1";
+  let helloReads = 0;
+  const channel = new TextChannel(
+    () => {},
+    async () => {
+      helloReads += 1;
+      await new Promise((r) => setTimeout(r, 5)); // a real read is a round trip
+      return [{ type: "documents", documents: [docTitled(disk)] }];
+    },
+  );
+  const port = await channel.start(0);
+  try {
+    const first = await connect(port);
+    const firstFrame = (await frameWithin(first, 2000)) as { type: string; documents: Array<{ title: string }> };
+    assert.equal(firstFrame.type, "documents");
+    assert.equal(firstFrame.documents[0].title, "v1");
+    first.close();
+
+    disk = "v2"; // external edit — the broker is not involved at all
+
+    const second = await connect(port);
+    const secondFrame = (await frameWithin(second, 2000)) as { type: string; documents: Array<{ title: string }> };
+    assert.equal(secondFrame.documents[0].title, "v2");
+    second.close();
+    assert.equal(helloReads, 2); // re-read per connection, not once at boot
+  } finally {
+    await channel.stop();
+  }
+});
+
+test("a broadcast that lands while the hello is still resolving is delivered AFTER it, never ahead of it", async () => {
+  let release = () => {};
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  const channel = new TextChannel(
+    () => {},
+    async () => {
+      await gate;
+      return [{ type: "documents", documents: [docTitled("snapshot")] }];
+    },
+  );
+  const port = await channel.start(0);
+  try {
+    const ws = await connect(port);
+    const frames: ChannelFrame[] = [];
+    ws.on("message", (d) => frames.push(JSON.parse(String(d)) as ChannelFrame));
+
+    // A live frame while the hello read is still in flight. Delivered first it
+    // would be overwritten by the older snapshot landing behind it.
+    channel.broadcast({ type: "utterance", text: "meanwhile" });
+    await new Promise((r) => setTimeout(r, 30));
+    // `assert.equal` on the length, not deepEqual on the array: deepEqual is a
+    // type-narrowing assertion and would leave `frames` as never[] below.
+    assert.equal(frames.length, 0, "nothing may reach the client before its hello");
+
+    release();
+    await new Promise((r) => setTimeout(r, 60));
+    assert.deepEqual(
+      frames.map((f) => f.type),
+      ["documents", "utterance"],
+    );
+    ws.close();
+  } finally {
+    await channel.stop();
+  }
+});
+
 test("DELETE /sessions/:id removes the session; an unknown id is 404 and /sessions itself is never deletable", async () => {
   const calls: string[] = [];
   const channel = channelWith({
