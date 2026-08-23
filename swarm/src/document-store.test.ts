@@ -718,15 +718,41 @@ test("acceptProposal: a document file with uncommitted changes refuses — §4's
       "",
       "the branch is intact — a refused accept deletes nothing",
     );
-    // Commit the hand edit and the same accept goes through, as the agent.
+    // Commit the hand edit and the same accept goes through, as the agent —
+    // even with the rest of the org repo dirty. The check is scoped to THIS
+    // document's file: an unrelated edit elsewhere is not this accept's
+    // business, and blocking on it would make one stray file freeze every
+    // accept in the org.
     execFileSync("git", ["add", "--", `workspaces/pg/specs/${doc.id}.md`], { cwd: paths.orgRepo });
     execFileSync("git", ["-c", "user.name=h", "-c", "user.email=h@h", "commit", "-q", "-m", "hand edit"], {
       cwd: paths.orgRepo,
     });
+    writeFileSync(join(paths.orgRepo, "workspaces", "other", "settings.json"), '{"name":"other","repos":[],"x":1}\n');
+    writeFileSync(join(paths.orgRepo, "HANDDROP.txt"), "dropped in by a human\n");
+    const otherDoc = (await createDocument(paths, PG, {
+      blueprintId: "spec",
+      workType: "feature",
+      effort: "neighbour",
+      author: EDWIN,
+      now: NOW,
+    })) as DocWire;
+    const neighbourFile = join(paths.orgRepo, "workspaces", "pg", "specs", `${otherDoc.id}.md`);
+    writeFileSync(neighbourFile, `${readFileSync(neighbourFile, "utf8")}\nEDIT TO A SIBLING DOCUMENT\n`);
     const accepted = await acceptProposal(paths, WS, doc.id, withP.proposals[0].id);
-    assert.ok(isDoc(accepted), JSON.stringify(accepted));
+    assert.ok(isDoc(accepted), `an unrelated dirty file must not block this accept: ${JSON.stringify(accepted)}`);
     assert.equal(accepted.sections.find((s) => s.id === "approach")?.body, "agent text");
     assert.match(lastLog(paths.orgRepo), /^anderson\|spec\(dirty\): accept proposal 1 — approach/);
+    // …and the accept committed only its own file — the sibling's edit and the
+    // hand-dropped files are still sitting there uncommitted.
+    assert.match(
+      readFileSync(neighbourFile, "utf8"),
+      /EDIT TO A SIBLING DOCUMENT/,
+      "the neighbour's uncommitted edit was neither committed nor reverted",
+    );
+    const porcelain = execFileSync("git", ["status", "--porcelain"], { cwd: paths.orgRepo }).toString();
+    assert.match(porcelain, /HANDDROP\.txt/);
+    assert.match(porcelain, /workspaces\/other\/settings\.json/);
+    assert.match(porcelain, new RegExp(`${otherDoc.id}\\.md`));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
