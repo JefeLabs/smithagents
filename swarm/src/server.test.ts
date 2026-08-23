@@ -1391,9 +1391,15 @@ test("AmbiguousDocumentError is a 409 on every id-addressed document route, not 
     // different workspaces. `freeId` now scans the WHOLE org repo, so no route
     // can produce this any more (final-review Important 1) — the collision is
     // SYNTHESIZED here by handing each create a workspace list holding only
-    // its own workspace, which is what a hand-created file or a merged
-    // instance branch does in the field. The on-disk ambiguity is still real
-    // and still reachable, so the route must still catch it.
+    // its own workspace — a shortcut to the on-disk state, NOT a shape any
+    // caller passes: the one production call site (POST
+    // /workspaces/:name/documents) always hands `createDocument` the full
+    // workspace list. What produces this state in the field is `importDocument`
+    // (which takes no workspace list at all, so its idempotence check is
+    // scoped to its own ws+folder+id — two legacy docs pinned to different
+    // workspaces and sharing a derived id both land), a hand-copied file, or a
+    // merged instance branch. The on-disk ambiguity is real and reachable by
+    // those paths, so the route must still catch it.
     const paths = smithPaths(root);
     const now = () => "2026-01-01T00:00:00.000Z";
     let id = "";
