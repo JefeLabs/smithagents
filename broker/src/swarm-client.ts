@@ -176,6 +176,76 @@ export interface SwarmMeeting {
   createdAt: string;
 }
 
+/**
+ * Documents (spec 2026-08-22 §3). These wire shapes mirror swarm's
+ * document-store.ts (`Doc`) and blueprints.ts (`Blueprint`) — moved here
+ * rather than imported, per this file's no-code-imports header. The old
+ * definitions in documents.ts/blueprints.ts stay in place for now (Task 9
+ * deletes them); do NOT import from those modules here, to avoid
+ * duplicate-name confusion between the broker-local and swarm-backed shapes.
+ */
+export interface DocSection {
+  id: string;
+  heading: string;
+  body: string;
+}
+
+/** A pending edit, held as a git branch on the swarm — `state` has no "accepted"/"rejected": a decided proposal's branch is gone. */
+export interface Proposal {
+  id: string;
+  sectionId: string;
+  agentId: string;
+  newBody: string;
+  rationale: string;
+  state: "open" | "stale";
+  createdAt: string;
+}
+
+export interface Doc {
+  id: string;
+  /** The workspace this document's file lives in — the UI reads it, never sets it. */
+  workspace: string;
+  title: string;
+  blueprintId: string;
+  workType: string;
+  /** Groups a spec with its plans; also names the file's slug. */
+  effort: string;
+  sections: DocSection[];
+  participants: string[];
+  proposals: Proposal[];
+  /** Workspaces (group ids later) this doc is pinned to — new sessions there inherit it. */
+  pins: string[];
+  status: "drafting" | "review" | "final";
+  createdAt: string;
+  updatedAt: string;
+  problems: Array<{ where: string; message: string }>;
+}
+
+export interface BlueprintSection {
+  id: string;
+  heading: string;
+  /** Author guidance shown as the empty-section placeholder. */
+  hint?: string;
+  /** Seed body a fresh document opens with (e.g. a starter Mermaid block). Absent = empty. */
+  starter?: string;
+  /** Absent = always present. */
+  when?: { workType: string[] };
+  required?: boolean;
+  /** Closed set; absent = prose. */
+  shape?: "prose" | "checklist" | "mermaid";
+}
+
+export interface Blueprint {
+  id: string;
+  name: string;
+  /** Render family — prose documents, Mermaid diagrams, or spec-driven dashboards. The composer groups by it. */
+  family: "document" | "diagram" | "dashboard";
+  workTypes: string[];
+  sections: BlueprintSection[];
+  /** Which workspace folder this blueprint's documents live in. */
+  folder: "specs" | "plans" | "dashboards";
+}
+
 export type SwarmEvent =
   | ({ type: "state:snapshot" } & Record<string, unknown>)
   | { type: "task:dispatched"; taskId: string; sessionName: string }
@@ -782,8 +852,69 @@ export class SwarmClient {
         .json()
         .then((b) => (b as { error?: string }).error)
         .catch(() => undefined);
-      throw new Error(detail ?? `swarm ${method} ${path} -> ${res.status}`);
+      throw Object.assign(new Error(detail ?? `swarm ${method} ${path} -> ${res.status}`), { status: res.status });
     }
     return (await res.json()) as Record<string, unknown>;
+  }
+
+  /** `http()`, but a 404 becomes `null` instead of throwing — for id-addressed GETs where "not found" is routine. */
+  private async httpOrNull(method: string, path: string, body?: unknown): Promise<Record<string, unknown> | null> {
+    try {
+      return await this.http(method, path, body);
+    } catch (err) {
+      if ((err as { status?: number }).status === 404) return null;
+      throw err;
+    }
+  }
+
+  // ── Documents (spec 2026-08-22 §3) ──────────────────────────────────────
+  async listBlueprints(workspace?: string): Promise<Blueprint[]> {
+    const q = workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
+    return (await this.http("GET", `/blueprints${q}`)).blueprints as Blueprint[];
+  }
+
+  async listDocuments(): Promise<Doc[]> {
+    return (await this.http("GET", "/documents")).documents as Doc[];
+  }
+
+  async createDocument(
+    workspace: string,
+    body: { blueprintId: string; workType?: string; title?: string; effort?: string },
+  ): Promise<Doc> {
+    return (await this.http("POST", `/workspaces/${encodeURIComponent(workspace)}/documents`, body)) as unknown as Doc;
+  }
+
+  async importDocument(workspace: string, doc: unknown): Promise<Doc> {
+    return (await this.http("POST", `/workspaces/${encodeURIComponent(workspace)}/documents/import`, {
+      doc,
+    })) as unknown as Doc;
+  }
+
+  async getDocument(id: string): Promise<Doc | null> {
+    return (await this.httpOrNull("GET", `/documents/${encodeURIComponent(id)}`)) as Doc | null;
+  }
+
+  async patchDocument(id: string, body: Record<string, unknown>): Promise<Doc> {
+    return (await this.http("PATCH", `/documents/${encodeURIComponent(id)}`, body)) as unknown as Doc;
+  }
+
+  async putSection(id: string, sectionId: string, body: string): Promise<Doc> {
+    return (await this.http("PUT", `/documents/${encodeURIComponent(id)}/sections/${encodeURIComponent(sectionId)}`, {
+      body,
+    })) as unknown as Doc;
+  }
+
+  async addProposal(
+    id: string,
+    p: { sectionId: string; newBody: string; agentId: string; rationale: string },
+  ): Promise<Doc> {
+    return (await this.http("POST", `/documents/${encodeURIComponent(id)}/proposals`, p)) as unknown as Doc;
+  }
+
+  async decideProposal(id: string, proposalId: string, decision: "accept" | "reject"): Promise<Doc> {
+    return (await this.http(
+      "POST",
+      `/documents/${encodeURIComponent(id)}/proposals/${encodeURIComponent(proposalId)}/${decision}`,
+    )) as unknown as Doc;
   }
 }

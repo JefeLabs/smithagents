@@ -42,6 +42,7 @@ import {
   resolveTaskRuntime,
   resolveVoiceKeys,
   runJiraSearch,
+  storeReply,
   workKindForCapability,
   workKindsPayload,
   workspaceProblems,
@@ -1346,4 +1347,15 @@ test("buildUserUpdate: sets, keeps, and clears the email — an empty string cle
 test("redactUser: the email is not a secret — it is returned so Settings can show what commits will say", () => {
   const real = redactUser({ id: "me", name: "Edwin", email: "e@example.com" } as never);
   assert.equal(real.email, "e@example.com");
+});
+
+test("storeReply: null is 404, a store error keeps its status and problems, a doc is 200 (201 on create)", () => {
+  assert.deepEqual(storeReply(null), { status: 404, body: { error: "unknown document" } });
+  assert.deepEqual(storeReply({ error: "stale", status: 409 }), { status: 409, body: { error: "stale" } });
+  const withProblems = storeReply({ error: "cannot", status: 409, problems: [{ where: "section:a", message: "m" }] });
+  assert.equal(withProblems.status, 409);
+  assert.deepEqual((withProblems.body as { problems: unknown }).problems, [{ where: "section:a", message: "m" }]);
+  const doc = { id: "x" } as never;
+  assert.deepEqual(storeReply(doc), { status: 200, body: doc });
+  assert.deepEqual(storeReply(doc, true), { status: 201, body: doc });
 });

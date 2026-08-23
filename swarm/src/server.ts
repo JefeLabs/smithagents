@@ -19,7 +19,7 @@ import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import websocket from "@fastify/websocket";
-import Fastify from "fastify";
+import Fastify, { type FastifyReply } from "fastify";
 import { WebSocket } from "ws";
 import { AgentSessionManager } from "./agent-sessions.js";
 import { type ComposedAgent, findAgent, loadAgents, saveAgent } from "./agents.js";
@@ -37,6 +37,7 @@ import { AnthropicProvider, ApiProviderError } from "./api-provider.js";
 import { ApiRuntime } from "./api-runtime.js";
 import { lookupTicket, searchDocs } from "./atlassian-client.js";
 import { readAvatar, stageAvatar } from "./avatars.js";
+import { loadBlueprintsFor } from "./blueprints.js";
 import {
   applyStoryToggles,
   type Capability,
@@ -72,6 +73,25 @@ import { loadLiveKitConfig } from "./config.js";
 import { findVendor, VENDORS, verifyBeforeSave } from "./connectors.js";
 import { buildExecutionModes, loadContainersFile, probeDocker, saveContainersFile } from "./containers.js";
 import { DeviceRegistry } from "./device-registry.js";
+import type { DocStatus } from "./document-file.js";
+import {
+  AmbiguousDocumentError,
+  acceptProposal,
+  addProposal,
+  changeBlueprint,
+  createDocument,
+  getDocument,
+  importDocument,
+  type LegacyDoc,
+  listDocuments,
+  listWorkspaceDocuments,
+  patchSection,
+  rejectProposal,
+  renameDocument,
+  type StoreResult,
+  setPins,
+  setStatus,
+} from "./document-store.js";
 import { driverIds, getDriver } from "./drivers/index.js";
 import { isValidModelId } from "./drivers/model-flag.js";
 import { type GitAuthor, SMITH_IDENTITY, userAuthor } from "./git-author.js";
@@ -2269,6 +2289,108 @@ export class OrchestratorServer {
       return roster ? { recorded: true, ...roster } : { recorded: false, agents: [], squads: [] };
     });
 
+    // ── Documents (spec 2026-08-22 §3) — the broker is the only caller ──
+    this.app.get<{ Querystring: { workspace?: string } }>("/blueprints", async (req) => ({
+      blueprints: await loadBlueprintsFor(this.paths, req.query.workspace || undefined),
+    }));
+    this.app.get("/documents", async () => ({
+      documents: await listDocuments(this.paths, await loadWorkspaces(this.paths)),
+    }));
+    this.app.get<{ Params: { name: string } }>("/workspaces/:name/documents", async (req, reply) => {
+      const ws = (await loadWorkspaces(this.paths)).find((w) => w.name === req.params.name);
+      if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
+      return { documents: await listWorkspaceDocuments(this.paths, ws) };
+    });
+    this.app.post<{ Params: { name: string } }>("/workspaces/:name/documents", async (req, reply) => {
+      const ws = (await loadWorkspaces(this.paths)).find((w) => w.name === req.params.name);
+      if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
+      const b = (req.body ?? {}) as { blueprintId?: string; workType?: string; title?: string; effort?: string };
+      if (!b.blueprintId) return reply.status(400).send({ error: "blueprintId is required" });
+      const r = await createDocument(this.paths, ws, {
+        ...b,
+        blueprintId: b.blueprintId,
+        author: await this.actingAuthor(),
+      });
+      const { status, body } = storeReply(r, true);
+      return reply.status(status).send(body);
+    });
+    this.app.post<{ Params: { name: string } }>("/workspaces/:name/documents/import", async (req, reply) => {
+      const ws = (await loadWorkspaces(this.paths)).find((w) => w.name === req.params.name);
+      if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
+      const legacy = (req.body as { doc?: LegacyDoc })?.doc;
+      if (!legacy || typeof legacy.id !== "string" || !Array.isArray(legacy.sections))
+        return reply.status(400).send({ error: "doc must be a legacy document record" });
+      const { status, body } = storeReply(await importDocument(this.paths, ws, legacy), true);
+      return reply.status(status).send(body);
+    });
+    const docRoute = async (
+      reply: FastifyReply,
+      fn: (workspaces: Workspace[]) => Promise<StoreResult | null>,
+      created = false,
+    ) => {
+      try {
+        const { status, body } = storeReply(await fn(await loadWorkspaces(this.paths)), created);
+        return reply.status(status).send(body);
+      } catch (err) {
+        if (err instanceof AmbiguousDocumentError) return reply.status(409).send({ error: err.message });
+        throw err;
+      }
+    };
+    this.app.get<{ Params: { id: string } }>("/documents/:id", (req, reply) =>
+      docRoute(reply, (w) => getDocument(this.paths, w, req.params.id)),
+    );
+    this.app.patch<{ Params: { id: string } }>("/documents/:id", async (req, reply) => {
+      const b = (req.body ?? {}) as {
+        title?: string;
+        status?: DocStatus;
+        blueprintId?: string;
+        workType?: string;
+        pins?: string[];
+      };
+      const author = await this.actingAuthor();
+      if (b.title !== undefined)
+        return docRoute(reply, (w) => renameDocument(this.paths, w, req.params.id, b.title as string, author));
+      if (b.status !== undefined)
+        return docRoute(reply, (w) => setStatus(this.paths, w, req.params.id, b.status as DocStatus, author));
+      if (b.blueprintId !== undefined)
+        return docRoute(reply, (w) =>
+          changeBlueprint(this.paths, w, req.params.id, b.blueprintId as string, b.workType, author),
+        );
+      if (Array.isArray(b.pins))
+        return docRoute(reply, (w) => setPins(this.paths, w, req.params.id, b.pins as string[], author));
+      return reply.status(400).send({ error: "nothing to change: give title, status, blueprintId, or pins" });
+    });
+    this.app.put<{ Params: { id: string; sid: string } }>("/documents/:id/sections/:sid", async (req, reply) => {
+      const body = String((req.body as { body?: unknown })?.body ?? "");
+      const author = await this.actingAuthor();
+      return docRoute(reply, (w) => patchSection(this.paths, w, req.params.id, req.params.sid, body, author));
+    });
+    this.app.post<{ Params: { id: string } }>("/documents/:id/proposals", async (req, reply) => {
+      const p = (req.body ?? {}) as { sectionId?: string; newBody?: string; agentId?: string; rationale?: string };
+      if (!p.sectionId || !p.agentId) return reply.status(400).send({ error: "sectionId and agentId are required" });
+      return docRoute(
+        reply,
+        (w) =>
+          addProposal(this.paths, w, req.params.id, {
+            sectionId: p.sectionId as string,
+            newBody: p.newBody ?? "",
+            agentId: p.agentId as string,
+            rationale: p.rationale ?? "",
+          }),
+        true,
+      );
+    });
+    this.app.post<{ Params: { id: string; pid: string; decision: string } }>(
+      "/documents/:id/proposals/:pid/:decision",
+      async (req, reply) => {
+        if (req.params.decision === "accept")
+          return docRoute(reply, (w) => acceptProposal(this.paths, w, req.params.id, req.params.pid));
+        if (req.params.decision === "reject")
+          return docRoute(reply, (w) => rejectProposal(this.paths, w, req.params.id, req.params.pid));
+        return reply.status(404).send({ error: "decision must be accept or reject" });
+      },
+    );
+
     this.app.get("/workspaces", async () => {
       const active = activeWorkspaces(this.workspaces);
       return {
@@ -4298,6 +4420,14 @@ export function buildUserUpdate(
     return rest;
   }
   return { ...base, email };
+}
+
+/** Map a document-store result to an HTTP reply. Kept pure so the mapping is testable without a server. */
+export function storeReply(r: StoreResult | null, created = false): { status: number; body: unknown } {
+  if (r === null) return { status: 404, body: { error: "unknown document" } };
+  if ("error" in r)
+    return { status: r.status, body: r.problems ? { error: r.error, problems: r.problems } : { error: r.error } };
+  return { status: created ? 201 : 200, body: r };
 }
 
 /**

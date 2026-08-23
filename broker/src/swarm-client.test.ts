@@ -456,3 +456,47 @@ test("apiAgentOneShot: reply on 200, notApiAgent on 404, typed throw otherwise",
   const c2 = new SwarmClient({ baseUrl: "http://x", fetchImpl: failing });
   await assert.rejects(() => c2.apiAgentOneShot("sage", "lead?"), /top up the account/);
 });
+
+test("document methods hit the swarm's document routes with the right verbs, bodies, and encodings", async () => {
+  const calls: Array<{ url: string; method?: string; body?: string }> = [];
+  const fetch = async (url: string, init?: RequestInit) => {
+    calls.push({ url, method: init?.method, body: init?.body as string | undefined });
+    if (url.endsWith("/documents/missing"))
+      return new Response(JSON.stringify({ error: "unknown document" }), { status: 404 });
+    // http() always sets an explicit method (never omits it for GET), so the discriminator
+    // is "GET to a bare /documents" vs. everything else — not "method is unset".
+    const body =
+      url.endsWith("/documents") && (init?.method ?? "GET") === "GET"
+        ? { documents: [{ id: "d" }] }
+        : url.includes("/blueprints")
+          ? { blueprints: [{ id: "spec" }] }
+          : { id: "d" };
+    return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const c = new SwarmClient({ baseUrl: "http://x", fetchImpl: fetch as unknown as typeof globalThis.fetch });
+
+  assert.deepEqual(await c.listBlueprints("my ws"), [{ id: "spec" }]);
+  assert.deepEqual(await c.listDocuments(), [{ id: "d" }]);
+  await c.createDocument("pg", { blueprintId: "spec", title: "T" });
+  await c.putSection("2026-x", "approach", "* a");
+  await c.patchDocument("2026-x", { status: "review" });
+  await c.addProposal("2026-x", { sectionId: "approach", newBody: "b", agentId: "anderson", rationale: "r" });
+  await c.decideProposal("2026-x", "3", "accept");
+  assert.equal(await c.getDocument("missing"), null);
+
+  assert.deepEqual(
+    calls.map((k) => `${k.method ?? "GET"} ${k.url.replace("http://x", "")}`),
+    [
+      "GET /blueprints?workspace=my%20ws",
+      "GET /documents",
+      "POST /workspaces/pg/documents",
+      "PUT /documents/2026-x/sections/approach",
+      "PATCH /documents/2026-x",
+      "POST /documents/2026-x/proposals",
+      "POST /documents/2026-x/proposals/3/accept",
+      "GET /documents/missing",
+    ],
+  );
+  assert.deepEqual(JSON.parse(calls[2].body!), { blueprintId: "spec", title: "T" });
+  assert.deepEqual(JSON.parse(calls[3].body!), { body: "* a" });
+});
