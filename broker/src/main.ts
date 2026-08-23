@@ -32,6 +32,7 @@ import { createDiscordVoiceLifecycle } from "./discord-voice-lifecycle.ts";
 import { createDiscordWorkspaceSwitcher } from "./discord-workspace-switcher.ts";
 import { runDocEditTurn } from "./doc-edit.ts";
 import { DocumentsCache, makeSerialQueue, nextDefaultTitle } from "./documents-cache.ts";
+import { importLegacyDocuments } from "./documents-import.ts";
 import { type AskFactory, ElectionScheduler, makeClaimAsk, runElection } from "./election.ts";
 import { EXEC_TO_RUNTIME, isExecutionMode } from "./execution-modes.ts";
 import { analyzeBrief, workItemsFrom } from "./feeds/analyze.ts";
@@ -524,6 +525,8 @@ const brain = new BrokerBrain(
 
 // Sessions — workspace-scoped conversations persisted under .smith/sessions/.
 const sessionsDir = process.env.BROKER_SESSIONS_DIR ?? ".smith/sessions";
+// The legacy store's location, kept only so this migration can find and archive it.
+const documentsDir = process.env.BROKER_DOCUMENTS_DIR ?? ".smith/documents";
 const sessionStore = {
   loadAll(): Session[] {
     try {
@@ -2679,6 +2682,19 @@ groupRecords = await swarm.listGroups().catch(() => []);
 // carries the real list rather than an empty one. Tolerant of an unreachable
 // swarm by construction (refreshDocuments keeps the last frame).
 await refreshDocuments();
+// ONE-WAY (spec §9.3): legacy .smith/documents → files in the swarm's org repo.
+{
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").slice(0, 15);
+  const r = await importLegacyDocuments({
+    documentsDir,
+    sessionsDir,
+    stamp,
+    client: swarm,
+    log: (l) => console.log(l),
+  });
+  for (const note of r.notes) console.warn(note);
+  if (r.imported.length > 0) await refreshDocuments();
+}
 defaultWorkspaceName = bootWorkspaces.find((w) => w.default)?.name ?? workspaceNames[0] ?? "default";
 // Waits for the real default workspace, not the "default" boot placeholder —
 // calling this any earlier races defaultWorkspaceName's assignment above.
