@@ -1388,14 +1388,18 @@ test("AmbiguousDocumentError is a 409 on every id-addressed document route, not 
     }
 
     // The same effort + blueprint, minted at the same instant, in two
-    // different workspaces: documentFileId is workspace-agnostic and
-    // freeId only checks ITS OWN workspace's folder, so both mint the
-    // identical id — the real, on-disk ambiguity the route must catch.
+    // different workspaces. `freeId` now scans the WHOLE org repo, so no route
+    // can produce this any more (final-review Important 1) — the collision is
+    // SYNTHESIZED here by handing each create a workspace list holding only
+    // its own workspace, which is what a hand-created file or a merged
+    // instance branch does in the field. The on-disk ambiguity is still real
+    // and still reachable, so the route must still catch it.
     const paths = smithPaths(root);
     const now = () => "2026-01-01T00:00:00.000Z";
     let id = "";
     for (const name of ["pg", "other"]) {
-      const r = await createDocument(paths, { name, repos: [] } as unknown as Workspace, {
+      const solo = [{ name, repos: [] } as unknown as Workspace];
+      const r = await createDocument(paths, solo[0], solo, {
         blueprintId: "spec",
         title: "Duplicate",
         effort: "dup-doc",

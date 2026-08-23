@@ -2312,11 +2312,15 @@ export class OrchestratorServer {
       return { documents: await listWorkspaceDocuments(this.paths, ws) };
     });
     this.app.post<{ Params: { name: string } }>("/workspaces/:name/documents", async (req, reply) => {
-      const ws = (await loadWorkspaces(this.paths)).find((w) => w.name === req.params.name);
+      // The whole list, not just `ws`: a document id has to be free across the
+      // ORG repo, because `resolveDocument` addresses documents by id alone
+      // (final-review Important 1). Loaded once and handed to `createDocument`.
+      const all = await loadWorkspaces(this.paths);
+      const ws = all.find((w) => w.name === req.params.name);
       if (!ws) return reply.status(404).send({ error: `Unknown workspace: ${req.params.name}` });
       const b = (req.body ?? {}) as { blueprintId?: string; workType?: string; title?: string; effort?: string };
       if (!b.blueprintId) return reply.status(400).send({ error: "blueprintId is required" });
-      const r = await createDocument(this.paths, ws, {
+      const r = await createDocument(this.paths, ws, all, {
         ...b,
         blueprintId: b.blueprintId,
         author: await this.actingAuthor(),

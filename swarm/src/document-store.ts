@@ -368,8 +368,36 @@ export async function getDocument(paths: SmithPaths, workspaces: Workspace[], id
     : null;
 }
 
-async function freeId(paths: SmithPaths, ws: Workspace, folder: BlueprintFolder, base: string): Promise<string> {
-  const taken = new Set(await listIds(paths, ws, folder));
+/**
+ * An id no document in the ORG REPO already holds — every active workspace and
+ * every folder, which is exactly the set `resolveDocument` scans.
+ *
+ * Scoped to one workspace's one folder, this minted a DUPLICATE id whenever two
+ * workspaces created a document with the same title in the same UTC minute (the
+ * ids carry a minute stamp and nothing else workspace-specific). Because every
+ * mutating route is id-addressed, `resolveDocument` then threw
+ * `AmbiguousDocumentError` → 409 on both documents, on every route, forever —
+ * advising "address it through its workspace", which no route supports. Neither
+ * document could be edited again without a human renaming a file on disk
+ * (final-review Important 1).
+ *
+ * COST: N active workspaces × 3 folders readdirs per creation, and creation
+ * only — this is not on the listing path. `ws` is scanned whether or not it is
+ * in `workspaces` (it may be archived, or the caller's list stale), and the
+ * slug set collapses two names that slug alike onto the ONE subtree they share
+ * rather than reading it twice.
+ */
+async function freeId(paths: SmithPaths, workspaces: Workspace[], ws: Workspace, base: string): Promise<string> {
+  const taken = new Set<string>();
+  const scanned = new Set<string>();
+  for (const w of [ws, ...activeWorkspaces(workspaces)]) {
+    const slug = slugForDir(w.name);
+    if (scanned.has(slug)) continue;
+    scanned.add(slug);
+    // A name that slugs to nothing names no subtree: `configDirFor` refuses it
+    // and `listIds` swallows that into an empty list, same as a missing folder.
+    for (const folder of FOLDERS) for (const id of await listIds(paths, w, folder)) taken.add(id);
+  }
   if (!taken.has(base)) return base;
   for (let n = 2; ; n++) if (!taken.has(`${base}-${n}`)) return `${base}-${n}`;
 }
@@ -377,6 +405,7 @@ async function freeId(paths: SmithPaths, ws: Workspace, folder: BlueprintFolder,
 export async function createDocument(
   paths: SmithPaths,
   ws: Workspace,
+  workspaces: Workspace[],
   input: {
     blueprintId: string;
     workType?: string;
@@ -419,7 +448,7 @@ export async function createDocument(
   // the same minute both see the base id free, both mint it, and the second
   // write destroys the first document outright (task-7 review: 20/20).
   const written = await withOrgRepoQueue(paths.orgRepo, async () => {
-    const id = await freeId(paths, ws, bp.folder, base);
+    const id = await freeId(paths, workspaces, ws, base);
     return writeDocInQueue(
       paths,
       located(paths, ws, bp.folder, id),
