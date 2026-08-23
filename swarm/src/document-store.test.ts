@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { type DocStatus, parseDocumentFile } from "./document-file.js";
+import type { Problem } from "./document-rules.js";
 import {
   AmbiguousDocumentError,
   acceptProposal,
@@ -293,6 +294,19 @@ test("setStatus: the gates bite — final refuses an empty required section; reo
     const toFinal = await setStatus(paths, WS, doc.id, "final", EDWIN);
     assert.equal(asError(toFinal).status, 409);
     assert.match(asError(toFinal).error, /overview/);
+    // The refusal carries problems[] as STRUCTURE, not only inside the message
+    // string. Asserting the string alone let the field be dropped silently —
+    // the mirror of the success-path gap the round-2 control exposed.
+    const refusalProblems = (toFinal as { problems?: Problem[] }).problems;
+    assert.ok(Array.isArray(refusalProblems), `no problems[] on the refusal: ${JSON.stringify(toFinal)}`);
+    assert.ok(
+      refusalProblems.some((p) => p.where === "section:overview" && /must not be empty/.test(p.message)),
+      `expected a section:overview problem, got ${JSON.stringify(refusalProblems)}`,
+    );
+    assert.ok(
+      refusalProblems.some((p) => p.where === "section:non-goals"),
+      "every blocking problem is reported, not just the first",
+    );
     assert.equal((await getDocument(paths, WS, doc.id))?.status, "review", "a refused transition writes nothing");
     await patchSection(paths, WS, doc.id, "overview", "x", EDWIN);
     await patchSection(paths, WS, doc.id, "non-goals", "y", EDWIN);
@@ -591,6 +605,49 @@ test("importDocument: legacy metadata that would not parse back is refused or re
     assert.equal(ok.updatedAt, NOW());
     const text = readFileSync(join(paths.orgRepo, "workspaces", "pg", "specs", `${ok.id}.md`), "utf8");
     assert.ok(parseDocumentFile(text).doc, JSON.stringify(parseDocumentFile(text).problems));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("importDocument: returns the bytes IT wrote, even when another mutation lands mid-import", async () => {
+  const { root, paths } = setup("import-race");
+  try {
+    // Several open proposals, so the branch loop — which releases and retakes
+    // the queue per proposal — keeps the import busy long enough for another
+    // caller to get a write in behind it. That window is real: the import's own
+    // commit is long since done by then.
+    const legacy: LegacyDoc = {
+      ...structuredClone(LEGACY),
+      proposals: [0, 1, 2, 3].map((i) => ({
+        id: `p${i}`,
+        sectionId: "approach",
+        agentId: `agent-${i}`,
+        newBody: `variant ${i}`,
+        rationale: `r${i}`,
+        state: "open",
+        createdAt: "2026-08-19T17:17:17.910Z",
+      })),
+    };
+    const id = "2026-08-19-1717-design-spec-2-design";
+    const file = join(paths.orgRepo, "workspaces", "pg", "specs", `${id}.md`);
+    const importing = importDocument(paths, PG, legacy);
+    // As soon as the import's own commit has landed, race a patch into it.
+    while (!existsSync(file)) await new Promise((r) => setImmediate(r));
+    const patched = await patchSection(paths, WS, id, "overview", "PATCHED BY SOMEONE ELSE", EDWIN);
+    const imported = await importing;
+    assert.ok(isDoc(patched) && isDoc(imported), JSON.stringify([patched, imported]));
+    assert.equal(
+      imported.sections.find((s) => s.id === "overview")?.body,
+      "hello",
+      "the import must return the bytes it wrote, not whoever wrote last",
+    );
+    // The patch is not lost either — it is simply someone else's result.
+    assert.equal(
+      (await getDocument(paths, WS, id))?.sections.find((s) => s.id === "overview")?.body,
+      "PATCHED BY SOMEONE ELSE",
+    );
+    assert.equal(imported.proposals.length, 4, "the derived proposal list is still current");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

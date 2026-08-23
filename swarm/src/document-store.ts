@@ -518,8 +518,19 @@ export async function importDocument(
       rationale: p.rationale,
     });
   }
-  const r = await readParsed(loc);
-  return r ? toWire(paths, loc, r.text, r.doc, bp) : { error: "import did not read back", status: 500 };
+  // Project from the bytes PINNED INSIDE THE QUEUE, not from a fresh read of
+  // the file. A fresh read here returns whatever the file holds *now* — and
+  // between the import's commit and this line the queue has been released
+  // several times over by the proposal loop above, so a concurrent
+  // `patchSection` lands in that window and the import returns someone else's
+  // content as its own result (task-7 re-review 2: an injected patch came back
+  // as the imported document's `overview`). This is the migration path, where
+  // a wrong return value is hardest to notice.
+  //
+  // `listProposals` inside `project` still runs NOW, so it sees the branches
+  // the loop just created — which is what we want: the bytes are the import's,
+  // the derived proposal list is current. Same split as everywhere else.
+  return project(paths, written);
 }
 
 /**
