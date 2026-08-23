@@ -6,9 +6,10 @@ import { Markdown } from "tiptap-markdown";
  * JSON-first; the document's model is markdown. Everything crosses here, so if
  * `tiptap-markdown` ever proves unfit, this file is the only thing that changes.
  *
- * The options mirror the broker's normalizer (`markdown-normalize.ts`): the same
- * bullet, fenced code, no HTML. Drift between the two shows up as a document
- * that rewrites itself on every save.
+ * The options mirror the SWARM's normalizer, `swarm/src/markdown-normalize.ts`
+ * (spec 2026-08-22 §2.2 moved it off the broker): the same bullet, fenced code,
+ * no HTML. Drift between the two shows up as a document that rewrites itself on
+ * every save, so a change to either one belongs in both.
  */
 export const markdownExtensions: Extensions = [
   Markdown.configure({
