@@ -768,11 +768,13 @@ function sessionFrame() {
 
 // Documents live in the swarm now (spec 2026-08-22 §3). Truth is the disk, so
 // this is only a last-frame cache: it is re-read on every path where a client
-// is about to READ (the hello frame, a workspace/group change) as well as
+// is about to READ (a new connection, a workspace/group change) as well as
 // after every mutation we make. That is what lets an edit made behind the
 // broker's back — a hand edit, a merged instance branch (§4) — reach the UI.
-// `documentsFrame()` itself stays synchronous on purpose: it is broadcast from
-// many unrelated places and must not put a swarm round trip on each of them.
+// Two things stay off the critical path deliberately: `documentsFrame()` is
+// synchronous, so a swarm round trip never creeps into the many unrelated
+// places that broadcast; and the connection refresh runs in the BACKGROUND,
+// so a hung swarm cannot hold up a handshake.
 const documents = new DocumentsCache({
   list: () => swarm.listDocuments(),
   seed: (sessionId, docId) => sessionManager.addArtifact(sessionId, docId),
@@ -1397,11 +1399,12 @@ if (config.auth.required) console.log("[broker] inbound auth REQUIRED — passke
 const textChannel = new TextChannel(
   handleUserText,
   // A connection is a READ, and spec 2026-08-22 §3 puts truth on the swarm's
-  // disk: re-read documents here so an edit made with no broker involvement —
-  // a hand edit, an instance merging its proposal branch (§4) — is on the
-  // first frame the client ever sees. Failure degrades to the last frame.
-  async () => {
-    await refreshDocuments();
+  // disk — so re-read documents here, but NEVER block the handshake on it.
+  // The client is served the last frame at once and converges via the
+  // follow-up broadcast a moment later; a swarm that accepts and never answers
+  // therefore costs a stale documents frame, not a blank UI.
+  () => {
+    documents.refreshInBackground(() => textChannel.broadcast(documentsFrame()));
     return [
       { type: "config", audio: voiceKeys.statusSync().tts },
       rosterFrame(broker.uiRoster()),

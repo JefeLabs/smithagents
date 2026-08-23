@@ -415,6 +415,13 @@ test("getBrainEngine: the request carries a bounded AbortSignal — this runs on
   assert.ok(calls[0]!.init!.signal instanceof AbortSignal, "expected an AbortSignal on the request init");
 });
 
+test("listDocuments: the request carries a bounded AbortSignal — it runs on every WS connection, so a hung swarm must reject, not leak a pending read", async () => {
+  const { calls, fetch } = fakeFetch({ "/documents": { documents: [] } });
+  const client = new SwarmClient({ baseUrl: "http://s", fetchImpl: fetch });
+  await client.listDocuments();
+  assert.ok(calls[0]!.init!.signal instanceof AbortSignal, "expected an AbortSignal on the request init");
+});
+
 test("saveBrainEngine: PUTs the body to /me/brain-engine and returns the saved record", async () => {
   const { calls, fetch } = fakeFetch({ "/me/brain-engine": { kind: "cli", provider: "claude" } });
   const client = new SwarmClient({ baseUrl: "http://s", fetchImpl: fetch });

@@ -873,8 +873,17 @@ export class SwarmClient {
     return (await this.http("GET", `/blueprints${q}`)).blueprints as Blueprint[];
   }
 
+  /**
+   * Bounded, like getBrainEngine and unlike the rest of this file: this runs
+   * automatically — on every WS connection and every workspace/group change —
+   * rather than in response to a user action, so nothing upstream is watching
+   * to give up on it. Without a bound, a swarm that accepts the connection and
+   * never answers (mid-restart, or inside a long git operation) leaks a pending
+   * request per connection forever. 10s is getBrainEngine's value and is far
+   * above a healthy read of one org repo.
+   */
   async listDocuments(): Promise<Doc[]> {
-    return (await this.http("GET", "/documents")).documents as Doc[];
+    return (await this.http("GET", "/documents", undefined, 10_000)).documents as Doc[];
   }
 
   async createDocument(

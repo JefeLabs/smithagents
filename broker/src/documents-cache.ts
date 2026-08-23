@@ -98,6 +98,31 @@ export class DocumentsCache {
   }
 
   /**
+   * Re-read WITHOUT blocking the caller, calling `onFresh` if the list
+   * actually changed.
+   *
+   * This is the read-path refresh for anything on a client's critical path —
+   * a WS handshake above all. Awaiting a swarm read there would mean a swarm
+   * that accepts but never answers leaves every new client blank
+   * indefinitely; serving the last frame at once and converging a moment
+   * later costs nothing when the swarm is healthy and nothing when it is not.
+   *
+   * `onFresh` fires only on a real change, so a burst of connections against
+   * an unchanged list produces no broadcasts.
+   */
+  refreshInBackground(onFresh: () => void): void {
+    const before = this.stamp();
+    void this.refresh().then((ok) => {
+      if (ok && this.stamp() !== before) onFresh();
+    });
+  }
+
+  /** Cheap change detector for `refreshInBackground` — ids and mtimes, in order. */
+  private stamp(): string {
+    return this.docs.map((d) => `${d.id}@${d.updatedAt}`).join("|");
+  }
+
+  /**
    * Seed a new session's shelf with its workspace's standing context.
    * Deferred — NOT written as an empty seed — while the list is unknown.
    */

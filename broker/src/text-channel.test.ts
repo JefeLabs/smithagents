@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { WebSocket } from "ws";
 import { BrokerAuth, type WebAuthnAdapter } from "./auth.ts";
+import { DocumentsCache } from "./documents-cache.ts";
+import type { Doc } from "./swarm-client.ts";
 import { type ChannelFrame, TextChannel, workUpdateFrames } from "./text-channel.ts";
 
 const AUTH_CRED = { id: "cred-1", publicKey: new Uint8Array([1, 2, 3]), counter: 0, transports: ["internal"] };
@@ -2257,105 +2259,152 @@ test("document handlers may be async: every documents route awaits a promise-ret
 });
 
 /**
- * `nextFrame` with a deadline. A hello regression delivers NOTHING rather than
- * something wrong, so an unbounded wait would hang the suite instead of
- * failing it.
+ * A client that buffers from the very first byte, with a DEADLINE on waiting.
+ *
+ * Two reasons this is not `connect` + `nextFrame`. The hello is sent
+ * synchronously inside the `connection` handler, so it can be delivered in the
+ * same tick as `open` — a listener attached after `await connect(...)` misses
+ * it. And a hello regression delivers NOTHING rather than something wrong, so
+ * an unbounded wait would hang the suite instead of failing it.
  */
-const frameWithin = (ws: WebSocket, ms: number): Promise<ChannelFrame> =>
-  Promise.race([
-    nextFrame(ws),
-    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`no frame within ${ms}ms`)), ms)),
-  ]);
+async function openCollector(port: number) {
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/events`);
+  const frames: ChannelFrame[] = [];
+  ws.on("message", (d) => frames.push(JSON.parse(String(d)) as ChannelFrame));
+  await new Promise<void>((resolve, reject) => {
+    ws.once("open", () => resolve());
+    ws.once("error", reject);
+  });
+  /** Resolve once frame #i has arrived, or throw at the deadline. */
+  const nth = async (i: number, ms: number): Promise<ChannelFrame> => {
+    const deadline = Date.now() + ms;
+    while (frames.length <= i) {
+      if (Date.now() > deadline) throw new Error(`no frame #${i} within ${ms}ms (got ${frames.length})`);
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    return frames[i];
+  };
+  return { ws, frames, nth };
+}
 
 /** The one field these hello-frame tests read; the rest of `Doc` is noise here. */
-const docTitled = (title: string) =>
-  ({
-    id: "d1",
-    workspace: "ops",
-    title,
-    blueprintId: "spec",
-    workType: "feature",
-    effort: "e",
-    sections: [],
-    participants: [],
-    proposals: [],
-    pins: [],
-    status: "drafting",
-    createdAt: "t",
-    updatedAt: "t",
-    problems: [],
-  }) as never;
+const docTitled = (title: string, updatedAt = title): Doc => ({
+  id: "d1",
+  workspace: "ops",
+  title,
+  blueprintId: "spec",
+  workType: "feature",
+  effort: "e",
+  sections: [],
+  participants: [],
+  proposals: [],
+  pins: [],
+  status: "drafting",
+  createdAt: "t",
+  updatedAt,
+  problems: [],
+});
 
-// Spec 2026-08-22 §3: "Truth is the disk, not a cache … External edits (hand
-// edits, merged instance branches) appear on the next read." A connection IS
-// a read, so the hello closure may be async and is awaited.
-test("hello frames may be async: a document changed behind the broker's back reaches a newly connected client with no broker-side mutation", async () => {
-  // Stands in for the swarm's disk. Nothing in this test goes through a
-  // broker mutation — `disk` is the only writer, as an instance merging its
-  // proposal branch would be.
-  let disk = "v1";
-  let helloReads = 0;
-  const channel = new TextChannel(
+/**
+ * main.ts's wiring, in miniature: a real `TextChannel` whose hello serves the
+ * cache SYNCHRONOUSLY and kicks off a background re-read that broadcasts when
+ * it lands. `list` stands in for `swarm.listDocuments`, and counts its calls.
+ */
+function channelOverCache(list: () => Promise<Doc[]>) {
+  let reads = 0;
+  const cache = new DocumentsCache({
+    list: () => {
+      reads += 1;
+      return list();
+    },
+    seed: () => {},
+    groups: () => [],
+    warn: () => {},
+  });
+  const channel: TextChannel = new TextChannel(
     () => {},
-    async () => {
-      helloReads += 1;
-      await new Promise((r) => setTimeout(r, 5)); // a real read is a round trip
-      return [{ type: "documents", documents: [docTitled(disk)] }];
+    () => {
+      cache.refreshInBackground(() => channel.broadcast({ type: "documents", documents: cache.list() }));
+      return [{ type: "documents", documents: cache.list() }];
     },
   );
+  return { channel, cache, reads: () => reads };
+}
+
+const titlesOf = (frame: ChannelFrame) =>
+  (frame as { documents: Array<{ title: string }> }).documents.map((d) => d.title);
+
+// Spec 2026-08-22 §3: "Truth is the disk, not a cache … External edits (hand
+// edits, merged instance branches) appear on the next read." A connection IS a
+// read — but it re-reads in the BACKGROUND and converges, it never blocks the
+// handshake on the network (see the next test for why).
+test("a document changed behind the broker's back reaches a newly connected client, via the follow-up frame, with no broker-side mutation", async () => {
+  // Stands in for the swarm's disk. Nothing here goes through a broker
+  // mutation — `disk` is the only writer, as a merged instance branch is.
+  let disk = [docTitled("v1")];
+  const { channel, cache, reads } = channelOverCache(async () => disk);
+  await cache.refresh(); // boot
   const port = await channel.start(0);
   try {
-    const first = await connect(port);
-    const firstFrame = (await frameWithin(first, 2000)) as { type: string; documents: Array<{ title: string }> };
-    assert.equal(firstFrame.type, "documents");
-    assert.equal(firstFrame.documents[0].title, "v1");
-    first.close();
+    const first = await openCollector(port);
+    assert.deepEqual(titlesOf(await first.nth(0, 2000)), ["v1"]);
+    first.ws.close();
 
-    disk = "v2"; // external edit — the broker is not involved at all
+    disk = [docTitled("edited-on-disk-by-an-instance")]; // external edit, no broker call at all
 
-    const second = await connect(port);
-    const secondFrame = (await frameWithin(second, 2000)) as { type: string; documents: Array<{ title: string }> };
-    assert.equal(secondFrame.documents[0].title, "v2");
-    second.close();
-    assert.equal(helloReads, 2); // re-read per connection, not once at boot
+    const second = await openCollector(port);
+    // The hello is the LAST known frame — still v1, served without waiting.
+    assert.deepEqual(titlesOf(await second.nth(0, 2000)), ["v1"]);
+    // …and the background read converges it a moment later.
+    assert.deepEqual(titlesOf(await second.nth(1, 2000)), ["edited-on-disk-by-an-instance"]);
+    second.ws.close();
+    assert.equal(reads(), 3); // boot + one per connection
   } finally {
     await channel.stop();
   }
 });
 
-test("a broadcast that lands while the hello is still resolving is delivered AFTER it, never ahead of it", async () => {
-  let release = () => {};
-  const gate = new Promise<void>((r) => {
-    release = r;
-  });
-  const channel = new TextChannel(
-    () => {},
-    async () => {
-      await gate;
-      return [{ type: "documents", documents: [docTitled("snapshot")] }];
-    },
+// The regression this replaces: awaiting the read here meant a swarm that
+// ACCEPTS the connection and never answers left every new client blank
+// indefinitely — no config, no roster, no sessions, no documents.
+test("a swarm that accepts but never answers does not delay the hello frames at all", async () => {
+  // Healthy at boot, hung afterwards — a swarm mid-restart, or inside a long
+  // git operation, which is what this failure looks like in production.
+  let hung = false;
+  const { channel, cache } = channelOverCache(() =>
+    hung ? new Promise<Doc[]>(() => {}) : Promise.resolve([docTitled("last-good")]),
   );
+  await cache.refresh();
+  hung = true;
   const port = await channel.start(0);
   try {
-    const ws = await connect(port);
-    const frames: ChannelFrame[] = [];
-    ws.on("message", (d) => frames.push(JSON.parse(String(d)) as ChannelFrame));
+    const client = await openCollector(port);
+    // A real deadline, far below the 10s bound on the read itself: the hello
+    // must not be waiting on it at all, not merely time out eventually.
+    assert.deepEqual(titlesOf(await client.nth(0, 250)), ["last-good"]);
+    client.ws.close();
+  } finally {
+    await channel.stop();
+  }
+});
 
-    // A live frame while the hello read is still in flight. Delivered first it
-    // would be overwritten by the older snapshot landing behind it.
-    channel.broadcast({ type: "utterance", text: "meanwhile" });
-    await new Promise((r) => setTimeout(r, 30));
-    // `assert.equal` on the length, not deepEqual on the array: deepEqual is a
-    // type-narrowing assertion and would leave `frames` as never[] below.
-    assert.equal(frames.length, 0, "nothing may reach the client before its hello");
-
-    release();
-    await new Promise((r) => setTimeout(r, 60));
-    assert.deepEqual(
-      frames.map((f) => f.type),
-      ["documents", "utterance"],
-    );
-    ws.close();
+test("broadcasting does not read from the swarm — a burst costs zero requests", async () => {
+  const { channel, cache, reads } = channelOverCache(async () => [docTitled("v1")]);
+  await cache.refresh();
+  const port = await channel.start(0);
+  try {
+    const client = await openCollector(port);
+    await client.nth(0, 2000); // the hello
+    await new Promise((r) => setTimeout(r, 30)); // let the connection's background read land
+    const afterHello = reads();
+    for (let i = 0; i < 10; i += 1) {
+      channel.broadcast({ type: "utterance", text: `line ${i}` });
+      channel.broadcast({ type: "documents", documents: cache.list() });
+    }
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(reads(), afterHello, "broadcast must never put a swarm round trip on the frame path");
+    assert.equal(client.frames.length, 21, "hello + 20 broadcasts");
+    client.ws.close();
   } finally {
     await channel.stop();
   }

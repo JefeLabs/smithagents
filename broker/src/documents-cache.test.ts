@@ -144,6 +144,65 @@ test("a session opened while the list is unknown is deferred even if an EARLIER 
   assert.equal(cache.deferredCount, 0);
 });
 
+// ── The read-path refresh that must never block a caller ───────────────────
+
+test("refreshInBackground returns immediately and calls back only once the list has actually changed", async () => {
+  let disk = [doc("d1", "ops", [], "v1")];
+  const { cache } = harness(async () => disk);
+  await cache.refresh();
+
+  const fired: string[][] = [];
+  const onFresh = () => fired.push(cache.list().map((d) => d.title));
+
+  // Nothing changed on disk: a burst of connections must not produce a burst
+  // of broadcasts.
+  for (let i = 0; i < 5; i += 1) cache.refreshInBackground(onFresh);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(fired, []);
+
+  // An external edit — a hand edit, a merged instance branch.
+  disk = [{ ...doc("d1", "ops", [], "edited"), updatedAt: "t2" }];
+  cache.refreshInBackground(onFresh);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(fired, [["edited"]]);
+});
+
+test("refreshInBackground does not block its caller, and a hung read never calls back", async () => {
+  // The regression this guards: awaiting the read on a client's critical path
+  // meant a swarm that accepts but never answers blocked the caller forever.
+  const { cache } = harness(() => new Promise<Doc[]>(() => {}));
+  let calledBack = false;
+  const before = Date.now();
+  cache.refreshInBackground(() => {
+    calledBack = true;
+  });
+  assert.ok(Date.now() - before < 50, "refreshInBackground must return in the same turn");
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(calledBack, false);
+  assert.equal(cache.loaded, false); // and it is still "unknown", not "empty"
+});
+
+test("refreshInBackground on a failed read neither calls back nor blanks the frame", async () => {
+  let mode: "ok" | "boom" = "ok";
+  const { cache, warnings } = harness(async () => {
+    if (mode === "boom") throw new Error("fetch failed");
+    return [doc("d1", "ops", [], "v1")];
+  });
+  await cache.refresh();
+  mode = "boom";
+  let calledBack = false;
+  cache.refreshInBackground(() => {
+    calledBack = true;
+  });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(calledBack, false);
+  assert.deepEqual(
+    cache.list().map((d) => d.title),
+    ["v1"],
+  );
+  assert.match(warnings.at(-1) ?? "", /keeping the last frame/);
+});
+
 // ── M3: the pin/unpin read-modify-write guard ──────────────────────────────
 
 test("makeSerialQueue runs operations one at a time, so two concurrent read-modify-writes cannot lose one", async () => {
