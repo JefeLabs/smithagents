@@ -5,8 +5,8 @@
  * the rewrites, broadcasting frames — so this stays a pure prompt/parse seam
  * over a ResearchEngine, which tests drive with a one-line fake.
  */
-import type { Doc } from "./documents.ts";
 import type { ResearchEngine } from "./research.ts";
+import type { Doc } from "./swarm-client.ts";
 
 export interface DocEditResult {
   rewrites: Array<{ sectionId: string; newBody: string }>;

@@ -1,23 +1,27 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { runDocEditTurn } from "./doc-edit.ts";
-import type { Doc } from "./documents.ts";
 import { ResearchError, type ResearchInput } from "./research.ts";
+import type { Doc } from "./swarm-client.ts";
 
 const DOC: Doc = {
   id: "d1",
+  workspace: "ops",
   title: "Login spec",
   blueprintId: "spec",
   workType: "feature",
+  effort: "login",
   sections: [
     { id: "overview", heading: "What this is", body: "Old overview." },
     { id: "approach", heading: "Approach", body: "Old approach." },
   ],
   participants: [],
   proposals: [],
+  pins: [],
   status: "drafting",
   createdAt: "t",
   updatedAt: "t",
+  problems: [],
 };
 
 function stub(reply: string) {

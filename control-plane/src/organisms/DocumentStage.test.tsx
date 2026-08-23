@@ -5,9 +5,11 @@ import { DocumentStage } from "./DocumentStage";
 
 const DOC: DocT = {
   id: "d1",
+  workspace: "ops",
   title: "Login spec",
   blueprintId: "spec",
   workType: "feature",
+  effort: "login",
   sections: [
     { id: "overview", heading: "What this is", body: "Words." },
     { id: "non-goals", heading: "Non-goals", body: "" },
@@ -57,8 +59,14 @@ describe("DocumentStage", () => {
     expect(screen.getByRole("textbox", { name: /non-goals/i })).toBeTruthy();
   });
   const BPS = [
-    { id: "spec", name: "Design Spec", family: "document" as const, workTypes: ["feature"] },
-    { id: "implementation-plan", name: "Implementation Plan", family: "document" as const, workTypes: ["feature"] },
+    { id: "spec", name: "Design Spec", family: "document" as const, workTypes: ["feature"], folder: "specs" as const },
+    {
+      id: "implementation-plan",
+      name: "Implementation Plan",
+      family: "document" as const,
+      workTypes: ["feature"],
+      folder: "plans" as const,
+    },
   ];
 
   it("the type switch re-casts an empty document", async () => {

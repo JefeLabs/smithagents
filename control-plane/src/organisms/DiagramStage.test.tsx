@@ -10,9 +10,11 @@ import { DiagramStage } from "./DiagramStage";
 
 const DOC = {
   id: "d1",
+  workspace: "ops",
   title: "ER",
   blueprintId: "er",
   workType: "feature",
+  effort: "er",
   status: "drafting" as const,
   participants: [],
   createdAt: "",
@@ -21,8 +23,14 @@ const DOC = {
   sections: [{ id: "diagram", heading: "Diagram", body: "erDiagram\n A ||--o{ B : has" }],
 };
 const BPS = [
-  { id: "er", name: "Database design", family: "diagram" as const, workTypes: ["feature"] },
-  { id: "sequence", name: "Sequence diagram", family: "diagram" as const, workTypes: ["feature"] },
+  { id: "er", name: "Database design", family: "diagram" as const, workTypes: ["feature"], folder: "specs" as const },
+  {
+    id: "sequence",
+    name: "Sequence diagram",
+    family: "diagram" as const,
+    workTypes: ["feature"],
+    folder: "specs" as const,
+  },
 ];
 afterEach(() => vi.clearAllMocks());
 

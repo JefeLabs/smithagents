@@ -5,9 +5,11 @@ import { ArtifactShelf, isSpotlit, shelfDocsFor, splitShelfDocs } from "./Artifa
 
 const DOC = (id: string, title: string): DocT => ({
   id,
+  workspace: "ops",
   title,
   blueprintId: "spec",
   workType: "feature",
+  effort: "shelf",
   sections: [],
   participants: [],
   status: "drafting",

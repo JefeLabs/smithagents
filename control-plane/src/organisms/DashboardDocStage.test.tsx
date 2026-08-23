@@ -9,9 +9,11 @@ import { DashboardDocStage } from "./DashboardDocStage";
 
 const dashDoc = (specBody: string, scope = "all workspaces"): DocT => ({
   id: "d1",
+  workspace: "ops",
   title: "Delivery health",
   blueprintId: "dashboard",
   workType: "insight",
+  effort: "delivery-health",
   sections: [
     { id: "question", heading: "Question", body: `where is delivery slipping?\n\nscope: ${scope}` },
     { id: "spec", heading: "Spec", body: specBody },

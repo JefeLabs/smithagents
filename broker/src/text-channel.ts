@@ -8,9 +8,9 @@
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
 import { AuthError, type BrokerAuth, type Identity, parseCookies } from "./auth.ts";
-import type { Blueprint } from "./blueprints.ts";
 import type { BrainPing } from "./brain-ping.ts";
-import type { Doc } from "./documents.ts";
+// The swarm owns documents now (spec 2026-08-22 §3); these are its wire shapes.
+import type { Blueprint, Doc } from "./swarm-client.ts";
 
 export interface RosterEntry {
   id: string;
@@ -345,13 +345,19 @@ export class TextChannel {
     },
     /** Polish-my-input (POST /polish): one standalone rewrite call before dispatch. Null = the model call failed; the caller keeps the draft. */
     private readonly polish?: (text: string) => Promise<string | null>,
-    /** Blueprint catalog for GET /blueprints (the document-creation picker). */
-    private readonly blueprints?: () => Blueprint[],
+    /**
+     * Blueprint catalog for GET /blueprints (the document-creation picker).
+     * Async since the cutover — it is one swarm call (spec 2026-08-22 §3).
+     */
+    private readonly blueprints?: () => Blueprint[] | Promise<Blueprint[]>,
     /**
      * Document lifecycle (POST /documents, PATCH /documents/:id/sections/:id).
      * `create` mirrors `sessions.create`'s async/error-with-status shape;
-     * `patchSection` is synchronous like `sessions.activate` — an error
-     * string or null, mapped to 404/200.
+     * every other handler answers with an error string or null, mapped to
+     * that route's own failure status (404, except the re-cast route's 409).
+     * All of them MAY be async: documents live in the swarm now, so main.ts's
+     * implementations are HTTP calls. The routes await before deciding —
+     * an un-awaited promise is truthy and would read as an error string.
      */
     private readonly documents?: {
       create(body: {
@@ -359,15 +365,15 @@ export class TextChannel {
         workType?: string;
         text?: string;
       }): Promise<{ doc?: Doc; error?: string; status?: number }>;
-      patchSection(docId: string, sectionId: string, body: string): string | null;
-      changeBlueprint(docId: string, blueprintId: string): string | null;
-      rename(docId: string, title: string): string | null;
+      patchSection(docId: string, sectionId: string, body: string): string | null | Promise<string | null>;
+      changeBlueprint(docId: string, blueprintId: string): string | null | Promise<string | null>;
+      rename(docId: string, title: string): string | null | Promise<string | null>;
       /** Sticky-note decisions — error string or null, mapped to 404/200 like patchSection. */
-      acceptProposal(docId: string, proposalId: string): string | null;
-      rejectProposal(docId: string, proposalId: string): string | null;
+      acceptProposal(docId: string, proposalId: string): string | null | Promise<string | null>;
+      rejectProposal(docId: string, proposalId: string): string | null | Promise<string | null>;
       /** Workspace pins (spec: dashboards-as-documents) — same error contract. */
-      pin(docId: string, target: string): string | null;
-      unpin(docId: string, target: string): string | null;
+      pin(docId: string, target: string): string | null | Promise<string | null>;
+      unpin(docId: string, target: string): string | null | Promise<string | null>;
     },
     /** Connection identity (passkey humans + bridge bearer). Absent = open mode. */
     private readonly auth?: BrokerAuth,
@@ -1657,9 +1663,28 @@ export class TextChannel {
             .end(JSON.stringify({ error: "origin not allowed" }));
           return true;
         };
+        /**
+         * Answer one document mutation. The handler may be sync or async
+         * (main.ts's are swarm calls since the cutover, spec 2026-08-22 §3),
+         * so resolve first and decide after — an un-awaited promise is truthy
+         * and would answer every success with `errorStatus`. `errorStatus` is
+         * per-route on purpose: the re-cast route is 409, the rest are 404.
+         * A rejection becomes a 500 here rather than an unhandled rejection
+         * (which would take the broker down).
+         */
+        const settle = (result: string | null | Promise<string | null>, errorStatus: number): void => {
+          void Promise.resolve(result).then(
+            (error) => json(error ? errorStatus : 200, error ? { error } : { ok: true }),
+            (err: unknown) => json(500, { error: String((err as Error).message ?? err) }),
+          );
+        };
 
         if (req.method === "GET" && url.pathname === "/blueprints" && this.blueprints) {
-          json(200, { blueprints: this.blueprints() });
+          const blueprints = this.blueprints;
+          void Promise.resolve(blueprints()).then(
+            (loaded) => json(200, { blueprints: loaded }),
+            (err: unknown) => json(500, { error: String((err as Error).message ?? err) }),
+          );
           return;
         }
 
@@ -1727,10 +1752,10 @@ export class TextChannel {
               return;
             }
             const docId = decodeURIComponent(docMatch[1]);
-            const error = title ? documents.rename(docId, title) : documents.changeBlueprint(docId, blueprintId);
-            res
-              .writeHead(error ? 409 : 200, { ...corsFor(req), "content-type": "application/json" })
-              .end(JSON.stringify(error ? { error } : { ok: true }));
+            // 409, not the sibling routes' 404: the usual failure here is a
+            // document that already has content, which re-casting would throw
+            // away. The whole ternary is settled — both branches are handlers.
+            settle(title ? documents.rename(docId, title) : documents.changeBlueprint(docId, blueprintId), 409);
           });
           return;
         }
@@ -1757,10 +1782,7 @@ export class TextChannel {
                 .end(JSON.stringify({ error: "target is required" }));
               return;
             }
-            const error = documents.pin(decodeURIComponent(pinPostMatch[1]), target.trim());
-            res
-              .writeHead(error ? 404 : 200, { ...corsFor(req), "content-type": "application/json" })
-              .end(JSON.stringify(error ? { error } : { ok: true }));
+            settle(documents.pin(decodeURIComponent(pinPostMatch[1]), target.trim()), 404);
           });
           return;
         }
@@ -1769,10 +1791,7 @@ export class TextChannel {
         if (req.method === "DELETE" && pinDeleteMatch && this.documents) {
           const documents = this.documents;
           if (originBlocked()) return;
-          const error = documents.unpin(decodeURIComponent(pinDeleteMatch[1]), decodeURIComponent(pinDeleteMatch[2]));
-          res
-            .writeHead(error ? 404 : 200, { ...corsFor(req), "content-type": "application/json" })
-            .end(JSON.stringify(error ? { error } : { ok: true }));
+          settle(documents.unpin(decodeURIComponent(pinDeleteMatch[1]), decodeURIComponent(pinDeleteMatch[2])), 404);
           return;
         }
 
@@ -1783,11 +1802,10 @@ export class TextChannel {
           if (originBlocked()) return;
           const docId = decodeURIComponent(proposalMatch[1]);
           const pid = decodeURIComponent(proposalMatch[2]);
-          const error =
-            proposalMatch[3] === "accept" ? documents.acceptProposal(docId, pid) : documents.rejectProposal(docId, pid);
-          res
-            .writeHead(error ? 404 : 200, { ...corsFor(req), "content-type": "application/json" })
-            .end(JSON.stringify(error ? { error } : { ok: true }));
+          settle(
+            proposalMatch[3] === "accept" ? documents.acceptProposal(docId, pid) : documents.rejectProposal(docId, pid),
+            404,
+          );
           return;
         }
 
@@ -1806,12 +1824,14 @@ export class TextChannel {
             } catch {
               /* empty = clear the section, which is legal */
             }
-            const error = documents.patchSection(
-              decodeURIComponent(docSectionMatch[1]),
-              decodeURIComponent(docSectionMatch[2]),
-              text,
+            settle(
+              documents.patchSection(
+                decodeURIComponent(docSectionMatch[1]),
+                decodeURIComponent(docSectionMatch[2]),
+                text,
+              ),
+              404,
             );
-            json(error ? 404 : 200, error ? { error } : { ok: true });
           });
           return;
         }

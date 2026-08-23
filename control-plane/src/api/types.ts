@@ -135,26 +135,36 @@ export interface DocSectionT {
 }
 
 /**
- * A blueprint-instantiated document, mirroring broker's documents.ts `Doc`
- * MINUS `proposals` — phase 1 renders no proposals, so that field simply
- * isn't read; an unknown extra field from the broker is not an error.
+ * A blueprint-instantiated document, mirroring the swarm's `Doc` (spec
+ * 2026-08-22 §3) as the broker forwards it. An unknown extra field from the
+ * broker is not an error.
  */
-/** An agent's suggested section rewrite — a sticky note on the page until decided. */
+/**
+ * An agent's suggested section rewrite — a sticky note on the page until
+ * decided. A decided proposal is not "accepted"/"rejected" any more: since the
+ * cutover a proposal IS a git branch, and deciding one deletes it, so it
+ * simply stops being listed. Those two values stay in the union because
+ * documents imported from the legacy JSON store still carry them.
+ */
 export interface ProposalT {
   id: string;
   sectionId: string;
   agentId: string;
   newBody: string;
   rationale: string;
-  state: "open" | "accepted" | "rejected" | "stale";
+  state: "open" | "stale" | "accepted" | "rejected";
   createdAt: string;
 }
 
 export interface DocT {
   id: string;
+  /** The workspace whose folder holds this document's file. Read, never set. */
+  workspace: string;
   title: string;
   blueprintId: string;
   workType: string;
+  /** Groups a spec with its plans; also names the file's slug. */
+  effort: string;
   sections: DocSectionT[];
   participants: string[];
   /** Absent on docs stored before proposals existed. */
@@ -164,6 +174,8 @@ export interface DocT {
   status: "drafting" | "review" | "final";
   createdAt: string;
   updatedAt: string;
+  /** Rule violations the swarm found on read (spec §6.3). Absent = none reported. */
+  problems?: Array<{ where: string; message: string }>;
 }
 
 /** A document schema, as `GET /blueprints` returns it — the creation form's list. */
@@ -173,8 +185,16 @@ export interface BlueprintT {
   /** Render family — prose documents, Mermaid diagrams, or spec-driven dashboards; the composer groups by it. */
   family: "document" | "diagram" | "dashboard";
   workTypes: string[];
+  /** Which workspace folder this blueprint's documents live in (spec §6.1). */
+  folder: "specs" | "plans" | "dashboards";
   /** The broker sends these; the page uses their `hint` as ghost text. */
-  sections?: Array<{ id: string; heading: string; hint?: string }>;
+  sections?: Array<{
+    id: string;
+    heading: string;
+    hint?: string;
+    /** Closed set; absent = prose. */
+    shape?: "prose" | "checklist" | "mermaid";
+  }>;
 }
 
 /** Full-frame-on-change, like the `session` frame — every document, not a diff. */

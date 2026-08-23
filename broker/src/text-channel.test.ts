@@ -2015,7 +2015,14 @@ test("POST /polish returns the rewrite, 400 on empty text, 502 when the rewrite 
 test("GET /blueprints returns the loaded set", async () => {
   const channel = channelWith({
     blueprints: () => [
-      { id: "spec", name: "Design Spec", family: "document" as const, workTypes: ["feature"], sections: [] },
+      {
+        id: "spec",
+        name: "Design Spec",
+        family: "document" as const,
+        workTypes: ["feature"],
+        sections: [],
+        folder: "specs" as const,
+      },
     ],
   });
   const port = await channel.start(0);
@@ -2044,15 +2051,19 @@ test("POST /documents forwards the body and returns the created doc; PATCH updat
           ? {
               doc: {
                 id: "d1",
+                workspace: "ops",
                 title: body.text ?? "",
                 blueprintId: "spec",
                 workType: body.workType ?? "",
+                effort: "login-rework",
                 sections: [],
                 participants: [],
                 proposals: [],
-                status: "drafting",
+                pins: [],
+                status: "drafting" as const,
                 createdAt: "t",
                 updatedAt: "t",
+                problems: [],
               },
             }
           : { error: `unknown blueprint: ${body.blueprintId ?? "(none)"}` };
@@ -2151,6 +2162,95 @@ test("POST /documents forwards the body and returns the created doc; PATCH updat
     });
     assert.equal(renamed.status, 200);
     assert.deepEqual(renames[0], ["d1", "Login flow spec"]);
+  } finally {
+    await channel.stop();
+  }
+});
+
+// Documents moved to the swarm (spec 2026-08-22 §3): every handler main.ts
+// passes is now one HTTP call away, so every one of them returns a promise.
+// The routes must await it — a bare promise is truthy, which the old
+// synchronous code read as "the handler returned an error string".
+test("document handlers may be async: every documents route awaits a promise-returning handler", async () => {
+  const seen: string[] = [];
+  const channel = channelWith({
+    documents: {
+      create: async () => ({ doc: { id: "x" } as never }),
+      patchSection: async (docId: string, sectionId: string, body: string) => {
+        seen.push(`patch ${docId}/${sectionId}=${body}`);
+        return null;
+      },
+      changeBlueprint: async () => "nope",
+      rename: async () => null,
+      acceptProposal: async (docId: string, proposalId: string) => {
+        seen.push(`accept ${docId}/${proposalId}`);
+        return null;
+      },
+      rejectProposal: async () => "unknown proposal",
+      pin: async () => null,
+      unpin: async () => "unknown document",
+    },
+    blueprints: async () => [
+      {
+        id: "spec",
+        name: "Spec",
+        family: "document" as const,
+        workTypes: ["feature"],
+        sections: [],
+        folder: "specs" as const,
+      },
+    ],
+  });
+  const port = await channel.start(0);
+  try {
+    const patched = await fetch(`http://127.0.0.1:${port}/documents/d/sections/s`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ body: "hi" }),
+    });
+    assert.equal(patched.status, 200);
+
+    const accepted = await fetch(`http://127.0.0.1:${port}/documents/d/proposals/1/accept`, { method: "POST" });
+    assert.equal(accepted.status, 200);
+    const rejected = await fetch(`http://127.0.0.1:${port}/documents/d/proposals/1/reject`, { method: "POST" });
+    assert.equal(rejected.status, 404);
+    assert.deepEqual(await rejected.json(), { error: "unknown proposal" });
+
+    const renamed = await fetch(`http://127.0.0.1:${port}/documents/d`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Renamed" }),
+    });
+    assert.equal(renamed.status, 200);
+    // Each route keeps its OWN failure status: this one answers 409 (the
+    // usual cause is a document that already has content), not the 404 its
+    // siblings use. Awaiting must not normalise them.
+    const recast = await fetch(`http://127.0.0.1:${port}/documents/d`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ blueprintId: "implementation-plan" }),
+    });
+    assert.equal(recast.status, 409);
+    assert.deepEqual(await recast.json(), { error: "nope" });
+
+    const pinned = await fetch(`http://127.0.0.1:${port}/documents/d/pins`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ target: "ops" }),
+    });
+    assert.equal(pinned.status, 200);
+    const unpinned = await fetch(`http://127.0.0.1:${port}/documents/d/pins/ops`, { method: "DELETE" });
+    assert.equal(unpinned.status, 404);
+
+    const bps = (await (await fetch(`http://127.0.0.1:${port}/blueprints`)).json()) as {
+      blueprints: Array<{ id: string }>;
+    };
+    assert.deepEqual(
+      bps.blueprints.map((b) => b.id),
+      ["spec"],
+    );
+
+    assert.deepEqual(seen, ["patch d/s=hi", "accept d/1"]);
   } finally {
     await channel.stop();
   }

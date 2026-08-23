@@ -13,7 +13,6 @@ import { ElevenLabsVoiceProvider } from "@smithagents/voice";
 import { BrokerAuth } from "./auth.ts";
 import { resolveAvatarEngine } from "./avatar-engine.ts";
 import { AvatarGenerator, type AvatarRequest } from "./avatar-generator.ts";
-import { loadBlueprints } from "./blueprints.ts";
 import { BrokerBrain, type StreamFactory } from "./brain.ts";
 import { brainArgvFor, resolvingStreamFactory } from "./brain-engine.ts";
 import { pingBrain } from "./brain-ping.ts";
@@ -32,7 +31,6 @@ import type { createDiscordVoiceSurface } from "./discord-voice.ts";
 import { createDiscordVoiceLifecycle } from "./discord-voice-lifecycle.ts";
 import { createDiscordWorkspaceSwitcher } from "./discord-workspace-switcher.ts";
 import { runDocEditTurn } from "./doc-edit.ts";
-import { type Doc, DocumentManager } from "./documents.ts";
 import { type AskFactory, ElectionScheduler, makeClaimAsk, runElection } from "./election.ts";
 import { EXEC_TO_RUNTIME, isExecutionMode } from "./execution-modes.ts";
 import { analyzeBrief, workItemsFrom } from "./feeds/analyze.ts";
@@ -79,6 +77,7 @@ import { type ExecutionMode, resolveLazyWorkspace, type Session, SessionManager,
 import { DeepgramSttStream, deepgramLiveOptions, type LiveLike } from "./stt.ts";
 import { applyModeChange, decideJoin, SurfacePolicy, surfaceModes } from "./surface-modes.ts";
 import {
+  type Doc,
   SwarmClient,
   type SwarmGroup,
   type SwarmGroupBody,
@@ -553,31 +552,6 @@ const sessionStore = {
 };
 const sessionManager = new SessionManager(sessionStore);
 
-// Documents — blueprint-instantiated work products persisted under .smith/documents/.
-const documentsDir = process.env.BROKER_DOCUMENTS_DIR ?? ".smith/documents";
-const documentStore = {
-  loadAll(): Doc[] {
-    try {
-      return readdirSync(documentsDir)
-        .filter((f) => f.endsWith(".json"))
-        .map((f) => JSON.parse(readFileSync(join(documentsDir, f), "utf8")) as Doc);
-    } catch {
-      return [];
-    }
-  },
-  save(doc: Doc): void {
-    try {
-      mkdirSync(documentsDir, { recursive: true });
-      writeFileSync(join(documentsDir, `${doc.id}.json`), JSON.stringify(doc, null, 2));
-    } catch (err) {
-      console.error("[documents] persist failed:", err);
-    }
-  },
-};
-const documentManager = new DocumentManager(documentStore);
-documentManager.init();
-const blueprints = loadBlueprints();
-
 // Crew memory — durable facts recalled into every turn. One inspectable JSON
 // file; the crew's continuity across conversations lives here.
 const memoryFile = process.env.BROKER_MEMORY_FILE ?? ".smith/memory.json";
@@ -792,9 +766,40 @@ function sessionFrame() {
   };
 }
 
+// Documents live in the swarm now (spec 2026-08-22 §3): this is a last-frame
+// cache, refreshed after every mutation we make and once at boot. The UI
+// contract (a full `documents` frame on change) is unchanged.
+let documentsCache: Doc[] = [];
+async function refreshDocuments(): Promise<void> {
+  try {
+    documentsCache = await swarm.listDocuments();
+  } catch (err) {
+    // Degrade, never blank: a refresh feeds every UI redraw, so an
+    // unreachable swarm must leave the last known list on screen.
+    console.warn(`[documents] could not refresh from the swarm — keeping the last frame: ${(err as Error).message}`);
+  }
+}
+
 /** Full-frame-on-change, like `sessionFrame()` — every document, not a diff. */
 function documentsFrame() {
-  return { type: "documents" as const, documents: documentManager.list() };
+  return { type: "documents" as const, documents: documentsCache };
+}
+
+/** After a mutation: refresh, then push the frame. */
+async function documentsChanged(): Promise<void> {
+  await refreshDocuments();
+  textChannel.broadcast(documentsFrame());
+}
+
+/** One mutation through the swarm: refresh + broadcast on success, the swarm's own message on failure. */
+async function viaSwarm(op: () => Promise<Doc>): Promise<string | null> {
+  try {
+    await op();
+  } catch (err) {
+    return (err as Error).message;
+  }
+  await documentsChanged();
+  return null;
 }
 
 // Re-fetch workspace records (active only — archived workspaces can't host new
@@ -827,11 +832,14 @@ function startSession(
     brain.seedContext(`workspace "${workspace}": ${rec.description ?? ""}${links}`);
     sessionManager.saveBrainHistory(brain.exportHistory());
   }
-  // Docs pinned to this workspace are its standing context (spec:
-  // dashboards-as-documents, pin model v2) — a new session opens with them
-  // already on its shelf.
-  for (const doc of documentManager.list()) {
-    if (docSeedsInWorkspace(doc.pins, workspace, groupRecords)) sessionManager.addArtifact(s.id, doc.id);
+  // A workspace's OWN documents are its standing context (spec 2026-08-22 §7:
+  // "the session's workspace documents plus pinned ones") — plus anything
+  // pinned here from elsewhere (spec: dashboards-as-documents, pin model v2).
+  // A new session opens with them already on its shelf.
+  for (const doc of documentsCache) {
+    if (doc.workspace === workspace || docSeedsInWorkspace(doc.pins, workspace, groupRecords)) {
+      sessionManager.addArtifact(s.id, doc.id);
+    }
   }
   switchDiscord(workspace);
   textChannel.broadcast(sessionFrame());
@@ -1565,83 +1573,64 @@ const textChannel = new TextChannel(
       .join("\n");
     return polishText(await researchEngine(), text, context);
   },
-  () => blueprints,
+  () => swarm.listBlueprints(),
   {
     create: async (body) => {
-      const bp = blueprints.find((b) => b.id === body.blueprintId);
-      if (!bp) return { error: `unknown blueprint: ${body.blueprintId ?? "(none)"}` };
-      // An absent work type takes the blueprint's first — the composer sends a
-      // blueprint chip and its text, nothing more.
-      const workType = body.workType ?? bp.workTypes[0] ?? "";
-      if (!bp.workTypes.includes(workType)) return { error: `workType must be one of: ${bp.workTypes.join(", ")}` };
+      if (!body.blueprintId) return { error: "blueprintId is required", status: 400 };
+      // The document lands in the active session's workspace — it attaches to
+      // the conversation in progress, it never spawns one.
+      const active = sessionManager.activeOrNull();
+      const workspace = active?.workspace ?? defaultWorkspaceName;
       const text = (body.text ?? "").trim();
       // Empty text is a composer instantiation: the doc scaffolds from the
-      // blueprint's starters and auto-names itself (documents.create falls
-      // back to "<blueprint> <seq>" — truncateTitle would mislabel it
-      // "New session"), and no utterance enters the room.
-      const doc = documentManager.create(bp, workType, text ? truncateTitle(text) : "");
-      if (!doc) return { error: "could not create document" };
+      // blueprint's starters and auto-names itself (the swarm falls back to
+      // the blueprint's name — truncateTitle would mislabel it "New
+      // session"), and no utterance enters the room.
+      let doc: Doc;
+      try {
+        doc = await swarm.createDocument(workspace, {
+          blueprintId: body.blueprintId,
+          workType: body.workType,
+          title: text ? truncateTitle(text) : undefined,
+        });
+      } catch (err) {
+        // The swarm validates the blueprint and the work type; its message is
+        // the one worth showing.
+        return { error: (err as Error).message, status: 400 };
+      }
       if (text) {
         // The send is still a send: the room hears it, the brain answers it in
         // context, and a session gets lazily created here exactly as it would
         // for a plain chat send — which is also how the document inherits the
-        // active session's runtime and workspace (it attaches, it never
-        // spawns).
+        // active session's runtime (it attaches, it never spawns).
         textChannel.broadcast({ type: "utterance", text });
         handleUserText(text);
       }
-      const active = sessionManager.activeOrNull();
-      if (active) sessionManager.addArtifact(active.id, doc.id);
-      textChannel.broadcast(documentsFrame());
+      // Re-read: `handleUserText` above may have lazily created the session
+      // this document belongs on.
+      const session = sessionManager.activeOrNull();
+      if (session) sessionManager.addArtifact(session.id, doc.id);
+      await documentsChanged();
       textChannel.broadcast(sessionFrame());
       return { doc };
     },
-    rename: (docId, title) => {
-      const doc = documentManager.rename(docId, title);
-      if (!doc) return `cannot rename ${docId} — unknown document, or the title was blank`;
-      textChannel.broadcast(documentsFrame());
-      return null;
-    },
-    changeBlueprint: (docId, blueprintId) => {
-      const bp = blueprints.find((b) => b.id === blueprintId);
-      if (!bp) return `unknown blueprint: ${blueprintId}`;
-      const doc = documentManager.changeBlueprint(docId, bp);
-      // 409, not 404: the usual cause is a document that already has text —
-      // switching blueprints would throw that away (documents.ts guards it).
-      if (!doc) return `cannot re-cast ${docId} as "${blueprintId}" — unknown document, or it already has content`;
-      textChannel.broadcast(documentsFrame());
-      return null;
-    },
-    pin: (docId, target) => {
-      const doc = documentManager.pin(docId, target);
-      if (!doc) return `unknown document: ${docId}`;
-      textChannel.broadcast(documentsFrame());
-      return null;
-    },
-    unpin: (docId, target) => {
-      const doc = documentManager.unpin(docId, target);
-      if (!doc) return `unknown document: ${docId}`;
-      textChannel.broadcast(documentsFrame());
-      return null;
-    },
-    acceptProposal: (docId, proposalId) => {
-      const doc = documentManager.acceptProposal(docId, proposalId);
-      if (!doc) return `unknown or already-decided proposal: ${docId}/${proposalId}`;
-      textChannel.broadcast(documentsFrame());
-      return null;
-    },
-    rejectProposal: (docId, proposalId) => {
-      const doc = documentManager.rejectProposal(docId, proposalId);
-      if (!doc) return `unknown or already-decided proposal: ${docId}/${proposalId}`;
-      textChannel.broadcast(documentsFrame());
-      return null;
-    },
-    patchSection: (docId, sectionId, body) => {
-      const doc = documentManager.patchSection(docId, sectionId, body);
-      if (!doc) return `unknown document or section: ${docId}/${sectionId}`;
-      textChannel.broadcast(documentsFrame());
-      return null;
-    },
+    rename: (docId, title) => viaSwarm(() => swarm.patchDocument(docId, { title })),
+    changeBlueprint: (docId, blueprintId) => viaSwarm(() => swarm.patchDocument(docId, { blueprintId })),
+    pin: (docId, target) =>
+      viaSwarm(async () => {
+        const doc = await swarm.getDocument(docId);
+        if (!doc) throw new Error(`unknown document: ${docId}`);
+        return swarm.patchDocument(docId, { pins: [...new Set([...doc.pins, target])] });
+      }),
+    unpin: (docId, target) =>
+      viaSwarm(async () => {
+        const doc = await swarm.getDocument(docId);
+        if (!doc) throw new Error(`unknown document: ${docId}`);
+        return swarm.patchDocument(docId, { pins: doc.pins.filter((t) => t !== target) });
+      }),
+    acceptProposal: (docId, proposalId) => viaSwarm(() => swarm.decideProposal(docId, proposalId, "accept")),
+    rejectProposal: (docId, proposalId) => viaSwarm(() => swarm.decideProposal(docId, proposalId, "reject")),
+    patchSection: (docId, sectionId, body) => viaSwarm(() => swarm.putSection(docId, sectionId, body)),
   },
   brokerAuth,
   {
@@ -1680,7 +1669,7 @@ const textChannel = new TextChannel(
       // directly; a single crew agent = a sticky-note Proposal. Never a
       // swarm dispatch — doc edits are broker-domain work.
       if (doc) {
-        const targetDoc = documentManager.get(doc.docId);
+        const targetDoc = await swarm.getDocument(doc.docId);
         if (!targetDoc) return { error: `unknown document: ${doc.docId}`, status: 404 };
         if (resolution.kind !== "brain" && target?.kind !== "agent") {
           return { error: "direct a doc instruction at one agent", status: 400 };
@@ -1700,20 +1689,24 @@ const textChannel = new TextChannel(
           });
           if (editor) {
             for (const rw of r.rewrites) {
-              documentManager.addProposal(doc.docId, { ...rw, agentId: editor, rationale: r.note });
+              await swarm.addProposal(doc.docId, { ...rw, agentId: editor, rationale: r.note });
             }
             textChannel.broadcast({
               type: "speech",
               text: `${r.rewrites.length} suggestion(s) from ${editor} on “${targetDoc.title}” — accept or dismiss them on the page.`,
             });
           } else {
-            for (const rw of r.rewrites) documentManager.patchSection(doc.docId, rw.sectionId, rw.newBody);
+            for (const rw of r.rewrites) await swarm.putSection(doc.docId, rw.sectionId, rw.newBody);
             textChannel.broadcast({ type: "speech", text: r.note });
           }
-          textChannel.broadcast(documentsFrame());
+          await documentsChanged();
         } catch (err) {
-          // Nothing was written; the transcript carries the failure so the
-          // composer isn't blocked on a refusal status.
+          // Each rewrite is its own swarm call now, so a failure part-way
+          // through the loop leaves the earlier ones written. Refresh before
+          // reporting so the page shows whatever DID land, then let the
+          // transcript carry the failure — the composer isn't blocked on a
+          // refusal status.
+          await documentsChanged();
           textChannel.broadcast({ type: "speech", text: `couldn't apply that: ${(err as Error).message}` });
         }
         return { ok: true as const };
@@ -2632,6 +2625,11 @@ workspaceRecords = bootWorkspaces;
 // the first mutation must not carry groups:[] (live-observed after a restart:
 // the GROUPS tier vanished and pins showed their groups as "(gone)").
 groupRecords = await swarm.listGroups().catch(() => []);
+// The first documents frame. Loaded here, with the workspaces its documents
+// belong to and BEFORE the channel accepts a connection, so the hello frame
+// carries the real list rather than an empty one. Tolerant of an unreachable
+// swarm by construction (refreshDocuments keeps the last frame).
+await refreshDocuments();
 defaultWorkspaceName = bootWorkspaces.find((w) => w.default)?.name ?? workspaceNames[0] ?? "default";
 // Waits for the real default workspace, not the "default" boot placeholder —
 // calling this any earlier races defaultWorkspaceName's assignment above.
