@@ -24,6 +24,13 @@ export { activeSections };
 
 const SHAPES = new Set<string>(["prose", "checklist", "mermaid"]);
 const FOLDERS = new Set<string>(["specs", "plans", "dashboards"]);
+/**
+ * The only section id a document file can carry — it is written into the
+ * heading as `{#id}` and `serializeDocumentFile` THROWS on anything else.
+ * Kept as a literal rather than imported from document-file.ts so this module
+ * stays free of that dependency; the two must not drift.
+ */
+const SECTION_ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 
 export const DEFAULT_BLUEPRINTS: Blueprint[] = [
   {
@@ -125,14 +132,28 @@ export const DEFAULT_BLUEPRINTS: Blueprint[] = [
   },
 ];
 
-/** A user file must carry id/workTypes/sections; family defaults to document, folder to specs; an invalid folder or shape rejects the WHOLE file rather than coercing it. */
+/**
+ * A user file must carry id/workTypes/sections; family defaults to document,
+ * folder to specs; an invalid folder or shape rejects the WHOLE file rather
+ * than coercing it.
+ *
+ * The id, the workTypes entries and the section ids are checked for the same
+ * reason: each is written verbatim into a document's frontmatter or heading,
+ * and `serializeDocumentFile` THROWS on an empty required scalar or a section
+ * id that is not `SECTION_ID_RE`. Rejecting here keeps that config out of the
+ * system entirely — otherwise an ordinary edit to a §6.1 blueprint file turns
+ * the create route into an unhandled 500 (task-7 review, I1).
+ */
 function validUserBlueprint(raw: unknown): Blueprint | null {
   const b = raw as Partial<Blueprint> | null;
   if (!b || typeof b.id !== "string" || !Array.isArray(b.workTypes) || !Array.isArray(b.sections)) return null;
+  if (b.id.trim() === "") return null;
+  if (b.workTypes.some((w) => typeof w !== "string" || w.trim() === "")) return null;
   const folder = b.folder ?? "specs";
   if (!FOLDERS.has(folder)) return null;
   for (const s of b.sections) {
     if (typeof s?.id !== "string" || typeof s?.heading !== "string") return null;
+    if (!SECTION_ID_RE.test(s.id)) return null;
     if (s.shape !== undefined && !SHAPES.has(s.shape)) return null;
   }
   return {

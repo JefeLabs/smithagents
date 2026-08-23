@@ -134,6 +134,42 @@ test("loadBlueprintsFor: a user file with an invalid folder or shape is skipped,
   }
 });
 
+test("loadBlueprintsFor: a file whose id, workType or section id cannot be written to a document is skipped", async () => {
+  const root = mkdtempSync(join(tmpdir(), "bp-unwritable-"));
+  try {
+    const paths = smithPaths(root);
+    const dir = join(paths.orgRepo, "blueprints");
+    mkdirSync(dir, { recursive: true });
+    const files: Array<[string, unknown]> = [
+      // `{#id}` is the heading grammar; serializeDocumentFile throws on anything else.
+      ["spaces", { id: "spaces", workTypes: ["f"], sections: [{ id: "Acceptance Criteria", heading: "A" }] }],
+      ["caps", { id: "caps", workTypes: ["f"], sections: [{ id: "Overview", heading: "O" }] }],
+      ["leading", { id: "leading", workTypes: ["f"], sections: [{ id: "-a", heading: "A" }] }],
+      ["emptysection", { id: "emptysection", workTypes: ["f"], sections: [{ id: "", heading: "A" }] }],
+      // `blueprint:` and `workType:` are REQUIRED frontmatter scalars; empty ones throw.
+      ["", { id: "", workTypes: ["f"], sections: [{ id: "a", heading: "A" }] }],
+      ["blankid", { id: "   ", workTypes: ["f"], sections: [{ id: "a", heading: "A" }] }],
+      ["blanktype", { id: "blanktype", workTypes: [""], sections: [{ id: "a", heading: "A" }] }],
+      ["nontype", { id: "nontype", workTypes: [3], sections: [{ id: "a", heading: "A" }] }],
+    ];
+    for (const [name, body] of files) writeFileSync(join(dir, `${name || "emptyid"}.json`), JSON.stringify(body));
+    const all = await loadBlueprintsFor(paths);
+    assert.deepEqual(
+      all.map((b) => b.id).sort(),
+      DEFAULT_BLUEPRINTS.map((b) => b.id).sort(),
+      "not one of them reached the resolved set",
+    );
+    // The valid neighbours of a rejected file are unaffected.
+    writeFileSync(
+      join(dir, "good.json"),
+      JSON.stringify({ id: "good", workTypes: ["f"], sections: [{ id: "a-1", heading: "A" }] }),
+    );
+    assert.ok((await loadBlueprintsFor(paths)).some((b) => b.id === "good"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("instantiateSections / activeSections: per-workType activation, starters as bodies", () => {
   const spec = DEFAULT_BLUEPRINTS.find((b) => b.id === "spec")!;
   assert.equal(instantiateSections(spec, "nope"), null);

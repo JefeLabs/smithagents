@@ -260,15 +260,38 @@ export function commitPaths(
   relPaths: string[],
   opts: { author: GitAuthor; message: string },
 ): Promise<boolean> {
-  return withOrgRepoQueue(paths.orgRepo, async () => {
-    for (const p of relPaths) {
-      if (isAbsolute(p)) throw new Error(`commitPaths: "${p}" must be relative to the org repo`);
-      if (p.split(/[\\/]/).includes("..")) throw new Error(`commitPaths: "${p}" contains ".."`);
-      if (!(await isFile(join(paths.orgRepo, p))))
-        throw new Error(`commitPaths: "${p}" does not exist in the org repo`);
-    }
-    return stageAndCommitPaths(paths.orgRepo, relPaths, opts);
-  });
+  return withOrgRepoQueue(paths.orgRepo, () => commitPathsInQueue(paths, relPaths, opts));
+}
+
+/**
+ * THE CALLER MUST ALREADY HOLD THE ORG-REPO QUEUE — this is `commitPaths`
+ * without the `withOrgRepoQueue` wrapper, and nothing else.
+ *
+ * Calling it outside the queue reintroduces exactly the interleaving
+ * `withOrgRepoQueue` exists to prevent: `add` → `diff --cached` → `commit`
+ * against ONE shared index, so a concurrent writer's content is committed
+ * under this caller's author and message while its own commit finds a clean
+ * index and reports "nothing to do". **`commitPaths` is the safe entry point
+ * for anyone who does not already hold the queue.**
+ *
+ * It exists for a caller that must make its whole read-modify-write-commit
+ * sequence one queued task — the document store's `writeDocInQueue`, where
+ * the file write has to be inside the same queue slot as the commit or a
+ * second writer clobbers the file between the two. `withOrgRepoQueue` is a
+ * plain promise chain, so such a caller CANNOT reach `commitPaths`: the inner
+ * task would chain after its own enclosing task's completion and deadlock.
+ */
+export async function commitPathsInQueue(
+  paths: SmithPaths,
+  relPaths: string[],
+  opts: { author: GitAuthor; message: string },
+): Promise<boolean> {
+  for (const p of relPaths) {
+    if (isAbsolute(p)) throw new Error(`commitPaths: "${p}" must be relative to the org repo`);
+    if (p.split(/[\\/]/).includes("..")) throw new Error(`commitPaths: "${p}" contains ".."`);
+    if (!(await isFile(join(paths.orgRepo, p)))) throw new Error(`commitPaths: "${p}" does not exist in the org repo`);
+  }
+  return stageAndCommitPaths(paths.orgRepo, relPaths, opts);
 }
 
 /**

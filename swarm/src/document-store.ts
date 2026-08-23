@@ -3,8 +3,10 @@
 // document-proposals (branches). Truth is the disk — every read lists the
 // directory, every mutation writes the file and commits exactly that file
 // through the per-org-repo queue with the acting author. No cache.
+import { execFile } from "node:child_process";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { promisify } from "node:util";
 import { type Blueprint, type BlueprintFolder, instantiateSections, loadBlueprintsFor } from "./blueprints.js";
 import { loadCapabilities } from "./capabilities.js";
 import {
@@ -22,8 +24,10 @@ import { type Problem, type RuleResolvers, transitionProblems, validateDocument 
 import { agentAuthor, type GitAuthor, SMITH_IDENTITY } from "./git-author.js";
 import { normalizeMarkdown } from "./markdown-normalize.js";
 import type { SmithPaths } from "./paths.js";
-import { commitPaths } from "./workspace-repos.js";
+import { commitPathsInQueue, withOrgRepoQueue } from "./workspace-repos.js";
 import { activeWorkspaces, configDirFor, slugForDir, type Workspace } from "./workspaces.js";
+
+const run = promisify(execFile);
 
 export interface DocWire {
   id: string;
@@ -138,9 +142,13 @@ function located(paths: SmithPaths, ws: Workspace, folder: BlueprintFolder, id: 
 
 async function listIds(paths: SmithPaths, ws: Workspace, folder: BlueprintFolder): Promise<string[]> {
   try {
-    return (await readdir(join(configDirFor(paths, ws), folder)))
-      .filter((f) => f.endsWith(".md"))
-      .map((f) => f.slice(0, -3));
+    // A DIRECTORY named `<id>.md` is not a document. Filtering on the name
+    // alone let `resolveDocument` locate one, and `rejectProposal` — which
+    // never reads the file — would then act on an id that is not a document
+    // at all (task-7 review, M2). A symlink to a real file still counts.
+    return (await readdir(join(configDirFor(paths, ws), folder), { withFileTypes: true }))
+      .filter((e) => e.name.endsWith(".md") && !e.isDirectory())
+      .map((e) => e.name.slice(0, -3));
   } catch {
     return [];
   }
@@ -219,28 +227,55 @@ async function blueprintFor(paths: SmithPaths, ws: Workspace, id: string): Promi
 }
 
 /**
- * Write the file and commit exactly it. Returns the fresh wire shape.
- *
- * The write happens before `commitPaths` enters the per-org-repo queue, so a
- * concurrent reader can observe a written-but-uncommitted file — the same
- * state a hand edit produces, and accepted as such. Closing that window means
- * running the write INSIDE the queue, which needs a commit primitive that
- * does not itself enter the queue (`withOrgRepoQueue` is a plain promise
- * chain and re-entering it from a queued task deadlocks) — a change to
- * workspace-repos.ts, not to this module.
+ * Serialize, or the refusal to. `serializeDocumentFile` THROWS on an empty
+ * required scalar or a section id outside `^[a-z0-9][a-z0-9-]*$` — both
+ * reachable from a §6.1 blueprint file or a §9.3 legacy document, neither of
+ * which this module authors. Every write path goes through here so those
+ * arrive as an ordinary `{error, status}` refusal instead of an unhandled 500
+ * (task-7 review, I1). `blueprints.ts` rejects such a file at load, so this is
+ * the second of two layers, not the only one.
  */
-async function writeDoc(
+function serializeOrRefuse(doc: ParsedDocument): { text: string } | { error: string; status: number } {
+  try {
+    return { text: serializeDocumentFile(doc) };
+  } catch (err) {
+    return { error: `this document cannot be written — ${(err as Error).message}`, status: 400 };
+  }
+}
+
+/** True when the org repo has uncommitted changes at exactly this path (untracked counts). */
+async function isDirty(orgRepo: string, relPath: string): Promise<boolean> {
+  const { stdout } = await run("git", ["status", "--porcelain", "--", relPath], { cwd: orgRepo });
+  return stdout.toString().trim() !== "";
+}
+
+/**
+ * THE CALLER MUST ALREADY HOLD THE ORG-REPO QUEUE (see `mutate`). Write the
+ * file and commit exactly it, then return the document AS RE-READ FROM DISK.
+ *
+ * Both halves matter. The write and the commit must sit in ONE queue slot: a
+ * second writer landing between them clobbers the file, and the commit then
+ * carries that writer's content under this caller's author and message — which
+ * is why this uses `commitPathsInQueue` and must never be reached from outside
+ * the queue. And the return value is re-read rather than built from `doc`,
+ * because the in-memory copy is what the caller *asked* for, not what the disk
+ * now holds (task-7 review, C1 defect 3).
+ */
+async function writeDocInQueue(
   paths: SmithPaths,
   loc: Located,
   doc: ParsedDocument,
   author: GitAuthor,
   message: string,
-): Promise<DocWire> {
+): Promise<StoreResult> {
+  const serialized = serializeOrRefuse(doc);
+  if ("error" in serialized) return serialized;
   await mkdir(dirname(loc.absPath), { recursive: true });
-  const text = serializeDocumentFile(doc);
-  await writeFile(loc.absPath, text);
-  await commitPaths(paths, [loc.relPath], { author, message });
-  return toWire(paths, loc, text, doc, await blueprintFor(paths, loc.ws, doc.frontmatter.blueprint));
+  await writeFile(loc.absPath, serialized.text);
+  await commitPathsInQueue(paths, [loc.relPath], { author, message });
+  const fresh = await readParsed(loc);
+  if (!fresh) return { error: `${loc.relPath} did not read back after being written`, status: 500 };
+  return toWire(paths, loc, fresh.text, fresh.doc, await blueprintFor(paths, loc.ws, fresh.doc.frontmatter.blueprint));
 }
 
 export async function listWorkspaceDocuments(paths: SmithPaths, ws: Workspace): Promise<DocWire[]> {
@@ -329,7 +364,7 @@ export async function createDocument(
   // string), so the fallback runs one step further to the id.
   const title = squash(input.title) || squash(bp.name) || bp.id;
   const effort = slugify(squash(input.effort) || title); // slugify is TOTAL (document-file.ts) — no fallback needed
-  const id = await freeId(paths, ws, bp.folder, documentFileId(now, effort, bp.id));
+  const base = documentFileId(now, effort, bp.id);
   const doc: ParsedDocument = {
     frontmatter: {
       title,
@@ -345,13 +380,20 @@ export async function createDocument(
     },
     sections,
   };
-  return writeDoc(
-    paths,
-    located(paths, ws, bp.folder, id),
-    doc,
-    input.author,
-    `${kindOf(bp.folder)}(${effort}): create`,
-  );
+  // `freeId` reads the directory that decides the id, so it MUST be in the
+  // same queue slot as the write. Outside it, two creates for one effort in
+  // the same minute both see the base id free, both mint it, and the second
+  // write destroys the first document outright (task-7 review: 20/20).
+  return withOrgRepoQueue(paths.orgRepo, async () => {
+    const id = await freeId(paths, ws, bp.folder, base);
+    return writeDocInQueue(
+      paths,
+      located(paths, ws, bp.folder, id),
+      doc,
+      input.author,
+      `${kindOf(bp.folder)}(${effort}): create`,
+    );
+  });
 }
 
 /**
@@ -394,7 +436,6 @@ export async function importDocument(
   const effort = slugify(title); // slugify is TOTAL (document-file.ts) — no fallback needed
   const id = documentFileId(legacy.createdAt, effort, bp.id);
   const loc = located(paths, ws, bp.folder, id);
-  if (await readParsed(loc)) return { error: `already imported as ${id}`, status: 409 };
   const doc: ParsedDocument = {
     frontmatter: {
       title,
@@ -410,18 +451,32 @@ export async function importDocument(
     },
     sections: legacy.sections.map((s) => ({ ...s, body: normalizeMarkdown(s.body) })),
   };
-  await writeDoc(paths, loc, doc, SMITH_IDENTITY, `${kindOf(bp.folder)}(${effort}): import`);
+  // The "already imported" check and the write are ONE queue slot, so two
+  // concurrent imports of the same legacy document cannot both find the file
+  // absent. The proposal branches below are deliberately OUTSIDE it:
+  // `createProposal` takes the queue itself, and `withOrgRepoQueue` is a plain
+  // promise chain — calling it from inside a queued task deadlocks.
+  const written = await withOrgRepoQueue(paths.orgRepo, async () => {
+    if (await readParsed(loc)) return { error: `already imported as ${id}`, status: 409 };
+    return writeDocInQueue(paths, loc, doc, SMITH_IDENTITY, `${kindOf(bp.folder)}(${effort}): import`);
+  });
+  if ("error" in written) return written;
   for (const p of legacy.proposals ?? []) {
     if (p.state !== "open" || !doc.sections.some((s) => s.id === p.sectionId)) continue;
     const proposed: ParsedDocument = {
       ...doc,
       sections: doc.sections.map((s) => (s.id === p.sectionId ? { ...s, body: normalizeMarkdown(p.newBody) } : s)),
     };
+    const serialized = serializeOrRefuse(proposed);
+    // A proposal that cannot be serialized is skipped, not thrown: the
+    // document itself is already imported, and losing one pending edit must
+    // not abort the rest of a §9.3 migration.
+    if ("error" in serialized) continue;
     await createProposal(paths, {
       slug: loc.slug,
       docId: id,
       relPath: loc.relPath,
-      newFileText: serializeDocumentFile(proposed),
+      newFileText: serialized.text,
       sectionId: p.sectionId,
       author: agentAuthor(p.agentId),
       rationale: p.rationale,
@@ -432,12 +487,36 @@ export async function importDocument(
 }
 
 /**
- * Resolve, re-read, apply `change`, write, commit. The re-read and the
- * `structuredClone` are deliberate, not duplication: truth is the disk, so
- * every mutation starts from the file as it is now, and `change` gets a copy
- * it can edit freely without a partial mutation surviving a refusal.
+ * Resolve, re-read, apply `change`, write, commit — **all inside ONE
+ * org-repo queue slot**. Every mutation in this module goes through here.
+ *
+ * The queue is what makes a mutation atomic against another mutation of the
+ * same file. It is a read-modify-write: each `change` produces a WHOLE
+ * serialized document from the text it read, so two overlapping mutations
+ * outside the queue are plain last-writer-wins — the task-7 review measured
+ * 8/8 lost edits on a two-section patch, 30/30 on three, and 5/8 `setStatus`
+ * calls reporting a `final` the disk never received. Nothing in that sequence
+ * is safe to leave outside.
+ *
+ * DEADLOCK DISCIPLINE: `withOrgRepoQueue` is a plain promise chain, so a
+ * queued task must NEVER call another queueing function — the inner task
+ * chains after its own enclosing task's completion token and neither ever
+ * settles. Everything reachable from `change` must therefore be a READ
+ * (`readParsed`, `listIds`, `loadBlueprintsFor`, `loadCapabilities`,
+ * `listProposals`, `isDirty`) or the non-queueing `commitPathsInQueue`.
+ * `createProposal`/`deleteProposal`/`commitPaths`/`commitConfigFiles` all
+ * queue internally and must stay outside — which is why `addProposal`,
+ * `acceptProposal` and `rejectProposal` call them sequentially rather than
+ * from within a queued task of their own.
+ *
+ * The re-read and the `structuredClone` are deliberate, not duplication:
+ * truth is the disk, so every mutation starts from the file as it is now, and
+ * `change` gets a copy it can edit freely without a partial mutation
+ * surviving a refusal. `change` may override the author (the accept path
+ * commits as the proposing agent, whose identity is only known once the
+ * proposal has been read inside the queue).
  */
-async function mutate(
+function mutate(
   paths: SmithPaths,
   workspaces: Workspace[],
   id: string,
@@ -446,19 +525,24 @@ async function mutate(
     doc: ParsedDocument,
     loc: Located,
     bp: Blueprint | undefined,
+    text: string,
   ) => Promise<
-    { doc: ParsedDocument; message: string } | { error: string; status: number; problems?: Problem[] } | null
+    | { doc: ParsedDocument; message: string; author?: GitAuthor }
+    | { error: string; status: number; problems?: Problem[] }
+    | null
   >,
 ): Promise<StoreResult | null> {
-  const loc = await resolveDocument(paths, workspaces, id);
-  const r = loc && (await readParsed(loc));
-  if (!loc || !r) return null;
-  const bp = await blueprintFor(paths, loc.ws, r.doc.frontmatter.blueprint);
-  const result = await change(structuredClone(r.doc), loc, bp);
-  if (result === null) return null;
-  if ("error" in result) return result;
-  result.doc.frontmatter.updatedAt = nowIso();
-  return writeDoc(paths, loc, result.doc, author, result.message);
+  return withOrgRepoQueue(paths.orgRepo, async () => {
+    const loc = await resolveDocument(paths, workspaces, id);
+    const r = loc && (await readParsed(loc));
+    if (!loc || !r) return null;
+    const bp = await blueprintFor(paths, loc.ws, r.doc.frontmatter.blueprint);
+    const result = await change(structuredClone(r.doc), loc, bp, r.text);
+    if (result === null) return null;
+    if ("error" in result) return result;
+    result.doc.frontmatter.updatedAt = nowIso();
+    return writeDocInQueue(paths, loc, result.doc, result.author ?? author, result.message);
+  });
 }
 
 export function patchSection(
@@ -473,7 +557,10 @@ export function patchSection(
     const s = doc.sections.find((x) => x.id === sectionId);
     if (!s) return null;
     s.body = normalizeMarkdown(body);
-    return { doc, message: `${kindOf(loc.folder)}(${doc.frontmatter.effort}): ${sectionId}` };
+    // The preamble's id is `""` (§2.2), which would end the commit subject at
+    // the colon and leave a blank entry in the audit trail.
+    const label = sectionId || "preamble";
+    return { doc, message: `${kindOf(loc.folder)}(${doc.frontmatter.effort}): ${label}` };
   });
 }
 
@@ -514,10 +601,25 @@ export function setPins(
 }
 
 /**
+ * Has the user written anything here yet? A section counts as untouched when
+ * it is empty OR still byte-identical to the starter its OWN blueprint seeded
+ * (`instantiateSections` writes `starter` as the birth body, and both diagram
+ * blueprints ship one). Without this, a just-created `er` document could never
+ * be re-cast to `sequence` — the user picks the wrong diagram type and is told
+ * they have content they never typed (task-7 review, I2).
+ */
+function isUntouched(doc: ParsedDocument, bp: Blueprint | undefined): boolean {
+  const starters = new Map(
+    (bp ? (instantiateSections(bp, doc.frontmatter.workType) ?? []) : []).map((s) => [s.id, s.body]),
+  );
+  return doc.sections.every((s) => !s.body.trim() || s.body === starters.get(s.id));
+}
+
+/**
  * Re-cast under another blueprint: only within the same folder (the file
- * never moves — its name is its id, minted once), and only while every
- * section is empty (re-casting replaces the section set, so any body would be
- * discarded).
+ * never moves — its name is its id, minted once), and only while the user has
+ * written nothing (re-casting replaces the section set, so any body the user
+ * typed would be discarded).
  *
  * Order matters when both refusals apply: the folder is reported first
  * because it is the one that can never be satisfied for this document —
@@ -532,7 +634,7 @@ export function changeBlueprint(
   workType: string | undefined,
   author: GitAuthor,
 ): Promise<StoreResult | null> {
-  return mutate(paths, workspaces, id, author, async (doc, loc) => {
+  return mutate(paths, workspaces, id, author, async (doc, loc, current) => {
     const bp = await blueprintFor(paths, loc.ws, blueprintId);
     if (!bp) return { error: `unknown blueprint: ${blueprintId}`, status: 400 };
     const wt = workType ?? bp.workTypes[0] ?? "";
@@ -544,7 +646,7 @@ export function changeBlueprint(
         status: 409,
       };
     }
-    if (doc.sections.some((s) => s.body.trim()))
+    if (!isUntouched(doc, current))
       return { error: "the document already has content — re-casting would discard it", status: 409 };
     doc.frontmatter.blueprint = bp.id;
     doc.frontmatter.workType = wt;
@@ -589,11 +691,13 @@ export async function addProposal(
     ...r.doc,
     sections: r.doc.sections.map((s) => (s.id === p.sectionId ? { ...s, body: normalizeMarkdown(p.newBody) } : s)),
   };
+  const serialized = serializeOrRefuse(proposed);
+  if ("error" in serialized) return serialized;
   await createProposal(paths, {
     slug: loc.slug,
     docId: id,
     relPath: loc.relPath,
-    newFileText: serializeDocumentFile(proposed),
+    newFileText: serialized.text,
     sectionId: p.sectionId,
     author: agentAuthor(p.agentId),
     rationale: p.rationale,
@@ -603,9 +707,22 @@ export async function addProposal(
 
 /**
  * Accept = the section write on main as the proposing agent, then the branch
- * goes. A stale proposal is refused: the text it was written against is gone.
- * The document is re-read at the end rather than returning `mutate`'s wire
- * shape, because that shape was built while the branch still existed.
+ * goes. Two refusals guard it, and both are evaluated INSIDE `mutate`'s queue
+ * slot against the same read the write is built from — outside it, either
+ * could be decided against a file that has since changed:
+ *
+ * - **stale**: the text the proposal was written against is gone.
+ * - **dirty** (spec §4): the document's own file has uncommitted changes.
+ *   Accepting would sweep a human's hand edit into the agent's commit, so the
+ *   human's paragraph would land authored by the agent — the exact guarantee
+ *   §1.4 exists to provide (task-7 review, I3). Scoped to THIS document's
+ *   file: an unrelated dirty file elsewhere in the org repo is not this
+ *   accept's business.
+ *
+ * `deleteProposal` runs after `mutate` returns, never inside it — it takes the
+ * queue itself (see the deadlock discipline on `mutate`). The document is then
+ * re-read, because `mutate`'s wire shape was built while the branch still
+ * existed and would still list the accepted proposal.
  */
 export async function acceptProposal(
   paths: SmithPaths,
@@ -613,26 +730,34 @@ export async function acceptProposal(
   id: string,
   proposalId: string,
 ): Promise<StoreResult | null> {
-  const loc = await resolveDocument(paths, workspaces, id);
-  const r = loc && (await readParsed(loc));
-  if (!loc || !r) return null;
-  const live = (
-    await listProposals(paths, { slug: loc.slug, docId: id, relPath: loc.relPath, currentFileText: r.text })
-  ).find((p) => p.id === proposalId);
-  if (!live) return null;
-  if (live.state === "stale") {
-    return {
-      error: `proposal ${proposalId} is stale — "${live.sectionId}" changed since it was written; reject it or ask for a new one`,
-      status: 409,
-    };
-  }
-  const result = await mutate(paths, workspaces, id, agentAuthor(live.agentId), async (doc, l) => {
+  // Resolved up front only for the slug, which is a function of the workspace
+  // name; `mutate` re-resolves and re-reads authoritatively inside the queue.
+  const pre = await resolveDocument(paths, workspaces, id);
+  if (!pre) return null;
+  const result = await mutate(paths, workspaces, id, SMITH_IDENTITY, async (doc, loc, _bp, text) => {
+    const live = (
+      await listProposals(paths, { slug: loc.slug, docId: id, relPath: loc.relPath, currentFileText: text })
+    ).find((p) => p.id === proposalId);
+    if (!live) return null;
+    if (live.state === "stale") {
+      return {
+        error: `proposal ${proposalId} is stale — "${live.sectionId}" changed since it was written; reject it or ask for a new one`,
+        status: 409,
+      };
+    }
+    if (await isDirty(paths.orgRepo, loc.relPath)) {
+      return {
+        error: `${loc.relPath} has uncommitted changes — commit or discard them before accepting`,
+        status: 409,
+      };
+    }
     const s = doc.sections.find((x) => x.id === live.sectionId);
     if (!s) return null;
     s.body = live.newBody;
     return {
       doc,
-      message: `${kindOf(l.folder)}(${doc.frontmatter.effort}): accept proposal ${proposalId} — ${live.sectionId}`,
+      message: `${kindOf(loc.folder)}(${doc.frontmatter.effort}): accept proposal ${proposalId} — ${live.sectionId}`,
+      author: agentAuthor(live.agentId),
     };
   });
   // A refusal from `mutate` is returned as itself: deleting the branch after
@@ -640,7 +765,7 @@ export async function acceptProposal(
   // report a failure as a success.
   if (result === null) return null;
   if ("error" in result) return result;
-  await deleteProposal(paths, { slug: loc.slug, docId: id, id: proposalId });
+  await deleteProposal(paths, { slug: pre.slug, docId: id, id: proposalId });
   return getDocument(paths, workspaces, id);
 }
 

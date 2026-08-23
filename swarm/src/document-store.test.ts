@@ -29,6 +29,7 @@ import { smithPaths } from "./paths.js";
 import type { Workspace } from "./workspaces.js";
 
 const EDWIN = { name: "Edwin Cruz", email: "e@example.com" };
+const ANDERSON = { name: "anderson", email: "anderson@agents.smithagents" };
 const PG: Workspace = { name: "pg", repos: [] };
 const OTHER: Workspace = { name: "other", repos: [] };
 const WS = [PG, OTHER];
@@ -427,7 +428,7 @@ test("renameDocument / setPins: title and pins change, the file does not move, n
   }
 });
 
-test("changeBlueprint: re-casting needs an empty document AND the same folder — each refusal says which", async () => {
+test("changeBlueprint: an untouched document re-casts freely — a seeded starter is not content the user typed", async () => {
   const { root, paths } = setup("recast");
   try {
     const doc = (await createDocument(paths, PG, {
@@ -437,9 +438,33 @@ test("changeBlueprint: re-casting needs an empty document AND the same folder �
       author: EDWIN,
       now: NOW,
     })) as DocWire;
-    const recast = (await changeBlueprint(paths, WS, doc.id, "er", undefined, EDWIN)) as DocWire;
-    assert.equal(recast.blueprintId, "er", "er shares the specs folder, and the document is still empty");
-    assert.match(recast.sections[0].body, /^```mermaid/);
+    const toEr = (await changeBlueprint(paths, WS, doc.id, "er", undefined, EDWIN)) as DocWire;
+    assert.equal(toEr.blueprintId, "er", "er shares the specs folder, and the document is still empty");
+    assert.match(toEr.sections[0].body, /^```mermaid/);
+    // The er starter is now the body. Picking the wrong diagram type must
+    // still be recoverable — both directions, and back out to prose.
+    const toSequence = (await changeBlueprint(paths, WS, doc.id, "sequence", undefined, EDWIN)) as DocWire;
+    assert.equal(toSequence.blueprintId, "sequence", "an untouched starter is not content");
+    assert.match(toSequence.sections[0].body, /sequenceDiagram/);
+    const backToSpec = (await changeBlueprint(paths, WS, doc.id, "spec", undefined, EDWIN)) as DocWire;
+    assert.equal(backToSpec.blueprintId, "spec");
+    assert.equal(asError(await changeBlueprint(paths, WS, doc.id, "nope", undefined, EDWIN)).status, 400);
+    assert.equal(await changeBlueprint(paths, WS, "missing-id", "er", undefined, EDWIN), null);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("changeBlueprint: a body the user actually edited refuses; a different folder refuses first", async () => {
+  const { root, paths } = setup("recast-refuse");
+  try {
+    const doc = (await createDocument(paths, PG, {
+      blueprintId: "er",
+      workType: "feature",
+      effort: "x",
+      author: EDWIN,
+      now: NOW,
+    })) as DocWire;
     const toPlan = await changeBlueprint(paths, WS, doc.id, "implementation-plan", undefined, EDWIN);
     assert.equal(asError(toPlan).status, 409);
     assert.match(
@@ -447,12 +472,11 @@ test("changeBlueprint: re-casting needs an empty document AND the same folder �
       /plans\//,
       "a different folder means a different file — create a new document instead",
     );
+    await patchSection(paths, WS, doc.id, "diagram", "```mermaid\nerDiagram\n  A ||--o{ B : owns\n```", EDWIN);
     const toSequence = await changeBlueprint(paths, WS, doc.id, "sequence", undefined, EDWIN);
     assert.equal(asError(toSequence).status, 409);
-    assert.match(asError(toSequence).error, /content/, "same folder, but the er starter is content this would discard");
-    assert.equal(asError(await changeBlueprint(paths, WS, doc.id, "nope", undefined, EDWIN)).status, 400);
+    assert.match(asError(toSequence).error, /content/, "the user edited this diagram — re-casting would discard it");
     assert.equal((await getDocument(paths, WS, doc.id))?.blueprintId, "er", "no refusal reached the file");
-    assert.equal(await changeBlueprint(paths, WS, "missing-id", "er", undefined, EDWIN), null);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -537,6 +561,218 @@ test("importDocument: legacy metadata that would not parse back is refused or re
     assert.equal(ok.updatedAt, NOW());
     const text = readFileSync(join(paths.orgRepo, "workspaces", "pg", "specs", `${ok.id}.md`), "utf8");
     assert.ok(parseDocumentFile(text).doc, JSON.stringify(parseDocumentFile(text).problems));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("importDocument: a legacy section id the heading grammar cannot carry is a 400, not a throw", async () => {
+  const { root, paths } = setup("import-badsection");
+  try {
+    const r = await importDocument(paths, PG, {
+      ...structuredClone(LEGACY),
+      proposals: [],
+      sections: [{ id: "Acceptance Criteria", heading: "Acceptance criteria", body: "x" }],
+    });
+    assert.equal(asError(r).status, 400, "serializeDocumentFile throws on this id — it must arrive as a refusal");
+    assert.match(asError(r).error, /Acceptance Criteria/);
+    assert.equal(existsSync(join(paths.orgRepo, "workspaces", "pg", "specs")), false, "nothing was written");
+    assert.equal(execFileSync("git", ["status", "--porcelain"], { cwd: paths.orgRepo }).toString(), "");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Concurrency. Every mutation is one org-repo queue slot: resolve, read,
+// change, write and commit cannot interleave with another mutation of the same
+// file. Before that, these three raced — the review measured 8/8 lost edits on
+// the first, 20/20 destroyed documents on the second.
+// ---------------------------------------------------------------------------
+
+test("concurrency: two patches of one document both land, each in its own commit with its own author", async () => {
+  const { root, paths } = setup("race-patch");
+  try {
+    const doc = (await createDocument(paths, PG, {
+      blueprintId: "spec",
+      workType: "feature",
+      effort: "race",
+      author: EDWIN,
+      now: NOW,
+    })) as DocWire;
+    const before = Number(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: paths.orgRepo }).toString());
+    const [a, b] = await Promise.all([
+      patchSection(paths, WS, doc.id, "overview", "AAA", EDWIN),
+      patchSection(paths, WS, doc.id, "testing", "BBB", ANDERSON),
+    ]);
+    assert.ok(isDoc(a) && isDoc(b), JSON.stringify([a, b]));
+    const fresh = await getDocument(paths, WS, doc.id);
+    assert.equal(fresh?.sections.find((s) => s.id === "overview")?.body, "AAA", "Edwin's edit survived");
+    assert.equal(fresh?.sections.find((s) => s.id === "testing")?.body, "BBB", "anderson's edit survived");
+    // TWO commits, each naming its own author and its own section — not one
+    // commit carrying the other caller's content.
+    const after = Number(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: paths.orgRepo }).toString());
+    assert.equal(after - before, 2);
+    const log = execFileSync("git", ["log", "-2", "--format=%an|%s"], { cwd: paths.orgRepo }).toString();
+    assert.match(log, /^Edwin Cruz\|spec\(race\): overview$/m);
+    assert.match(log, /^anderson\|spec\(race\): testing$/m);
+    // Neither return value may claim content that is not on disk: the second
+    // writer read the first's result, so exactly one carries both edits.
+    const both = [a, b].filter(
+      (d) =>
+        d.sections.find((s) => s.id === "overview")?.body === "AAA" &&
+        d.sections.find((s) => s.id === "testing")?.body === "BBB",
+    );
+    assert.equal(both.length, 1, "the later mutation returns the document as it now is on disk");
+    assert.equal(execFileSync("git", ["status", "--porcelain"], { cwd: paths.orgRepo }).toString(), "");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("concurrency: two creates for the same effort mint two documents, not one", async () => {
+  const { root, paths } = setup("race-create");
+  try {
+    const input = {
+      blueprintId: "spec",
+      workType: "feature",
+      effort: "twin",
+      author: EDWIN,
+      now: NOW,
+    } as const;
+    const [a, b] = await Promise.all([createDocument(paths, PG, input), createDocument(paths, PG, input)]);
+    assert.ok(isDoc(a) && isDoc(b), JSON.stringify([a, b]));
+    assert.notEqual(a.id, b.id, "freeId reads the directory that decides the id — it must be inside the queue");
+    const listed = await listWorkspaceDocuments(paths, PG);
+    assert.equal(listed.length, 2, "two documents exist; neither create destroyed the other");
+    assert.deepEqual(
+      listed.map((d) => d.id).sort(),
+      [a.id, b.id].sort(),
+      "each returned id resolves to its own document",
+    );
+    assert.equal(execFileSync("git", ["status", "--porcelain"], { cwd: paths.orgRepo }).toString(), "");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("concurrency: a status transition racing a patch reports the status the disk actually received", async () => {
+  const { root, paths } = setup("race-status");
+  try {
+    const doc = (await createDocument(paths, PG, {
+      blueprintId: "spec",
+      workType: "feature",
+      effort: "gate",
+      author: EDWIN,
+      now: NOW,
+    })) as DocWire;
+    await patchSection(paths, WS, doc.id, "overview", "o", EDWIN);
+    await patchSection(paths, WS, doc.id, "non-goals", "n", EDWIN);
+    const [status, patched] = await Promise.all([
+      setStatus(paths, WS, doc.id, "final", EDWIN),
+      patchSection(paths, WS, doc.id, "approach", "later", ANDERSON),
+    ]);
+    assert.ok(isDoc(status) && isDoc(patched), JSON.stringify([status, patched]));
+    const fresh = await getDocument(paths, WS, doc.id);
+    assert.equal(
+      status.status,
+      fresh?.status,
+      "§7's delivery gate reads this — it must not report a status that never landed",
+    );
+    assert.equal(fresh?.status, "final");
+    assert.equal(fresh?.sections.find((s) => s.id === "approach")?.body, "later");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("acceptProposal: a document file with uncommitted changes refuses — §4's dirty-tree gate", async () => {
+  const { root, paths } = setup("dirty");
+  try {
+    const doc = (await createDocument(paths, PG, {
+      blueprintId: "spec",
+      workType: "feature",
+      effort: "dirty",
+      author: EDWIN,
+      now: NOW,
+    })) as DocWire;
+    const withP = (await addProposal(paths, WS, doc.id, {
+      sectionId: "approach",
+      newBody: "agent text",
+      agentId: "anderson",
+      rationale: "r",
+    })) as DocWire;
+    const file = join(paths.orgRepo, "workspaces", "pg", "specs", `${doc.id}.md`);
+    writeFileSync(file, `${readFileSync(file, "utf8")}\nHAND EDIT BY A HUMAN\n`);
+    const refused = await acceptProposal(paths, WS, doc.id, withP.proposals[0].id);
+    assert.equal(asError(refused).status, 409);
+    assert.match(asError(refused).error, /uncommitted changes/);
+    assert.match(asError(refused).error, /workspaces\/pg\/specs\//, "the refusal names the path");
+    assert.match(
+      readFileSync(file, "utf8"),
+      /HAND EDIT BY A HUMAN/,
+      "the human's text is untouched — the refusal is not a revert",
+    );
+    assert.notEqual(
+      execFileSync("git", ["for-each-ref", "refs/heads/proposals/"], { cwd: paths.orgRepo }).toString(),
+      "",
+      "the branch is intact — a refused accept deletes nothing",
+    );
+    // Commit the hand edit and the same accept goes through, as the agent.
+    execFileSync("git", ["add", "--", `workspaces/pg/specs/${doc.id}.md`], { cwd: paths.orgRepo });
+    execFileSync("git", ["-c", "user.name=h", "-c", "user.email=h@h", "commit", "-q", "-m", "hand edit"], {
+      cwd: paths.orgRepo,
+    });
+    const accepted = await acceptProposal(paths, WS, doc.id, withP.proposals[0].id);
+    assert.ok(isDoc(accepted), JSON.stringify(accepted));
+    assert.equal(accepted.sections.find((s) => s.id === "approach")?.body, "agent text");
+    assert.match(lastLog(paths.orgRepo), /^anderson\|spec\(dirty\): accept proposal 1 — approach/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("listIds: a DIRECTORY named <id>.md is not a document", async () => {
+  const { root, paths } = setup("dirmd");
+  try {
+    const good = (await createDocument(paths, PG, {
+      blueprintId: "spec",
+      workType: "feature",
+      effort: "good",
+      author: EDWIN,
+      now: NOW,
+    })) as DocWire;
+    const fake = "2026-01-01-0000-not-a-doc-design";
+    mkdirSync(join(paths.orgRepo, "workspaces", "pg", "specs", `${fake}.md`), { recursive: true });
+    writeFileSync(join(paths.orgRepo, "workspaces", "pg", "specs", `${fake}.md`, "inside.txt"), "x\n");
+    assert.equal(await resolveDocument(paths, WS, fake), null, "never located, so no mutation can act on it");
+    assert.equal(await rejectProposal(paths, WS, fake, "1"), null);
+    assert.deepEqual(
+      (await listWorkspaceDocuments(paths, PG)).map((d) => d.id),
+      [good.id],
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("patchSection: the preamble is writable and its commit subject names it", async () => {
+  const { root, paths } = setup("preamble");
+  try {
+    const doc = (await createDocument(paths, PG, {
+      blueprintId: "spec",
+      workType: "feature",
+      effort: "pre",
+      author: EDWIN,
+      now: NOW,
+    })) as DocWire;
+    // A preamble only exists once something sits above the first heading.
+    const file = join(paths.orgRepo, "workspaces", "pg", "specs", `${doc.id}.md`);
+    writeFileSync(file, readFileSync(file, "utf8").replace("\n## ", "\nintro line\n\n## "));
+    const r = await patchSection(paths, WS, doc.id, "", "a better intro", EDWIN);
+    assert.ok(isDoc(r), JSON.stringify(r));
+    assert.equal(r.sections.find((s) => s.id === "")?.body, "a better intro");
+    assert.match(lastLog(paths.orgRepo), /^Edwin Cruz\|spec\(pre\): preamble$/m, "no commit subject ends at the colon");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
