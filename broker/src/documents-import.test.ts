@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -57,8 +57,8 @@ test("importLegacyDocuments: first matching pin wins, else the default workspace
       sessionsDir,
       stamp: "20260822T120000",
       log: () => {},
+      workspaces: WORKSPACES,
       client: {
-        listWorkspaces: async () => WORKSPACES,
         importDocument: async (ws, doc) => {
           calls.push([ws, (doc as { id: string }).id]);
           return { id: `new-${(doc as { id: string }).id}` };
@@ -94,8 +94,8 @@ test("importLegacyDocuments: a 409 means already imported and still counts; any 
       sessionsDir,
       stamp: "s",
       log: () => {},
+      workspaces: WORKSPACES,
       client: {
-        listWorkspaces: async () => WORKSPACES,
         importDocument: async (_ws, doc) => {
           if ((doc as { id: string }).id === "d1")
             throw Object.assign(new Error("already imported as 2026-08-17-1325-pinned-design"), { status: 409 });
@@ -124,9 +124,257 @@ test("importLegacyDocuments: an absent documents dir is a no-op", async () => {
       sessionsDir: join(root, "sessions"),
       stamp: "s",
       log: () => {},
-      client: { listWorkspaces: async () => WORKSPACES, importDocument: async () => ({ id: "x" }) },
+      workspaces: WORKSPACES,
+      client: { importDocument: async () => ({ id: "x" }) },
     });
     assert.deepEqual(r, { imported: [], notes: [] });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ── Fix round 1 ──────────────────────────────────────────────────────────
+
+test("importLegacyDocuments: a second run is a true no-op — nothing re-imported, nothing re-noted, nothing changed", async () => {
+  const { root, documentsDir, sessionsDir } = fixture();
+  try {
+    const client = {
+      importDocument: async (_ws: string, doc: unknown) => ({ id: `new-${(doc as { id: string }).id}` }),
+    };
+    const first = await importLegacyDocuments({
+      documentsDir,
+      sessionsDir,
+      stamp: "run1",
+      workspaces: WORKSPACES,
+      log: () => {},
+      client,
+    });
+    assert.equal(first.imported.length, 2);
+    const archived = `${documentsDir}-archived-run1`;
+    assert.ok(statSync(archived).isDirectory());
+
+    // A real second boot's readdir hits the now-archived (missing) path —
+    // that IS what idempotence means at this layer: nothing left to import.
+    const second = await importLegacyDocuments({
+      documentsDir,
+      sessionsDir,
+      stamp: "run2",
+      workspaces: WORKSPACES,
+      log: () => {},
+      client,
+    });
+    assert.deepEqual(second, { imported: [], notes: [] });
+    assert.ok(statSync(archived).isDirectory(), "the first archive is untouched");
+    assert.throws(() => statSync(`${documentsDir}-archived-run2`), "no second archive was created");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("importLegacyDocuments: no active workspace (what main.ts's own .catch(() => []) produces when the swarm is down at boot) does not throw", async () => {
+  const { root, documentsDir, sessionsDir } = fixture();
+  try {
+    const r = await importLegacyDocuments({
+      documentsDir,
+      sessionsDir,
+      stamp: "s",
+      log: () => {},
+      workspaces: [], // simulates swarm.listWorkspaces().catch(() => []) upstream in main.ts
+      client: { importDocument: async () => ({ id: "should-not-be-called" }) },
+    });
+    assert.deepEqual(r.imported, []);
+    assert.ok(r.notes.some((n) => /d1\.json/.test(n) && /no active workspace/.test(n)));
+    assert.ok(r.notes.some((n) => /d2\.json/.test(n) && /no active workspace/.test(n)));
+    assert.ok(statSync(documentsDir).isDirectory(), "not archived — nothing succeeded, so the next boot retries");
+    assert.deepEqual(
+      JSON.parse(readFileSync(join(sessionsDir, "s1.json"), "utf8")).artifacts,
+      ["d1", "d2", "keep-me"],
+      "nothing remapped",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("importLegacyDocuments: a failing rename (ENOTEMPTY reproduced) rejects — the caller's own catch is what keeps the broker up", async () => {
+  const { root, documentsDir, sessionsDir } = fixture();
+  try {
+    const archived = `${documentsDir}-archived-collide`;
+    mkdirSync(archived);
+    writeFileSync(join(archived, "occupied.txt"), "pre-existing content blocks rename onto this directory");
+    const client = {
+      importDocument: async (_ws: string, doc: unknown) => ({ id: `new-${(doc as { id: string }).id}` }),
+    };
+    await assert.rejects(() =>
+      importLegacyDocuments({
+        documentsDir,
+        sessionsDir,
+        stamp: "collide",
+        workspaces: WORKSPACES,
+        log: () => {},
+        client,
+      }),
+    );
+    // Nothing was lost: the source directory is exactly where it was, and
+    // the imports/remaps that already landed before rename() threw are on
+    // disk regardless — only the archive step (and this call's return
+    // value) is what a retry redoes.
+    assert.ok(statSync(documentsDir).isDirectory());
+    assert.deepEqual(JSON.parse(readFileSync(join(sessionsDir, "s1.json"), "utf8")).artifacts, [
+      "new-d1",
+      "new-d2",
+      "keep-me",
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("importLegacyDocuments: an unwritable session file is noted and blocks archiving, not silently dropped", async () => {
+  const { root, documentsDir, sessionsDir } = fixture();
+  const sessionPath = join(sessionsDir, "s1.json");
+  try {
+    chmodSync(sessionPath, 0o444);
+    const client = {
+      importDocument: async (_ws: string, doc: unknown) => ({ id: `new-${(doc as { id: string }).id}` }),
+    };
+    const r = await importLegacyDocuments({
+      documentsDir,
+      sessionsDir,
+      stamp: "s",
+      workspaces: WORKSPACES,
+      log: () => {},
+      client,
+    });
+    assert.deepEqual(
+      r.imported,
+      [
+        { from: "d1", to: "new-d1" },
+        { from: "d2", to: "new-d2" },
+      ],
+      "both documents still imported",
+    );
+    assert.ok(r.notes.some((n) => /s1\.json/.test(n) && /not remapped/.test(n)));
+    assert.ok(
+      statSync(documentsDir).isDirectory(),
+      "not archived — the session write failed, so the next boot retries",
+    );
+    assert.deepEqual(
+      JSON.parse(readFileSync(sessionPath, "utf8")).artifacts,
+      ["d1", "d2", "keep-me"],
+      "the on-disk session is untouched, not half-written",
+    );
+  } finally {
+    chmodSync(sessionPath, 0o644);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("importLegacyDocuments: two documents colliding on the same imported id are not silently merged", async () => {
+  const { root, documentsDir, sessionsDir } = fixture();
+  try {
+    const client = {
+      importDocument: async (_ws: string, doc: unknown) => {
+        const id = (doc as { id: string }).id;
+        if (id === "d1") return { id: "shared-target" };
+        // d2 derives the very same target filename as d1, within this SAME
+        // run — the swarm reports it exactly like a genuine cross-boot
+        // re-import (409), which is what makes the two indistinguishable
+        // without this run's own idMap.
+        throw Object.assign(new Error("already imported as shared-target"), { status: 409 });
+      },
+    };
+    const r = await importLegacyDocuments({
+      documentsDir,
+      sessionsDir,
+      stamp: "s",
+      workspaces: WORKSPACES,
+      log: () => {},
+      client,
+    });
+    assert.deepEqual(
+      r.imported,
+      [{ from: "d1", to: "shared-target" }],
+      "the collision loser is not reported as imported",
+    );
+    assert.ok(r.notes.some((n) => /d2\.json/.test(n) && /collision/.test(n)));
+    assert.ok(statSync(documentsDir).isDirectory(), "not archived — the collision blocks completion");
+    assert.deepEqual(
+      JSON.parse(readFileSync(join(sessionsDir, "s1.json"), "utf8")).artifacts,
+      ["shared-target", "d2", "keep-me"],
+      "only the winner is remapped",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("importLegacyDocuments: a *.json file that isn't a legacy document filename is noted, not silently swept into the archive", async () => {
+  const { root, documentsDir, sessionsDir } = fixture();
+  try {
+    writeFileSync(join(documentsDir, "backup.json"), JSON.stringify({ not: "a legacy doc" }));
+    const client = {
+      importDocument: async (_ws: string, doc: unknown) => ({ id: `new-${(doc as { id: string }).id}` }),
+    };
+    const r = await importLegacyDocuments({
+      documentsDir,
+      sessionsDir,
+      stamp: "s",
+      workspaces: WORKSPACES,
+      log: () => {},
+      client,
+    });
+    assert.ok(r.notes.some((n) => /backup\.json/.test(n)));
+    assert.deepEqual(
+      r.imported,
+      [
+        { from: "d1", to: "new-d1" },
+        { from: "d2", to: "new-d2" },
+      ],
+      "backup.json was never treated as a document to import",
+    );
+    assert.ok(statSync(join(`${documentsDir}-archived-s`, "backup.json")).isFile(), "still archived, never deleted");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("importLegacyDocuments: a permanently unimportable document (400) is moved aside with a loud note; the rest of the migration completes", async () => {
+  const { root, documentsDir, sessionsDir } = fixture();
+  try {
+    const client = {
+      importDocument: async (_ws: string, doc: unknown) => {
+        const id = (doc as { id: string }).id;
+        if (id === "d1") throw Object.assign(new Error("Invalid blueprintId: spec"), { status: 400 });
+        return { id: `new-${id}` };
+      },
+    };
+    const r = await importLegacyDocuments({
+      documentsDir,
+      sessionsDir,
+      stamp: "s",
+      workspaces: WORKSPACES,
+      log: () => {},
+      client,
+    });
+    assert.deepEqual(
+      r.imported,
+      [{ from: "d2", to: "new-d2" }],
+      "the unimportable document is not reported as imported",
+    );
+    assert.ok(r.notes.some((n) => /UNIMPORTABLE/.test(n) && /d1\.json/.test(n) && /Invalid blueprintId/.test(n)));
+    const sidecar = `${documentsDir}-unimportable-s`;
+    assert.ok(statSync(join(sidecar, "d1.json")).isFile(), "the bytes are recoverable in the sidecar, never deleted");
+    assert.throws(
+      () => statSync(join(`${documentsDir}-archived-s`, "d1.json")),
+      "d1.json did not end up in the archive",
+    );
+    assert.ok(statSync(`${documentsDir}-archived-s`).isDirectory(), "the rest of the migration still completes");
+    assert.deepEqual(
+      JSON.parse(readFileSync(join(sessionsDir, "s1.json"), "utf8")).artifacts,
+      ["d1", "new-d2", "keep-me"],
+      "d1 stays unremapped — it was never imported",
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

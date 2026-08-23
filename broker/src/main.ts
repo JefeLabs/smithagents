@@ -2683,14 +2683,23 @@ groupRecords = await swarm.listGroups().catch(() => []);
 // swarm by construction (refreshDocuments keeps the last frame).
 await refreshDocuments();
 // ONE-WAY (spec §9.3): legacy .smith/documents → files in the swarm's org repo.
+// `workspaces` reuses `bootWorkspaces` above rather than fetching again — that
+// list is already `.catch`-guarded and active-filtered. The whole call is
+// also wrapped here: a down swarm (or a rename failure inside the migration
+// itself) must not take the boot sequence down with it — every neighbouring
+// boot call above has the same shape of guard.
 {
   const stamp = new Date().toISOString().replace(/[-:]/g, "").slice(0, 15);
   const r = await importLegacyDocuments({
     documentsDir,
     sessionsDir,
     stamp,
+    workspaces: bootWorkspaces,
     client: swarm,
     log: (l) => console.log(l),
+  }).catch((err) => {
+    console.warn("[documents-import] skipped this boot:", err);
+    return { imported: [], notes: [] };
   });
   for (const note of r.notes) console.warn(note);
   if (r.imported.length > 0) await refreshDocuments();
