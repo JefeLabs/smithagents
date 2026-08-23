@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import { DocumentsCache, docsSeedingWorkspace, makeSerialQueue, nextDefaultTitle } from "./documents-cache.ts";
 import type { Doc } from "./swarm-client.ts";
@@ -201,6 +202,70 @@ test("refreshInBackground on a failed read neither calls back nor blanks the fra
     ["v1"],
   );
   assert.match(warnings.at(-1) ?? "", /keeping the last frame/);
+});
+
+/**
+ * Run one script in a CHILD node under `--unhandled-rejections=strict`.
+ *
+ * `refreshInBackground` is fire-and-forget, so nothing awaits its chain: an
+ * escaping rejection is an UNHANDLED rejection, and Node's default mode for
+ * those is `throw` — the broker process dies. Only a real process boundary
+ * proves it does not, and only a child can be given the flag. In-process this
+ * would be masked by the test runner's own rejection handling.
+ */
+function runInStrictChild(body: string): { status: number | null; stdout: string; stderr: string } {
+  const cacheModule = new URL("./documents-cache.ts", import.meta.url).href;
+  const r = spawnSync(
+    process.execPath,
+    [
+      "--unhandled-rejections=strict",
+      "--import",
+      "tsx",
+      "--input-type=module",
+      "--eval",
+      `
+      import { DocumentsCache } from ${JSON.stringify(cacheModule)};
+      const docs = (title) => [{
+        id: "d1", workspace: "ops", title, blueprintId: "spec", workType: "feature", effort: "e",
+        sections: [], participants: [], proposals: [], pins: [], status: "drafting",
+        createdAt: "t", updatedAt: title, problems: [],
+      }];
+      ${body}
+    `,
+    ],
+    { encoding: "utf8", cwd: new URL("..", import.meta.url).pathname },
+  );
+  return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+}
+
+test("refreshInBackground: a throwing onFresh does not kill the process, and the cache still works afterwards", () => {
+  const child = runInStrictChild(`
+    let disk = docs("v1");
+    const cache = new DocumentsCache({
+      list: async () => disk,
+      seed: () => {},
+      groups: () => [],
+      warn: (line) => { if (line.includes("background refresh")) console.log("SWALLOWED"); },
+    });
+    await cache.refresh();
+
+    disk = docs("v2");
+    cache.refreshInBackground(() => { throw new Error("callback blew up"); });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Still usable for the NEXT connection — the queue is not wedged and the
+    // failed callback's read still landed.
+    disk = docs("v3");
+    await new Promise((resolve) => {
+      cache.refreshInBackground(() => { console.log("STILL WORKS:" + cache.list()[0].title); resolve(); });
+    });
+    console.log("ALIVE");
+  `);
+  assert.equal(child.status, 0, `child exited ${child.status}\n${child.stderr}`);
+  assert.match(child.stdout, /SWALLOWED/, "the throw must be logged, not silently dropped");
+  assert.match(child.stdout, /STILL WORKS:v3/, "the cache must still refresh and call back afterwards");
+  assert.match(child.stdout, /ALIVE/, "the process must reach the end of the script");
+  assert.doesNotMatch(child.stderr, /callback blew up/, "the error must not escape as an unhandled rejection");
 });
 
 // ── M3: the pin/unpin read-modify-write guard ──────────────────────────────

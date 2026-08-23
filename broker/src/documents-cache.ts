@@ -109,12 +109,22 @@ export class DocumentsCache {
    *
    * `onFresh` fires only on a real change, so a burst of connections against
    * an unchanged list produces no broadcasts.
+   *
+   * Nobody awaits this chain, so it must settle itself: a throwing `onFresh`
+   * would otherwise be an unhandled rejection, which Node's default mode makes
+   * process-fatal — a worse failure than the staleness this exists to fix.
+   * Guarded here rather than by requiring callbacks to be non-throwing,
+   * because nothing would enforce that on the next callback added.
    */
   refreshInBackground(onFresh: () => void): void {
     const before = this.stamp();
-    void this.refresh().then((ok) => {
-      if (ok && this.stamp() !== before) onFresh();
-    });
+    void this.refresh()
+      .then((ok) => {
+        if (ok && this.stamp() !== before) onFresh();
+      })
+      .catch((err: unknown) => {
+        this.deps.warn(`[documents] background refresh callback failed: ${(err as Error).message}`);
+      });
   }
 
   /** Cheap change detector for `refreshInBackground` — ids and mtimes, in order. */
