@@ -66,6 +66,16 @@ function planted(paths: SmithPaths, slug: string, folder: string, id: string, by
   return file;
 }
 
+/**
+ * The document half of a StoreResult, asserted as such. `getDocument` can now
+ * also answer 422 (final-review Important 2), and `?.field` on that would read
+ * as `undefined` and quietly pass — this fails naming what came back instead.
+ */
+function asDoc(r: unknown): DocWire {
+  assert.ok(isDoc(r), `expected a document, got ${JSON.stringify(r)}`);
+  return r;
+}
+
 /** The error half of a StoreResult, asserted as such rather than as "not a doc". */
 function asError(r: unknown): { error: string; status: number } {
   assert.ok(r && typeof r === "object" && "error" in r, `expected an error, got ${JSON.stringify(r)}`);
@@ -353,9 +363,71 @@ test("listWorkspaceDocuments: an unparseable file is skipped, never taking the r
       listed.map((d) => d.id),
       [good.id],
     );
-    assert.equal(await getDocument(paths, WS, "2026-01-01-0000-hand-edited-design"), null);
+    // Skipped from the LIST — the wire shape there is unchanged — but
+    // addressed directly it is a 422 carrying the problems, not a bare 404
+    // that reads as "no such document" (final-review Important 2).
+    const broken = await getDocument(paths, WS, "2026-01-01-0000-hand-edited-design");
+    assert.ok(broken && "error" in broken, `expected a 422, got ${JSON.stringify(broken)}`);
+    assert.equal(broken.status, 422);
+    assert.deepEqual(broken.problems, [
+      { where: "frontmatter", message: "no frontmatter block at the top of the file" },
+    ]);
     assert.ok(isDoc(await getDocument(paths, WS, good.id)));
+    // An id that resolves to nothing at all is still a 404.
+    assert.equal(await getDocument(paths, WS, "2099-01-01-0000-nothing"), null);
   } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a document one stray hand-edited frontmatter line broke warns by path and problem — it never vanishes silently", async () => {
+  const { root, paths } = setup("silent");
+  const warned: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (...a: unknown[]) => {
+    warned.push(a.map(String).join(" "));
+  };
+  try {
+    const doc = (await createDocument(paths, PG, WS, {
+      blueprintId: "spec",
+      workType: "feature",
+      effort: "vanishing",
+      author: EDWIN,
+      now: NOW,
+    })) as DocWire;
+    const file = join(paths.orgRepo, "workspaces", "pg", "specs", `${doc.id}.md`);
+    // Spec §3 makes hand edits and merged instance branches first-class
+    // inputs. ONE unknown key used to take the document off the shelf, off
+    // the stage and 404 every route, with no log line anywhere.
+    writeFileSync(
+      file,
+      readFileSync(file, "utf8").replace("\nstatus: drafting\n", "\nstatus: drafting\nowner: edwin\n"),
+    );
+
+    warned.length = 0;
+    assert.deepEqual(await listWorkspaceDocuments(paths, PG), [], "still skipped from the listing");
+    assert.ok(
+      warned.some(
+        (w) => w.includes(`workspaces/pg/specs/${doc.id}.md`) && w.includes("frontmatter.owner: unknown key"),
+      ),
+      `the listing must say WHY the file was skipped; warnings were:\n${warned.join("\n")}`,
+    );
+
+    warned.length = 0;
+    const got = await getDocument(paths, WS, doc.id);
+    assert.ok(got && "error" in got, `expected a 422, got ${JSON.stringify(got)}`);
+    assert.equal(got.status, 422);
+    assert.match(got.error, new RegExp(`workspaces/pg/specs/${doc.id}\\.md`));
+    assert.deepEqual(got.problems, [{ where: "frontmatter.owner", message: "unknown key" }]);
+    assert.ok(
+      warned.some((w) => w.includes("frontmatter.owner: unknown key")),
+      warned.join("\n"),
+    );
+
+    // The file is intact — nothing repaired it, nothing deleted it.
+    assert.match(readFileSync(file, "utf8"), /^owner: edwin$/m);
+  } finally {
+    console.warn = realWarn;
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -389,7 +461,7 @@ test("setStatus: the gates bite — final refuses an empty required section; reo
       refusalProblems.some((p) => p.where === "section:non-goals"),
       "every blocking problem is reported, not just the first",
     );
-    assert.equal((await getDocument(paths, WS, doc.id))?.status, "review", "a refused transition writes nothing");
+    assert.equal(asDoc(await getDocument(paths, WS, doc.id)).status, "review", "a refused transition writes nothing");
     await patchSection(paths, WS, doc.id, "overview", "x", EDWIN);
     await patchSection(paths, WS, doc.id, "non-goals", "y", EDWIN);
     const fin = await setStatus(paths, WS, doc.id, "final", EDWIN);
@@ -426,7 +498,11 @@ test("§6.3: a write never refuses — the violation comes back as problems[] on
       "not a fenced diagram at all",
       "the write still landed — only status transitions refuse",
     );
-    assert.deepEqual(r.problems, (await getDocument(paths, WS, doc.id))?.problems, "same projection as a plain read");
+    assert.deepEqual(
+      r.problems,
+      asDoc(await getDocument(paths, WS, doc.id)).problems,
+      "same projection as a plain read",
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -446,7 +522,7 @@ test("setStatus: a shape violation blocks review — the document keeps its stat
     const refused = await setStatus(paths, WS, doc.id, "review", EDWIN);
     assert.equal(asError(refused).status, 409);
     assert.match(asError(refused).error, /mermaid/);
-    assert.equal((await getDocument(paths, WS, doc.id))?.status, "drafting");
+    assert.equal(asDoc(await getDocument(paths, WS, doc.id)).status, "drafting");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -476,7 +552,10 @@ test("proposals: add → listed open → accept writes the section on main as th
     assert.deepEqual(accepted.proposals, []);
     assert.match(lastLog(paths.orgRepo), /^anderson\|spec\(x\): accept proposal 1 — approach/);
     // The write is on disk, not only in the returned wire shape.
-    assert.equal((await getDocument(paths, WS, doc.id))?.sections.find((s) => s.id === "approach")?.body, "agent text");
+    assert.equal(
+      asDoc(await getDocument(paths, WS, doc.id)).sections.find((s) => s.id === "approach")?.body,
+      "agent text",
+    );
     const refs = execFileSync("git", ["for-each-ref", "refs/heads/proposals/"], { cwd: paths.orgRepo }).toString();
     assert.equal(refs, "", "branch deleted after accept");
     assert.equal(await acceptProposal(paths, WS, doc.id, withP.proposals[0].id), null, "gone is gone");
@@ -508,7 +587,7 @@ test("proposals: a human write stales the open proposal; accepting a stale one i
     assert.equal(asError(refused).status, 409);
     assert.match(asError(refused).error, /stale/);
     assert.equal(
-      (await getDocument(paths, WS, doc.id))?.sections.find((s) => s.id === "approach")?.body,
+      asDoc(await getDocument(paths, WS, doc.id)).sections.find((s) => s.id === "approach")?.body,
       "human text",
       "the refusal wrote nothing",
     );
@@ -540,14 +619,18 @@ test("renameDocument / setPins: title and pins change, the file does not move, n
     assert.equal(renamed.id, doc.id);
     const blank = await renameDocument(paths, WS, doc.id, "   ", EDWIN);
     assert.equal(asError(blank).status, 400, "an empty title would serialize as `title: ` and never parse back");
-    assert.equal((await getDocument(paths, WS, doc.id))?.title, "New title");
+    assert.equal(asDoc(await getDocument(paths, WS, doc.id)).title, "New title");
     const pinned = (await setPins(paths, WS, doc.id, ["pg", "group:team", " pg ", ""], EDWIN)) as DocWire;
     assert.deepEqual(pinned.pins, ["pg", "group:team"], "trimmed and de-duplicated");
     const badPin = await setPins(paths, WS, doc.id, ["a,b"], EDWIN);
     assert.equal(asError(badPin).status, 400, "a comma would re-parse as two pins");
     assert.equal(asError(await setPins(paths, WS, doc.id, ["a]b"], EDWIN)).status, 400);
     assert.equal(asError(await setPins(paths, WS, doc.id, ["a\nstatus: final"], EDWIN)).status, 400);
-    assert.deepEqual((await getDocument(paths, WS, doc.id))?.pins, ["pg", "group:team"], "no refusal reached the file");
+    assert.deepEqual(
+      asDoc(await getDocument(paths, WS, doc.id)).pins,
+      ["pg", "group:team"],
+      "no refusal reached the file",
+    );
     assert.equal(await renameDocument(paths, WS, "missing-id", "t", EDWIN), null);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -602,7 +685,7 @@ test("changeBlueprint: a body the user actually edited refuses; a different fold
     const toSequence = await changeBlueprint(paths, WS, doc.id, "sequence", undefined, EDWIN);
     assert.equal(asError(toSequence).status, 409);
     assert.match(asError(toSequence).error, /content/, "the user edited this diagram — re-casting would discard it");
-    assert.equal((await getDocument(paths, WS, doc.id))?.blueprintId, "er", "no refusal reached the file");
+    assert.equal(asDoc(await getDocument(paths, WS, doc.id)).blueprintId, "er", "no refusal reached the file");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -726,7 +809,7 @@ test("importDocument: returns the bytes IT wrote, even when another mutation lan
     );
     // The patch is not lost either — it is simply someone else's result.
     assert.equal(
-      (await getDocument(paths, WS, id))?.sections.find((s) => s.id === "overview")?.body,
+      asDoc(await getDocument(paths, WS, id)).sections.find((s) => s.id === "overview")?.body,
       "PATCHED BY SOMEONE ELSE",
     );
     assert.equal(imported.proposals.length, 4, "the derived proposal list is still current");
@@ -775,9 +858,9 @@ test("concurrency: two patches of one document both land, each in its own commit
       patchSection(paths, WS, doc.id, "testing", "BBB", ANDERSON),
     ]);
     assert.ok(isDoc(a) && isDoc(b), JSON.stringify([a, b]));
-    const fresh = await getDocument(paths, WS, doc.id);
-    assert.equal(fresh?.sections.find((s) => s.id === "overview")?.body, "AAA", "Edwin's edit survived");
-    assert.equal(fresh?.sections.find((s) => s.id === "testing")?.body, "BBB", "anderson's edit survived");
+    const fresh = asDoc(await getDocument(paths, WS, doc.id));
+    assert.equal(fresh.sections.find((s) => s.id === "overview")?.body, "AAA", "Edwin's edit survived");
+    assert.equal(fresh.sections.find((s) => s.id === "testing")?.body, "BBB", "anderson's edit survived");
     // TWO commits, each naming its own author and its own section — not one
     // commit carrying the other caller's content.
     const after = Number(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: paths.orgRepo }).toString());
@@ -842,14 +925,14 @@ test("concurrency: a status transition racing a patch reports the status the dis
       patchSection(paths, WS, doc.id, "approach", "later", ANDERSON),
     ]);
     assert.ok(isDoc(status) && isDoc(patched), JSON.stringify([status, patched]));
-    const fresh = await getDocument(paths, WS, doc.id);
+    const fresh = asDoc(await getDocument(paths, WS, doc.id));
     assert.equal(
       status.status,
-      fresh?.status,
+      fresh.status,
       "§7's delivery gate reads this — it must not report a status that never landed",
     );
-    assert.equal(fresh?.status, "final");
-    assert.equal(fresh?.sections.find((s) => s.id === "approach")?.body, "later");
+    assert.equal(fresh.status, "final");
+    assert.equal(fresh.sections.find((s) => s.id === "approach")?.body, "later");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

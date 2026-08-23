@@ -154,15 +154,42 @@ async function listIds(paths: SmithPaths, ws: Workspace, folder: BlueprintFolder
   }
 }
 
-async function readParsed(loc: Located): Promise<{ text: string; doc: ParsedDocument } | null> {
+/**
+ * The file as it is: parsed, or present-but-unparseable with the reasons, or
+ * absent (`null`).
+ *
+ * `parseDocumentFile` is deliberately TOTAL and hands back `problems` so a
+ * caller can say WHY. Collapsing that straight to `null` — which is what every
+ * caller here used to do — made one stray hand-edited frontmatter line
+ * (`owner: edwin`) take a document off the shelf, off the stage and 404 every
+ * route with no log line anywhere, and §3 makes hand edits and merged instance
+ * branches a first-class input, not an exotic one (final-review Important 2).
+ *
+ * The warn fires HERE, at the one choke point every read passes through, so no
+ * caller can be the one that forgets. It repeats on every refresh while the
+ * file stays broken; that is the point — the failure it replaces was silence.
+ */
+async function readDocumentFile(
+  loc: Located,
+): Promise<{ text: string; doc: ParsedDocument } | { text: string; doc: null; problems: Problem[] } | null> {
   let text: string;
   try {
     text = await readFile(loc.absPath, "utf8");
   } catch {
-    return null;
+    return null; // no such file — an id that resolves to nothing is a 404, not a parse failure
   }
-  const { doc } = parseDocumentFile(text);
-  return doc ? { text, doc } : null;
+  const { doc, problems } = parseDocumentFile(text);
+  if (doc) return { text, doc };
+  console.warn(
+    `[documents] ${loc.relPath} does not parse and is not being served: ${problems.map((p) => `${p.where}: ${p.message}`).join("; ")}`,
+  );
+  return { text, doc: null, problems };
+}
+
+/** `readDocumentFile` for the callers that only act on a document they can build. Warns through it. */
+async function readParsed(loc: Located): Promise<{ text: string; doc: ParsedDocument } | null> {
+  const r = await readDocumentFile(loc);
+  return r?.doc ? { text: r.text, doc: r.doc } : null;
 }
 
 function resolvers(paths: SmithPaths, ws: Workspace): RuleResolvers {
@@ -360,12 +387,28 @@ export async function resolveDocument(paths: SmithPaths, workspaces: Workspace[]
   return hits[0] ?? null;
 }
 
-export async function getDocument(paths: SmithPaths, workspaces: Workspace[], id: string): Promise<DocWire | null> {
+/**
+ * `null` ONLY when the id names no file at all — that is the 404. A file that
+ * exists but does not parse is a 422 carrying its `problems[]`: §2.2 promises
+ * the failing key is named and §6.3 promises every document response carries
+ * `problems[]`, and returning `null` for both made the one case where the
+ * reasons already exist the one case that said nothing (final-review
+ * Important 2). The `documents[]` LIST shape is deliberately untouched — the
+ * control-plane renders `problems` nowhere yet.
+ */
+export async function getDocument(paths: SmithPaths, workspaces: Workspace[], id: string): Promise<StoreResult | null> {
   const loc = await resolveDocument(paths, workspaces, id);
-  const r = loc && (await readParsed(loc));
-  return loc && r
-    ? toWire(paths, loc, r.text, r.doc, await blueprintFor(paths, loc.ws, r.doc.frontmatter.blueprint))
-    : null;
+  if (!loc) return null;
+  const r = await readDocumentFile(loc);
+  if (!r) return null;
+  if (!r.doc) {
+    return {
+      error: `${loc.relPath} does not parse — fix the file and it comes back; nothing has been changed or deleted`,
+      status: 422,
+      problems: r.problems,
+    };
+  }
+  return toWire(paths, loc, r.text, r.doc, await blueprintFor(paths, loc.ws, r.doc.frontmatter.blueprint));
 }
 
 /**
