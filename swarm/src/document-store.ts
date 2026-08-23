@@ -812,6 +812,16 @@ export async function acceptProposal(
   if (result === null) return null;
   if ("error" in result) return result;
   await deleteProposal(paths, { slug: pre.slug, docId: id, id: proposalId });
+  // DO NOT COLLAPSE THIS INTO `mutate`'s RESULT. The second projection is
+  // deliberate: `mutate` projected BEFORE the branch was deleted, so its
+  // `proposals[]` still contains this one. Re-reading after the delete is what
+  // makes the returned document true. Measured, by trying it: returning
+  // `mutate`'s result here gives the caller
+  //   proposals: [{ id: "1", sectionId: "approach", state: "stale" }]
+  // — the just-accepted proposal, listed as STALE, because the accept's own
+  // write changed the section it was diffed against. The UI would show an
+  // accepted edit as a stale sticky note awaiting rejection until something
+  // else refreshed it. This looks like an obvious double fetch; it is not.
   return getDocument(paths, workspaces, id);
 }
 
@@ -824,5 +834,10 @@ export async function rejectProposal(
   const loc = await resolveDocument(paths, workspaces, id);
   if (!loc) return null;
   const gone = await deleteProposal(paths, { slug: loc.slug, docId: id, id: proposalId });
+  // Same rule as `acceptProposal`: the read happens AFTER the delete, and that
+  // ordering is the only thing that keeps the rejected proposal out of the
+  // returned `proposals[]`. Reject makes no write of its own, so there is no
+  // earlier projection to reuse even if one wanted to — but a future reader
+  // "optimising" this into the pre-delete state would ship the same bug.
   return gone ? getDocument(paths, workspaces, id) : null;
 }
