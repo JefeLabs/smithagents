@@ -116,11 +116,26 @@ export async function importLegacyDocuments(opts: {
         // entries). The winner already has `to`; this file's own content
         // never reached the store separately, so it must not be reported as
         // imported nor remapped to someone else's document.
-        allDone = false;
-        notes.push(
-          `[documents-import] ${file}: already imported as ${to}, which this run already used for another document — a filename collision; will retry next boot`,
-        );
-        continue;
+        //
+        // Treated exactly like the permanently-unimportable (400) path above,
+        // and for the same reason: the retry this used to promise is
+        // DETERMINISTIC — the same two files derive the same id on every boot,
+        // so `allDone` stayed false forever, the directory was never archived,
+        // and every boot printed byte-identical lines. No terminal state, no
+        // operator instruction, and "will retry next boot" was a promise the
+        // code could not keep. Auto-suffixing instead (the way `createDocument`
+        // does) is NOT an option: the migration's cross-boot idempotence is
+        // built entirely on "same legacy doc → same derived id → 409 → already
+        // imported", so a suffix would re-import a duplicate of everything on
+        // every boot. A within-run collision genuinely needs a human, which is
+        // what `setAside` is for (final-review Important 3).
+        const sidecar = await setAside(opts.documentsDir, opts.stamp, file);
+        const note =
+          `[documents-import] COLLISION: ${file} derives the same document id as ${to}, which this run already used for another document — moved to ${sidecar}/ for manual review, nothing deleted. ` +
+          `To import it, edit its title or createdAt so it derives a different id and put it back in ${opts.documentsDir}/, which the next boot will pick up.`;
+        notes.push(note);
+        opts.log(note);
+        continue; // resolved by moving it aside — does not block the rest of this run
       }
       idMap.set(doc.id, to);
       imported.push({ from: doc.id, to });

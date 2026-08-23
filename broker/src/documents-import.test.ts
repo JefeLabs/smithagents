@@ -270,8 +270,10 @@ test("importLegacyDocuments: an unwritable session file is noted and blocks arch
   }
 });
 
-test("importLegacyDocuments: two documents colliding on the same imported id are not silently merged", async () => {
+test("importLegacyDocuments: two documents colliding on the same imported id are not silently merged, and the run still reaches a terminal state", async () => {
   const { root, documentsDir, sessionsDir } = fixture();
+  const loserBytes = readFileSync(join(documentsDir, "d2.json"));
+  const logged: string[] = [];
   try {
     const client = {
       importDocument: async (_ws: string, doc: unknown) => {
@@ -289,7 +291,7 @@ test("importLegacyDocuments: two documents colliding on the same imported id are
       sessionsDir,
       stamp: "s",
       workspaces: WORKSPACES,
-      log: () => {},
+      log: (l) => logged.push(l),
       client,
     });
     assert.deepEqual(
@@ -297,12 +299,35 @@ test("importLegacyDocuments: two documents colliding on the same imported id are
       [{ from: "d1", to: "shared-target" }],
       "the collision loser is not reported as imported",
     );
-    assert.ok(r.notes.some((n) => /d2\.json/.test(n) && /collision/.test(n)));
-    assert.ok(statSync(documentsDir).isDirectory(), "not archived — the collision blocks completion");
+
+    // The note is LOUD, names the WINNER's id, names where the loser went, and
+    // says what to do about it. It must NOT promise a retry: the derivation is
+    // deterministic, so the retry never succeeds and a fourth boot printed
+    // byte-identical output (final-review Important 3).
+    const note = r.notes.find((n) => /d2\.json/.test(n));
+    assert.ok(note, `no note about d2.json: ${JSON.stringify(r.notes)}`);
+    assert.match(note, /COLLISION/);
+    assert.match(note, /shared-target/, "names the winner's id");
+    assert.match(note, new RegExp(`${documentsDir}-unimportable-s`), "names where the loser was set aside");
+    assert.match(note, /edit its title or createdAt/, "tells the operator what to do");
+    assert.doesNotMatch(note, /will retry next boot/, "a promise the code cannot keep");
+    assert.ok(logged.includes(note), "and it is logged live, not only returned");
+
+    // Terminal state: the migration completes, so the next boot is a no-op
+    // rather than a byte-identical replay of this one.
+    assert.ok(statSync(`${documentsDir}-archived-s`).isDirectory(), "the run completes and the directory is archived");
+    assert.throws(() => statSync(documentsDir), "the source directory is gone, so the next boot re-walks nothing");
+
+    // The loser's bytes are recoverable, EXACTLY as they were, and never in
+    // the archive where they would look imported.
+    const sidecar = `${documentsDir}-unimportable-s`;
+    assert.deepEqual(readFileSync(join(sidecar, "d2.json")), loserBytes, "moved, byte for byte — never rewritten");
+    assert.throws(() => statSync(join(`${documentsDir}-archived-s`, "d2.json")), "not swept into the archive");
+
     assert.deepEqual(
       JSON.parse(readFileSync(join(sessionsDir, "s1.json"), "utf8")).artifacts,
       ["shared-target", "d2", "keep-me"],
-      "only the winner is remapped",
+      "only the winner is remapped — the loser never reached the store",
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
