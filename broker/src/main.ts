@@ -5,6 +5,7 @@
  */
 
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import Anthropic from "@anthropic-ai/sdk";
@@ -13,6 +14,7 @@ import { ElevenLabsVoiceProvider } from "@smithagents/voice";
 import { BrokerAuth } from "./auth.ts";
 import { resolveAvatarEngine } from "./avatar-engine.ts";
 import { AvatarGenerator, type AvatarRequest } from "./avatar-generator.ts";
+import { warnLegacyBlueprints } from "./blueprints-legacy.ts";
 import { BrokerBrain, type StreamFactory } from "./brain.ts";
 import { brainArgvFor, resolvingStreamFactory } from "./brain-engine.ts";
 import { pingBrain } from "./brain-ping.ts";
@@ -2703,6 +2705,23 @@ await refreshDocuments();
   });
   for (const note of r.notes) console.warn(note);
   if (r.imported.length > 0) await refreshDocuments();
+
+  // Spec §9.1's OTHER half, which never shipped: the org repo was supposed to
+  // be seeded with `blueprints/` from `broker/.smith/blueprints/*.json`. The
+  // only reader of that directory went with `broker/src/blueprints.ts`, so a
+  // user's custom blueprints stopped taking effect with no message at all.
+  // A WARNING ONLY — the swarm owns the org repo (§3), so the copy itself
+  // needs a swarm-side write route and is Plan 3 work (final-review Minor 1).
+  //
+  // The destination is derived the way the swarm derives it (config.ts:48) —
+  // the two processes share a machine and an environment, and this is a line
+  // for a human to read and act on, not a path anything here opens.
+  const stateRoot = process.env.SMITH_STATE_ROOT?.trim() || join(homedir(), ".smithagents");
+  await warnLegacyBlueprints({
+    blueprintsDir: process.env.BROKER_BLUEPRINTS_DIR ?? ".smith/blueprints",
+    destination: join(stateRoot, "config", "blueprints"),
+    log: (l) => console.warn(l),
+  });
 }
 defaultWorkspaceName = bootWorkspaces.find((w) => w.default)?.name ?? workspaceNames[0] ?? "default";
 // Waits for the real default workspace, not the "default" boot placeholder —
