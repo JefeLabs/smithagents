@@ -16,7 +16,7 @@
  * wrong model.
  */
 import type { StreamFactory } from "./brain.ts";
-import { createCliStreamFactory } from "./cli-brain.ts";
+import { BRAIN_SCHEMA_MODES, createCliStreamFactory } from "./cli-brain.ts";
 import { createGeminiStreamFactory } from "./gemini-brain.ts";
 import { createLocalStreamFactory } from "./local-brain.ts";
 import type { Spawner } from "./research.ts";
@@ -47,26 +47,24 @@ export interface BrainEngineDeps {
 }
 
 /**
- * The brain has a requirement research does not: the cli must actually
- * ENFORCE `--json-schema` for tool calls, not merely accept the flag (spec
- * 2026-08-15-brain-engine-selection, "Out of scope": "agy is not offered as
- * a brain yet: it accepts --json-schema but did not enforce it";
- * codex/opencode/copilot were never claimed to support it either). Only
- * claude is verified.
+ * The brain has a requirement research does not: the cli must produce the
+ * `{speech, tool_calls[]}` envelope, and each cli is spoken to in its own
+ * dialect — see cli-brain.ts's BRAIN_SCHEMA_MODES, which is therefore the
+ * gate: a cli with a dialect resolves, a cli without one cannot be invoked
+ * as a brain at all.
  *
  * Wrapping an existing argvFor table (e.g. main.ts's research one), rather
- * than passing it straight through as the brain's own argvFor, is the point:
- * reusing research's "every listed cli works" table unmodified is the exact
- * mistake this closes — a cli research can run is not automatically one the
- * brain can.
+ * than passing it straight through as the brain's own argvFor, is still the
+ * point: reusing research's "every listed cli works" table unmodified is the
+ * exact mistake this closes — a cli research can run is not automatically
+ * one the brain knows how to talk to.
  */
-const BRAIN_CLI_ALLOWLIST = new Set(["claude"]);
 
-/** See BRAIN_CLI_ALLOWLIST. Callers not in the allowlist resolve as if
+/** See BRAIN_SCHEMA_MODES. Callers without a dialect resolve as if
  * argvFor didn't know them — resolveBrainFactory's existing cli branch
  * already falls through to the terminal fallback for that case. */
 export function brainArgvFor(argvFor: (cli: string) => string[] | undefined): (cli: string) => string[] | undefined {
-  return (cli) => (BRAIN_CLI_ALLOWLIST.has(cli) ? argvFor(cli) : undefined);
+  return (cli) => (cli in BRAIN_SCHEMA_MODES ? argvFor(cli) : undefined);
 }
 
 /**

@@ -22,7 +22,41 @@
  * before it resolves.
  */
 
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { defaultSpawner, type Spawner } from "./research.ts";
+
+/**
+ * How each known CLI is made to produce the `{speech, tool_calls[]}` envelope.
+ * The dialects genuinely differ, and feeding one CLI another's flags is not a
+ * degraded turn but a dead one (`--json-schema` is an unknown flag to codex
+ * and copilot — the process exits before any model runs):
+ *
+ * - `flag`:   `--json-schema '<inline schema>'` — claude, the only CLI
+ *             verified to ENFORCE the schema (spec
+ *             2026-08-15-brain-engine-selection).
+ * - `file`:   `--output-schema <file>` + `--output-last-message <file>` —
+ *             codex. Real enforcement, but both sides travel as files: the
+ *             schema in, and the final message out (codex's stdout is the
+ *             session transcript, not the reply).
+ * - `prompt`: no schema support at all (copilot/opencode) or a flag that is
+ *             accepted but not enforced (agy). The schema travels in the
+ *             prompt and the reply is CLEANED (fences stripped) then parsed
+ *             strictly — soft enforcement fails loudly on a malformed reply
+ *             rather than degrading into empty speech.
+ *
+ * A CLI absent from this table has no known brain dialect; brain-engine.ts
+ * gates on membership, so an unknown cli falls through to the terminal
+ * fallback rather than reaching a spawn that cannot work.
+ */
+export const BRAIN_SCHEMA_MODES: Record<string, "flag" | "file" | "prompt"> = {
+  claude: "flag",
+  codex: "file",
+  agy: "prompt",
+  copilot: "prompt",
+  opencode: "prompt",
+};
 
 interface AnthropicBlock {
   type: string;
@@ -140,6 +174,22 @@ interface SchemaEnvelope {
   tool_calls: Array<{ name: string; input: unknown }>;
 }
 
+/**
+ * Prompt-mode replies come from CLIs nothing forced into raw JSON, so the
+ * envelope often arrives dressed — a markdown fence, a "Sure!" preamble.
+ * Undress it (fenced block first, else outermost braces) but never repair it:
+ * what this returns still has to survive parseEnvelope's strict shape check.
+ */
+function extractJson(raw: string): string {
+  const t = raw.trim();
+  const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) return fence[1].trim();
+  const start = t.indexOf("{");
+  const end = t.lastIndexOf("}");
+  if (start >= 0 && end > start) return t.slice(start, end + 1);
+  return t;
+}
+
 /** Parses the CLI's stdout into the envelope this kind requires. Throws rather than degrading into empty speech. */
 function parseEnvelope(cliName: string, stdout: string): SchemaEnvelope {
   let parsed: unknown;
@@ -190,15 +240,43 @@ export function createCliStreamFactory(deps: CliBrainDeps) {
         // CliResearch for why: spawn takes an argv ARRAY with no shell, so
         // quotes/newlines/backticks reach execve as ordinary bytes.
         const prompt = toPrompt(params.system, params.messages);
-        const argv = [...withModel, "--json-schema", JSON.stringify(schema), prompt];
+        const mode = BRAIN_SCHEMA_MODES[deps.argv[0]] ?? "prompt";
 
-        const { code, stdout, stderr } = await spawn(argv);
-        if (code !== 0) {
-          const detail = stderr.trim() || stdout.trim() || (code === null ? "killed or timed out" : `exit ${code}`);
-          throw new CliBrainError(`${deps.argv[0]} failed: ${detail}`);
+        const run = async (argv: string[]) => {
+          const { code, stdout, stderr } = await spawn(argv);
+          if (code !== 0) {
+            const detail = stderr.trim() || stdout.trim() || (code === null ? "killed or timed out" : `exit ${code}`);
+            throw new CliBrainError(`${deps.argv[0]} failed: ${detail}`);
+          }
+          return stdout;
+        };
+
+        let raw: string;
+        if (mode === "file") {
+          // Per-turn temp dir, removed in finally — a leak here compounds at
+          // one dir per brain turn.
+          const dir = await mkdtemp(join(tmpdir(), "smith-brain-"));
+          try {
+            const schemaPath = join(dir, "schema.json");
+            const lastPath = join(dir, "last-message.json");
+            await writeFile(schemaPath, JSON.stringify(schema));
+            await run([...withModel, "--output-schema", schemaPath, "--output-last-message", lastPath, prompt]);
+            // An unwritten file parses as "" and fails parseEnvelope loudly —
+            // the transcript on stdout is never a fallback source.
+            raw = await readFile(lastPath, "utf8").catch(() => "");
+          } finally {
+            await rm(dir, { recursive: true, force: true });
+          }
+        } else if (mode === "flag") {
+          raw = (await run([...withModel, "--json-schema", JSON.stringify(schema), prompt])).trim();
+        } else {
+          const framed =
+            `${prompt}\n\nRespond with ONLY a single JSON object matching this JSON Schema — ` +
+            `no markdown fences, no commentary before or after:\n${JSON.stringify(schema)}`;
+          raw = extractJson(await run([...withModel, framed]));
         }
 
-        const envelope = parseEnvelope(deps.argv[0], stdout.trim());
+        const envelope = parseEnvelope(deps.argv[0], raw.trim());
 
         // No streaming exists for this kind — the whole speech string is
         // emitted as ONE delta, after the process exits and before resolving.

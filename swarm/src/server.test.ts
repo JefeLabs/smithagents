@@ -857,17 +857,23 @@ test("buildBrainEngineUpdate: null clears, cli is gated, local needs a baseUrl",
   });
 });
 
-test("buildBrainEngineUpdate: only claude may be saved as a cli brain — the rest accept --json-schema without enforcing it", () => {
+test("buildBrainEngineUpdate: every catalog cli with a broker dialect may be saved as a cli brain; one without a dialect is refused", () => {
   const ok = () => "";
-  assert.deepEqual(buildBrainEngineUpdate({ kind: "cli", provider: "claude" }, ENGINES, ok), {
-    brainEngine: { kind: "cli", provider: "claude" },
-  });
-
-  for (const provider of ["codex", "opencode", "copilot", "agy"]) {
-    const r = buildBrainEngineUpdate({ kind: "cli", provider }, ENGINES, ok);
-    assert.ok("error" in r, `expected ${provider} to be refused as a brain`);
-    assert.match((r as { error: string }).error, /claude|--json-schema/i);
+  for (const provider of ["claude", "codex", "opencode", "copilot", "agy"]) {
+    assert.deepEqual(
+      buildBrainEngineUpdate({ kind: "cli", provider }, ENGINES, ok),
+      { brainEngine: { kind: "cli", provider } },
+      `${provider} has a dialect in the broker's BRAIN_SCHEMA_MODES — must be saveable`,
+    );
   }
+
+  const r = buildBrainEngineUpdate(
+    { kind: "cli", provider: "imaginary" },
+    [...ENGINES, { cli: "imaginary", label: "Imaginary", models: [], warmSessions: false }],
+    ok,
+  );
+  assert.ok("error" in r, "a catalog cli the broker has no dialect for must be refused at save time");
+  assert.match((r as { error: string }).error, /dialect/i);
 });
 
 test("redactBrainEngine hides a cli whose gate now fails", () => {
@@ -898,9 +904,22 @@ test("buildEnginesUpdate: every role is gated by the SAME allowlists as the main
   // point. A per-role copy of this assertion would pass for whichever roles
   // its author remembered.
   for (const role of ["main", "quick", "fallback"] as const) {
-    const cli = buildEnginesUpdate({ [role]: { kind: "cli", provider: "agy" } }, ENGINES, ok);
-    assert.ok("error" in cli, `${role}: agy must be refused as a cli engine`);
-    assert.match((cli as { error: string }).error, /claude|--json-schema/i, `${role}: refused for the stated reason`);
+    // Every catalog cli has a brain dialect now (broker cli-brain.ts
+    // BRAIN_SCHEMA_MODES) — each must be accepted, not just claude.
+    for (const cliName of ["claude", "codex", "opencode", "copilot", "agy"]) {
+      const accepted = buildEnginesUpdate({ [role]: { kind: "cli", provider: cliName } }, ENGINES, ok);
+      assert.ok(!("error" in accepted), `${role}: ${cliName} has a brain dialect — must be accepted`);
+    }
+
+    // A catalog cli WITHOUT a dialect is the case the allowlist still guards:
+    // a future registry addition must not become a saveable brain by default.
+    const noDialect = buildEnginesUpdate(
+      { [role]: { kind: "cli", provider: "imaginary" } },
+      [...ENGINES, { cli: "imaginary", label: "Imaginary", models: [], warmSessions: false }],
+      ok,
+    );
+    assert.ok("error" in noDialect, `${role}: a cli with no brain dialect must be refused`);
+    assert.match((noDialect as { error: string }).error, /dialect/i, `${role}: refused for the stated reason`);
 
     const api = buildEnginesUpdate({ [role]: { kind: "api", provider: "openai" } }, ENGINES, ok);
     assert.ok("error" in api, `${role}: openai must be refused as an api engine`);

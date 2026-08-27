@@ -8,17 +8,19 @@ import { formatSize } from "./WizardSourcesStep";
 
 /**
  * Which CLIs the swarm will actually accept as an engine — mirrored from
- * `BRAIN_CLI_ALLOWLIST` (swarm/src/server.ts), not imported; no shared package
- * crosses this boundary. Its own comment carries the reason: *"a brain cli must
- * ENFORCE `--json-schema` for tool calls, not merely accept the flag"*, and
- * only claude has been verified to.
+ * `BRAIN_CLI_ALLOWLIST` (swarm/src/server.ts), which itself mirrors the
+ * broker's per-CLI schema dialects (`BRAIN_SCHEMA_MODES`,
+ * broker/src/cli-brain.ts); not imported — no shared package crosses this
+ * boundary. Every catalog CLI has a dialect now, so all five are offered.
  *
- * Mirroring the allowlist here rather than offering every active CLI is the
- * whole point of this screen's filtering. The step this replaces offered them
- * all and let the server refuse, which trapped a codex-only user on the last
- * screen of first-run setup and had to be rescued with a bolted-on escape.
+ * Mirroring the allowlist here rather than offering every active CLI is
+ * still the whole point of this screen's filtering: a CLI added to the
+ * registry before the broker learns its dialect must not appear here. The
+ * step this replaces offered options the server refused, which trapped a
+ * codex-only user on the last screen of first-run setup and had to be
+ * rescued with a bolted-on escape.
  */
-const BRAIN_CLIS = ["claude"];
+const BRAIN_CLIS = ["claude", "codex", "agy", "copilot", "opencode"];
 
 /**
  * API-key provider id → the brain provider the swarm names for it.

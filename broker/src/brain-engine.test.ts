@@ -312,21 +312,45 @@ test("a rejecting getStoredEngine degrades to the same fallback as a clean null 
   assert.deepEqual(seen, ["anthropic"]);
 });
 
-test("brainArgvFor: only claude passes through; every other cli resolves as unknown to argvFor", () => {
+test("brainArgvFor: every cli with a schema dialect passes through; one without a dialect resolves as unknown", () => {
   const underlying = (cli: string): string[] | undefined => (cli === "not-real" ? undefined : [cli, "--print"]);
   const wrapped = brainArgvFor(underlying);
 
-  assert.deepEqual(wrapped("claude"), ["claude", "--print"]);
-  for (const cli of ["codex", "opencode", "copilot", "agy"]) {
-    assert.equal(wrapped(cli), undefined, `${cli} accepts --json-schema without enforcing it — must not resolve`);
+  for (const cli of ["claude", "codex", "opencode", "copilot", "agy"]) {
+    assert.deepEqual(wrapped(cli), [cli, "--print"], `${cli} has a dialect in BRAIN_SCHEMA_MODES — must resolve`);
   }
+  assert.equal(wrapped("imaginary-cli"), undefined, "no dialect means no way to invoke it as a brain");
 });
 
-test("a stored cli brainArgvFor refuses (e.g. agy) falls through to the fallback, same as an argv the broker can't invoke at all", async () => {
+test("a stored codex brain resolves to the cli factory — the dialect table, not claude-membership, is the gate", async () => {
+  const argvs: string[][] = [];
+  const spy: Spawner = async (argv) => {
+    argvs.push(argv);
+    const lastPath = argv[argv.indexOf("--output-last-message") + 1] as string;
+    await (await import("node:fs/promises")).writeFile(lastPath, JSON.stringify({ speech: "hi", tool_calls: [] }));
+    return { code: 0, stdout: "transcript noise", stderr: "" };
+  };
+  const seen: string[] = [];
+  const factory = await resolveBrainFactory({
+    getStoredEngine: async () => ({ kind: "cli", provider: "codex" }),
+    argvFor: brainArgvFor((cli) => [cli, "exec"]),
+    spawn: spy,
+    geminiApiKey: undefined,
+    anthropicFactory: () => {
+      seen.push("anthropic");
+      return dummyFactory;
+    },
+  });
+  await factory(PARAMS).finalMessage();
+  assert.deepEqual(seen, [], "the fallback must never be constructed for a resolvable cli");
+  assert.deepEqual(argvs[0]?.slice(0, 2), ["codex", "exec"]);
+});
+
+test("a stored cli brainArgvFor refuses (one with no schema dialect) falls through to the fallback, same as an argv the broker can't invoke at all", async () => {
   const seen: string[] = [];
   const underlying = (cli: string): string[] | undefined => [cli, "--print"]; // would resolve EVERY cli if not wrapped
   await resolveBrainFactory({
-    getStoredEngine: async () => ({ kind: "cli", provider: "agy" }),
+    getStoredEngine: async () => ({ kind: "cli", provider: "imaginary-cli" }),
     argvFor: brainArgvFor(underlying),
     spawn: dummySpawn,
     geminiApiKey: undefined,

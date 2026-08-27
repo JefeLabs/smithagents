@@ -164,12 +164,13 @@ describe("WizardRolesStep", () => {
 
   // --- Only what the server will accept ------------------------------------
 
-  it("offers exactly what the server accepts — a refusable option never appears in ANY dropdown", async () => {
+  it("offers exactly what the server accepts — every active CLI now, and still never a refusable key", async () => {
     // codex/opencode/agy are installed and signed in, and an OpenAI key is
-    // genuinely verified. Every one of them is refused by the swarm for every
-    // role (BRAIN_CLI_ALLOWLIST is claude alone; API_BRAIN_PROVIDERS is
-    // anthropic/gemini), and offering a refusable option is what trapped a
-    // codex-only user in the step this replaces.
+    // genuinely verified. The CLIs are all saveable brains now (the broker
+    // grew a schema dialect per CLI — BRAIN_SCHEMA_MODES), so each must be
+    // offered; the OpenAI key is still refused by the swarm for every role
+    // (API_BRAIN_PROVIDERS is anthropic/gemini), and offering a refusable
+    // option is what trapped a codex-only user in the step this replaces.
     //
     // Asserted as the WHOLE list rather than as the absence of names this test
     // happened to think of: a `queryByText` per villain proves nothing about
@@ -183,11 +184,12 @@ describe("WizardRolesStep", () => {
       ],
     });
     await screen.findByRole("combobox", { name: MAIN });
-    expect(optionsOf(MAIN)).toEqual(["claude (login)", "Anthropic (key)"]);
-    expect(optionsOf(QUICK)).toEqual(["claude (login)", "Anthropic (key)"]);
+    const CLIS = ["claude (login)", "codex (login)", "opencode (login)", "agy (login)"];
+    expect(optionsOf(MAIN)).toEqual([...CLIS, "Anthropic (key)"]);
+    expect(optionsOf(QUICK)).toEqual([...CLIS, "Anthropic (key)"]);
     // The fallback offers the same set plus its own "nothing" — the extra
     // entry is a value, not an origin.
-    expect(optionsOf(FALLBACK)).toEqual([NOTHING, "claude (login)", "Anthropic (key)"]);
+    expect(optionsOf(FALLBACK)).toEqual([NOTHING, ...CLIS, "Anthropic (key)"]);
   });
 
   it("a key that is not VERIFIED is not offered — stored is not the same as working", async () => {

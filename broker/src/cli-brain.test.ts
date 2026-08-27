@@ -134,6 +134,87 @@ test("tool_choice: {type:'none'} reaches the CLI as a schema that cannot yield t
   assert.equal(schema.properties.tool_calls.maxItems, 0);
 });
 
+test("prompt-mode cli (copilot): the schema travels IN THE PROMPT, never as a flag the binary would reject", async () => {
+  const stub = spawnStub({ code: 0, stdout: JSON.stringify({ speech: "ok", tool_calls: [] }), stderr: "" });
+  const stream = createCliStreamFactory({ argv: ["copilot", "--prompt"], spawn: stub.fn })({
+    model: "m",
+    max_tokens: 10,
+    system: "s",
+    messages: [{ role: "user", content: "hi" }],
+    tools: [{ name: "delegate", description: "hand off work", input_schema: { type: "object" } }],
+  });
+  await stream.finalMessage();
+
+  const argv = stub.calls[0].argv;
+  assert.equal(argv.indexOf("--json-schema"), -1, "copilot has no such flag — passing it fails the turn");
+  const prompt = argv.at(-1) as string;
+  assert.ok(prompt.includes("hi"), "the conversation still reaches the prompt");
+  assert.ok(prompt.includes('"delegate"'), "the tool-name enum reaches the prompt-embedded schema");
+  assert.ok(/only.*json/i.test(prompt), "the prompt demands a JSON-only reply");
+});
+
+test("prompt-mode cli: a fenced ```json reply still parses — soft enforcement means cleaning, not trusting", async () => {
+  const envelope = { speech: "done", tool_calls: [] };
+  const spawn = async () => ({
+    code: 0,
+    stdout: `Sure! Here you go:\n\`\`\`json\n${JSON.stringify(envelope)}\n\`\`\`\n`,
+    stderr: "",
+  });
+  const stream = createCliStreamFactory({ argv: ["copilot", "--prompt"], spawn })({
+    model: "m",
+    max_tokens: 10,
+    system: "s",
+    messages: [],
+    tools: [],
+  });
+  const final = await stream.finalMessage();
+  assert.equal(final.stop_reason, "end_turn");
+  assert.deepEqual(final.content, [{ type: "text", text: "done" }]);
+});
+
+test("prompt-mode cli: prose with no JSON in it still fails loudly, same as the flag mode", async () => {
+  const spawn = async () => ({ code: 0, stdout: "I couldn't do that", stderr: "" });
+  const stream = createCliStreamFactory({ argv: ["copilot", "--prompt"], spawn })({
+    model: "m",
+    max_tokens: 10,
+    system: "s",
+    messages: [],
+    tools: [],
+  });
+  await assert.rejects(() => stream.finalMessage(), /could not parse/i);
+});
+
+test("file-mode cli (codex): schema arrives as a --output-schema file, the envelope is read from --output-last-message, and the temp dir is cleaned up", async () => {
+  const { readFile, writeFile } = await import("node:fs/promises");
+  const { existsSync } = await import("node:fs");
+
+  let schemaSeen: { properties?: { tool_calls?: { items?: { properties?: { name?: { enum?: string[] } } } } } } = {};
+  let tempDir = "";
+  const spawn = async (argv: string[]) => {
+    const schemaPath = argv[argv.indexOf("--output-schema") + 1] as string;
+    const lastPath = argv[argv.indexOf("--output-last-message") + 1] as string;
+    tempDir = schemaPath.slice(0, schemaPath.lastIndexOf("/"));
+    schemaSeen = JSON.parse(await readFile(schemaPath, "utf8"));
+    await writeFile(lastPath, JSON.stringify({ speech: "from codex", tool_calls: [] }));
+    // codex exec prints transcript noise to stdout — the envelope must NOT come from here.
+    return { code: 0, stdout: "[2026-08-27] thinking...\ntokens used: 5000", stderr: "" };
+  };
+
+  const stream = createCliStreamFactory({ argv: ["codex", "exec"], spawn })({
+    model: "m",
+    max_tokens: 10,
+    system: "s",
+    messages: [{ role: "user", content: "hi" }],
+    tools: [{ name: "delegate", description: "hand off work", input_schema: { type: "object" } }],
+  });
+  const final = await stream.finalMessage();
+
+  assert.equal(schemaSeen.properties?.tool_calls?.items?.properties?.name?.enum?.[0], "delegate");
+  assert.deepEqual(final.content, [{ type: "text", text: "from codex" }]);
+  assert.ok(tempDir.length > 0, "spawner must have seen a real temp path");
+  assert.ok(!existsSync(tempDir), "the per-turn temp dir must not leak");
+});
+
 test("toPrompt flattens a tool_use/tool_result history into readable prose, not just plain text turns", () => {
   const messages = [
     { role: "user", content: "check the login bug" },

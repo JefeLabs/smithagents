@@ -4612,14 +4612,15 @@ export function redactResearchEngine(
 const API_BRAIN_PROVIDERS = new Set(["anthropic", "gemini"]);
 
 /**
- * A brain cli must ENFORCE `--json-schema` for tool calls, not merely accept
- * the flag — a stricter bar than research's ENGINES table promises (spec
- * 2026-08-15-brain-engine-selection, "Out of scope": "agy is not offered as
- * a brain yet: it accepts --json-schema but did not enforce it";
- * codex/opencode/copilot were never claimed to support it either). Only
- * claude is verified, so only claude may be saved as a cli brain.
+ * The CLIs the broker knows how to ask for structured tool calls — mirrored
+ * from `BRAIN_SCHEMA_MODES` (broker/src/cli-brain.ts), not imported; no
+ * shared package crosses this boundary. Each cli there has its own schema
+ * dialect (claude `--json-schema`, codex `--output-schema` files, the rest
+ * prompt-embedded), so every catalog cli is saveable as a brain. The set
+ * still exists to guard the future case: a cli added to the ENGINES catalog
+ * without a broker dialect must be refused here, not fail on its first turn.
  */
-const BRAIN_CLI_ALLOWLIST = new Set(["claude"]);
+const BRAIN_CLI_ALLOWLIST = new Set(["claude", "codex", "agy", "copilot", "opencode"]);
 
 /** PUT /me/brain-engine body → validated setting. `null` clears it. Mirrors buildResearchEngineUpdate. */
 export function buildBrainEngineUpdate(
@@ -4657,7 +4658,9 @@ function buildEngineSetting(
     const engine = engines.find((e) => e.cli === b.provider);
     if (!engine || engine.kind === "api") return { error: `Unknown engine: ${String(b.provider)}` };
     if (!BRAIN_CLI_ALLOWLIST.has(engine.cli)) {
-      return { error: `${engine.label} is not supported as a brain yet — only Claude Code enforces --json-schema` };
+      return {
+        error: `${engine.label} has no brain dialect yet — the broker does not know how to ask it for structured tool calls`,
+      };
     }
     const reason = gate(engine.cli);
     if (reason) return { error: reason };
