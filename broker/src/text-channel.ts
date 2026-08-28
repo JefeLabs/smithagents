@@ -723,6 +723,15 @@ export class TextChannel {
           } catch {
             /* empty body = default scope */
           }
+          // Attribution this hop alone can supply: every reset reaches the
+          // swarm over the broker's own socket, so without this the swarm's
+          // forensic record can only ever name the broker. See
+          // describeResetCaller (swarm/src/server.ts) for the other half.
+          const who = identity?.kind ?? "local";
+          const from = req.socket.remoteAddress ?? "unknown";
+          const ua = req.headers["user-agent"] ?? "unknown";
+          scope.origin = `broker:${who} from=${from} ua=${ua}`;
+          console.warn(`[broker] RESET requested by ${scope.origin} scope=${JSON.stringify(scope)}`);
           void onReset(scope)
             .then((report) =>
               res.writeHead(200, { ...corsFor(req), "content-type": "application/json" }).end(JSON.stringify(report)),

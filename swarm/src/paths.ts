@@ -40,6 +40,12 @@ export interface SmithPaths {
    * an org of one. There is no per-workspace mode.
    */
   readonly orgRepo: string;
+  /**
+   * Append-only forensic record of every reset, written before the
+   * destruction it describes. Deliberately under `logs/` — the one place a
+   * reset never archives — so the account of an event outlives the event.
+   */
+  readonly resetLog: string;
   /** Timestamped archive sibling, e.g. work-archived-20260816T120000. */
   archived(kind: ArchivableKind, stamp: string): string;
 }
@@ -71,6 +77,7 @@ export function smithPaths(root: string): SmithPaths {
     legacyProjectFile: join(resolvedRoot, "project.json"),
     legacyProjectsDir: join(resolvedRoot, "projects"),
     orgRepo: join(resolvedRoot, "config"),
+    resetLog: join(resolvedRoot, "logs", "resets.jsonl"),
     archived(kind: ArchivableKind, stamp: string): string {
       return join(resolvedRoot, `${kind}-archived-${stamp}`);
     },

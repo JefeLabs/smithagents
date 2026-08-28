@@ -15,7 +15,7 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { createSocket, type Socket as DgramSocket } from "node:dgram";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import websocket from "@fastify/websocket";
@@ -751,6 +751,21 @@ export class OrchestratorServer {
     if (this.udpSocket) this.udpSocket.close();
     for (const ws of this.wsClients) ws.close();
     await this.app.close();
+  }
+
+  /**
+   * Appends one line to the reset journal. Never throws: a reset the user
+   * asked for must not fail because its own audit trail could not be
+   * written — but the failure is announced, because a silently unwritten
+   * journal is the exact hole this closes.
+   */
+  private async recordReset(entry: Record<string, unknown>): Promise<void> {
+    try {
+      await mkdir(dirname(this.paths.resetLog), { recursive: true });
+      await appendFile(this.paths.resetLog, `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`);
+    } catch (err) {
+      this.app.log.warn(`Reset journal could not be written (${(err as Error).message}) — this reset is unrecorded`);
+    }
   }
 
   /** setTimeout chain, not setInterval: each firing re-measures the distance to the NEXT local midnight, so drift and DST never accumulate. */
@@ -1962,6 +1977,12 @@ export class OrchestratorServer {
     // back exactly what was destroyed and what was preserved. Remote workers
     // are NEVER killed — they are other machines' processes.
     this.app.post("/reset", async (req) => {
+      // WHO asked, recorded BEFORE anything is destroyed. On 2026-08-27 an
+      // unattributed reset archived a roster and deleted every session, and
+      // the only account was the app.log.warn at the bottom of this handler:
+      // written after the fact, into a pane that had already scrolled. A log
+      // line that describes a destruction has to survive it and precede it.
+      const caller = describeResetCaller(req.headers as Record<string, string | string[] | undefined>, req.ip);
       const body = (req.body ?? {}) as { runtime?: boolean; worktrees?: boolean; agents?: boolean };
       const scope = {
         runtime: body.runtime !== false,
@@ -1970,6 +1991,11 @@ export class OrchestratorServer {
       };
       const killed = { warmSessions: 0, taskSessions: 0, queued: 0, active: 0, worktrees: 0, agents: 0, squads: 0 };
       const preserved: string[] = [];
+
+      await this.recordReset({ phase: "start", caller, scope });
+      this.app.log.warn(
+        `Reset REQUESTED by ip=${caller.ip} ua=${JSON.stringify(caller.userAgent)} origin=${caller.origin} scope=${JSON.stringify(scope)}`,
+      );
 
       if (scope.runtime) {
         // Warm conversational sessions first (they own worktrees + branches).
@@ -2045,6 +2071,7 @@ export class OrchestratorServer {
         preserved.push("agent personas and squads");
       }
 
+      await this.recordReset({ phase: "done", caller, scope, killed });
       this.app.log.warn(`Reset (${JSON.stringify(scope)}): ${JSON.stringify(killed)}`);
       this.broadcast({
         type: "session:orphan_cleanup",
@@ -4610,6 +4637,30 @@ export function redactResearchEngine(
 }
 
 const API_BRAIN_PROVIDERS = new Set(["anthropic", "gemini"]);
+
+/** What a reset's forensic record can say about who asked for it. */
+export interface ResetCaller {
+  ip: string;
+  userAgent: string;
+  /** `x-smith-origin`, stamped by any proxy that knows more than this hop does (the broker names the identity it authenticated). */
+  origin: string;
+}
+
+/**
+ * Who asked for a reset, from the only things this hop can see. Every field
+ * that cannot be learned is recorded as the string "unknown" rather than
+ * omitted: reading the 2026-08-27 incident, an absent field and a field
+ * nobody thought to record were indistinguishable, and the difference is the
+ * whole value of the record.
+ */
+export function describeResetCaller(
+  headers: Record<string, string | string[] | undefined>,
+  ip: string | undefined,
+): ResetCaller {
+  const one = (v: string | string[] | undefined): string =>
+    (Array.isArray(v) ? v[0] : v)?.trim() || /* v is absent or blank */ "unknown";
+  return { ip: one(ip), userAgent: one(headers["user-agent"]), origin: one(headers["x-smith-origin"]) };
+}
 
 /**
  * The CLIs the broker knows how to ask for structured tool calls — mirrored

@@ -30,6 +30,7 @@ import {
   buildWorkspaceCreate,
   buildWorkspaceUpdate,
   clearVoiceReferences,
+  describeResetCaller,
   gitInitRequestedRepos,
   isValidWorkspaceCreateRepos,
   OrchestratorServer,
@@ -1676,6 +1677,94 @@ test("POST /documents/:id/proposals: agentId is validated at the route — git m
       after.proposals.map((p) => [p.id, p.agentId]),
       [["1", "anderson-2"]],
     );
+  } finally {
+    await server.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// ── Reset forensics ──────────────────────────────────────────────────
+//
+// 2026-08-27: an unattributed reset archived the roster, the squads and the
+// work boards, and deleted every session record. Nothing on disk said who
+// asked for it. The only account was one `app.log.warn` line — written AFTER
+// the destruction, into a tmux pane that had already scrolled by the time
+// anyone looked. These tests pin the two properties that would have named
+// the caller: the record is written BEFORE anything is destroyed, and it
+// outlives the reset that produced it.
+
+test("describeResetCaller: names what it knows and MARKS what it could not learn, rather than dropping the field", () => {
+  const full = describeResetCaller(
+    { "user-agent": "smithagents-control-plane/0.1.0", "x-smith-origin": "broker:human" },
+    "127.0.0.1",
+  );
+  assert.equal(full.ip, "127.0.0.1");
+  assert.equal(full.userAgent, "smithagents-control-plane/0.1.0");
+  assert.equal(full.origin, "broker:human");
+
+  // An absent field recorded as "unknown" reads differently from a field the
+  // recorder forgot — the incident turned on exactly that distinction.
+  const bare = describeResetCaller({}, undefined);
+  assert.equal(bare.ip, "unknown");
+  assert.equal(bare.userAgent, "unknown");
+  assert.equal(bare.origin, "unknown");
+});
+
+test("POST /reset records its caller BEFORE destroying anything, and the record survives the reset", async () => {
+  const root = await mkdtemp(join(tmpdir(), "smith-reset-log-"));
+  // Mark the temp root initialized before boot: an unmarked empty root while
+  // a legacy `swarm/.smith` exists in this checkout trips the migration guard
+  // and the server refuses to start (see isInitialized/needsMigration).
+  await writeFile(join(root, "state-version.json"), JSON.stringify({ version: 1 }));
+  // An agent on disk so the destructive phase has something real to archive.
+  await mkdir(join(root, "agents"), { recursive: true });
+  await writeFile(
+    join(root, "agents", "ignacio.json"),
+    JSON.stringify({
+      id: "ignacio",
+      name: "Ignacio",
+      role: "engineer",
+      directives: "ship it",
+      engine: { cli: "claude", model: "sonnet" },
+    }),
+  );
+  const port = 18991;
+  const server = new OrchestratorServer({ port, host: "127.0.0.1", orchestrator: { smithRoot: root } });
+  try {
+    await server.start();
+
+    const res = await fetch(`http://127.0.0.1:${port}/reset`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "user-agent": "test-agent/9",
+        "x-smith-origin": "broker:human",
+      },
+      body: JSON.stringify({ runtime: false, agents: true }),
+    });
+    assert.equal(res.status, 200);
+
+    const lines = (await readFile(join(root, "logs", "resets.jsonl"), "utf8")).trim().split("\n");
+    const start = JSON.parse(lines[0]) as {
+      phase: string;
+      caller: { ip: string; userAgent: string; origin: string };
+      scope: Record<string, boolean>;
+    };
+    // FIRST line, not merely present: a reset that dies halfway — or one whose
+    // report never comes back — still leaves the caller named.
+    assert.equal(start.phase, "start", "the caller is recorded before the destruction, not after it");
+    assert.equal(start.caller.userAgent, "test-agent/9");
+    assert.equal(start.caller.origin, "broker:human");
+    assert.equal(start.scope.agents, true);
+
+    const done = JSON.parse(lines.at(-1) as string) as { phase: string; killed?: { agents?: number } };
+    assert.equal(done.phase, "done", "and the outcome is recorded too");
+    assert.equal(done.killed?.agents, 1, "the outcome names what was actually destroyed");
+
+    // The evidence must outlive the event: `logs/` is not one of the
+    // directories a reset archives, so the record is still readable after the
+    // roster it describes has been moved aside.
+    assert.equal((await readFile(join(root, "logs", "resets.jsonl"), "utf8")).includes("test-agent/9"), true);
   } finally {
     await server.stop();
     await rm(root, { recursive: true, force: true });

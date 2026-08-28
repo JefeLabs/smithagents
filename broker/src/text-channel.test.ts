@@ -3280,3 +3280,36 @@ test("an UNKNOWN origin gets no allow-origin at all, rather than a credentialed 
     await channel.stop();
   }
 });
+
+test("POST /reset hands the swarm an ORIGIN describing the caller it authenticated, not just 'the broker'", async () => {
+  // 2026-08-27: an unattributed reset wiped the roster and every session. The
+  // swarm records who asked (describeResetCaller), but every reset through
+  // this door arrives from the broker's own socket — so unless this hop
+  // stamps what it alone knows (which identity it authenticated, and from
+  // where), the swarm's record can only ever name the broker.
+  const seen: Array<Record<string, unknown>> = [];
+  const channel = channelWith({
+    onReset: async (scope) => {
+      seen.push(scope);
+      return { ok: true };
+    },
+  });
+  const port = await channel.start(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/reset`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "user-agent": "control-plane/test" },
+      body: JSON.stringify({ agents: true }),
+    });
+    assert.equal(res.status, 200);
+    assert.equal(seen.length, 1);
+    // The scope the UI asked for still arrives untouched...
+    assert.equal(seen[0]?.agents, true);
+    // ...and the attribution rides along with it.
+    const origin = String(seen[0]?.origin ?? "");
+    assert.match(origin, /control-plane\/test/, "the caller's user-agent is part of the origin");
+    assert.match(origin, /127\.0\.0\.1/, "so is where it connected from");
+  } finally {
+    await channel.stop();
+  }
+});

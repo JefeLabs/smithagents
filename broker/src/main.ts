@@ -1517,7 +1517,10 @@ const textChannel = new TextChannel(
       agents: Boolean(scope.agents),
     };
     const swarmReport = await swarm
-      .reset({ runtime: wants.runtime, worktrees: wants.worktrees, agents: wants.agents })
+      .reset(
+        { runtime: wants.runtime, worktrees: wants.worktrees, agents: wants.agents },
+        typeof scope.origin === "string" ? scope.origin : undefined,
+      )
       .catch((err: unknown) => ({ error: `swarm reset failed: ${String(err)}` }));
 
     if (wants.conversations) {

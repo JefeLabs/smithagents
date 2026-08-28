@@ -393,9 +393,18 @@ export class SwarmClient {
     return ids;
   }
 
-  /** Tiered runtime reset on the orchestrator (remote workers are never killed). */
-  async reset(scope: { runtime?: boolean; worktrees?: boolean; agents?: boolean }): Promise<Record<string, unknown>> {
-    return this.http("POST", "/reset", scope);
+  /**
+   * Tiered runtime reset on the orchestrator (remote workers are never killed).
+   *
+   * `origin` describes whoever asked the BROKER — the swarm sees only this
+   * client's socket, so without it the swarm's forensic record (2026-08-27:
+   * an unattributed reset wiped the roster) can name nothing but the broker.
+   */
+  async reset(
+    scope: { runtime?: boolean; worktrees?: boolean; agents?: boolean },
+    origin?: string,
+  ): Promise<Record<string, unknown>> {
+    return this.http("POST", "/reset", scope, undefined, origin ? { "x-smith-origin": origin } : undefined);
   }
 
   /** Stereotypes, quick questions and reaction levels for the creation wizard. */
@@ -829,6 +838,7 @@ export class SwarmClient {
     path: string,
     body?: unknown,
     timeoutMs?: number,
+    extraHeaders?: Record<string, string>,
   ): Promise<Record<string, unknown>> {
     // Only set content-type when a body actually follows: fastify's default
     // JSON body parser 400s ("FST_ERR_CTP_EMPTY_JSON_BODY") on a
@@ -838,6 +848,7 @@ export class SwarmClient {
     const headers: Record<string, string> = {};
     if (body !== undefined) headers["content-type"] = "application/json";
     if (this.token) headers.authorization = `Bearer ${this.token}`;
+    Object.assign(headers, extraHeaders);
     const res = await this.fetchImpl(`${this.baseUrl}${path}`, {
       method,
       headers,

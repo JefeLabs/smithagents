@@ -518,3 +518,20 @@ test("document methods hit the swarm's document routes with the right verbs, bod
   assert.deepEqual(JSON.parse(calls[2].body!), { blueprintId: "spec", title: "T" });
   assert.deepEqual(JSON.parse(calls[3].body!), { body: "* a" });
 });
+
+test("reset carries the caller's origin as a header, and omits it entirely when there is none to forward", async () => {
+  // The swarm can only see this client's socket; the origin header is the
+  // one channel by which the true caller reaches its forensic record.
+  const { fetch, calls } = fakeFetch({ "/reset": { ok: true } });
+  const c = new SwarmClient({ baseUrl: "http://x", fetchImpl: fetch });
+
+  await c.reset({ agents: true }, "broker:human from=127.0.0.1 ua=control-plane/1");
+  assert.equal(
+    (calls[0]!.init!.headers as Record<string, string>)["x-smith-origin"],
+    "broker:human from=127.0.0.1 ua=control-plane/1",
+  );
+
+  // No origin means no header — an empty attribution must not masquerade as one.
+  await c.reset({ agents: true });
+  assert.equal((calls[1]!.init!.headers as Record<string, string>)["x-smith-origin"], undefined);
+});
