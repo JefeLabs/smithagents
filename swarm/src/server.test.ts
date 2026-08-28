@@ -1383,6 +1383,27 @@ test("storeReply: null is 404, a store error keeps its status and problems, a do
   assert.deepEqual(storeReply(doc, true), { status: 201, body: doc });
 });
 
+/**
+ * A temp state root a real OrchestratorServer will actually boot against.
+ *
+ * `mkdtemp` alone is not enough, and the difference is not cosmetic: an
+ * unmarked empty root sends `start()` into the legacy-state guard
+ * (isInitialized → needsMigration, migrate-state.ts), which THROWS whenever
+ * a legacy root exists beside the package — and this checkout still carries
+ * `swarm/.smith`, the pre-migration rollback copy. Four document-route tests
+ * failed that way for weeks: the server never started, every assertion saw a
+ * 500, and the failures read as route bugs rather than a boot refusal.
+ *
+ * Writing the marker is exactly what the product's own `markInitialized`
+ * does, so this says "a fresh root, already migrated" rather than suppressing
+ * the guard.
+ */
+async function freshStateRoot(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  await writeFile(join(root, "state-version.json"), JSON.stringify({ version: 1 }));
+  return root;
+}
+
 // ── Document routes: booted against a REAL fastify server (task-8-review.md fix round 1) ──
 // These three boot the actual OrchestratorServer on a spare loopback port far
 // from 7777/7781/7790, rather than calling the extracted pure helpers — the
@@ -1391,7 +1412,7 @@ test("storeReply: null is 404, a store error keeps its status and problems, a do
 // function these tests could otherwise import directly.
 
 test("AmbiguousDocumentError is a 409 on every id-addressed document route, not a 500 (task-8 review I1)", async () => {
-  const root = await mkdtemp(join(tmpdir(), "smith-doc-ambig-"));
+  const root = await freshStateRoot("smith-doc-ambig-");
   const port = 18973;
   const server = new OrchestratorServer({ port, host: "127.0.0.1", orchestrator: { smithRoot: root } });
   const base = `http://127.0.0.1:${port}`;
@@ -1466,7 +1487,7 @@ test("AmbiguousDocumentError is a 409 on every id-addressed document route, not 
 });
 
 test("PUT .../sections/:sid: an absent body field refuses (400) rather than erasing the section; an explicit empty string still clears it (task-8 review I2)", async () => {
-  const root = await mkdtemp(join(tmpdir(), "smith-doc-section-"));
+  const root = await freshStateRoot("smith-doc-section-");
   const port = 18974;
   const server = new OrchestratorServer({ port, host: "127.0.0.1", orchestrator: { smithRoot: root } });
   const base = `http://127.0.0.1:${port}`;
@@ -1542,7 +1563,7 @@ test("PUT .../sections/:sid: an absent body field refuses (400) rather than eras
 });
 
 test("PATCH /documents/:id: more than one recognised field refuses (400) rather than silently applying the first; a single field still works; blueprintId+workType is ONE field pair (task-8 review I3)", async () => {
-  const root = await mkdtemp(join(tmpdir(), "smith-doc-patch-"));
+  const root = await freshStateRoot("smith-doc-patch-");
   const port = 18975;
   const server = new OrchestratorServer({ port, host: "127.0.0.1", orchestrator: { smithRoot: root } });
   const base = `http://127.0.0.1:${port}`;
@@ -1616,7 +1637,7 @@ test("PATCH /documents/:id: more than one recognised field refuses (400) rather 
 });
 
 test("POST /documents/:id/proposals: agentId is validated at the route — git must never silently mutate the recorded identity (final-review Minor 5)", async () => {
-  const root = await mkdtemp(join(tmpdir(), "smith-doc-agentid-"));
+  const root = await freshStateRoot("smith-doc-agentid-");
   const port = 18976;
   const server = new OrchestratorServer({ port, host: "127.0.0.1", orchestrator: { smithRoot: root } });
   const base = `http://127.0.0.1:${port}`;
@@ -1711,11 +1732,7 @@ test("describeResetCaller: names what it knows and MARKS what it could not learn
 });
 
 test("POST /reset records its caller BEFORE destroying anything, and the record survives the reset", async () => {
-  const root = await mkdtemp(join(tmpdir(), "smith-reset-log-"));
-  // Mark the temp root initialized before boot: an unmarked empty root while
-  // a legacy `swarm/.smith` exists in this checkout trips the migration guard
-  // and the server refuses to start (see isInitialized/needsMigration).
-  await writeFile(join(root, "state-version.json"), JSON.stringify({ version: 1 }));
+  const root = await freshStateRoot("smith-reset-log-");
   // An agent on disk so the destructive phase has something real to archive.
   await mkdir(join(root, "agents"), { recursive: true });
   await writeFile(
