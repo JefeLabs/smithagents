@@ -372,6 +372,9 @@ describe("WorkspaceManagerModal — Atlassian key lists", () => {
     const save = spySave();
     renderWith(save);
     await userEvent.click(await screen.findByText("acme"));
+    // The key lives on the Integrations tab; the other panes are `hidden`, and a hidden
+    // field can't take focus (jsdom >=30.1 enforces this, as browsers always have).
+    await openTab(/integrations/i);
     const jira = await screen.findByPlaceholderText(/jira project key/i);
     expect((jira as HTMLInputElement).value).toBe("ACME"); // the input shows entry 0
     await userEvent.clear(jira);
@@ -400,6 +403,7 @@ describe("WorkspaceManagerModal — Atlassian key lists", () => {
       />,
     );
     await userEvent.click(await screen.findByText("acme"));
+    await openTab(/integrations/i);
     await userEvent.clear(await screen.findByPlaceholderText(/jira project key/i));
     await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
     await waitFor(() => expect(save).toHaveBeenCalled());
