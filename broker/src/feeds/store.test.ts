@@ -17,6 +17,11 @@ const item = (id: string, publishedAt: string): FeedItem => ({
   summary: "",
 });
 
+// The store trims anything older than 30 days on every write, measured against its
+// clock. Fixtures dated 2026-08-11 need a clock pinned near that date, or the real
+// clock silently ages them out and these tests start failing a month later.
+const fixtureNow = () => new Date("2026-08-11T12:00:00Z");
+
 const source: FeedSource = {
   id: "s1",
   label: "Diario Libre",
@@ -43,7 +48,7 @@ test("putSource replaces by id rather than duplicating", () => {
 });
 
 test("addItems returns only what was new — re-fetching a feed adds nothing", () => {
-  const store = new FeedStore(memoryIo());
+  const store = new FeedStore(memoryIo(), { now: fixtureNow });
   const first = store.addItems([item("a", "2026-08-11T00:00:00Z"), item("b", "2026-08-11T01:00:00Z")]);
   assert.equal(first.length, 2);
   const second = store.addItems([item("a", "2026-08-11T00:00:00Z"), item("c", "2026-08-11T02:00:00Z")]);
@@ -83,7 +88,7 @@ test("trimming caps at 500 items, keeping the newest", () => {
 
 test("markSpoken and markCarded stamp the item and survive a reload", () => {
   const io = memoryIo();
-  const store = new FeedStore(io);
+  const store = new FeedStore(io, { now: fixtureNow });
   store.addItems([item("rel", "2026-08-11T00:00:00Z")]);
   store.markSpoken(["rel"], "2026-08-11T09:00:00Z");
   store.markCarded("rel", "2026-08-11T09:00:01Z");

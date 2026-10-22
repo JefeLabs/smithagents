@@ -896,12 +896,18 @@ describe("MapStage editing", () => {
    * Nodes are found by `data-id` rather than by role: xyflow marks unmeasured nodes
    * `visibility: hidden`, and jsdom measures nothing, so `getByRole` cannot see them.
    */
-  function selectStories(ids: string[]) {
+  async function selectStories(ids: string[]) {
+    const handleFor = (id: string) => document.querySelector(`.react-flow__node[data-id="${id}"] .map-story__handle`);
+    // The Slices panel the callers await can mount before React Flow renders its nodes;
+    // under full-suite load that gap is wide enough to query an empty canvas.
+    await waitFor(() => {
+      for (const id of ids) {
+        if (!handleFor(id)) throw new Error(`no story node ${id} on the canvas`);
+      }
+    });
     fireEvent.keyDown(document, { key: "Shift", shiftKey: true });
     for (const id of ids) {
-      const handle = document.querySelector(`.react-flow__node[data-id="${id}"] .map-story__handle`);
-      if (!handle) throw new Error(`no story node ${id} on the canvas`);
-      fireEvent.click(handle, { shiftKey: true });
+      fireEvent.click(handleFor(id) as Element, { shiftKey: true });
     }
     fireEvent.keyUp(document, { key: "Shift" });
   }
@@ -915,7 +921,7 @@ describe("MapStage editing", () => {
     const panel = await screen.findByRole("region", { name: "Slices" });
     // s2 is ALREADY in sl1 and s3 is in none. Overlapping is the point of the feature, and
     // sl1 keeps s1 so nothing is stripped — so this is a write the rule allows.
-    selectStories(["s2", "s3"]);
+    await selectStories(["s2", "s3"]);
 
     const create = await within(panel).findByText(/slice from 2 selected/i);
     expect((create.closest("button") as HTMLButtonElement).disabled).toBe(false);
@@ -939,7 +945,7 @@ describe("MapStage editing", () => {
     const panel = await screen.findByRole("region", { name: "Slices" });
     // sl1 owns s1 AND s2 exclusively, so taking BOTH is what strips it — taking one alone
     // leaves it the other. Measured against blockedBy rather than assumed.
-    selectStories(["s1", "s2"]);
+    await selectStories(["s1", "s2"]);
 
     const create = await within(panel).findByText(/slice from 2 selected/i);
     expect((create.closest("button") as HTMLButtonElement).disabled).toBe(true);
@@ -959,7 +965,7 @@ describe("MapStage editing", () => {
     const panel = await screen.findByRole("region", { name: "Slices" });
     // s1 is already in sl1, and sl1 keeps s2 — so nothing is taken from anyone and the new
     // slice is the only casualty. There is no victim to name.
-    selectStories(["s1"]);
+    await selectStories(["s1"]);
 
     const create = await within(panel).findByText(/slice from 1 selected/i);
     expect((create.closest("button") as HTMLButtonElement).disabled).toBe(true);
@@ -988,7 +994,7 @@ describe("MapStage editing", () => {
     const { client } = renderMapStage();
     seedSessionFrame(client, { workspace: "skoolscout" });
     const panel = await screen.findByRole("region", { name: "Slices" });
-    selectStories(["s1", "s2"]);
+    await selectStories(["s1", "s2"]);
     expect(await within(panel).findByText(/slice from 2 selected/i)).toBeDefined();
 
     // Revealing rebuilds every node from the model, which is exactly what wipes React
@@ -1008,10 +1014,10 @@ describe("MapStage editing", () => {
     const { client } = renderMapStage();
     seedSessionFrame(client, { workspace: "skoolscout" });
     const panel = await screen.findByRole("region", { name: "Slices" });
-    selectStories(["s1"]);
+    await selectStories(["s1"]);
     expect(await within(panel).findByText(/slice from 1 selected/i)).toBeDefined();
 
-    selectStories(["s2"]);
+    await selectStories(["s2"]);
     expect(await within(panel).findByText(/slice from 2 selected/i)).toBeDefined();
     // …and it did NOT reveal: no chain opened for the story that was shift-clicked.
     expect(document.querySelector(".map-slice-anchor")).toBeNull();
@@ -1022,7 +1028,7 @@ describe("MapStage editing", () => {
     const { client } = renderMapStage();
     seedSessionFrame(client, { workspace: "skoolscout" });
     const panel = await screen.findByRole("region", { name: "Slices" });
-    selectStories(["s1", "s2"]);
+    await selectStories(["s1", "s2"]);
     await within(panel).findByText(/slice from 2 selected/i);
 
     await userEvent.click(within(panel).getByRole("button", { name: /collapse slices/i }));
@@ -1034,7 +1040,7 @@ describe("MapStage editing", () => {
     const { client } = renderMapStage();
     seedSessionFrame(client, { workspace: "skoolscout" });
     const panel = await screen.findByRole("region", { name: "Slices" });
-    selectStories(["s2", "s3"]);
+    await selectStories(["s2", "s3"]);
     await userEvent.click(await within(panel).findByText(/slice from 2 selected/i));
     await userEvent.type(screen.getByPlaceholderText("Name this slice…"), "analytics v2{Enter}");
 
@@ -1050,7 +1056,7 @@ describe("MapStage editing", () => {
     const { client } = renderMapStage();
     seedSessionFrame(client, { workspace: "skoolscout" });
     const panel = await screen.findByRole("region", { name: "Slices" });
-    selectStories(["s3"]);
+    await selectStories(["s3"]);
     await userEvent.click(await within(panel).findByText(/slice from 1 selected/i));
     const input = screen.getByPlaceholderText("Name this slice…");
 
@@ -1064,13 +1070,13 @@ describe("MapStage editing", () => {
     const { client } = renderMapStage();
     seedSessionFrame(client, { workspace: "skoolscout" });
     const panel = await screen.findByRole("region", { name: "Slices" });
-    selectStories(["s3"]);
+    await selectStories(["s3"]);
     await userEvent.click(await within(panel).findByText(/slice from 1 selected/i));
 
     // Naming swaps the button for an input but does NOT lock the canvas, so the selection
     // can still move underneath it. Everything the panel validated — the count, the
     // blocked check, the message — was computed for the OLD selection.
-    selectStories(["s2"]);
+    await selectStories(["s2"]);
     await userEvent.type(screen.getByPlaceholderText("Name this slice…"), "frozen{Enter}");
 
     await waitFor(() => expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(1));
@@ -1085,7 +1091,7 @@ describe("MapStage editing", () => {
     const { client } = renderMapStage();
     seedSessionFrame(client, { workspace: "skoolscout" });
     const panel = await screen.findByRole("region", { name: "Slices" });
-    selectStories(["s3"]);
+    await selectStories(["s3"]);
     await userEvent.click(await within(panel).findByText(/slice from 1 selected/i));
     await userEvent.type(screen.getByPlaceholderText("Name this slice…"), "doomed{Enter}");
 
@@ -1104,7 +1110,7 @@ describe("MapStage editing", () => {
     const { client } = renderMapStage();
     seedSessionFrame(client, { workspace: "skoolscout" });
     const panel = await screen.findByRole("region", { name: "Slices" });
-    selectStories(["s2", "s3"]);
+    await selectStories(["s2", "s3"]);
     await userEvent.click(await within(panel).findByText(/slice from 2 selected/i));
     expect(screen.getByPlaceholderText("Name this slice…")).toBeDefined();
 
@@ -1127,7 +1133,7 @@ describe("MapStage editing", () => {
     const { client } = renderMapStage();
     seedSessionFrame(client, { workspace: "skoolscout" });
     const panel = await screen.findByRole("region", { name: "Slices" });
-    selectStories(["s2", "s3"]);
+    await selectStories(["s2", "s3"]);
     await userEvent.click(await within(panel).findByText(/slice from 2 selected/i));
 
     // A key with no on-screen affordance is not a way out for anyone who does not know it.
