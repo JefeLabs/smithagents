@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.5.3/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.6.2/schema.json",
   "root": true,
   "vcs": {
     "enabled": true,
@@ -25,12 +25,23 @@
       "quoteStyle": "double"
     }
   },
+  "markdown": {
+    "formatter": {
+      "enabled": false
+    }
+  },
+  "yaml": {
+    "formatter": {
+      "enabled": false
+    }
+  },
   "overrides": [
     {
       "includes": ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/e2e/**"],
       "linter": {
         "rules": {
-          "style": { "noNonNullAssertion": "off" }
+          "style": { "noNonNullAssertion": "off" },
+          "correctness": { "noComponentHookFactories": "off" }
         }
       }
     }
