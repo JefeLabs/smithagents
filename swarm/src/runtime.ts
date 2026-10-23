@@ -16,8 +16,9 @@ import { randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, stat, unlink } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import type { WorkerPool } from "./remote-runtime.js";
+import { secretPaths } from "./secret-file.js";
 import { TASK_CLONE_MARKER } from "./task-clone.js";
 import type { DockerConfig, RuntimeType } from "./types.js";
 
@@ -295,6 +296,31 @@ export class TmuxRuntime implements RuntimeAdapter {
  *   - anything else at `<cwd>/.git` is refused.
  * It inspects only `<cwd>/.git`, never any repository above or below it.
  */
+/**
+ * Which mount sources would expose a secret: `resolve(source)` is the secret
+ * itself or an ancestor of it at a path-segment boundary (`/h/.smithx` is not
+ * `/h/.smith`). Pure string comparison: never stats or reads the secrets.
+ */
+export function exposedSecrets(mountSources: string[], secrets: string[]): Array<{ source: string; secret: string }> {
+  const out: Array<{ source: string; secret: string }> = [];
+  for (const source of mountSources) {
+    const abs = resolve(source);
+    const prefix = abs.endsWith(sep) ? abs : abs + sep;
+    for (const secret of secrets) {
+      const s = resolve(secret);
+      if (s === abs || s.startsWith(prefix)) out.push({ source, secret });
+    }
+  }
+  return out;
+}
+
+/** Refuse a `docker run` whose `-v` sources would put a ~/.smith secret in a container. */
+function assertNoSecretMounts(args: string[]): void {
+  const sources = args.flatMap((a, i) => (args[i - 1] === "-v" ? [a.split(":")[0] ?? ""] : []));
+  const [hit] = exposedSecrets(sources, secretPaths());
+  if (hit) throw new Error(`refusing to start container: mount ${hit.source} would expose ${hit.secret}`);
+}
+
 async function assertMountableCwd(cwd: string): Promise<void> {
   const dir = await stat(cwd).catch((err: NodeJS.ErrnoException) => {
     if (err.code === "ENOENT") throw new Error(`refusing to start a container in ${cwd}: it does not exist`);
@@ -501,6 +527,7 @@ export class DockerRuntime implements RuntimeAdapter {
     // single pre-joined arg would be exec'd as a literal filename (exit 127).
     args.push(image, "/bin/bash", "-c", command);
 
+    assertNoSecretMounts(args);
     await this.docker(args);
   }
 
@@ -545,6 +572,7 @@ export class DockerRuntime implements RuntimeAdapter {
     if (cpuLimit) args.push("--cpus", cpuLimit);
     if (memoryLimit) args.push("--memory", memoryLimit);
     args.push(image, "-c", command);
+    assertNoSecretMounts(args);
     let timer: NodeJS.Timeout | undefined;
     // Set when the timer fires: the FINAL timeout error, composed after the
     // removal settles. Once set it wins over whatever `docker run` does next

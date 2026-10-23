@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { WorkerPool } from "./remote-runtime.js";
-import { containerReachableUrl, createRuntime, DockerRuntime, TmuxRuntime } from "./runtime.js";
+import { containerReachableUrl, createRuntime, DockerRuntime, exposedSecrets, TmuxRuntime } from "./runtime.js";
+import { secretPaths } from "./secret-file.js";
 
 test("TmuxRuntime.launch: env vars are exported inside the wrapped command, not interpolated into it", async () => {
   const runtime = new TmuxRuntime();
@@ -451,4 +452,48 @@ test("containerReachableUrl: only loopback hosts change; ports and paths survive
   assert.equal(containerReachableUrl("http://[::1]:7777"), "http://host.docker.internal:7777");
   assert.equal(containerReachableUrl("http://10.0.0.5:7777"), "http://10.0.0.5:7777");
   assert.equal(containerReachableUrl("not a url"), "not a url");
+});
+
+test("exposedSecrets: a mount of a secret's directory or any ancestor exposes it; a sibling does not", () => {
+  const secrets = secretPaths("/h");
+  assert.deepEqual(exposedSecrets(["/h/.smith/docker-auth", "/h/.smithx", "/w/repo/.git"], secrets), []);
+  assert.equal(exposedSecrets(["/h/.smith"], secrets).length, 3);
+  assert.equal(exposedSecrets(["/h"], secrets).length, 3);
+});
+
+test("DockerRuntime.launch: refuses a mount that would expose ~/.smith, before docker runs", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "secret-mount-"));
+  process.env.SMITH_DOCKER_CLAUDE_DIR = join(dir, "no-credential-here");
+  const runtime = new DockerRuntime({ image: "smith-agent:real", extraMounts: [`${homedir()}/.smith:/x`] });
+  let calls = 0;
+  (runtime as unknown as { docker: (a: string[]) => Promise<unknown> }).docker = async () => {
+    calls++;
+    return { stdout: "", stderr: "" };
+  };
+  try {
+    await assert.rejects(runtime.launch("task-s", "true", dir), /refusing to start container: mount .* would expose/);
+    assert.equal(calls, 0);
+  } finally {
+    delete process.env.SMITH_DOCKER_CLAUDE_DIR;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("DockerRuntime.runOnce: refuses a read-only mount that would expose ~/.smith, before docker runs", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "secret-once-"));
+  const runtime = new DockerRuntime({ image: "smith-agent:real" });
+  let calls = 0;
+  (runtime as unknown as { docker: (a: string[]) => Promise<unknown> }).docker = async () => {
+    calls++;
+    return { stdout: "", stderr: "" };
+  };
+  try {
+    await assert.rejects(
+      runtime.runOnce(dir, "true", [join(homedir(), ".smith")]),
+      /refusing to start container: mount .* would expose/,
+    );
+    assert.equal(calls, 0);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
