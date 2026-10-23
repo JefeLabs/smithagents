@@ -21,6 +21,16 @@ import {
   verifyAuthenticationResponse,
   verifyRegistrationResponse,
 } from "@simplewebauthn/server";
+import { COSEALG } from "@simplewebauthn/server/helpers";
+
+/**
+ * Classic passkey algorithms only. SimpleWebAuthn 14 would otherwise offer
+ * ML-DSA-44 first wherever the runtime supports it, and on Node 24 that is an
+ * experimental WebCrypto API: a passkey minted with it could stop verifying if
+ * that API changes. Revisit once Node ships ML-DSA as stable. Registration
+ * options and verification must use the same list.
+ */
+const PASSKEY_ALGORITHMS = [COSEALG.EdDSA, COSEALG.ES256, COSEALG.RS256];
 
 export type Identity = { kind: "human"; userId: string; name: string; role: "owner" } | { kind: "bridge" };
 
@@ -127,6 +137,7 @@ const defaultAdapter: WebAuthnAdapter = {
       // Passkeys proper: resident key + user verification give the
       // usernameless Face ID login flow.
       authenticatorSelection: { residentKey: "required", userVerification: "required" },
+      supportedAlgorithmIDs: PASSKEY_ALGORITHMS,
     }),
   verifyRegistrationResponse: (input) =>
     verifyRegistrationResponse({
@@ -134,6 +145,7 @@ const defaultAdapter: WebAuthnAdapter = {
       expectedChallenge: input.expectedChallenge,
       expectedOrigin: input.expectedOrigin,
       expectedRPID: input.expectedRPID,
+      supportedAlgorithmIDs: PASSKEY_ALGORITHMS,
     }) as ReturnType<WebAuthnAdapter["verifyRegistrationResponse"]>,
   generateAuthenticationOptions: (input) =>
     generateAuthenticationOptions({ rpID: input.rpID, userVerification: "required" }),
