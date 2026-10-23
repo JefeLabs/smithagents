@@ -17,7 +17,7 @@ import { execFile } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { appendFile, copyFile, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { gateReason, loadCliToolsFile, refreshCliTool } from "./cli-tools.js";
+import { CliToolRefresher, gateReason, loadCliToolsFile } from "./cli-tools.js";
 import { ToolLaunchError } from "./drivers/errors.js";
 import { getDriver } from "./drivers/index.js";
 import { smithPaths } from "./paths.js";
@@ -152,11 +152,14 @@ export class Dispatcher extends EventEmitter {
   private readonly config: OrchestratorConfig;
   private readonly quarantine: QuarantineManager;
   private readonly workerPool?: WorkerPool;
+  /** Runs the on-failure re-probes. The server passes its own, so stop() settles them. */
+  private readonly cliRefresher: CliToolRefresher;
 
-  constructor(config: OrchestratorConfig, workerPool?: WorkerPool) {
+  constructor(config: OrchestratorConfig, workerPool?: WorkerPool, cliRefresher?: CliToolRefresher) {
     super();
     this.config = config;
     this.workerPool = workerPool;
+    this.cliRefresher = cliRefresher ?? new CliToolRefresher();
     this.quarantine = new QuarantineManager(config.logsDir);
   }
 
@@ -190,11 +193,11 @@ export class Dispatcher extends EventEmitter {
     if (cliGate) {
       // A blocked attempt is itself a freshness signal: re-probe so a stale
       // confirmed-negative self-corrects (mirrors the warm-session path).
-      void refreshCliTool(
+      this.cliRefresher.refresh(
         join(this.config.smithRoot, "cli-tools.json"),
         this.config.agentCommands,
         manifest.agent,
-      ).catch(() => {});
+      );
       throw new ToolLaunchError(manifest.agent, `subscription-inactive: ${cliGate}`);
     }
 
@@ -276,11 +279,11 @@ export class Dispatcher extends EventEmitter {
     } catch (err) {
       // Any dispatch failure refreshes this tool's status (spec: on-failure
       // re-probe) — cheap, async, and harmless when the cause was elsewhere.
-      void refreshCliTool(
+      this.cliRefresher.refresh(
         join(this.config.smithRoot, "cli-tools.json"),
         this.config.agentCommands,
         manifest.agent,
-      ).catch(() => {});
+      );
       throw err;
     } finally {
       // Phase 8: ALWAYS tear down — kill orphan sessions, clean up

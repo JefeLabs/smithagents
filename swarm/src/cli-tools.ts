@@ -180,7 +180,11 @@ export async function sweepCliTools(path: string, deps: SweepDeps, only?: string
   const { signal } = deps;
   const probe = deps.run ?? subprocessRunner(signal);
   // Injected runners give way on abort too, so the sweep can always settle.
-  const run: CommandRunner = signal ? (argv, ms) => untilAborted(probe(argv, ms), signal) : probe;
+  // Once aborted, the next probe is never started (detection → --version →
+  // auth run in sequence per tool); one already running gives way at once.
+  const run: CommandRunner = signal
+    ? (argv, ms) => (signal.aborted ? Promise.resolve({ ...ABORTED_PROBE }) : untilAborted(probe(argv, ms), signal))
+    : probe;
   const resolveDriver = deps.resolveDriver ?? getDriver;
   const authTimeoutMs = deps.authTimeoutMs ?? AUTH_TIMEOUT_MS;
   const now = deps.now ?? (() => new Date().toISOString());
@@ -238,7 +242,43 @@ export async function sweepCliTools(path: string, deps: SweepDeps, only?: string
   return file;
 }
 
-/** One-tool sweep with production deps — the launch-failure self-correction hook. */
-export async function refreshCliTool(path: string, agentCommands: Record<string, string>, cli: string): Promise<void> {
-  await sweepCliTools(path, { agentCommands, clis: [cli] }, cli);
+/**
+ * Owns the background CLI-tool probes (the startup sweep and the one-tool
+ * re-probes after a launch failure) so a shutdown can settle them. Each probe
+ * writes cli-tools.json into the state root, so one that outlived its server
+ * could land in, or recreate, a root that is being torn down.
+ *
+ * close() aborts everything still running (subprocesses killed, nothing
+ * written) and resolves once it has all settled. Closing is permanent: work
+ * that fails during shutdown must not start new probes.
+ */
+export class CliToolRefresher {
+  private readonly abort = new AbortController();
+  private readonly inflight = new Set<Promise<unknown>>();
+
+  /** `run` overrides the probe runner (tests); default is real subprocesses. */
+  constructor(private readonly run?: CommandRunner) {}
+
+  get closed(): boolean {
+    return this.abort.signal.aborted;
+  }
+
+  /** A sweep that close() will settle. Rejects only if the sweep itself throws. */
+  sweep(path: string, deps: Pick<SweepDeps, "agentCommands" | "clis">, only?: string): Promise<CliToolsFile> {
+    const sweep = sweepCliTools(path, { ...deps, run: this.run, signal: this.abort.signal }, only);
+    this.inflight.add(sweep);
+    const settled = () => this.inflight.delete(sweep);
+    sweep.then(settled, settled);
+    return sweep;
+  }
+
+  /** Re-probe one tool in the background: the launch-failure self-correction. Never throws. */
+  refresh(path: string, agentCommands: Record<string, string>, cli: string): void {
+    this.sweep(path, { agentCommands, clis: [cli] }, cli).catch(() => {});
+  }
+
+  async close(): Promise<void> {
+    this.abort.abort();
+    await Promise.allSettled(this.inflight);
+  }
 }

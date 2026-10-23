@@ -1,21 +1,22 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { emptyCliToolsFile, saveCliToolsFile } from "./cli-tools.js";
+import { CliToolRefresher, emptyCliToolsFile, saveCliToolsFile } from "./cli-tools.js";
 import { loadConfig } from "./config.js";
 import { createLegacyWorktree, Dispatcher, resolveTaskWorktree } from "./dispatcher.js";
 import { ToolLaunchError } from "./drivers/errors.js";
+import type { CommandRunner } from "./drivers/types.js";
 import { makeGitRepo, makeOrgRepo } from "./org-repo.fixture.js";
 import { smithPaths } from "./paths.js";
 import type { OrchestratorConfig, TaskManifest } from "./types.js";
 import { saveWorkspace, type Workspace } from "./workspaces.js";
 
-// A binary guaranteed not to resolve on PATH, so refreshCliTool's re-probe
-// (fired fire-and-forget by both the gate and the catch block) fails fast on
+// A binary guaranteed not to resolve on PATH, so the on-failure re-probe
+// (started in the background by both the gate and the catch block) fails fast on
 // detection instead of hanging or touching a real installed CLI.
 const NO_SUCH_BINARY: Record<TaskManifest["agent"], string> = {
   agy: "definitely-not-a-real-binary-xyz",
@@ -504,4 +505,56 @@ test("createLegacyWorktree: no repoPath passes the base through unchanged — no
     undefined,
     "no cwd, and the base is untouched — matches the pre-fix legacy call exactly for this case",
   );
+});
+
+test("dispatch: a blocked attempt re-probes through the refresher it was given, which close() settles before teardown", async () => {
+  const smithRoot = await mkdtemp(join(tmpdir(), "dispatch-refresh-"));
+  const file = emptyCliToolsFile();
+  file.tools.claude = {
+    detected: true,
+    authOk: false,
+    enabled: true,
+    detail: "not logged in",
+    lastCheckedAt: "2026-08-06T00:00:00.000Z",
+  };
+  await saveCliToolsFile(join(smithRoot, "cli-tools.json"), file);
+
+  // The re-probe returns only when the test says so, like a slow CLI under load.
+  const probed: string[][] = [];
+  let firstProbe!: () => void;
+  const probeStarted = new Promise<void>((resolve) => {
+    firstProbe = resolve;
+  });
+  let finishProbes!: () => void;
+  const probesFinish = new Promise<void>((resolve) => {
+    finishProbes = resolve;
+  });
+  const slow: CommandRunner = async (argv) => {
+    probed.push(argv);
+    firstProbe();
+    await probesFinish;
+    return { code: 0, stdout: "/usr/local/bin/claude\n", stderr: "" };
+  };
+  const refresher = new CliToolRefresher(slow);
+  const dispatcher = new Dispatcher(loadConfig({ smithRoot }), undefined, refresher);
+  const manifest: TaskManifest = {
+    taskId: "gate-blocked-refresh",
+    prompt: "irrelevant — the gate blocks first",
+    context: { files: [], repository: "https://github.com/acme/repo", branch: "main" },
+    agent: "claude",
+    createdAt: new Date().toISOString(),
+    priority: "normal",
+  };
+  await assert.rejects(() => dispatcher.dispatch(manifest), ToolLaunchError);
+  await probeStarted;
+  assert.ok(probed.length > 0, "the re-probe ran through the injected refresher");
+
+  await refresher.close(); // what the server's stop() does
+  await rm(smithRoot, { recursive: true, force: true });
+  finishProbes();
+  const deadline = Date.now() + 1_000;
+  while (Date.now() < deadline && !existsSync(smithRoot)) await new Promise((r) => setTimeout(r, 20));
+  const recreated = existsSync(smithRoot);
+  await rm(smithRoot, { recursive: true, force: true });
+  assert.equal(recreated, false, "a dispatcher re-probe outlived close() and recreated the deleted root");
 });

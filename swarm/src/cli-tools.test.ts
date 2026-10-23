@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import {
   buildCliToolListings,
+  CliToolRefresher,
   type CliToolStatus,
   emptyCliToolsFile,
   gateReason,
@@ -310,5 +311,43 @@ test("an aborted sweep settles without writing, even while a probe never returns
   // Writing here would replace good cached entries with the cut-short probes'
   // false negatives, and recreate a state root that was being torn down.
   await assert.rejects(stat(path), { code: "ENOENT" });
+  await assert.rejects(stat(join(dir, "state")), { code: "ENOENT" });
+});
+
+test("CliToolRefresher.close() aborts in-flight refreshes, waits for them, and nothing is written", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "smith-refresher-close-"));
+  const path = join(dir, "state", "cli-tools.json");
+  const calls: string[][] = [];
+  let bothRunning!: () => void;
+  const probesRunning = new Promise<void>((resolve) => {
+    bothRunning = resolve;
+  });
+  const neverReturns: CommandRunner = (argv) => {
+    calls.push(argv);
+    if (calls.length === 2) bothRunning();
+    return new Promise(() => {});
+  };
+  const refresher = new CliToolRefresher(neverReturns);
+  refresher.refresh(path, {}, "claude");
+  refresher.refresh(path, {}, "gemini");
+  await probesRunning; // both detection probes are in flight and will never return on their own
+  await refresher.close(); // must settle anyway
+  assert.equal(calls.length, 2, "no later probe (--version, auth) starts once aborted");
+  await assert.rejects(stat(join(dir, "state")), { code: "ENOENT" });
+});
+
+test("CliToolRefresher: a refresh after close() starts no probe and writes nothing", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "smith-refresher-closed-"));
+  const path = join(dir, "state", "cli-tools.json");
+  let probes = 0;
+  const counting: CommandRunner = async () => {
+    probes += 1;
+    return { code: 0, stdout: "/usr/local/bin/tool\n", stderr: "" };
+  };
+  const refresher = new CliToolRefresher(counting);
+  await refresher.close();
+  refresher.refresh(path, {}, "claude"); // e.g. a task that fails during shutdown
+  await refresher.close(); // settles whatever that started, which must be nothing
+  assert.equal(probes, 0);
   await assert.rejects(stat(join(dir, "state")), { code: "ENOENT" });
 });

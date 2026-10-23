@@ -60,11 +60,11 @@ import {
 import { loadChannelsFor, saveChannels, type WorkspaceChannels } from "./channels.js";
 import {
   buildCliToolListings,
+  CliToolRefresher,
   gateReason,
   inactiveDetail,
   isActive,
   loadCliToolsFile,
-  refreshCliTool,
   type SweepDeps,
   saveCliToolsFile,
   sweepCliTools,
@@ -330,9 +330,12 @@ export class OrchestratorServer {
    * field initializers run before. */
   readonly deviceRegistry: DeviceRegistry;
   private reapTimer: ReturnType<typeof setInterval> | null = null;
-  /** The startup CLI-tool sweep, and its abort. stop() settles it, because it writes into the state root. */
-  private startupSweep: Promise<void> | null = null;
-  private startupSweepAbort = new AbortController();
+  /**
+   * Owns every background CLI-tool probe: the startup sweep, and the re-probes
+   * after a launch failure (here and in the dispatcher). They write into the
+   * state root, so stop() closes it: probes killed, nothing written, all settled.
+   */
+  private readonly cliRefresher: CliToolRefresher;
   /** Midnight sweep of the step axis — this user's Today cards revert to their plate. */
   private sweepTimer: ReturnType<typeof setTimeout> | null = null;
   readonly squadPool = new SquadPool();
@@ -366,7 +369,8 @@ export class OrchestratorServer {
     // Field initializers (deviceRegistry included) run before this constructor
     // body, so anything needing this.paths is built here instead.
     this.deviceRegistry = new DeviceRegistry(this.paths.devices);
-    this.dispatcher = new Dispatcher(this.orchConfig, this.workerPool);
+    this.cliRefresher = new CliToolRefresher(this.config.cliToolRunner);
+    this.dispatcher = new Dispatcher(this.orchConfig, this.workerPool, this.cliRefresher);
     this.quarantine = new QuarantineManager(this.orchConfig.logsDir);
 
     // Create Fastify instance
@@ -732,23 +736,21 @@ export class OrchestratorServer {
     // CLI tool registry: probe machine reality in the background — the cached
     // file serves until fresh results land (spec: startup + manual +
     // on-failure; never a boot gate, never periodic).
-    // Kept, not fire-and-forget: stop() aborts and awaits it.
-    const abort = new AbortController();
-    this.startupSweepAbort = abort;
-    this.startupSweep = sweepCliTools(this.paths.cliTools, {
-      agentCommands: this.orchConfig.agentCommands,
-      clis: ENGINES.map((e) => e.cli),
-      run: this.config.cliToolRunner,
-      signal: abort.signal,
-    }).then(
-      (f) => {
-        if (abort.signal.aborted) return; // cut short by stop(): partial, and not saved
-        this.app.log.info(
-          `CLI tools: ${ENGINES.map((e) => `${e.cli}=${isActive(f.tools[e.cli]) ? "active" : "inactive"}`).join(" ")}`,
-        );
-      },
-      (err) => this.app.log.warn(`CLI tool sweep failed: ${(err as Error).message}`),
-    );
+    // Through the refresher, so stop() settles it.
+    void this.cliRefresher
+      .sweep(this.paths.cliTools, {
+        agentCommands: this.orchConfig.agentCommands,
+        clis: ENGINES.map((e) => e.cli),
+      })
+      .then(
+        (f) => {
+          if (this.cliRefresher.closed) return; // cut short by stop(): partial, and not saved
+          this.app.log.info(
+            `CLI tools: ${ENGINES.map((e) => `${e.cli}=${isActive(f.tools[e.cli]) ? "active" : "inactive"}`).join(" ")}`,
+          );
+        },
+        (err) => this.app.log.warn(`CLI tool sweep failed: ${(err as Error).message}`),
+      );
 
     this.app.log.info(`Orchestrator server running on http://${this.config.host}:${this.config.port}`);
     this.app.log.info(`UDP heartbeat on ${this.config.udpMulticastAddr}:${this.config.udpPort}`);
@@ -761,11 +763,10 @@ export class OrchestratorServer {
     if (this.reapTimer) clearInterval(this.reapTimer);
     if (this.sweepTimer) clearTimeout(this.sweepTimer);
     if (this.queueWorkerTimer) clearInterval(this.queueWorkerTimer);
-    // Settle the startup CLI sweep before returning. Aborting kills its probes and
-    // skips its write, so it settles at once and can't land in (or recreate) a
-    // state root the caller tears down next.
-    this.startupSweepAbort.abort();
-    await this.startupSweep;
+    // Settle every background CLI probe before returning. Closing kills them and
+    // skips their writes, so it is immediate, and none can land in (or recreate)
+    // a state root the caller tears down next.
+    await this.cliRefresher.close();
     if (this.udpSocket) this.udpSocket.close();
     for (const ws of this.wsClients) ws.close();
     await this.app.close();
@@ -1946,12 +1947,12 @@ export class OrchestratorServer {
       } catch (err) {
         if ((err as { code?: string }).code === "tool_launch_failed") {
           // Self-correction (spec: on-failure re-probe): a launch failure is
-          // the freshest signal — refresh just this tool, fire-and-forget.
+          // the freshest signal — refresh just this tool in the background (stop() settles it).
           // Only a cli-kind agent has a tool to refresh; an api-kind agent carries a
           // provider instead and there is nothing on PATH to probe.
           if (agent.engine.cli) {
             const cli = agent.engine.cli;
-            void refreshCliTool(this.paths.cliTools, this.orchConfig.agentCommands, cli).catch(() => {});
+            this.cliRefresher.refresh(this.paths.cliTools, this.orchConfig.agentCommands, cli);
           }
         }
         return reply.status(sessionErrorStatus(err)).send({ error: String((err as Error).message) });
