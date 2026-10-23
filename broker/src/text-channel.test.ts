@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { WebSocket } from "ws";
 import { BrokerAuth, type WebAuthnAdapter } from "./auth.ts";
 import { DocumentsCache } from "./documents-cache.ts";
-import type { Doc } from "./swarm-client.ts";
+import { type Doc, SwarmClient } from "./swarm-client.ts";
 import { type ChannelFrame, TextChannel, workUpdateFrames } from "./text-channel.ts";
 
 const AUTH_CRED = { id: "cred-1", publicKey: new Uint8Array([1, 2, 3]), counter: 0, transports: ["internal"] };
@@ -3511,6 +3511,31 @@ test("an authenticated route keeps a generous cap: 256 KiB is served, past 8 MiB
     assert.equal(after.status, 202);
     assert.equal(seen.at(-1), "still here");
   } finally {
+    await channel.stop();
+  }
+});
+
+test("a swarm that refuses the broker's credential reaches the browser as 502, never a 401 that drops it to login", async () => {
+  // Wired exactly as main.ts wires it: the real SwarmClient.work behind /work/* and /work-kinds.
+  const swarm = new SwarmClient({
+    baseUrl: "http://swarm",
+    token: "a-stale-token",
+    fetchImpl: (async () => new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 })) as typeof fetch,
+  });
+  const channel = channelWith({
+    workBoards: { proxy: (m, p, b) => swarm.work(m, p, b), delegate: async () => ({ taskId: "t" }) },
+  });
+  const restore = console.error;
+  console.error = () => {};
+  const port = await channel.start(0);
+  try {
+    for (const path of ["/work/boards", "/work-kinds"]) {
+      const r = await fetch(`http://127.0.0.1:${port}${path}`, { headers: { Origin: ALLOWED_ORIGIN } });
+      assert.equal(r.status, 502, path);
+      assert.match(((await r.json()) as { error: string }).error, /the swarm refused the broker's credential/);
+    }
+  } finally {
+    console.error = restore;
     await channel.stop();
   }
 });

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { test } from "node:test";
+import { mock, test } from "node:test";
 import { SwarmClient, type SwarmEvent, type WsLike } from "./swarm-client.ts";
 
 interface Call {
@@ -534,4 +534,40 @@ test("reset carries the caller's origin as a header, and omits it entirely when 
   // No origin means no header — an empty attribution must not masquerade as one.
   await c.reset({ agents: true });
   assert.equal((calls[1]!.init!.headers as Record<string, string>)["x-smith-origin"], undefined);
+});
+
+test("work(): a swarm 401/403 is the broker's credential being refused — 502 with a fix-it message, logged once", async () => {
+  const error = mock.method(console, "error", () => {});
+  try {
+    for (const status of [401, 403, 401]) {
+      const c = new SwarmClient({
+        baseUrl: "http://s",
+        token: "broker-side-token",
+        fetchImpl: (async () => new Response(JSON.stringify({ error: "unauthorized" }), { status })) as typeof fetch,
+      });
+      const r = await c.work("GET", "/work/boards");
+      assert.equal(r.status, 502, `upstream ${status}`);
+      assert.deepEqual(r.payload, {
+        error: "the swarm refused the broker's credential — restart both services (or check SMITH_API_TOKEN matches)",
+      });
+    }
+    assert.equal(error.mock.callCount(), 1, "said once per process, not once per request");
+    assert.deepEqual(error.mock.calls[0]?.arguments, [
+      "[broker] the swarm refused the broker's credential (401/403) — is SMITH_API_TOKEN the same for both services?",
+    ]);
+  } finally {
+    error.mock.restore();
+  }
+});
+
+test("work(): every other upstream status still passes through verbatim", async () => {
+  for (const status of [200, 404, 409, 500]) {
+    const c = new SwarmClient({
+      baseUrl: "http://s",
+      fetchImpl: (async () => new Response(JSON.stringify({ status }), { status })) as typeof fetch,
+    });
+    const r = await c.work("GET", "/work/boards");
+    assert.equal(r.status, status);
+    assert.deepEqual(r.payload, { status });
+  }
 });

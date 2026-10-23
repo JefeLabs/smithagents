@@ -265,6 +265,23 @@ export interface SwarmClientOptions {
   wsFactory?: (url: string) => WsLike;
 }
 
+let swarmRefusalLogged = false;
+
+/**
+ * The swarm refused the broker's own credential (401/403): SMITH_API_TOKEN
+ * differs between the two services, or the api-token was rotated and only one
+ * restarted. Logged once per process; returns the message the browser sees.
+ */
+function swarmRefusedCredential(): string {
+  if (!swarmRefusalLogged) {
+    swarmRefusalLogged = true;
+    console.error(
+      "[broker] the swarm refused the broker's credential (401/403) — is SMITH_API_TOKEN the same for both services?",
+    );
+  }
+  return "the swarm refused the broker's credential — restart both services (or check SMITH_API_TOKEN matches)";
+}
+
 export class SwarmClient {
   private readonly baseUrl: string;
   private readonly token?: string;
@@ -810,7 +827,13 @@ export class SwarmClient {
     };
   }
 
-  /** Verbatim passthrough for the work-board routes — the broker adds no logic. */
+  /**
+   * Verbatim passthrough for the work-board routes — the broker adds no logic,
+   * with one exception. A swarm 401/403 here refuses the BROKER's credential,
+   * not the browser's, so it becomes a 502: the browser drops to login on any
+   * 401, and a token mismatch between the two services would otherwise loop a
+   * successful passkey sign-in straight back to the login screen.
+   */
   async work(method: string, path: string, body?: unknown): Promise<{ status: number; payload: unknown }> {
     const res = await this.fetchImpl(`${this.baseUrl}${path}`, {
       method,
@@ -820,6 +843,10 @@ export class SwarmClient {
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
+    if (res.status === 401 || res.status === 403) {
+      await res.arrayBuffer().catch(() => undefined);
+      return { status: 502, payload: { error: swarmRefusedCredential() } };
+    }
     return { status: res.status, payload: await res.json().catch(() => ({})) };
   }
 
