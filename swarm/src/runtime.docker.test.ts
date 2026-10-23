@@ -243,7 +243,6 @@ test("image contract: runOnce's timeout stops and removes the container", { skip
     assert.ok(elapsed < 10_000, `took ${elapsed}ms`);
     const name = /container (smith-once-[0-9a-f-]+)/.exec(message)?.[1];
     assert.ok(name, `no container name in: ${message}`);
-    await sleep(500);
     assert.equal((await run("docker", "ps", "-a", "--filter", `name=${name}`, "--format", "{{.Names}}")).trim(), "");
   }),
 );

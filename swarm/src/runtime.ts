@@ -18,6 +18,7 @@ import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WorkerPool } from "./remote-runtime.js";
+import { TASK_CLONE_MARKER } from "./task-clone.js";
 import type { DockerConfig, RuntimeType } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -323,7 +324,7 @@ async function refuseWorktree(cwd: string): Promise<void> {
   }
   // Allowlist: only a directory carrying the marker createTaskClone planted.
   if (st.isDirectory()) {
-    const marker = await lstat(join(cwd, ".git", "smith-task-clone")).catch((err: NodeJS.ErrnoException) => {
+    const marker = await lstat(join(cwd, ".git", TASK_CLONE_MARKER)).catch((err: NodeJS.ErrnoException) => {
       if (err.code === "ENOENT") return undefined;
       throw err;
     });
@@ -504,6 +505,11 @@ export class DockerRuntime implements RuntimeAdapter {
     readOnlyMounts: string[],
     timeoutMs: number = 120_000,
   ): Promise<{ exitCode: number; output: string }> {
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2_147_483_647) {
+      throw new Error(
+        `runOnce: timeoutMs must be a positive number of milliseconds up to 2147483647, got ${timeoutMs}`,
+      );
+    }
     await refuseWorktree(cwd);
     const { image, cpuLimit, memoryLimit } = this.dockerConfig;
     // bash is PID 1 once tini is bypassed and ignores SIGTERM, so `--init` plus
@@ -533,9 +539,17 @@ export class DockerRuntime implements RuntimeAdapter {
     const expiry = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
         timedOut = true;
-        // Removing the container makes the attached CLI exit.
-        this.docker(["rm", "-f", name]).catch(() => {});
-        reject(new Error(`runOnce timed out after ${timeoutMs}ms (container ${name})`));
+        // Remove FIRST (that also ends the attached CLI), reject after, and
+        // never swallow a failed removal: the container may still be running.
+        this.docker(["rm", "-f", name]).then(
+          () => reject(new Error(`runOnce timed out after ${timeoutMs}ms (container ${name})`)),
+          (rmErr: unknown) =>
+            reject(
+              new Error(
+                `runOnce timed out after ${timeoutMs}ms (container ${name}; removing it failed: ${rmErr instanceof Error ? rmErr.message : String(rmErr)})`,
+              ),
+            ),
+        );
       }, timeoutMs);
     });
     try {

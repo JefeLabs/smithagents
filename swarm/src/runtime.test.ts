@@ -284,6 +284,42 @@ test("DockerRuntime.runOnce: on timeout it removes the container by name and rej
   }
 });
 
+test("DockerRuntime.runOnce: a failed removal is surfaced in the timeout error, not swallowed", async () => {
+  const runtime = new DockerRuntime({ image: "smith-agent:real" });
+  (runtime as unknown as { docker: (a: string[]) => Promise<unknown> }).docker = (a) =>
+    a[0] === "run" ? new Promise(() => {}) : Promise.reject(new Error("No such container"));
+  const dir = await mkdtemp(join(tmpdir(), "run-once-rmfail-"));
+  try {
+    await assert.rejects(
+      runtime.runOnce(dir, "sleep 99", [], 50),
+      /timed out after 50ms.*removing it failed: No such container/,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("DockerRuntime.runOnce: rejects a nonsense timeout before touching docker", async () => {
+  const runtime = new DockerRuntime({ image: "smith-agent:real" });
+  let called = false;
+  (runtime as unknown as { docker: (a: string[]) => Promise<unknown> }).docker = async () => {
+    called = true;
+    return { stdout: "", stderr: "" };
+  };
+  const dir = await mkdtemp(join(tmpdir(), "run-once-badtimeout-"));
+  try {
+    for (const bad of [0, -1, Number.NaN, 2 ** 31]) {
+      await assert.rejects(
+        runtime.runOnce(dir, "true", [], bad),
+        new RegExp(`timeoutMs must be a positive number of milliseconds up to 2147483647, got ${bad}`),
+      );
+    }
+    assert.equal(called, false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("DockerRuntime.runOnce: reports a non-zero exit instead of throwing", async () => {
   const runtime = new DockerRuntime({ image: "smith-agent:real" });
   (runtime as unknown as { docker: (a: string[]) => Promise<unknown> }).docker = async () => {

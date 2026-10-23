@@ -7,6 +7,9 @@ import { resolveStartPoint } from "./workspace-instances.js";
 const exec = promisify(execFile);
 
 /** A disposable `git clone --shared` of the user's repo, made for one docker task. */
+/** Empty file createTaskClone plants in `.git/`; DockerRuntime only mounts directories carrying it. */
+export const TASK_CLONE_MARKER = "smith-task-clone";
+
 export interface TaskClone {
   /** realpath of the user's repo */
   repoPath: string;
@@ -134,7 +137,7 @@ export async function createTaskClone(
   if (safeUrl) await hardenedGit(["remote", "set-url", "origin", safeUrl], clonePath);
   else await hardenedGit(["remote", "remove", "origin"], clonePath);
   // Marker DockerRuntime's guard allowlists; the clone is still trusted here.
-  await writeFile(join(clonePath, ".git", "smith-task-clone"), "");
+  await writeFile(join(clonePath, ".git", TASK_CLONE_MARKER), "");
   return { repoPath: repoReal, path: clonePath, branch, baseSha, readOnlyMounts };
 }
 
