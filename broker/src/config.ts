@@ -15,7 +15,6 @@ export interface BrokerConfig {
     rpId: string;
     /** WebAuthn expected origin (the SPA's origin). */
     webOrigin: string;
-    /** Static bearer for smith-broker-send/check. */
     /** Where users/sessions persist. */
     file: string;
   };

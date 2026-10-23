@@ -23,9 +23,10 @@ test("boots with no voice keys anywhere — voice keys are Settings-managed, not
 });
 
 test("optional overrides are honored", () => {
-  const c = loadBrokerConfig({ ...FULL, SWARM_URL: "http://h:9999", SMITH_API_TOKEN: "t", SWARM_REPO: "git@x:y.git" });
+  const c = loadBrokerConfig({ ...FULL, SWARM_URL: "http://h:9999", SWARM_REPO: "git@x:y.git" });
   assert.equal(c.swarm.baseUrl, "http://h:9999");
   assert.equal(c.swarm.repository, "git@x:y.git");
+  assert.ok(!("token" in c.swarm), "the swarm token is resolved by secrets.ts, not config");
 });
 
 test("gemini config: absent key -> undefined + default image model", () => {
