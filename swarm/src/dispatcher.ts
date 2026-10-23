@@ -477,8 +477,11 @@ export class Dispatcher extends EventEmitter {
     uploadPack: string,
     completed: boolean,
   ): Promise<boolean> {
+    const agent = manifest.agentName ?? manifest.agent;
+    // A failed finalize never stops the import: the import's server side runs in
+    // the sandboxed upload-pack container, so the agent's committed work still
+    // comes home whatever state the clone is in.
     try {
-      const agent = manifest.agentName ?? manifest.agent;
       const finalize = await runner.runOnce(
         clone.path,
         finalizeCommand(agent, manifest.taskId, completed),
@@ -490,6 +493,10 @@ export class Dispatcher extends EventEmitter {
           finalize.output,
         );
       }
+    } catch (err) {
+      console.error(`[dispatch] finalize failed for ${manifest.taskId}; importing anyway:`, err);
+    }
+    try {
       await importTaskBranch(clone, uploadPack);
       return true;
     } catch (err) {

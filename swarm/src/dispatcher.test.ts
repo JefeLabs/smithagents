@@ -768,6 +768,7 @@ test("finalizeAndImport never throws: with docker gone, the clone is kept and th
       taskId: "t-fin",
       context: { repoPath: repo, branch: "main", files: [], repository: "" },
     });
+    const sentinel = join(root, "import-attempted");
     const logged: string[] = [];
     console.error = (...a: unknown[]) => {
       logged.push(a.map(String).join(" "));
@@ -780,13 +781,86 @@ test("finalizeAndImport never throws: with docker gone, the clone is kept and th
           throw new Error("Cannot connect to the Docker daemon");
         },
       },
-      "false",
+      `touch ${sentinel}; false`,
       true,
     );
     console.error = realError;
     assert.equal(ok, false);
+    assert.ok(existsSync(sentinel), "the import was attempted despite the dead finalize");
     assert.ok(logged.some((l) => l.includes(clone.path)));
     assert.ok(existsSync(clone.path));
+  } finally {
+    console.error = realError;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+async function importFixture(taskId: string) {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "disp-imp-")));
+  const repo = makeGitRepo(join(root, "solo"));
+  const d = new Dispatcher(
+    loadConfig({ smithRoot: root, agentCommands: NO_SUCH_BINARY }),
+  ) as unknown as CloneDispatcher;
+  const clone = await createTaskClone(repo, taskClonePath(root, taskId), taskId, "main");
+  writeFileSync(join(clone.path, "work.txt"), "agent work\n");
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: clone.path, encoding: "utf8" }).trim();
+  git("add", "work.txt");
+  git("-c", "user.name=a", "-c", "user.email=a@b", "commit", "-q", "-m", "agent commit");
+  const manifest = makeManifest({
+    taskId,
+    context: { repoPath: repo, branch: "main", files: [], repository: "" },
+  });
+  return { root, repo, d, clone, manifest, tip: git("rev-parse", "HEAD") };
+}
+
+test("finalizeAndImport: a non-zero finalize exit is logged and the agent's commits still come home", async () => {
+  const { root, repo, d, clone, manifest, tip } = await importFixture("t-nz");
+  const realError = console.error;
+  try {
+    const logged: string[] = [];
+    console.error = (...a: unknown[]) => {
+      logged.push(a.map(String).join(" "));
+    };
+    const ok = await d.finalizeAndImport(
+      manifest,
+      clone,
+      { runOnce: async () => ({ exitCode: 1, output: "x" }) },
+      "git-upload-pack",
+      true,
+    );
+    console.error = realError;
+    assert.equal(ok, true);
+    assert.ok(logged.some((l) => l.includes("finalize exited 1")));
+    assert.equal(execFileSync("git", ["rev-parse", "smith/t-nz"], { cwd: repo, encoding: "utf8" }).trim(), tip);
+  } finally {
+    console.error = realError;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("finalizeAndImport: a finalize that throws (marker deleted, timeout) still imports", async () => {
+  const { root, repo, d, clone, manifest, tip } = await importFixture("t-th");
+  const realError = console.error;
+  try {
+    const logged: string[] = [];
+    console.error = (...a: unknown[]) => {
+      logged.push(a.map(String).join(" "));
+    };
+    const ok = await d.finalizeAndImport(
+      manifest,
+      clone,
+      {
+        runOnce: async () => {
+          throw new Error("refusing to start a container on a non-clone");
+        },
+      },
+      "git-upload-pack",
+      true,
+    );
+    console.error = realError;
+    assert.equal(ok, true);
+    assert.ok(logged.some((l) => l.includes("finalize failed for t-th; importing anyway")));
+    assert.equal(execFileSync("git", ["rev-parse", "smith/t-th"], { cwd: repo, encoding: "utf8" }).trim(), tip);
   } finally {
     console.error = realError;
     rmSync(root, { recursive: true, force: true });
