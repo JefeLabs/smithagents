@@ -6,10 +6,10 @@ import { resolveStartPoint } from "./workspace-instances.js";
 
 const exec = promisify(execFile);
 
-/** A disposable `git clone --shared` of the user's repo, made for one docker task. */
 /** Empty file createTaskClone plants in `.git/`; DockerRuntime only mounts directories carrying it. */
 export const TASK_CLONE_MARKER = "smith-task-clone";
 
+/** A disposable `git clone --shared` of the user's repo, made for one docker task. */
 export interface TaskClone {
   /** realpath of the user's repo */
   repoPath: string;

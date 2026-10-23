@@ -535,32 +535,37 @@ export class DockerRuntime implements RuntimeAdapter {
     if (memoryLimit) args.push("--memory", memoryLimit);
     args.push(image, "-c", command);
     let timer: NodeJS.Timeout | undefined;
-    let timedOut = false;
-    const expiry = new Promise<never>((_, reject) => {
+    // Set when the timer fires: the FINAL timeout error, composed after the
+    // removal settles. Once set it wins over whatever `docker run` does next
+    // (killing the container makes the attached CLI exit with 137 at once).
+    let timeoutError: Promise<Error> | undefined;
+    const expiry = new Promise<"timeout">((resolve) => {
       timer = setTimeout(() => {
-        timedOut = true;
-        // Remove FIRST (that also ends the attached CLI), reject after, and
-        // never swallow a failed removal: the container may still be running.
-        this.docker(["rm", "-f", name]).then(
-          () => reject(new Error(`runOnce timed out after ${timeoutMs}ms (container ${name})`)),
+        // Remove FIRST, report after, and never swallow a failed removal: the
+        // container may still be running.
+        timeoutError = this.docker(["rm", "-f", name]).then(
+          () => new Error(`runOnce timed out after ${timeoutMs}ms (container ${name})`),
           (rmErr: unknown) =>
-            reject(
-              new Error(
-                `runOnce timed out after ${timeoutMs}ms (container ${name}; removing it failed: ${rmErr instanceof Error ? rmErr.message : String(rmErr)})`,
-              ),
+            new Error(
+              `runOnce timed out after ${timeoutMs}ms (container ${name}; removing it failed: ${rmErr instanceof Error ? rmErr.message : String(rmErr)})`,
             ),
         );
+        resolve("timeout");
       }, timeoutMs);
     });
+    // Never rejects, so a run that settles after the timeout is not unhandled.
+    const settled = this.docker(args, 0).then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error }),
+    );
     try {
-      const { stdout, stderr } = await Promise.race([this.docker(args, 0), expiry]);
-      return { exitCode: 0, output: stdout + stderr };
-    } catch (err) {
-      const e = err as { code?: unknown; stdout?: string; stderr?: string };
-      if (!timedOut && typeof e.code === "number") {
-        return { exitCode: e.code, output: (e.stdout ?? "") + (e.stderr ?? "") };
-      }
-      throw err;
+      const first = await Promise.race([settled, expiry]);
+      if (timeoutError) throw await timeoutError;
+      if (first === "timeout") throw new Error("runOnce: unreachable"); // timeoutError is set before expiry resolves
+      if ("value" in first) return { exitCode: 0, output: first.value.stdout + first.value.stderr };
+      const e = first.error as { code?: unknown; stdout?: string; stderr?: string };
+      if (typeof e.code === "number") return { exitCode: e.code, output: (e.stdout ?? "") + (e.stderr ?? "") };
+      throw first.error;
     } finally {
       clearTimeout(timer);
     }

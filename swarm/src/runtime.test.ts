@@ -299,6 +299,33 @@ test("DockerRuntime.runOnce: a failed removal is surfaced in the timeout error, 
   }
 });
 
+for (const rmFails of [false, true]) {
+  test(`DockerRuntime.runOnce: a run that dies while its timed-out container is being removed still reports the timeout${rmFails ? " (rm fails too)" : ""}`, async () => {
+    const runtime = new DockerRuntime({ image: "smith-agent:real" });
+    (runtime as unknown as { docker: (a: string[]) => Promise<unknown> }).docker = (a) => {
+      if (a[0] === "run") {
+        // dies a tick after the timer fires, before rm settles
+        return new Promise((_, reject) =>
+          setTimeout(() => reject(Object.assign(new Error("killed"), { code: 137, stdout: "", stderr: "" })), 40),
+        );
+      }
+      return new Promise((resolve, reject) =>
+        setTimeout(() => (rmFails ? reject(new Error("daemon hiccup")) : resolve({ stdout: "", stderr: "" })), 120),
+      );
+    };
+    const dir = await mkdtemp(join(tmpdir(), "run-once-race-"));
+    try {
+      await assert.rejects(runtime.runOnce(dir, "sleep 99", [], 20), (e: Error) => {
+        assert.match(e.message, /timed out after \d+ms \(container smith-once-/);
+        if (rmFails) assert.match(e.message, /removing it failed: daemon hiccup/);
+        return true;
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+}
+
 test("DockerRuntime.runOnce: rejects a nonsense timeout before touching docker", async () => {
   const runtime = new DockerRuntime({ image: "smith-agent:real" });
   let called = false;
