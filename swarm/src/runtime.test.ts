@@ -687,8 +687,8 @@ test("DockerRuntime.launch: ~/.smith under a name realpath keeps (a macOS firmli
         (s) => `${s.dev}:${s.ino}`,
         () => "missing",
       );
-    if ((await id(alias("home"))) !== (await id(home)))
-      return t.skip("no /System/Volumes/Data firmlink on this system");
+    if (process.platform !== "darwin") return t.skip("firmlinks are macOS-only");
+    assert.equal(await id(alias("home")), await id(home), "on macOS, /System/Volumes/Data<path> is <path> on disk");
     assert.equal(await realpath(alias("home")), alias("home"), "realpath keeps the alias, so only identity can see it");
 
     for (const source of [
@@ -728,8 +728,10 @@ test("DockerRuntime.launch: a secret with a second hard link refuses every launc
 
     // A hard link is the secret itself under any name, in any directory. The
     // guard cannot find it (here it hides in a harmless-looking mount), so it
-    // refuses every launch, even one that mounts only the cwd.
+    // refuses every launch, even one that mounts only the cwd. A symlink beside
+    // the secret is not a hard link and must not be counted as one of its names.
     await link(join(home, ".smith", "master.key"), join(scratch, "elsewhere", "notes.txt"));
+    await symlink("master.key", join(home, ".smith", "master.key.link"));
     for (const extra of [[`${join(scratch, "elsewhere")}:/x`], undefined]) {
       await assert.rejects(
         runtime(extra).launch("task-2", "true", work),
@@ -738,6 +740,57 @@ test("DockerRuntime.launch: a secret with a second hard link refuses every launc
       );
     }
     assert.equal(calls.length, 1);
+  });
+});
+
+test("DockerRuntime.launch: a secret's extra name inside ~/.smith (a crashed token write) does not block launches", async () => {
+  await withFakeHome(async ({ home, work, calls, runtime }) => {
+    await mkdir(join(home, ".smith", "docker-auth"), { recursive: true });
+    const token = join(home, ".smith", "api-token");
+    await writeFile(token, "fake\n");
+    // ensureSecretFile links a temp file into place, then unlinks it. A crash in
+    // between leaves this name behind, inside the directory the guard protects.
+    const leftover = `${token}.4242.0000.tmp`;
+    await link(token, leftover);
+    await runtime().launch("task-tmp", "true", work);
+    assert.equal(calls.length, 1);
+
+    // The leftover is still the secret, so mounting it is refused...
+    await assert.rejects(
+      runtime([`${leftover}:/x`]).launch("task-tmp", "true", work),
+      /refusing to start container: mount .* would expose .*api-token/,
+    );
+    // ...and a link in a subdirectory (the credential dir every container gets)
+    // is not inside the protected directory, so it blocks every launch.
+    await link(token, join(home, ".smith", "docker-auth", "notes.txt"));
+    await assert.rejects(
+      runtime().launch("task-tmp", "true", work),
+      /refusing to start container: .*api-token has 3 hard links/,
+    );
+    assert.equal(calls.length, 1);
+  });
+});
+
+test("DockerRuntime.launch: a symlink planted inside a mount never counts as holding ~/.smith", async () => {
+  await withFakeHome(async ({ home, work, calls, runtime }) => {
+    // Every container gets ~/.smith/docker-auth read-write as its ~/.claude. A
+    // link it plants there resolves in the container's namespace, never the
+    // host's, so following it on the host could only refuse every later launch.
+    const auth = join(home, ".smith", "docker-auth");
+    await mkdir(auth, { recursive: true });
+    await writeFile(join(auth, ".credentials.json"), "{}");
+    await writeFile(join(home, ".smith", "api-token"), "fake\n");
+    await symlink("..", join(auth, ".smith"));
+    await symlink("../api-token", join(auth, "api-token"));
+    delete process.env.SMITH_DOCKER_CLAUDE_DIR;
+    await runtime().launch("task-planted", "true", work);
+    assert.equal(calls.length, 1);
+    assert.ok(calls[0]?.includes(`${auth}:/home/agent/.claude`), "credential dir mounted");
+
+    // A loop at one of ~/.smith's names: following it would fail with ELOOP.
+    await symlink(".smith", join(work, ".smith"));
+    await runtime().launch("task-loop", "true", work);
+    assert.equal(calls.length, 2);
   });
 });
 

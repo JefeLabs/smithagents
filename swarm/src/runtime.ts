@@ -13,7 +13,7 @@
 
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, readFile, realpath, stat, unlink } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, realpath, stat, unlink } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
@@ -338,11 +338,16 @@ interface DiskId {
   ino: bigint;
 }
 
-/** `path`'s DiskId, or undefined if nothing is there. Inode numbers pass 2^53 on APFS, hence bigint. */
-async function diskId(path: string): Promise<(DiskId & { nlink: bigint; isFile: boolean }) | undefined> {
+/**
+ * `path` itself as the disk knows it (a symlink is not followed), or undefined
+ * if nothing is there. Inode numbers pass 2^53 on APFS, hence bigint.
+ */
+async function diskId(
+  path: string,
+): Promise<(DiskId & { nlink: bigint; isFile: boolean; isSymlink: boolean }) | undefined> {
   try {
-    const st = await stat(path, { bigint: true });
-    return { path, dev: st.dev, ino: st.ino, nlink: st.nlink, isFile: st.isFile() };
+    const st = await lstat(path, { bigint: true });
+    return { path, dev: st.dev, ino: st.ino, nlink: st.nlink, isFile: st.isFile(), isSymlink: st.isSymbolicLink() };
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === "ENOENT" || code === "ENOTDIR") return undefined;
@@ -351,6 +356,24 @@ async function diskId(path: string): Promise<(DiskId & { nlink: bigint; isFile: 
 }
 
 const sameFile = (a: DiskId, b: DiskId) => a.dev === b.dev && a.ino === b.ino;
+
+/**
+ * `<root>/<names…>` as a container that mounts `root` would see it: undefined
+ * if it is missing or reached through a symlink, which the container resolves
+ * in its own namespace, never the host's. Walked one name at a time because
+ * lstat follows every link but the last; a link that IS the last name comes
+ * back as itself, never a secret. `root` is already canonical.
+ */
+async function idInsideMount(root: string, names: string[]): Promise<DiskId | undefined> {
+  let path = root;
+  let id = await diskId(path);
+  for (const name of names) {
+    if (!id || id.isSymlink) return undefined;
+    path = join(path, name);
+    id = await diskId(path);
+  }
+  return id;
+}
 
 /**
  * The target that `root`, or a path under it ending in the target's own names
@@ -362,12 +385,28 @@ async function heldByIdentity(root: string, targets: DiskId[]): Promise<{ target
   for (const target of targets) {
     const names = target.path.split(sep).filter(Boolean);
     for (let k = 0; k <= names.length; k++) {
-      const via = join(root, ...names.slice(names.length - k));
-      const id = await diskId(via);
-      if (id && sameFile(id, target)) return { target, via };
+      const tail = names.slice(names.length - k);
+      const id = await idInsideMount(root, tail);
+      if (id && sameFile(id, target)) return { target, via: join(root, ...tail) };
     }
   }
   return undefined;
+}
+
+/**
+ * How many of `secret`'s hard links sit directly in its own directory. Those
+ * are covered: mounting the directory is refused, and so is mounting any of
+ * them (each is the secret by identity). A leftover from ensureSecretFile's
+ * link-then-unlink is one; a link in a subdirectory, like docker-auth, is not.
+ */
+async function linksBeside(secret: DiskId): Promise<bigint> {
+  const dir = dirname(secret.path);
+  let count = 0n;
+  for (const name of await readdir(dir)) {
+    const id = await diskId(join(dir, name));
+    if (id && sameFile(id, secret)) count++;
+  }
+  return count;
 }
 
 /** The directory in `dirs` that some existing ancestor of `path` is on disk, if any. */
@@ -385,8 +424,8 @@ async function insideByIdentity(path: string, dirs: DiskId[]): Promise<string | 
  * container, comparing as written, with symlinks resolved on both sides (a link
  * to ~/.smith, or a ~/.smith that is itself a link), and by disk identity (a
  * name realpath keeps, like a firmlink). A source that cannot be resolved is
- * refused, and so is every launch while a secret has a second hard link: that
- * name could be anywhere, including inside a mount.
+ * refused, and so is every launch while a secret has a hard link outside its own
+ * directory: that name could be anywhere, including inside a mount.
  *
  * Creates the secrets' directories first (0700, as boot does): realpath names
  * a path the way the disk does only when it exists, and a missing ~/.smith
@@ -412,9 +451,12 @@ async function assertNoSecretMounts(args: string[]): Promise<void> {
     const id = await diskId(path).catch(refuse("inspect secret", path));
     if (!id) continue;
     if (id.isFile && id.nlink > 1n) {
-      throw new Error(
-        `refusing to start container: ${path} has ${id.nlink} hard links, and a mount could hold one under any name; remove the extra links`,
-      );
+      const beside = await linksBeside(id).catch(refuse("list the directory of secret", path));
+      if (beside < id.nlink) {
+        throw new Error(
+          `refusing to start container: ${path} has ${id.nlink} hard links and only ${beside} are in ${dirname(path)}; a mount could hold another under any name, so remove the extra links`,
+        );
+      }
     }
     (id.isFile ? fileIds : dirIds).push(id);
   }
