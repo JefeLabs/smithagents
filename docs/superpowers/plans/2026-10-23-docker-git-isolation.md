@@ -1,6 +1,6 @@
 # Docker Git Isolation Implementation Plan
 
-> **Executing:** branch `feat/docker-git-isolation` (Claude Code session 7177457c, subagent-driven) since 2026-10-23T09:01Z
+> **Shipped:** branch `feat/docker-git-isolation` merged to main 2026-10-23 (subagent-driven: 6 tasks + one final-review fix wave). Beyond the plan: origin credentials stripped (fail-closed), alternates validated, `runOnce` gets `--init --name` + a timeout that removes the container, DockerRuntime only mounts marked task clones (`.git/smith-task-clone`) in an existing directory, the import is bounded (`importTimeoutMs`) with a named upload-pack container, a failed import sets `TaskResult.importError` instead of naming a branch, warm sessions refuse docker up front.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
