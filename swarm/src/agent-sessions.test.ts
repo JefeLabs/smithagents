@@ -114,10 +114,15 @@ done
 });
 
 after(async () => {
+  // Every id here must belong to `manager`. A destroy that fails leaves a live
+  // tmux session behind after the suite, so it fails loudly instead of being
+  // swallowed. A test whose session belongs to another manager destroys it itself.
+  const leaked: string[] = [];
   for (const id of created) {
-    await manager.destroy(id).catch(() => {});
+    await manager.destroy(id).catch((err: Error) => leaked.push(`${id}: ${err.message}`));
   }
   rmSync(repoRoot, { recursive: true, force: true });
+  assert.deepEqual(leaked, [], "teardown could not destroy these sessions; their tmux sessions outlive the suite");
 });
 
 test("create: worktree on its own branch, profile materialized + excluded, pinned hash, ready", async () => {
@@ -257,8 +262,10 @@ test("reconcile: a session that outlived the server is adopted and still usable"
     turnTimeoutMs: 10_000,
     store,
   });
+  // Not pushed to `created`: the shared teardown destroys through `manager`,
+  // which never knows this session. It is destroyed below by whichever
+  // manager holds it.
   const info = await first.create(AGENT, JSON.stringify(AGENT), repoRoot, "main");
-  created.push(info.id);
 
   // The server dies; the tmux process does not.
   const reborn = new AgentSessionManager(runtime, {
@@ -269,19 +276,24 @@ test("reconcile: a session that outlived the server is adopted and still usable"
     turnTimeoutMs: 10_000,
     store,
   });
-  const hash = createHash("sha256").update(JSON.stringify(AGENT)).digest("hex").slice(0, 16);
-  const summary = await reborn.reconcile(new Map([[AGENT.id, hash]]));
+  try {
+    const hash = createHash("sha256").update(JSON.stringify(AGENT)).digest("hex").slice(0, 16);
+    const summary = await reborn.reconcile(new Map([[AGENT.id, hash]]));
 
-  assert.equal(summary.adopted, 1);
-  // Claimed sessions are excluded from the orphan sweep. (Sessions from other
-  // tests share this tmux server and legitimately show up as orphans here.)
-  assert.ok(
-    !summary.orphans.includes(`smith-warm-${info.id}`),
-    "an adopted session must not also be reported as an orphan",
-  );
-  // Adoption is only real if the handle works: send a turn through it.
-  const replies = await reborn.send(info.id, "still there?");
-  assert.match(replies.map((m) => m.text).join(" "), /echo: still there\?/);
+    assert.equal(summary.adopted, 1);
+    // Claimed sessions are excluded from the orphan sweep. (Sessions from other
+    // tests share this tmux server and legitimately show up as orphans here.)
+    assert.ok(
+      !summary.orphans.includes(`smith-warm-${info.id}`),
+      "an adopted session must not also be reported as an orphan",
+    );
+    // Adoption is only real if the handle works: send a turn through it.
+    const replies = await reborn.send(info.id, "still there?");
+    assert.match(replies.map((m) => m.text).join(" "), /echo: still there\?/);
+  } finally {
+    // `reborn` owns it once adopted; if adoption failed, `first` still does.
+    await reborn.destroy(info.id).catch(() => first.destroy(info.id));
+  }
 });
 
 test("reconcile: a record whose process died is forgotten and its file removed", async () => {
