@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -174,6 +174,7 @@ test("DockerRuntime.launch: no exported credential adds no mount (docker keeps w
 test("DockerRuntime.launch: a clone mounts only itself and the read-only object stores it is given", async () => {
   const dir = await mkdtemp(join(tmpdir(), "plain-clone-"));
   await mkdir(join(dir, ".git"), { recursive: true }); // a directory, not a file
+  await writeFile(join(dir, ".git", "smith-task-clone"), "");
   // Pin the credential dir away from the real one: this asserts the mount list
   // EXACTLY, so a developer who has exported a credential would otherwise see
   // it fail for a reason that has nothing to do with the object stores.
@@ -196,6 +197,42 @@ test("DockerRuntime.launch: a clone mounts only itself and the read-only object 
   }
 });
 
+test("DockerRuntime guard: refuses a .git symlink and a non-clone repo; allows a marked clone and a non-git dir", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "guard-"));
+  const runtime = new DockerRuntime({ image: "smith-agent:real" });
+  let calls = 0;
+  (runtime as unknown as { docker: (a: string[]) => Promise<unknown> }).docker = async () => {
+    calls++;
+    return { stdout: "", stderr: "" };
+  };
+  try {
+    const link = join(dir, "link");
+    await mkdir(link);
+    await symlink("/somewhere", join(link, ".git"));
+    const plain = join(dir, "plain");
+    await mkdir(join(plain, ".git"), { recursive: true });
+    for (const cwd of [link, plain]) {
+      await assert.rejects(runtime.launch("g", "true", cwd), /refusing to start a container/);
+      await assert.rejects(runtime.runOnce(cwd, "true", []), /refusing to start a container/);
+    }
+    await assert.rejects(runtime.runOnce(plain, "true", []), /not a smith task clone/);
+    assert.equal(calls, 0, "docker never called for a refused cwd");
+
+    const marked = join(dir, "marked");
+    await mkdir(join(marked, ".git"), { recursive: true });
+    await writeFile(join(marked, ".git", "smith-task-clone"), "");
+    const nogit = join(dir, "nogit");
+    await mkdir(nogit);
+    for (const cwd of [marked, nogit]) {
+      await runtime.launch("g", "true", cwd);
+      await runtime.runOnce(cwd, "true", []);
+    }
+    assert.equal(calls, 4);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("DockerRuntime.runOnce: a throwaway, offline container with no credentials and no env", async () => {
   const dir = await mkdtemp(join(tmpdir(), "run-once-"));
   const credDir = join(dir, "docker-auth");
@@ -214,6 +251,8 @@ test("DockerRuntime.runOnce: a throwaway, offline container with no credentials 
     const result = await runtime.runOnce(dir, "git status", ["/o"]);
     assert.deepEqual(result, { exitCode: 0, output: "fine" });
     assert.ok(captured.includes("--rm"));
+    assert.ok(captured.includes("--init"), "bash is PID 1 without tini; --init lets signals through");
+    assert.match(captured[captured.indexOf("--name") + 1] ?? "", /^smith-once-[0-9a-f-]{36}$/);
     const at = (flag: string) => captured.indexOf(flag);
     assert.deepEqual(captured.slice(at("--network"), at("--network") + 2), ["--network", "none"]);
     assert.deepEqual(captured.slice(at("--entrypoint"), at("--entrypoint") + 2), ["--entrypoint", "/bin/bash"]);
@@ -224,6 +263,23 @@ test("DockerRuntime.runOnce: a throwaway, offline container with no credentials 
     assert.deepEqual(captured.slice(-3), ["smith-agent:real", "-c", "git status"]);
   } finally {
     delete process.env.SMITH_DOCKER_CLAUDE_DIR;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("DockerRuntime.runOnce: on timeout it removes the container by name and rejects", async () => {
+  const runtime = new DockerRuntime({ image: "smith-agent:real" });
+  const calls: string[][] = [];
+  (runtime as unknown as { docker: (a: string[]) => Promise<unknown> }).docker = (a) => {
+    calls.push(a);
+    return a[0] === "run" ? new Promise(() => {}) : Promise.resolve({ stdout: "", stderr: "" });
+  };
+  const dir = await mkdtemp(join(tmpdir(), "run-once-timeout-"));
+  try {
+    await assert.rejects(runtime.runOnce(dir, "sleep 99", [], 50), /runOnce timed out after 50ms/);
+    const name = calls[0][calls[0].indexOf("--name") + 1];
+    assert.deepEqual(calls[1], ["rm", "-f", name]);
+  } finally {
     await rm(dir, { recursive: true, force: true });
   }
 });

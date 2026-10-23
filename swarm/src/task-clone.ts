@@ -133,13 +133,27 @@ export async function createTaskClone(
   const safeUrl = originUrl ? stripUrlCredentials(originUrl) : undefined;
   if (safeUrl) await hardenedGit(["remote", "set-url", "origin", safeUrl], clonePath);
   else await hardenedGit(["remote", "remove", "origin"], clonePath);
+  // Marker DockerRuntime's guard allowlists; the clone is still trusted here.
+  await writeFile(join(clonePath, ".git", "smith-task-clone"), "");
   return { repoPath: repoReal, path: clonePath, branch, baseSha, readOnlyMounts };
 }
 
 /** The `--upload-pack` command that serves a clone's objects from a throwaway, network-less container. */
 export function sandboxedUploadPack(image: string, clone: TaskClone): string {
   const mounts = [clone.path, ...clone.readOnlyMounts].flatMap((p) => ["-v", `${p}:${p}:ro`]);
-  return ["docker", "run", "--rm", "-i", "--network", "none", "--entrypoint", "git-upload-pack", ...mounts, image]
+  return [
+    "docker",
+    "run",
+    "--rm",
+    "--init",
+    "-i",
+    "--network",
+    "none",
+    "--entrypoint",
+    "git-upload-pack",
+    ...mounts,
+    image,
+  ]
     .map(shellQuote)
     .join(" ");
 }

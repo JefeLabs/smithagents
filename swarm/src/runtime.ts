@@ -13,6 +13,7 @@
 
 import { execFile } from "node:child_process";
 import { lstat, mkdir, readFile, stat, unlink } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -308,18 +309,29 @@ export class TmuxRuntime implements RuntimeAdapter {
  * the host. Containers get a disposable clone instead (see task-clone.ts).
  */
 async function refuseWorktree(cwd: string): Promise<void> {
-  let isFileOrLink = false;
+  let st: Awaited<ReturnType<typeof lstat>>;
   try {
-    const st = await lstat(join(cwd, ".git"));
-    isFileOrLink = st.isFile() || st.isSymbolicLink();
-  } catch {
-    // no .git at all (or unreadable): not a worktree
+    st = await lstat(join(cwd, ".git"));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return; // not a git dir at all
+    throw err;
   }
-  if (isFileOrLink) {
+  if (st.isFile() || st.isSymbolicLink()) {
     throw new Error(
       `refusing to start a container in ${cwd}: it is a git worktree, and its .git would hand the container the host repository`,
     );
   }
+  // Allowlist: only a directory carrying the marker createTaskClone planted.
+  if (st.isDirectory()) {
+    const marker = await lstat(join(cwd, ".git", "smith-task-clone")).catch((err: NodeJS.ErrnoException) => {
+      if (err.code === "ENOENT") return undefined;
+      throw err;
+    });
+    if (marker?.isFile()) return;
+  }
+  throw new Error(
+    `refusing to start a container in ${cwd}: its .git is not a smith task clone, and mounting it would hand the container that repository`,
+  );
 }
 
 /** Host directory bind-mounted as the container agent's `$HOME/.claude`. */
@@ -494,9 +506,15 @@ export class DockerRuntime implements RuntimeAdapter {
   ): Promise<{ exitCode: number; output: string }> {
     await refuseWorktree(cwd);
     const { image, cpuLimit, memoryLimit } = this.dockerConfig;
+    // bash is PID 1 once tini is bypassed and ignores SIGTERM, so `--init` plus
+    // our own `docker rm -f` on expiry is what really stops the container.
+    const name = `smith-once-${randomUUID()}`;
     const args = [
       "run",
       "--rm",
+      "--init",
+      "--name",
+      name,
       "--network",
       "none",
       "--entrypoint",
@@ -510,13 +528,27 @@ export class DockerRuntime implements RuntimeAdapter {
     if (cpuLimit) args.push("--cpus", cpuLimit);
     if (memoryLimit) args.push("--memory", memoryLimit);
     args.push(image, "-c", command);
+    let timer: NodeJS.Timeout | undefined;
+    let timedOut = false;
+    const expiry = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        // Removing the container makes the attached CLI exit.
+        this.docker(["rm", "-f", name]).catch(() => {});
+        reject(new Error(`runOnce timed out after ${timeoutMs}ms (container ${name})`));
+      }, timeoutMs);
+    });
     try {
-      const { stdout, stderr } = await this.docker(args, timeoutMs);
+      const { stdout, stderr } = await Promise.race([this.docker(args, 0), expiry]);
       return { exitCode: 0, output: stdout + stderr };
     } catch (err) {
       const e = err as { code?: unknown; stdout?: string; stderr?: string };
-      if (typeof e.code === "number") return { exitCode: e.code, output: (e.stdout ?? "") + (e.stderr ?? "") };
+      if (!timedOut && typeof e.code === "number") {
+        return { exitCode: e.code, output: (e.stdout ?? "") + (e.stderr ?? "") };
+      }
       throw err;
+    } finally {
+      clearTimeout(timer);
     }
   }
 

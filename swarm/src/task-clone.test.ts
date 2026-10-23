@@ -46,6 +46,10 @@ test("createTaskClone: a fresh clone on smith/<taskId> at the base commit, borro
   assert.equal(await sh("git", ["rev-parse", "--abbrev-ref", "HEAD"], clone.path), "smith/t1");
   assert.equal(await sh("git", ["rev-parse", "HEAD"], clone.path), clone.baseSha);
   assert.ok((await lstat(join(clone.path, ".git"))).isDirectory(), "a clone, not a worktree");
+  assert.ok(
+    (await lstat(join(clone.path, ".git", "smith-task-clone"))).isFile(),
+    "the marker DockerRuntime allowlists",
+  );
   assert.equal(
     (await readFile(join(clone.path, ".git/objects/info/alternates"), "utf8")).trim(),
     clone.readOnlyMounts[0],
@@ -171,6 +175,7 @@ test("sandboxedUploadPack: clone and object stores read-only, no network, the im
     "docker",
     "run",
     "--rm",
+    "--init",
     "-i",
     "--network",
     "none",

@@ -230,6 +230,24 @@ test("image contract: nothing a container plants runs on the host — finalize a
   }),
 );
 
+test("image contract: runOnce's timeout stops and removes the container", { skip }, () =>
+  withContainer(async (rt, _name, dir) => {
+    const started = Date.now();
+    let message = "";
+    await assert.rejects(rt.runOnce(dir, "sleep 30", [], 2000), (e: Error) => {
+      message = e.message;
+      return /timed out after 2000ms/.test(e.message);
+    });
+    const elapsed = Date.now() - started;
+    console.log(`runOnce timeout measured ${elapsed}ms`);
+    assert.ok(elapsed < 10_000, `took ${elapsed}ms`);
+    const name = /container (smith-once-[0-9a-f-]+)/.exec(message)?.[1];
+    assert.ok(name, `no container name in: ${message}`);
+    await sleep(500);
+    assert.equal((await run("docker", "ps", "-a", "--filter", `name=${name}`, "--format", "{{.Names}}")).trim(), "");
+  }),
+);
+
 test("image contract: the agent CLI is installed and starts", { skip }, () =>
   withContainer(async (rt, name, dir) => {
     await rt.launch(name, "claude --version", dir);
