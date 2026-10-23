@@ -497,3 +497,33 @@ test("DockerRuntime.runOnce: refuses a read-only mount that would expose ~/.smit
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('DockerRuntime: network "host" is refused by launch and runOnce before docker runs; any other network passes', async () => {
+  const dir = await mkdtemp(join(tmpdir(), "host-net-"));
+  process.env.SMITH_DOCKER_CLAUDE_DIR = join(dir, "no-credential-here");
+  const fakeDocker = (runtime: DockerRuntime) => {
+    const calls: string[][] = [];
+    (runtime as unknown as { docker: (a: string[]) => Promise<unknown> }).docker = async (a) => {
+      calls.push(a);
+      return { stdout: "0\n", stderr: "" };
+    };
+    return calls;
+  };
+  const refusal = /refusing to start container: network "host" would put the container on the host's loopback/;
+  try {
+    const host = new DockerRuntime({ image: "smith-agent:real", network: "host" });
+    const hostCalls = fakeDocker(host);
+    await assert.rejects(host.launch("task-h", "true", dir), refusal);
+    await assert.rejects(host.runOnce(dir, "true", []), refusal);
+    assert.equal(hostCalls.length, 0);
+
+    const bridge = new DockerRuntime({ image: "smith-agent:real", network: "bridge" });
+    const bridgeCalls = fakeDocker(bridge);
+    await bridge.launch("task-b", "true", dir);
+    const run = bridgeCalls[0] ?? [];
+    assert.equal(run[run.indexOf("--network") + 1], "bridge");
+  } finally {
+    delete process.env.SMITH_DOCKER_CLAUDE_DIR;
+    await rm(dir, { recursive: true, force: true });
+  }
+});

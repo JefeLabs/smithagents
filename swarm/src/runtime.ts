@@ -302,6 +302,17 @@ export function exposedSecrets(mountSources: string[], secrets: string[]): Array
   return out;
 }
 
+/**
+ * Refuse a host-network container. The broker's session cookie is scoped to
+ * the host, not the port, so a container on the host's loopback could listen
+ * on a localhost port and receive browser requests carrying `smith_session`.
+ */
+function assertNotHostNetwork(network: string | undefined): void {
+  if (network === "host") {
+    throw new Error(`refusing to start container: network "host" would put the container on the host's loopback`);
+  }
+}
+
 /** Refuse a `docker run` whose `-v` sources would put a ~/.smith secret in a container. */
 function assertNoSecretMounts(args: string[]): void {
   const sources = args.flatMap((a, i) => (args[i - 1] === "-v" ? [a.split(":")[0] ?? ""] : []));
@@ -442,6 +453,7 @@ export class DockerRuntime implements RuntimeAdapter {
   ): Promise<void> {
     await assertMountableCwd(cwd);
     const { image, network, extraMounts, extraEnv, cpuLimit, memoryLimit, shmSize } = this.dockerConfig;
+    assertNotHostNetwork(network);
 
     // Build docker run args
     const args: string[] = [
@@ -549,6 +561,9 @@ export class DockerRuntime implements RuntimeAdapter {
       );
     }
     await assertMountableCwd(cwd);
+    // runOnce always runs with `--network none`, but a host-network config is
+    // refused here too, so it fails at the first docker call, not the launch.
+    assertNotHostNetwork(this.dockerConfig.network);
     const { image, cpuLimit, memoryLimit } = this.dockerConfig;
     // bash is PID 1 once tini is bypassed and ignores SIGTERM, so `--init` plus
     // our own `docker rm -f` on expiry is what really stops the container.

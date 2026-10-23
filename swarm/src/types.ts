@@ -175,7 +175,7 @@ export interface RemoteWorkerEntry {
  */
 export interface DockerConfig {
   image: string; // Docker image to use (default: 'smith-agent:latest')
-  network?: string; // Docker network mode (e.g., 'host', 'bridge', custom)
+  network?: string; // Docker network mode (e.g., 'bridge', custom). 'host' is refused: it puts the container on the host's loopback
   cpuLimit?: string; // CPU limit (e.g., '2.0' for 2 cores)
   memoryLimit?: string; // Memory limit (e.g., '4g' for 4GB)
   shmSize?: string; // /dev/shm size for Playwright/Chromium (default: '2g')
