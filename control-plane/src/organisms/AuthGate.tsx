@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { getMe } from "../api/auth";
+import { qk } from "../queries/keys";
 import { useAuthStore } from "../stores/authStore";
 import { LoginScreen } from "./LoginScreen";
 
@@ -24,9 +25,11 @@ export function AuthGate({ children }: { children: ReactNode }) {
     isError,
     failureCount,
     refetch,
-  } = useQuery({ queryKey: ["me"], queryFn: getMe, retry: true, retryDelay: 2000 });
+  } = useQuery({ queryKey: qk.authMe, queryFn: getMe, retry: true, retryDelay: 2000 });
 
-  if (isError || failureCount > 0) {
+  // Only before the first answer: a background refetch that fails while the
+  // identity is already loaded must never unmount the app.
+  if (!me && (isError || failureCount > 0)) {
     return (
       <div className="auth-gate__splash" role="alert">
         <p>Can't reach the broker — retrying…</p>
@@ -46,7 +49,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
       <LoginScreen
         onAuthed={() => {
           useAuthStore.getState().clearSessionLost();
-          void qc.invalidateQueries({ queryKey: ["me"] });
+          void qc.invalidateQueries({ queryKey: qk.authMe });
         }}
       />
     );

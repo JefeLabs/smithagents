@@ -24,7 +24,12 @@ export const qk = {
   brainEngine: ["brain-engine"] as const,
   engines: ["engines"] as const,
   machine: ["machine"] as const,
+  /** `GET /me`: the user RECORD (wizard progress, connectors), read by `useMe`. */
   me: ["me"] as const,
+  /** `GET /auth/me`: who is signed in, read only by AuthGate. A different
+      resource from `me`: sharing one entry let the identity overwrite the
+      record on every `invalidateQueries(qk.me)`. */
+  authMe: ["auth", "me"] as const,
   executionModes: ["execution-modes"] as const,
   activity: (name: string) => ["activity", name] as const,
   board: (id: string) => ["board", id] as const,

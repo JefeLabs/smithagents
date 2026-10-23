@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -11,9 +11,34 @@ vi.mock("../api/auth", () => ({
   EnrollError: class extends Error {},
 }));
 
+// The user RECORD (GET /me) — a different resource from the identity above
+// (GET /auth/me). Only the cache-separation tests below read it; the wizard's
+// first step also probes the machine, so those reads are stubbed empty.
+vi.mock("../api/broker", () => ({
+  getMe: vi.fn(),
+  updateMe: vi.fn(),
+  getCliTools: vi.fn(async () => []),
+  pingBrain: vi.fn(async () => ({ ok: false, reason: "not asked in this test" })),
+  getApiKeys: vi.fn(async () => []),
+  getLocalModels: vi.fn(async () => []),
+  getMachineFacts: vi.fn(async () => ({ totalMemBytes: 34_359_738_368 })),
+  getEngines: vi.fn(async () => ({ main: null, quick: null, fallback: null })),
+  saveEngines: vi.fn(),
+  getConnectorVendors: vi.fn(async () => []),
+  getMyConnectors: vi.fn(async () => []),
+  getVoiceSettings: vi.fn(async () => ({ stt: null, tts: null, enabled: false })),
+  getVoiceOptions: vi.fn(async () => []),
+  getTopicNames: vi.fn(async () => []),
+}));
+
 import { getMe } from "../api/auth";
+import { getMe as getUserRecord } from "../api/broker";
+import type { MeRecord } from "../api/types";
+import { useMe } from "../queries/http";
+import { qk } from "../queries/keys";
 import { useAuthStore } from "../stores/authStore";
 import { AuthGate } from "./AuthGate";
+import { WizardGate } from "./WizardGate";
 
 const wrap = (ui: ReactNode) => render(<QueryClientProvider client={new QueryClient()}>{ui}</QueryClientProvider>);
 
@@ -78,5 +103,92 @@ describe("AuthGate", () => {
     await waitFor(() => expect(screen.getByText("the app")).toBeInTheDocument());
     useAuthStore.getState().markSessionLost();
     await waitFor(() => expect(screen.getByRole("button", { name: /sign in/i })).toBeInTheDocument());
+  });
+});
+
+/**
+ * `/auth/me` (who is signed in) and `GET /me` (the user record the wizard and
+ * Settings read) are different resources. They once shared the cache key
+ * `["me"]`, so the identity leaked into every `useMe` reader and an
+ * `invalidateQueries(qk.me)` — which every wizard step fires — refetched the
+ * record with AuthGate's query function, replacing it with the identity and
+ * collapsing the first-run wizard after its first step.
+ */
+describe("AuthGate keeps the identity out of the user record (qk.me)", () => {
+  const identity = { kind: "human" as const, name: "identity-not-a-record", local: true };
+  const record: MeRecord = { id: "me", name: "Record Owner", connectors: [], placeholder: true };
+
+  function renderWithClient(ui: ReactNode) {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return { qc, ...render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>) };
+  }
+
+  it("a useMe reader under AuthGate only ever sees the user record, before and after invalidating qk.me", async () => {
+    (getMe as ReturnType<typeof vi.fn>).mockResolvedValue(identity);
+    (getUserRecord as ReturnType<typeof vi.fn>).mockResolvedValue(record);
+    const seen: unknown[] = [];
+    function RecordProbe() {
+      const { data } = useMe();
+      if (data) seen.push(data);
+      return <p>record: {data?.name ?? "none"}</p>;
+    }
+    const { qc } = renderWithClient(
+      <AuthGate>
+        <RecordProbe />
+      </AuthGate>,
+    );
+    await screen.findByText("record: Record Owner");
+    await act(async () => {
+      await qc.invalidateQueries({ queryKey: qk.me });
+    });
+    await waitFor(() => expect(qc.isFetching()).toBe(0));
+    expect(screen.getByText("record: Record Owner")).toBeInTheDocument();
+    expect(seen.filter((d) => (d as { name?: string }).name !== "Record Owner")).toEqual([]);
+  });
+
+  it("the first-run wizard stays open after a step invalidates qk.me", async () => {
+    (getMe as ReturnType<typeof vi.fn>).mockResolvedValue(identity);
+    (getUserRecord as ReturnType<typeof vi.fn>).mockResolvedValue(record);
+    const { qc, container } = renderWithClient(
+      <AuthGate>
+        <WizardGate>
+          <div>THE APP</div>
+        </WizardGate>
+      </AuthGate>,
+    );
+    await waitFor(() => expect(container.querySelector("[data-step]")).not.toBeNull());
+    await act(async () => {
+      await qc.invalidateQueries({ queryKey: qk.me });
+    });
+    await waitFor(() => expect(qc.isFetching()).toBe(0));
+    expect(container.querySelector("[data-step]")).not.toBeNull();
+    expect(screen.queryByText("THE APP")).not.toBeInTheDocument();
+  });
+
+  it("a failed background refetch of /auth/me keeps the app mounted once the identity is loaded", async () => {
+    (getMe as ReturnType<typeof vi.fn>).mockResolvedValueOnce(identity).mockRejectedValue(new Error("network"));
+    const { qc } = renderWithClient(
+      <AuthGate>
+        <div>the app</div>
+      </AuthGate>,
+    );
+    await screen.findByText("the app");
+    // Not awaited: AuthGate retries an unreachable broker forever, so this
+    // refetch never settles. Every query is refetched so the test does not
+    // depend on which key AuthGate uses.
+    act(() => {
+      void qc.invalidateQueries();
+    });
+    await waitFor(() =>
+      expect(
+        qc
+          .getQueryCache()
+          .getAll()
+          .some((q) => q.state.fetchFailureCount > 0),
+      ).toBe(true),
+    );
+    expect(screen.getByText("the app")).toBeInTheDocument();
+    expect(screen.queryByText(/can't reach the broker/i)).not.toBeInTheDocument();
+    qc.clear();
   });
 });
