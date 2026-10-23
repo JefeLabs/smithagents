@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { CliToolRefresher, emptyCliToolsFile, saveCliToolsFile } from "./cli-tools.js";
 import { loadConfig } from "./config.js";
+import { delegationKey, verifyDelegationToken } from "./delegation-token.js";
 import { createLegacyWorktree, Dispatcher, resolveTaskWorktree, taskClonePath } from "./dispatcher.js";
 import { ToolLaunchError } from "./drivers/errors.js";
 import type { CommandRunner } from "./drivers/types.js";
@@ -622,6 +623,7 @@ test("sessionEnv: every session can call this swarm back, aimed at the parent ta
       SMITH_REPO: "web",
       SMITH_BRANCH: "dev",
       GH_TOKEN: "gh-tok",
+      SMITH_API_TOKEN: "",
     });
     // An unrouted task sends only what it knows; the swarm picks its default.
     assert.deepEqual(
@@ -629,8 +631,53 @@ test("sessionEnv: every session can call this swarm back, aimed at the parent ta
       {
         SMITH_URL: "http://127.0.0.1:7777",
         SMITH_BRANCH: "main",
+        SMITH_API_TOKEN: "",
       },
     );
+  } finally {
+    await rm(smithRoot, { recursive: true, force: true });
+  }
+});
+
+test("sessionEnv: with a delegation key the session gets a token scoped to its own task — never the admin token", async () => {
+  const smithRoot = await mkdtemp(join(tmpdir(), "dispatch-env-"));
+  try {
+    const key = delegationKey("admin-secret");
+    const config = loadConfig({ smithRoot, agentCommands: NO_SUCH_BINARY, delegationKey: key });
+    const dispatcher = new Dispatcher(config) as unknown as {
+      sessionEnv(manifest: TaskManifest, connectionsEnv: Record<string, string>): Record<string, string>;
+    };
+    const manifest: TaskManifest = {
+      taskId: "env",
+      prompt: "irrelevant",
+      context: { files: [], repository: "", branch: "dev", workspace: "acme", repo: "web", repoPath: "/x/web" },
+      agent: "claude",
+      createdAt: new Date().toISOString(),
+      priority: "normal",
+    };
+    // A connector (or the inherited env) must not be able to smuggle the admin token in.
+    const env = dispatcher.sessionEnv(manifest, { SMITH_API_TOKEN: "admin-secret" });
+    assert.equal(env.SMITH_API_TOKEN, "");
+    assert.deepEqual(verifyDelegationToken(key, env.SMITH_DELEGATE_TOKEN), {
+      task: "env",
+      workspace: "acme",
+      repo: "web",
+      branch: "dev",
+      runtime: "tmux",
+      depth: 0,
+    });
+    const child = dispatcher.sessionEnv(
+      { ...manifest, runtime: "docker", delegation: { parentTaskId: "p", depth: 2 } },
+      {},
+    );
+    assert.deepEqual(verifyDelegationToken(key, child.SMITH_DELEGATE_TOKEN), {
+      task: "env",
+      workspace: "acme",
+      repo: "web",
+      branch: "dev",
+      runtime: "docker",
+      depth: 2,
+    });
   } finally {
     await rm(smithRoot, { recursive: true, force: true });
   }

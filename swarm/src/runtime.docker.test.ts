@@ -269,17 +269,17 @@ test("image contract: the agent CLI is installed and starts", { skip }, () =>
 
 test("image contract: smith-delegate reaches the swarm on the host, aimed at the parent's repo", { skip }, () =>
   withContainer(async (rt, name, dir) => {
-    // A stand-in swarm bound to LOOPBACK ONLY — how the real one runs without
-    // SMITH_API_TOKEN — so this proves the container gets through without the
-    // swarm being exposed any wider.
-    const received: { url?: string; body: string }[] = [];
+    // A stand-in swarm bound to LOOPBACK ONLY, so this proves the container
+    // gets through (carrying its own delegation token) without the swarm being
+    // exposed any wider.
+    const received: { url?: string; authorization?: string; body: string }[] = [];
     const swarm = createServer((req, res) => {
       let body = "";
       req.on("data", (chunk) => {
         body += chunk;
       });
       req.on("end", () => {
-        received.push({ url: req.url, body });
+        received.push({ url: req.url, authorization: req.headers.authorization, body });
         res.writeHead(200, { "content-type": "application/json" });
         res.end('{"taskId":"sub-1"}');
       });
@@ -298,10 +298,12 @@ test("image contract: smith-delegate reaches the swarm on the host, aimed at the
         SMITH_WORKSPACE: "acme",
         SMITH_REPO: "web",
         SMITH_BRANCH: "main",
+        SMITH_DELEGATE_TOKEN: "sdt1.contract",
       });
       assert.equal(await rt.waitFor(name), 0, await rt.captureOutput(name));
       assert.equal(received.length, 1, "the delegation never reached the swarm");
       assert.equal(received[0].url, "/tasks");
+      assert.equal(received[0].authorization, "Bearer sdt1.contract");
       const body = JSON.parse(received[0].body);
       assert.equal(body.prompt, "write the sub-task");
       assert.deepEqual(body.context, { files: [], repository: "", branch: "main", workspace: "acme", repo: "web" });

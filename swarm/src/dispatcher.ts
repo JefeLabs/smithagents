@@ -19,6 +19,7 @@ import { EventEmitter } from "node:events";
 import { appendFile, copyFile, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { CliToolRefresher, gateReason, loadCliToolsFile } from "./cli-tools.js";
+import { mintDelegationToken } from "./delegation-token.js";
 import { ToolLaunchError } from "./drivers/errors.js";
 import { getDriver } from "./drivers/index.js";
 import { smithPaths } from "./paths.js";
@@ -550,7 +551,9 @@ export class Dispatcher extends EventEmitter {
    * parent's own workspace/repo/branch. Without that context POST /tasks
    * resolves the DEFAULT workspace's repo — a sub-task of a repo-X task would
    * run in repo Y. SMITH_URL is the loopback form; DockerRuntime rewrites it
-   * for containers.
+   * for containers. SMITH_DELEGATE_TOKEN (when the swarm has a delegation key)
+   * is the session's only credential for calling back; SMITH_API_TOKEN is
+   * always blanked.
    */
   private sessionEnv(manifest: TaskManifest, connectionsEnv: Record<string, string>): Record<string, string> {
     const env: Record<string, string> = {};
@@ -559,7 +562,22 @@ export class Dispatcher extends EventEmitter {
     if (workspace) env.SMITH_WORKSPACE = workspace;
     if (repo) env.SMITH_REPO = repo;
     if (branch) env.SMITH_BRANCH = branch;
-    return { ...env, ...connectionsEnv };
+    const key = this.config.delegationKey;
+    if (key) {
+      // The session's own grant: sub-tasks in this task's workspace/repo on
+      // its own runtime, nothing else. Never the admin token.
+      env.SMITH_DELEGATE_TOKEN = mintDelegationToken(key, {
+        task: manifest.taskId,
+        workspace,
+        repo,
+        branch,
+        runtime: manifest.runtime ?? this.config.defaultRuntime,
+        depth: manifest.delegation?.depth ?? 0,
+      });
+    }
+    // Last, so neither the tmux server's inherited env nor a connector can
+    // put the admin token into a session.
+    return { ...env, ...connectionsEnv, SMITH_API_TOKEN: "" };
   }
 
   /**

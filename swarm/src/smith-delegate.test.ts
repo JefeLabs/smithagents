@@ -13,6 +13,7 @@ const SCRIPT = fileURLToPath(new URL("../bin/smith-delegate", import.meta.url));
 interface Received {
   method?: string;
   url?: string;
+  headers: NodeJS.Dict<string | string[]>;
   body: string;
 }
 
@@ -25,7 +26,7 @@ async function standInSwarm(status: number, reply: object) {
       body += chunk;
     });
     req.on("end", () => {
-      received.push({ method: req.method, url: req.url, body });
+      received.push({ method: req.method, url: req.url, headers: req.headers, body });
       res.writeHead(status, { "content-type": "application/json" });
       res.end(JSON.stringify(reply));
     });
@@ -83,6 +84,30 @@ test("smith-delegate: a refused delegation exits non-zero and shows the swarm's 
         return true;
       },
     );
+  } finally {
+    swarm.close();
+  }
+});
+
+test("smith-delegate: authenticates with the session's own delegation token", async () => {
+  const swarm = await standInSwarm(200, { taskId: "t-1" });
+  try {
+    await execFileP(SCRIPT, ["claude", "do it"], {
+      env: sessionEnv({ SMITH_URL: swarm.url, SMITH_DELEGATE_TOKEN: "sdt1.fake" }),
+    });
+    assert.equal(swarm.received[0].headers.authorization, "Bearer sdt1.fake");
+  } finally {
+    swarm.close();
+  }
+});
+
+test("smith-delegate: never sends SMITH_API_TOKEN, even when the session inherited one", async () => {
+  const swarm = await standInSwarm(200, { taskId: "t-1" });
+  try {
+    await execFileP(SCRIPT, ["claude", "do it"], {
+      env: sessionEnv({ SMITH_URL: swarm.url, SMITH_API_TOKEN: "admin-secret" }),
+    });
+    assert.equal(swarm.received[0].headers.authorization, undefined);
   } finally {
     swarm.close();
   }

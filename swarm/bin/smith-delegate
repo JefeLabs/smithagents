@@ -11,6 +11,11 @@
 #                  — the parent task's own target. Without them the swarm falls
 #                    back to its DEFAULT workspace's repo, so the sub-task could
 #                    land in a different repo entirely.
+#   SMITH_DELEGATE_TOKEN
+#                  — this task's own credential: it can create sub-tasks in the
+#                    parent's workspace/repo, nothing else. Sent as a bearer
+#                    token when set. SMITH_API_TOKEN (the admin token) is never
+#                    sent.
 #
 # The JSON is built with node: every session has it (the swarm runs on it, and
 # so does the agent image), while python3 is not in the agent image.
@@ -42,7 +47,7 @@ process.stdout.write(JSON.stringify({
 # --fail-with-body: a refusal (unknown repo, archived agent…) prints the
 # swarm's reason instead of only a bare exit code.
 curl -sS --fail-with-body -X POST "$SMITH_URL/tasks" \
-  ${SMITH_API_TOKEN:+-H "authorization: Bearer $SMITH_API_TOKEN"} \
+  ${SMITH_DELEGATE_TOKEN:+-H "authorization: Bearer $SMITH_DELEGATE_TOKEN"} \
   -H 'content-type: application/json' \
   -d "$BODY"
 echo
