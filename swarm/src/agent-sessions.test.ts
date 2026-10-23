@@ -12,7 +12,7 @@ import { AgentSessionManager } from "./agent-sessions.js";
 import type { ComposedAgent } from "./agents.js";
 import { SessionDeadError, ToolLaunchError } from "./drivers/errors.js";
 import type { NormalizedMessage, ToolDriver } from "./drivers/types.js";
-import { TmuxRuntime } from "./runtime.js";
+import { DockerRuntime, TmuxRuntime } from "./runtime.js";
 import { SessionStore } from "./session-store.js";
 
 const AGENT: ComposedAgent = {
@@ -451,4 +451,34 @@ test("create() refuses when toolGate reports a reason — before any worktree or
       return true;
     },
   );
+});
+
+test("create() refuses a docker runtime up front — no worktree, no branch, no session", async () => {
+  const docker = new DockerRuntime({ image: "smith-agent:real" });
+  let dockerCalls = 0;
+  (docker as unknown as { docker: (a: string[]) => Promise<unknown> }).docker = async () => {
+    dockerCalls++;
+    return { stdout: "", stderr: "" };
+  };
+  const store = new SessionStore(join(repoRoot, ".smith/sessions-docker"));
+  const onDocker = new AgentSessionManager(docker, {
+    agentCommands: { claude: toolScript },
+    worktreeDir: ".smith/worktrees",
+    resolveDriver: () => new FakeDriver(),
+    store,
+  });
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: repoRoot, encoding: "utf8" });
+  const worktrees = git("worktree", "list", "--porcelain");
+  const branches = git("branch", "--list", "smith/session-*");
+
+  await assert.rejects(onDocker.create(AGENT, JSON.stringify(AGENT), repoRoot, "main"), (err: Error) => {
+    assert.equal(err.message, "warm sessions don't run on docker yet — use the tmux runtime");
+    return true;
+  });
+
+  assert.equal(git("worktree", "list", "--porcelain"), worktrees, "no worktree was added");
+  assert.equal(git("branch", "--list", "smith/session-*"), branches, "no smith/session-* branch was created");
+  assert.deepEqual(await onDocker.list(), [], "no phantom session");
+  assert.deepEqual(await store.load(), [], "no session record");
+  assert.equal(dockerCalls, 0);
 });

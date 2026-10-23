@@ -17,7 +17,7 @@ import type { ComposedAgent } from "./agents.js";
 import { SessionDeadError, SessionNotFoundError, ToolLaunchError, TurnTimeoutError } from "./drivers/errors.js";
 import { getDriver } from "./drivers/index.js";
 import type { NormalizedMessage, ToolDriver } from "./drivers/types.js";
-import type { RuntimeAdapter } from "./runtime.js";
+import { DockerRuntime, type RuntimeAdapter } from "./runtime.js";
 import { classifySession } from "./session-reconcile.js";
 import type { SessionRecord, SessionStore } from "./session-store.js";
 
@@ -84,6 +84,12 @@ export class AgentSessionManager {
     repoRoot: string,
     baseBranch: string,
   ): Promise<AgentSessionInfo> {
+    // Before any side effect: a warm session is a git worktree, which
+    // DockerRuntime refuses to mount — failing at launch would leak the
+    // worktree, its smith/session-* branch and a phantom "starting" session.
+    if (this.runtime instanceof DockerRuntime) {
+      throw new Error("warm sessions don't run on docker yet — use the tmux runtime");
+    }
     // `engine.cli` is optional on the TYPE because an api-kind agent carries a
     // provider instead (agents.ts:14-21); the loader enforces "cli when kind is
     // cli-or-absent" at runtime, but the type cannot express it. Narrow once

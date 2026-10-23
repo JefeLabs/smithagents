@@ -65,7 +65,9 @@ test("DockerRuntime.launch: passes the command raw — the entrypoint owns the t
     return { stdout: "", stderr: "" };
   };
 
-  await runtime.launch("task-abc", "claude --print 'hi there'", "/repo");
+  const dir = await mkdtemp(join(tmpdir(), "launch-raw-"));
+  await runtime.launch("task-abc", "claude --print 'hi there'", dir);
+  await rm(dir, { recursive: true, force: true });
 
   assert.deepEqual(captured.slice(-3), ["/bin/bash", "-c", "claude --print 'hi there'"]);
   assert.ok(
@@ -228,6 +230,32 @@ test("DockerRuntime guard: refuses a .git symlink and a non-clone repo; allows a
       await runtime.runOnce(cwd, "true", []);
     }
     assert.equal(calls, 4);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("DockerRuntime guard: a cwd that does not exist, or is not a directory, is refused before docker runs", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "guard-cwd-"));
+  const runtime = new DockerRuntime({ image: "smith-agent:real" });
+  let calls = 0;
+  (runtime as unknown as { docker: (a: string[]) => Promise<unknown> }).docker = async () => {
+    calls++;
+    return { stdout: "", stderr: "" };
+  };
+  try {
+    const missing = join(dir, "nope");
+    const file = join(dir, "file");
+    await writeFile(file, "");
+    for (const [cwd, why] of [
+      [missing, "it does not exist"],
+      [file, "it is not a directory"],
+    ]) {
+      const expected = (e: Error) => e.message === `refusing to start a container in ${cwd}: ${why}`;
+      await assert.rejects(runtime.launch("g", "true", cwd), expected);
+      await assert.rejects(runtime.runOnce(cwd, "true", []), expected);
+    }
+    assert.equal(calls, 0, "docker never called for a refused cwd");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -407,7 +435,9 @@ test("DockerRuntime.launch: a loopback SMITH_URL is rewritten to reach the host,
     return { stdout: "", stderr: "" };
   };
 
-  await runtime.launch("task-url", "true", "/repo", { SMITH_URL: "http://127.0.0.1:7777", SMITH_REPO: "web" });
+  const dir = await mkdtemp(join(tmpdir(), "launch-url-"));
+  await runtime.launch("task-url", "true", dir, { SMITH_URL: "http://127.0.0.1:7777", SMITH_REPO: "web" });
+  await rm(dir, { recursive: true, force: true });
 
   assert.ok(captured.includes("SMITH_URL=http://host.docker.internal:7777"), `got: ${captured.join(" ")}`);
   assert.ok(captured.includes("SMITH_REPO=web"), "other env passes through untouched");

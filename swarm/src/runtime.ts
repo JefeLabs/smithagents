@@ -25,13 +25,6 @@ import type { DockerConfig, RuntimeType } from "./types.js";
 // RuntimeAdapter Interface
 // ---------------------------------------------------------------------------
 
-/**
- * The contract that all execution runtimes must satisfy.
- *
- * The Dispatcher calls these methods without knowing whether it's talking
- * to bare-metal tmux, a Docker container, or any future runtime (Kubernetes,
- * Firecracker, etc.).
- */
 /** Extra, optional launch parameters. Runtimes that cannot honour a field ignore it. */
 export interface LaunchOptions {
   /**
@@ -42,6 +35,13 @@ export interface LaunchOptions {
   readOnlyMounts?: string[];
 }
 
+/**
+ * The contract that all execution runtimes must satisfy.
+ *
+ * The Dispatcher calls these methods without knowing whether it's talking
+ * to bare-metal tmux, a Docker container, or any future runtime (Kubernetes,
+ * Firecracker, etc.).
+ */
 export interface RuntimeAdapter {
   /**
    * Launch a new isolated session that runs `command` inside `cwd`.
@@ -284,32 +284,23 @@ export class TmuxRuntime implements RuntimeAdapter {
 // ---------------------------------------------------------------------------
 
 /**
- * Runs agent sessions inside Docker containers.
- *
- * Each task gets one container, running the smith-agent image
- * (docker/smith-agent/ — build it with `make agent-image`). The image's
- * /entrypoint.sh owns the contract this class depends on: the command runs in
- * tmux session "main", everything the session prints is mirrored to the
- * container's stdout, and the container exits with the command's exit code.
- * runtime.docker.test.ts checks that contract against a real image.
- *
- * Lifecycle:
- *   1. `docker run -d` → start the container; the command starts at once
- *   2. `docker exec`   → type into session "main" (sendKeys / sendText)
- *   3. `docker wait`   → block until the container exits; prints the exit code
- *   4. `docker logs`   → capture output
- *   5. `docker rm -f`  → teardown
- *
- * The container name IS the session name, so the RuntimeAdapter
- * interface maps cleanly.
+ * Throws unless `cwd` may be bind-mounted into a container. An allowlist:
+ *   - `cwd` must exist and be a directory;
+ *   - with no `<cwd>/.git` at all, it is not a repository and is allowed;
+ *   - a `.git` FILE or symlink (a worktree) is refused: it names the user's real
+ *     repository, and making it usable in a container means mounting that .git
+ *     read-write, so the container could plant hooks/fsmonitor the host later runs;
+ *   - a `.git` directory is allowed only when it carries TASK_CLONE_MARKER,
+ *     i.e. it is a disposable clone createTaskClone made (see task-clone.ts);
+ *   - anything else at `<cwd>/.git` is refused.
+ * It inspects only `<cwd>/.git`, never any repository above or below it.
  */
-/**
- * Refuse a worktree. Its `.git` is a FILE (or symlink) naming the user's real
- * repository; making that usable in a container means mounting the real .git
- * read-write, which lets the container plant hooks/fsmonitor that later run on
- * the host. Containers get a disposable clone instead (see task-clone.ts).
- */
-async function refuseWorktree(cwd: string): Promise<void> {
+async function assertMountableCwd(cwd: string): Promise<void> {
+  const dir = await stat(cwd).catch((err: NodeJS.ErrnoException) => {
+    if (err.code === "ENOENT") throw new Error(`refusing to start a container in ${cwd}: it does not exist`);
+    throw err;
+  });
+  if (!dir.isDirectory()) throw new Error(`refusing to start a container in ${cwd}: it is not a directory`);
   let st: Awaited<ReturnType<typeof lstat>>;
   try {
     st = await lstat(join(cwd, ".git"));
@@ -389,6 +380,26 @@ export function containerReachableUrl(url: string): string {
   return rewritten.endsWith("/") && !url.endsWith("/") ? rewritten.slice(0, -1) : rewritten;
 }
 
+/**
+ * Runs agent sessions inside Docker containers.
+ *
+ * Each task gets one container, running the smith-agent image
+ * (docker/smith-agent/ — build it with `make agent-image`). The image's
+ * /entrypoint.sh owns the contract this class depends on: the command runs in
+ * tmux session "main", everything the session prints is mirrored to the
+ * container's stdout, and the container exits with the command's exit code.
+ * runtime.docker.test.ts checks that contract against a real image.
+ *
+ * Lifecycle:
+ *   1. `docker run -d` → start the container; the command starts at once
+ *   2. `docker exec`   → type into session "main" (sendKeys / sendText)
+ *   3. `docker wait`   → block until the container exits; prints the exit code
+ *   4. `docker logs`   → capture output
+ *   5. `docker rm -f`  → teardown
+ *
+ * The container name IS the session name, so the RuntimeAdapter
+ * interface maps cleanly.
+ */
 export class DockerRuntime implements RuntimeAdapter {
   private readonly dockerConfig: DockerConfig;
 
@@ -403,7 +414,7 @@ export class DockerRuntime implements RuntimeAdapter {
     env?: Record<string, string>,
     opts?: LaunchOptions,
   ): Promise<void> {
-    await refuseWorktree(cwd);
+    await assertMountableCwd(cwd);
     const { image, network, extraMounts, extraEnv, cpuLimit, memoryLimit, shmSize } = this.dockerConfig;
 
     // Build docker run args
@@ -413,7 +424,7 @@ export class DockerRuntime implements RuntimeAdapter {
       "--name",
       sessionName,
 
-      // Mount the worktree into the container at /workspace
+      // Mount the task clone (or a plain, non-git directory) at /workspace
       "-v",
       `${cwd}:/workspace`,
       "-w",
@@ -510,7 +521,7 @@ export class DockerRuntime implements RuntimeAdapter {
         `runOnce: timeoutMs must be a positive number of milliseconds up to 2147483647, got ${timeoutMs}`,
       );
     }
-    await refuseWorktree(cwd);
+    await assertMountableCwd(cwd);
     const { image, cpuLimit, memoryLimit } = this.dockerConfig;
     // bash is PID 1 once tini is bypassed and ignores SIGTERM, so `--init` plus
     // our own `docker rm -f` on expiry is what really stops the container.

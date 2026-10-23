@@ -45,22 +45,19 @@ export function taskClonePath(smithRoot: string, taskId: string): string {
 }
 
 /**
- * Where this task's agent runs.
+ * Where a non-docker (tmux or remote) task's agent runs. Docker tasks never
+ * come here: they run in a disposable clone (prepareTaskClone), because
+ * DockerRuntime refuses to mount a worktree.
  *
  * A workspace-routed task gets a workspace-instance (spec §2.1): worktrees of
  * config/ and the routed repo, on one branch, inside the workspace. The agent
- * starts in the repo's worktree, with config/ alongside it — true under tmux,
- * where the runtime's cwd is the filesystem the agent sees. Under docker,
- * DockerRuntime currently mounts only that cwd (runtime.ts), so config/ and
- * any sibling repos are NOT visible inside the container yet; extending the
- * mount to the instance directory is deferred, separate work. `createInstance`
+ * starts in the repo's worktree, with config/ alongside it. `createInstance`
  * already creates the repo worktree, so `created: true` tells `prepareWorktree`
  * not to `git worktree add` it a second time.
  *
  * Everything else keeps the legacy detached worktree under the state root.
- * That path is unchanged by design — migrating it is a separate plan, and
- * gitdirMount() still exists for it. `created: false` there means
- * `prepareWorktree` still owns creating it.
+ * That path is unchanged by design — migrating it is a separate plan.
+ * `created: false` there means `prepareWorktree` still owns creating it.
  */
 export async function resolveTaskWorktree(
   manifest: TaskManifest,
