@@ -24,12 +24,24 @@ import { smithPaths } from "./paths.js";
 import { QuarantineManager } from "./quarantine.js";
 import type { WorkerPool } from "./remote-runtime.js";
 import type { RuntimeAdapter } from "./runtime.js";
-import { createRuntime } from "./runtime.js";
-import { autoCommitMessage } from "./task-clone.js";
+import { createRuntime, DockerRuntime } from "./runtime.js";
+import {
+  autoCommitMessage,
+  createTaskClone,
+  finalizeCommand,
+  importTaskBranch,
+  sandboxedUploadPack,
+  type TaskClone,
+} from "./task-clone.js";
 import type { DispatcherEvent, OrchestratorConfig, RuntimeType, TaskManifest, TaskResult } from "./types.js";
 import { loadUsersFromDir, resolveCurrentUser } from "./users.js";
 import { createInstance, resolveStartPoint } from "./workspace-instances.js";
 import { loadWorkspaces, workspaceDir } from "./workspaces.js";
+
+/** Where a docker task's disposable clone lives. */
+export function taskClonePath(smithRoot: string, taskId: string): string {
+  return join(smithRoot, "clones", taskId);
+}
 
 /**
  * Where this task's agent runs.
@@ -215,10 +227,17 @@ export class Dispatcher extends EventEmitter {
     const runtime = createRuntime(runtimeType, this.config.docker, this.workerPool);
 
     let worktreePath = "";
+    // Docker tasks run in a disposable clone, never a worktree of the user's repo.
+    let clone: TaskClone | undefined;
 
     try {
-      // Phase 1: Prepare the isolated worktree environment
-      worktreePath = await this.prepareWorktree(manifest, connections);
+      // Phase 1: Prepare the isolated environment
+      if (runtimeType === "docker") {
+        clone = await this.prepareTaskClone(manifest, connections);
+        worktreePath = clone.path;
+      } else {
+        worktreePath = await this.prepareWorktree(manifest, connections);
+      }
 
       // Phase 2: Build the full CLI command for the Alpha agent
       const command = this.buildAgentCommand(manifest, worktreePath);
@@ -230,7 +249,13 @@ export class Dispatcher extends EventEmitter {
         sessionName,
       });
 
-      await runtime.launch(sessionName, command, worktreePath, this.sessionEnv(manifest, connections.env));
+      await runtime.launch(
+        sessionName,
+        command,
+        worktreePath,
+        this.sessionEnv(manifest, connections.env),
+        clone ? { readOnlyMounts: clone.readOnlyMounts } : undefined,
+      );
 
       // Phase 4: THE WAIT STATE — block until the Alpha session exits
       // This is the "Fire-and-Forget" core. We sit here doing nothing
@@ -240,7 +265,25 @@ export class Dispatcher extends EventEmitter {
       // Phase 4.5: preserve the work. Agents sometimes exit without
       // committing; anything uncommitted would die with the worktree. Stage
       // and commit as the agent so the task branch always carries the work.
-      await this.ensureWorkCommitted(manifest, worktreePath, exitCode === 0);
+      // THE RULE: once the container has run, the host never runs git in the
+      // clone — a docker task is finalized inside a throwaway container and its
+      // branch comes home by sandboxed fetch.
+      let imported = false;
+      if (clone) {
+        if (runtime instanceof DockerRuntime) {
+          imported = await this.finalizeAndImport(
+            manifest,
+            clone,
+            runtime,
+            sandboxedUploadPack(this.config.docker.image, clone),
+            exitCode === 0,
+          );
+        } else {
+          console.error(`[dispatch] ${manifest.taskId}: docker task without a DockerRuntime; nothing imported`);
+        }
+      } else {
+        await this.ensureWorkCommitted(manifest, worktreePath, exitCode === 0);
+      }
 
       // Phase 5: Build the result
       const completedAt = new Date().toISOString();
@@ -263,7 +306,14 @@ export class Dispatcher extends EventEmitter {
       // never fails the task.
       result.branch = `smith/${manifest.taskId}`;
       if (exitCode === 0) {
-        result.pullRequestUrl = await this.openPullRequest(manifest, worktreePath);
+        if (!clone) {
+          result.pullRequestUrl = await this.openPullRequest(manifest, worktreePath);
+        } else if (imported) {
+          result.pullRequestUrl = await this.openPullRequest(manifest, clone.repoPath, {
+            head: clone.branch,
+            baseRev: clone.baseSha,
+          });
+        }
       }
 
       // Phase 6: Capture session output to logs before teardown
@@ -365,9 +415,7 @@ export class Dispatcher extends EventEmitter {
     // start-point. Both pass it after `--` so a value like `--upload-pack=…`
     // can't be parsed as a git flag (argument injection).
     const baseBranch = manifest.context.branch;
-    if (!/^[A-Za-z0-9._/-]+$/.test(baseBranch) || baseBranch.startsWith("-")) {
-      throw new Error(`Invalid base branch: ${baseBranch}`);
-    }
+    this.validateBaseBranch(baseBranch);
 
     // Workspace-routed tasks run inside a workspace-instance — resolveTaskWorktree
     // has already created that worktree (`created: true`). Everything else worktrees
@@ -384,6 +432,78 @@ export class Dispatcher extends EventEmitter {
       );
     }
 
+    await this.prepareSessionDir(manifest, connections, worktreePath);
+    return worktreePath;
+  }
+
+  /** Throws unless the (untrusted) base branch is safe to pass to git. */
+  private validateBaseBranch(baseBranch: string): void {
+    if (!/^[A-Za-z0-9._/-]+$/.test(baseBranch) || baseBranch.startsWith("-")) {
+      throw new Error(`Invalid base branch: ${baseBranch}`);
+    }
+  }
+
+  /**
+   * A docker task's disposable clone of the user's repo, made and prepared
+   * while it is still trusted (before any container has touched it).
+   */
+  private async prepareTaskClone(
+    manifest: TaskManifest,
+    connections: { atlassian?: { siteUrl: string; jiraProjectKeys?: string[]; confluenceSpaceKeys?: string[] } },
+  ): Promise<TaskClone> {
+    const base = manifest.context.branch;
+    this.validateBaseBranch(base);
+    const repoPath = manifest.context.repoPath;
+    if (!repoPath) throw new Error("a docker task needs a repository; this one has none");
+    const clone = await createTaskClone(
+      repoPath,
+      taskClonePath(this.config.smithRoot, manifest.taskId),
+      manifest.taskId,
+      base,
+    );
+    await this.prepareSessionDir(manifest, connections, clone.path);
+    return clone;
+  }
+
+  /**
+   * Finalize the clone inside a throwaway container, then fetch its branch
+   * home. Never throws; true only when the import succeeded. On any failure
+   * the clone is kept for inspection.
+   */
+  private async finalizeAndImport(
+    manifest: TaskManifest,
+    clone: TaskClone,
+    runner: Pick<DockerRuntime, "runOnce">,
+    uploadPack: string,
+    completed: boolean,
+  ): Promise<boolean> {
+    try {
+      const agent = manifest.agentName ?? manifest.agent;
+      const finalize = await runner.runOnce(
+        clone.path,
+        finalizeCommand(agent, manifest.taskId, completed),
+        clone.readOnlyMounts,
+      );
+      if (finalize.exitCode !== 0) {
+        console.error(
+          `[dispatch] finalize exited ${finalize.exitCode} for ${manifest.taskId}; importing anyway:`,
+          finalize.output,
+        );
+      }
+      await importTaskBranch(clone, uploadPack);
+      return true;
+    } catch (err) {
+      console.error(`[dispatch] import failed for ${manifest.taskId}; clone kept at ${clone.path}:`, err);
+      return false;
+    }
+  }
+
+  /** Inject smith-delegate and the composed-agent profile into a prepared worktree/clone. */
+  private async prepareSessionDir(
+    manifest: TaskManifest,
+    connections: { atlassian?: { siteUrl: string; jiraProjectKeys?: string[]; confluenceSpaceKeys?: string[] } },
+    worktreePath: string,
+  ): Promise<void> {
     // Inject the smith-delegate tool into the worktree's bin/ directory
     // so the Alpha agent can find it on PATH
     const worktreeBin = join(worktreePath, "bin");
@@ -404,8 +524,6 @@ export class Dispatcher extends EventEmitter {
     const excludeFile = await this.git(["rev-parse", "--git-path", "info/exclude"], worktreePath);
     await mkdir(dirname(resolve(worktreePath, excludeFile)), { recursive: true });
     await appendFile(resolve(worktreePath, excludeFile), `${injected.join("\n")}\n`);
-
-    return worktreePath;
   }
 
   /**
@@ -646,7 +764,11 @@ export class Dispatcher extends EventEmitter {
    * manifest.pullRequest.autoCreate = false. Returns the PR URL, or
    * undefined when there is no remote, no work, or gh fails.
    */
-  private async openPullRequest(manifest: TaskManifest, worktreePath: string): Promise<string | undefined> {
+  private async openPullRequest(
+    manifest: TaskManifest,
+    worktreePath: string,
+    from?: { head: string; baseRev: string },
+  ): Promise<string | undefined> {
     const pr = manifest.pullRequest ?? {};
     if (pr.autoCreate === false) return undefined;
     const base = pr.targetBranch ?? manifest.context.branch;
@@ -655,13 +777,17 @@ export class Dispatcher extends EventEmitter {
     try {
       const remotes = await this.git(["remote"], worktreePath);
       if (!remotes.split("\n").includes("origin")) return undefined;
-      const commits = await this.git(["rev-list", "--count", `${base}..HEAD`], worktreePath);
+      const range = from ? `${from.baseRev}..${from.head}` : `${base}..HEAD`;
+      const commits = await this.git(["rev-list", "--count", range], worktreePath);
       if (commits === "0") return undefined;
-      await this.git(["push", "-u", "origin", branchName], worktreePath);
+      await this.git(
+        from
+          ? ["-c", "core.hooksPath=/dev/null", "push", "--no-verify", "origin", from.head]
+          : ["push", "-u", "origin", branchName],
+        worktreePath,
+      );
 
-      const firstSubject = (await this.git(["log", "--reverse", "--format=%s", `${base}..HEAD`], worktreePath)).split(
-        "\n",
-      )[0];
+      const firstSubject = (await this.git(["log", "--reverse", "--format=%s", range], worktreePath)).split("\n")[0];
       const title = pr.titlePattern
         ? pr.titlePattern
             .replace("{taskId}", manifest.taskId)

@@ -1,17 +1,18 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { CliToolRefresher, emptyCliToolsFile, saveCliToolsFile } from "./cli-tools.js";
 import { loadConfig } from "./config.js";
-import { createLegacyWorktree, Dispatcher, resolveTaskWorktree } from "./dispatcher.js";
+import { createLegacyWorktree, Dispatcher, resolveTaskWorktree, taskClonePath } from "./dispatcher.js";
 import { ToolLaunchError } from "./drivers/errors.js";
 import type { CommandRunner } from "./drivers/types.js";
 import { makeGitRepo, makeOrgRepo } from "./org-repo.fixture.js";
 import { smithPaths } from "./paths.js";
+import { createTaskClone } from "./task-clone.js";
 import type { OrchestratorConfig, TaskManifest } from "./types.js";
 import { saveWorkspace, type Workspace } from "./workspaces.js";
 
@@ -631,5 +632,163 @@ test("sessionEnv: every session can call this swarm back, aimed at the parent ta
     );
   } finally {
     await rm(smithRoot, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Docker tasks run in disposable clones (docker git isolation, Task 4).
+// ---------------------------------------------------------------------------
+
+type CloneDispatcher = {
+  prepareTaskClone(manifest: TaskManifest, connections: object): Promise<import("./task-clone.js").TaskClone>;
+  openPullRequest(
+    manifest: TaskManifest,
+    cwd: string,
+    from?: { head: string; baseRev: string },
+  ): Promise<string | undefined>;
+  finalizeAndImport(
+    manifest: TaskManifest,
+    clone: import("./task-clone.js").TaskClone,
+    runner: { runOnce(cwd: string, command: string, mounts: string[]): Promise<{ exitCode: number; output: string }> },
+    uploadPack: string,
+    completed: boolean,
+  ): Promise<boolean>;
+  run(cmd: string, args: string[], cwd?: string): Promise<string>;
+};
+
+test("prepareTaskClone: a docker task gets a fresh clone with smith-delegate, its plumbing excluded, and no branch in the user's repo", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "disp-clone-")));
+  try {
+    const repo = makeGitRepo(join(root, "solo"));
+    const delegate = join(root, "smith-delegate");
+    writeFileSync(delegate, "#!/bin/sh\necho hi\n", { mode: 0o755 });
+    const config = loadConfig({ smithRoot: root, agentCommands: NO_SUCH_BINARY, delegateBin: delegate });
+    const d = new Dispatcher(config) as unknown as CloneDispatcher;
+    const manifest = makeManifest({
+      taskId: "t-clone",
+      context: { repoPath: repo, branch: "main", files: [], repository: "" },
+    });
+    manifest.runtime = "docker";
+
+    const clone = await d.prepareTaskClone(manifest, {});
+    assert.equal(clone.path, taskClonePath(root, "t-clone"));
+    assert.ok(existsSync(join(clone.path, "bin", "smith-delegate")));
+    assert.match(readFileSync(join(clone.path, ".git", "info", "exclude"), "utf8"), /bin\/smith-delegate/);
+    const refs = execFileSync("git", ["branch", "--list", "smith/t-clone"], { cwd: repo, encoding: "utf8" });
+    assert.equal(refs.trim(), "", "the user's repo gains no branch until import");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("prepareTaskClone: a docker task with no repository is refused", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "disp-clone-norepo-")));
+  try {
+    const d = new Dispatcher(
+      loadConfig({ smithRoot: root, agentCommands: NO_SUCH_BINARY }),
+    ) as unknown as CloneDispatcher;
+    const manifest = makeManifest({ taskId: "t-nr", context: { branch: "main", files: [], repository: "" } });
+    await assert.rejects(d.prepareTaskClone(manifest, {}), /a docker task needs a repository/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("prepareTaskClone: an invalid base branch is refused before any git runs", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "disp-clone-bad-")));
+  try {
+    const repo = makeGitRepo(join(root, "solo"));
+    const d = new Dispatcher(
+      loadConfig({ smithRoot: root, agentCommands: NO_SUCH_BINARY }),
+    ) as unknown as CloneDispatcher;
+    const manifest = makeManifest({
+      taskId: "t-bad",
+      context: { repoPath: repo, branch: "--upload-pack=x", files: [], repository: "" },
+    });
+    await assert.rejects(d.prepareTaskClone(manifest, {}), /Invalid base branch/);
+    assert.ok(!existsSync(taskClonePath(root, "t-bad")));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("openPullRequest from the user's repo: counts and titles from the base commit, pushes with hooks off, never reads HEAD", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "disp-pr-")));
+  try {
+    const repo = join(root, "repo");
+    const d = new Dispatcher(
+      loadConfig({ smithRoot: root, agentCommands: NO_SUCH_BINARY }),
+    ) as unknown as CloneDispatcher;
+    const calls: { cmd: string; args: string[]; cwd?: string }[] = [];
+    d.run = async (cmd, args, cwd) => {
+      calls.push({ cmd, args, cwd });
+      if (cmd === "gh") return "https://github.com/acme/web/pull/7";
+      if (args[0] === "remote") return "origin";
+      if (args[0] === "rev-list") return "1";
+      if (args[0] === "log") return "feat: agent work";
+      return "";
+    };
+    const manifest = makeManifest({
+      taskId: "t-1",
+      context: { repoPath: repo, branch: "main", files: [], repository: "" },
+    });
+    const url = await d.openPullRequest(manifest, repo, { head: "smith/t-1", baseRev: "abc123" });
+    assert.equal(url, "https://github.com/acme/web/pull/7");
+    assert.ok(calls.every((c) => c.cwd === repo));
+    assert.deepEqual(calls.find((c) => c.args[0] === "rev-list")?.args, ["rev-list", "--count", "abc123..smith/t-1"]);
+    assert.ok(calls.find((c) => c.args[0] === "log")?.args.includes("abc123..smith/t-1"));
+    assert.deepEqual(calls.find((c) => c.args.includes("push"))?.args, [
+      "-c",
+      "core.hooksPath=/dev/null",
+      "push",
+      "--no-verify",
+      "origin",
+      "smith/t-1",
+    ]);
+    for (const c of calls) {
+      assert.ok(!c.args.some((a) => a === "HEAD" || a.endsWith("..HEAD")), `no HEAD in ${c.args.join(" ")}`);
+    }
+    const gh = calls.find((c) => c.cmd === "gh");
+    assert.ok(gh?.args.join(" ").includes("--head smith/t-1"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("finalizeAndImport never throws: with docker gone, the clone is kept and the import reports false", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "disp-fin-")));
+  const realError = console.error;
+  try {
+    const repo = makeGitRepo(join(root, "solo"));
+    const d = new Dispatcher(
+      loadConfig({ smithRoot: root, agentCommands: NO_SUCH_BINARY }),
+    ) as unknown as CloneDispatcher;
+    const clone = await createTaskClone(repo, taskClonePath(root, "t-fin"), "t-fin", "main");
+    const manifest = makeManifest({
+      taskId: "t-fin",
+      context: { repoPath: repo, branch: "main", files: [], repository: "" },
+    });
+    const logged: string[] = [];
+    console.error = (...a: unknown[]) => {
+      logged.push(a.map(String).join(" "));
+    };
+    const ok = await d.finalizeAndImport(
+      manifest,
+      clone,
+      {
+        runOnce: async () => {
+          throw new Error("Cannot connect to the Docker daemon");
+        },
+      },
+      "false",
+      true,
+    );
+    console.error = realError;
+    assert.equal(ok, false);
+    assert.ok(logged.some((l) => l.includes(clone.path)));
+    assert.ok(existsSync(clone.path));
+  } finally {
+    console.error = realError;
+    rmSync(root, { recursive: true, force: true });
   }
 });
