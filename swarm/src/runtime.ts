@@ -13,10 +13,10 @@
 
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, readFile, stat, unlink } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath, stat, unlink } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import type { WorkerPool } from "./remote-runtime.js";
 import { secretPaths } from "./secret-file.js";
 import { TASK_CLONE_MARKER } from "./task-clone.js";
@@ -313,11 +313,45 @@ function assertNotHostNetwork(network: string | undefined): void {
   }
 }
 
-/** Refuse a `docker run` whose `-v` sources would put a ~/.smith secret in a container. */
-function assertNoSecretMounts(args: string[]): void {
+/**
+ * `path` with every symlink resolved, as a bind mount would see it. A missing
+ * tail is kept as written under its deepest existing ancestor's real path:
+ * docker creates a missing mount source, so that is where it would land. A
+ * dangling symlink throws, since its target cannot be known here.
+ */
+async function canonicalPath(path: string): Promise<string> {
+  const abs = resolve(path);
+  try {
+    return await realpath(abs);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+  if ((await lstat(abs).catch(() => undefined))?.isSymbolicLink()) throw new Error(`${abs} is a dangling symlink`);
+  const parent = dirname(abs);
+  return parent === abs ? abs : join(await canonicalPath(parent), basename(abs));
+}
+
+/**
+ * Refuse a `docker run` whose `-v` sources would put a ~/.smith secret in a
+ * container, comparing both as written and with symlinks resolved on both
+ * sides (a link to ~/.smith, or a ~/.smith that is itself a link). A source
+ * that cannot be resolved is refused.
+ */
+async function assertNoSecretMounts(args: string[]): Promise<void> {
   const sources = args.flatMap((a, i) => (args[i - 1] === "-v" ? [a.split(":")[0] ?? ""] : []));
-  const [hit] = exposedSecrets(sources, secretPaths());
-  if (hit) throw new Error(`refusing to start container: mount ${hit.source} would expose ${hit.secret}`);
+  const resolveOrRefuse = (what: string, path: string) =>
+    canonicalPath(path).catch((err: unknown) => {
+      throw new Error(
+        `refusing to start container: cannot resolve ${what} ${path}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+  const secrets = secretPaths();
+  const realSecrets = await Promise.all(secrets.map((s) => resolveOrRefuse("secret", s)));
+  for (const source of sources) {
+    const real = await resolveOrRefuse("mount", source);
+    const hit = exposedSecrets([source], secrets)[0] ?? exposedSecrets([real], realSecrets)[0];
+    if (hit) throw new Error(`refusing to start container: mount ${source} would expose ${hit.secret}`);
+  }
 }
 
 /**
@@ -539,7 +573,7 @@ export class DockerRuntime implements RuntimeAdapter {
     // single pre-joined arg would be exec'd as a literal filename (exit 127).
     args.push(image, "/bin/bash", "-c", command);
 
-    assertNoSecretMounts(args);
+    await assertNoSecretMounts(args);
     await this.docker(args);
   }
 
@@ -587,7 +621,7 @@ export class DockerRuntime implements RuntimeAdapter {
     if (cpuLimit) args.push("--cpus", cpuLimit);
     if (memoryLimit) args.push("--memory", memoryLimit);
     args.push(image, "-c", command);
-    assertNoSecretMounts(args);
+    await assertNoSecretMounts(args);
     let timer: NodeJS.Timeout | undefined;
     // Set when the timer fires: the FINAL timeout error, composed after the
     // removal settles. Once set it wins over whatever `docker run` does next

@@ -498,6 +498,119 @@ test("DockerRuntime.runOnce: refuses a read-only mount that would expose ~/.smit
   }
 });
 
+/**
+ * Runs `fn` with HOME pointed at `<scratch>/home`, so the mount guard's secret
+ * paths (secretPaths() reads homedir() on every call) live in a throwaway dir,
+ * never the real ~/.smith. `work` is an empty, mountable cwd; docker is faked
+ * and every call is recorded.
+ */
+async function withFakeHome(
+  fn: (ctx: {
+    scratch: string;
+    home: string;
+    work: string;
+    calls: string[][];
+    runtime: (extraMounts?: string[]) => DockerRuntime;
+  }) => Promise<void>,
+): Promise<void> {
+  const scratch = await mkdtemp(join(tmpdir(), "mount-realpath-"));
+  const home = join(scratch, "home");
+  const work = join(scratch, "work");
+  await mkdir(home);
+  await mkdir(work);
+  const savedHome = process.env.HOME;
+  process.env.HOME = home;
+  process.env.SMITH_DOCKER_CLAUDE_DIR = join(scratch, "no-credential-here");
+  const calls: string[][] = [];
+  const runtime = (extraMounts?: string[]) => {
+    const r = new DockerRuntime({ image: "smith-agent:real", extraMounts });
+    (r as unknown as { docker: (a: string[]) => Promise<unknown> }).docker = async (a) => {
+      calls.push(a);
+      return { stdout: "0\n", stderr: "" };
+    };
+    return r;
+  };
+  try {
+    assert.equal(homedir(), home, "HOME override must reach os.homedir(), or this test guards the real ~/.smith");
+    await fn({ scratch, home, work, calls, runtime });
+  } finally {
+    process.env.HOME = savedHome;
+    delete process.env.SMITH_DOCKER_CLAUDE_DIR;
+    await rm(scratch, { recursive: true, force: true });
+  }
+}
+
+test("DockerRuntime.launch: a symlink to ~/.smith or to an ancestor of it is refused; a symlink elsewhere still launches", async () => {
+  await withFakeHome(async ({ scratch, home, work, calls, runtime }) => {
+    await mkdir(join(home, ".smith"));
+    await mkdir(join(scratch, "elsewhere"));
+    await symlink(join(home, ".smith"), join(scratch, "to-smith"));
+    await symlink(home, join(scratch, "to-home"));
+    await symlink(join(scratch, "elsewhere"), join(scratch, "to-elsewhere"));
+
+    for (const link of ["to-smith", "to-home"]) {
+      await assert.rejects(
+        runtime([`${join(scratch, link)}:/x`]).launch("task-l", "true", work),
+        /refusing to start container: mount .* would expose/,
+        link,
+      );
+    }
+    assert.equal(calls.length, 0);
+
+    // Positive control: resolving links must not refuse every symlinked mount.
+    await runtime([`${join(scratch, "to-elsewhere")}:/x`]).launch("task-ok", "true", work);
+    assert.equal(calls.length, 1);
+  });
+});
+
+test("DockerRuntime.launch: when ~/.smith is itself a symlink, mounting its target is refused", async () => {
+  await withFakeHome(async ({ scratch, home, work, calls, runtime }) => {
+    await mkdir(join(scratch, "real-smith"));
+    await symlink(join(scratch, "real-smith"), join(home, ".smith"));
+    await assert.rejects(
+      runtime([`${join(scratch, "real-smith")}:/x`]).launch("task-t", "true", work),
+      /refusing to start container: mount .* would expose/,
+    );
+    assert.equal(calls.length, 0);
+  });
+});
+
+test("DockerRuntime.launch: a missing mount source is resolved through its existing symlinked parent", async () => {
+  await withFakeHome(async ({ scratch, home, work, calls, runtime }) => {
+    // Neither ~/.smith nor the source exists yet: docker would create ~/.smith
+    // through the link, and the swarm would later write its tokens into it.
+    await symlink(home, join(scratch, "to-home"));
+    await assert.rejects(
+      runtime([`${join(scratch, "to-home", ".smith")}:/x`]).launch("task-m", "true", work),
+      /refusing to start container: mount .* would expose/,
+    );
+    assert.equal(calls.length, 0);
+  });
+});
+
+test("DockerRuntime.launch: a dangling symlink mount source is refused", async () => {
+  await withFakeHome(async ({ scratch, work, calls, runtime }) => {
+    await symlink(join(scratch, "nowhere"), join(scratch, "dangling"));
+    await assert.rejects(
+      runtime([`${join(scratch, "dangling")}:/x`]).launch("task-d", "true", work),
+      /refusing to start container: cannot resolve mount .*dangling/,
+    );
+    assert.equal(calls.length, 0);
+  });
+});
+
+test("DockerRuntime.runOnce: a read-only mount that is a symlink to ~/.smith is refused before docker runs", async () => {
+  await withFakeHome(async ({ scratch, home, work, calls, runtime }) => {
+    await mkdir(join(home, ".smith"));
+    await symlink(join(home, ".smith"), join(scratch, "to-smith"));
+    await assert.rejects(
+      runtime().runOnce(work, "true", [join(scratch, "to-smith")]),
+      /refusing to start container: mount .* would expose/,
+    );
+    assert.equal(calls.length, 0);
+  });
+});
+
 test('DockerRuntime: network "host" is refused by launch and runOnce before docker runs; any other network passes', async () => {
   const dir = await mkdtemp(join(tmpdir(), "host-net-"));
   process.env.SMITH_DOCKER_CLAUDE_DIR = join(dir, "no-credential-here");
