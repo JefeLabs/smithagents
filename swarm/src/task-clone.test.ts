@@ -13,6 +13,7 @@ import {
   objectStoreMounts,
   sandboxedUploadPack,
   shellQuote,
+  stripUrlCredentials,
   type TaskClone,
 } from "./task-clone.js";
 
