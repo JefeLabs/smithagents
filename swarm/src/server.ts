@@ -94,6 +94,7 @@ import {
 } from "./document-store.js";
 import { driverIds, getDriver } from "./drivers/index.js";
 import { isValidModelId } from "./drivers/model-flag.js";
+import type { CommandRunner } from "./drivers/types.js";
 import { type GitAuthor, SMITH_IDENTITY, userAuthor } from "./git-author.js";
 import {
   assertGroup,
@@ -283,6 +284,8 @@ export interface ServerConfig {
   maxConcurrent: number;
   /** Orchestrator config overrides */
   orchestrator?: Partial<OrchestratorConfig>;
+  /** Runs the CLI-tool probes (`command -v`, `--version`, auth). Default: real subprocesses. */
+  cliToolRunner?: CommandRunner;
 }
 
 const DEFAULT_SERVER_CONFIG: ServerConfig = {
@@ -327,6 +330,9 @@ export class OrchestratorServer {
    * field initializers run before. */
   readonly deviceRegistry: DeviceRegistry;
   private reapTimer: ReturnType<typeof setInterval> | null = null;
+  /** The startup CLI-tool sweep, and its abort. stop() settles it, because it writes into the state root. */
+  private startupSweep: Promise<void> | null = null;
+  private startupSweepAbort = new AbortController();
   /** Midnight sweep of the step axis — this user's Today cards revert to their plate. */
   private sweepTimer: ReturnType<typeof setTimeout> | null = null;
   readonly squadPool = new SquadPool();
@@ -726,14 +732,21 @@ export class OrchestratorServer {
     // CLI tool registry: probe machine reality in the background — the cached
     // file serves until fresh results land (spec: startup + manual +
     // on-failure; never a boot gate, never periodic).
-    void sweepCliTools(this.paths.cliTools, {
+    // Kept, not fire-and-forget: stop() aborts and awaits it.
+    const abort = new AbortController();
+    this.startupSweepAbort = abort;
+    this.startupSweep = sweepCliTools(this.paths.cliTools, {
       agentCommands: this.orchConfig.agentCommands,
       clis: ENGINES.map((e) => e.cli),
+      run: this.config.cliToolRunner,
+      signal: abort.signal,
     }).then(
-      (f) =>
+      (f) => {
+        if (abort.signal.aborted) return; // cut short by stop(): partial, and not saved
         this.app.log.info(
           `CLI tools: ${ENGINES.map((e) => `${e.cli}=${isActive(f.tools[e.cli]) ? "active" : "inactive"}`).join(" ")}`,
-        ),
+        );
+      },
       (err) => this.app.log.warn(`CLI tool sweep failed: ${(err as Error).message}`),
     );
 
@@ -748,6 +761,11 @@ export class OrchestratorServer {
     if (this.reapTimer) clearInterval(this.reapTimer);
     if (this.sweepTimer) clearTimeout(this.sweepTimer);
     if (this.queueWorkerTimer) clearInterval(this.queueWorkerTimer);
+    // Settle the startup CLI sweep before returning. Aborting kills its probes and
+    // skips its write, so it settles at once and can't land in (or recreate) a
+    // state root the caller tears down next.
+    this.startupSweepAbort.abort();
+    await this.startupSweep;
     if (this.udpSocket) this.udpSocket.close();
     for (const ws of this.wsClients) ws.close();
     await this.app.close();

@@ -110,18 +110,27 @@ export function buildCliToolListings(engines: EngineOption[], file: CliToolsFile
 const AUTH_TIMEOUT_MS = 10_000;
 const VERSION_TIMEOUT_MS = 5_000;
 
-/** Production subprocess runner: resolves with exit code + output, never rejects. */
-export const defaultRunner: CommandRunner = (argv, timeoutMs) =>
-  new Promise((done) => {
-    execFile(argv[0], argv.slice(1), { timeout: timeoutMs }, (err, stdout, stderr) => {
-      const code = err
-        ? typeof (err as { code?: unknown }).code === "number"
-          ? (err as { code: number }).code
-          : null // killed by timeout/signal
-        : 0;
-      done({ code, stdout: String(stdout), stderr: String(stderr) });
+/**
+ * Real subprocess probes: resolve with exit code + output, never reject. When
+ * `signal` aborts, the child is killed at once and the probe resolves with a
+ * null code, the same shape as a timeout.
+ */
+export function subprocessRunner(signal?: AbortSignal): CommandRunner {
+  return (argv, timeoutMs) =>
+    new Promise((done) => {
+      execFile(argv[0], argv.slice(1), { timeout: timeoutMs, signal }, (err, stdout, stderr) => {
+        const code = err
+          ? typeof (err as { code?: unknown }).code === "number"
+            ? (err as { code: number }).code
+            : null // killed by timeout, signal or abort
+          : 0;
+        done({ code, stdout: String(stdout), stderr: String(stderr) });
+      });
     });
-  });
+}
+
+/** Production subprocess runner with no abort. */
+export const defaultRunner: CommandRunner = subprocessRunner();
 
 export interface SweepDeps {
   /** OrchestratorConfig.agentCommands — the binary is the first word. */
@@ -132,6 +141,33 @@ export interface SweepDeps {
   resolveDriver?: (id: string) => Pick<ToolDriver, "verifyAuth"> | null;
   authTimeoutMs?: number;
   now?: () => string;
+  /**
+   * Cuts the sweep short: in-flight probes give way (real subprocesses are
+   * killed) and nothing is written. Aborted probes read as "not found", so
+   * saving them would replace good cached entries with false negatives.
+   */
+  signal?: AbortSignal;
+}
+
+const ABORTED_PROBE = { code: null, stdout: "", stderr: "aborted" };
+
+/** `probe`, or an aborted result the moment `signal` fires, whichever comes first. */
+function untilAborted(probe: ReturnType<CommandRunner>, signal: AbortSignal): ReturnType<CommandRunner> {
+  if (signal.aborted) return Promise.resolve({ ...ABORTED_PROBE });
+  return new Promise((resolve, reject) => {
+    const onAbort = () => resolve({ ...ABORTED_PROBE });
+    signal.addEventListener("abort", onAbort, { once: true });
+    probe.then(
+      (result) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(result);
+      },
+      (err) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(err);
+      },
+    );
+  });
 }
 
 /**
@@ -141,7 +177,10 @@ export interface SweepDeps {
  * this sweep are preserved verbatim; `enabled` always survives re-probes.
  */
 export async function sweepCliTools(path: string, deps: SweepDeps, only?: string): Promise<CliToolsFile> {
-  const run = deps.run ?? defaultRunner;
+  const { signal } = deps;
+  const probe = deps.run ?? subprocessRunner(signal);
+  // Injected runners give way on abort too, so the sweep can always settle.
+  const run: CommandRunner = signal ? (argv, ms) => untilAborted(probe(argv, ms), signal) : probe;
   const resolveDriver = deps.resolveDriver ?? getDriver;
   const authTimeoutMs = deps.authTimeoutMs ?? AUTH_TIMEOUT_MS;
   const now = deps.now ?? (() => new Date().toISOString());
@@ -192,6 +231,9 @@ export async function sweepCliTools(path: string, deps: SweepDeps, only?: string
     }),
   );
 
+  // A cut-short sweep holds the aborted probes' false negatives, and its
+  // directory may be mid-teardown: return the result, never persist it.
+  if (signal?.aborted) return file;
   await saveCliToolsFile(path, file);
   return file;
 }

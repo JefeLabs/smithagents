@@ -5,6 +5,7 @@
 
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +13,7 @@ import { test } from "node:test";
 import { promisify } from "node:util";
 import type { WorkspaceChannels } from "./channels.js";
 import { createDocument } from "./document-store.js";
+import type { CommandRunner } from "./drivers/types.js";
 import { SMITH_IDENTITY } from "./git-author.js";
 import { makeOrgRepo } from "./org-repo.fixture.js";
 import { smithPaths } from "./paths.js";
@@ -1786,4 +1788,40 @@ test("POST /reset records its caller BEFORE destroying anything, and the record 
     await server.stop();
     await rm(root, { recursive: true, force: true });
   }
+});
+
+// ── Shutdown: the startup CLI-tool sweep must not outlive stop() ──
+// start() probes every agent CLI in the background and then writes
+// <root>/cli-tools.json, creating the directory first. When stop() let that run
+// on, a slow probe finished after teardown and wrote into a state root the test
+// was deleting (ENOTEMPTY), or recreated it after deletion (orphaned temp roots
+// holding nothing but cli-tools.json).
+test("stop() settles the startup CLI sweep: nothing writes into, or recreates, the state root afterwards", async () => {
+  const root = await freshStateRoot("smith-sweep-stop-");
+  // Stands in for a slow `claude --version`: it returns only when the test says so.
+  let finishProbes!: () => void;
+  const probesFinish = new Promise<void>((resolve) => {
+    finishProbes = resolve;
+  });
+  const cliToolRunner: CommandRunner = async () => {
+    await probesFinish;
+    return { code: 0, stdout: "/usr/local/bin/tool\n", stderr: "" };
+  };
+  const server = new OrchestratorServer({
+    port: 18992,
+    host: "127.0.0.1",
+    orchestrator: { smithRoot: root },
+    cliToolRunner,
+  });
+  await server.start();
+  await server.stop();
+  await rm(root, { recursive: true, force: true });
+
+  finishProbes(); // the probes come back only after shutdown, as a slow CLI does under load
+  // A sweep that outlived stop() would mkdir -p the root and write within milliseconds.
+  const deadline = Date.now() + 1_000;
+  while (Date.now() < deadline && !existsSync(root)) await new Promise((r) => setTimeout(r, 20));
+  const recreated = existsSync(root);
+  await rm(root, { recursive: true, force: true });
+  assert.equal(recreated, false, "a CLI sweep outlived stop() and recreated the deleted state root");
 });

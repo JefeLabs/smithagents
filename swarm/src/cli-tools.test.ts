@@ -13,6 +13,7 @@ import {
   loadCliToolsFile,
   type SweepDeps,
   saveCliToolsFile,
+  subprocessRunner,
   sweepCliTools,
 } from "./cli-tools.js";
 import type { CommandRunner } from "./drivers/types.js";
@@ -281,4 +282,33 @@ test("inactiveDetail still returns prose, unchanged, for every class", () => {
   // The class is ADDITIVE. Existing consumers of the human string must not change.
   assert.match(inactiveDetail(status({ detected: false, authOk: "unknown", detail: "" })), /PATH/);
   assert.equal(inactiveDetail(status({ enabled: false })), "disabled in Settings → CLI Tools");
+});
+
+test("subprocessRunner kills its child when the signal aborts, instead of waiting it out", async () => {
+  const ctl = new AbortController();
+  const started = Date.now();
+  const pending = subprocessRunner(ctl.signal)(["/bin/sh", "-c", "sleep 5"], 10_000);
+  setTimeout(() => ctl.abort(), 50);
+  const result = await pending;
+  assert.equal(result.code, null, "an aborted probe is not a result");
+  assert.ok(Date.now() - started < 2_000, "the 5s child was killed, not awaited");
+});
+
+test("an aborted sweep settles without writing, even while a probe never returns", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "smith-sweep-abort-"));
+  const path = join(dir, "state", "cli-tools.json");
+  const ctl = new AbortController();
+  const neverReturns: CommandRunner = () => new Promise(() => {});
+  const sweep = sweepCliTools(path, {
+    agentCommands: {},
+    clis: ["claude", "gemini"],
+    run: neverReturns,
+    signal: ctl.signal,
+  });
+  ctl.abort();
+  await sweep;
+  // Writing here would replace good cached entries with the cut-short probes'
+  // false negatives, and recreate a state root that was being torn down.
+  await assert.rejects(stat(path), { code: "ENOENT" });
+  await assert.rejects(stat(join(dir, "state")), { code: "ENOENT" });
 });
