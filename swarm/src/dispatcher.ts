@@ -552,8 +552,8 @@ export class Dispatcher extends EventEmitter {
    * resolves the DEFAULT workspace's repo — a sub-task of a repo-X task would
    * run in repo Y. SMITH_URL is the loopback form; DockerRuntime rewrites it
    * for containers. SMITH_DELEGATE_TOKEN (when the swarm has a delegation key)
-   * is the session's only credential for calling back; SMITH_API_TOKEN is
-   * always blanked.
+   * is the session's only credential for calling back; SMITH_API_TOKEN and
+   * SMITH_BROKER_TOKEN are always blanked.
    */
   private sessionEnv(manifest: TaskManifest, connectionsEnv: Record<string, string>): Record<string, string> {
     const env: Record<string, string> = {};
@@ -576,8 +576,8 @@ export class Dispatcher extends EventEmitter {
       });
     }
     // Last, so neither the tmux server's inherited env nor a connector can
-    // put the admin token into a session.
-    return { ...env, ...connectionsEnv, SMITH_API_TOKEN: "" };
+    // put the swarm admin token or the broker bridge token into a session.
+    return { ...env, ...connectionsEnv, SMITH_API_TOKEN: "", SMITH_BROKER_TOKEN: "" };
   }
 
   /**

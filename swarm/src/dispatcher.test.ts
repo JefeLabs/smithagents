@@ -624,6 +624,7 @@ test("sessionEnv: every session can call this swarm back, aimed at the parent ta
       SMITH_BRANCH: "dev",
       GH_TOKEN: "gh-tok",
       SMITH_API_TOKEN: "",
+      SMITH_BROKER_TOKEN: "",
     });
     // An unrouted task sends only what it knows; the swarm picks its default.
     assert.deepEqual(
@@ -632,6 +633,7 @@ test("sessionEnv: every session can call this swarm back, aimed at the parent ta
         SMITH_URL: "http://127.0.0.1:7777",
         SMITH_BRANCH: "main",
         SMITH_API_TOKEN: "",
+        SMITH_BROKER_TOKEN: "",
       },
     );
   } finally {
@@ -655,9 +657,14 @@ test("sessionEnv: with a delegation key the session gets a token scoped to its o
       createdAt: new Date().toISOString(),
       priority: "normal",
     };
-    // A connector (or the inherited env) must not be able to smuggle the admin token in.
-    const env = dispatcher.sessionEnv(manifest, { SMITH_API_TOKEN: "admin-secret" });
+    // A connector (or the inherited env) must not be able to smuggle the admin
+    // token, or the broker bridge token, in.
+    const env = dispatcher.sessionEnv(manifest, {
+      SMITH_API_TOKEN: "admin-secret",
+      SMITH_BROKER_TOKEN: "bridge-secret",
+    });
     assert.equal(env.SMITH_API_TOKEN, "");
+    assert.equal(env.SMITH_BROKER_TOKEN, "");
     assert.deepEqual(verifyDelegationToken(key, env.SMITH_DELEGATE_TOKEN), {
       task: "env",
       workspace: "acme",

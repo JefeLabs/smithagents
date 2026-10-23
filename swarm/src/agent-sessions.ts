@@ -160,11 +160,12 @@ export class AgentSessionManager {
     await driver.prepareWorkspace?.(cwd);
     // The tmux process an agent lives in is fully determined by its
     // definition: its CLI picks the binary, its model picks the flag.
-    // SMITH_API_TOKEN is blanked: a tmux server started with the admin token
-    // exported would otherwise hand it to the agent. Warm sessions get no
-    // SMITH_URL and no delegation token — they do not delegate.
+    // SMITH_API_TOKEN and SMITH_BROKER_TOKEN are blanked: a tmux server
+    // started with either exported would otherwise hand it to the agent. Warm
+    // sessions get no SMITH_URL and no delegation token — they do not delegate.
     await this.runtime.launch(state.tmuxSession, driver.interactiveCommand(baseCommand, agent.engine.model, id), cwd, {
       SMITH_API_TOKEN: "",
+      SMITH_BROKER_TOKEN: "",
     });
 
     // Readiness: the TUI is up and stays up. Some tools (claude) only write

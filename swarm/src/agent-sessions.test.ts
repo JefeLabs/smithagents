@@ -483,7 +483,7 @@ test("create() refuses a docker runtime up front — no worktree, no branch, no 
   assert.equal(dockerCalls, 0);
 });
 
-test("create: a warm session launches with SMITH_API_TOKEN blanked, so it never inherits the admin token", async () => {
+test("create: a warm session launches with SMITH_API_TOKEN and SMITH_BROKER_TOKEN blanked, so it inherits neither", async () => {
   const launches: Array<Record<string, string> | undefined> = [];
   class SpyRuntime extends TmuxRuntime {
     override async launch(...args: Parameters<TmuxRuntime["launch"]>) {
@@ -503,6 +503,7 @@ test("create: a warm session launches with SMITH_API_TOKEN blanked, so it never 
   try {
     assert.equal(launches.length, 1);
     assert.equal(launches[0]?.SMITH_API_TOKEN, "");
+    assert.equal(launches[0]?.SMITH_BROKER_TOKEN, "");
   } finally {
     await spied.destroy(info.id);
   }
