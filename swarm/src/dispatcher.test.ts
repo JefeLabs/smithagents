@@ -652,7 +652,7 @@ type CloneDispatcher = {
     runner: { runOnce(cwd: string, command: string, mounts: string[]): Promise<{ exitCode: number; output: string }> },
     uploadPack: string,
     completed: boolean,
-  ): Promise<boolean>;
+  ): Promise<{ imported: true } | { imported: false; error: string }>;
   run(cmd: string, args: string[], cwd?: string): Promise<string>;
 };
 
@@ -773,7 +773,7 @@ test("finalizeAndImport never throws: with docker gone, the clone is kept and th
     console.error = (...a: unknown[]) => {
       logged.push(a.map(String).join(" "));
     };
-    const ok = await d.finalizeAndImport(
+    const outcome = await d.finalizeAndImport(
       manifest,
       clone,
       {
@@ -785,9 +785,17 @@ test("finalizeAndImport never throws: with docker gone, the clone is kept and th
       true,
     );
     console.error = realError;
-    assert.equal(ok, false);
+    assert.equal(outcome.imported, false);
+    assert.match(outcome.imported ? "" : outcome.error, /^git fetch failed: \S/, "the import's own error comes back");
     assert.ok(existsSync(sentinel), "the import was attempted despite the dead finalize");
-    assert.ok(logged.some((l) => l.includes(clone.path)));
+    assert.ok(
+      logged.some((l) =>
+        l.includes(
+          `import failed for t-fin; clone kept at ${clone.path} — do not run git in it on the host (a container wrote it):`,
+        ),
+      ),
+      logged.join("\n"),
+    );
     assert.ok(existsSync(clone.path));
   } finally {
     console.error = realError;
@@ -821,7 +829,7 @@ test("finalizeAndImport: a non-zero finalize exit is logged and the agent's comm
     console.error = (...a: unknown[]) => {
       logged.push(a.map(String).join(" "));
     };
-    const ok = await d.finalizeAndImport(
+    const outcome = await d.finalizeAndImport(
       manifest,
       clone,
       { runOnce: async () => ({ exitCode: 1, output: "x" }) },
@@ -829,7 +837,7 @@ test("finalizeAndImport: a non-zero finalize exit is logged and the agent's comm
       true,
     );
     console.error = realError;
-    assert.equal(ok, true);
+    assert.deepEqual(outcome, { imported: true });
     assert.ok(logged.some((l) => l.includes("finalize exited 1")));
     assert.equal(execFileSync("git", ["rev-parse", "smith/t-nz"], { cwd: repo, encoding: "utf8" }).trim(), tip);
   } finally {
@@ -846,7 +854,7 @@ test("finalizeAndImport: a finalize that throws (marker deleted, timeout) still 
     console.error = (...a: unknown[]) => {
       logged.push(a.map(String).join(" "));
     };
-    const ok = await d.finalizeAndImport(
+    const outcome = await d.finalizeAndImport(
       manifest,
       clone,
       {
@@ -858,7 +866,7 @@ test("finalizeAndImport: a finalize that throws (marker deleted, timeout) still 
       true,
     );
     console.error = realError;
-    assert.equal(ok, true);
+    assert.deepEqual(outcome, { imported: true });
     assert.ok(logged.some((l) => l.includes("finalize failed for t-th; importing anyway")));
     assert.equal(execFileSync("git", ["rev-parse", "smith/t-th"], { cwd: repo, encoding: "utf8" }).trim(), tip);
   } finally {

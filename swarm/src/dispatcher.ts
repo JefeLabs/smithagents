@@ -269,12 +269,13 @@ export class Dispatcher extends EventEmitter {
       // THE RULE: once the container has run, the host never runs git in the
       // clone — a docker task is finalized inside a throwaway container and its
       // branch comes home by sandboxed fetch.
-      let imported = false;
+      // Set when a docker task's branch never reached the user's repo.
+      let importError: string | undefined;
       if (clone) {
         if (runtime instanceof DockerRuntime) {
           const { image, cpuLimit, memoryLimit, importTimeoutMs } = this.config.docker;
           const uploadName = `smith-upload-${randomUUID()}`;
-          imported = await this.finalizeAndImport(
+          const outcome = await this.finalizeAndImport(
             manifest,
             clone,
             runtime,
@@ -282,8 +283,10 @@ export class Dispatcher extends EventEmitter {
             exitCode === 0,
             { timeoutMs: importTimeoutMs ?? 300_000, onTimeout: () => runtime.removeContainer(uploadName) },
           );
+          if (!outcome.imported) importError = outcome.error;
         } else {
-          console.error(`[dispatch] ${manifest.taskId}: docker task without a DockerRuntime; nothing imported`);
+          importError = "docker task without a DockerRuntime; nothing imported";
+          console.error(`[dispatch] ${manifest.taskId}: ${importError}`);
         }
       } else {
         await this.ensureWorkCommitted(manifest, worktreePath, exitCode === 0);
@@ -307,12 +310,14 @@ export class Dispatcher extends EventEmitter {
 
       // Phase 5.5: successful work goes up for human review — push the task
       // branch and open a (draft) pull request. Best effort: a PR failure
-      // never fails the task.
-      result.branch = `smith/${manifest.taskId}`;
+      // never fails the task. A docker task whose import failed has no branch
+      // in the user's repo, so it names none and says why instead.
+      if (importError === undefined) result.branch = `smith/${manifest.taskId}`;
+      else result.importError = importError;
       if (exitCode === 0) {
         if (!clone) {
           result.pullRequestUrl = await this.openPullRequest(manifest, worktreePath);
-        } else if (imported) {
+        } else if (importError === undefined) {
           result.pullRequestUrl = await this.openPullRequest(manifest, clone.repoPath, {
             head: clone.branch,
             baseRev: clone.baseSha,
@@ -471,8 +476,8 @@ export class Dispatcher extends EventEmitter {
 
   /**
    * Finalize the clone inside a throwaway container, then fetch its branch
-   * home. Never throws; true only when the import succeeded. On any failure
-   * the clone is kept for inspection.
+   * home. Never throws: a failed import comes back with its error. On any
+   * failure the clone is kept for inspection.
    */
   private async finalizeAndImport(
     manifest: TaskManifest,
@@ -481,7 +486,7 @@ export class Dispatcher extends EventEmitter {
     uploadPack: string,
     completed: boolean,
     importOpts: { timeoutMs?: number; onTimeout?: () => Promise<unknown> } = {},
-  ): Promise<boolean> {
+  ): Promise<{ imported: true } | { imported: false; error: string }> {
     const agent = manifest.agentName ?? manifest.agent;
     // A failed finalize never stops the import: the import's server side runs in
     // the sandboxed upload-pack container, so the agent's committed work still
@@ -504,10 +509,13 @@ export class Dispatcher extends EventEmitter {
     }
     try {
       await importTaskBranch(clone, uploadPack, importOpts);
-      return true;
+      return { imported: true };
     } catch (err) {
-      console.error(`[dispatch] import failed for ${manifest.taskId}; clone kept at ${clone.path}:`, err);
-      return false;
+      console.error(
+        `[dispatch] import failed for ${manifest.taskId}; clone kept at ${clone.path} — do not run git in it on the host (a container wrote it):`,
+        err,
+      );
+      return { imported: false, error: err instanceof Error ? err.message : String(err) };
     }
   }
 

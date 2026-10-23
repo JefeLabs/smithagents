@@ -9,6 +9,7 @@ import {
   autoCommitMessage,
   createTaskClone,
   finalizeCommand,
+  hardenedGit,
   importTaskBranch,
   objectStoreMounts,
   sandboxedUploadPack,
@@ -156,6 +157,17 @@ test("objectStoreMounts: refuses an alternates entry that is not a git object st
   await symlink(plain, join(dir, "objects"));
   await writeFile(alternates, `${join(dir, "objects")}\n`);
   await assert.rejects(objectStoreMounts(repo), /not a git object store/);
+});
+
+test("hardenedGit: a quiet failure still says why, naming the subcommand past -c pairs", async () => {
+  const { repo } = await fixture();
+  await writeFile(join(repo, "f.txt"), "x\n");
+  await sh("git", ["add", "f.txt"], repo);
+  // `diff --quiet` with a staged change exits 1 and prints nothing on stderr.
+  await assert.rejects(hardenedGit(["-c", "core.quotePath=false", "diff", "--cached", "--quiet"], repo), (e: Error) => {
+    assert.match(e.message, /^git diff failed: \S/);
+    return true;
+  });
 });
 
 test("shellQuote: survives a shell round-trip, spaces and quotes included", async () => {

@@ -121,6 +121,11 @@ export interface TaskResult {
   branch?: string;
   /** PR URL if auto-created */
   pullRequestUrl?: string;
+  /**
+   * Why a docker task's branch never reached the user's repo. Set only when its
+   * import failed; `branch` is then unset, because no such branch exists there.
+   */
+  importError?: string;
 }
 
 /**

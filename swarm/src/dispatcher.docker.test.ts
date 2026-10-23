@@ -130,3 +130,69 @@ test("dispatch (docker): the agent's commit and its leftovers land on smith/<tas
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("dispatch (docker): a clone whose config wedges upload-pack times out — dispatch resolves with no branch, an importError, and no upload-pack container left", {
+  skip,
+  timeout: 180_000,
+}, async () => {
+  const dir = await realpath(await mkdtemp(join(tmpdir(), "smith-dispatch-docker-")));
+  const taskId = "t-docker-wedge";
+  try {
+    const repo = join(dir, "repo");
+    const smithRoot = join(dir, "state");
+    await mkdir(smithRoot);
+    await git("init", "-q", "-b", "main", repo);
+    await git("-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init");
+
+    // The fake agent's last act: point the clone's config at stdin. upload-pack,
+    // run with -i, then reads its config from the protocol pipe while the host
+    // fetch waits for its ref advertisement — a deadlock only a timeout breaks.
+    const agent = join(dir, "fake-agent.sh");
+    await writeFile(
+      agent,
+      [
+        "#!/bin/sh",
+        "set -e",
+        "echo work > work.txt",
+        "git add work.txt",
+        'git commit -q -m "feat: agent work"',
+        "ln -sf /dev/stdin .git/config",
+        "",
+      ].join("\n"),
+    );
+    await chmod(agent, 0o755);
+
+    const config = loadConfig({
+      smithRoot,
+      defaultRuntime: "docker",
+      delegateBin: agent,
+      agentCommands: { ...NO_SUCH_BINARY, claude: "smith-delegate" },
+      docker: { image: IMAGE as string, importTimeoutMs: 5000 },
+    });
+    const result = await new Dispatcher(config).dispatch({
+      taskId,
+      agent: "claude",
+      runtime: "docker",
+      prompt: "do it",
+      context: { files: [], repository: "", branch: "main", repoPath: repo },
+      createdAt: new Date().toISOString(),
+      priority: "normal",
+    });
+
+    assert.equal(result.outcome, "completed", JSON.stringify(result));
+    assert.equal(result.branch, undefined, "no branch is named that the user's repo does not have");
+    assert.equal(result.importError, "import timed out after 5000ms", JSON.stringify(result));
+    assert.equal(result.pullRequestUrl, undefined);
+    await assert.rejects(git("-C", repo, "rev-parse", "--verify", `refs/heads/smith/${taskId}`));
+    const left = (
+      await execFileP("docker", ["ps", "-a", "--filter", "name=smith-upload-", "--format", "{{.Names}}"])
+    ).stdout.trim();
+    assert.equal(left, "", `upload-pack container(s) left behind: ${left}`);
+  } finally {
+    const rt = new DockerRuntime({ image: IMAGE as string });
+    await rt.killPattern("sub-").catch(() => {});
+    await rt.killPattern(`task-${taskId}`).catch(() => {});
+    await rt.killPattern("smith-upload-").catch(() => {});
+    await rm(dir, { recursive: true, force: true });
+  }
+});

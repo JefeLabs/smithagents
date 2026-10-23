@@ -36,9 +36,20 @@ export async function hardenedGit(args: string[], cwd: string, opts: { signal?: 
     });
     return stdout.trim();
   } catch (err) {
-    const stderr = (err as { stderr?: string }).stderr ?? String(err);
-    throw new Error(`git ${args.find((a) => !a.startsWith("-"))} failed: ${stderr}`);
+    // A blank stderr (a spawn failure, an abort, a quiet non-zero exit) must
+    // never leave the reason empty.
+    const reason = (err as { stderr?: string }).stderr?.trim() || (err instanceof Error ? err.message : String(err));
+    throw new Error(`git ${subcommand(args)} failed: ${reason}`);
   }
+}
+
+/** The git subcommand in `args`, skipping `-c <name>=<value>` pairs. */
+function subcommand(args: string[]): string | undefined {
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "-c") i++;
+    else if (!args[i].startsWith("-")) return args[i];
+  }
+  return undefined;
 }
 
 export function shellQuote(word: string): string {
