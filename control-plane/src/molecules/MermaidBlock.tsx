@@ -44,12 +44,16 @@ export function MermaidBlock({ code }: { code: string }) {
       // layout/theme/look pin the pre-12 rendering: Mermaid 12 made ELK the
       // default layout and changed the theme and look defaults, which would
       // silently re-lay-out and restyle every diagram already saved.
+      // suppressErrorRendering: a parse failure still rejects (the alert below
+      // shows it), but Mermaid no longer also appends its own "Syntax error"
+      // SVG to <body>, outside this component and never removed.
       mermaid.initialize({
         startOnLoad: false,
         securityLevel: "strict",
         layout: "dagre",
         theme: "default",
         look: "classic",
+        suppressErrorRendering: true,
       });
       initialized = true;
     }
