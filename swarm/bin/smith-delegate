@@ -1,28 +1,47 @@
 #!/bin/sh
 # smith-delegate — sub-delegation from inside a task worktree.
-# Usage: smith-delegate <agent: agy|claude|codex> <task description...>
-# Submits a task to the swarm orchestrator and prints the task id.
+# Usage: smith-delegate <agent: agy|claude|codex|opencode|copilot> <task description...>
+# Submits a task to the swarm orchestrator and prints the swarm's reply.
+#
+# The dispatcher gives every task session:
+#   SMITH_URL      — this swarm. A docker session's points at
+#                    host.docker.internal: inside a container, 127.0.0.1 is the
+#                    container itself.
+#   SMITH_WORKSPACE, SMITH_REPO, SMITH_BRANCH
+#                  — the parent task's own target. Without them the swarm falls
+#                    back to its DEFAULT workspace's repo, so the sub-task could
+#                    land in a different repo entirely.
+#
+# The JSON is built with node: every session has it (the swarm runs on it, and
+# so does the agent image), while python3 is not in the agent image.
 set -eu
 
 SMITH_URL="${SMITH_URL:-http://127.0.0.1:7777}"
 
 if [ "$#" -lt 2 ]; then
-  echo "usage: smith-delegate <agent: agy|claude|codex> <task description...>" >&2
+  echo "usage: smith-delegate <agent: agy|claude|codex|opencode|copilot> <task description...>" >&2
   exit 2
 fi
 
 AGENT="$1"
 shift
-PROMPT="$*"
 
-BODY=$(printf '%s' "$PROMPT" | python3 -c 'import json,sys; print(json.dumps({
-  "prompt": sys.stdin.read(),
-  "agent": sys.argv[1],
-  "context": {"files": [], "repository": "", "branch": ""},
-  "metadata": {"source": "smith-delegate"},
-}))' "$AGENT")
+BODY=$(SMITH_DELEGATE_AGENT="$AGENT" SMITH_DELEGATE_PROMPT="$*" node -e '
+const env = process.env;
+const context = { files: [], repository: "", branch: env.SMITH_BRANCH || "" };
+if (env.SMITH_WORKSPACE) context.workspace = env.SMITH_WORKSPACE;
+if (env.SMITH_REPO) context.repo = env.SMITH_REPO;
+process.stdout.write(JSON.stringify({
+  prompt: env.SMITH_DELEGATE_PROMPT,
+  agent: env.SMITH_DELEGATE_AGENT,
+  context,
+  metadata: { source: "smith-delegate" },
+}));
+')
 
-curl -sf -X POST "$SMITH_URL/tasks" \
+# --fail-with-body: a refusal (unknown repo, archived agent…) prints the
+# swarm's reason instead of only a bare exit code.
+curl -sS --fail-with-body -X POST "$SMITH_URL/tasks" \
   ${SMITH_API_TOKEN:+-H "authorization: Bearer $SMITH_API_TOKEN"} \
   -H 'content-type: application/json' \
   -d "$BODY"

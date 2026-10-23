@@ -596,3 +596,40 @@ test("buildAgentCommand: a worktree's bin/ adds smith-delegate but cannot shadow
     await rm(smithRoot, { recursive: true, force: true });
   }
 });
+
+test("sessionEnv: every session can call this swarm back, aimed at the parent task's own workspace/repo/branch", async () => {
+  const smithRoot = await mkdtemp(join(tmpdir(), "dispatch-env-"));
+  try {
+    const config = loadConfig({ smithRoot, agentCommands: NO_SUCH_BINARY, swarmUrl: "http://127.0.0.1:7777" });
+    const dispatcher = new Dispatcher(config) as unknown as {
+      sessionEnv(manifest: TaskManifest, connectionsEnv: Record<string, string>): Record<string, string>;
+    };
+    const manifest: TaskManifest = {
+      taskId: "env",
+      prompt: "irrelevant",
+      context: { files: [], repository: "", branch: "dev", workspace: "acme", repo: "web", repoPath: "/x/web" },
+      agent: "claude",
+      createdAt: new Date().toISOString(),
+      priority: "normal",
+    };
+    // Without workspace/repo, POST /tasks resolves the DEFAULT workspace's repo,
+    // so a sub-task of a repo-X task would run in repo Y.
+    assert.deepEqual(dispatcher.sessionEnv(manifest, { GH_TOKEN: "gh-tok" }), {
+      SMITH_URL: "http://127.0.0.1:7777",
+      SMITH_WORKSPACE: "acme",
+      SMITH_REPO: "web",
+      SMITH_BRANCH: "dev",
+      GH_TOKEN: "gh-tok",
+    });
+    // An unrouted task sends only what it knows; the swarm picks its default.
+    assert.deepEqual(
+      dispatcher.sessionEnv({ ...manifest, context: { files: [], repository: "", branch: "main" } }, {}),
+      {
+        SMITH_URL: "http://127.0.0.1:7777",
+        SMITH_BRANCH: "main",
+      },
+    );
+  } finally {
+    await rm(smithRoot, { recursive: true, force: true });
+  }
+});

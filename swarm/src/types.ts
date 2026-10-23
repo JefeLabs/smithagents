@@ -139,6 +139,12 @@ export interface OrchestratorConfig {
   docker: DockerConfig; // Docker-specific configuration
   /** Remote workers — machines that accept task dispatch over HTTPS */
   remoteWorkers?: RemoteWorkerEntry[];
+  /**
+   * How agent sessions on this machine call the swarm back — smith-delegate's
+   * SMITH_URL. The server sets it once listening (the real port), unless
+   * configured explicitly.
+   */
+  swarmUrl?: string;
 }
 
 /**

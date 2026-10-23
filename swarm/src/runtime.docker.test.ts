@@ -8,11 +8,14 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { DockerRuntime } from "./runtime.js";
 
@@ -20,6 +23,7 @@ const execFileP = promisify(execFile);
 const IMAGE = process.env.SMITH_AGENT_IMAGE;
 const skip = IMAGE ? false : "set SMITH_AGENT_IMAGE=<image> to run the image contract tests (make agent-image does)";
 const PREFIX = "smith-contract-";
+const DELEGATE_BIN = fileURLToPath(new URL("../bin/smith-delegate", import.meta.url));
 
 async function run(cmd: string, ...args: string[]): Promise<string> {
   return (await execFileP(cmd, args)).stdout;
@@ -175,5 +179,49 @@ test("image contract: the agent CLI is installed and starts", { skip }, () =>
     await rt.launch(name, "claude --version", dir);
     assert.equal(await rt.waitFor(name), 0);
     assert.match(await rt.captureOutput(name), /\d+\.\d+\.\d+ \(Claude Code\)/);
+  }),
+);
+
+test("image contract: smith-delegate reaches the swarm on the host, aimed at the parent's repo", { skip }, () =>
+  withContainer(async (rt, name, dir) => {
+    // A stand-in swarm bound to LOOPBACK ONLY — how the real one runs without
+    // SMITH_API_TOKEN — so this proves the container gets through without the
+    // swarm being exposed any wider.
+    const received: { url?: string; body: string }[] = [];
+    const swarm = createServer((req, res) => {
+      let body = "";
+      req.on("data", (chunk) => {
+        body += chunk;
+      });
+      req.on("end", () => {
+        received.push({ url: req.url, body });
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end('{"taskId":"sub-1"}');
+      });
+    });
+    await new Promise<void>((resolve) => swarm.listen(0, "127.0.0.1", resolve));
+    const { port } = swarm.address() as AddressInfo;
+    try {
+      // Where the dispatcher puts it: the worktree's bin/, i.e. /workspace/bin.
+      await mkdir(join(dir, "bin"));
+      await copyFile(DELEGATE_BIN, join(dir, "bin", "smith-delegate"));
+      await chmod(join(dir, "bin", "smith-delegate"), 0o755);
+
+      // The env exactly as the dispatcher hands it over: the LOOPBACK url.
+      await rt.launch(name, 'smith-delegate claude "write the sub-task"', dir, {
+        SMITH_URL: `http://127.0.0.1:${port}`,
+        SMITH_WORKSPACE: "acme",
+        SMITH_REPO: "web",
+        SMITH_BRANCH: "main",
+      });
+      assert.equal(await rt.waitFor(name), 0, await rt.captureOutput(name));
+      assert.equal(received.length, 1, "the delegation never reached the swarm");
+      assert.equal(received[0].url, "/tasks");
+      const body = JSON.parse(received[0].body);
+      assert.equal(body.prompt, "write the sub-task");
+      assert.deepEqual(body.context, { files: [], repository: "", branch: "main", workspace: "acme", repo: "web" });
+    } finally {
+      swarm.close();
+    }
   }),
 );

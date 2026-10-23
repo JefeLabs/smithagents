@@ -332,6 +332,27 @@ async function credentialMount(env: NodeJS.ProcessEnv = process.env): Promise<st
   }
 }
 
+/**
+ * A loopback URL, rewritten to reach the HOST from inside a container — where
+ * 127.0.0.1 is the container itself. Docker Desktop delivers
+ * host.docker.internal connections to the host's loopback (they arrive as
+ * 127.0.0.1), so a swarm bound to loopback only still accepts them. Anything
+ * that is not a loopback URL passes through unchanged.
+ */
+export function containerReachableUrl(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
+  if (!["127.0.0.1", "localhost", "[::1]"].includes(parsed.hostname)) return url;
+  parsed.hostname = "host.docker.internal";
+  const rewritten = parsed.toString();
+  // URL adds a "/" to a bare origin; smith-delegate appends "/tasks" itself.
+  return rewritten.endsWith("/") && !url.endsWith("/") ? rewritten.slice(0, -1) : rewritten;
+}
+
 export class DockerRuntime implements RuntimeAdapter {
   private readonly dockerConfig: DockerConfig;
 
@@ -374,6 +395,12 @@ export class DockerRuntime implements RuntimeAdapter {
       "SMITH_RUNTIME=docker",
       "-e",
       `SMITH_SESSION=${sessionName}`,
+
+      // The host, as seen from inside: smith-delegate calls the swarm back
+      // there (see containerReachableUrl). Docker Desktop defines the name
+      // already; host-gateway defines it on Linux engines too.
+      "--add-host",
+      "host.docker.internal:host-gateway",
     ];
 
     // Network mode
@@ -407,7 +434,7 @@ export class DockerRuntime implements RuntimeAdapter {
     }
     if (env) {
       for (const [key, value] of Object.entries(env)) {
-        args.push("-e", `${key}=${value}`);
+        args.push("-e", `${key}=${key === "SMITH_URL" ? containerReachableUrl(value) : value}`);
       }
     }
 

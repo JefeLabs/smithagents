@@ -46,6 +46,23 @@ test("resolveRepo never resolves into an archived workspace", () => {
   assert.equal(resolveRepo(ws, "old", undefined), null);
 });
 
+test("resolveRepo: a delegation naming its parent's workspace/repo lands there, not in the default", () => {
+  const ws: Workspace[] = [
+    { name: "home", default: true, repos: [{ name: "site", path: "/tmp/site" }] },
+    {
+      name: "acme",
+      repos: [
+        { name: "api", path: "/tmp/api" },
+        { name: "web", path: "/tmp/web" },
+      ],
+    },
+  ];
+  // What smith-delegate sent before it carried the parent's context:
+  assert.equal(resolveRepo(ws, undefined, undefined)?.repo.path, "/tmp/site");
+  // What it sends now, from the parent task's SMITH_WORKSPACE / SMITH_REPO:
+  assert.equal(resolveRepo(ws, "acme", "web")?.repo.path, "/tmp/web");
+});
+
 test("saveWorkspace rejects a bad slug and round-trips a good one", async () => {
   const root = await mkdtemp(join(tmpdir(), "ws-"));
   const paths = smithPaths(root);

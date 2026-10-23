@@ -229,7 +229,7 @@ export class Dispatcher extends EventEmitter {
         sessionName,
       });
 
-      await runtime.launch(sessionName, command, worktreePath, connections.env);
+      await runtime.launch(sessionName, command, worktreePath, this.sessionEnv(manifest, connections.env));
 
       // Phase 4: THE WAIT STATE — block until the Alpha session exits
       // This is the "Fire-and-Forget" core. We sit here doing nothing
@@ -405,6 +405,24 @@ export class Dispatcher extends EventEmitter {
     await appendFile(resolve(worktreePath, excludeFile), `${injected.join("\n")}\n`);
 
     return worktreePath;
+  }
+
+  /**
+   * The env a task session gets: its connector credentials, plus what
+   * smith-delegate needs to hand a sub-task back to THIS swarm aimed at the
+   * parent's own workspace/repo/branch. Without that context POST /tasks
+   * resolves the DEFAULT workspace's repo — a sub-task of a repo-X task would
+   * run in repo Y. SMITH_URL is the loopback form; DockerRuntime rewrites it
+   * for containers.
+   */
+  private sessionEnv(manifest: TaskManifest, connectionsEnv: Record<string, string>): Record<string, string> {
+    const env: Record<string, string> = {};
+    if (this.config.swarmUrl) env.SMITH_URL = this.config.swarmUrl;
+    const { workspace, repo, branch } = manifest.context;
+    if (workspace) env.SMITH_WORKSPACE = workspace;
+    if (repo) env.SMITH_REPO = repo;
+    if (branch) env.SMITH_BRANCH = branch;
+    return { ...env, ...connectionsEnv };
   }
 
   /**

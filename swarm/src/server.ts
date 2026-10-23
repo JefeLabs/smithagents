@@ -16,6 +16,7 @@ import { execFile } from "node:child_process";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { createSocket, type Socket as DgramSocket } from "node:dgram";
 import { appendFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import type { AddressInfo } from "node:net";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import websocket from "@fastify/websocket";
@@ -310,6 +311,17 @@ const DEFAULT_SERVER_CONFIG: ServerConfig = {
  *   - UDP heartbeat multicast
  *   - Auto-dispatch queue worker
  */
+/**
+ * How agent sessions on this machine call the swarm back (smith-delegate's
+ * SMITH_URL). A wildcard or loopback bind answers on 127.0.0.1; a server bound
+ * to one specific interface answers only there. DockerRuntime rewrites the
+ * loopback form for containers.
+ */
+export function localSwarmUrl(host: string, port: number): string {
+  if (["0.0.0.0", "::", "127.0.0.1", "localhost"].includes(host)) return `http://127.0.0.1:${port}`;
+  return `http://${host.includes(":") ? `[${host}]` : host}:${port}`;
+}
+
 export class OrchestratorServer {
   private readonly config: ServerConfig;
   private readonly orchConfig: OrchestratorConfig;
@@ -732,6 +744,11 @@ export class OrchestratorServer {
     }
 
     await this.app.listen({ port: this.config.port, host: this.config.host });
+
+    // Only now is the port real (config may ask for 0). The dispatcher hands
+    // this to every task session as smith-delegate's SMITH_URL.
+    const { port } = this.app.server.address() as AddressInfo;
+    this.orchConfig.swarmUrl ??= localSwarmUrl(this.config.host, port);
 
     // CLI tool registry: probe machine reality in the background — the cached
     // file serves until fresh results land (spec: startup + manual +

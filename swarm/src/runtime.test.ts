@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { WorkerPool } from "./remote-runtime.js";
-import { createRuntime, DockerRuntime, TmuxRuntime } from "./runtime.js";
+import { containerReachableUrl, createRuntime, DockerRuntime, TmuxRuntime } from "./runtime.js";
 
 test("TmuxRuntime.launch: env vars are exported inside the wrapped command, not interpolated into it", async () => {
   const runtime = new TmuxRuntime();
@@ -206,4 +206,34 @@ test("DockerRuntime.launch: a plain clone (no gitdir file) adds no extra mount",
     delete process.env.SMITH_DOCKER_CLAUDE_DIR;
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+/**
+ * smith-delegate inside a container calls the swarm back at SMITH_URL. The
+ * dispatcher hands every session the swarm's LOOPBACK url — correct on the
+ * host, but inside a container 127.0.0.1 is the container itself, so every
+ * docker delegation went nowhere.
+ */
+test("DockerRuntime.launch: a loopback SMITH_URL is rewritten to reach the host, and the host name is mapped", async () => {
+  const runtime = new DockerRuntime({ image: "smith-agent:latest" });
+  let captured: string[] = [];
+  (runtime as unknown as { docker: (args: string[]) => Promise<unknown> }).docker = async (args) => {
+    captured = args;
+    return { stdout: "", stderr: "" };
+  };
+
+  await runtime.launch("task-url", "true", "/repo", { SMITH_URL: "http://127.0.0.1:7777", SMITH_REPO: "web" });
+
+  assert.ok(captured.includes("SMITH_URL=http://host.docker.internal:7777"), `got: ${captured.join(" ")}`);
+  assert.ok(captured.includes("SMITH_REPO=web"), "other env passes through untouched");
+  const at = captured.indexOf("--add-host");
+  assert.equal(captured[at + 1], "host.docker.internal:host-gateway", "Linux engines don't define the name");
+});
+
+test("containerReachableUrl: only loopback hosts change; ports and paths survive, no slash is added", () => {
+  assert.equal(containerReachableUrl("http://127.0.0.1:7777"), "http://host.docker.internal:7777");
+  assert.equal(containerReachableUrl("http://localhost:7777/api"), "http://host.docker.internal:7777/api");
+  assert.equal(containerReachableUrl("http://[::1]:7777"), "http://host.docker.internal:7777");
+  assert.equal(containerReachableUrl("http://10.0.0.5:7777"), "http://10.0.0.5:7777");
+  assert.equal(containerReachableUrl("not a url"), "not a url");
 });

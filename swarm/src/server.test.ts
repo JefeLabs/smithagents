@@ -35,6 +35,7 @@ import {
   describeResetCaller,
   gitInitRequestedRepos,
   isValidWorkspaceCreateRepos,
+  localSwarmUrl,
   OrchestratorServer,
   prepareSquadSwarm,
   redactBrainEngine,
@@ -1824,4 +1825,37 @@ test("stop() settles the startup CLI sweep: nothing writes into, or recreates, t
   const recreated = existsSync(root);
   await rm(root, { recursive: true, force: true });
   assert.equal(recreated, false, "a CLI sweep outlived stop() and recreated the deleted state root");
+});
+
+// smith-delegate's SMITH_URL comes from here. The server binds port 0 in tests
+// and may in config, so only the address it ACTUALLY bound is any use.
+test("start() records how this machine's sessions call the swarm back, with the port it actually bound", async () => {
+  const root = await freshStateRoot("smith-swarm-url-");
+  const server = new OrchestratorServer({
+    port: 0,
+    host: "127.0.0.1",
+    orchestrator: { smithRoot: root },
+    cliToolRunner: async () => ({ code: 1, stdout: "", stderr: "" }),
+  });
+  try {
+    await server.start();
+    const internals = server as unknown as {
+      app: { server: { address(): { port: number } } };
+      orchConfig: { swarmUrl?: string };
+    };
+    const { port } = internals.app.server.address();
+    assert.notEqual(port, 0);
+    assert.equal(internals.orchConfig.swarmUrl, `http://127.0.0.1:${port}`);
+  } finally {
+    await server.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("localSwarmUrl: a wildcard or loopback bind is called at 127.0.0.1; one specific interface only at itself", () => {
+  assert.equal(localSwarmUrl("127.0.0.1", 7777), "http://127.0.0.1:7777");
+  assert.equal(localSwarmUrl("0.0.0.0", 7777), "http://127.0.0.1:7777");
+  assert.equal(localSwarmUrl("::", 7777), "http://127.0.0.1:7777");
+  assert.equal(localSwarmUrl("192.168.1.5", 7777), "http://192.168.1.5:7777");
+  assert.equal(localSwarmUrl("::1", 7777), "http://[::1]:7777");
 });
