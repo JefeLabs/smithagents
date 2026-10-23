@@ -44,7 +44,9 @@ import {
   redactConnector,
   redactEngines,
   redactResearchEngine,
+  redactTokenQuery,
   redactUser,
+  requestLogSerializer,
   resolveAtlassianConnector,
   resolveCloseBy,
   resolveConnector,
@@ -1884,7 +1886,9 @@ test("auth: with an admin token, a request without it is 401 and with it is 200;
   const root = await freshStateRoot("smith-auth-http-");
   const { server, url } = await bootServer(root, "admin-secret");
   try {
-    assert.equal((await fetch(`${url}/tasks`)).status, 401);
+    const denied = await fetch(`${url}/tasks`);
+    assert.equal(denied.status, 401);
+    assert.deepEqual(await denied.json(), { error: "unauthorized" });
     assert.equal((await fetch(`${url}/tasks`, { headers: { authorization: "Bearer admin-secret" } })).status, 200);
     assert.equal((await fetch(`${url}/health`)).status, 200);
   } finally {
@@ -1927,4 +1931,14 @@ test("serverConfigFromArgs: always resolves an admin token — SMITH_API_TOKEN, 
   } finally {
     await rm(home, { recursive: true, force: true });
   }
+});
+
+test("redactTokenQuery: a token in the query string never reaches the log", () => {
+  assert.equal(redactTokenQuery("/ws?token=s3cret"), "/ws?token=[redacted]");
+  assert.equal(redactTokenQuery("/ws?a=1&token=x%2By&b=2"), "/ws?a=1&token=[redacted]&b=2");
+  assert.equal(redactTokenQuery("/tasks"), "/tasks");
+  assert.equal(redactTokenQuery("/tasks?x=1"), "/tasks?x=1");
+  // the serializer wired into Fastify's logger applies it
+  const logged = requestLogSerializer({ method: "GET", url: "/ws?token=admin-secret", hostname: "h", ip: "1.2.3.4" });
+  assert.equal(JSON.stringify(logged).includes("admin-secret"), false);
 });

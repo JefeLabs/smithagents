@@ -21,7 +21,7 @@
 // ---------------------------------------------------------------------------
 
 import { WebSocket } from "ws";
-import { adminAuthHeader, resolveApiToken } from "./secret-file.js";
+import { adminAuthHeader } from "./secret-file.js";
 
 const BASE_URL = process.env.SMITH_SERVER_URL ?? "http://localhost:7777";
 const WS_URL = `${BASE_URL.replace(/^http/, "ws")}/ws`;
@@ -200,7 +200,7 @@ class Dashboard {
 
   private async connectWebSocket(): Promise<void> {
     try {
-      this.ws = new WebSocket(`${WS_URL}?token=${encodeURIComponent(await resolveApiToken())}`);
+      this.ws = new WebSocket(WS_URL, { headers: await adminAuthHeader() });
       this.ws.on("open", () => {
         this.state.connected = true;
         this.addEvent("WebSocket connected");

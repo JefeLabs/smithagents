@@ -324,6 +324,35 @@ const DEFAULT_SERVER_CONFIG: ServerConfig = {
  * to one specific interface answers only there. DockerRuntime rewrites the
  * loopback form for containers.
  */
+/** Replace the value of any `token` query parameter, so a credential in a URL never reaches the log. */
+export function redactTokenQuery(url: string): string {
+  const q = url.indexOf("?");
+  if (q < 0) return url;
+  const query = url
+    .slice(q + 1)
+    .split("&")
+    .map((p) => (p === "token" || p.startsWith("token=") ? "token=[redacted]" : p))
+    .join("&");
+  return `${url.slice(0, q)}?${query}`;
+}
+
+/** Fastify's default `req` log shape, minus the raw URL's secrets. */
+export function requestLogSerializer(req: {
+  method?: string;
+  url?: string;
+  hostname?: string;
+  ip?: string;
+  socket?: { remotePort?: number };
+}) {
+  return {
+    method: req.method,
+    url: redactTokenQuery(req.url ?? ""),
+    hostname: req.hostname,
+    remoteAddress: req.ip,
+    remotePort: req.socket?.remotePort,
+  };
+}
+
 export function localSwarmUrl(host: string, port: number): string {
   if (["0.0.0.0", "::", "127.0.0.1", "localhost"].includes(host)) return `http://127.0.0.1:${port}`;
   return `http://${host.includes(":") ? `[${host}]` : host}:${port}`;
@@ -399,6 +428,7 @@ export class OrchestratorServer {
       bodyLimit: 4 * 1024 * 1024,
       logger: {
         level: "info",
+        serializers: { req: requestLogSerializer },
         transport: {
           target: "pino-pretty",
           options: { translateTime: "HH:MM:ss", ignore: "pid,hostname" },
@@ -545,7 +575,7 @@ export class OrchestratorServer {
     if (!this.apiToken && !loopback) {
       throw new Error(
         `Refusing to bind ${this.config.host} without an admin token. ` +
-          "Set SMITH_API_TOKEN (or start via the CLI, which generates one), or use --host 127.0.0.1.",
+          "Set SMITH_API_TOKEN, or start via `pnpm serve` (server.ts main), which resolves one; or use --host 127.0.0.1.",
       );
     }
 
@@ -3951,19 +3981,7 @@ export class OrchestratorServer {
 // CLI entry point
 // ---------------------------------------------------------------------------
 
-/**
- * Start the orchestrator server from the command line.
- *
- * Usage:
- *   npx tsx orchestrator/server.ts
- *   npx tsx orchestrator/server.ts --port 8080 --max-concurrent 8
- *
- * Binds loopback by default; every route except /health, /devices/redeem and
- * /workers/connect requires the admin token. It comes from SMITH_API_TOKEN, else
- * `~/.smith/api-token` (generated on first boot).
- *   npx tsx orchestrator/server.ts --host 0.0.0.0
- * (WebSocket clients may pass ?token=<secret> on /ws.)
- */
+/** Parse the CLI flags and resolve the admin token (SMITH_API_TOKEN, else the generated file). */
 export async function serverConfigFromArgs(
   args: string[],
   env: NodeJS.ProcessEnv = process.env,
@@ -3992,6 +4010,19 @@ export async function serverConfigFromArgs(
   return config;
 }
 
+/**
+ * Start the orchestrator server from the command line.
+ *
+ * Usage:
+ *   npx tsx orchestrator/server.ts
+ *   npx tsx orchestrator/server.ts --port 8080 --max-concurrent 8
+ *
+ * Binds loopback by default; every route except /health, /devices/redeem and
+ * /workers/connect requires the admin token. It comes from SMITH_API_TOKEN, else
+ * `~/.smith/api-token` (generated on first boot).
+ *   npx tsx orchestrator/server.ts --host 0.0.0.0
+ * (WebSocket clients may pass ?token=<secret> on /ws.)
+ */
 export async function main(): Promise<void> {
   const server = new OrchestratorServer(await serverConfigFromArgs(process.argv.slice(2)));
 
