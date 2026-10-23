@@ -165,13 +165,36 @@ test("shellQuote: survives a shell round-trip, spaces and quotes included", asyn
   assert.deepEqual(out.split("\n"), words);
 });
 
-test("sandboxedUploadPack: clone and object stores read-only, no network, the image's entrypoint bypassed", async () => {
+test("sandboxedUploadPack: clone and object stores read-only, no network, named, limited, the image's entrypoint bypassed", async () => {
   const { dir } = await fixture();
   const clone = { path: "/c lone", readOnlyMounts: ["/o"] } as TaskClone;
-  const words = (
-    await sh("sh", ["-c", `printf '%s\\n' ${sandboxedUploadPack("smith-agent:latest", clone)}`], dir)
-  ).split("\n");
-  assert.deepEqual(words, [
+  const words = async (cmd: string) => (await sh("sh", ["-c", `printf '%s\\n' ${cmd}`], dir)).split("\n");
+  assert.deepEqual(
+    await words(sandboxedUploadPack("smith-agent:latest", clone, "smith-upload-1", { cpus: "1.5", memory: "4g" })),
+    [
+      "docker",
+      "run",
+      "--rm",
+      "--init",
+      "-i",
+      "--network",
+      "none",
+      "--name",
+      "smith-upload-1",
+      "--cpus",
+      "1.5",
+      "--memory",
+      "4g",
+      "--entrypoint",
+      "git-upload-pack",
+      "-v",
+      "/c lone:/c lone:ro",
+      "-v",
+      "/o:/o:ro",
+      "smith-agent:latest",
+    ],
+  );
+  assert.deepEqual(await words(sandboxedUploadPack("img", clone, "it's")), [
     "docker",
     "run",
     "--rm",
@@ -179,14 +202,109 @@ test("sandboxedUploadPack: clone and object stores read-only, no network, the im
     "-i",
     "--network",
     "none",
+    "--name",
+    "it's",
     "--entrypoint",
     "git-upload-pack",
     "-v",
     "/c lone:/c lone:ro",
     "-v",
     "/o:/o:ro",
-    "smith-agent:latest",
+    "img",
   ]);
+});
+
+/** Live processes whose command line contains `needle`, as [pid, command]. */
+async function processesWith(needle: string): Promise<Array<[number, string]>> {
+  const { stdout } = await exec("ps", ["-axo", "pid=,command="]);
+  return stdout
+    .split("\n")
+    .filter((line) => line.includes(needle))
+    .map((line) => {
+      const [, pid = "0", command = ""] = /^\s*(\d+)\s+(.*)$/.exec(line) ?? [];
+      return [Number(pid), command];
+    });
+}
+
+/** Resolves once `pid` is gone; rejects if it outlives `ms`. */
+async function gone(pid: number, ms: number): Promise<void> {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    try {
+      process.kill(pid, 0);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ESRCH") return;
+      throw err;
+    }
+    if (Date.now() > deadline) throw new Error(`process ${pid} is still alive`);
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
+
+/**
+ * Starts an import whose upload-pack hangs — the stand-in for a wedged
+ * container — and returns the hung git's pid once it is seen running.
+ */
+async function hungImport(onTimeoutFails: boolean, timeoutMs: number) {
+  const { dir, repo } = await fixture();
+  const clone = await createTaskClone(repo, join(dir, "clones", "t1"), "t1", "main");
+  const pidFile = join(dir, "upload-pack.pid");
+  let removals = 0;
+  const started = Date.now();
+  const importing = importTaskBranch(clone, `echo $$ > ${shellQuote(pidFile)}; exec sleep 30;`, {
+    timeoutMs,
+    onTimeout: async () => {
+      removals++;
+      // What `docker rm -f` does to the real container.
+      process.kill(Number((await readFile(pidFile, "utf8")).trim()), "SIGKILL");
+      if (onTimeoutFails) throw new Error("Cannot connect to the Docker daemon");
+    },
+  });
+  // Swallow until awaited below, so a positive-control failure is not reported as unhandled.
+  importing.catch(() => {});
+  let gitPid: number | undefined;
+  while (gitPid === undefined && Date.now() - started < timeoutMs - 100) {
+    gitPid = (await processesWith(pidFile)).find(([, cmd]) => / fetch /.test(cmd))?.[0];
+  }
+  assert.ok(gitPid, "never saw the hung git fetch running — this test proved nothing");
+  return { importing, gitPid, pidFile, started, removals: () => removals };
+}
+
+test("importTaskBranch: a hung upload-pack times out — git is killed, its container removed, and the import rejects", async () => {
+  const { importing, gitPid, pidFile, started, removals } = await hungImport(false, 500);
+  await assert.rejects(importing, (e: Error) => {
+    assert.equal(e.message, "import timed out after 500ms");
+    return true;
+  });
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed < 5_000, `took ${elapsed}ms`);
+  assert.equal(removals(), 1, "onTimeout runs exactly once");
+  await gone(gitPid, 2_000);
+  assert.deepEqual(await processesWith(pidFile), [], "no process of this import is left");
+});
+
+test("importTaskBranch: a timed-out import whose container removal fails says so", async () => {
+  const { importing, gitPid, started, removals } = await hungImport(true, 500);
+  await assert.rejects(
+    importing,
+    /^Error: import timed out after 500ms; removing its container failed: Cannot connect to the Docker daemon$/,
+  );
+  assert.ok(Date.now() - started < 5_000);
+  assert.equal(removals(), 1);
+  await gone(gitPid, 2_000);
+});
+
+test("importTaskBranch: rejects a nonsense timeout before any fetch", async () => {
+  const { dir, repo } = await fixture();
+  const clone = await createTaskClone(repo, join(dir, "clones", "t1"), "t1", "main");
+  const probe = join(dir, "probe");
+  for (const bad of [0, -1, Number.NaN, 2 ** 31]) {
+    await assert.rejects(
+      importTaskBranch(clone, `touch ${shellQuote(probe)}; git-upload-pack`, { timeoutMs: bad }),
+      /timeoutMs must be a positive number/,
+    );
+  }
+  await assert.rejects(lstat(probe), "no fetch ran");
 });
 
 test("importTaskBranch: the clone's task branch lands in the user's repo; the user repo's hooks stay off", async () => {

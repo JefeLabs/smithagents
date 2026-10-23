@@ -172,6 +172,17 @@ export interface DockerConfig {
   shmSize?: string; // /dev/shm size for Playwright/Chromium (default: '2g')
   extraMounts?: string[]; // Additional volume mounts (e.g., SSH keys, git config)
   extraEnv?: Record<string, string>; // Additional environment variables
+  /**
+   * How long importing a docker task's branch may take before its fetch is
+   * killed and its upload-pack container removed (default 300_000).
+   */
+  importTimeoutMs?: number;
+  /**
+   * How long the in-container finalize — committing the agent's leftovers —
+   * may take (default 600_000). A big repo's `git add -A` over a bind mount is
+   * slow, and a finalize cut short leaves those leftovers behind.
+   */
+  finalizeTimeoutMs?: number;
 }
 
 /**

@@ -183,7 +183,7 @@ test("image contract: an agent commits inside its own clone and cannot write the
     assert.match(output, /objects-readonly/);
     assert.doesNotMatch(output, /OBJECTS-WRITABLE/);
 
-    await importTaskBranch(clone, sandboxedUploadPack(IMAGE as string, clone));
+    await importTaskBranch(clone, sandboxedUploadPack(IMAGE as string, clone, `${PREFIX}upload-${randomUUID()}`));
     assert.equal(
       (await run("git", "-C", repo, "log", "-1", "--format=%an <%ae>|%s", "smith/contract")).trim(),
       "smith agent <crew@smithagents.local>|agent work",
@@ -213,7 +213,7 @@ test("image contract: nothing a container plants runs on the host — finalize a
 
     const finalized = await rt.runOnce(clone.path, finalizeCommand("contract", "t", true), clone.readOnlyMounts);
     assert.equal(finalized.exitCode, 0, finalized.output);
-    await importTaskBranch(clone, sandboxedUploadPack(IMAGE as string, clone));
+    await importTaskBranch(clone, sandboxedUploadPack(IMAGE as string, clone, `${PREFIX}upload-${randomUUID()}`));
     assert.equal((await run("git", "-C", repo, "show", "smith/contract:leftover.txt")).trim(), "leftover");
 
     const fired = await readdir(markers).catch((e: NodeJS.ErrnoException) => {

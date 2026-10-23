@@ -14,6 +14,7 @@
 // ---------------------------------------------------------------------------
 
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { appendFile, copyFile, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -271,12 +272,15 @@ export class Dispatcher extends EventEmitter {
       let imported = false;
       if (clone) {
         if (runtime instanceof DockerRuntime) {
+          const { image, cpuLimit, memoryLimit, importTimeoutMs } = this.config.docker;
+          const uploadName = `smith-upload-${randomUUID()}`;
           imported = await this.finalizeAndImport(
             manifest,
             clone,
             runtime,
-            sandboxedUploadPack(this.config.docker.image, clone),
+            sandboxedUploadPack(image, clone, uploadName, { cpus: cpuLimit, memory: memoryLimit }),
             exitCode === 0,
+            { timeoutMs: importTimeoutMs ?? 300_000, onTimeout: () => runtime.removeContainer(uploadName) },
           );
         } else {
           console.error(`[dispatch] ${manifest.taskId}: docker task without a DockerRuntime; nothing imported`);
@@ -476,6 +480,7 @@ export class Dispatcher extends EventEmitter {
     runner: Pick<DockerRuntime, "runOnce">,
     uploadPack: string,
     completed: boolean,
+    importOpts: { timeoutMs?: number; onTimeout?: () => Promise<unknown> } = {},
   ): Promise<boolean> {
     const agent = manifest.agentName ?? manifest.agent;
     // A failed finalize never stops the import: the import's server side runs in
@@ -486,6 +491,7 @@ export class Dispatcher extends EventEmitter {
         clone.path,
         finalizeCommand(agent, manifest.taskId, completed),
         clone.readOnlyMounts,
+        this.config.docker.finalizeTimeoutMs ?? 600_000,
       );
       if (finalize.exitCode !== 0) {
         console.error(
@@ -497,7 +503,7 @@ export class Dispatcher extends EventEmitter {
       console.error(`[dispatch] finalize failed for ${manifest.taskId}; importing anyway:`, err);
     }
     try {
-      await importTaskBranch(clone, uploadPack);
+      await importTaskBranch(clone, uploadPack, importOpts);
       return true;
     } catch (err) {
       console.error(`[dispatch] import failed for ${manifest.taskId}; clone kept at ${clone.path}:`, err);

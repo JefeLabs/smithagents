@@ -24,11 +24,15 @@ export interface TaskClone {
 }
 
 /** git on the host with hooks and fsmonitor neutralised — a container may have written the config. */
-export async function hardenedGit(args: string[], cwd: string): Promise<string> {
+export async function hardenedGit(args: string[], cwd: string, opts: { signal?: AbortSignal } = {}): Promise<string> {
   try {
     const { stdout } = await exec("git", ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args], {
       cwd,
       env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      // An abort SIGKILLs git and settles at once, without waiting on children
+      // (an upload-pack command) that may still hold its output pipes.
+      signal: opts.signal,
+      killSignal: "SIGKILL",
     });
     return stdout.trim();
   } catch (err) {
@@ -141,8 +145,17 @@ export async function createTaskClone(
   return { repoPath: repoReal, path: clonePath, branch, baseSha, readOnlyMounts };
 }
 
-/** The `--upload-pack` command that serves a clone's objects from a throwaway, network-less container. */
-export function sandboxedUploadPack(image: string, clone: TaskClone): string {
+/**
+ * The `--upload-pack` command that serves a clone's objects from a throwaway,
+ * network-less container. `name` lets a timed-out import remove that container:
+ * killing git never signals the docker CLI it spawned.
+ */
+export function sandboxedUploadPack(
+  image: string,
+  clone: TaskClone,
+  name: string,
+  limits: { cpus?: string; memory?: string } = {},
+): string {
   const mounts = [clone.path, ...clone.readOnlyMounts].flatMap((p) => ["-v", `${p}:${p}:ro`]);
   return [
     "docker",
@@ -152,6 +165,10 @@ export function sandboxedUploadPack(image: string, clone: TaskClone): string {
     "-i",
     "--network",
     "none",
+    "--name",
+    name,
+    ...(limits.cpus ? ["--cpus", limits.cpus] : []),
+    ...(limits.memory ? ["--memory", limits.memory] : []),
     "--entrypoint",
     "git-upload-pack",
     ...mounts,
@@ -161,25 +178,66 @@ export function sandboxedUploadPack(image: string, clone: TaskClone): string {
     .join(" ");
 }
 
-/** Fetch the clone's task branch into the user's repo through `uploadPack`; returns the imported tip SHA. */
-export async function importTaskBranch(clone: TaskClone, uploadPack: string): Promise<string> {
-  await hardenedGit(
-    [
-      "-c",
-      "fetch.fsckObjects=true",
-      "-c",
-      "transfer.fsckObjects=true",
-      "fetch",
-      "--quiet",
-      "--no-tags",
-      "--no-recurse-submodules",
-      "--no-write-fetch-head",
-      `--upload-pack=${uploadPack}`,
-      clone.path,
-      `+refs/heads/${clone.branch}:refs/heads/${clone.branch}`,
-    ],
-    clone.repoPath,
-  );
+/**
+ * Fetch the clone's task branch into the user's repo through `uploadPack`;
+ * returns the imported tip SHA.
+ *
+ * Bounded by `timeoutMs` (default 300_000): a container-written clone can wedge
+ * upload-pack (a `.git/config` symlinked to /dev/stdin makes it read its config
+ * from the protocol pipe while the fetch waits for its advertisement), and so
+ * can a wedged docker daemon. On expiry git is SIGKILLed, `onTimeout` (remove
+ * the upload-pack container) is awaited, and the import rejects.
+ */
+export async function importTaskBranch(
+  clone: TaskClone,
+  uploadPack: string,
+  opts: { timeoutMs?: number; onTimeout?: () => Promise<unknown> } = {},
+): Promise<string> {
+  const ms = opts.timeoutMs ?? 300_000;
+  if (!Number.isFinite(ms) || ms <= 0 || ms > 2_147_483_647) {
+    throw new Error(
+      `importTaskBranch: timeoutMs must be a positive number of milliseconds up to 2147483647, got ${ms}`,
+    );
+  }
+  const abort = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    abort.abort();
+  }, ms);
+  try {
+    await hardenedGit(
+      [
+        "-c",
+        "fetch.fsckObjects=true",
+        "-c",
+        "transfer.fsckObjects=true",
+        "fetch",
+        "--quiet",
+        "--no-tags",
+        "--no-recurse-submodules",
+        "--no-write-fetch-head",
+        `--upload-pack=${uploadPack}`,
+        clone.path,
+        `+refs/heads/${clone.branch}:refs/heads/${clone.branch}`,
+      ],
+      clone.repoPath,
+      { signal: abort.signal },
+    );
+  } catch (err) {
+    if (!timedOut) throw err;
+    // git is already SIGKILLed; the container its docker CLI child started is
+    // not, so remove it before reporting — and never swallow a failed removal.
+    let removal = "";
+    try {
+      await opts.onTimeout?.();
+    } catch (rmErr) {
+      removal = `; removing its container failed: ${rmErr instanceof Error ? rmErr.message : String(rmErr)}`;
+    }
+    throw new Error(`import timed out after ${ms}ms${removal}`);
+  } finally {
+    clearTimeout(timer);
+  }
   return hardenedGit(["rev-parse", `refs/heads/${clone.branch}`], clone.repoPath);
 }
 

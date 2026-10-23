@@ -596,10 +596,15 @@ export class DockerRuntime implements RuntimeAdapter {
 
   async kill(sessionName: string): Promise<void> {
     try {
-      await this.docker(["rm", "-f", sessionName]);
+      await this.removeContainer(sessionName);
     } catch {
       // Container may already be gone
     }
+  }
+
+  /** `docker rm -f <name>`. Unlike kill(), a failure is thrown, not swallowed. */
+  async removeContainer(name: string): Promise<void> {
+    await this.docker(["rm", "-f", name]);
   }
 
   async killPattern(pattern: string): Promise<number> {
