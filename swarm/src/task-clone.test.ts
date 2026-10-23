@@ -215,7 +215,7 @@ test("importTaskBranch: an object fsck rejects is refused", async () => {
   });
   const commit = await sh("git", [...GIT_ID, "commit-tree", treeSha, "-p", clone.baseSha, "-m", "evil"], clone.path);
   await sh("git", ["update-ref", "refs/heads/smith/t1", commit], clone.path);
-  await assert.rejects(importTaskBranch(clone, "git-upload-pack"));
+  await assert.rejects(importTaskBranch(clone, "git-upload-pack"), /hasDotgit|fsck/);
   await assert.rejects(sh("git", ["rev-parse", "--verify", "refs/heads/smith/t1"], repo));
 });
 
@@ -225,7 +225,7 @@ test("importTaskBranch: a clone with no task branch fails cleanly", async () => 
   await sh("git", ["checkout", "-q", "--detach"], clone.path);
   await sh("git", ["branch", "-D", "smith/t1"], clone.path);
   const before = await sh("git", ["for-each-ref"], repo);
-  await assert.rejects(importTaskBranch(clone, "git-upload-pack"));
+  await assert.rejects(importTaskBranch(clone, "git-upload-pack"), /couldn.t find remote ref/);
   assert.equal(await sh("git", ["for-each-ref"], repo), before);
 });
 
@@ -240,4 +240,19 @@ test("finalizeCommand: commits leftovers as the agent with today's message; does
   const count = await sh("git", ["rev-list", "--count", "HEAD"], scratch);
   await sh("sh", ["-c", cmd], scratch);
   assert.equal(await sh("git", ["rev-list", "--count", "HEAD"], scratch), count);
+});
+
+test("importTaskBranch: the fetch's server side is the uploadPack command it is given — never the host default", async () => {
+  const { dir, repo } = await fixture();
+  const clone = await createTaskClone(repo, join(dir, "clones", "t1"), "t1", "main");
+  await sh("git", [...GIT_ID, "commit", "-q", "--allow-empty", "-m", "agent work"], clone.path);
+  const probe = join(dir, "probe");
+  await importTaskBranch(clone, `touch ${shellQuote(probe)}; git-upload-pack`);
+  await lstat(probe);
+  assert.equal(await sh("git", ["log", "-1", "--format=%s", "smith/t1"], repo), "agent work");
+
+  const clone2 = await createTaskClone(repo, join(dir, "clones", "t2"), "t2", "main");
+  await sh("git", [...GIT_ID, "commit", "-q", "--allow-empty", "-m", "more"], clone2.path);
+  await assert.rejects(importTaskBranch(clone2, "false"));
+  await assert.rejects(sh("git", ["rev-parse", "--verify", "refs/heads/smith/t2"], repo));
 });
