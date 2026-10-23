@@ -41,7 +41,16 @@ export function MermaidBlock({ code }: { code: string }) {
       // securityLevel:"strict" makes mermaid run its bundled DOMPurify over the
       // SVG it returns, so the markup we inject below is already sanitized. Pin
       // it rather than trust the (currently strict) default across major bumps.
-      mermaid.initialize({ startOnLoad: false, securityLevel: "strict" });
+      // layout/theme/look pin the pre-12 rendering: Mermaid 12 made ELK the
+      // default layout and changed the theme and look defaults, which would
+      // silently re-lay-out and restyle every diagram already saved.
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: "strict",
+        layout: "dagre",
+        theme: "default",
+        look: "classic",
+      });
       initialized = true;
     }
     mermaid
