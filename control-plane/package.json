@@ -46,7 +46,7 @@
     "react": "^19.0.0",
     "react-aria-components": "^1.22.1",
     "react-dom": "^19.0.0",
-    "react-hook-form": "7.85.0",
+    "react-hook-form": "7.90.0",
     "react-markdown": "^10.1.0",
     "react-resizable-panels": "^4.14.8",
     "remark-breaks": "^4.0.0",

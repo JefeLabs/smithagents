@@ -19,6 +19,3 @@ allowBuilds:
   fsevents: true
   '@google/genai': true
   protobufjs: true
-
-minimumReleaseAgeExclude:
-  - react-hook-form@7.85.0
