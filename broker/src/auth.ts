@@ -67,6 +67,18 @@ export interface BrokerAuthOptions {
   webauthn?: WebAuthnAdapter;
 }
 
+/**
+ * A short fixed label for a WebAuthn library failure. The library's own message
+ * embeds attacker-controlled clientDataJSON strings, so it is never logged.
+ */
+function failureCategory(err: unknown): "challenge" | "origin" | "signature" | "other" {
+  const message = err instanceof Error ? err.message.toLowerCase() : "";
+  if (message.includes("challenge")) return "challenge";
+  if (message.includes("origin") || message.includes("rp id") || message.includes("rpid")) return "origin";
+  if (message.includes("signature") || message.includes("counter")) return "signature";
+  return "other";
+}
+
 export class AuthError extends Error {
   constructor(
     public code: "invalid-code" | "verify-failed" | "unknown-credential",
@@ -188,6 +200,9 @@ export class BrokerAuth {
   private readonly challengeKey = randomBytes(32);
   /** Accepted challenges (replay guard): challenge -> expiresAt. */
   private readonly usedLoginChallenges = new Map<string, number>();
+  /** Reserved by a finishLogin that has not finished yet (concurrent-replay guard). */
+  private readonly inFlightLoginChallenges = new Set<string>();
+  private warnedUsedFull = false;
 
   /** The WebAuthn expected origin — needed by the cookie's Secure flag. */
   readonly webOrigin: string;
@@ -274,7 +289,7 @@ export class BrokerAuth {
         expectedRPID: this.opts.rpId,
       });
     } catch (err) {
-      console.warn("[broker] passkey enrollment failed:", (err as Error).message);
+      console.warn("[broker] passkey enrollment failed:", failureCategory(err));
       throw new AuthError("verify-failed");
     }
     if (!result.verified || !result.registrationInfo) throw new AuthError("verify-failed");
@@ -313,70 +328,91 @@ export class BrokerAuth {
     return this.webauthn.generateAuthenticationOptions({ rpID: this.opts.rpId, challenge });
   }
 
-  /** Valid HMAC, unexpired, unused. Marks the challenge used the moment it is accepted. */
-  private acceptChallenge(challenge: string, now: number): boolean {
+  /**
+   * Valid HMAC, unexpired, neither used nor in flight. RESERVES the challenge
+   * (synchronously, so a concurrent replay is refused); finishLogin commits it
+   * to the used set only after a successful login. Returns its expiry, or null.
+   */
+  private reserveChallenge(challenge: unknown, now: number): number | null {
+    if (typeof challenge !== "string") return null;
     const raw = Buffer.from(challenge, "base64url");
-    if (raw.length !== CHALLENGE_LENGTH || raw.toString("base64url") !== challenge) return false;
+    if (raw.length !== CHALLENGE_LENGTH || raw.toString("base64url") !== challenge) return null;
     const body = raw.subarray(0, CHALLENGE_BODY);
-    if (!timingSafeEqual(raw.subarray(CHALLENGE_BODY), this.signChallenge(body))) return false;
+    if (!timingSafeEqual(raw.subarray(CHALLENGE_BODY), this.signChallenge(body))) return null;
     const expiresAt = Number(raw.readBigUInt64BE(0));
-    if (now >= expiresAt || this.usedLoginChallenges.has(challenge)) return false;
-    this.usedLoginChallenges.set(challenge, expiresAt);
-    return true;
+    if (now >= expiresAt || this.usedLoginChallenges.has(challenge) || this.inFlightLoginChallenges.has(challenge)) {
+      return null;
+    }
+    // Fail closed: never evict a used entry before it expires.
+    if (this.usedLoginChallenges.size + this.inFlightLoginChallenges.size >= MAX_USED_CHALLENGES) {
+      if (!this.warnedUsedFull) {
+        this.warnedUsedFull = true;
+        console.warn("[broker] login replay guard is full — refusing passkey sign-ins until entries expire");
+      }
+      return null;
+    }
+    this.inFlightLoginChallenges.add(challenge);
+    return expiresAt;
+  }
+
+  /** Test-only: challenges currently reserved by an unfinished finishLogin. */
+  inFlightLoginCount(): number {
+    return this.inFlightLoginChallenges.size;
   }
 
   private pruneUsedChallenges(now: number): void {
     for (const [challenge, expiresAt] of this.usedLoginChallenges) {
       if (now >= expiresAt) this.usedLoginChallenges.delete(challenge);
     }
-    while (this.usedLoginChallenges.size > MAX_USED_CHALLENGES) {
-      let soonest: string | undefined;
-      let soonestAt = Number.POSITIVE_INFINITY;
-      for (const [challenge, expiresAt] of this.usedLoginChallenges) {
-        if (expiresAt < soonestAt) {
-          soonest = challenge;
-          soonestAt = expiresAt;
-        }
-      }
-      if (soonest === undefined) break;
-      this.usedLoginChallenges.delete(soonest);
-    }
+    if (this.usedLoginChallenges.size < MAX_USED_CHALLENGES) this.warnedUsedFull = false;
   }
 
   async finishLogin(
     response: unknown,
     now = Date.now(),
   ): Promise<{ userId: string; name: string; sessionToken: string }> {
+    if (typeof response !== "object" || response === null) throw new AuthError("verify-failed");
     const credentialId = (response as { id?: string }).id;
     const user = this.users.find((u) => u.credentials.some((c) => c.id === credentialId));
     const cred = user?.credentials.find((c) => c.id === credentialId);
     if (!user || !cred) throw new AuthError("unknown-credential");
 
-    // Usernameless flow: ONE verify call; the library hands us the challenge the
-    // authenticator signed and acceptChallenge decides (and marks it used, so a
-    // concurrent replay of the same assertion is refused while this one verifies).
+    // Usernameless flow: ONE verify call. The closure RESERVES the challenge the
+    // authenticator signed; it joins the used set only after a successful login,
+    // so junk responses can neither burn a challenge nor churn the replay guard.
     this.pruneUsedChallenges(now);
-    let verified: { verified: boolean; authenticationInfo?: { newCounter: number } };
+    let reserved: { challenge: string; expiresAt: number } | undefined;
     try {
-      verified = await this.webauthn.verifyAuthenticationResponse({
-        response,
-        expectedChallenge: (challenge) => this.acceptChallenge(challenge, now),
-        expectedOrigin: this.opts.webOrigin,
-        expectedRPID: this.opts.rpId,
-        credential: {
-          id: cred.id,
-          publicKey: new Uint8Array(Buffer.from(cred.publicKey, "base64")),
-          counter: cred.counter,
-        },
-      });
-    } catch (err) {
-      console.warn("[broker] passkey sign-in failed:", (err as Error).message);
-      throw new AuthError("verify-failed");
+      let verified: { verified: boolean; authenticationInfo?: { newCounter: number } };
+      try {
+        verified = await this.webauthn.verifyAuthenticationResponse({
+          response,
+          expectedChallenge: (challenge) => {
+            const expiresAt = this.reserveChallenge(challenge, now);
+            if (expiresAt === null) return false;
+            reserved = { challenge, expiresAt };
+            return true;
+          },
+          expectedOrigin: this.opts.webOrigin,
+          expectedRPID: this.opts.rpId,
+          credential: {
+            id: cred.id,
+            publicKey: new Uint8Array(Buffer.from(cred.publicKey, "base64")),
+            counter: cred.counter,
+          },
+        });
+      } catch (err) {
+        console.warn("[broker] passkey sign-in failed:", failureCategory(err));
+        throw new AuthError("verify-failed");
+      }
+      if (!verified.verified || !reserved) throw new AuthError("verify-failed");
+      cred.counter = verified.authenticationInfo?.newCounter ?? cred.counter;
+      const sessionToken = await this.createSession(user.userId, now);
+      this.usedLoginChallenges.set(reserved.challenge, reserved.expiresAt);
+      return { userId: user.userId, name: user.name, sessionToken };
+    } finally {
+      if (reserved) this.inFlightLoginChallenges.delete(reserved.challenge);
     }
-    if (!verified.verified) throw new AuthError("verify-failed");
-    cred.counter = verified.authenticationInfo?.newCounter ?? cred.counter;
-    const sessionToken = await this.createSession(user.userId, now);
-    return { userId: user.userId, name: user.name, sessionToken };
   }
 
   private async createSession(userId: string, now: number): Promise<string> {

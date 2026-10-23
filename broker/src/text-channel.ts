@@ -499,7 +499,15 @@ export class TextChannel {
       json(405, { error: "method not allowed" });
       return;
     }
-    const parseBody = async <T>(): Promise<T> => JSON.parse((await readBody(req)) || "{}") as T;
+    const parseBody = async <T>(): Promise<T> => {
+      try {
+        const parsed = JSON.parse((await readBody(req)) || "{}") as unknown;
+        if (typeof parsed === "object" && parsed !== null) return parsed as T;
+      } catch {
+        // fall through: a malformed body is a refused ceremony, not a server error
+      }
+      throw new AuthError("verify-failed");
+    };
 
     try {
       if (pathname === "/auth/invites") {

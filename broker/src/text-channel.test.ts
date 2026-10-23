@@ -11,20 +11,26 @@ import { type ChannelFrame, TextChannel, workUpdateFrames } from "./text-channel
 
 const AUTH_CRED = { id: "cred-1", publicKey: new Uint8Array([1, 2, 3]), counter: 0, transports: ["internal"] };
 
-/** The same 4-method fake used in auth.test.ts — ceremonies pass when response.ok !== false. */
+/** Mirrors the fake in auth.test.ts: ceremonies pass when response.ok !== false, and a bad attestation or challenge THROWS like the real library. */
 function fakeWebauthnAdapter(): WebAuthnAdapter {
+  let lastChallenge = "challenge-1";
   return {
     async generateRegistrationOptions({ userName }) {
       return { challenge: "challenge-1", user: { name: userName } };
     },
     async verifyRegistrationResponse({ response }) {
-      const ok = (response as { ok?: boolean }).ok !== false;
-      return ok ? { verified: true, registrationInfo: { credential: AUTH_CRED } } : { verified: false };
+      if ((response as { ok?: boolean }).ok === false) throw new Error("Registration verification failed");
+      return { verified: true, registrationInfo: { credential: AUTH_CRED } };
     },
-    async generateAuthenticationOptions() {
-      return { challenge: "challenge-1" };
+    async generateAuthenticationOptions({ challenge }) {
+      if (challenge) lastChallenge = Buffer.from(challenge).toString("base64url");
+      return { challenge: lastChallenge };
     },
-    async verifyAuthenticationResponse({ response, credential }) {
+    async verifyAuthenticationResponse({ response, expectedChallenge, credential }) {
+      const signed = (response as { challenge?: string }).challenge ?? lastChallenge;
+      const accepted =
+        typeof expectedChallenge === "function" ? await expectedChallenge(signed) : expectedChallenge === signed;
+      if (!accepted) throw new Error("Unexpected authentication response challenge");
       const ok = (response as { ok?: boolean }).ok !== false;
       return ok ? { verified: true, authenticationInfo: { newCounter: credential.counter + 1 } } : { verified: false };
     },
@@ -2655,10 +2661,14 @@ test("WS /events: a present, disallowed Origin is closed with 4403 before any fr
 
     // the allowed origin receives the sentinel
     const ok = open({ cookie, origin: ALLOWED_ORIGIN });
+    let timer: NodeJS.Timeout | undefined;
     await Promise.race([
       new Promise<void>((res) => ok.ws.once("message", () => res())),
-      new Promise<void>((_, rej) => setTimeout(() => rej(new Error("no sentinel within 5s")), 5000)),
+      new Promise<void>((_, rej) => {
+        timer = setTimeout(() => rej(new Error("no sentinel within 5s")), 5000);
+      }),
     ]);
+    clearTimeout(timer);
     assert.equal(ok.frames.length, 1);
     assert.match(ok.frames[0] ?? "", /sentinel/);
     ok.ws.close();
@@ -3350,6 +3360,25 @@ test("POST /reset hands the swarm an ORIGIN describing the caller it authenticat
     const origin = String(seen[0]?.origin ?? "");
     assert.match(origin, /control-plane\/test/, "the caller's user-agent is part of the origin");
     assert.match(origin, /127\.0\.0\.1/, "so is where it connected from");
+  } finally {
+    await channel.stop();
+  }
+});
+
+test("POST /auth/login/verify: an empty or malformed body is 400 verify-failed, never a 500 echo", async () => {
+  const auth = await makeAuth(true);
+  const channel = channelWith({ auth });
+  const port = await channel.start(0);
+  try {
+    for (const body of ["{}", "not json", "[1]"]) {
+      const r = await fetch(`http://127.0.0.1:${port}/auth/login/verify`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+      });
+      assert.equal(r.status, 400, body);
+      assert.deepEqual(await r.json(), { error: "verify-failed" });
+    }
   } finally {
     await channel.stop();
   }

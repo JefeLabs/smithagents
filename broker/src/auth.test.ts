@@ -41,8 +41,11 @@ function fakeWebauthn(): WebAuthnAdapter & { lastChallenge: string } {
       const accepted =
         typeof expectedChallenge === "function" ? await expectedChallenge(signed) : expectedChallenge === signed;
       if (!accepted) throw new Error(`Unexpected authentication response challenge "${signed}"`);
-      const ok = (response as { ok?: boolean }).ok !== false;
-      return ok ? { verified: true, authenticationInfo: { newCounter: credential.counter + 1 } } : { verified: false };
+      const ok = (response as { ok?: boolean | "throw" }).ok;
+      if (ok === "throw") throw new Error('Could not verify signature for "attacker-controlled text"');
+      return ok !== false
+        ? { verified: true, authenticationInfo: { newCounter: credential.counter + 1 } }
+        : { verified: false };
     },
   };
   return fake;
@@ -263,4 +266,39 @@ test("a throwing library on sign-in or enrollment is a generic verify-failed", a
   await auth.beginRegistration(code, "again");
   await assert.rejects(auth.finishRegistration(code, { ok: false }), refused);
   await assert.doesNotReject(auth.finishRegistration(code, { ok: true })); // invite not consumed by the failure
+});
+
+test("a junk-signature attempt on a minted challenge does not burn it", async () => {
+  const { auth, webauthn } = await enrolled();
+  await auth.beginLogin(0);
+  const challenge = webauthn.lastChallenge;
+  await assert.rejects(auth.finishLogin({ ok: false, id: "cred-1", challenge }, 1_000), refused);
+  await assert.rejects(auth.finishLogin({ ok: "throw", id: "cred-1", challenge }, 1_000), refused);
+  assert.equal(auth.inFlightLoginCount(), 0);
+  await assert.doesNotReject(login(auth, challenge, 2_000));
+  assert.equal(auth.inFlightLoginCount(), 0);
+  await assert.rejects(login(auth, challenge, 3_000), refused); // replay after success
+});
+
+test("a full replay guard fails closed and evicts nothing", async () => {
+  const { auth, webauthn } = await enrolled();
+  await auth.beginLogin(0);
+  const first = webauthn.lastChallenge;
+  await login(auth, first, 1);
+  for (let i = 1; i < 1024; i++) {
+    await auth.beginLogin(0);
+    await login(auth, webauthn.lastChallenge, 1);
+  }
+  await auth.beginLogin(0);
+  await assert.rejects(login(auth, webauthn.lastChallenge, 2), refused); // guard full -> refused
+  await assert.rejects(login(auth, first, 2), refused); // nothing was evicted
+  // once entries expire the guard frees up
+  await auth.beginLogin(10 * 60_000);
+  await assert.doesNotReject(login(auth, webauthn.lastChallenge, 10 * 60_000 + 1));
+});
+
+test("a non-string challenge or a non-object response is refused without a throw", async () => {
+  const { auth } = await enrolled();
+  await assert.rejects(auth.finishLogin(undefined, 0), refused);
+  await assert.rejects(auth.finishLogin({ ok: true, id: "cred-1", challenge: 42 }, 0), refused);
 });
