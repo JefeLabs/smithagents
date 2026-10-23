@@ -1,26 +1,29 @@
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { generateAuthenticationOptions } from "@simplewebauthn/server";
 import { type AuthError, BrokerAuth, parseCookies, type WebAuthnAdapter } from "./auth.js";
 
 const CRED = { id: "cred-1", publicKey: new Uint8Array([1, 2, 3]), counter: 0, transports: ["internal"] };
 
-function fakeWebauthn(): WebAuthnAdapter & { lastChallenge: string; unique: boolean } {
-  let seq = 0;
+function fakeWebauthn(): WebAuthnAdapter & { lastChallenge: string } {
   const fake = {
     lastChallenge: "challenge-1",
-    unique: false,
     async generateRegistrationOptions({ userName }: { userName: string }) {
       return { challenge: fake.lastChallenge, user: { name: userName } };
     },
     async verifyRegistrationResponse({ response }: { response: unknown }) {
       const ok = (response as { ok?: boolean }).ok !== false;
-      return ok ? { verified: true, registrationInfo: { credential: CRED } } : { verified: false };
+      // Like the real library, a bad attestation THROWS.
+      if (!ok) throw new Error("Registration verification failed");
+      return { verified: true, registrationInfo: { credential: CRED } };
     },
-    async generateAuthenticationOptions() {
-      if (fake.unique) fake.lastChallenge = `c-${seq++}`;
+    async generateAuthenticationOptions({ challenge }: { challenge?: Uint8Array }) {
+      // The real library returns base64url(challenge) when handed raw bytes.
+      if (challenge) fake.lastChallenge = Buffer.from(challenge).toString("base64url");
       return { challenge: fake.lastChallenge };
     },
     async verifyAuthenticationResponse({
@@ -173,49 +176,91 @@ test("firstRunInviteUrl: the invite lasts 24h", async () => {
   );
 });
 
-test("login challenges expire after 5 minutes and are pruned", async () => {
-  const { auth } = await freshAuth();
-  await auth.beginLogin(0);
-  await auth.beginLogin(6 * 60_000);
-  assert.equal(auth.pendingLoginCount(), 1);
-});
-
-test("finishLogin treats an expired challenge as unknown", async () => {
-  const { auth } = await freshAuth();
+/** Register edwin and return the auth + fake so login tests can drive challenges. */
+async function enrolled() {
+  const webauthn = fakeWebauthn();
+  const { auth } = await freshAuth({ webauthn });
   const { code } = auth.mintInvite();
   await auth.beginRegistration(code, "edwin");
   await auth.finishRegistration(code, { ok: true });
+  return { auth, webauthn };
+}
+
+const login = (auth: BrokerAuth, challenge: string, now: number) =>
+  auth.finishLogin({ ok: true, id: "cred-1", challenge }, now);
+const refused = (e: AuthError) => e.code === "verify-failed";
+
+test("a login challenge is accepted once, then refused (replay)", async () => {
+  const { auth, webauthn } = await enrolled();
   await auth.beginLogin(0);
-  await assert.rejects(
-    auth.finishLogin({ ok: true, id: "cred-1" }, 6 * 60_000),
-    (e: AuthError) => e.code === "verify-failed",
-  );
-  await auth.beginLogin(10 * 60_000);
-  await assert.doesNotReject(auth.finishLogin({ ok: true, id: "cred-1" }, 10 * 60_000 + 1000));
+  const challenge = webauthn.lastChallenge;
+  await assert.doesNotReject(login(auth, challenge, 1_000));
+  await assert.rejects(login(auth, challenge, 2_000), refused);
+});
+
+test("an expired login challenge is refused", async () => {
+  const { auth, webauthn } = await enrolled();
+  await auth.beginLogin(0);
+  await assert.rejects(login(auth, webauthn.lastChallenge, 5 * 60_000), refused);
+  await auth.beginLogin(0);
+  await assert.doesNotReject(login(auth, webauthn.lastChallenge, 5 * 60_000 - 1));
+});
+
+test("a login challenge with one flipped byte (bad HMAC) is refused", async () => {
+  const { auth, webauthn } = await enrolled();
+  await auth.beginLogin(0);
+  const raw = Buffer.from(webauthn.lastChallenge, "base64url");
+  for (const index of [0, 12, raw.length - 1]) {
+    const bad = Buffer.from(raw);
+    bad[index] = (bad[index] ?? 0) ^ 1;
+    await assert.rejects(login(auth, bad.toString("base64url"), 1_000), refused);
+  }
+  await assert.doesNotReject(login(auth, webauthn.lastChallenge, 1_000)); // the genuine one still works
+});
+
+test("1000 beginLogin calls never stop a legitimate pending challenge from succeeding", async () => {
+  const { auth, webauthn } = await enrolled();
+  await auth.beginLogin(0);
+  const legit = webauthn.lastChallenge;
+  for (let i = 0; i < 1000; i++) await auth.beginLogin(0);
+  await assert.doesNotReject(login(auth, legit, 1_000));
 });
 
 test("a cancelled attempt never blocks the retry", async () => {
-  const webauthn = fakeWebauthn();
-  webauthn.unique = true;
-  const { auth } = await freshAuth({ webauthn });
-  const { code } = auth.mintInvite();
-  await auth.beginRegistration(code, "edwin");
-  await auth.finishRegistration(code, { ok: true });
-  await auth.beginLogin(0); // c-0: the cancelled prompt
-  await auth.beginLogin(1_000); // c-1: the retry
-  const { sessionToken } = await auth.finishLogin({ ok: true, id: "cred-1", challenge: "c-1" }, 2_000);
+  const { auth, webauthn } = await enrolled();
+  await auth.beginLogin(0); // the cancelled prompt
+  await auth.beginLogin(1_000); // the retry
+  const { sessionToken } = await login(auth, webauthn.lastChallenge, 2_000);
   assert.equal(auth.sessionIdentity(sessionToken, 2_000)?.kind, "human");
-  assert.equal(auth.pendingLoginCount(), 1); // only the matched one was consumed
-  await assert.rejects(
-    auth.finishLogin({ ok: true, id: "cred-1", challenge: "nope" }, 3_000),
-    (e: AuthError) => e.code === "verify-failed",
-  );
+  await assert.rejects(login(auth, "nope", 3_000), refused);
 });
 
-test("at most 64 login challenges stay pending", async () => {
-  const webauthn = fakeWebauthn();
-  webauthn.unique = true;
-  const { auth } = await freshAuth({ webauthn });
-  for (let i = 0; i < 70; i++) await auth.beginLogin(5);
-  assert.equal(auth.pendingLoginCount(), 64);
+test("two concurrent finishLogin calls with the same response yield exactly one session", async () => {
+  const { auth, webauthn } = await enrolled();
+  await auth.beginLogin(0);
+  const results = await Promise.allSettled([
+    login(auth, webauthn.lastChallenge, 1_000),
+    login(auth, webauthn.lastChallenge, 1_000),
+  ]);
+  assert.equal(results.filter((r) => r.status === "fulfilled").length, 1);
+  assert.equal(results.filter((r) => r.status === "rejected").length, 1);
+});
+
+test("the REAL library hands raw challenge bytes back as the same base64url the server verifies", async () => {
+  const bytes = new Uint8Array(randomBytes(56));
+  const options = await generateAuthenticationOptions({ rpID: "localhost", challenge: bytes });
+  assert.equal(options.challenge, Buffer.from(bytes).toString("base64url"));
+  // and through BrokerAuth's default adapter: a 56-byte challenge, 75 base64url chars
+  const { auth } = await freshAuth({ webauthn: undefined });
+  const real = (await auth.beginLogin(0)) as { challenge: string };
+  assert.equal(real.challenge.length, 75);
+});
+
+test("a throwing library on sign-in or enrollment is a generic verify-failed", async () => {
+  const { auth } = await enrolled();
+  await assert.rejects(auth.finishLogin({ ok: true, id: "cred-1", challenge: "x" }, 0), refused);
+  const { code } = auth.mintInvite();
+  await auth.beginRegistration(code, "again");
+  await assert.rejects(auth.finishRegistration(code, { ok: false }), refused);
+  await assert.doesNotReject(auth.finishRegistration(code, { ok: true })); // invite not consumed by the failure
 });

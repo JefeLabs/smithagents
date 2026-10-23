@@ -2655,7 +2655,10 @@ test("WS /events: a present, disallowed Origin is closed with 4403 before any fr
 
     // the allowed origin receives the sentinel
     const ok = open({ cookie, origin: ALLOWED_ORIGIN });
-    await new Promise((r) => setTimeout(r, 200));
+    await Promise.race([
+      new Promise<void>((res) => ok.ws.once("message", () => res())),
+      new Promise<void>((_, rej) => setTimeout(() => rej(new Error("no sentinel within 5s")), 5000)),
+    ]);
     assert.equal(ok.frames.length, 1);
     assert.match(ok.frames[0] ?? "", /sentinel/);
     ok.ws.close();

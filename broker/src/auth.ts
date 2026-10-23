@@ -11,7 +11,7 @@
 // bearer token. In open mode (required: false) nothing is enforced — the
 // loopback dev experience is unchanged.
 // ---------------------------------------------------------------------------
-import { createHash, randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
 import { dirname } from "node:path";
@@ -45,7 +45,7 @@ export interface WebAuthnAdapter {
     verified: boolean;
     registrationInfo?: { credential: { id: string; publicKey: Uint8Array; counter: number; transports?: string[] } };
   }>;
-  generateAuthenticationOptions(input: { rpID: string }): Promise<unknown>;
+  generateAuthenticationOptions(input: { rpID: string; challenge?: Uint8Array }): Promise<unknown>;
   verifyAuthenticationResponse(input: {
     response: unknown;
     expectedChallenge: string | ((challenge: string) => boolean | Promise<boolean>);
@@ -113,7 +113,11 @@ const CODE_LENGTH = 8;
 const DEFAULT_INVITE_TTL_MS = 10 * 60_000;
 export const FIRST_RUN_INVITE_TTL_MS = 24 * 60 * 60_000;
 export const LOGIN_CHALLENGE_TTL_MS = 5 * 60_000;
-const MAX_PENDING_LOGINS = 64;
+const MAX_USED_CHALLENGES = 1024;
+const CHALLENGE_HEADER = 8; // expiresAt ms, big-endian
+const CHALLENGE_NONCE = 16;
+const CHALLENGE_BODY = CHALLENGE_HEADER + CHALLENGE_NONCE;
+const CHALLENGE_LENGTH = CHALLENGE_BODY + 32; // + HMAC-SHA256
 const SESSION_TTL_MS = 30 * 24 * 60 * 60_000;
 const SESSION_PREFIX = "smith-sess-";
 
@@ -151,7 +155,11 @@ const defaultAdapter: WebAuthnAdapter = {
       supportedAlgorithmIDs: PASSKEY_ALGORITHMS,
     }) as ReturnType<WebAuthnAdapter["verifyRegistrationResponse"]>,
   generateAuthenticationOptions: (input) =>
-    generateAuthenticationOptions({ rpID: input.rpID, userVerification: "required" }),
+    generateAuthenticationOptions({
+      rpID: input.rpID,
+      challenge: input.challenge ? new Uint8Array(input.challenge) : undefined,
+      userVerification: "required",
+    }),
   verifyAuthenticationResponse: (input) =>
     verifyAuthenticationResponse({
       response: input.response as Parameters<typeof verifyAuthenticationResponse>[0]["response"],
@@ -172,8 +180,14 @@ export class BrokerAuth {
   private users: StoredUser[] = [];
   private sessions: StoredSession[] = [];
   private readonly invites: PendingInvite[] = [];
-  /** challenge -> issuedAt */
-  private readonly loginChallenges = new Map<string, number>();
+  /**
+   * Login challenges are STATELESS: expiry + nonce + HMAC under this per-process
+   * key, so a flood of unauthenticated /auth/login/options cannot evict the
+   * owner's pending challenge. Never persisted, never logged.
+   */
+  private readonly challengeKey = randomBytes(32);
+  /** Accepted challenges (replay guard): challenge -> expiresAt. */
+  private readonly usedLoginChallenges = new Map<string, number>();
 
   /** The WebAuthn expected origin — needed by the cookie's Secure flag. */
   readonly webOrigin: string;
@@ -225,10 +239,6 @@ export class BrokerAuth {
     return `${this.webOrigin}/#invite=${code}`;
   }
 
-  pendingLoginCount(): number {
-    return this.loginChallenges.size;
-  }
-
   private findInvite(code: string, now: number): PendingInvite {
     const presented = sha256(normalizeCode(code));
     const invite = this.invites.find((i) => timingSafeEqual(presented, Buffer.from(i.codeHash, "hex")));
@@ -255,12 +265,18 @@ export class BrokerAuth {
   ): Promise<{ userId: string; name: string; sessionToken: string }> {
     const invite = this.findInvite(code, now);
     if (!invite.challenge || !invite.name) throw new AuthError("invalid-code", "registration not begun");
-    const result = await this.webauthn.verifyRegistrationResponse({
-      response,
-      expectedChallenge: invite.challenge,
-      expectedOrigin: this.opts.webOrigin,
-      expectedRPID: this.opts.rpId,
-    });
+    let result: Awaited<ReturnType<WebAuthnAdapter["verifyRegistrationResponse"]>>;
+    try {
+      result = await this.webauthn.verifyRegistrationResponse({
+        response,
+        expectedChallenge: invite.challenge,
+        expectedOrigin: this.opts.webOrigin,
+        expectedRPID: this.opts.rpId,
+      });
+    } catch (err) {
+      console.warn("[broker] passkey enrollment failed:", (err as Error).message);
+      throw new AuthError("verify-failed");
+    }
     if (!result.verified || !result.registrationInfo) throw new AuthError("verify-failed");
 
     // Consume the invite only on success — a failed ceremony can retry.
@@ -285,18 +301,46 @@ export class BrokerAuth {
     return { userId: user.userId, name: user.name, sessionToken };
   }
 
+  private signChallenge(body: Buffer): Buffer {
+    return createHmac("sha256", this.challengeKey).update(body).digest();
+  }
+
   async beginLogin(now = Date.now()): Promise<unknown> {
-    for (const [challenge, issuedAt] of this.loginChallenges) {
-      if (now - issuedAt >= LOGIN_CHALLENGE_TTL_MS) this.loginChallenges.delete(challenge);
+    const body = Buffer.alloc(CHALLENGE_BODY);
+    body.writeBigUInt64BE(BigInt(now + LOGIN_CHALLENGE_TTL_MS), 0);
+    randomBytes(CHALLENGE_NONCE).copy(body, CHALLENGE_HEADER);
+    const challenge = new Uint8Array(Buffer.concat([body, this.signChallenge(body)]));
+    return this.webauthn.generateAuthenticationOptions({ rpID: this.opts.rpId, challenge });
+  }
+
+  /** Valid HMAC, unexpired, unused. Marks the challenge used the moment it is accepted. */
+  private acceptChallenge(challenge: string, now: number): boolean {
+    const raw = Buffer.from(challenge, "base64url");
+    if (raw.length !== CHALLENGE_LENGTH || raw.toString("base64url") !== challenge) return false;
+    const body = raw.subarray(0, CHALLENGE_BODY);
+    if (!timingSafeEqual(raw.subarray(CHALLENGE_BODY), this.signChallenge(body))) return false;
+    const expiresAt = Number(raw.readBigUInt64BE(0));
+    if (now >= expiresAt || this.usedLoginChallenges.has(challenge)) return false;
+    this.usedLoginChallenges.set(challenge, expiresAt);
+    return true;
+  }
+
+  private pruneUsedChallenges(now: number): void {
+    for (const [challenge, expiresAt] of this.usedLoginChallenges) {
+      if (now >= expiresAt) this.usedLoginChallenges.delete(challenge);
     }
-    const options = await this.webauthn.generateAuthenticationOptions({ rpID: this.opts.rpId });
-    this.loginChallenges.set((options as { challenge: string }).challenge, now);
-    // /auth/login/options is unauthenticated: bound the Map, oldest out first.
-    while (this.loginChallenges.size > MAX_PENDING_LOGINS) {
-      const oldest = this.loginChallenges.keys().next().value as string;
-      this.loginChallenges.delete(oldest);
+    while (this.usedLoginChallenges.size > MAX_USED_CHALLENGES) {
+      let soonest: string | undefined;
+      let soonestAt = Number.POSITIVE_INFINITY;
+      for (const [challenge, expiresAt] of this.usedLoginChallenges) {
+        if (expiresAt < soonestAt) {
+          soonest = challenge;
+          soonestAt = expiresAt;
+        }
+      }
+      if (soonest === undefined) break;
+      this.usedLoginChallenges.delete(soonest);
     }
-    return options;
   }
 
   async finishLogin(
@@ -309,20 +353,14 @@ export class BrokerAuth {
     if (!user || !cred) throw new AuthError("unknown-credential");
 
     // Usernameless flow: ONE verify call; the library hands us the challenge the
-    // authenticator signed and we accept it only if it is pending and unexpired.
-    // (The real library THROWS on a mismatch, so trying challenges one by one
-    // would let a stale, cancelled attempt block every retry.)
-    let matched: string | undefined;
+    // authenticator signed and acceptChallenge decides (and marks it used, so a
+    // concurrent replay of the same assertion is refused while this one verifies).
+    this.pruneUsedChallenges(now);
     let verified: { verified: boolean; authenticationInfo?: { newCounter: number } };
     try {
       verified = await this.webauthn.verifyAuthenticationResponse({
         response,
-        expectedChallenge: (challenge) => {
-          const issuedAt = this.loginChallenges.get(challenge);
-          if (issuedAt === undefined || now - issuedAt >= LOGIN_CHALLENGE_TTL_MS) return false;
-          matched = challenge;
-          return true;
-        },
+        expectedChallenge: (challenge) => this.acceptChallenge(challenge, now),
         expectedOrigin: this.opts.webOrigin,
         expectedRPID: this.opts.rpId,
         credential: {
@@ -331,11 +369,11 @@ export class BrokerAuth {
           counter: cred.counter,
         },
       });
-    } catch {
+    } catch (err) {
+      console.warn("[broker] passkey sign-in failed:", (err as Error).message);
       throw new AuthError("verify-failed");
     }
-    if (!verified.verified || matched === undefined) throw new AuthError("verify-failed");
-    this.loginChallenges.delete(matched);
+    if (!verified.verified) throw new AuthError("verify-failed");
     cred.counter = verified.authenticationInfo?.newCounter ?? cred.counter;
     const sessionToken = await this.createSession(user.userId, now);
     return { userId: user.userId, name: user.name, sessionToken };
