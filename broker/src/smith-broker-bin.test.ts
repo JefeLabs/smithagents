@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -59,7 +59,7 @@ test("smith-broker-send times out with the brain's reply and exits non-zero when
   }
 });
 
-test("required mode: send bin authenticates with SMITH_BROKER_TOKEN; without it the gate refuses", async () => {
+test("required mode: send bin authenticates with SMITH_BROKER_TOKEN or ~/.smith/broker-bridge-token; with neither the gate refuses", async () => {
   const dir = await mkdtemp(join(tmpdir(), "binauth-"));
   const auth = new BrokerAuth(join(dir, "auth.json"), {
     rpId: "localhost",
@@ -98,24 +98,37 @@ test("required mode: send bin authenticates with SMITH_BROKER_TOKEN; without it 
     auth,
   );
   const port = await channel.start(0);
-  const run = (extraEnv: Record<string, string>) =>
-    execFileAsync("node", [join(BIN_DIR, "smith-broker-send.mjs"), "docs/prd.md", "ping"], {
-      env: {
-        ...process.env,
-        SMITH_BROKER_URL: `http://127.0.0.1:${port}`,
-        SMITH_BROKER_SEND_TIMEOUT_MS: "2500",
-        ...extraEnv,
-      },
-    });
+  const emptyHome = await mkdtemp(join(tmpdir(), "binhome-empty-"));
+  const fileHome = await mkdtemp(join(tmpdir(), "binhome-file-"));
+  await mkdir(join(fileHome, ".smith"), { recursive: true });
+  await writeFile(join(fileHome, ".smith", "broker-bridge-token"), "bridge-secret\n");
+  const run = (home: string, token?: string) => {
+    const env: Record<string, string | undefined> = {
+      ...process.env,
+      HOME: home,
+      SMITH_BROKER_URL: `http://127.0.0.1:${port}`,
+      SMITH_BROKER_SEND_TIMEOUT_MS: "2500",
+    };
+    delete env.SMITH_BROKER_TOKEN;
+    if (token) env.SMITH_BROKER_TOKEN = token;
+    return execFileAsync("node", [join(BIN_DIR, "smith-broker-send.mjs"), "docs/prd.md", "ping"], { env });
+  };
   try {
-    const { stdout } = await run({ SMITH_BROKER_TOKEN: "bridge-secret" });
+    const { stdout } = await run(emptyHome, "bridge-secret");
     assert.equal(JSON.parse(stdout).taskId, "t-9", "token path reaches the brain and dispatches");
 
-    await assert.rejects(run({}), (err: unknown) => {
-      // No token → POST /utterance is 401, nothing dispatches → send exits 1.
+    await assert.rejects(run(emptyHome), (err: unknown) => {
+      // No token and no file → POST /utterance is 401, nothing dispatches → send exits 1.
       assert.equal((err as ExecFailure).code, 1);
       return true;
     });
+
+    const viaFile = await run(fileHome);
+    assert.equal(
+      JSON.parse(viaFile.stdout).taskId,
+      "t-9",
+      "no env token: the send bin reads ~/.smith/broker-bridge-token",
+    );
   } finally {
     await channel.stop();
   }

@@ -2,7 +2,7 @@
 export interface BrokerConfig {
   anthropicApiKey: string;
   livekit: { url: string; apiKey: string; apiSecret: string };
-  swarm: { baseUrl: string; token?: string; repository: string };
+  swarm: { baseUrl: string; repository: string };
   /** Loopback port for the text channel (POST /utterance + WS /events). */
   textPort: number;
   /** Bind address for the text channel. Non-loopback requires auth. */
@@ -16,7 +16,6 @@ export interface BrokerConfig {
     /** WebAuthn expected origin (the SPA's origin). */
     webOrigin: string;
     /** Static bearer for smith-broker-send/check. */
-    bridgeToken?: string;
     /** Where users/sessions persist. */
     file: string;
   };
@@ -58,7 +57,6 @@ export function loadBrokerConfig(env: Record<string, string | undefined> = proce
     },
     swarm: {
       baseUrl: env.SWARM_URL || "http://127.0.0.1:7777",
-      token: env.SMITH_API_TOKEN || undefined,
       repository: env.SWARM_REPO || "",
     },
     textPort: env.BROKER_TEXT_PORT ? Number(env.BROKER_TEXT_PORT) : 7790,
@@ -67,7 +65,6 @@ export function loadBrokerConfig(env: Record<string, string | undefined> = proce
       required,
       rpId: env.SMITH_BROKER_RPID || "localhost",
       webOrigin: env.SMITH_BROKER_WEB_ORIGIN || "http://localhost:1420",
-      bridgeToken: env.SMITH_BROKER_TOKEN || undefined,
       file: env.SMITH_BROKER_AUTH_FILE || ".smith/auth.json",
     },
     geminiApiKey: env.GEMINI_API_KEY || undefined,

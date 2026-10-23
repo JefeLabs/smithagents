@@ -8,8 +8,23 @@
 // Prints {"status","prUrl","raw"} to stdout and exits 0 for any known task
 // (including status:"failed" — that's a real answer, not an error). Exits 1
 // on an unknown taskId or a broker/network failure; 2 on bad usage.
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 const BROKER_URL = (process.env.SMITH_BROKER_URL ?? "http://127.0.0.1:7790").replace(/\/$/, "");
-const TOKEN = process.env.SMITH_BROKER_TOKEN;
+// The bridge bearer: SMITH_BROKER_TOKEN, else the file the broker generated. Read-only — the
+// broker owns creating ~/.smith/broker-bridge-token.
+function bridgeToken() {
+  const fromEnv = process.env.SMITH_BROKER_TOKEN?.trim();
+  if (fromEnv) return fromEnv;
+  try {
+    return readFileSync(join(homedir(), ".smith", "broker-bridge-token"), "utf8").trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+const TOKEN = bridgeToken();
 
 const [taskId] = process.argv.slice(2);
 if (!taskId) {

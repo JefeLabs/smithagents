@@ -14,6 +14,9 @@
 // taskId to smith-broker-check to poll for completion.
 // On timeout with no delegation: prints the brain's last reply to stderr,
 // exits 1 — the brain didn't delegate (declined, or asked a question).
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { WebSocket } from "ws";
 
 const BROKER_URL = (process.env.SMITH_BROKER_URL ?? "http://127.0.0.1:7790").replace(/\/$/, "");
@@ -22,7 +25,18 @@ const SOURCE = process.env.SMITH_BRIDGE_SOURCE ?? "bridge";
 const TIMEOUT_MS = Number(process.env.SMITH_BROKER_SEND_TIMEOUT_MS ?? 45000);
 // A cloud broker runs with auth required; the bridge is a Bearer client.
 // Node's ws can set upgrade headers, so no query-param workaround is needed.
-const TOKEN = process.env.SMITH_BROKER_TOKEN;
+// The bridge bearer: SMITH_BROKER_TOKEN, else the file the broker generated. Read-only — the
+// broker owns creating ~/.smith/broker-bridge-token.
+function bridgeToken() {
+  const fromEnv = process.env.SMITH_BROKER_TOKEN?.trim();
+  if (fromEnv) return fromEnv;
+  try {
+    return readFileSync(join(homedir(), ".smith", "broker-bridge-token"), "utf8").trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+const TOKEN = bridgeToken();
 const authHeaders = TOKEN ? { authorization: `Bearer ${TOKEN}` } : undefined;
 
 const [prdPath, ...rest] = process.argv.slice(2);

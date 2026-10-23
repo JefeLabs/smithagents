@@ -13,7 +13,6 @@ test("loads with defaults for optional vars", () => {
   const c = loadBrokerConfig(FULL);
   assert.equal(c.swarm.baseUrl, "http://127.0.0.1:7777");
   assert.equal(c.swarm.repository, "");
-  assert.equal(c.swarm.token, undefined);
   assert.equal(c.livekit.url, "ws://127.0.0.1:7880");
 });
 
@@ -26,7 +25,6 @@ test("boots with no voice keys anywhere — voice keys are Settings-managed, not
 test("optional overrides are honored", () => {
   const c = loadBrokerConfig({ ...FULL, SWARM_URL: "http://h:9999", SMITH_API_TOKEN: "t", SWARM_REPO: "git@x:y.git" });
   assert.equal(c.swarm.baseUrl, "http://h:9999");
-  assert.equal(c.swarm.token, "t");
   assert.equal(c.swarm.repository, "git@x:y.git");
 });
 
@@ -65,7 +63,6 @@ test("SMITH_BROKER_AUTH=required flips the gate; env overrides flow through", ()
     required: true,
     rpId: "skoolscout.example.com",
     webOrigin: "https://skoolscout.example.com",
-    bridgeToken: "bt",
     file: "/data/auth.json",
   });
   assert.equal(c.host, "0.0.0.0");

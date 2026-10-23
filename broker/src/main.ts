@@ -75,6 +75,7 @@ import { createRemovalService } from "./removal.ts";
 import { defaultSpawner, type ResearchEngine } from "./research.ts";
 import { resolveResearchEngine } from "./research-engine.ts";
 import { LiveKitRoomBridge } from "./room.ts";
+import { resolveBrokerSecrets } from "./secrets.ts";
 import { generateSessionTitle } from "./session-title.ts";
 import { type ExecutionMode, resolveLazyWorkspace, type Session, SessionManager, truncateTitle } from "./sessions.ts";
 import { DeepgramSttStream, deepgramLiveOptions, type LiveLike } from "./stt.ts";
@@ -107,7 +108,8 @@ const anthropic = new Anthropic({ apiKey: config.anthropicApiKey });
 const anthropicStream: StreamFactory = (params) =>
   anthropic.messages.stream(params as Parameters<typeof anthropic.messages.stream>[0]);
 
-const swarm = new SwarmClient({ baseUrl: config.swarm.baseUrl, token: config.swarm.token });
+const secrets = await resolveBrokerSecrets();
+const swarm = new SwarmClient({ baseUrl: config.swarm.baseUrl, token: secrets.swarmToken });
 
 /** One-shot invocation per tool, verified against each binary's --help. */
 const RESEARCH_ARGV: Record<string, string[]> = {
@@ -1395,7 +1397,7 @@ const creation = {
 const brokerAuth = new BrokerAuth(config.auth.file, {
   rpId: config.auth.rpId,
   webOrigin: config.auth.webOrigin,
-  bridgeToken: config.auth.bridgeToken,
+  bridgeToken: secrets.bridgeToken,
   required: config.auth.required,
 });
 await brokerAuth.load();
