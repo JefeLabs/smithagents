@@ -33,6 +33,8 @@ test("createTaskClone: a fresh clone on smith/<taskId> at the base commit, borro
   const clone = await createTaskClone(repo, join(dir, "clones", "t1"), "t1", "main");
   assert.equal(clone.branch, "smith/t1");
   assert.equal(clone.baseSha, await sh("git", ["rev-parse", "main"], repo));
+  assert.equal(await sh("git", ["rev-parse", "--abbrev-ref", "HEAD"], clone.path), "smith/t1");
+  assert.equal(await sh("git", ["rev-parse", "HEAD"], clone.path), clone.baseSha);
   assert.ok((await lstat(join(clone.path, ".git"))).isDirectory(), "a clone, not a worktree");
   assert.equal(
     (await readFile(join(clone.path, ".git/objects/info/alternates"), "utf8")).trim(),
@@ -53,6 +55,8 @@ test("createTaskClone: a base that exists only as origin/<base> starts at origin
   await sh("git", ["branch", "-D", "main"], work);
   const clone = await createTaskClone(work, join(dir, "clones", "t1"), "t1", "main");
   assert.equal(clone.baseSha, await sh("git", ["rev-parse", "origin/main"], work));
+  assert.equal(await sh("git", ["rev-parse", "--abbrev-ref", "HEAD"], clone.path), "smith/t1");
+  assert.equal(await sh("git", ["rev-parse", "HEAD"], clone.path), clone.baseSha);
 });
 
 test("createTaskClone: the clone's origin is the user's origin URL — never the host path", async () => {
@@ -65,6 +69,14 @@ test("createTaskClone: the clone's origin is the user's origin URL — never the
   const bare = await makeRepo(join(dir, "noorigin"));
   const without = await createTaskClone(bare, join(dir, "clones", "t2"), "t2", "main");
   assert.equal(await sh("git", ["remote"], without.path), "");
+});
+
+test("createTaskClone: credentials embedded in the user's origin URL never reach the clone", async () => {
+  const { dir, repo } = await fixture();
+  await sh("git", ["remote", "add", "origin", "https://x-access-token:s3cret@github.com/acme/web.git"], repo);
+  const clone = await createTaskClone(repo, join(dir, "clones", "t1"), "t1", "main");
+  assert.equal(await sh("git", ["remote", "get-url", "origin"], clone.path), "https://github.com/acme/web.git");
+  assert.ok(!(await readFile(join(clone.path, ".git/config"), "utf8")).includes("s3cret"));
 });
 
 test("createTaskClone: refuses a path that already exists — a container may have written to it", async () => {
@@ -93,6 +105,20 @@ test("objectStoreMounts: follows chained alternates, relative and absolute", asy
   await writeFile(join(aObjects, "info", "alternates"), `# comment\n../../../B/.git/objects\n\n${cObjects}\n`);
   assert.deepEqual(await objectStoreMounts(a), [aObjects, resolve(aObjects, "../../../B/.git/objects"), cObjects]);
   assert.ok(b);
+});
+
+test("objectStoreMounts: refuses an alternates entry that is not a git object store", async () => {
+  const { dir, repo } = await fixture();
+  const alternates = join(repo, ".git", "objects", "info", "alternates");
+  await mkdir(join(repo, ".git", "objects", "info"), { recursive: true });
+  await writeFile(alternates, `${dir}\n`);
+  await assert.rejects(objectStoreMounts(repo), /not a git object store/);
+
+  const plain = join(dir, "plain");
+  await mkdir(plain);
+  await symlink(plain, join(dir, "objects"));
+  await writeFile(alternates, `${join(dir, "objects")}\n`);
+  await assert.rejects(objectStoreMounts(repo), /not a git object store/);
 });
 
 test("shellQuote: survives a shell round-trip, spaces and quotes included", async () => {

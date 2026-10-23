@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
-import { access, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { access, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { resolveStartPoint } from "./workspace-instances.js";
 
@@ -38,19 +38,55 @@ export function shellQuote(word: string): string {
   return `'${word.replaceAll("'", "'\\''")}'`;
 }
 
+/** Strip credentials from a remote URL before it enters a container-readable config. */
+export function stripUrlCredentials(url: string): string {
+  if (!/^(https?|ssh):\/\//i.test(url)) return url;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
+  if (parsed.protocol === "ssh:") {
+    if (!parsed.password) return url;
+    parsed.password = "";
+  } else {
+    parsed.username = "";
+    parsed.password = "";
+  }
+  const out = parsed.toString();
+  return out.endsWith("/") && !url.endsWith("/") ? out.slice(0, -1) : out;
+}
+
+/** A chained alternate becomes a container mount, so it must really be a git object store. */
+async function assertObjectStore(entry: string, dir: string, alternatesFile: string): Promise<void> {
+  const refuse = (): never => {
+    throw new Error(`refusing alternates entry ${entry} in ${alternatesFile}: it is not a git object store`);
+  };
+  let real: string;
+  try {
+    real = await realpath(dir);
+    if (basename(real) !== "objects" || !(await stat(join(real, "pack"))).isDirectory()) refuse();
+  } catch {
+    refuse();
+  }
+}
+
 const MAX_ALTERNATE_DEPTH = 5;
 
 /** The user's objects dir followed by every alternate it chains to, in discovery order. */
 export async function objectStoreMounts(repoPath: string): Promise<string[]> {
   const common = await realpath(resolve(repoPath, await hardenedGit(["rev-parse", "--git-common-dir"], repoPath)));
   const found: string[] = [];
-  const visit = async (dir: string, depth: number): Promise<void> => {
+  const visit = async (dir: string, depth: number, from?: { entry: string; file: string }): Promise<void> => {
     if (found.includes(dir)) return;
+    if (from) await assertObjectStore(from.entry, dir, from.file);
     found.push(dir);
     if (depth >= MAX_ALTERNATE_DEPTH) return;
+    const file = join(dir, "info", "alternates");
     let text: string;
     try {
-      text = await readFile(join(dir, "info", "alternates"), "utf8");
+      text = await readFile(file, "utf8");
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
       throw err;
@@ -58,7 +94,7 @@ export async function objectStoreMounts(repoPath: string): Promise<string[]> {
     for (const line of text.split("\n")) {
       const l = line.trim();
       if (l === "" || l.startsWith("#")) continue;
-      await visit(isAbsolute(l) ? l : resolve(dir, l), depth + 1);
+      await visit(isAbsolute(l) ? l : resolve(dir, l), depth + 1, { entry: l, file });
     }
   };
   await visit(join(common, "objects"), 0);
@@ -98,7 +134,7 @@ export async function createTaskClone(
   } catch {
     originUrl = null;
   }
-  if (originUrl) await hardenedGit(["remote", "set-url", "origin", originUrl], clonePath);
+  if (originUrl) await hardenedGit(["remote", "set-url", "origin", stripUrlCredentials(originUrl)], clonePath);
   else await hardenedGit(["remote", "remove", "origin"], clonePath);
   return { repoPath: repoReal, path: clonePath, branch, baseSha, readOnlyMounts };
 }
