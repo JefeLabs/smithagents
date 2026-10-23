@@ -154,12 +154,24 @@ test("firstRunInviteUrl: with no passkey it returns a link whose code enrolls; o
   const { auth } = await freshAuth();
   assert.equal(auth.hasUsers(), false);
   const url = auth.firstRunInviteUrl();
-  assert.match(url ?? "", /^http:\/\/localhost:1420\/#invite=[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+  // 16 symbols: the owner invite is a link, so length costs nothing.
+  assert.match(url ?? "", /^http:\/\/localhost:1420\/#invite=[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
   const code = (url ?? "").split("#invite=")[1] as string;
   await auth.beginRegistration(code, "Edwin");
   await auth.finishRegistration(code, { ok: true });
   assert.equal(auth.hasUsers(), true);
   assert.equal(auth.firstRunInviteUrl(), null);
+});
+
+test("a human-typed invite stays 8 symbols, and both lengths redeem however they are typed", async () => {
+  const { auth } = await freshAuth();
+  const long = (auth.firstRunInviteUrl() ?? "").split("#invite=")[1] as string;
+  const { code: short } = auth.mintInvite();
+  assert.match(short, /^[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+  for (const code of [short, long]) {
+    const typed = code.toLowerCase().replaceAll("-", "");
+    await assert.doesNotReject(auth.beginRegistration(typed, `user-${code.length}`));
+  }
 });
 
 test("firstRunInviteUrl: an open broker never mints one", async () => {

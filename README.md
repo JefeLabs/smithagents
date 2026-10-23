@@ -105,7 +105,7 @@ SMITH_BROKER_TOKEN=               # blank = generated at ~/.smith/broker-bridge-
 ```
 
 **First run.** The broker requires a passkey by default. Until one is enrolled it prints
-`[broker] No passkey enrolled yet — open http://localhost:1420/#invite=XXXX-XXXX on this Mac to create one
+`[broker] No passkey enrolled yet — open http://localhost:1420/#invite=XXXX-XXXX-XXXX-XXXX on this Mac to create one
 (link expires in 24h).` Open that link in the control plane to create your passkey; after that it signs
 you in with it. `SMITH_BROKER_AUTH=open` skips all of this and leaves the broker unauthenticated (loopback only).
 

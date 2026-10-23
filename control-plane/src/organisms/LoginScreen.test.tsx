@@ -49,12 +49,16 @@ describe("LoginScreen", () => {
   it("a successful enroll from a first-run link clears the hash and keeps the search", async () => {
     (beginEnroll as ReturnType<typeof vi.fn>).mockResolvedValue({});
     (finishEnroll as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-    window.history.replaceState(null, "", "/?a=1#invite=ABCD-EFGH");
+    // The first-run owner invite is 16 symbols; the prefill passes it through untouched.
+    window.history.replaceState(null, "", "/?a=1#invite=ABCD-EFGH-JKMN-PQRS");
     const onAuthed = vi.fn();
     render(<LoginScreen onAuthed={onAuthed} />);
+    expect(screen.getByRole("textbox", { name: /invite code/i })).toHaveValue("ABCD-EFGH-JKMN-PQRS");
     await userEvent.type(screen.getByPlaceholderText(/edwin/i), "Edwin");
     await userEvent.click(screen.getByRole("button", { name: /create passkey/i }));
     await waitFor(() => expect(onAuthed).toHaveBeenCalled());
+    expect(beginEnroll).toHaveBeenCalledWith("ABCD-EFGH-JKMN-PQRS", "Edwin");
+    expect(finishEnroll).toHaveBeenCalledWith("ABCD-EFGH-JKMN-PQRS", {});
     expect(window.location.hash).toBe("");
     expect(window.location.search).toBe("?a=1");
     window.history.replaceState(null, "", "/");

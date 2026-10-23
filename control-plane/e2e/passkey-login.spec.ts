@@ -5,7 +5,7 @@
 //   Local run:
 //   1. Stop the live tmux `smith-broker` on 7790 first, then start a broker in required mode with a THROWAWAY auth file, never your real one:
 //        SMITH_BROKER_AUTH_FILE=$(mktemp -d)/broker-auth.json pnpm run serve   (in broker/)
-//      Its first run prints http://localhost:1420/#invite=XXXX-XXXX; INVITE_CODE is that code.
+//      Its first run prints http://localhost:1420/#invite=XXXX-XXXX-XXXX-XXXX; INVITE_CODE is that code.
 //   2. The SPA at http://localhost:1420 (the page's hostname is also the broker's, so the
 //      session cookie is same-site). E2E_BASE_URL=http://localhost:1420.
 //   Cloud run: a required-mode broker whose webOrigin equals the SPA's origin

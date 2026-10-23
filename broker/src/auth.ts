@@ -121,7 +121,14 @@ interface PendingInvite {
 }
 
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+/** A human-typed invite (minted from Settings, read aloud or pasted). */
 const CODE_LENGTH = 8;
+/**
+ * The first-run invite grants OWNER, reaches an unauthenticated route with no
+ * attempt limit, and lasts 24h. It is delivered as a link, so its length costs
+ * nothing: 16 symbols of 31 is ~79 bits.
+ */
+const FIRST_RUN_CODE_LENGTH = 16;
 const DEFAULT_INVITE_TTL_MS = 10 * 60_000;
 export const FIRST_RUN_INVITE_TTL_MS = 24 * 60 * 60_000;
 export const LOGIN_CHALLENGE_TTL_MS = 5 * 60_000;
@@ -235,12 +242,17 @@ export class BrokerAuth {
     await writeFile(this.filePath, JSON.stringify({ users: this.users, sessions: this.sessions }, null, 2));
   }
 
-  mintInvite(ttlMs = DEFAULT_INVITE_TTL_MS, now = Date.now()): { code: string; expiresAt: number } {
+  /** `length` symbols, shown in groups of four (`XXXX-XXXX`); the lookup ignores dashes and case, so any length redeems. */
+  mintInvite(
+    ttlMs = DEFAULT_INVITE_TTL_MS,
+    now = Date.now(),
+    length = CODE_LENGTH,
+  ): { code: string; expiresAt: number } {
     let code = "";
-    for (let i = 0; i < CODE_LENGTH; i++) code += CODE_ALPHABET[randomInt(CODE_ALPHABET.length)];
+    for (let i = 0; i < length; i++) code += CODE_ALPHABET[randomInt(CODE_ALPHABET.length)];
     const expiresAt = now + ttlMs;
     this.invites.push({ codeHash: sha256(code).toString("hex"), expiresAt });
-    return { code: `${code.slice(0, 4)}-${code.slice(4)}`, expiresAt };
+    return { code: (code.match(/.{1,4}/g) ?? []).join("-"), expiresAt };
   }
 
   hasUsers(): boolean {
@@ -250,7 +262,7 @@ export class BrokerAuth {
   /** Enrollment link for the very first passkey; null once one exists or when auth is open. */
   firstRunInviteUrl(now = Date.now()): string | null {
     if (!this.required || this.hasUsers()) return null;
-    const { code } = this.mintInvite(FIRST_RUN_INVITE_TTL_MS, now);
+    const { code } = this.mintInvite(FIRST_RUN_INVITE_TTL_MS, now, FIRST_RUN_CODE_LENGTH);
     return `${this.webOrigin}/#invite=${code}`;
   }
 
