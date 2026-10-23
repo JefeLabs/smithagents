@@ -17,6 +17,8 @@
 //   SMITH_SERVER_URL=http://localhost:7777  (default)
 // ---------------------------------------------------------------------------
 
+import { adminAuthHeader } from "./secret-file.js";
+
 const BASE_URL = process.env.SMITH_SERVER_URL ?? "http://localhost:7777";
 
 // ---------------------------------------------------------------------------
@@ -31,7 +33,7 @@ async function request(
   const url = `${BASE_URL}${path}`;
   const init: RequestInit = {
     method,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(await adminAuthHeader()) },
   };
   if (body) init.body = JSON.stringify(body);
 

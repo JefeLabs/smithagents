@@ -155,6 +155,7 @@ import {
 } from "./personas.js";
 import { WorkerPool } from "./remote-runtime.js";
 import type { ConnectedWorker, RegisteredMessage, WorkerMessage, WorkerRegisterMessage } from "./remote-types.js";
+import { resolveApiToken } from "./secret-file.js";
 import { isEncrypted } from "./secretbox.js";
 import { SessionStore } from "./session-store.js";
 import { seedSourceMigration } from "./source-migration.js";
@@ -273,8 +274,14 @@ interface ActiveTask {
 export interface ServerConfig {
   /** HTTP port (default: 7777) */
   port: number;
-  /** HTTP host (default: '127.0.0.1' — binding non-loopback requires SMITH_API_TOKEN) */
+  /** HTTP host (default: '127.0.0.1' — binding non-loopback requires an admin token) */
   host: string;
+  /**
+   * The admin token every route (bar the exempt ones) requires. `undefined` = SMITH_API_TOKEN, else
+   * open. `null` = open — loopback-only, and only tests use it. A string = required. main() always
+   * passes a string (serverConfigFromArgs).
+   */
+  apiToken?: string | null;
   /** UDP multicast address for heartbeat (default: '239.0.0.1') */
   udpMulticastAddr: string;
   /** UDP multicast port (default: 7778) */
@@ -361,7 +368,7 @@ export class OrchestratorServer {
   /** The 1s task-queue poll started by startQueueWorker() — cleared in stop() like every other background timer here. */
   private queueWorkerTimer: ReturnType<typeof setInterval> | null = null;
 
-  // Auth — bearer token from SMITH_API_TOKEN; null means loopback-only dev mode
+  // Auth — the admin bearer token (see ServerConfig.apiToken); null means open, loopback-only (tests)
   private readonly apiToken: string | null;
 
   // Meetings — built lazily (agents loaded from disk) on first use
@@ -373,7 +380,7 @@ export class OrchestratorServer {
 
   constructor(config?: Partial<ServerConfig>) {
     this.config = { ...DEFAULT_SERVER_CONFIG, ...config };
-    this.apiToken = process.env.SMITH_API_TOKEN?.trim() || null;
+    this.apiToken = config?.apiToken !== undefined ? config.apiToken : process.env.SMITH_API_TOKEN?.trim() || null;
     this.orchConfig = loadConfig(this.config.orchestrator);
     // Resolved once from the config's root. Previously every state path was
     // re-derived from process.cwd() at each call site.
@@ -537,8 +544,8 @@ export class OrchestratorServer {
     const loopback = ["127.0.0.1", "::1", "localhost"].includes(this.config.host);
     if (!this.apiToken && !loopback) {
       throw new Error(
-        `Refusing to bind ${this.config.host} without SMITH_API_TOKEN set. ` +
-          "Export SMITH_API_TOKEN to expose the API beyond loopback, or use --host 127.0.0.1.",
+        `Refusing to bind ${this.config.host} without an admin token. ` +
+          "Set SMITH_API_TOKEN (or start via the CLI, which generates one), or use --host 127.0.0.1.",
       );
     }
 
@@ -846,16 +853,16 @@ export class OrchestratorServer {
   }
 
   /**
-   * Require `Authorization: Bearer <SMITH_API_TOKEN>` on every route except
-   * /health. Runs on WebSocket upgrade requests too (/ws, /workers/connect);
-   * those clients may instead pass `?token=<SMITH_API_TOKEN>` since browsers
-   * cannot set headers on WebSocket connections.
+   * Require `Authorization: Bearer <admin token>` on every route except
+   * /health. Runs on WebSocket upgrade requests too. Only /ws also accepts
+   * `?token=` (browsers cannot set headers on a WebSocket); a URL token on any
+   * other route would leak into logs and referrers for no benefit.
    */
   private registerAuthHook(): void {
     const token = this.apiToken;
     if (!token) {
       // start() has already pinned the listener to loopback in this mode.
-      this.app.log.warn("SMITH_API_TOKEN not set — API is unauthenticated, loopback-only");
+      this.app.log.warn("no admin token configured — API is unauthenticated, loopback-only (tests)");
       return;
     }
     // /devices/redeem authenticates via single-use pairing code; /workers/connect
@@ -867,7 +874,7 @@ export class OrchestratorServer {
       if (exempt.has(path)) return;
       const header = req.headers.authorization;
       const bearer = header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : undefined;
-      const queryToken = (req.query as Record<string, unknown> | null)?.token;
+      const queryToken = path === "/ws" ? (req.query as Record<string, unknown> | null)?.token : undefined;
       const presented = bearer ?? (typeof queryToken === "string" ? queryToken : undefined);
       if (!OrchestratorServer.secretsEqual(presented, token)) {
         return reply.status(401).send({ error: "unauthorized" });
@@ -3951,13 +3958,17 @@ export class OrchestratorServer {
  *   npx tsx orchestrator/server.ts
  *   npx tsx orchestrator/server.ts --port 8080 --max-concurrent 8
  *
- * Binds loopback by default. To expose beyond localhost:
- *   SMITH_API_TOKEN=<secret> npx tsx orchestrator/server.ts --host 0.0.0.0
- * All routes except /health then require `Authorization: Bearer <secret>`
- * (WebSocket clients may pass ?token=<secret>).
+ * Binds loopback by default; every route except /health, /devices/redeem and
+ * /workers/connect requires the admin token. It comes from SMITH_API_TOKEN, else
+ * `~/.smith/api-token` (generated on first boot).
+ *   npx tsx orchestrator/server.ts --host 0.0.0.0
+ * (WebSocket clients may pass ?token=<secret> on /ws.)
  */
-export async function main(): Promise<void> {
-  const args = process.argv.slice(2);
+export async function serverConfigFromArgs(
+  args: string[],
+  env: NodeJS.ProcessEnv = process.env,
+  home?: string,
+): Promise<Partial<ServerConfig>> {
   const config: Partial<ServerConfig> = {};
 
   for (let i = 0; i < args.length; i += 2) {
@@ -3977,7 +3988,12 @@ export async function main(): Promise<void> {
     }
   }
 
-  const server = new OrchestratorServer(config);
+  config.apiToken = await resolveApiToken(env, home);
+  return config;
+}
+
+export async function main(): Promise<void> {
+  const server = new OrchestratorServer(await serverConfigFromArgs(process.argv.slice(2)));
 
   // Graceful shutdown
   const shutdown = async () => {

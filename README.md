@@ -99,7 +99,7 @@ DISCORD_VOICE_CHANNELS=           # comma-separated voice channel ids the crew a
                                   # Discord identity in voice instead of sharing the ear's. <NAME> matches
                                   # the agent's id, uppercased with hyphens as underscores. Missing = that
                                   # agent's voice lines play through the ear bot instead.
-SMITH_API_TOKEN=                  # blank = loopback-only dev mode
+SMITH_API_TOKEN=                  # blank = generated at ~/.smith/api-token on first boot (always required)
 ```
 
 Then register at least one workspace in `swarm/.smith/workspaces/<name>.json`:

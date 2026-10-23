@@ -21,9 +21,16 @@
 // ---------------------------------------------------------------------------
 
 import { WebSocket } from "ws";
+import { adminAuthHeader, resolveApiToken } from "./secret-file.js";
 
 const BASE_URL = process.env.SMITH_SERVER_URL ?? "http://localhost:7777";
 const WS_URL = `${BASE_URL.replace(/^http/, "ws")}/ws`;
+
+/** The admin token header every REST call to the swarm needs. */
+const authed = async (init: RequestInit = {}): Promise<RequestInit> => ({
+  ...init,
+  headers: { ...(init.headers as Record<string, string> | undefined), ...(await adminAuthHeader()) },
+});
 
 // ---------------------------------------------------------------------------
 // ANSI helpers
@@ -174,8 +181,12 @@ class Dashboard {
     try {
       const [healthRes, tasksRes, agentsRes] = await Promise.all([
         fetch(`${BASE_URL}/health`).then((r) => r.json()),
-        fetch(`${BASE_URL}/tasks`).then((r) => r.json()),
-        fetch(`${BASE_URL}/agents`).then((r) => r.json()),
+        authed()
+          .then((init) => fetch(`${BASE_URL}/tasks`, init))
+          .then((r) => r.json()),
+        authed()
+          .then((init) => fetch(`${BASE_URL}/agents`, init))
+          .then((r) => r.json()),
       ]);
       this.state.health = healthRes as HealthData;
       this.state.tasks = tasksRes as TasksData;
@@ -187,9 +198,9 @@ class Dashboard {
     this.render();
   }
 
-  private connectWebSocket(): void {
+  private async connectWebSocket(): Promise<void> {
     try {
-      this.ws = new WebSocket(WS_URL);
+      this.ws = new WebSocket(`${WS_URL}?token=${encodeURIComponent(await resolveApiToken())}`);
       this.ws.on("open", () => {
         this.state.connected = true;
         this.addEvent("WebSocket connected");
@@ -279,7 +290,7 @@ class Dashboard {
     const task = this.getSelectedTask();
     if (!task) return;
     try {
-      const res = await fetch(`${BASE_URL}/tasks/${task.taskId}/output`);
+      const res = await fetch(`${BASE_URL}/tasks/${task.taskId}/output`, await authed());
       if (res.ok) {
         const data = (await res.json()) as Record<string, unknown>;
         this.state.outputContent = data.output as string;
@@ -298,7 +309,7 @@ class Dashboard {
     const task = this.getSelectedTask();
     if (!task) return;
     try {
-      await fetch(`${BASE_URL}/tasks/${task.taskId}/kill`, { method: "POST" });
+      await fetch(`${BASE_URL}/tasks/${task.taskId}/kill`, await authed({ method: "POST" }));
       this.addEvent(`Killed ${task.taskId}`);
     } catch {
       this.addEvent(`Kill failed for ${task.taskId}`);
@@ -324,11 +335,12 @@ class Dashboard {
         process.stdin.setRawMode?.(true);
         process.stdout.write(ansi.cursorHide);
 
-        fetch(`${BASE_URL}/tasks/${task.taskId}/steer`, {
+        authed({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ keys: lines[0] }),
         })
+          .then((init) => fetch(`${BASE_URL}/tasks/${task.taskId}/steer`, init))
           .then(() => this.addEvent(`Steered ${task.taskId}: ${lines[0].substring(0, 40)}`))
           .catch(() => this.addEvent(`Steer failed for ${task.taskId}`))
           .finally(() => this.render());

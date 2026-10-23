@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
+import { WebSocket } from "ws";
 import type { WorkspaceChannels } from "./channels.js";
 import { createDocument } from "./document-store.js";
 import type { CommandRunner } from "./drivers/types.js";
@@ -18,6 +19,7 @@ import { SMITH_IDENTITY } from "./git-author.js";
 import { makeOrgRepo } from "./org-repo.fixture.js";
 import { smithPaths } from "./paths.js";
 import { ENGINES } from "./personas.js";
+import { apiTokenPath } from "./secret-file.js";
 import {
   archiveWorkspaceBoards,
   buildBrainEngineUpdate,
@@ -49,6 +51,7 @@ import {
   resolveTaskRuntime,
   resolveVoiceKeys,
   runJiraSearch,
+  serverConfigFromArgs,
   storeReply,
   workKindForCapability,
   workKindsPayload,
@@ -1858,4 +1861,70 @@ test("localSwarmUrl: a wildcard or loopback bind is called at 127.0.0.1; one spe
   assert.equal(localSwarmUrl("::", 7777), "http://127.0.0.1:7777");
   assert.equal(localSwarmUrl("192.168.1.5", 7777), "http://192.168.1.5:7777");
   assert.equal(localSwarmUrl("::1", 7777), "http://[::1]:7777");
+});
+
+// ── Admin token: production always requires it ──
+
+/** Boot a real server on a spare port. `null` is open mode (tests only); a string is the required token. */
+async function bootServer(root: string, apiToken: string | null): Promise<{ server: OrchestratorServer; url: string }> {
+  const server = new OrchestratorServer({
+    port: 0,
+    host: "127.0.0.1",
+    maxConcurrent: 0,
+    apiToken,
+    orchestrator: { smithRoot: root },
+    cliToolRunner: async () => ({ code: 1, stdout: "", stderr: "" }),
+  });
+  await server.start();
+  const internals = server as unknown as { orchConfig: { swarmUrl?: string } };
+  return { server, url: internals.orchConfig.swarmUrl as string };
+}
+
+test("auth: with an admin token, a request without it is 401 and with it is 200; /health stays open", async () => {
+  const root = await freshStateRoot("smith-auth-http-");
+  const { server, url } = await bootServer(root, "admin-secret");
+  try {
+    assert.equal((await fetch(`${url}/tasks`)).status, 401);
+    assert.equal((await fetch(`${url}/tasks`, { headers: { authorization: "Bearer admin-secret" } })).status, 200);
+    assert.equal((await fetch(`${url}/health`)).status, 200);
+  } finally {
+    await server.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("auth: ?token= is honoured on /ws only", async () => {
+  const root = await freshStateRoot("smith-auth-ws-");
+  const { server, url } = await bootServer(root, "admin-secret");
+  const wsUrl = url.replace(/^http/, "ws");
+  const opens = (u: string) =>
+    new Promise<boolean>((resolve) => {
+      const ws = new WebSocket(u);
+      ws.on("open", () => {
+        ws.close();
+        resolve(true);
+      });
+      ws.on("error", () => resolve(false));
+      ws.on("unexpected-response", () => resolve(false));
+    });
+  try {
+    assert.equal((await fetch(`${url}/tasks?token=admin-secret`)).status, 401);
+    assert.equal(await opens(`${wsUrl}/ws?token=admin-secret`), true);
+    assert.equal(await opens(`${wsUrl}/ws`), false);
+  } finally {
+    await server.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("serverConfigFromArgs: always resolves an admin token — SMITH_API_TOKEN, else the generated file", async () => {
+  const home = await mkdtemp(join(tmpdir(), "smith-cfg-home-"));
+  try {
+    const cfg = await serverConfigFromArgs(["--port", "9"], {}, home);
+    assert.equal(cfg.port, 9);
+    assert.equal(cfg.apiToken, (await readFile(apiTokenPath(home), "utf8")).trim());
+    assert.equal((await serverConfigFromArgs([], { SMITH_API_TOKEN: "e" }, home)).apiToken, "e");
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
 });
