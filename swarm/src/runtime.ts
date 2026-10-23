@@ -336,22 +336,26 @@ async function canonicalPath(path: string): Promise<string> {
  * container, comparing both as written and with symlinks resolved on both
  * sides (a link to ~/.smith, or a ~/.smith that is itself a link). A source
  * that cannot be resolved is refused.
+ *
+ * Creates the secrets' directories first (0700, as boot does): realpath names
+ * a path the way the disk does only when it exists, and a missing ~/.smith
+ * cannot be told apart from a spelling the disk folds to it (~/.Smith, or
+ * ~/.ſmith on APFS), which docker would create and the swarm then write into.
  */
 async function assertNoSecretMounts(args: string[]): Promise<void> {
   const sources = args.flatMap((a, i) => (args[i - 1] === "-v" ? [a.split(":")[0] ?? ""] : []));
-  const resolveOrRefuse = (what: string, path: string) =>
-    canonicalPath(path).catch((err: unknown) => {
-      throw new Error(
-        `refusing to start container: cannot resolve ${what} ${path}: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    });
-  // realpath returns on-disk case only for components that exist; a missing
-  // ~/.smith and a missing ~/.Smith are one directory on macOS's default disk.
-  const fold = (p: string) => (process.platform === "darwin" ? p.toLowerCase() : p);
+  const refuse = (what: string, path: string) => (err: unknown) => {
+    throw new Error(
+      `refusing to start container: cannot ${what} ${path}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  };
   const secrets = secretPaths();
-  const realSecrets = (await Promise.all(secrets.map((s) => resolveOrRefuse("secret", s)))).map(fold);
+  for (const dir of new Set(secrets.map((s) => dirname(s)))) {
+    await mkdir(dir, { recursive: true, mode: 0o700 }).catch(refuse("create secrets directory", dir));
+  }
+  const realSecrets = await Promise.all(secrets.map((s) => canonicalPath(s).catch(refuse("resolve secret", s))));
   for (const source of sources) {
-    const real = fold(await resolveOrRefuse("mount", source));
+    const real = await canonicalPath(source).catch(refuse("resolve mount", source));
     const hit = exposedSecrets([source], secrets)[0] ?? exposedSecrets([real], realSecrets)[0];
     if (hit) throw new Error(`refusing to start container: mount ${source} would expose ${hit.secret}`);
   }

@@ -588,32 +588,45 @@ test("DockerRuntime.launch: when ~/.smith is itself a symlink, mounting its targ
   });
 });
 
-test("DockerRuntime.launch: on a case-insensitive disk, a case variant of a missing ~/.smith is refused", async (t) => {
+test("DockerRuntime.launch: on a case-insensitive disk, any spelling the disk folds to a missing ~/.smith is refused", async (t) => {
   await withFakeHome(async ({ home, work, calls, runtime }) => {
     // The swarm would later create ~/.smith, which IS ~/.Smith on such a disk.
-    await mkdir(join(home, "probe"));
-    const caseInsensitive = await stat(join(home, "PROBE")).then(
-      () => true,
-      () => false,
-    );
-    if (!caseInsensitive) return t.skip("this disk is case-sensitive: ~/.Smith is a different directory");
-    await assert.rejects(
-      runtime([`${join(home, ".Smith")}:/x`]).launch("task-case", "true", work),
-      /refusing to start container: mount .* would expose/,
-    );
+    // APFS also folds U+017F (long s) to "s", which JS toLowerCase() does not.
+    await mkdir(join(home, "sprobe"));
+    const sameDir = (name: string) =>
+      stat(join(home, name)).then(
+        () => true,
+        () => false,
+      );
+    if (!(await sameDir("SPROBE"))) return t.skip("this disk is case-sensitive: ~/.Smith is a different directory");
+    const variants = [".Smith", ...((await sameDir("ſprobe")) ? [".ſmith"] : [])];
+    assert.ok(process.platform !== "darwin" || variants.length === 2, "APFS folds the long s; the probe must see it");
+    for (const name of variants) {
+      await assert.rejects(
+        runtime([`${join(home, name)}:/x`]).launch("task-case", "true", work),
+        /refusing to start container: mount .* would expose/,
+        name,
+      );
+    }
     assert.equal(calls.length, 0);
+    // The guard creates ~/.smith itself (so realpath can name it), private like boot does.
+    assert.equal((await stat(join(home, ".smith"))).mode & 0o777, 0o700);
   });
 });
 
 test("DockerRuntime.launch: a missing mount source is resolved through its existing symlinked parent", async () => {
   await withFakeHome(async ({ scratch, home, work, calls, runtime }) => {
-    // Neither ~/.smith nor the source exists yet: docker would create ~/.smith
-    // through the link, and the swarm would later write its tokens into it.
+    // The token does not exist yet; docker would create it (as a directory the
+    // container owns) through the link, where the swarm later expects its token.
+    await mkdir(join(home, ".smith"));
     await symlink(home, join(scratch, "to-home"));
-    await assert.rejects(
-      runtime([`${join(scratch, "to-home", ".smith")}:/x`]).launch("task-m", "true", work),
-      /refusing to start container: mount .* would expose/,
-    );
+    for (const source of [join(scratch, "to-home", ".smith"), join(scratch, "to-home", ".smith", "api-token")]) {
+      await assert.rejects(
+        runtime([`${source}:/x`]).launch("task-m", "true", work),
+        /refusing to start container: mount .* would expose/,
+        source,
+      );
+    }
     assert.equal(calls.length, 0);
   });
 });
