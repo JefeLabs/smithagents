@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
-    "@deepgram/sdk": "^5.7.0",
+    "@deepgram/sdk": "^5.15.0",
     "@discordjs/opus": "^0.10.0",
     "@discordjs/voice": "^0.19.2",
     "@google/genai": "^2.30.0",

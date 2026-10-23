@@ -18,8 +18,8 @@ importers:
         specifier: ^0.115.0
         version: 0.115.0
       '@deepgram/sdk':
-        specifier: ^5.7.0
-        version: 5.7.0
+        specifier: ^5.15.0
+        version: 5.15.0
       '@discordjs/opus':
         specifier: ^0.10.0
         version: 0.10.0
@@ -566,8 +566,8 @@ packages:
   '@datastructures-js/deque@1.0.8':
     resolution: {integrity: sha512-PSBhJ2/SmeRPRHuBv7i/fHWIdSC3JTyq56qb+Rq0wjOagi0/fdV5/B/3Md5zFZus/W6OkSPMaxMKKMNMrSmubg==}
 
-  '@deepgram/sdk@5.7.0':
-    resolution: {integrity: sha512-A0uIaLukO+8JXUuT+iDE5ts8PCmdLCxDajawghFHLDEnFvA8dYYecCFxqFaTWgjJcJil0CtgIHKzm23E4RVqOA==}
+  '@deepgram/sdk@5.15.0':
+    resolution: {integrity: sha512-LAmMdOHVfvyJ8hz+YI4aK+kPmfqdtmMl7O8Q63lDWVyuHx9vEyoyt+W9y3vxxaVxdOmn4zFmGYjntbNVh/KyqA==}
     engines: {node: '>=18.0.0'}
 
   '@discordjs/builders@1.14.1':
@@ -4974,7 +4974,7 @@ snapshots:
 
   '@datastructures-js/deque@1.0.8': {}
 
-  '@deepgram/sdk@5.7.0':
+  '@deepgram/sdk@5.15.0':
     dependencies:
       ws: 8.21.3
     transitivePeerDependencies:
