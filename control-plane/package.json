@@ -25,7 +25,7 @@
     "@heroui-pro/react": "1.0.0-beta.10",
     "@heroui/react": "^3.2.6",
     "@heroui/styles": "^3.2.6",
-    "@simplewebauthn/browser": "^13.3.0",
+    "@simplewebauthn/browser": "^14.0.0",
     "@tanstack/react-query": "5.104.5",
     "@tanstack/react-router": "1.170.45",
     "@tauri-apps/api": "^2.0.0",
