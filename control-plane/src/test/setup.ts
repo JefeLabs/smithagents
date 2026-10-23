@@ -20,19 +20,28 @@ configure({ asyncUtilTimeout: 5_000 });
  *
  * Hoisted so it lands before this file's own imports, and left writable so a
  * suite that needs to control the stored value can still stub over it.
+ *
+ * DEFINED, not assigned: since Vitest 5, `globalThis` writes reach jsdom's real
+ * window, where `localStorage` is a getter-only accessor — a plain assignment
+ * throws. A writable data property shadows the getter, and later plain
+ * assignments in individual suites keep working.
  */
 vi.hoisted(() => {
   const map = new Map<string, string>();
-  globalThis.localStorage = {
-    getItem: (k: string) => map.get(k) ?? null,
-    setItem: (k: string, v: string) => void map.set(k, String(v)),
-    removeItem: (k: string) => void map.delete(k),
-    clear: () => map.clear(),
-    key: (i: number) => Array.from(map.keys())[i] ?? null,
-    get length() {
-      return map.size;
-    },
-  } as Storage;
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    writable: true,
+    value: {
+      getItem: (k: string) => map.get(k) ?? null,
+      setItem: (k: string, v: string) => void map.set(k, String(v)),
+      removeItem: (k: string) => void map.delete(k),
+      clear: () => map.clear(),
+      key: (i: number) => Array.from(map.keys())[i] ?? null,
+      get length() {
+        return map.size;
+      },
+    } as Storage,
+  });
 
   /**
    * jsdom implements no `matchMedia`, and `@heroui-pro/react`'s barrel reaches
