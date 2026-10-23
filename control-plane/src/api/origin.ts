@@ -1,13 +1,16 @@
 /**
  * Where the broker lives and how to reach it — the ONE place scheme, host, and
- * credentials are decided. In dev/tauri the broker is the loopback; in cloud
- * the SPA and broker share the page's own host (ALB path-split). Every broker
+ * credentials are decided. Locally the broker is on the page's own hostname at
+ * port 7790 (same-site, so the SameSite=Lax session cookie is stored and sent);
+ * tauri uses the loopback; in cloud the SPA and broker share the page's own
+ * host (ALB path-split). Every broker
  * request goes through `brokerFetch`, so credentials and the 401 seam are
  * uniform across all ~75 call sites rather than repeated at each.
  */
 import { useAuthStore } from "../stores/authStore";
 
-export const LOCAL_BASE = "127.0.0.1:7790";
+export const LOCAL_PORT = 7790;
+export const LOCAL_BASE = `127.0.0.1:${LOCAL_PORT}`;
 
 type Loc = { hostname: string; host: string; protocol: string };
 
@@ -26,9 +29,14 @@ export function isCloud(loc: Pick<Loc, "hostname" | "protocol"> = currentLoc()):
   return loc.hostname !== "localhost" && loc.hostname !== "127.0.0.1";
 }
 
-/** host:port the broker answers on: loopback in dev, the page's own host in cloud. */
+/**
+ * host:port the broker answers on: the page's own host in cloud, the loopback
+ * under tauri, otherwise the page's own hostname on the broker port.
+ */
 export function brokerBase(loc: Loc = currentLoc()): string {
-  return isCloud(loc) ? loc.host : LOCAL_BASE;
+  if (isCloud(loc)) return loc.host;
+  if (loc.protocol === "tauri:") return LOCAL_BASE;
+  return `${loc.hostname}:${LOCAL_PORT}`;
 }
 
 function httpScheme(loc: Pick<Loc, "protocol"> = currentLoc()): string {
@@ -53,13 +61,13 @@ export const BROKER_BASE: string = brokerBase();
 
 /**
  * The one fetch every broker call routes through: applies scheme + credentials,
- * and — in cloud mode only — flips `sessionLost` on a 401 so a mid-session
+ * and flips `sessionLost` on a 401 in every mode so a mid-session
  * expiry drops the user to login from one place. `/auth/me` opts out (it IS the
  * check; letting it trip the seam would loop).
  */
 export async function brokerFetch(path: string, base: string = BROKER_BASE, init?: RequestInit): Promise<Response> {
   const res = await fetch(httpUrl(path, base), { credentials: "include", ...init });
-  if (res.status === 401 && isCloud() && path !== "/auth/me") {
+  if (res.status === 401 && path !== "/auth/me") {
     useAuthStore.getState().markSessionLost();
   }
   return res;

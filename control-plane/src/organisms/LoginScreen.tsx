@@ -18,14 +18,29 @@ function messageFor(err: unknown): string {
   return "Something went wrong — try again.";
 }
 
+/** `#invite=ABCD-EFGH` (the broker's first-run link) -> the code; anything else -> null. */
+export function inviteFromHash(hash: string): string | null {
+  const m = /^#invite=([^&]+)$/.exec(hash);
+  return m?.[1] ? decodeURIComponent(m[1]) : null;
+}
+
+/** WebAuthn can't run on an IP host: on 127.0.0.1, the same page on `localhost`; otherwise null. */
+export function localhostHint(loc: { hostname: string; port: string; pathname: string; hash: string }): string | null {
+  if (loc.hostname !== "127.0.0.1") return null;
+  const port = loc.port ? `:${loc.port}` : "";
+  return `http://localhost${port}${loc.pathname}${loc.hash}`;
+}
+
 /**
  * The only thing on screen when a cloud tenant isn't signed in (modelled on
  * NewSessionScreen's full-screen `forced` state — not a modal). Two ways in:
  * sign in with an existing passkey, or redeem an invite to create one.
  */
 export function LoginScreen({ onAuthed }: { onAuthed: () => void }) {
-  const { control, handleSubmit } = useForm<InviteForm>({ defaultValues: { code: "", name: "" } });
-  const [showInvite, setShowInvite] = useState(false);
+  const invite = inviteFromHash(window.location.hash);
+  const hint = localhostHint(window.location);
+  const { control, handleSubmit } = useForm<InviteForm>({ defaultValues: { code: invite ?? "", name: "" } });
+  const [showInvite, setShowInvite] = useState(invite !== null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -48,6 +63,7 @@ export function LoginScreen({ onAuthed }: { onAuthed: () => void }) {
     try {
       const options = await beginEnroll(code, name);
       await finishEnroll(code, options);
+      history.replaceState(null, "", window.location.pathname + window.location.search);
       onAuthed();
     } catch (err) {
       setError(messageFor(err));
@@ -61,6 +77,12 @@ export function LoginScreen({ onAuthed }: { onAuthed: () => void }) {
       <div className="login-screen__card">
         <h1 className="login-screen__title">Welcome back</h1>
         <p className="login-screen__subtitle">Sign in with your passkey to reach your crew.</p>
+
+        {hint ? (
+          <p className="login-screen__hint" role="note">
+            Passkeys don't work on an IP address. Open <a href={hint}>{hint}</a> instead.
+          </p>
+        ) : null}
 
         <Button variant="primary" onPress={signIn} isDisabled={busy}>
           Sign in
@@ -91,6 +113,11 @@ export function LoginScreen({ onAuthed }: { onAuthed: () => void }) {
             I have an invite
           </button>
         )}
+
+        <p className="login-screen__firstrun">
+          First time on this Mac? Open the sign-up link printed in the broker's terminal (
+          <code>tmux attach -t smith-broker</code>).
+        </p>
 
         {error ? (
           <p className="login-screen__error" role="alert">

@@ -3,7 +3,6 @@ import { render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../lib/cloud", () => ({ CLOUD_MODE: true }));
 vi.mock("../api/auth", () => ({
   getMe: vi.fn(),
   login: vi.fn(),
@@ -23,7 +22,17 @@ afterEach(() => {
   useAuthStore.getState().clearSessionLost();
 });
 
-describe("AuthGate (cloud mode)", () => {
+describe("AuthGate", () => {
+  it("renders children for an open-mode broker", async () => {
+    (getMe as ReturnType<typeof vi.fn>).mockResolvedValue({ kind: "human", local: true });
+    wrap(
+      <AuthGate>
+        <div>the app</div>
+      </AuthGate>,
+    );
+    await waitFor(() => expect(screen.getByText("the app")).toBeInTheDocument());
+  });
+
   it("renders children when /auth/me is a human", async () => {
     (getMe as ReturnType<typeof vi.fn>).mockResolvedValue({ kind: "human", name: "edwin" });
     wrap(

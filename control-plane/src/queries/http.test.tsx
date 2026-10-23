@@ -105,7 +105,7 @@ describe("http queries", () => {
     renderWithProviders(<LocalModelsProbe />);
 
     expect(await screen.findByText("lmstudio")).toBeInTheDocument();
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://127.0.0.1:7790/local-models");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://localhost:7790/local-models");
   });
 
   it("useMachineFacts asks the BROKER for /machine", async () => {
@@ -125,7 +125,7 @@ describe("http queries", () => {
     // "pending" synchronously, so the element is found on the first tick and
     // the assertion would run against the pre-fetch state.
     expect(await screen.findByText("103079215104")).toBeInTheDocument();
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://127.0.0.1:7790/machine");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://localhost:7790/machine");
   });
 
   it("useSaveEngines PUTs the three roles to the BROKER's /me/engines, fallback null included", async () => {
@@ -147,7 +147,7 @@ describe("http queries", () => {
     await userEvent.click(screen.getByRole("button", { name: "save engines" }));
 
     const [url, init] = fetchMock.mock.calls[0] ?? [];
-    expect(url).toBe("http://127.0.0.1:7790/me/engines");
+    expect(url).toBe("http://localhost:7790/me/engines");
     expect(init?.method).toBe("PUT");
     const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
     expect("fallback" in body).toBe(true);

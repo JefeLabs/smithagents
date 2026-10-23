@@ -2,17 +2,17 @@
 // virtual authenticator (no real hardware).
 //
 // FAITHFUL-RUN PREREQUISITES (run by hand — see the limitation note below):
-//   1. A broker in required mode whose webOrigin equals the SPA's origin:
-//        SMITH_BROKER_AUTH=required SMITH_BROKER_TOKEN=$TOK \
-//        SMITH_BROKER_WEB_ORIGIN=https://<cloud-host> SMITH_BROKER_RPID=<cloud-host> \
-//        BROKER_TEXT_PORT=7906 npm run serve   (in broker/)
-//   2. The SPA built and served at that SAME cloud host (so isCloud() is true and
-//      CLOUD_MODE gates — under localhost/127.0.0.1 the gate is a passthrough and
-//      no login screen ever renders). E2E_BASE_URL points here.
-//   3. Mint an invite:
+//   Local run:
+//   1. A broker in required mode on 7790 with a THROWAWAY auth file, never your real one:
+//        SMITH_BROKER_AUTH_FILE=$(mktemp -d)/broker-auth.json npm run serve   (in broker/)
+//      Its first run prints http://localhost:1420/#invite=XXXX-XXXX; INVITE_CODE is that code.
+//   2. The SPA at http://localhost:1420 (the page's hostname is also the broker's, so the
+//      session cookie is same-site). E2E_BASE_URL=http://localhost:1420.
+//   Cloud run: a required-mode broker whose webOrigin equals the SPA's origin
+//      (SMITH_BROKER_WEB_ORIGIN, SMITH_BROKER_RPID) with the SPA served at that SAME host;
+//      mint an invite with
 //        curl -s -XPOST https://<cloud-host>/auth/invites -H "authorization: Bearer $TOK"
-//      and pass it as INVITE_CODE.
-//   4. pnpm exec playwright install chromium   (browser binary)
+//   3. pnpm exec playwright install chromium   (browser binary)
 //
 // Then: E2E_BASE_URL=https://<cloud-host> INVITE_CODE=<code> pnpm exec playwright test
 import { expect, test } from "@playwright/test";

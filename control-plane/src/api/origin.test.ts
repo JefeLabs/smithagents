@@ -17,8 +17,10 @@ describe("origin derivation", () => {
     expect(isCloud(tauri)).toBe(false);
     expect(isCloud(cloud)).toBe(true);
   });
-  it("brokerBase is the loopback in dev, the page host in cloud", () => {
-    expect(brokerBase(dev)).toBe(LOCAL_BASE);
+  it("brokerBase follows the page's own hostname locally, so the session cookie is same-site", () => {
+    expect(brokerBase(dev)).toBe("localhost:7790");
+    expect(brokerBase({ hostname: "127.0.0.1", host: "127.0.0.1:1420", protocol: "http:" })).toBe("127.0.0.1:7790");
+    expect(brokerBase(tauri)).toBe(LOCAL_BASE);
     expect(brokerBase(cloud)).toBe("skoolscout.smith.app");
   });
   it("httpUrl/wsUrl follow the page scheme", () => {
@@ -36,12 +38,20 @@ describe("origin derivation", () => {
     expect(init?.credentials).toBe("include");
     expect(init?.method).toBe("POST");
   });
-  it("a 401 does NOT flip sessionLost in local mode (jsdom host is localhost)", async () => {
+  it("a 401 flips sessionLost locally too", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response("{}", { status: 401 })),
     );
     await brokerFetch("/me");
+    expect(useAuthStore.getState().sessionLost).toBe(true);
+  });
+  it("a 401 from /auth/me never flips it (it IS the check)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("{}", { status: 401 })),
+    );
+    await brokerFetch("/auth/me");
     expect(useAuthStore.getState().sessionLost).toBe(false);
   });
 });
