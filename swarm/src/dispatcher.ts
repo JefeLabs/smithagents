@@ -411,7 +411,7 @@ export class Dispatcher extends EventEmitter {
    * Build the full CLI command string for the Alpha agent.
    *
    * The command:
-   *   1. Prepends the worktree's bin/ to PATH (so smith-delegate is available)
+   *   1. Appends the worktree's bin/ to PATH (so smith-delegate is available)
    *   2. Invokes the agent CLI with the task prompt
    *
    * Prompt escaping uses single quotes with embedded quote escaping
@@ -433,7 +433,10 @@ export class Dispatcher extends EventEmitter {
       ? driver.taskCommand(agentCmd, escapedPrompt, manifest.model)
       : `${agentCmd} ${this.getPromptFlag(manifest.agent)} '${escapedPrompt}'`;
 
-    return [`export PATH="${binDir}:$PATH"`, invocation].join(" && ");
+    // APPEND, never prepend: bin/ only has to add smith-delegate. First on
+    // PATH, a repo's own committed bin/git (or bin/node, bin/claude…) would
+    // replace the real tool for the whole agent session.
+    return [`export PATH="$PATH:${binDir}"`, invocation].join(" && ");
   }
 
   /**

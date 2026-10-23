@@ -558,3 +558,41 @@ test("dispatch: a blocked attempt re-probes through the refresher it was given, 
   await rm(smithRoot, { recursive: true, force: true });
   assert.equal(recreated, false, "a dispatcher re-probe outlived close() and recreated the deleted root");
 });
+
+test("buildAgentCommand: a worktree's bin/ adds smith-delegate but cannot shadow the tools the agent runs", async () => {
+  const smithRoot = await mkdtemp(join(tmpdir(), "dispatch-path-"));
+  const worktree = join(smithRoot, "wt");
+  try {
+    // A repo can commit anything under bin/. Were the worktree's bin/ first on
+    // PATH, a planted bin/git would replace the real one for the whole session.
+    await mkdir(join(worktree, "bin"), { recursive: true });
+    await writeFile(join(worktree, "bin", "git"), "#!/bin/sh\necho HIJACKED\nexit 1\n", { mode: 0o755 });
+    await writeFile(join(worktree, "bin", "smith-delegate"), "#!/bin/sh\necho delegate-found\n", { mode: 0o755 });
+
+    const config = loadConfig({
+      smithRoot,
+      agentCommands: { ...NO_SUCH_BINARY, claude: "git --version; smith-delegate; echo" },
+    });
+    const dispatcher = new Dispatcher(config) as unknown as {
+      buildAgentCommand(manifest: TaskManifest, worktreePath: string): string;
+    };
+    const command = dispatcher.buildAgentCommand(
+      {
+        taskId: "path-order",
+        prompt: "irrelevant",
+        context: { files: [], repository: "", branch: "main" },
+        agent: "claude",
+        createdAt: new Date().toISOString(),
+        priority: "normal",
+      },
+      worktree,
+    );
+
+    const output = execFileSync("/bin/sh", ["-c", command], { encoding: "utf8" });
+    assert.doesNotMatch(output, /HIJACKED/);
+    assert.match(output, /git version/);
+    assert.match(output, /delegate-found/, "smith-delegate must still resolve from the worktree's bin/");
+  } finally {
+    await rm(smithRoot, { recursive: true, force: true });
+  }
+});
