@@ -88,6 +88,29 @@ test("createTaskClone: credentials embedded in the user's origin URL never reach
   assert.ok(!(await readFile(join(clone.path, ".git/config"), "utf8")).includes("s3cret"));
 });
 
+test("stripUrlCredentials: strips userinfo for every scheme and fails closed", () => {
+  const table: Array<[string, string | undefined]> = [
+    ["https://x-access-token:s3cret@github.com/acme/web.git", "https://github.com/acme/web.git"],
+    ["https://github.com/acme/web.git", "https://github.com/acme/web.git"],
+    ["git://u:p@host/r.git", "git://host/r.git"],
+    ["ftp://u:p@host/r.git", "ftp://host/r.git"],
+    ["git+ssh://git:pw@host/r.git", "git+ssh://host/r.git"],
+    ["ssh://git@github.com/acme/web.git", "ssh://github.com/acme/web.git"],
+    ["https://user:pa/ss@host/r.git", undefined],
+    ["git@github.com:acme/web.git", "git@github.com:acme/web.git"],
+    ["/srv/repos/web.git", "/srv/repos/web.git"],
+  ];
+  for (const [input, expected] of table) assert.equal(stripUrlCredentials(input), expected, input);
+});
+
+test("createTaskClone: an origin that cannot be sanitised gives the clone no origin", async () => {
+  const { dir, repo } = await fixture();
+  await sh("git", ["remote", "add", "origin", "https://user:pa/ss@host/r.git"], repo);
+  const clone = await createTaskClone(repo, join(dir, "clones", "t1"), "t1", "main");
+  assert.equal(await sh("git", ["remote"], clone.path), "");
+  assert.ok(!(await readFile(join(clone.path, ".git/config"), "utf8")).includes("pa/ss"));
+});
+
 test("createTaskClone: refuses a path that already exists — a container may have written to it", async () => {
   const { dir, repo } = await fixture();
   await mkdir(join(dir, "clones", "t1"), { recursive: true });

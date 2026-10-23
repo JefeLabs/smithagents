@@ -38,24 +38,20 @@ export function shellQuote(word: string): string {
   return `'${word.replaceAll("'", "'\\''")}'`;
 }
 
-/** Strip credentials from a remote URL before it enters a container-readable config. */
-export function stripUrlCredentials(url: string): string {
-  if (!/^(https?|ssh):\/\//i.test(url)) return url;
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return url;
-  }
-  if (parsed.protocol === "ssh:") {
-    if (!parsed.password) return url;
-    parsed.password = "";
-  } else {
-    parsed.username = "";
-    parsed.password = "";
-  }
-  const out = parsed.toString();
-  return out.endsWith("/") && !url.endsWith("/") ? out.slice(0, -1) : out;
+/**
+ * Strip userinfo from a remote URL before it enters a container-readable config.
+ * Fails closed: `undefined` means the clone gets no origin at all.
+ */
+export function stripUrlCredentials(url: string): string | undefined {
+  const sep = url.indexOf("://");
+  if (sep === -1) return url;
+  const head = url.slice(0, sep + 3);
+  const rest = url.slice(sep + 3);
+  const slash = rest.indexOf("/");
+  const authority = slash === -1 ? rest : rest.slice(0, slash);
+  const remainder = slash === -1 ? "" : rest.slice(slash);
+  const cleaned = authority.slice(authority.lastIndexOf("@") + 1) + remainder;
+  return cleaned.includes("@") ? undefined : head + cleaned;
 }
 
 /** A chained alternate becomes a container mount, so it must really be a git object store. */
@@ -134,7 +130,8 @@ export async function createTaskClone(
   } catch {
     originUrl = null;
   }
-  if (originUrl) await hardenedGit(["remote", "set-url", "origin", stripUrlCredentials(originUrl)], clonePath);
+  const safeUrl = originUrl ? stripUrlCredentials(originUrl) : undefined;
+  if (safeUrl) await hardenedGit(["remote", "set-url", "origin", safeUrl], clonePath);
   else await hardenedGit(["remote", "remove", "origin"], clonePath);
   return { repoPath: repoReal, path: clonePath, branch, baseSha, readOnlyMounts };
 }
