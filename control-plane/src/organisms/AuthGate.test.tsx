@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -23,6 +23,20 @@ afterEach(() => {
 });
 
 describe("AuthGate", () => {
+  it("an unreachable broker shows can't-reach (not login), then the app once it answers", async () => {
+    const m = getMe as ReturnType<typeof vi.fn>;
+    m.mockRejectedValueOnce(new Error("network")).mockResolvedValue({ kind: "human", local: true });
+    wrap(
+      <AuthGate>
+        <div>the app</div>
+      </AuthGate>,
+    );
+    await waitFor(() => expect(screen.getByText(/can't reach the broker/i)).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: /^sign in$/i })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /retry now/i }));
+    await waitFor(() => expect(screen.getByText("the app")).toBeInTheDocument());
+  });
+
   it("renders children for an open-mode broker", async () => {
     (getMe as ReturnType<typeof vi.fn>).mockResolvedValue({ kind: "human", local: true });
     wrap(

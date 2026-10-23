@@ -29,6 +29,7 @@ describe("first-run link helpers", () => {
     expect(inviteFromHash("#invite=ABCD-EFGH")).toBe("ABCD-EFGH");
     expect(inviteFromHash("")).toBeNull();
     expect(inviteFromHash("#other=1")).toBeNull();
+    expect(inviteFromHash("#invite=50%")).toBeNull();
   });
   it("localhostHint: on 127.0.0.1 it points at localhost, keeping port, path and hash", () => {
     expect(localhostHint({ hostname: "127.0.0.1", port: "1420", pathname: "/", hash: "#invite=X" })).toBe(
@@ -43,6 +44,20 @@ describe("LoginScreen", () => {
     window.location.hash = "#invite=ABCD-EFGH";
     render(<LoginScreen onAuthed={vi.fn()} />);
     expect(screen.getByRole("textbox", { name: /invite code/i })).toHaveValue("ABCD-EFGH");
+  });
+
+  it("a successful enroll from a first-run link clears the hash and keeps the search", async () => {
+    (beginEnroll as ReturnType<typeof vi.fn>).mockResolvedValue({});
+    (finishEnroll as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    window.history.replaceState(null, "", "/?a=1#invite=ABCD-EFGH");
+    const onAuthed = vi.fn();
+    render(<LoginScreen onAuthed={onAuthed} />);
+    await userEvent.type(screen.getByPlaceholderText(/edwin/i), "Edwin");
+    await userEvent.click(screen.getByRole("button", { name: /create passkey/i }));
+    await waitFor(() => expect(onAuthed).toHaveBeenCalled());
+    expect(window.location.hash).toBe("");
+    expect(window.location.search).toBe("?a=1");
+    window.history.replaceState(null, "", "/");
   });
 
   it("tells a first-time user where the sign-up link is", () => {

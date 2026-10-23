@@ -160,8 +160,8 @@ function credentialCors(req: IncomingMessage): Record<string, string> {
 function sessionCookie(token: string, webOrigin: string): string {
   // A cloud SPA (CloudFront) is cross-site to the ALB-fronted broker, so the
   // cookie must be SameSite=None (which mandates Secure). SameSite is computed
-  // on host, not port, so even localhost:1420 → 127.0.0.1:7790 is cross-site —
-  // dev pins the SPA to 127.0.0.1:1420 so Lax works there without HTTPS.
+  // on host, not port, so the SPA calls the broker on the page's own hostname
+  // (localhost:1420 → localhost:7790 is same-site) and Lax works without HTTPS.
   const sameSite = webOrigin.startsWith("https://") ? "None; Secure" : "Lax";
   return `smith_session=${token}; HttpOnly; Path=/; SameSite=${sameSite}; Max-Age=2592000`;
 }

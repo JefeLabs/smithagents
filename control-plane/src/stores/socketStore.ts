@@ -183,7 +183,7 @@ export const useSocketStore = create<SocketState>((set) => ({
         if (socket !== ws) return;
         socket = null;
         set({ connected: false });
-        // 4401 is the broker's "unauthorized" upgrade close (cloud, required
+        // 4401 is the broker's "unauthorized" upgrade close (required
         // mode). Retrying would hot-loop against the auth wall forever — stop,
         // and route the user to login via the auth store instead.
         if (event?.code === 4401) {

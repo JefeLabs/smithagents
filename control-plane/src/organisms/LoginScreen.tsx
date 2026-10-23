@@ -2,6 +2,7 @@ import { Button } from "@heroui/react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { beginEnroll, EnrollError, finishEnroll, login } from "../api/auth";
+import { isCloud } from "../api/origin";
 import { FormTextField } from "../molecules/form";
 
 interface InviteForm {
@@ -21,7 +22,12 @@ function messageFor(err: unknown): string {
 /** `#invite=ABCD-EFGH` (the broker's first-run link) -> the code; anything else -> null. */
 export function inviteFromHash(hash: string): string | null {
   const m = /^#invite=([^&]+)$/.exec(hash);
-  return m?.[1] ? decodeURIComponent(m[1]) : null;
+  if (!m?.[1]) return null;
+  try {
+    return decodeURIComponent(m[1]);
+  } catch {
+    return null; // malformed %-escape: not a code
+  }
 }
 
 /** WebAuthn can't run on an IP host: on 127.0.0.1, the same page on `localhost`; otherwise null. */
@@ -32,7 +38,7 @@ export function localhostHint(loc: { hostname: string; port: string; pathname: s
 }
 
 /**
- * The only thing on screen when a cloud tenant isn't signed in (modelled on
+ * The only thing on screen when nobody is signed in (modelled on
  * NewSessionScreen's full-screen `forced` state — not a modal). Two ways in:
  * sign in with an existing passkey, or redeem an invite to create one.
  */
@@ -114,10 +120,12 @@ export function LoginScreen({ onAuthed }: { onAuthed: () => void }) {
           </button>
         )}
 
-        <p className="login-screen__firstrun">
-          First time on this Mac? Open the sign-up link printed in the broker's terminal (
-          <code>tmux attach -t smith-broker</code>).
-        </p>
+        {isCloud() ? null : (
+          <p className="login-screen__firstrun">
+            First time on this Mac? Open the sign-up link printed in the broker's terminal (
+            <code>tmux attach -t smith-broker</code>).
+          </p>
+        )}
 
         {error ? (
           <p className="login-screen__error" role="alert">

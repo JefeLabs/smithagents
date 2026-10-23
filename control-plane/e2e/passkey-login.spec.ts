@@ -3,8 +3,8 @@
 //
 // FAITHFUL-RUN PREREQUISITES (run by hand — see the limitation note below):
 //   Local run:
-//   1. A broker in required mode on 7790 with a THROWAWAY auth file, never your real one:
-//        SMITH_BROKER_AUTH_FILE=$(mktemp -d)/broker-auth.json npm run serve   (in broker/)
+//   1. Stop the live tmux `smith-broker` on 7790 first, then start a broker in required mode with a THROWAWAY auth file, never your real one:
+//        SMITH_BROKER_AUTH_FILE=$(mktemp -d)/broker-auth.json pnpm run serve   (in broker/)
 //      Its first run prints http://localhost:1420/#invite=XXXX-XXXX; INVITE_CODE is that code.
 //   2. The SPA at http://localhost:1420 (the page's hostname is also the broker's, so the
 //      session cookie is same-site). E2E_BASE_URL=http://localhost:1420.
@@ -14,10 +14,13 @@
 //        curl -s -XPOST https://<cloud-host>/auth/invites -H "authorization: Bearer $TOK"
 //   3. pnpm exec playwright install chromium   (browser binary)
 //
-// Then: E2E_BASE_URL=https://<cloud-host> INVITE_CODE=<code> pnpm exec playwright test
+// Then: E2E_BASE_URL=http://localhost:1420 (or https://<cloud-host>) INVITE_CODE=<code> pnpm exec playwright test
 import { expect, test } from "@playwright/test";
 
-test.skip(!process.env.INVITE_CODE, "requires a required-mode broker + cloud-host SPA + INVITE_CODE (see header)");
+test.skip(
+  !process.env.INVITE_CODE,
+  "requires a required-mode broker + SPA on a passkey-capable host + INVITE_CODE (see header)",
+);
 
 test("enroll with an invite, then the app renders", async ({ page }) => {
   const client = await page.context().newCDPSession(page);

@@ -8,14 +8,34 @@ import { LoginScreen } from "./LoginScreen";
  * One gate for every mode. It holds the app behind /auth/me: a splash while the
  * check is in flight, the login screen when unauthenticated OR after a
  * mid-session drop (brokerFetch 401 / WS 4401 both flip `sessionLost`), and the
- * app once a human is present. An open-mode broker answers /auth/me with
+ * app once a human is present. An unreachable broker is NOT "signed out": it
+ * shows "can't reach" and keeps retrying, never a login that cannot succeed. An open-mode broker answers /auth/me with
  * `{kind:"human", local:true}`, so it passes straight through. Mounted above
  * the router so it precedes the socket connect HomePage owns.
  */
 export function AuthGate({ children }: { children: ReactNode }) {
   const qc = useQueryClient();
   const sessionLost = useAuthStore((s) => s.sessionLost);
-  const { data: me, isLoading } = useQuery({ queryKey: ["me"], queryFn: getMe });
+  // getMe returns null on a 401 and throws only when the broker is unreachable, so
+  // retrying forever is safe: it never retries an auth answer.
+  const {
+    data: me,
+    isLoading,
+    isError,
+    failureCount,
+    refetch,
+  } = useQuery({ queryKey: ["me"], queryFn: getMe, retry: true, retryDelay: 2000 });
+
+  if (isError || failureCount > 0) {
+    return (
+      <div className="auth-gate__splash" role="alert">
+        <p>Can't reach the broker — retrying…</p>
+        <button type="button" onClick={() => void refetch()}>
+          Retry now
+        </button>
+      </div>
+    );
+  }
 
   if (isLoading) {
     return <div className="auth-gate__splash" aria-busy="true" />;
