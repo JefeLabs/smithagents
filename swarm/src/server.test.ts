@@ -2009,6 +2009,30 @@ test("delegation: a running task's token creates a sub-task pinned to its worksp
   }
 });
 
+test("delegation: the route drops a delegated task's extras — priority, location, card patching, composed agent", async () => {
+  const { root, server, url, tok, taskQueue } = await bootDelegationServer();
+  try {
+    const res = await postTask(url, "/tasks", tok, {
+      ...subTaskBody,
+      priority: "critical",
+      location: "local",
+      metadata: { workCardRef: { boardId: "b", cardId: "c" }, composedAgentId: "x", source: "smith-delegate" },
+    });
+    assert.equal(res.status, 202);
+    assert.equal(taskQueue.length, 1);
+    const m = taskQueue[0];
+    assert.equal(m.priority, "normal");
+    assert.equal(m.location, "docker"); // derived from the parent's runtime, not the body's "local"
+    assert.deepEqual(m.metadata, { source: "smith-delegate" });
+    assert.equal("workCardRef" in (m.metadata ?? {}), false);
+    assert.equal(m.profile, undefined);
+    assert.equal(m.model, undefined);
+  } finally {
+    await server.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("delegation: asking for the host runtime is 403 and nothing is queued", async () => {
   const { root, server, url, tok, taskQueue } = await bootDelegationServer();
   try {
