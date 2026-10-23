@@ -884,7 +884,7 @@ export class OrchestratorServer {
 
   /**
    * Require `Authorization: Bearer <admin token>` on every route except
-   * /health. Runs on WebSocket upgrade requests too. Only /ws also accepts
+   * /health, /devices/redeem and /workers/connect. Runs on WebSocket upgrade requests too. Only /ws also accepts
    * `?token=` (browsers cannot set headers on a WebSocket); a URL token on any
    * other route would leak into logs and referrers for no benefit.
    */
