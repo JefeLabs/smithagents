@@ -1,5 +1,7 @@
 # Local API Auth Implementation Plan
 
+> **Executing:** branch `feat/local-api-auth` (Claude Code session 7177457c, subagent-driven) since 2026-10-23
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A container on Docker Desktop can no longer drive the swarm (7777) or the broker (7790).
