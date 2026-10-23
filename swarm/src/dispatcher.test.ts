@@ -12,6 +12,7 @@ import { ToolLaunchError } from "./drivers/errors.js";
 import type { CommandRunner } from "./drivers/types.js";
 import { makeGitRepo, makeOrgRepo } from "./org-repo.fixture.js";
 import { smithPaths } from "./paths.js";
+import { DockerRuntime } from "./runtime.js";
 import { createTaskClone } from "./task-clone.js";
 import type { OrchestratorConfig, TaskManifest } from "./types.js";
 import { saveWorkspace, type Workspace } from "./workspaces.js";
@@ -872,5 +873,218 @@ test("finalizeAndImport: a finalize that throws (marker deleted, timeout) still 
   } finally {
     console.error = realError;
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// dispatch() on docker, with no real docker: the security wiring itself.
+// DockerRuntime's container methods are patched; a fake `docker` first on
+// PATH logs its argv and serves the clone with the host's git-upload-pack
+// (safe ONLY because no real container ever touched this clone); a `git`
+// wrapper logs every host git process's cwd and argv.
+// ---------------------------------------------------------------------------
+
+const PR_URL = "https://github.com/acme/web/pull/1";
+
+/** `${cwd}\n${args...}` per invocation of a logging wrapper. */
+function readInvocations(log: string): { cwd: string; args: string[] }[] {
+  if (!existsSync(log)) return [];
+  return readFileSync(log, "utf8")
+    .split("--END--\n")
+    .filter((r) => r.trim() !== "")
+    .map((r) => {
+      const [cwd = "", ...args] = r.replace(/\n$/, "").split("\n");
+      return { cwd, args };
+    });
+}
+
+async function dispatchOnFakeDocker(taskId: string, upload: "serve" | "hang", importTimeoutMs?: number) {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "disp-wire-")));
+  const repo = makeGitRepo(join(root, "repo"));
+  const origin = join(root, "origin.git");
+  execFileSync("git", ["init", "-q", "--bare", origin]);
+  execFileSync("git", ["remote", "add", "origin", origin], { cwd: repo });
+  execFileSync("git", ["push", "-q", "origin", "main"], { cwd: repo });
+  const clonePath = taskClonePath(join(root, "state"), taskId);
+  const realGit = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+
+  const bin = join(root, "fake-bin");
+  const dockerLog = join(root, "docker.log");
+  const gitLog = join(root, "git.log");
+  const pidFile = join(root, "upload.pid");
+  execFileSync("mkdir", ["-p", bin]);
+  const logArgv = (log: string) => `{ pwd -P; printf '%s\\n' "$@"; echo --END--; } >> '${log}'`;
+  writeFileSync(
+    join(bin, "docker"),
+    `#!/bin/bash\n${logArgv(dockerLog)}\n${upload === "serve" ? 'for last in "$@"; do :; done; exec git-upload-pack "$last"' : `echo $$ > '${pidFile}'; exec sleep 30`}\n`,
+    { mode: 0o755 },
+  );
+  writeFileSync(join(bin, "git"), `#!/bin/bash\n${logArgv(gitLog)}\nexec '${realGit}' "$@"\n`, { mode: 0o755 });
+  const delegate = join(root, "smith-delegate");
+  writeFileSync(delegate, "#!/bin/sh\n", { mode: 0o755 });
+
+  const proto = DockerRuntime.prototype as unknown as Record<string, unknown>;
+  const patched = ["launch", "waitFor", "runOnce", "captureOutput", "killPattern", "removeContainer"] as const;
+  const saved = Object.fromEntries(patched.map((m) => [m, proto[m]]));
+  const savedPath = process.env.PATH;
+  const runCalls: { cmd: string; args: string[]; cwd?: string }[] = [];
+  const runOnceCalls: unknown[][] = [];
+  const removed: string[] = [];
+  let runCallsAtLaunch = -1;
+  try {
+    proto.launch = async (_name: string, _command: string, cwd: string) => {
+      // The agent's work. Host git on the clone is safe ONLY because no real
+      // container ever touched it; the wrapper is bypassed, so it is not logged.
+      writeFileSync(join(cwd, "work.txt"), "agent work\n");
+      execFileSync(realGit, ["add", "work.txt"], { cwd });
+      execFileSync(realGit, ["-c", "user.name=a", "-c", "user.email=a@b", "commit", "-q", "-m", "feat: agent work"], {
+        cwd,
+      });
+      writeFileSync(gitLog, "LAUNCHED\n--END--\n", { flag: "a" });
+      runCallsAtLaunch = runCalls.length;
+    };
+    proto.waitFor = async () => 0;
+    proto.runOnce = async (...args: unknown[]) => {
+      runOnceCalls.push(args);
+      return { exitCode: 0, output: "" };
+    };
+    proto.captureOutput = async () => "";
+    proto.killPattern = async () => 0;
+    proto.removeContainer = async (name: string) => {
+      removed.push(name);
+      // What `docker rm -f` does: the hung upload-pack stops.
+      if (existsSync(pidFile)) process.kill(Number(readFileSync(pidFile, "utf8").trim()), "SIGKILL");
+    };
+    process.env.PATH = `${bin}:${savedPath}`;
+
+    const config = loadConfig({
+      smithRoot: join(root, "state"),
+      defaultRuntime: "docker",
+      agentCommands: NO_SUCH_BINARY,
+      delegateBin: delegate,
+      docker: { image: "smith-agent:test", ...(importTimeoutMs ? { importTimeoutMs } : {}) },
+    });
+    const dispatcher = new Dispatcher(config);
+    const d = dispatcher as unknown as CloneDispatcher;
+    const realRun = d.run.bind(d);
+    d.run = async (cmd, args, cwd) => {
+      runCalls.push({ cmd, args, cwd });
+      return cmd === "gh" ? PR_URL : realRun(cmd, args, cwd);
+    };
+    const result = await dispatcher.dispatch({
+      taskId,
+      agent: "claude",
+      runtime: "docker",
+      prompt: "do it",
+      context: { files: [], repository: "", branch: "main", repoPath: repo },
+      createdAt: new Date().toISOString(),
+      priority: "normal",
+    });
+    const gitCalls = readInvocations(gitLog);
+    const launchedAt = gitCalls.findIndex((c) => c.cwd === "LAUNCHED");
+    return {
+      root,
+      repo,
+      origin,
+      clonePath,
+      result,
+      dockerCalls: readInvocations(dockerLog),
+      gitAfterLaunch: launchedAt === -1 ? [] : gitCalls.slice(launchedAt + 1),
+      runAfterLaunch: runCallsAtLaunch === -1 ? [] : runCalls.slice(runCallsAtLaunch),
+      runOnceCalls,
+      removed,
+    };
+  } finally {
+    process.env.PATH = savedPath;
+    for (const m of patched) proto[m] = saved[m];
+  }
+}
+
+test("dispatch (docker wiring): the import runs the sandboxed upload-pack, no host git touches the clone after launch, and the branch comes home and is pushed", async () => {
+  const taskId = "t-wire";
+  const run = await dispatchOnFakeDocker(taskId, "serve");
+  try {
+    const { repo, origin, clonePath, result } = run;
+
+    // The upload-pack really ran in a sandboxed container.
+    assert.equal(run.dockerCalls.length, 1, "exactly one upload-pack container");
+    const argv = run.dockerCalls[0].args;
+    const after = (flag: string) => argv[argv.indexOf(flag) + 1];
+    assert.equal(argv[0], "run");
+    assert.equal(after("--network"), "none");
+    assert.equal(after("--entrypoint"), "git-upload-pack");
+    assert.match(after("--name") ?? "", /^smith-upload-[0-9a-f-]{36}$/);
+    assert.equal(after("--memory"), "8g", "the configured limits reach the upload-pack container");
+    assert.ok(argv.includes(`${clonePath}:${clonePath}:ro`), `clone mounted read-only; got ${argv.join(" ")}`);
+    assert.equal(argv.at(-1), clonePath, "what it serves is the clone");
+
+    // The finalize ran in a container, bounded by the default finalize timeout.
+    assert.equal(run.runOnceCalls.length, 1);
+    assert.equal(run.runOnceCalls[0][0], clonePath);
+    assert.equal(run.runOnceCalls[0][3], 600_000);
+
+    // THE RULE: after launch, every host git/gh call runs in the user's repo, never the clone.
+    assert.ok(
+      run.runAfterLaunch.some((c) => c.args.includes("push")),
+      "openPullRequest's calls were recorded — or this proved nothing",
+    );
+    for (const c of run.runAfterLaunch) {
+      assert.equal(c.cwd, repo, `${c.cmd} ${c.args.join(" ")} ran in ${c.cwd}`);
+      assert.ok(!c.args.some((a) => a.includes(clonePath)), `${c.cmd} ${c.args.join(" ")} names the clone`);
+    }
+    assert.ok(
+      run.gitAfterLaunch.some((c) => c.args.includes("fetch")),
+      "the git wrapper saw the import's fetch — or this proved nothing",
+    );
+    for (const c of run.gitAfterLaunch) {
+      assert.equal(c.cwd, repo, `git ${c.args.join(" ")} ran in ${c.cwd}`);
+      for (const a of c.args.filter((x) => x.includes(clonePath))) {
+        const isUploadPack = a.startsWith("--upload-pack=");
+        const isFetchRemote = a === clonePath && c.args.includes("fetch");
+        assert.ok(isUploadPack || isFetchRemote, `git ${c.args.join(" ")} names the clone outside the fetch`);
+      }
+    }
+
+    // The work came home and went up.
+    const clonedTip = execFileSync("git", ["rev-parse", `smith/${taskId}`], { cwd: clonePath, encoding: "utf8" });
+    assert.equal(execFileSync("git", ["rev-parse", `smith/${taskId}`], { cwd: repo, encoding: "utf8" }), clonedTip);
+    assert.equal(
+      execFileSync("git", ["--git-dir", origin, "rev-parse", `smith/${taskId}`], { encoding: "utf8" }),
+      clonedTip,
+      "pushed to origin",
+    );
+    assert.equal(result.branch, `smith/${taskId}`);
+    assert.equal(result.pullRequestUrl, PR_URL);
+    assert.equal(result.importError, undefined);
+    const gh = run.runAfterLaunch.find((c) => c.cmd === "gh");
+    assert.ok(gh?.args.join(" ").includes(`--head smith/${taskId}`));
+  } finally {
+    rmSync(run.root, { recursive: true, force: true });
+  }
+});
+
+test("dispatch (docker wiring): a hung import times out, removes its named upload-pack container, and reports importError with no branch and no PR", async () => {
+  const taskId = "t-wire-hang";
+  const realError = console.error;
+  console.error = () => {};
+  let run: Awaited<ReturnType<typeof dispatchOnFakeDocker>> | undefined;
+  try {
+    const started = Date.now();
+    run = await dispatchOnFakeDocker(taskId, "hang", 300);
+    console.error = realError;
+    assert.ok(Date.now() - started < 10_000);
+    const argv = run.dockerCalls[0]?.args ?? [];
+    assert.deepEqual(run.removed, [argv[argv.indexOf("--name") + 1]], "the container removed is the one started");
+    assert.equal(run.result.outcome, "completed");
+    assert.equal(run.result.importError, "import timed out after 300ms");
+    assert.equal(run.result.branch, undefined);
+    assert.equal(run.result.pullRequestUrl, undefined);
+    assert.ok(!run.runAfterLaunch.some((c) => c.cmd === "gh"), "no PR for a branch that never came home");
+    assert.throws(() =>
+      execFileSync("git", ["rev-parse", "--verify", `refs/heads/smith/${taskId}`], { cwd: run?.repo, stdio: "ignore" }),
+    );
+  } finally {
+    console.error = realError;
+    if (run) rmSync(run.root, { recursive: true, force: true });
   }
 });
