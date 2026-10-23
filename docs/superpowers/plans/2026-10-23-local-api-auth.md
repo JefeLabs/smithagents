@@ -1,6 +1,6 @@
 # Local API Auth Implementation Plan
 
-> **Executing:** branch `feat/local-api-auth` (Claude Code session 7177457c, subagent-driven) since 2026-10-23
+> **Shipped:** branch `feat/local-api-auth` merged to main 2026-10-23 (subagent-driven: 9 tasks + one final-review fix wave; live-walked on throwaway state with a real browser + virtual passkey and container probes). Beyond the plan: the dashboard sends the admin token as a header and the swarm redacts `token` from its request log; delegated bodies are a strict whitelist; warm sessions blank the admin and bridge tokens; broker login challenges are stateless signed tokens with reserve-then-commit replay protection; bodies are capped (64 KiB unauthenticated, 413); a swarm 401 surfaces as 502, never a login loop; the first-run invite is 16 symbols; docker `network: "host"` is refused; AuthGate uses its own query key and shows "can't reach the broker" instead of a login it can't satisfy.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
