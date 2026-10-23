@@ -1,5 +1,7 @@
 # Docker Git Isolation Implementation Plan
 
+> **Executing:** branch `feat/docker-git-isolation` (Claude Code session 7177457c, subagent-driven) since 2026-10-23T09:01Z
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A docker task's container can no longer write into the user's repository, and no host git or `gh` command ever reads a `.git` that a container wrote.
