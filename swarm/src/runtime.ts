@@ -345,10 +345,13 @@ async function assertNoSecretMounts(args: string[]): Promise<void> {
         `refusing to start container: cannot resolve ${what} ${path}: ${err instanceof Error ? err.message : String(err)}`,
       );
     });
+  // realpath returns on-disk case only for components that exist; a missing
+  // ~/.smith and a missing ~/.Smith are one directory on macOS's default disk.
+  const fold = (p: string) => (process.platform === "darwin" ? p.toLowerCase() : p);
   const secrets = secretPaths();
-  const realSecrets = await Promise.all(secrets.map((s) => resolveOrRefuse("secret", s)));
+  const realSecrets = (await Promise.all(secrets.map((s) => resolveOrRefuse("secret", s)))).map(fold);
   for (const source of sources) {
-    const real = await resolveOrRefuse("mount", source);
+    const real = fold(await resolveOrRefuse("mount", source));
     const hit = exposedSecrets([source], secrets)[0] ?? exposedSecrets([real], realSecrets)[0];
     if (hit) throw new Error(`refusing to start container: mount ${source} would expose ${hit.secret}`);
   }

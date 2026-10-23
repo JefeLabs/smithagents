@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -518,7 +518,7 @@ async function withFakeHome(
   const work = join(scratch, "work");
   await mkdir(home);
   await mkdir(work);
-  const savedHome = process.env.HOME;
+  const saved = { HOME: process.env.HOME, SMITH_DOCKER_CLAUDE_DIR: process.env.SMITH_DOCKER_CLAUDE_DIR };
   process.env.HOME = home;
   process.env.SMITH_DOCKER_CLAUDE_DIR = join(scratch, "no-credential-here");
   const calls: string[][] = [];
@@ -534,8 +534,10 @@ async function withFakeHome(
     assert.equal(homedir(), home, "HOME override must reach os.homedir(), or this test guards the real ~/.smith");
     await fn({ scratch, home, work, calls, runtime });
   } finally {
-    process.env.HOME = savedHome;
-    delete process.env.SMITH_DOCKER_CLAUDE_DIR;
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
     await rm(scratch, { recursive: true, force: true });
   }
 }
@@ -563,12 +565,40 @@ test("DockerRuntime.launch: a symlink to ~/.smith or to an ancestor of it is ref
   });
 });
 
-test("DockerRuntime.launch: when ~/.smith is itself a symlink, mounting its target is refused", async () => {
+test("DockerRuntime.launch: when ~/.smith is itself a symlink, mounting its target is refused; its credential dir still mounts", async () => {
   await withFakeHome(async ({ scratch, home, work, calls, runtime }) => {
-    await mkdir(join(scratch, "real-smith"));
+    await mkdir(join(scratch, "real-smith", "docker-auth"), { recursive: true });
     await symlink(join(scratch, "real-smith"), join(home, ".smith"));
     await assert.rejects(
       runtime([`${join(scratch, "real-smith")}:/x`]).launch("task-t", "true", work),
+      /refusing to start container: mount .* would expose/,
+    );
+    assert.equal(calls.length, 0);
+
+    // Positive control: the default credential mount, ~/.smith/docker-auth, is
+    // a sibling of the secrets and must still launch once links are resolved.
+    delete process.env.SMITH_DOCKER_CLAUDE_DIR;
+    await writeFile(join(scratch, "real-smith", "docker-auth", ".credentials.json"), "{}");
+    await runtime().launch("task-c", "true", work);
+    assert.equal(calls.length, 1);
+    assert.ok(
+      calls[0]?.includes(`${join(home, ".smith", "docker-auth")}:/home/agent/.claude`),
+      "credential dir mounted",
+    );
+  });
+});
+
+test("DockerRuntime.launch: on a case-insensitive disk, a case variant of a missing ~/.smith is refused", async (t) => {
+  await withFakeHome(async ({ home, work, calls, runtime }) => {
+    // The swarm would later create ~/.smith, which IS ~/.Smith on such a disk.
+    await mkdir(join(home, "probe"));
+    const caseInsensitive = await stat(join(home, "PROBE")).then(
+      () => true,
+      () => false,
+    );
+    if (!caseInsensitive) return t.skip("this disk is case-sensitive: ~/.Smith is a different directory");
+    await assert.rejects(
+      runtime([`${join(home, ".Smith")}:/x`]).launch("task-case", "true", work),
       /refusing to start container: mount .* would expose/,
     );
     assert.equal(calls.length, 0);
