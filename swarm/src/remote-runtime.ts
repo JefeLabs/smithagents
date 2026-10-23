@@ -14,7 +14,7 @@ import type {
   TaskSteerMessage,
   WorkerMessage,
 } from "./remote-types.js";
-import type { RuntimeAdapter } from "./runtime.js";
+import type { LaunchOptions, RuntimeAdapter } from "./runtime.js";
 
 // ---------------------------------------------------------------------------
 // Worker Pool — manages connected remote workers
@@ -376,7 +376,13 @@ export class RemoteRuntime implements RuntimeAdapter {
     private readonly kind?: "tmux" | "docker",
   ) {}
 
-  launch(sessionName: string, command: string, cwd: string, env?: Record<string, string>): Promise<void> {
+  launch(
+    sessionName: string,
+    command: string,
+    cwd: string,
+    env?: Record<string, string>,
+    _opts?: LaunchOptions,
+  ): Promise<void> {
     return this.pool.launch(sessionName, command, cwd, env, this.kind);
   }
   waitFor(sessionName: string): Promise<number> {

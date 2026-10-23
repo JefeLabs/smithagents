@@ -12,10 +12,10 @@
 // ---------------------------------------------------------------------------
 
 import { execFile } from "node:child_process";
-import { mkdir, readFile, stat, unlink } from "node:fs/promises";
+import { lstat, mkdir, readFile, stat, unlink } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import type { WorkerPool } from "./remote-runtime.js";
 import type { DockerConfig, RuntimeType } from "./types.js";
 
@@ -30,6 +30,16 @@ import type { DockerConfig, RuntimeType } from "./types.js";
  * to bare-metal tmux, a Docker container, or any future runtime (Kubernetes,
  * Firecracker, etc.).
  */
+/** Extra, optional launch parameters. Runtimes that cannot honour a field ignore it. */
+export interface LaunchOptions {
+  /**
+   * Host paths a container may READ but never write — the object stores a
+   * `--shared` task clone borrows from. DockerRuntime mounts each at the same
+   * path with `:ro`; the other runtimes ignore them.
+   */
+  readOnlyMounts?: string[];
+}
+
 export interface RuntimeAdapter {
   /**
    * Launch a new isolated session that runs `command` inside `cwd`.
@@ -42,8 +52,17 @@ export interface RuntimeAdapter {
    * and `ps` output for that one moment — an intrinsic property of
    * process-based env passing on POSIX systems, not avoidable here without a
    * different IPC mechanism.
+   *
+   * `opts.readOnlyMounts` lists host paths a container gets read-only (see
+   * LaunchOptions); TmuxRuntime and RemoteRuntime accept and ignore it.
    */
-  launch(sessionName: string, command: string, cwd: string, env?: Record<string, string>): Promise<void>;
+  launch(
+    sessionName: string,
+    command: string,
+    cwd: string,
+    env?: Record<string, string>,
+    opts?: LaunchOptions,
+  ): Promise<void>;
 
   /**
    * Block until the named session exits and return its exit code.
@@ -119,7 +138,13 @@ export class TmuxRuntime implements RuntimeAdapter {
     this.exitDir = join(tmpdir(), ".smith-exits");
   }
 
-  async launch(sessionName: string, command: string, cwd: string, env?: Record<string, string>): Promise<void> {
+  async launch(
+    sessionName: string,
+    command: string,
+    cwd: string,
+    env?: Record<string, string>,
+    _opts?: LaunchOptions,
+  ): Promise<void> {
     await mkdir(this.exitDir, { recursive: true });
 
     const exitFile = this.exitFilePath(sessionName);
@@ -277,25 +302,23 @@ export class TmuxRuntime implements RuntimeAdapter {
  * interface maps cleanly.
  */
 /**
- * The `-v` args that make a task worktree's git usable inside a container.
- *
- * `git worktree add` writes a `.git` FILE containing an absolute host path:
- *   gitdir: /Users/…/<repo>/.git/worktrees/<taskId>
- * That path means nothing in a container unless it is mounted at exactly the
- * same location, so the parent repo's `.git` is bind-mounted at its own host
- * path. Returns [] when `.git` is a directory (a plain clone, not a worktree)
- * or unreadable — callers then get today's behaviour rather than a crash.
+ * Refuse a worktree. Its `.git` is a FILE (or symlink) naming the user's real
+ * repository; making that usable in a container means mounting the real .git
+ * read-write, which lets the container plant hooks/fsmonitor that later run on
+ * the host. Containers get a disposable clone instead (see task-clone.ts).
  */
-async function gitdirMount(worktreePath: string): Promise<string[]> {
+async function refuseWorktree(cwd: string): Promise<void> {
+  let isFileOrLink = false;
   try {
-    const dotGit = await readFile(join(worktreePath, ".git"), "utf8");
-    const match = /^gitdir:\s*(.+)$/m.exec(dotGit.trim());
-    if (!match) return [];
-    // …/<repo>/.git/worktrees/<taskId> → …/<repo>/.git
-    const repoGitDir = resolve(match[1].trim(), "..", "..");
-    return ["-v", `${repoGitDir}:${repoGitDir}`];
+    const st = await lstat(join(cwd, ".git"));
+    isFileOrLink = st.isFile() || st.isSymbolicLink();
   } catch {
-    return [];
+    // no .git at all (or unreadable): not a worktree
+  }
+  if (isFileOrLink) {
+    throw new Error(
+      `refusing to start a container in ${cwd}: it is a git worktree, and its .git would hand the container the host repository`,
+    );
   }
 }
 
@@ -360,7 +383,14 @@ export class DockerRuntime implements RuntimeAdapter {
     this.dockerConfig = dockerConfig;
   }
 
-  async launch(sessionName: string, command: string, cwd: string, env?: Record<string, string>): Promise<void> {
+  async launch(
+    sessionName: string,
+    command: string,
+    cwd: string,
+    env?: Record<string, string>,
+    opts?: LaunchOptions,
+  ): Promise<void> {
+    await refuseWorktree(cwd);
     const { image, network, extraMounts, extraEnv, cpuLimit, memoryLimit, shmSize } = this.dockerConfig;
 
     // Build docker run args
@@ -376,14 +406,9 @@ export class DockerRuntime implements RuntimeAdapter {
       "-w",
       "/workspace",
 
-      // A task worktree's `.git` is a FILE holding an absolute host path
-      // (`gitdir: /…/<repo>/.git/worktrees/<id>`), not a directory. Mounting
-      // only the worktree therefore gives the container a dangling pointer:
-      // every git command fails with "not a git repository", so the agent
-      // cannot commit and the task's work is lost. Mounting the parent .git at
-      // that SAME absolute path inside the container makes the pointer
-      // resolve. Read-write on purpose — git writes refs and the index there.
-      ...(await gitdirMount(cwd)),
+      // The clone's object stores, read-only at the path its alternates file
+      // names: the container can read history but never write the user's objects.
+      ...(opts?.readOnlyMounts ?? []).flatMap((m) => ["-v", `${m}:${m}:ro`]),
 
       // The agent's Claude subscription, exported from the host Keychain into
       // the Linux credentials-file format. Without this the CLI starts, finds
@@ -453,6 +478,46 @@ export class DockerRuntime implements RuntimeAdapter {
     args.push(image, "/bin/bash", "-c", command);
 
     await this.docker(args);
+  }
+
+  /**
+   * Run one command in a throwaway container and wait for it: `--rm`, no
+   * network, no credentials, no env. Used for in-container git work on a task
+   * clone, so the host never runs git there. An explicit `--entrypoint` skips
+   * the image's tini+tmux wrapper. A non-zero exit is reported, not thrown.
+   */
+  async runOnce(
+    cwd: string,
+    command: string,
+    readOnlyMounts: string[],
+    timeoutMs: number = 120_000,
+  ): Promise<{ exitCode: number; output: string }> {
+    await refuseWorktree(cwd);
+    const { image, cpuLimit, memoryLimit } = this.dockerConfig;
+    const args = [
+      "run",
+      "--rm",
+      "--network",
+      "none",
+      "--entrypoint",
+      "/bin/bash",
+      "-v",
+      `${cwd}:/workspace`,
+      "-w",
+      "/workspace",
+      ...readOnlyMounts.flatMap((m) => ["-v", `${m}:${m}:ro`]),
+    ];
+    if (cpuLimit) args.push("--cpus", cpuLimit);
+    if (memoryLimit) args.push("--memory", memoryLimit);
+    args.push(image, "-c", command);
+    try {
+      const { stdout, stderr } = await this.docker(args, timeoutMs);
+      return { exitCode: 0, output: stdout + stderr };
+    } catch (err) {
+      const e = err as { code?: unknown; stdout?: string; stderr?: string };
+      if (typeof e.code === "number") return { exitCode: e.code, output: (e.stdout ?? "") + (e.stderr ?? "") };
+      throw err;
+    }
   }
 
   async waitFor(sessionName: string): Promise<number> {

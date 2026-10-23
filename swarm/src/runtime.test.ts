@@ -88,35 +88,23 @@ test("createRuntime maps remote-tmux and remote-docker to kind-filtered RemoteRu
 });
 
 /**
- * A task worktree's `.git` is a FILE holding an absolute host path. Mounting
- * only the worktree leaves that pointer dangling inside the container, so
- * every git command fails with "not a git repository" and the agent cannot
- * commit — the work is built and then lost. The parent .git must be mounted
- * at its own host path so the pointer resolves.
+ * A worktree's `.git` is a FILE pointing at the user's real repository.
+ * Mounting that repo's .git read-write (the old behaviour) let a container plant
+ * hooks/fsmonitor that later ran on the host. The runtime now refuses outright.
  */
-test("DockerRuntime.launch: mounts the parent .git so a worktree's gitdir pointer resolves", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "gitdir-mount-"));
-  const repoGit = join(dir, "repo", ".git");
-  const worktree = join(dir, "wt");
-  await mkdir(join(repoGit, "worktrees", "task-1"), { recursive: true });
-  await mkdir(worktree, { recursive: true });
-  await writeFile(join(worktree, ".git"), `gitdir: ${join(repoGit, "worktrees", "task-1")}\n`);
-
+test("DockerRuntime.launch: refuses a git worktree — its .git would hand the container the host repository", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "refuse-wt-"));
+  await writeFile(join(dir, ".git"), "gitdir: /x/.git/worktrees/t\n");
   const runtime = new DockerRuntime({ image: "smith-agent:real" });
-  let captured: string[] = [];
-  (runtime as unknown as { docker: (a: string[]) => Promise<unknown> }).docker = async (a) => {
-    captured = a;
+  let called = false;
+  (runtime as unknown as { docker: (a: string[]) => Promise<unknown> }).docker = async () => {
+    called = true;
     return { stdout: "", stderr: "" };
   };
-
   try {
-    await runtime.launch("task-1", "echo hi", worktree);
-    // The parent .git is mounted at the SAME absolute path on both sides —
-    // anything else leaves the gitdir pointer dangling.
-    assert.ok(
-      captured.includes(`${repoGit}:${repoGit}`),
-      `expected a ${repoGit}:${repoGit} mount; got: ${captured.join(" ")}`,
-    );
+    await assert.rejects(runtime.launch("task-wt", "echo hi", dir), /it is a git worktree/);
+    await assert.rejects(runtime.runOnce(dir, "true", []), /it is a git worktree/);
+    assert.equal(called, false, "docker must never be called for a worktree");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -183,12 +171,12 @@ test("DockerRuntime.launch: no exported credential adds no mount (docker keeps w
   }
 });
 
-test("DockerRuntime.launch: a plain clone (no gitdir file) adds no extra mount", async () => {
+test("DockerRuntime.launch: a clone mounts only itself and the read-only object stores it is given", async () => {
   const dir = await mkdtemp(join(tmpdir(), "plain-clone-"));
   await mkdir(join(dir, ".git"), { recursive: true }); // a directory, not a file
   // Pin the credential dir away from the real one: this asserts the mount list
   // EXACTLY, so a developer who has exported a credential would otherwise see
-  // it fail for a reason that has nothing to do with gitdir handling.
+  // it fail for a reason that has nothing to do with the object stores.
   process.env.SMITH_DOCKER_CLAUDE_DIR = join(dir, "no-credential-here");
 
   const runtime = new DockerRuntime({ image: "smith-agent:real" });
@@ -199,11 +187,56 @@ test("DockerRuntime.launch: a plain clone (no gitdir file) adds no extra mount",
   };
 
   try {
-    await runtime.launch("task-2", "echo hi", dir);
-    const mounts = captured.filter((a, i) => captured[i - 1] === "-v");
-    assert.deepEqual(mounts, [`${dir}:/workspace`], "only the worktree mount should be present");
+    await runtime.launch("task-2", "true", dir, undefined, { readOnlyMounts: ["/o1", "/o2"] });
+    const mounts = captured.filter((_a, i) => captured[i - 1] === "-v");
+    assert.deepEqual(mounts, [`${dir}:/workspace`, "/o1:/o1:ro", "/o2:/o2:ro"]);
   } finally {
     delete process.env.SMITH_DOCKER_CLAUDE_DIR;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("DockerRuntime.runOnce: a throwaway, offline container with no credentials and no env", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "run-once-"));
+  const credDir = join(dir, "docker-auth");
+  await mkdir(credDir, { recursive: true });
+  await writeFile(join(credDir, ".credentials.json"), "{}");
+  process.env.SMITH_DOCKER_CLAUDE_DIR = credDir;
+
+  const runtime = new DockerRuntime({ image: "smith-agent:real", extraEnv: { SECRET: "x" }, extraMounts: ["/a:/a"] });
+  let captured: string[] = [];
+  (runtime as unknown as { docker: (a: string[]) => Promise<unknown> }).docker = async (a) => {
+    captured = a;
+    return { stdout: "fine", stderr: "" };
+  };
+
+  try {
+    const result = await runtime.runOnce(dir, "git status", ["/o"]);
+    assert.deepEqual(result, { exitCode: 0, output: "fine" });
+    assert.ok(captured.includes("--rm"));
+    const at = (flag: string) => captured.indexOf(flag);
+    assert.deepEqual(captured.slice(at("--network"), at("--network") + 2), ["--network", "none"]);
+    assert.deepEqual(captured.slice(at("--entrypoint"), at("--entrypoint") + 2), ["--entrypoint", "/bin/bash"]);
+    const mounts = captured.filter((_a, i) => captured[i - 1] === "-v");
+    assert.deepEqual(mounts, [`${dir}:/workspace`, "/o:/o:ro"]);
+    assert.ok(!captured.includes("-e"), `no env may reach a one-shot container; got: ${captured.join(" ")}`);
+    assert.ok(!captured.some((a) => a.includes("/home/agent/.claude")), "no credential mount");
+    assert.deepEqual(captured.slice(-3), ["smith-agent:real", "-c", "git status"]);
+  } finally {
+    delete process.env.SMITH_DOCKER_CLAUDE_DIR;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("DockerRuntime.runOnce: reports a non-zero exit instead of throwing", async () => {
+  const runtime = new DockerRuntime({ image: "smith-agent:real" });
+  (runtime as unknown as { docker: (a: string[]) => Promise<unknown> }).docker = async () => {
+    throw Object.assign(new Error("exit 3"), { code: 3, stdout: "a", stderr: "b" });
+  };
+  const dir = await mkdtemp(join(tmpdir(), "run-once-fail-"));
+  try {
+    assert.deepEqual(await runtime.runOnce(dir, "false", []), { exitCode: 3, output: "ab" });
+  } finally {
     await rm(dir, { recursive: true, force: true });
   }
 });

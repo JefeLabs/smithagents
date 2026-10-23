@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { chmod, copyFile, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -18,6 +18,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { DockerRuntime } from "./runtime.js";
+import { createTaskClone, finalizeCommand, importTaskBranch, sandboxedUploadPack } from "./task-clone.js";
 
 const execFileP = promisify(execFile);
 const IMAGE = process.env.SMITH_AGENT_IMAGE;
@@ -142,35 +143,90 @@ test("image contract: a worktree's bin/ adds commands but cannot shadow the imag
   }),
 );
 
-test("image contract: an agent commits on its task branch from inside a worktree", { skip }, () =>
+/** A repo with one empty commit on main. */
+async function initRepo(repo: string): Promise<void> {
+  await run("git", "init", "-q", "-b", "main", repo);
+  await run(
+    "git",
+    "-C",
+    repo,
+    "-c",
+    "user.name=t",
+    "-c",
+    "user.email=t@t",
+    "commit",
+    "-q",
+    "--allow-empty",
+    "-m",
+    "init",
+  );
+}
+
+test("image contract: an agent commits inside its own clone and cannot write the user's objects", { skip }, () =>
   withContainer(async (rt, name, dir) => {
     const repo = join(dir, "repo");
-    const worktree = join(dir, "wt");
-    await run("git", "init", "-q", "-b", "main", repo);
-    await run(
-      "git",
-      "-C",
-      repo,
-      "-c",
-      "user.name=t",
-      "-c",
-      "user.email=t@t",
-      "commit",
-      "-q",
-      "--allow-empty",
-      "-m",
-      "init",
-    );
-    await run("git", "-C", repo, "worktree", "add", "-q", "-b", "smith/contract", worktree);
+    await initRepo(repo);
+    const clone = await createTaskClone(repo, join(dir, "clone"), "contract", "main");
 
     // No identity is passed in: the image's own must be enough, or an agent
-    // reaches for `git config`, which writes the host repo's mounted config.
-    await rt.launch(name, 'echo work > f.txt && git add f.txt && git commit -q -m "agent work"', worktree);
-    assert.equal(await rt.waitFor(name), 0, await rt.captureOutput(name));
+    // reaches for `git config`.
+    await rt.launch(
+      name,
+      `echo work > f.txt && git add f.txt && git commit -q -m "agent work" && (touch ${clone.readOnlyMounts[0]}/probe 2>/dev/null && echo OBJECTS-WRITABLE || echo objects-readonly)`,
+      clone.path,
+      undefined,
+      { readOnlyMounts: clone.readOnlyMounts },
+    );
+    const exitCode = await rt.waitFor(name);
+    const output = await rt.captureOutput(name);
+    assert.equal(exitCode, 0, output);
+    assert.match(output, /objects-readonly/);
+    assert.doesNotMatch(output, /OBJECTS-WRITABLE/);
+
+    await importTaskBranch(clone, sandboxedUploadPack(IMAGE as string, clone));
     assert.equal(
       (await run("git", "-C", repo, "log", "-1", "--format=%an <%ae>|%s", "smith/contract")).trim(),
       "smith agent <crew@smithagents.local>|agent work",
     );
+  }),
+);
+
+test("image contract: nothing a container plants runs on the host — finalize and import stay sandboxed", { skip }, () =>
+  withContainer(async (rt, name, dir) => {
+    const repo = join(dir, "repo");
+    await initRepo(repo);
+    const clone = await createTaskClone(repo, join(dir, "clone"), "contract", "main");
+    // A HOST path that no container mounts: only a trap running on the host can create it.
+    const markers = join(dir, "markers");
+    const hooks = ["pre-commit", "post-commit", "post-index-change", "reference-transaction", "post-checkout"];
+    const plant = [
+      `printf '#!/bin/sh\\nmkdir -p ${markers} && touch ${markers}/$(basename $0)\\nexit 0\\n' > .git/trap`,
+      "chmod +x .git/trap",
+      ...hooks.map((h) => `cp .git/trap .git/hooks/${h}`),
+      "cp .git/trap .git/fsmonitor-trap",
+      "git config core.fsmonitor /workspace/.git/fsmonitor-trap",
+      "echo leftover > leftover.txt",
+    ].join(" && ");
+
+    await rt.launch(name, plant, clone.path, undefined, { readOnlyMounts: clone.readOnlyMounts });
+    assert.equal(await rt.waitFor(name), 0, await rt.captureOutput(name));
+
+    const finalized = await rt.runOnce(clone.path, finalizeCommand("contract", "t", true), clone.readOnlyMounts);
+    assert.equal(finalized.exitCode, 0, finalized.output);
+    await importTaskBranch(clone, sandboxedUploadPack(IMAGE as string, clone));
+    assert.equal((await run("git", "-C", repo, "show", "smith/contract:leftover.txt")).trim(), "leftover");
+
+    const fired = await readdir(markers).catch((e: NodeJS.ErrnoException) => {
+      if (e.code === "ENOENT") return [] as string[];
+      throw e;
+    });
+    assert.deepEqual(fired, [], `a planted trap ran on the host: ${fired.join(", ")}`);
+
+    // POSITIVE CONTROL: plain host git in the same clone must fire a trap. If it
+    // does not, the traps were never armed and the assertion above proved nothing.
+    await execFileP("git", ["status"], { cwd: clone.path }).catch(() => {});
+    const control = await readdir(markers).catch(() => [] as string[]);
+    assert.ok(control.length > 0, "control failed — this test proved nothing");
   }),
 );
 
