@@ -331,11 +331,62 @@ async function canonicalPath(path: string): Promise<string> {
   return parent === abs ? abs : join(await canonicalPath(parent), basename(abs));
 }
 
+/** A file as the disk knows it: the same device and inode is the same file, whatever its name. */
+interface DiskId {
+  path: string;
+  dev: bigint;
+  ino: bigint;
+}
+
+/** `path`'s DiskId, or undefined if nothing is there. Inode numbers pass 2^53 on APFS, hence bigint. */
+async function diskId(path: string): Promise<(DiskId & { nlink: bigint; isFile: boolean }) | undefined> {
+  try {
+    const st = await stat(path, { bigint: true });
+    return { path, dev: st.dev, ino: st.ino, nlink: st.nlink, isFile: st.isFile() };
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return undefined;
+    throw err;
+  }
+}
+
+const sameFile = (a: DiskId, b: DiskId) => a.dev === b.dev && a.ino === b.ino;
+
+/**
+ * The target that `root`, or a path under it ending in the target's own names
+ * (`<root>/.smith`, `<root>/<user>/.smith`, …), is on disk, with that path.
+ * Catches names realpath keeps apart: a macOS firmlink (/System/Volumes/Data/Users
+ * is /Users), a bind mount. Not an alias under some other name deeper inside root.
+ */
+async function heldByIdentity(root: string, targets: DiskId[]): Promise<{ target: DiskId; via: string } | undefined> {
+  for (const target of targets) {
+    const names = target.path.split(sep).filter(Boolean);
+    for (let k = 0; k <= names.length; k++) {
+      const via = join(root, ...names.slice(names.length - k));
+      const id = await diskId(via);
+      if (id && sameFile(id, target)) return { target, via };
+    }
+  }
+  return undefined;
+}
+
+/** The directory in `dirs` that some existing ancestor of `path` is on disk, if any. */
+async function insideByIdentity(path: string, dirs: DiskId[]): Promise<string | undefined> {
+  for (let p = dirname(path); ; p = dirname(p)) {
+    const id = await diskId(p);
+    const dir = id && dirs.find((d) => sameFile(d, id));
+    if (dir) return dir.path;
+    if (dirname(p) === p) return undefined;
+  }
+}
+
 /**
  * Refuse a `docker run` whose `-v` sources would put a ~/.smith secret in a
- * container, comparing both as written and with symlinks resolved on both
- * sides (a link to ~/.smith, or a ~/.smith that is itself a link). A source
- * that cannot be resolved is refused.
+ * container, comparing as written, with symlinks resolved on both sides (a link
+ * to ~/.smith, or a ~/.smith that is itself a link), and by disk identity (a
+ * name realpath keeps, like a firmlink). A source that cannot be resolved is
+ * refused, and so is every launch while a secret has a second hard link: that
+ * name could be anywhere, including inside a mount.
  *
  * Creates the secrets' directories first (0700, as boot does): realpath names
  * a path the way the disk does only when it exists, and a missing ~/.smith
@@ -355,20 +406,41 @@ async function assertNoSecretMounts(args: string[]): Promise<void> {
   }
   const realSecrets = await Promise.all(secrets.map((s) => canonicalPath(s).catch(refuse("resolve secret", s))));
   const realSecretDirs = [...new Set(realSecrets.map((s) => dirname(s)))];
+  const dirIds: DiskId[] = [];
+  const fileIds: DiskId[] = [];
+  for (const path of [...realSecretDirs, ...realSecrets]) {
+    const id = await diskId(path).catch(refuse("inspect secret", path));
+    if (!id) continue;
+    if (id.isFile && id.nlink > 1n) {
+      throw new Error(
+        `refusing to start container: ${path} has ${id.nlink} hard links, and a mount could hold one under any name; remove the extra links`,
+      );
+    }
+    (id.isFile ? fileIds : dirIds).push(id);
+  }
   for (const source of sources) {
     const real = await canonicalPath(source).catch(refuse("resolve mount", source));
     const hit = exposedSecrets([source], secrets)[0] ?? exposedSecrets([real], realSecrets)[0];
     if (hit) throw new Error(`refusing to start container: mount ${source} would expose ${hit.secret}`);
+    const exists = await lstat(real).then(
+      () => true,
+      () => false,
+    );
+    if (exists) {
+      const held = await heldByIdentity(real, [...dirIds, ...fileIds]).catch(refuse("inspect mount", source));
+      if (held) {
+        throw new Error(
+          `refusing to start container: mount ${source} would expose ${held.target.path} (${held.via} is the same file on disk)`,
+        );
+      }
+      continue;
+    }
     // Docker creates a missing source. Inside a secrets directory that could be a
     // token not written yet, under a spelling the disk folds to its name.
-    const inside = realSecretDirs.find((d) => real.startsWith(d + sep));
-    if (
-      inside &&
-      !(await lstat(real).then(
-        () => true,
-        () => false,
-      ))
-    ) {
+    const inside =
+      realSecretDirs.find((d) => real.startsWith(d + sep)) ??
+      (await insideByIdentity(real, dirIds).catch(refuse("inspect mount", source)));
+    if (inside) {
       throw new Error(
         `refusing to start container: mount ${source} does not exist, and docker would create it inside ${inside}`,
       );

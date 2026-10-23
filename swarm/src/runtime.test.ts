@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { link, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -671,6 +671,73 @@ test("DockerRuntime.runOnce: a read-only mount that is a symlink to ~/.smith is 
       /refusing to start container: mount .* would expose/,
     );
     assert.equal(calls.length, 0);
+  });
+});
+
+test("DockerRuntime.launch: ~/.smith under a name realpath keeps (a macOS firmlink) is refused; a sibling still mounts", async (t) => {
+  await withFakeHome(async ({ scratch, home, work, calls, runtime }) => {
+    await mkdir(join(home, ".smith"));
+    await writeFile(join(home, ".smith", "api-token"), "fake\n");
+    await mkdir(join(scratch, "elsewhere"));
+    // /System/Volumes/Data/<path> is <path> on disk: a firmlink, not a symlink.
+    const realScratch = await realpath(scratch);
+    const alias = (p: string) => join("/System/Volumes/Data", realScratch, p);
+    const id = (p: string) =>
+      stat(p, { bigint: true }).then(
+        (s) => `${s.dev}:${s.ino}`,
+        () => "missing",
+      );
+    if ((await id(alias("home"))) !== (await id(home)))
+      return t.skip("no /System/Volumes/Data firmlink on this system");
+    assert.equal(await realpath(alias("home")), alias("home"), "realpath keeps the alias, so only identity can see it");
+
+    for (const source of [
+      alias("home/.smith"),
+      alias("home/.smith/api-token"),
+      alias("home"),
+      alias(""),
+      "/System/Volumes/Data",
+    ]) {
+      await assert.rejects(
+        runtime([`${source}:/x`]).launch("task-f", "true", work),
+        /refusing to start container: mount .* would expose/,
+        source,
+      );
+    }
+    // Missing under the alias: docker would create it inside ~/.smith.
+    await assert.rejects(
+      runtime([`${alias("home/.smith/new-dir")}:/x`]).launch("task-f", "true", work),
+      /refusing to start container: mount .* does not exist, and docker would create it inside/,
+    );
+    assert.equal(calls.length, 0);
+
+    // Positive control: the alias of a dir that does not hold ~/.smith mounts.
+    await runtime([`${alias("elsewhere")}:/x`]).launch("task-ok", "true", work);
+    assert.equal(calls.length, 1);
+  });
+});
+
+test("DockerRuntime.launch: a secret with a second hard link refuses every launch, wherever the link is", async () => {
+  await withFakeHome(async ({ scratch, home, work, calls, runtime }) => {
+    await mkdir(join(home, ".smith"));
+    await writeFile(join(home, ".smith", "master.key"), "fake\n");
+    await mkdir(join(scratch, "elsewhere"));
+    // Positive control: a secret with one name blocks nothing.
+    await runtime([`${join(scratch, "elsewhere")}:/x`]).launch("task-1", "true", work);
+    assert.equal(calls.length, 1);
+
+    // A hard link is the secret itself under any name, in any directory. The
+    // guard cannot find it (here it hides in a harmless-looking mount), so it
+    // refuses every launch, even one that mounts only the cwd.
+    await link(join(home, ".smith", "master.key"), join(scratch, "elsewhere", "notes.txt"));
+    for (const extra of [[`${join(scratch, "elsewhere")}:/x`], undefined]) {
+      await assert.rejects(
+        runtime(extra).launch("task-2", "true", work),
+        /refusing to start container: .*master\.key has 2 hard links/,
+        String(extra),
+      );
+    }
+    assert.equal(calls.length, 1);
   });
 });
 
