@@ -38,13 +38,14 @@ export function loadBrokerConfig(env: Record<string, string | undefined> = proce
     return v;
   };
   const host = env.BROKER_HOST || "127.0.0.1";
-  const required = env.SMITH_BROKER_AUTH === "required";
+  // Passkey auth is the default; only an explicit "open" turns it off.
+  const required = env.SMITH_BROKER_AUTH !== "open";
   // The bind address stops being the security boundary the moment it leaves
   // loopback — refuse to trade it for nothing (mirrors swarm's refusal).
   if (!["127.0.0.1", "::1", "localhost"].includes(host) && !required) {
     throw new Error(
-      `Refusing BROKER_HOST=${host} without SMITH_BROKER_AUTH=required. ` +
-        "Set SMITH_BROKER_AUTH=required (and SMITH_BROKER_TOKEN for bridges) to bind beyond loopback.",
+      `Refusing BROKER_HOST=${host} with SMITH_BROKER_AUTH=open. ` +
+        "Remove SMITH_BROKER_AUTH=open (auth is required by default) to bind beyond loopback.",
     );
   }
   return {

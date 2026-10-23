@@ -100,7 +100,14 @@ DISCORD_VOICE_CHANNELS=           # comma-separated voice channel ids the crew a
                                   # the agent's id, uppercased with hyphens as underscores. Missing = that
                                   # agent's voice lines play through the ear bot instead.
 SMITH_API_TOKEN=                  # blank = generated at ~/.smith/api-token on first boot (always required)
+SMITH_BROKER_AUTH=                # blank = passkey required (default); "open" = no auth, loopback only
+SMITH_BROKER_TOKEN=               # blank = generated at ~/.smith/broker-bridge-token on first boot
 ```
+
+**First run.** The broker requires a passkey by default. Until one is enrolled it prints
+`[broker] No passkey enrolled yet — open http://localhost:1420/#invite=XXXX-XXXX on this Mac to create one
+(link expires in 24h).` Open that link in the control plane to create your passkey; after that it signs
+you in with it. `SMITH_BROKER_AUTH=open` skips all of this and leaves the broker unauthenticated (loopback only).
 
 Then register at least one workspace in `swarm/.smith/workspaces/<name>.json`:
 

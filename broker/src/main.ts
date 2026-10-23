@@ -1402,6 +1402,17 @@ const brokerAuth = new BrokerAuth(config.auth.file, {
 });
 await brokerAuth.load();
 if (config.auth.required) console.log("[broker] inbound auth REQUIRED — passkey sessions + bridge token");
+const firstRunUrl = brokerAuth.firstRunInviteUrl();
+if (firstRunUrl) {
+  console.log(
+    `[broker] No passkey enrolled yet — open ${firstRunUrl} on this Mac to create one (link expires in 24h).`,
+  );
+}
+if (!config.auth.required) {
+  console.warn(
+    "[broker] SMITH_BROKER_AUTH=open — the broker is UNAUTHENTICATED; any local process or container can drive it.",
+  );
+}
 
 const textChannel = new TextChannel(
   handleUserText,

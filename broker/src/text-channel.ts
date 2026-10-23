@@ -2035,6 +2035,13 @@ export class TextChannel {
 
     this.wss = new WebSocketServer({ server, path: "/events" });
     this.wss.on("connection", (client, req) => {
+      // A browser page on any other origin must not ride the user's cookie into
+      // the event stream. An ABSENT Origin (bridge bins, CLIs) stays allowed.
+      const wsOrigin = req.headers.origin;
+      if (wsOrigin && !ALLOWED_ORIGINS.has(wsOrigin) && wsOrigin !== this.auth?.webOrigin) {
+        client.close(4403, "origin not allowed");
+        return;
+      }
       // Authenticate the upgrade BEFORE any hello frame leaks roster/transcript.
       const identity = this.auth?.resolveIdentity(req) ?? null;
       if (this.auth?.required && !identity) {

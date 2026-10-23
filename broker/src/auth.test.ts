@@ -132,3 +132,53 @@ test("parseCookies handles multiple pairs and absent header", () => {
   assert.deepEqual(parseCookies("a=1; smith_session=tok; b=2").smith_session, "tok");
   assert.deepEqual(parseCookies(undefined), {});
 });
+
+test("firstRunInviteUrl: with no passkey it returns a link whose code enrolls; once one exists, null", async () => {
+  const { auth } = await freshAuth();
+  assert.equal(auth.hasUsers(), false);
+  const url = auth.firstRunInviteUrl();
+  assert.match(url ?? "", /^http:\/\/localhost:1420\/#invite=[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+  const code = (url ?? "").split("#invite=")[1] as string;
+  await auth.beginRegistration(code, "Edwin");
+  await auth.finishRegistration(code, { ok: true });
+  assert.equal(auth.hasUsers(), true);
+  assert.equal(auth.firstRunInviteUrl(), null);
+});
+
+test("firstRunInviteUrl: an open broker never mints one", async () => {
+  const { auth } = await freshAuth({ required: false });
+  assert.equal(auth.firstRunInviteUrl(), null);
+});
+
+test("firstRunInviteUrl: the invite lasts 24h", async () => {
+  const { auth } = await freshAuth();
+  const code = (auth.firstRunInviteUrl(0) ?? "").split("#invite=")[1] as string;
+  await assert.doesNotReject(auth.beginRegistration(code, "Edwin", 23 * 60 * 60_000));
+  const { auth: other } = await freshAuth();
+  const late = (other.firstRunInviteUrl(0) ?? "").split("#invite=")[1] as string;
+  await assert.rejects(
+    other.beginRegistration(late, "Edwin", 25 * 60 * 60_000),
+    (e: AuthError) => e.code === "invalid-code",
+  );
+});
+
+test("login challenges expire after 5 minutes and are pruned", async () => {
+  const { auth } = await freshAuth();
+  await auth.beginLogin(0);
+  await auth.beginLogin(6 * 60_000);
+  assert.equal(auth.pendingLoginCount(), 1);
+});
+
+test("finishLogin treats an expired challenge as unknown", async () => {
+  const { auth } = await freshAuth();
+  const { code } = auth.mintInvite();
+  await auth.beginRegistration(code, "edwin");
+  await auth.finishRegistration(code, { ok: true });
+  await auth.beginLogin(0);
+  await assert.rejects(
+    auth.finishLogin({ ok: true, id: "cred-1" }, 6 * 60_000),
+    (e: AuthError) => e.code === "verify-failed",
+  );
+  await auth.beginLogin(10 * 60_000);
+  await assert.doesNotReject(auth.finishLogin({ ok: true, id: "cred-1" }, 10 * 60_000 + 1000));
+});

@@ -2626,6 +2626,32 @@ test("required mode: a session cookie authenticates the WS upgrade", async () =>
   }
 });
 
+test("WS /events: a present, disallowed Origin is closed with 4403 before any frame", async () => {
+  const auth = await makeAuth(true);
+  const invite = auth.mintInvite();
+  await auth.beginRegistration(invite.code, "edwin");
+  const { sessionToken } = await auth.finishRegistration(invite.code, { ok: true });
+  const channel = channelWith({ auth });
+  const port = await channel.start(0);
+  const cookie = `smith_session=${sessionToken}`;
+  try {
+    const bad = new WebSocket(`ws://127.0.0.1:${port}/events`, {
+      headers: { cookie, origin: "http://localhost:3000" },
+    });
+    const frames: unknown[] = [];
+    bad.on("message", (d) => frames.push(d));
+    const code = await new Promise<number>((res) => bad.on("close", (c) => res(c)));
+    assert.equal(code, 4403);
+    assert.equal(frames.length, 0);
+
+    const ok = await connectAuthed(port, { cookie, origin: ALLOWED_ORIGIN });
+    assert.equal(ok.readyState, WebSocket.OPEN);
+    ok.close();
+  } finally {
+    await channel.stop();
+  }
+});
+
 test("open mode: WS connects with no credential and mic works as before", async () => {
   const auth = await makeAuth(false);
   const started: number[] = [];

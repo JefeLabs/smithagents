@@ -111,6 +111,8 @@ interface PendingInvite {
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const CODE_LENGTH = 8;
 const DEFAULT_INVITE_TTL_MS = 10 * 60_000;
+export const FIRST_RUN_INVITE_TTL_MS = 24 * 60 * 60_000;
+export const LOGIN_CHALLENGE_TTL_MS = 5 * 60_000;
 const SESSION_TTL_MS = 30 * 24 * 60 * 60_000;
 const SESSION_PREFIX = "smith-sess-";
 
@@ -169,7 +171,8 @@ export class BrokerAuth {
   private users: StoredUser[] = [];
   private sessions: StoredSession[] = [];
   private readonly invites: PendingInvite[] = [];
-  private readonly loginChallenges = new Set<string>();
+  /** challenge -> issuedAt */
+  private readonly loginChallenges = new Map<string, number>();
 
   /** The WebAuthn expected origin — needed by the cookie's Secure flag. */
   readonly webOrigin: string;
@@ -208,6 +211,21 @@ export class BrokerAuth {
     const expiresAt = now + ttlMs;
     this.invites.push({ codeHash: sha256(code).toString("hex"), expiresAt });
     return { code: `${code.slice(0, 4)}-${code.slice(4)}`, expiresAt };
+  }
+
+  hasUsers(): boolean {
+    return this.users.length > 0;
+  }
+
+  /** Enrollment link for the very first passkey; null once one exists or when auth is open. */
+  firstRunInviteUrl(now = Date.now()): string | null {
+    if (!this.required || this.hasUsers()) return null;
+    const { code } = this.mintInvite(FIRST_RUN_INVITE_TTL_MS, now);
+    return `${this.webOrigin}/#invite=${code}`;
+  }
+
+  pendingLoginCount(): number {
+    return this.loginChallenges.size;
   }
 
   private findInvite(code: string, now: number): PendingInvite {
@@ -266,9 +284,12 @@ export class BrokerAuth {
     return { userId: user.userId, name: user.name, sessionToken };
   }
 
-  async beginLogin(): Promise<unknown> {
+  async beginLogin(now = Date.now()): Promise<unknown> {
+    for (const [challenge, issuedAt] of this.loginChallenges) {
+      if (now - issuedAt >= LOGIN_CHALLENGE_TTL_MS) this.loginChallenges.delete(challenge);
+    }
     const options = await this.webauthn.generateAuthenticationOptions({ rpID: this.opts.rpId });
-    this.loginChallenges.add((options as { challenge: string }).challenge);
+    this.loginChallenges.set((options as { challenge: string }).challenge, now);
     return options;
   }
 
@@ -283,7 +304,8 @@ export class BrokerAuth {
 
     // Usernameless flow: any in-flight challenge may match; try each.
     let verified: { verified: boolean; authenticationInfo?: { newCounter: number } } = { verified: false };
-    for (const challenge of this.loginChallenges) {
+    for (const [challenge, issuedAt] of this.loginChallenges) {
+      if (now - issuedAt >= LOGIN_CHALLENGE_TTL_MS) continue; // expired = unknown
       verified = await this.webauthn.verifyAuthenticationResponse({
         response,
         expectedChallenge: challenge,
