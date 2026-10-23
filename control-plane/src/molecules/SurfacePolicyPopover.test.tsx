@@ -44,7 +44,9 @@ describe("SurfacePolicyPopover", () => {
     expect(screen.queryByText("Tauri app")).toBeNull();
     expect(screen.getByText("Discord text")).toBeDefined();
     // discord is on-request but PRESENT (admitted) → no Join now; discord-voice absent → Join now.
-    expect(screen.getAllByRole("button", { name: /join now/i })).toHaveLength(1);
+    // Awaited: the rows render one commit before the effect that copies modes into state,
+    // and Join now depends on the mode.
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /join now/i })).toHaveLength(1));
   });
 
   it("mode click PUTs the full record with a tauri-free channels map", async () => {
