@@ -482,3 +482,28 @@ test("create() refuses a docker runtime up front — no worktree, no branch, no 
   assert.deepEqual(await store.load(), [], "no session record");
   assert.equal(dockerCalls, 0);
 });
+
+test("create: a warm session launches with SMITH_API_TOKEN blanked, so it never inherits the admin token", async () => {
+  const launches: Array<Record<string, string> | undefined> = [];
+  class SpyRuntime extends TmuxRuntime {
+    override async launch(...args: Parameters<TmuxRuntime["launch"]>) {
+      launches.push(args[3]);
+      return super.launch(...args);
+    }
+  }
+  const spied = new AgentSessionManager(new SpyRuntime(), {
+    agentCommands: { claude: toolScript },
+    worktreeDir: ".smith/worktrees",
+    resolveDriver: () => new FakeDriver(),
+    pollIntervalMs: 100,
+    readinessTimeoutMs: 10_000,
+    turnTimeoutMs: 10_000,
+  });
+  const info = await spied.create(AGENT, JSON.stringify(AGENT), repoRoot, "main");
+  try {
+    assert.equal(launches.length, 1);
+    assert.equal(launches[0]?.SMITH_API_TOKEN, "");
+  } finally {
+    await spied.destroy(info.id);
+  }
+});
