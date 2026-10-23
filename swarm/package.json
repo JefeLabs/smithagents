@@ -30,9 +30,9 @@
     "node": ">=24.0.0"
   },
   "dependencies": {
-    "@fastify/websocket": "^11.3.0",
+    "@fastify/websocket": "^11.3.4",
     "@livekit/protocol": "^1.53.0",
-    "fastify": "^5.10.0",
+    "fastify": "^5.12.7",
     "livekit-server-sdk": "^2.19.1",
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",
