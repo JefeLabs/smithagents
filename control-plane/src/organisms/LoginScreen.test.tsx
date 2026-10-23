@@ -64,9 +64,12 @@ describe("LoginScreen", () => {
     window.history.replaceState(null, "", "/");
   });
 
-  it("tells a first-time user where the sign-up link is", () => {
+  it("tells a first-time user where the sign-up link is, and that it expires", () => {
     render(<LoginScreen onAuthed={vi.fn()} />);
     expect(screen.getByText(/tmux attach -t smith-broker/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/The link expires after 24 hours — restart the broker for a new one\./),
+    ).toBeInTheDocument();
   });
 
   it("Sign in runs login() then onAuthed", async () => {

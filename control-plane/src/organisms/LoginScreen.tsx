@@ -123,7 +123,8 @@ export function LoginScreen({ onAuthed }: { onAuthed: () => void }) {
         {isCloud() ? null : (
           <p className="login-screen__firstrun">
             First time on this Mac? Open the sign-up link printed in the broker's terminal (
-            <code>tmux attach -t smith-broker</code>).
+            <code>tmux attach -t smith-broker</code>). The link expires after 24 hours — restart the broker for a new
+            one.
           </p>
         )}
 

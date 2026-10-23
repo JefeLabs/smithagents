@@ -109,6 +109,14 @@ SMITH_BROKER_TOKEN=               # blank = generated at ~/.smith/broker-bridge-
 (link expires in 24h).` Open that link in the control plane to create your passkey; after that it signs
 you in with it. `SMITH_BROKER_AUTH=open` skips all of this and leaves the broker unauthenticated (loopback only).
 
+**Recovering sign-in.**
+- **After a reset.** `make reset`, or a deleted `broker/.smith/auth.json`, removes every enrolled passkey. The
+  broker prints a NEW first-run link at its next start, and your old passkey no longer works: enroll again
+  from the new link.
+- **Lost passkey.** Stop the broker, move `broker/.smith/auth.json` aside, and restart it to get a new
+  first-run link. Or set `SMITH_BROKER_AUTH=open` temporarily (loopback only) and unset it once you are back in.
+- **Expired link.** The first-run link expires after 24h. Restart the broker for a new one.
+
 Then register at least one workspace in `swarm/.smith/workspaces/<name>.json`:
 
 ```json

@@ -145,6 +145,10 @@ reset: ## TRUE first-run wipe: state, master key, task branches, agent sessions,
 	@echo "  voice    dead until you paste deepgram + elevenlabs into Settings"
 	@echo "  browser  clear the 'smith.sound' localStorage key for a spotless first run"
 	@echo "  next     start the services, then open the app"
+	@echo "  sign-in  the broker prints a NEW first-run link (tmux attach -t smith-broker); your old passkey"
+	@echo "           no longer works. The link expires after 24h: restart the broker for a new one."
+	@echo "  passkey  lost one later? Stop the broker, move broker/.smith/auth.json aside, and restart for a"
+	@echo "           new link. Or set SMITH_BROKER_AUTH=open temporarily (loopback only)."
 
 reset-restore-voice: ## Restore only the voice credentials from a backup (BACKUP=path)
 	@[ -n "$(BACKUP)" ] || { echo "  usage: make reset-restore-voice BACKUP=<dir>"; exit 1; }
