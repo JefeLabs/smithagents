@@ -12,8 +12,8 @@
 // ---------------------------------------------------------------------------
 
 import { execFile } from "node:child_process";
-import { lstat, mkdir, readFile, stat, unlink } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { lstat, mkdir, readFile, stat, unlink } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
