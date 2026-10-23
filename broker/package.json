@@ -33,7 +33,7 @@
     "remark-parse": "^11.0.0",
     "remark-stringify": "^11.0.0",
     "sharp": "^0.35.5",
-    "sodium-native": "^5.1.0",
+    "sodium-native": "^5.2.0",
     "unified": "^11.0.5",
     "ws": "^8.22.0"
   },

@@ -60,8 +60,8 @@ importers:
         specifier: ^0.35.5
         version: 0.35.5(@types/node@24.19.2)
       sodium-native:
-        specifier: ^5.1.0
-        version: 5.1.0(bare-events@2.9.1)
+        specifier: ^5.2.0
+        version: 5.2.0(bare-events@2.9.1)
       unified:
         specifier: ^11.0.5
         version: 11.0.5
@@ -4367,8 +4367,8 @@ packages:
   sisteransi@1.0.5:
     resolution: {integrity: sha512-bLGGlR1QxBcynn2d5YmDX4MGjlZvy2MRBDRNHLJ8VI6l6+9FUiyTFNJ0IveOSP0bcXgVDPRcfGqA0pjaqUpfVg==}
 
-  sodium-native@5.1.0:
-    resolution: {integrity: sha512-3RxgyWyJlhTsABPnJVpCI5CoTDANZTqqFrEPqr+kjfnRaBihpVtMUE3yTF40ukdoB1APXeoBNKF3MzZAIHg39g==}
+  sodium-native@5.2.0:
+    resolution: {integrity: sha512-ntJqNSc9bWmWqcJkx8NA5eS0HUwQnmDlluUzoKCOQUWey8i7LXptk+E/qo2T2RPO9uK2br+3N0zYQme8qPXG+g==}
     engines: {bare: '>=1.16.0'}
 
   solid-js@1.9.17:
@@ -9231,7 +9231,7 @@ snapshots:
 
   sisteransi@1.0.5: {}
 
-  sodium-native@5.1.0(bare-events@2.9.1):
+  sodium-native@5.2.0(bare-events@2.9.1):
     dependencies:
       bare-assert: 1.2.0(bare-events@2.9.1)
       require-addon: 1.2.0
