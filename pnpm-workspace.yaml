@@ -19,3 +19,15 @@ allowBuilds:
   fsevents: true
   '@google/genai': true
   protobufjs: true
+
+overrides:
+  # @discordjs/node-pre-gyp 0.4.5 (latest; via @discordjs/opus) still declares
+  # tar ^6, and the tar 6 line has no fix for the 12 path-traversal / DoS
+  # advisories (one critical). It only calls tar.extract({cwd,strip,onentry})
+  # and tar.create({...}, files, cb), which tar 7 keeps. Drop this once
+  # node-pre-gyp moves to tar 7 itself.
+  '@discordjs/node-pre-gyp>tar': ^7.5.21
+  # The HeroUI Pro CLI (heroui-pro, latest beta.14) pins figlet 1.11.0 exactly;
+  # 1.11.3 is the patch release that fixes its DoS advisory. Drop this once the
+  # CLI pins a fixed figlet itself.
+  'heroui-pro>figlet': ~1.11.3
