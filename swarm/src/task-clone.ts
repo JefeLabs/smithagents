@@ -138,3 +138,43 @@ export async function createTaskClone(
   else await hardenedGit(["remote", "remove", "origin"], clonePath);
   return { repoPath: repoReal, path: clonePath, branch, baseSha, readOnlyMounts };
 }
+
+/** The `--upload-pack` command that serves a clone's objects from a throwaway, network-less container. */
+export function sandboxedUploadPack(image: string, clone: TaskClone): string {
+  const mounts = [clone.path, ...clone.readOnlyMounts].flatMap((p) => ["-v", `${p}:${p}:ro`]);
+  return ["docker", "run", "--rm", "-i", "--network", "none", "--entrypoint", "git-upload-pack", ...mounts, image]
+    .map(shellQuote)
+    .join(" ");
+}
+
+/** Fetch the clone's task branch into the user's repo through `uploadPack`; returns the imported tip SHA. */
+export async function importTaskBranch(clone: TaskClone, uploadPack: string): Promise<string> {
+  await hardenedGit(
+    [
+      "-c",
+      "fetch.fsckObjects=true",
+      "-c",
+      "transfer.fsckObjects=true",
+      "fetch",
+      "--quiet",
+      "--no-tags",
+      "--no-recurse-submodules",
+      "--no-write-fetch-head",
+      `--upload-pack=${uploadPack}`,
+      clone.path,
+      `+refs/heads/${clone.branch}:refs/heads/${clone.branch}`,
+    ],
+    clone.repoPath,
+  );
+  return hardenedGit(["rev-parse", `refs/heads/${clone.branch}`], clone.repoPath);
+}
+
+/** The message for the commit that sweeps an agent's uncommitted leftovers onto the task branch. */
+export function autoCommitMessage(agent: string, taskId: string, completed: boolean): string {
+  return `${completed ? "task" : "task(incomplete)"}: ${agent} — ${taskId}\n\nAuto-committed by the dispatcher after the agent session exited${completed ? "" : " with a non-zero code"}.`;
+}
+
+/** Shell command (run inside the container) that commits leftovers as the agent; a no-op when clean. */
+export function finalizeCommand(agent: string, taskId: string, completed: boolean): string {
+  return `git add -A && { git diff --cached --quiet || git -c user.name=${shellQuote(`${agent} (smith)`)} -c user.email=crew@smithagents.local commit -q -m ${shellQuote(autoCommitMessage(agent, taskId, completed))}; }`;
+}

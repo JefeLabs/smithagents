@@ -5,7 +5,16 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
-import { createTaskClone, objectStoreMounts, shellQuote } from "./task-clone.js";
+import {
+  autoCommitMessage,
+  createTaskClone,
+  finalizeCommand,
+  importTaskBranch,
+  objectStoreMounts,
+  sandboxedUploadPack,
+  shellQuote,
+  type TaskClone,
+} from "./task-clone.js";
 
 const exec = promisify(execFile);
 
@@ -126,4 +135,85 @@ test("shellQuote: survives a shell round-trip, spaces and quotes included", asyn
   const words = ["plain", "a b", "it's", "--upload-pack=x"];
   const out = await sh("sh", ["-c", `printf '%s\\n' ${words.map(shellQuote).join(" ")}`], dir);
   assert.deepEqual(out.split("\n"), words);
+});
+
+test("sandboxedUploadPack: clone and object stores read-only, no network, the image's entrypoint bypassed", async () => {
+  const { dir } = await fixture();
+  const clone = { path: "/c lone", readOnlyMounts: ["/o"] } as TaskClone;
+  const words = (
+    await sh("sh", ["-c", `printf '%s\\n' ${sandboxedUploadPack("smith-agent:latest", clone)}`], dir)
+  ).split("\n");
+  assert.deepEqual(words, [
+    "docker",
+    "run",
+    "--rm",
+    "-i",
+    "--network",
+    "none",
+    "--entrypoint",
+    "git-upload-pack",
+    "-v",
+    "/c lone:/c lone:ro",
+    "-v",
+    "/o:/o:ro",
+    "smith-agent:latest",
+  ]);
+});
+
+test("importTaskBranch: the clone's task branch lands in the user's repo; the user repo's hooks stay off", async () => {
+  const { dir, repo } = await fixture();
+  const clone = await createTaskClone(repo, join(dir, "clones", "t1"), "t1", "main");
+  await sh("git", [...GIT_ID, "commit", "-q", "--allow-empty", "-m", "agent work"], clone.path);
+  const marker = join(dir, "hook-marker");
+  await mkdir(join(repo, ".git", "hooks"), { recursive: true });
+  await writeFile(join(repo, ".git", "hooks", "reference-transaction"), `#!/bin/sh\ntouch '${marker}'\n`, {
+    mode: 0o755,
+  });
+  const tip = await importTaskBranch(clone, "git-upload-pack");
+  assert.equal(tip, await sh("git", ["rev-parse", "HEAD"], clone.path));
+  assert.equal(await sh("git", ["log", "-1", "--format=%s", "smith/t1"], repo), "agent work");
+  await assert.rejects(lstat(marker), "the user repo's hook did not run");
+});
+
+test("importTaskBranch: an object fsck rejects is refused", async () => {
+  const { dir, repo } = await fixture();
+  const clone = await createTaskClone(repo, join(dir, "clones", "t1"), "t1", "main");
+  const blobSha = await sh("sh", ["-c", "printf x | git hash-object -w --stdin"], clone.path);
+  const treeBytes = Buffer.concat([Buffer.from("100644 .git\0"), Buffer.from(blobSha, "hex")]);
+  const treeSha = await new Promise<string>((ok, bad) => {
+    const p = execFile(
+      "git",
+      ["hash-object", "-w", "--literally", "-t", "tree", "--stdin"],
+      { cwd: clone.path },
+      (e, out) => (e ? bad(e) : ok(out.trim())),
+    );
+    p.stdin?.end(treeBytes);
+  });
+  const commit = await sh("git", [...GIT_ID, "commit-tree", treeSha, "-p", clone.baseSha, "-m", "evil"], clone.path);
+  await sh("git", ["update-ref", "refs/heads/smith/t1", commit], clone.path);
+  await assert.rejects(importTaskBranch(clone, "git-upload-pack"));
+  await assert.rejects(sh("git", ["rev-parse", "--verify", "refs/heads/smith/t1"], repo));
+});
+
+test("importTaskBranch: a clone with no task branch fails cleanly", async () => {
+  const { dir, repo } = await fixture();
+  const clone = await createTaskClone(repo, join(dir, "clones", "t1"), "t1", "main");
+  await sh("git", ["checkout", "-q", "--detach"], clone.path);
+  await sh("git", ["branch", "-D", "smith/t1"], clone.path);
+  const before = await sh("git", ["for-each-ref"], repo);
+  await assert.rejects(importTaskBranch(clone, "git-upload-pack"));
+  assert.equal(await sh("git", ["for-each-ref"], repo), before);
+});
+
+test("finalizeCommand: commits leftovers as the agent with today's message; does nothing when clean", async () => {
+  const { dir } = await fixture();
+  const scratch = await makeRepo(join(dir, "scratch"));
+  await writeFile(join(scratch, "f.txt"), "leftover\n");
+  const cmd = finalizeCommand("O'Brien", "t-1", false);
+  await sh("sh", ["-c", cmd], scratch);
+  const expected = `O'Brien (smith)|crew@smithagents.local|${autoCommitMessage("O'Brien", "t-1", false)}`;
+  assert.equal(await sh("git", ["log", "-1", "--format=%an|%ae|%B"], scratch), expected);
+  const count = await sh("git", ["rev-list", "--count", "HEAD"], scratch);
+  await sh("sh", ["-c", cmd], scratch);
+  assert.equal(await sh("git", ["rev-list", "--count", "HEAD"], scratch), count);
 });

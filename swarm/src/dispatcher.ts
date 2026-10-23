@@ -25,6 +25,7 @@ import { QuarantineManager } from "./quarantine.js";
 import type { WorkerPool } from "./remote-runtime.js";
 import type { RuntimeAdapter } from "./runtime.js";
 import { createRuntime } from "./runtime.js";
+import { autoCommitMessage } from "./task-clone.js";
 import type { DispatcherEvent, OrchestratorConfig, RuntimeType, TaskManifest, TaskResult } from "./types.js";
 import { loadUsersFromDir, resolveCurrentUser } from "./users.js";
 import { createInstance, resolveStartPoint } from "./workspace-instances.js";
@@ -630,7 +631,7 @@ export class Dispatcher extends EventEmitter {
           "commit",
           "-q",
           "-m",
-          `${completed ? "task" : "task(incomplete)"}: ${agent} — ${manifest.taskId}\n\nAuto-committed by the dispatcher after the agent session exited${completed ? "" : " with a non-zero code"}.`,
+          autoCommitMessage(agent, manifest.taskId, completed),
         ],
         worktreePath,
       );
