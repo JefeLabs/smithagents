@@ -22,7 +22,7 @@
     "@deepgram/sdk": "^5.7.0",
     "@discordjs/opus": "^0.10.0",
     "@discordjs/voice": "^0.19.2",
-    "@google/genai": "^2.16.0",
+    "@google/genai": "^2.30.0",
     "@livekit/rtc-node": "^0.13.31",
     "@simplewebauthn/server": "^13.3.3",
     "@smithagents/voice": "workspace:*",
