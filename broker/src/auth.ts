@@ -406,9 +406,11 @@ export class BrokerAuth {
         throw new AuthError("verify-failed");
       }
       if (!verified.verified || !reserved) throw new AuthError("verify-failed");
+      // Spent the moment it verifies, before any await: a persist() throw in
+      // createSession must never hand a verified assertion back for a replay.
+      this.usedLoginChallenges.set(reserved.challenge, reserved.expiresAt);
       cred.counter = verified.authenticationInfo?.newCounter ?? cred.counter;
       const sessionToken = await this.createSession(user.userId, now);
-      this.usedLoginChallenges.set(reserved.challenge, reserved.expiresAt);
       return { userId: user.userId, name: user.name, sessionToken };
     } finally {
       if (reserved) this.inFlightLoginChallenges.delete(reserved.challenge);

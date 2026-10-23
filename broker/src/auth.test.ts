@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -301,4 +301,21 @@ test("a non-string challenge or a non-object response is refused without a throw
   const { auth } = await enrolled();
   await assert.rejects(auth.finishLogin(undefined, 0), refused);
   await assert.rejects(auth.finishLogin({ ok: true, id: "cred-1", challenge: 42 }, 0), refused);
+});
+
+test("a verified assertion is spent even when saving its session throws: the replay is refused", async () => {
+  const webauthn = fakeWebauthn();
+  const { auth, file } = await freshAuth({ webauthn });
+  const { code } = auth.mintInvite();
+  await auth.beginRegistration(code, "edwin");
+  await auth.finishRegistration(code, { ok: true });
+  await auth.beginLogin(0);
+  const challenge = webauthn.lastChallenge;
+  // A directory where auth.json lives: persist() throws EISDIR inside createSession.
+  await rm(file);
+  await mkdir(file);
+  await assert.rejects(login(auth, challenge, 1_000));
+  await rm(file, { recursive: true });
+  assert.equal(auth.inFlightLoginCount(), 0);
+  await assert.rejects(login(auth, challenge, 2_000), refused);
 });
