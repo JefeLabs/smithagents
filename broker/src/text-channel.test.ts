@@ -130,10 +130,11 @@ function channelWith(opts: {
   localModels?: ConstructorParameters<typeof TextChannel>[31];
   machine?: ConstructorParameters<typeof TextChannel>[32];
   onUtterance?: ConstructorParameters<typeof TextChannel>[0];
+  helloFrames?: ConstructorParameters<typeof TextChannel>[1];
 }): TextChannel {
   return new TextChannel(
     opts.onUtterance ?? (() => {}),
-    () => [],
+    opts.helloFrames ?? (() => []),
     undefined,
     undefined,
     opts.mic,
@@ -2631,22 +2632,33 @@ test("WS /events: a present, disallowed Origin is closed with 4403 before any fr
   const invite = auth.mintInvite();
   await auth.beginRegistration(invite.code, "edwin");
   const { sessionToken } = await auth.finishRegistration(invite.code, { ok: true });
-  const channel = channelWith({ auth });
+  const channel = channelWith({ auth, helloFrames: () => [{ type: "sentinel" }] as never });
   const port = await channel.start(0);
   const cookie = `smith_session=${sessionToken}`;
+  const open = (headers: Record<string, string>) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/events`, { headers });
+    const frames: string[] = [];
+    ws.on("message", (d) => frames.push(String(d)));
+    const closed = new Promise<number>((res) => ws.on("close", (c) => res(c)));
+    return { ws, frames, closed };
+  };
   try {
-    const bad = new WebSocket(`ws://127.0.0.1:${port}/events`, {
-      headers: { cookie, origin: "http://localhost:3000" },
-    });
-    const frames: unknown[] = [];
-    bad.on("message", (d) => frames.push(d));
-    const code = await new Promise<number>((res) => bad.on("close", (c) => res(c)));
-    assert.equal(code, 4403);
-    assert.equal(frames.length, 0);
+    // valid cookie + bad origin: 4403 and the sentinel never leaks
+    const bad = open({ cookie, origin: "http://localhost:3000" });
+    assert.equal(await bad.closed, 4403);
+    assert.equal(bad.frames.length, 0);
 
-    const ok = await connectAuthed(port, { cookie, origin: ALLOWED_ORIGIN });
-    assert.equal(ok.readyState, WebSocket.OPEN);
-    ok.close();
+    // NO credential + bad origin: 4403, not 4401 -> the origin check precedes identity
+    const anon = open({ origin: "http://localhost:3000" });
+    assert.equal(await anon.closed, 4403);
+    assert.equal(anon.frames.length, 0);
+
+    // the allowed origin receives the sentinel
+    const ok = open({ cookie, origin: ALLOWED_ORIGIN });
+    await new Promise((r) => setTimeout(r, 200));
+    assert.equal(ok.frames.length, 1);
+    assert.match(ok.frames[0] ?? "", /sentinel/);
+    ok.ws.close();
   } finally {
     await channel.stop();
   }

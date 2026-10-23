@@ -7,9 +7,11 @@ import { type AuthError, BrokerAuth, parseCookies, type WebAuthnAdapter } from "
 
 const CRED = { id: "cred-1", publicKey: new Uint8Array([1, 2, 3]), counter: 0, transports: ["internal"] };
 
-function fakeWebauthn(): WebAuthnAdapter & { lastChallenge: string } {
+function fakeWebauthn(): WebAuthnAdapter & { lastChallenge: string; unique: boolean } {
+  let seq = 0;
   const fake = {
     lastChallenge: "challenge-1",
+    unique: false,
     async generateRegistrationOptions({ userName }: { userName: string }) {
       return { challenge: fake.lastChallenge, user: { name: userName } };
     },
@@ -18,15 +20,24 @@ function fakeWebauthn(): WebAuthnAdapter & { lastChallenge: string } {
       return ok ? { verified: true, registrationInfo: { credential: CRED } } : { verified: false };
     },
     async generateAuthenticationOptions() {
+      if (fake.unique) fake.lastChallenge = `c-${seq++}`;
       return { challenge: fake.lastChallenge };
     },
     async verifyAuthenticationResponse({
       response,
+      expectedChallenge,
       credential,
     }: {
       response: unknown;
+      expectedChallenge: string | ((c: string) => boolean | Promise<boolean>);
       credential: { counter: number };
     }) {
+      // Like the real library: the response carries the challenge it signed, and a
+      // mismatch THROWS rather than returning verified:false.
+      const signed = (response as { challenge?: string }).challenge ?? fake.lastChallenge;
+      const accepted =
+        typeof expectedChallenge === "function" ? await expectedChallenge(signed) : expectedChallenge === signed;
+      if (!accepted) throw new Error(`Unexpected authentication response challenge "${signed}"`);
       const ok = (response as { ok?: boolean }).ok !== false;
       return ok ? { verified: true, authenticationInfo: { newCounter: credential.counter + 1 } } : { verified: false };
     },
@@ -181,4 +192,30 @@ test("finishLogin treats an expired challenge as unknown", async () => {
   );
   await auth.beginLogin(10 * 60_000);
   await assert.doesNotReject(auth.finishLogin({ ok: true, id: "cred-1" }, 10 * 60_000 + 1000));
+});
+
+test("a cancelled attempt never blocks the retry", async () => {
+  const webauthn = fakeWebauthn();
+  webauthn.unique = true;
+  const { auth } = await freshAuth({ webauthn });
+  const { code } = auth.mintInvite();
+  await auth.beginRegistration(code, "edwin");
+  await auth.finishRegistration(code, { ok: true });
+  await auth.beginLogin(0); // c-0: the cancelled prompt
+  await auth.beginLogin(1_000); // c-1: the retry
+  const { sessionToken } = await auth.finishLogin({ ok: true, id: "cred-1", challenge: "c-1" }, 2_000);
+  assert.equal(auth.sessionIdentity(sessionToken, 2_000)?.kind, "human");
+  assert.equal(auth.pendingLoginCount(), 1); // only the matched one was consumed
+  await assert.rejects(
+    auth.finishLogin({ ok: true, id: "cred-1", challenge: "nope" }, 3_000),
+    (e: AuthError) => e.code === "verify-failed",
+  );
+});
+
+test("at most 64 login challenges stay pending", async () => {
+  const webauthn = fakeWebauthn();
+  webauthn.unique = true;
+  const { auth } = await freshAuth({ webauthn });
+  for (let i = 0; i < 70; i++) await auth.beginLogin(5);
+  assert.equal(auth.pendingLoginCount(), 64);
 });

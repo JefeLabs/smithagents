@@ -48,7 +48,7 @@ export interface WebAuthnAdapter {
   generateAuthenticationOptions(input: { rpID: string }): Promise<unknown>;
   verifyAuthenticationResponse(input: {
     response: unknown;
-    expectedChallenge: string;
+    expectedChallenge: string | ((challenge: string) => boolean | Promise<boolean>);
     expectedOrigin: string;
     expectedRPID: string;
     credential: { id: string; publicKey: Uint8Array; counter: number };
@@ -113,6 +113,7 @@ const CODE_LENGTH = 8;
 const DEFAULT_INVITE_TTL_MS = 10 * 60_000;
 export const FIRST_RUN_INVITE_TTL_MS = 24 * 60 * 60_000;
 export const LOGIN_CHALLENGE_TTL_MS = 5 * 60_000;
+const MAX_PENDING_LOGINS = 64;
 const SESSION_TTL_MS = 30 * 24 * 60 * 60_000;
 const SESSION_PREFIX = "smith-sess-";
 
@@ -290,6 +291,11 @@ export class BrokerAuth {
     }
     const options = await this.webauthn.generateAuthenticationOptions({ rpID: this.opts.rpId });
     this.loginChallenges.set((options as { challenge: string }).challenge, now);
+    // /auth/login/options is unauthenticated: bound the Map, oldest out first.
+    while (this.loginChallenges.size > MAX_PENDING_LOGINS) {
+      const oldest = this.loginChallenges.keys().next().value as string;
+      this.loginChallenges.delete(oldest);
+    }
     return options;
   }
 
@@ -302,13 +308,21 @@ export class BrokerAuth {
     const cred = user?.credentials.find((c) => c.id === credentialId);
     if (!user || !cred) throw new AuthError("unknown-credential");
 
-    // Usernameless flow: any in-flight challenge may match; try each.
-    let verified: { verified: boolean; authenticationInfo?: { newCounter: number } } = { verified: false };
-    for (const [challenge, issuedAt] of this.loginChallenges) {
-      if (now - issuedAt >= LOGIN_CHALLENGE_TTL_MS) continue; // expired = unknown
+    // Usernameless flow: ONE verify call; the library hands us the challenge the
+    // authenticator signed and we accept it only if it is pending and unexpired.
+    // (The real library THROWS on a mismatch, so trying challenges one by one
+    // would let a stale, cancelled attempt block every retry.)
+    let matched: string | undefined;
+    let verified: { verified: boolean; authenticationInfo?: { newCounter: number } };
+    try {
       verified = await this.webauthn.verifyAuthenticationResponse({
         response,
-        expectedChallenge: challenge,
+        expectedChallenge: (challenge) => {
+          const issuedAt = this.loginChallenges.get(challenge);
+          if (issuedAt === undefined || now - issuedAt >= LOGIN_CHALLENGE_TTL_MS) return false;
+          matched = challenge;
+          return true;
+        },
         expectedOrigin: this.opts.webOrigin,
         expectedRPID: this.opts.rpId,
         credential: {
@@ -317,12 +331,11 @@ export class BrokerAuth {
           counter: cred.counter,
         },
       });
-      if (verified.verified) {
-        this.loginChallenges.delete(challenge);
-        break;
-      }
+    } catch {
+      throw new AuthError("verify-failed");
     }
-    if (!verified.verified) throw new AuthError("verify-failed");
+    if (!verified.verified || matched === undefined) throw new AuthError("verify-failed");
+    this.loginChallenges.delete(matched);
     cred.counter = verified.authenticationInfo?.newCounter ?? cred.counter;
     const sessionToken = await this.createSession(user.userId, now);
     return { userId: user.userId, name: user.name, sessionToken };
