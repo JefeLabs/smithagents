@@ -150,6 +150,12 @@ lives elsewhere, so Docker received a dangling pointer and the parent `.git` had
 to be bind-mounted separately. With both inside the workspace directory,
 `-v <instance>:/workspace` resolves on its own.
 
+> **Note (2026-10-23): this claim was wrong.** A worktree's `.git` pointer and
+> its shared object store still need the parent `.git`, and mounting it
+> read-write lets a container plant hooks the host later runs. Docker tasks now
+> run in disposable `git clone --shared` task clones and their work comes home
+> by sandboxed fetch. See `2026-10-23-docker-git-isolation-design.md`.
+
 ### 2.2 Lifecycle
 
 The lifecycle is a filesystem fact, not a status field someone must remember to
@@ -440,6 +446,8 @@ credential rotation a live operation and removing the relaunch path entirely.
   both.
 - **Docker**: `-v <instance>:/workspace` gives a container working git with no
   `gitdirMount()`.
+  *(2026-10-23: superseded — docker tasks now run in task clones; see
+  `2026-10-23-docker-git-isolation-design.md`.)*
 - **Inbox**: an event delivered to a busy assignee queues and lands on idle; to a
   dead assignee marks the work item blocked.
 - **Rebase**: a conflict returns the item to in-progress rather than failing it.
