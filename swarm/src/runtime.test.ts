@@ -326,6 +326,39 @@ for (const rmFails of [false, true]) {
   });
 }
 
+test("DockerRuntime.removeContainer: a failed rm counts only once the container is verifiably gone", async () => {
+  const stub = (rm: () => Promise<unknown>, ps: () => Promise<unknown>) => {
+    const runtime = new DockerRuntime({ image: "smith-agent:real" });
+    const calls: string[][] = [];
+    (runtime as unknown as { docker: (a: string[]) => Promise<unknown> }).docker = (a) => {
+      calls.push(a);
+      return a[0] === "rm" ? rm() : ps();
+    };
+    return { runtime, calls };
+  };
+  const inProgress = () => Promise.reject(new Error("removal of container x is already in progress"));
+
+  // Its own --rm got there first: gone, so removed.
+  const raced = stub(inProgress, async () => ({ stdout: "\n", stderr: "" }));
+  await raced.runtime.removeContainer("smith-upload-1", 200);
+  assert.deepEqual(raced.calls, [
+    ["rm", "-f", "smith-upload-1"],
+    ["ps", "-a", "-q", "--filter", "name=^smith-upload-1$"],
+  ]);
+
+  // Still there after the grace: the rm failure stands.
+  const stuck = stub(inProgress, async () => ({ stdout: "abc123\n", stderr: "" }));
+  await assert.rejects(stuck.runtime.removeContainer("smith-upload-2", 200), /already in progress/);
+  assert.ok(stuck.calls.filter((c) => c[0] === "ps").length >= 2, "it looked more than once");
+
+  // Cannot even look: the rm failure stands, at once.
+  const blind = stub(
+    () => Promise.reject(new Error("Cannot connect to the Docker daemon")),
+    () => Promise.reject(new Error("still cannot connect")),
+  );
+  await assert.rejects(blind.runtime.removeContainer("smith-upload-3", 60_000), /Cannot connect to the Docker daemon/);
+});
+
 test("DockerRuntime.runOnce: rejects a nonsense timeout before touching docker", async () => {
   const runtime = new DockerRuntime({ image: "smith-agent:real" });
   let called = false;

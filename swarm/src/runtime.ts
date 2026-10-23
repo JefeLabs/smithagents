@@ -602,9 +602,29 @@ export class DockerRuntime implements RuntimeAdapter {
     }
   }
 
-  /** `docker rm -f <name>`. Unlike kill(), a failure is thrown, not swallowed. */
-  async removeContainer(name: string): Promise<void> {
-    await this.docker(["rm", "-f", name]);
+  /**
+   * `docker rm -f <name>`. Unlike kill(), a failure is thrown, not swallowed —
+   * unless the container is verifiably gone within `graceMs`: an `--rm`
+   * container that exited on its own may already be removing itself, and then
+   * rm fails with "removal … is already in progress" although nothing is left.
+   */
+  async removeContainer(name: string, graceMs = 5_000): Promise<void> {
+    try {
+      await this.docker(["rm", "-f", name]);
+    } catch (err) {
+      const deadline = Date.now() + graceMs;
+      for (;;) {
+        let left: string;
+        try {
+          left = (await this.docker(["ps", "-a", "-q", "--filter", `name=^${name}$`])).stdout.trim();
+        } catch {
+          throw err; // cannot even look: report the failed removal
+        }
+        if (left === "") return;
+        if (Date.now() >= deadline) throw err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
   }
 
   async killPattern(pattern: string): Promise<number> {
