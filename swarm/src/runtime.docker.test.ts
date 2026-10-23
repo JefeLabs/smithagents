@@ -203,8 +203,14 @@ test("image contract: nothing a container plants runs on the host — finalize a
       `printf '#!/bin/sh\\nmkdir -p ${markers} && touch ${markers}/$(basename $0)\\nexit 0\\n' > .git/trap`,
       "chmod +x .git/trap",
       ...hooks.map((h) => `cp .git/trap .git/hooks/${h}`),
+      // Relative, so it resolves in the container AND on the host.
       "cp .git/trap .git/fsmonitor-trap",
-      "git config core.fsmonitor /workspace/.git/fsmonitor-trap",
+      "git config core.fsmonitor .git/fsmonitor-trap",
+      // A filter driver: survives hooksPath=/dev/null and fsmonitor=false. The
+      // trailing `cat` passes content through, so the finalize keeps it intact.
+      "cp .git/trap .git/filter-trap",
+      "echo '* filter=trap' >> .git/info/attributes",
+      "git config filter.trap.clean '.git/filter-trap ; cat'",
       "echo leftover > leftover.txt",
     ].join(" && ");
 
@@ -226,7 +232,13 @@ test("image contract: nothing a container plants runs on the host — finalize a
     // does not, the traps were never armed and the assertion above proved nothing.
     await execFileP("git", ["status"], { cwd: clone.path }).catch(() => {});
     const control = await readdir(markers).catch(() => [] as string[]);
+    console.log(`host control fired: ${control.join(", ")}`);
     assert.ok(control.length > 0, "control failed — this test proved nothing");
+    // The traps hooksPath=/dev/null alone would not stop are armed too.
+    assert.ok(
+      control.includes("fsmonitor-trap") || control.includes("filter-trap"),
+      `only hooks fired (${control.join(", ")}): the fsmonitor and filter traps were never armed`,
+    );
   }),
 );
 

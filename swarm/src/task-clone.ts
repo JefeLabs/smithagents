@@ -23,7 +23,12 @@ export interface TaskClone {
   readOnlyMounts: string[];
 }
 
-/** git on the host with hooks and fsmonitor neutralised — a container may have written the config. */
+/**
+ * git on the host with hooks and fsmonitor off. NOT safe on a container-written
+ * repo: filter drivers (`.gitattributes` + `filter.<x>.clean`), `gpg.program`
+ * with `commit.gpgsign`, and other config-named programs still run. Use it only
+ * on the user's repo, or on a clone no container has started on.
+ */
 export async function hardenedGit(args: string[], cwd: string, opts: { signal?: AbortSignal } = {}): Promise<string> {
   try {
     const { stdout } = await exec("git", ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args], {
