@@ -631,6 +631,26 @@ test("DockerRuntime.launch: a missing mount source is resolved through its exist
   });
 });
 
+test("DockerRuntime.launch: a missing mount source inside ~/.smith is refused; an existing one still mounts", async () => {
+  await withFakeHome(async ({ home, work, calls, runtime }) => {
+    // No token exists yet. Docker would create the source as a container-owned
+    // directory, and API-TOKEN is api-token on a case-insensitive disk.
+    await mkdir(join(home, ".smith", "docker-auth"), { recursive: true });
+    for (const name of ["API-TOKEN", "new-dir", join("new-dir", "deeper")]) {
+      await assert.rejects(
+        runtime([`${join(home, ".smith", name)}:/x`]).launch("task-n", "true", work),
+        /refusing to start container: mount .* does not exist, and docker would create it inside .*\.smith/,
+        name,
+      );
+    }
+    assert.equal(calls.length, 0);
+
+    // Positive control: an existing non-secret dir in ~/.smith (the credential dir) mounts.
+    await runtime([`${join(home, ".smith", "docker-auth")}:/x`]).launch("task-e", "true", work);
+    assert.equal(calls.length, 1);
+  });
+});
+
 test("DockerRuntime.launch: a dangling symlink mount source is refused", async () => {
   await withFakeHome(async ({ scratch, work, calls, runtime }) => {
     await symlink(join(scratch, "nowhere"), join(scratch, "dangling"));

@@ -354,10 +354,25 @@ async function assertNoSecretMounts(args: string[]): Promise<void> {
     await mkdir(dir, { recursive: true, mode: 0o700 }).catch(refuse("create secrets directory", dir));
   }
   const realSecrets = await Promise.all(secrets.map((s) => canonicalPath(s).catch(refuse("resolve secret", s))));
+  const realSecretDirs = [...new Set(realSecrets.map((s) => dirname(s)))];
   for (const source of sources) {
     const real = await canonicalPath(source).catch(refuse("resolve mount", source));
     const hit = exposedSecrets([source], secrets)[0] ?? exposedSecrets([real], realSecrets)[0];
     if (hit) throw new Error(`refusing to start container: mount ${source} would expose ${hit.secret}`);
+    // Docker creates a missing source. Inside a secrets directory that could be a
+    // token not written yet, under a spelling the disk folds to its name.
+    const inside = realSecretDirs.find((d) => real.startsWith(d + sep));
+    if (
+      inside &&
+      !(await lstat(real).then(
+        () => true,
+        () => false,
+      ))
+    ) {
+      throw new Error(
+        `refusing to start container: mount ${source} does not exist, and docker would create it inside ${inside}`,
+      );
+    }
   }
 }
 
