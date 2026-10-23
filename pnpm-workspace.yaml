@@ -20,6 +20,25 @@ allowBuilds:
   '@google/genai': true
   protobufjs: true
 
+# Per-version waivers of pnpm's 1-day release cooldown, added 2026-10-23 on an
+# explicit request to take these releases early. Checked first: zustand,
+# react-router, router-core, livekit-server-sdk and rtc-node carry SLSA
+# provenance from GitHub Actions trusted publishing; motion, framer-motion,
+# motion-dom and motion-utils are hand-published by their sole maintainer
+# without provenance, as every motion release is. Each entry names an exact
+# version, so it is dead once that version is older than a day (the last by
+# 2026-10-23T20:10Z) and can be deleted.
+minimumReleaseAgeExclude:
+  - '@livekit/rtc-node@1.2.1'
+  - '@tanstack/react-router@1.170.46'
+  - '@tanstack/router-core@1.171.39'
+  - framer-motion@14.6.0
+  - livekit-server-sdk@2.19.2
+  - motion-dom@14.6.0
+  - motion-utils@14.6.0
+  - motion@14.6.0
+  - zustand@5.0.16
+
 overrides:
   # @discordjs/node-pre-gyp 0.4.5 (latest; via @discordjs/opus) still declares
   # tar ^6, and the tar 6 line has no fix for the 12 path-traversal / DoS
