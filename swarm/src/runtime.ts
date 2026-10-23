@@ -285,18 +285,6 @@ export class TmuxRuntime implements RuntimeAdapter {
 // ---------------------------------------------------------------------------
 
 /**
- * Throws unless `cwd` may be bind-mounted into a container. An allowlist:
- *   - `cwd` must exist and be a directory;
- *   - with no `<cwd>/.git` at all, it is not a repository and is allowed;
- *   - a `.git` FILE or symlink (a worktree) is refused: it names the user's real
- *     repository, and making it usable in a container means mounting that .git
- *     read-write, so the container could plant hooks/fsmonitor the host later runs;
- *   - a `.git` directory is allowed only when it carries TASK_CLONE_MARKER,
- *     i.e. it is a disposable clone createTaskClone made (see task-clone.ts);
- *   - anything else at `<cwd>/.git` is refused.
- * It inspects only `<cwd>/.git`, never any repository above or below it.
- */
-/**
  * Which mount sources would expose a secret: `resolve(source)` is the secret
  * itself or an ancestor of it at a path-segment boundary (`/h/.smithx` is not
  * `/h/.smith`). Pure string comparison: never stats or reads the secrets.
@@ -321,6 +309,18 @@ function assertNoSecretMounts(args: string[]): void {
   if (hit) throw new Error(`refusing to start container: mount ${hit.source} would expose ${hit.secret}`);
 }
 
+/**
+ * Throws unless `cwd` may be bind-mounted into a container. An allowlist:
+ *   - `cwd` must exist and be a directory;
+ *   - with no `<cwd>/.git` at all, it is not a repository and is allowed;
+ *   - a `.git` FILE or symlink (a worktree) is refused: it names the user's real
+ *     repository, and making it usable in a container means mounting that .git
+ *     read-write, so the container could plant hooks/fsmonitor the host later runs;
+ *   - a `.git` directory is allowed only when it carries TASK_CLONE_MARKER,
+ *     i.e. it is a disposable clone createTaskClone made (see task-clone.ts);
+ *   - anything else at `<cwd>/.git` is refused.
+ * It inspects only `<cwd>/.git`, never any repository above or below it.
+ */
 async function assertMountableCwd(cwd: string): Promise<void> {
   const dir = await stat(cwd).catch((err: NodeJS.ErrnoException) => {
     if (err.code === "ENOENT") throw new Error(`refusing to start a container in ${cwd}: it does not exist`);

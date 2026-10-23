@@ -319,21 +319,6 @@ const DEFAULT_SERVER_CONFIG: ServerConfig = {
 // OrchestratorServer
 // ---------------------------------------------------------------------------
 
-/**
- * Long-running orchestrator server.
- *
- * Wraps the Dispatcher in a Fastify HTTP server with:
- *   - REST API (POST/GET/DELETE tasks)
- *   - WebSocket event stream
- *   - UDP heartbeat multicast
- *   - Auto-dispatch queue worker
- */
-/**
- * How agent sessions on this machine call the swarm back (smith-delegate's
- * SMITH_URL). A wildcard or loopback bind answers on 127.0.0.1; a server bound
- * to one specific interface answers only there. DockerRuntime rewrites the
- * loopback form for containers.
- */
 /** Replace the value of any `token` query parameter, so a credential in a URL never reaches the log. */
 export function redactTokenQuery(url: string): string {
   const q = url.indexOf("?");
@@ -363,11 +348,26 @@ export function requestLogSerializer(req: {
   };
 }
 
+/**
+ * How agent sessions on this machine call the swarm back (smith-delegate's
+ * SMITH_URL). A wildcard or loopback bind answers on 127.0.0.1; a server bound
+ * to one specific interface answers only there. DockerRuntime rewrites the
+ * loopback form for containers.
+ */
 export function localSwarmUrl(host: string, port: number): string {
   if (["0.0.0.0", "::", "127.0.0.1", "localhost"].includes(host)) return `http://127.0.0.1:${port}`;
   return `http://${host.includes(":") ? `[${host}]` : host}:${port}`;
 }
 
+/**
+ * Long-running orchestrator server.
+ *
+ * Wraps the Dispatcher in a Fastify HTTP server with:
+ *   - REST API (POST/GET/DELETE tasks)
+ *   - WebSocket event stream
+ *   - UDP heartbeat multicast
+ *   - Auto-dispatch queue worker
+ */
 export class OrchestratorServer {
   private readonly config: ServerConfig;
   private readonly orchConfig: OrchestratorConfig;
