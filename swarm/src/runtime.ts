@@ -259,18 +259,19 @@ export class TmuxRuntime implements RuntimeAdapter {
 /**
  * Runs agent sessions inside Docker containers.
  *
- * Each task gets one container. The container runs the smith image
- * which has tmux, agent CLIs, and smith-delegate pre-installed.
- * Sub-agents spawned by smith-delegate create tmux sessions *inside*
- * the same container — one container per task, not per sub-agent.
+ * Each task gets one container, running the smith-agent image
+ * (docker/smith-agent/ — build it with `make agent-image`). The image's
+ * /entrypoint.sh owns the contract this class depends on: the command runs in
+ * tmux session "main", everything the session prints is mirrored to the
+ * container's stdout, and the container exits with the command's exit code.
+ * runtime.docker.test.ts checks that contract against a real image.
  *
  * Lifecycle:
- *   1. `docker run -d` → start container with worktree mounted
- *   2. `docker exec`   → launch the Alpha agent command
- *   3. `docker wait`   → block until the container exits
- *   4. `docker inspect` → read exit code
- *   5. `docker logs`   → capture output
- *   6. `docker rm -f`  → teardown
+ *   1. `docker run -d` → start the container; the command starts at once
+ *   2. `docker exec`   → type into session "main" (sendKeys / sendText)
+ *   3. `docker wait`   → block until the container exits; prints the exit code
+ *   4. `docker logs`   → capture output
+ *   5. `docker rm -f`  → teardown
  *
  * The container name IS the session name, so the RuntimeAdapter
  * interface maps cleanly.
@@ -419,10 +420,9 @@ export class DockerRuntime implements RuntimeAdapter {
     // with the session the entrypoint had already created ("duplicate
     // session: main"), so every docker task died with exit 1 in ~500ms.
     //
-    // The entrypoint reassembles argv with `printf '%q '`, so the command
-    // must arrive as the three args `/bin/bash -c <command>`: a single
-    // pre-joined arg would be quoted into one word and exec'd as a literal
-    // filename (exit 127).
+    // The entrypoint hands its argv on as argv — no shell re-parses it — so
+    // the command must arrive as the three args `/bin/bash -c <command>`: a
+    // single pre-joined arg would be exec'd as a literal filename (exit 127).
     args.push(image, "/bin/bash", "-c", command);
 
     await this.docker(args);

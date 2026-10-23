@@ -37,7 +37,7 @@ BACKUP_DIR  ?= $(HOME)/smith-reset-backup-$(STAMP)
 # never touched: a first-run user supplies those, a reset does not steal them.
 ENV_SETTINGS := SMITH_BRAIN_PROVIDER SMITH_BRAIN_MODEL
 
-.PHONY: help reset reset-restore-voice services-stop agents-stop
+.PHONY: help reset reset-restore-voice services-stop agents-stop agent-image
 
 help: ## Show available targets
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -56,6 +56,20 @@ agents-stop: ## Kill leftover agent tmux sessions (smith-warm-*, task-*) — nev
 	  tmux ls 2>/dev/null | grep -E '^(smith-warm-|task-)' | cut -d: -f1 \
 	    | while read s; do tmux kill-session -t "$$s" 2>/dev/null || true; done; \
 	  echo "  killed $$n agent session(s)"; fi
+
+# The docker runtime's image (docker/smith-agent/). The build lands on a
+# candidate tag and is promoted to :latest only after the contract tests pass
+# against it, so a broken build never replaces a working image. A failed run
+# leaves smith-agent:candidate behind to inspect.
+# Bump the CLI with: make agent-image CLAUDE_CODE_VERSION=<version>
+agent-image: ## Build the docker-runtime agent image; tag :latest only if its contract tests pass
+	docker build --pull $(if $(CLAUDE_CODE_VERSION),--build-arg CLAUDE_CODE_VERSION=$(CLAUDE_CODE_VERSION)) \
+	  -t smith-agent:candidate docker/smith-agent
+	cd swarm && SMITH_AGENT_IMAGE=smith-agent:candidate \
+	  node --import tsx --test --test-timeout 60000 src/runtime.docker.test.ts
+	docker tag smith-agent:candidate smith-agent:latest
+	docker rmi smith-agent:candidate >/dev/null
+	@docker image ls smith-agent:latest --format '  smith-agent:latest  {{.ID}}  {{.Size}}'
 
 reset: ## TRUE first-run wipe: state, master key, task branches, agent sessions, app env settings
 	@echo "==> True reset. This deletes:"

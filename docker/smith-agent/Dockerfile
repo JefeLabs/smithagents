@@ -1,29 +1,55 @@
-# smith-agent — the image the docker runtime dispatches agents into.
+# smith-agent — the image the docker runtime dispatches agents into
+# (DockerRuntime in swarm/src/runtime.ts; default image smith-agent:latest).
 #
-# Built FROM the existing smith-agent:latest deliberately: that image already
-# carries /entrypoint.sh, whose contract the DockerRuntime depends on (it wraps
-# the command in a tmux session named "main", blocks on wait-for, and
-# propagates the inner exit code). Rebuilding from scratch would mean
-# reproducing that contract exactly; extending keeps it byte-identical.
+# Build it with `make agent-image`: that builds a candidate, runs the contract
+# tests in swarm/src/runtime.docker.test.ts against it, and only then tags it
+# smith-agent:latest.
 #
-# What the base image lacks: the agent CLIs are placeholder shims that print
-# "ERROR: claude CLI is not installed in this image" and exit 1, so every
-# docker task failed before the agent ever started.
+# Everything starts from a pinned public image, so a Docker cleanup can never
+# strand the recipe — `docker image prune` costs a rebuild, nothing more.
 #
-# Base on the PRISTINE stub image, never on smith-agent:latest. The build's
-# output is promoted to :latest, so `FROM smith-agent:latest` makes the second
-# build start from the first build's output — which already ends with
-# `USER agent`, so `npm install -g` runs unprivileged and the build dies at
-# "rm -f /usr/local/bin/claude". Pinning the original base keeps rebuilds
-# idempotent instead of working exactly once.
-FROM smith-agent:stub-backup
+#   base  — the runtime contract: Node, tmux, git, and /entrypoint.sh
+#   agent — the agent CLI, and the non-root user it must run as
 
-# The real CLI, replacing the stub at /usr/local/bin/claude.
-# The stub must go FIRST: npm refuses to overwrite it and fails the build with
-# "EEXIST: file already exists /usr/local/bin/claude".
-RUN rm -f /usr/local/bin/claude \
- && npm install -g @anthropic-ai/claude-code \
+# ── base ─────────────────────────────────────────────────────────────────────
+FROM node:24.22.1-trixie-slim AS base
+
+# tmux  — /entrypoint.sh runs every command in tmux session "main"
+# git   — agents commit on their task branch inside the container
+# tini  — PID 1: forwards `docker stop` signals and reaps the tmux server
+# curl, jq, procps — everyday tools agents reach for
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl git jq procps tini tmux \
+ && rm -rf /var/lib/apt/lists/*
+
+# Agents commit as the crew identity the dispatcher's own auto-commit uses.
+# With no identity at all, `git commit` fails "Please tell me who you are", and
+# an agent's natural fix — `git config user.email …` — writes into the parent
+# .git/config, which is the HOST repo's config, mounted read-write.
+RUN git config --system user.name "smith agent" \
+ && git config --system user.email crew@smithagents.local
+
+# The dispatcher copies smith-delegate into <worktree>/bin and prepends that
+# directory's HOST path to PATH — which does not exist in here. The worktree is
+# always mounted at /workspace.
+ENV PATH="/workspace/bin:${PATH}"
+
+COPY --chmod=0755 entrypoint.sh /entrypoint.sh
+WORKDIR /workspace
+ENTRYPOINT ["/usr/bin/tini", "--", "/entrypoint.sh"]
+
+# ── agent ────────────────────────────────────────────────────────────────────
+FROM base AS agent
+
+# Pinned so a rebuild is reproducible; bump it like any other dependency.
+ARG CLAUDE_CODE_VERSION=2.1.309
+RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+ && npm cache clean --force \
  && claude --version
+
+# The CLI cannot update itself in here (its install is root-owned and the agent
+# is not root), and a pinned image should not drift at runtime anyway.
+ENV DISABLE_AUTOUPDATER=1
 
 # gh is NOT installed on purpose: the container only commits to its task
 # branch. Pushing and opening the PR happen on the host, in the dispatcher,
@@ -37,17 +63,18 @@ RUN rm -f /usr/local/bin/claude \
 # uid 501 matches the macOS host user, so files the agent writes into the
 # bind-mounted worktree carry the host owner rather than root-owned artefacts
 # the host then cannot clean up.
-RUN useradd -m -u 501 -s /bin/bash agent 2>/dev/null || true
+RUN useradd -m -u 501 -s /bin/bash agent
 
-# The container holds its OWN subscription credential, obtained by logging in
-# once from inside a container (`claude auth login`) and persisted in a named
-# volume mounted here. On Linux the CLI stores credentials as a FILE under
-# $HOME/.claude, unlike macOS where they live in the Keychain — which is what
-# makes this possible at all, and why the Keychain itself can never be mounted
-# across the boundary.
+# The agent's subscription credential is mounted here: exported from the host
+# Keychain by scripts/export-claude-credential.sh and bind-mounted read-write by
+# credentialMount() in swarm/src/runtime.ts. On Linux the CLI stores
+# credentials as a FILE under $HOME/.claude, unlike macOS where they live in the
+# Keychain — which is what makes this possible at all, and why the Keychain
+# itself can never be mounted across the boundary.
 #
-# This directory must exist in the IMAGE, owned by agent, before any volume is
-# mounted over it: Docker seeds a fresh named volume from the image's contents
+# This directory must exist in the IMAGE, owned by agent, for the other route —
+# a named volume logged in once from inside a container (`claude auth login`):
+# Docker seeds a fresh named volume from the image's contents
 # and ownership at that path. Without this line the volume is created
 # root-owned, and uid 501 cannot write its credential — login fails on a
 # permission error that looks nothing like an auth problem.
