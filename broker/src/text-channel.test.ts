@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
+import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -3379,6 +3380,136 @@ test("POST /auth/login/verify: an empty or malformed body is 400 verify-failed, 
       assert.equal(r.status, 400, body);
       assert.deepEqual(await r.json(), { error: "verify-failed" });
     }
+  } finally {
+    await channel.stop();
+  }
+});
+
+/**
+ * Streams `total` bytes as a POST and resolves with the broker's response.
+ * Without a content-length header it is chunked, so only a streaming cap can
+ * stop it. `end: false` leaves the body unfinished (a declared length the
+ * client never sends). Write errors after the response are expected: the
+ * broker destroys the socket. A broker that never answers fails the test in
+ * 10s instead of hanging the suite.
+ */
+function streamPost(
+  port: number,
+  path: string,
+  total: number,
+  opts: { headers?: Record<string, string>; end?: boolean } = {},
+): Promise<{ status: number; body: string; socketClosed: Promise<void> }> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let markClosed: () => void = () => {};
+    const socketClosed = new Promise<void>((r) => {
+      markClosed = r;
+    });
+    const req = request({
+      host: "127.0.0.1",
+      port,
+      path,
+      method: "POST",
+      headers: { "content-type": "application/json", ...opts.headers },
+    });
+    req.setTimeout(10_000, () => req.destroy(new Error("the broker did not answer within 10s")));
+    req.on("socket", (socket) => socket.once("close", () => markClosed()));
+    req.on("response", (res) => {
+      let body = "";
+      res.on("data", (c) => {
+        body += c;
+      });
+      res.on("end", () => {
+        settled = true;
+        resolve({ status: res.statusCode ?? 0, body, socketClosed });
+      });
+    });
+    req.on("error", (err) => {
+      if (!settled) reject(err);
+    });
+    const chunk = Buffer.alloc(16 * 1024, "a");
+    let sent = 0;
+    const pump = () => {
+      while (sent < total) {
+        if (req.destroyed) return;
+        const next = chunk.subarray(0, Math.min(chunk.length, total - sent));
+        sent += next.length;
+        if (!req.write(next)) {
+          req.once("drain", pump);
+          return;
+        }
+      }
+      if (opts.end !== false) req.end();
+    };
+    pump();
+  });
+}
+
+const AUTH_BODY_CAP = 64 * 1024;
+
+test("POST /auth/login/verify: a streamed body past 64 KiB is 413 and the broker keeps serving", async () => {
+  const auth = await makeAuth(true);
+  const channel = channelWith({ auth });
+  const port = await channel.start(0);
+  try {
+    const big = await streamPost(port, "/auth/login/verify", AUTH_BODY_CAP * 4);
+    assert.equal(big.status, 413);
+    assert.deepEqual(JSON.parse(big.body), { error: "body too large" });
+    // The broker destroys the refused socket (after a short grace so the 413
+    // is read), well before any keep-alive or client timeout would close it.
+    const closed = await Promise.race([
+      big.socketClosed.then(() => true),
+      new Promise<boolean>((r) => setTimeout(() => r(false), 3000)),
+    ]);
+    assert.equal(closed, true, "the refused socket was destroyed");
+    // The next request still gets its normal answer.
+    const r = await fetch(`http://127.0.0.1:${port}/auth/login/verify`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(r.status, 400);
+    assert.deepEqual(await r.json(), { error: "verify-failed" });
+  } finally {
+    await channel.stop();
+  }
+});
+
+test("POST /auth/register/options: a declared content-length past 64 KiB is 413 before any body is read", async () => {
+  const auth = await makeAuth(true);
+  const channel = channelWith({ auth });
+  const port = await channel.start(0);
+  try {
+    // Declares 10 MiB, sends 16 KiB, never finishes: only a refusal on the
+    // declared length can answer this.
+    const big = await streamPost(port, "/auth/register/options", 16 * 1024, {
+      headers: { "content-length": String(10 * 1024 * 1024) },
+      end: false,
+    });
+    assert.equal(big.status, 413);
+    assert.deepEqual(JSON.parse(big.body), { error: "body too large" });
+  } finally {
+    await channel.stop();
+  }
+});
+
+test("an authenticated route keeps a generous cap: 256 KiB is served, past 8 MiB is 413, and the broker keeps serving", async () => {
+  const seen: string[] = [];
+  const channel = channelWith({ onUtterance: (t) => seen.push(t) });
+  const port = await channel.start(0);
+  try {
+    const text = "x".repeat(256 * 1024);
+    const ok = await post(port, JSON.stringify({ text }));
+    assert.equal(ok.status, 202);
+    assert.equal(seen[0]?.length, text.length);
+
+    const big = await streamPost(port, "/utterance", 8 * 1024 * 1024 + 64 * 1024);
+    assert.equal(big.status, 413);
+    assert.deepEqual(JSON.parse(big.body), { error: "body too large" });
+
+    const after = await post(port, JSON.stringify({ text: "still here" }));
+    assert.equal(after.status, 202);
+    assert.equal(seen.at(-1), "still here");
   } finally {
     await channel.stop();
   }

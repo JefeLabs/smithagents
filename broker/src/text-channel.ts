@@ -5,7 +5,7 @@
  * transcript ({type:'utterance'|'speech', text}) to every connected client.
  * Loopback-only; CORS is wide open because the bind address is the gate.
  */
-import { createServer, type IncomingMessage, type Server } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
 import { AuthError, type BrokerAuth, type Identity, parseCookies } from "./auth.ts";
 import type { BrainPing } from "./brain-ping.ts";
@@ -166,15 +166,88 @@ function sessionCookie(token: string, webOrigin: string): string {
   return `smith_session=${token}; HttpOnly; Path=/; SameSite=${sameSite}; Max-Age=2592000`;
 }
 
-/** Read a request body to string (JSON routes). */
-function readBody(req: IncomingMessage): Promise<string> {
-  return new Promise((resolve) => {
-    let body = "";
-    req.on("data", (c) => {
-      body += c;
-    });
-    req.on("end", () => resolve(body));
+/**
+ * Request-body caps. No route reads an unbounded body: one 700 MB POST to an
+ * unauthenticated /auth route once crashed the broker ("Invalid string
+ * length"). The /auth ceremony is reachable without a session, and a WebAuthn
+ * response is a few KiB, so it gets the small cap. Every other route sits
+ * behind the identity gate (or is open mode's explicit opt-out) and keeps
+ * room for documents.
+ */
+export const AUTH_BODY_LIMIT_BYTES = 64 * 1024;
+export const BODY_LIMIT_BYTES = 8 * 1024 * 1024;
+
+/** A body passed its cap. The 413 has already been sent, so the handler only stops. */
+class BodyTooLargeError extends Error {
+  constructor() {
+    super("body too large");
+  }
+}
+
+/**
+ * How long a refused request's socket stays open after its 413 is flushed.
+ * Destroying it at once resets a connection the client is still writing to,
+ * and the client then reports EPIPE instead of reading the 413. The request
+ * is paused for the whole grace, so nothing more is buffered.
+ */
+const REFUSED_SOCKET_GRACE_MS = 1000;
+
+/**
+ * Collect a request body as UTF-8, refusing more than `limit` bytes. A
+ * declared content-length over the cap is refused before a byte is read; a
+ * streamed body is refused the moment it crosses the cap. A refusal stops
+ * reading, answers 413 {"error":"body too large"}, then destroys the socket
+ * (after REFUSED_SOCKET_GRACE_MS, so the client can read the answer).
+ * `onBody` runs only for a body that arrived whole.
+ */
+function collectBody(
+  req: IncomingMessage,
+  res: ServerResponse,
+  limit: number,
+  onBody: (body: string) => void,
+  onRefused?: () => void,
+): void {
+  let refused = false;
+  const refuse = () => {
+    refused = true;
+    req.pause();
+    onRefused?.();
+    if (res.headersSent) {
+      req.socket.destroy();
+      return;
+    }
+    // No `connection: close`: Node would then destroy the socket itself the
+    // moment the response flushed, which is the race the grace exists to avoid.
+    res
+      .writeHead(413, { ...corsFor(req), "content-type": "application/json" })
+      .end(JSON.stringify({ error: "body too large" }), () => {
+        setTimeout(() => req.socket.destroy(), REFUSED_SOCKET_GRACE_MS).unref();
+      });
+  };
+  if (Number(req.headers["content-length"]) > limit) {
+    refuse();
+    return;
+  }
+  const chunks: Buffer[] = [];
+  let size = 0;
+  req.on("data", (chunk: Buffer) => {
+    if (refused) return;
+    size += chunk.length;
+    if (size > limit) {
+      chunks.length = 0;
+      refuse();
+      return;
+    }
+    chunks.push(chunk);
   });
+  req.on("end", () => {
+    if (!refused) onBody(Buffer.concat(chunks).toString("utf8"));
+  });
+}
+
+/** Read a request body to string (JSON routes); rejects with BodyTooLargeError once the 413 is sent. */
+function readBody(req: IncomingMessage, res: ServerResponse, limit: number): Promise<string> {
+  return new Promise((resolve, reject) => collectBody(req, res, limit, resolve, () => reject(new BodyTooLargeError())));
 }
 
 /** Frames the channel owes its clients after a successful mutating /work call. */
@@ -500,8 +573,10 @@ export class TextChannel {
       return;
     }
     const parseBody = async <T>(): Promise<T> => {
+      // Outside the try: an over-cap body is already answered (413), not a refused ceremony.
+      const raw = await readBody(req, res, AUTH_BODY_LIMIT_BYTES);
       try {
-        const parsed = JSON.parse((await readBody(req)) || "{}") as unknown;
+        const parsed = JSON.parse(raw || "{}") as unknown;
         if (typeof parsed === "object" && parsed !== null) return parsed as T;
       } catch {
         // fall through: a malformed body is a refused ceremony, not a server error
@@ -559,6 +634,7 @@ export class TextChannel {
       }
       json(404, { error: "unknown auth route" });
     } catch (err) {
+      if (err instanceof BodyTooLargeError) return;
       if (err instanceof AuthError) {
         const status = err.code === "invalid-code" ? 410 : err.code === "verify-failed" ? 400 : 401;
         json(status, { error: err.code });
@@ -582,6 +658,10 @@ export class TextChannel {
       const auth = this.auth;
       const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
       const identity: Identity | null = auth?.resolveIdentity(req) ?? null;
+      // The /auth ceremony, and anything an unauthenticated caller reaches in
+      // required mode, gets the small body cap; the rest keeps room for documents.
+      const bodyLimit =
+        pathname.startsWith("/auth/") || (auth?.required && !identity) ? AUTH_BODY_LIMIT_BYTES : BODY_LIMIT_BYTES;
       // Ceremony routes authenticate by pairing code / passkey, not a session.
       const EXEMPT = new Set([
         "/auth/register/options",
@@ -637,11 +717,7 @@ export class TextChannel {
       }
 
       if (req.method === "POST" && req.url === "/utterance") {
-        let body = "";
-        req.on("data", (c) => {
-          body += c;
-        });
-        req.on("end", () => {
+        collectBody(req, res, bodyLimit, (body) => {
           let parsed: { text?: unknown; target?: unknown; doc?: unknown } = {};
           try {
             parsed = JSON.parse(body) as typeof parsed;
@@ -692,11 +768,7 @@ export class TextChannel {
         return;
       }
       if (req.method === "POST" && req.url === "/compose") {
-        let body = "";
-        req.on("data", (c) => {
-          body += c;
-        });
-        req.on("end", () => {
+        collectBody(req, res, bodyLimit, (body) => {
           let parsed: unknown;
           try {
             parsed = JSON.parse(body);
@@ -720,11 +792,7 @@ export class TextChannel {
             .end(JSON.stringify({ error: "reset is not permitted for bridge clients" }));
           return;
         }
-        let body = "";
-        req.on("data", (c) => {
-          body += c;
-        });
-        req.on("end", () => {
+        collectBody(req, res, bodyLimit, (body) => {
           let scope: Record<string, unknown> = {};
           try {
             scope = JSON.parse(body || "{}") as Record<string, unknown>;
@@ -819,11 +887,7 @@ export class TextChannel {
           return;
         }
         if (req.method === "POST" && url.pathname === "/avatars/generate") {
-          let body = "";
-          req.on("data", (c) => {
-            body += c;
-          });
-          req.on("end", () => {
+          collectBody(req, res, bodyLimit, (body) => {
             let parsed: Record<string, unknown> = {};
             try {
               parsed = JSON.parse(body || "{}") as Record<string, unknown>;
@@ -842,11 +906,7 @@ export class TextChannel {
           return;
         }
         if (req.method === "POST" && url.pathname === "/voices/preview") {
-          let body = "";
-          req.on("data", (c) => {
-            body += c;
-          });
-          req.on("end", () => {
+          collectBody(req, res, bodyLimit, (body) => {
             let parsed: { voiceId?: string; text?: string } = {};
             try {
               parsed = JSON.parse(body || "{}") as typeof parsed;
@@ -872,11 +932,7 @@ export class TextChannel {
         }
         if (req.method === "POST" && url.pathname === "/voice/preview" && this.voice) {
           const voice = this.voice;
-          let body = "";
-          req.on("data", (c) => {
-            body += c;
-          });
-          req.on("end", () => {
+          collectBody(req, res, bodyLimit, (body) => {
             let parsed: { voiceId?: string; text?: string; ttsInstanceId?: unknown } = {};
             try {
               parsed = JSON.parse(body || "{}") as typeof parsed;
@@ -896,11 +952,7 @@ export class TextChannel {
           return;
         }
         if (req.method === "POST" && url.pathname === "/agents/generate") {
-          let body = "";
-          req.on("data", (c) => {
-            body += c;
-          });
-          req.on("end", () => {
+          collectBody(req, res, bodyLimit, (body) => {
             let parsed: Record<string, unknown> = {};
             try {
               parsed = JSON.parse(body || "{}") as Record<string, unknown>;
@@ -954,11 +1006,7 @@ export class TextChannel {
           return;
         }
         if (req.method === "PUT" && editMatch) {
-          let body = "";
-          req.on("data", (c) => {
-            body += c;
-          });
-          req.on("end", () => {
+          collectBody(req, res, bodyLimit, (body) => {
             let parsed: Record<string, unknown> = {};
             try {
               parsed = JSON.parse(body || "{}") as Record<string, unknown>;
@@ -972,11 +1020,7 @@ export class TextChannel {
           return;
         }
         if (req.method === "POST" && url.pathname === "/agents") {
-          let body = "";
-          req.on("data", (c) => {
-            body += c;
-          });
-          req.on("end", () => {
+          collectBody(req, res, bodyLimit, (body) => {
             let parsed: Record<string, unknown> = {};
             try {
               parsed = JSON.parse(body || "{}") as Record<string, unknown>;
@@ -994,11 +1038,7 @@ export class TextChannel {
         }
         if (req.method === "POST" && url.pathname === "/workspaces" && this.workspaces) {
           const workspaces = this.workspaces;
-          let body = "";
-          req.on("data", (c) => {
-            body += c;
-          });
-          req.on("end", () => {
+          collectBody(req, res, bodyLimit, (body) => {
             let parsed: Record<string, unknown> = {};
             try {
               parsed = JSON.parse(body || "{}") as Record<string, unknown>;
@@ -1012,11 +1052,7 @@ export class TextChannel {
         const workspaceMatch = /^\/workspaces\/([^/]+)$/.exec(url.pathname);
         if (req.method === "PUT" && workspaceMatch && this.workspaces) {
           const workspaces = this.workspaces;
-          let body = "";
-          req.on("data", (c) => {
-            body += c;
-          });
-          req.on("end", () => {
+          collectBody(req, res, bodyLimit, (body) => {
             let parsed: Record<string, unknown> = {};
             try {
               parsed = JSON.parse(body || "{}") as Record<string, unknown>;
@@ -1041,11 +1077,7 @@ export class TextChannel {
         }
         if (req.method === "POST" && url.pathname === "/groups" && this.groups) {
           const groups = this.groups;
-          let body = "";
-          req.on("data", (c) => {
-            body += c;
-          });
-          req.on("end", () => {
+          collectBody(req, res, bodyLimit, (body) => {
             let parsed: Record<string, unknown> = {};
             try {
               parsed = JSON.parse(body || "{}") as Record<string, unknown>;
@@ -1059,11 +1091,7 @@ export class TextChannel {
         const groupMatch = /^\/groups\/([^/]+)$/.exec(url.pathname);
         if (req.method === "PUT" && groupMatch && this.groups) {
           const groups = this.groups;
-          let body = "";
-          req.on("data", (c) => {
-            body += c;
-          });
-          req.on("end", () => {
+          collectBody(req, res, bodyLimit, (body) => {
             let parsed: Record<string, unknown> = {};
             try {
               parsed = JSON.parse(body || "{}") as Record<string, unknown>;
@@ -1090,11 +1118,7 @@ export class TextChannel {
         if (req.method === "PUT" && url.pathname === "/me" && this.me) {
           const me = this.me;
           if (originBlocked()) return;
-          let body = "";
-          req.on("data", (c) => {
-            body += c;
-          });
-          req.on("end", () => {
+          collectBody(req, res, bodyLimit, (body) => {
             let parsed: Record<string, unknown> = {};
             try {
               parsed = JSON.parse(body || "{}") as Record<string, unknown>;
@@ -1130,11 +1154,7 @@ export class TextChannel {
         if (req.method === "PUT" && wsChannelsMatch && this.channels) {
           const channels = this.channels;
           if (originBlocked()) return;
-          let body = "";
-          req.on("data", (c) => {
-            body += c;
-          });
-          req.on("end", () => {
+          collectBody(req, res, bodyLimit, (body) => {
             let parsed: Record<string, unknown> = {};
             try {
               parsed = JSON.parse(body || "{}") as Record<string, unknown>;
@@ -1163,11 +1183,7 @@ export class TextChannel {
         if (req.method === "PUT" && url.pathname === "/me/voice" && this.voice) {
           const voice = this.voice;
           if (originBlocked()) return;
-          let body = "";
-          req.on("data", (c) => {
-            body += c;
-          });
-          req.on("end", () => {
+          collectBody(req, res, bodyLimit, (body) => {
             let parsed: Record<string, unknown> = {};
             try {
               parsed = JSON.parse(body || "{}") as Record<string, unknown>;
@@ -1186,11 +1202,7 @@ export class TextChannel {
         if (req.method === "PUT" && url.pathname === "/me/research-engine" && this.research) {
           const research = this.research;
           if (originBlocked()) return;
-          let body = "";
-          req.on("data", (c) => {
-            body += c;
-          });
-          req.on("end", () => {
+          collectBody(req, res, bodyLimit, (body) => {
             // Same `body || "{}"` as voice's PUT above, deliberately — a
             // literal `null` body ("Off") is non-empty and survives through
             // JSON.parse unchanged; only a truly empty body falls back to
@@ -1222,11 +1234,7 @@ export class TextChannel {
         if (req.method === "PUT" && url.pathname === "/me/brain-engine" && this.brain) {
           const brain = this.brain;
           if (originBlocked()) return;
-          let body = "";
-          req.on("data", (c) => {
-            body += c;
-          });
-          req.on("end", () => {
+          collectBody(req, res, bodyLimit, (body) => {
             // `body || "{}"` for the same reason research's PUT documents: a
             // literal `null` body (clearing the setting) is non-empty and
             // survives JSON.parse unchanged, and the swarm's clear path needs
@@ -1256,11 +1264,7 @@ export class TextChannel {
         if (req.method === "PUT" && url.pathname === "/me/engines" && this.brain) {
           const brain = this.brain;
           if (originBlocked()) return;
-          let body = "";
-          req.on("data", (c) => {
-            body += c;
-          });
-          req.on("end", () => {
+          collectBody(req, res, bodyLimit, (body) => {
             let parsed: Record<string, unknown> | null = null;
             try {
               parsed = JSON.parse(body || "{}") as Record<string, unknown> | null;
@@ -1304,11 +1308,7 @@ export class TextChannel {
         if (req.method === "POST" && url.pathname === "/me/connectors" && this.connectors) {
           const connectors = this.connectors;
           if (originBlocked()) return;
-          let body = "";
-          req.on("data", (c) => {
-            body += c;
-          });
-          req.on("end", () => {
+          collectBody(req, res, bodyLimit, (body) => {
             let parsed: Record<string, unknown> = {};
             try {
               parsed = JSON.parse(body || "{}") as Record<string, unknown>;
@@ -1323,11 +1323,7 @@ export class TextChannel {
         if (req.method === "PUT" && connectorIdMatch && this.connectors) {
           const connectors = this.connectors;
           if (originBlocked()) return;
-          let body = "";
-          req.on("data", (c) => {
-            body += c;
-          });
-          req.on("end", () => {
+          collectBody(req, res, bodyLimit, (body) => {
             let parsed: Record<string, unknown> = {};
             try {
               parsed = JSON.parse(body || "{}") as Record<string, unknown>;
@@ -1351,11 +1347,7 @@ export class TextChannel {
         if (req.method === "POST" && connectorVerifyMatch && this.connectors) {
           const connectors = this.connectors;
           if (originBlocked()) return;
-          let body = "";
-          req.on("data", (c) => {
-            body += c;
-          });
-          req.on("end", () => {
+          collectBody(req, res, bodyLimit, (body) => {
             let parsed: { extra?: Record<string, string> } = {};
             try {
               parsed = body ? (JSON.parse(body) as { extra?: Record<string, string> }) : {};
@@ -1382,11 +1374,7 @@ export class TextChannel {
         if (req.method === "PUT" && cliToolMatch && this.cliTools) {
           const cliTools = this.cliTools;
           if (originBlocked()) return;
-          let body = "";
-          req.on("data", (c) => {
-            body += c;
-          });
-          req.on("end", () => {
+          collectBody(req, res, bodyLimit, (body) => {
             let parsed: { enabled?: unknown } = {};
             try {
               parsed = JSON.parse(body || "{}") as { enabled?: unknown };
@@ -1414,11 +1402,7 @@ export class TextChannel {
         if (req.method === "PUT" && url.pathname === "/containers" && this.containers) {
           const containers = this.containers;
           if (originBlocked()) return;
-          let body = "";
-          req.on("data", (c) => {
-            body += c;
-          });
-          req.on("end", () => {
+          collectBody(req, res, bodyLimit, (body) => {
             let parsed: { docker?: { enabled?: unknown } } = {};
             try {
               parsed = JSON.parse(body || "{}") as { docker?: { enabled?: unknown } };
@@ -1453,11 +1437,7 @@ export class TextChannel {
         if (req.method === "PUT" && apiKeyMatch && this.apiKeys) {
           const apiKeys = this.apiKeys;
           if (originBlocked()) return;
-          let body = "";
-          req.on("data", (c) => {
-            body += c;
-          });
-          req.on("end", () => {
+          collectBody(req, res, bodyLimit, (body) => {
             let parsed: { key?: string } = {};
             try {
               parsed = JSON.parse(body || "{}") as { key?: string };
@@ -1498,11 +1478,7 @@ export class TextChannel {
           return true;
         };
         const readBody = (cb: (body: Record<string, unknown>) => void) => {
-          let raw = "";
-          req.on("data", (c) => {
-            raw += c;
-          });
-          req.on("end", () => {
+          collectBody(req, res, bodyLimit, (raw) => {
             try {
               cb(JSON.parse(raw || "{}") as Record<string, unknown>);
             } catch {
@@ -1631,11 +1607,7 @@ export class TextChannel {
           return true;
         };
         if (originBlocked()) return;
-        let body = "";
-        req.on("data", (c) => {
-          body += c;
-        });
-        req.on("end", () => {
+        collectBody(req, res, bodyLimit, (body) => {
           let parsed: { workspace?: unknown; runtime?: unknown; prompt?: unknown } = {};
           try {
             parsed = JSON.parse(body || "{}") as typeof parsed;
@@ -1716,11 +1688,7 @@ export class TextChannel {
         if (req.method === "POST" && url.pathname === "/documents" && this.documents) {
           const documents = this.documents;
           if (originBlocked()) return;
-          let body = "";
-          req.on("data", (c) => {
-            body += c;
-          });
-          req.on("end", () => {
+          collectBody(req, res, bodyLimit, (body) => {
             let parsed: { blueprintId?: unknown; workType?: unknown; text?: unknown } = {};
             try {
               parsed = JSON.parse(body || "{}") as typeof parsed;
@@ -1757,11 +1725,7 @@ export class TextChannel {
         if (req.method === "PATCH" && docMatch && this.documents) {
           const documents = this.documents;
           if (originBlocked()) return;
-          let body = "";
-          req.on("data", (c) => {
-            body += c;
-          });
-          req.on("end", () => {
+          collectBody(req, res, bodyLimit, (body) => {
             let parsed: { blueprintId?: unknown; title?: unknown } = {};
             try {
               parsed = JSON.parse(body || "{}") as typeof parsed;
@@ -1790,11 +1754,7 @@ export class TextChannel {
         if (req.method === "POST" && pinPostMatch && this.documents) {
           const documents = this.documents;
           if (originBlocked()) return;
-          let body = "";
-          req.on("data", (c) => {
-            body += c;
-          });
-          req.on("end", () => {
+          collectBody(req, res, bodyLimit, (body) => {
             let target = "";
             try {
               target = String((JSON.parse(body || "{}") as { target?: unknown }).target ?? "");
@@ -1838,11 +1798,7 @@ export class TextChannel {
         if (req.method === "PATCH" && docSectionMatch && this.documents) {
           const documents = this.documents;
           if (originBlocked()) return;
-          let body = "";
-          req.on("data", (c) => {
-            body += c;
-          });
-          req.on("end", () => {
+          collectBody(req, res, bodyLimit, (body) => {
             let text = "";
             try {
               text = String((JSON.parse(body || "{}") as { body?: unknown }).body ?? "");
@@ -1876,11 +1832,7 @@ export class TextChannel {
           return true;
         };
         if (originBlocked()) return;
-        let body = "";
-        req.on("data", (c) => {
-          body += c;
-        });
-        req.on("end", () => {
+        collectBody(req, res, bodyLimit, (body) => {
           let text = "";
           try {
             text = String((JSON.parse(body || "{}") as { text?: unknown }).text ?? "");
@@ -1913,11 +1865,7 @@ export class TextChannel {
           return;
         }
         if (req.method === "POST" && action) {
-          let body = "";
-          req.on("data", (c) => {
-            body += c;
-          });
-          req.on("end", () => {
+          collectBody(req, res, bodyLimit, (body) => {
             const message = ((): string => {
               try {
                 return String((JSON.parse(body) as { message?: unknown }).message ?? "");
@@ -1966,11 +1914,7 @@ export class TextChannel {
             return true;
           };
           if (originBlocked()) return;
-          let body = "";
-          req.on("data", (c) => {
-            body += c;
-          });
-          req.on("end", () => {
+          collectBody(req, res, bodyLimit, (body) => {
             let parsed: Record<string, unknown> = {};
             try {
               parsed = JSON.parse(body || "{}") as Record<string, unknown>;
@@ -2004,11 +1948,7 @@ export class TextChannel {
               .end(JSON.stringify({ error: "origin not allowed" }));
             return;
           }
-          let body = "";
-          req.on("data", (c) => {
-            body += c;
-          });
-          req.on("end", () => {
+          collectBody(req, res, bodyLimit, (body) => {
             let parsed: unknown;
             if (body) {
               try {
