@@ -101,6 +101,8 @@ export interface TaskManifest {
   profile?: { name: string; role: string; directives: string };
   /** Override pull request settings for this task */
   pullRequest?: Partial<PullRequestConfig>;
+  /** Set server-side only, when a running task created this one with its delegation token. */
+  delegation?: { parentTaskId: string; depth: number };
 }
 
 /**
@@ -132,6 +134,8 @@ export interface TaskResult {
  * Configuration for the orchestrator.
  */
 export interface OrchestratorConfig {
+  /** HMAC key for delegation tokens, derived from the admin token. Unset when the API is open (tests). */
+  delegationKey?: Buffer;
   smithRoot: string; // Path to .smith/ directory
   queueDir: string; // .smith/queue/
   worktreeDir: string; // .smith/worktrees/

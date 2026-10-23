@@ -20,7 +20,7 @@ import type { AddressInfo } from "node:net";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import websocket from "@fastify/websocket";
-import Fastify, { type FastifyReply } from "fastify";
+import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { WebSocket } from "ws";
 import { AgentSessionManager } from "./agent-sessions.js";
 import { AGENT_ID_RE, type ComposedAgent, findAgent, loadAgents, saveAgent } from "./agents.js";
@@ -73,6 +73,13 @@ import {
 import { loadLiveKitConfig } from "./config.js";
 import { findVendor, VENDORS, verifyBeforeSave } from "./connectors.js";
 import { buildExecutionModes, loadContainersFile, probeDocker, saveContainersFile } from "./containers.js";
+import {
+  DELEGATION_PREFIX,
+  type DelegationClaims,
+  delegationKey,
+  scopeDelegatedTask,
+  verifyDelegationToken,
+} from "./delegation-token.js";
 import { DeviceRegistry } from "./device-registry.js";
 import { DOC_STATUSES, type DocStatus } from "./document-file.js";
 import {
@@ -259,6 +266,9 @@ type WorkCardRef = { boardId: string; cardId: string };
 // happened to be launched from. See legacyStateRoots' docstring.
 const swarmPackageDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
+/** A POST /tasks body once its required fields are known to be present. */
+type TaskBody = Partial<TaskManifest> & Pick<TaskManifest, "prompt" | "agent" | "context">;
+
 /** Active task tracked by the server */
 interface ActiveTask {
   manifest: TaskManifest;
@@ -399,6 +409,8 @@ export class OrchestratorServer {
 
   // Auth — the admin bearer token (see ServerConfig.apiToken); null means open, loopback-only (tests)
   private readonly apiToken: string | null;
+  // Claims of a verified delegation token, carried from the auth hook to POST /tasks
+  private readonly delegations = new WeakMap<FastifyRequest, DelegationClaims>();
 
   // Meetings — built lazily (agents loaded from disk) on first use
   private meetingOrchestrator: MeetingOrchestrator | null = null;
@@ -411,6 +423,7 @@ export class OrchestratorServer {
     this.config = { ...DEFAULT_SERVER_CONFIG, ...config };
     this.apiToken = config?.apiToken !== undefined ? config.apiToken : process.env.SMITH_API_TOKEN?.trim() || null;
     this.orchConfig = loadConfig(this.config.orchestrator);
+    if (this.apiToken) this.orchConfig.delegationKey = delegationKey(this.apiToken);
     // Resolved once from the config's root. Previously every state path was
     // re-derived from process.cwd() at each call site.
     this.paths = smithPaths(this.orchConfig.smithRoot);
@@ -906,9 +919,21 @@ export class OrchestratorServer {
       const bearer = header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : undefined;
       const queryToken = path === "/ws" ? (req.query as Record<string, unknown> | null)?.token : undefined;
       const presented = bearer ?? (typeof queryToken === "string" ? queryToken : undefined);
-      if (!OrchestratorServer.secretsEqual(presented, token)) {
-        return reply.status(401).send({ error: "unauthorized" });
+      if (OrchestratorServer.secretsEqual(presented, token)) return;
+      // A running task's delegation token — Authorization header only, never ?token=.
+      if (bearer?.startsWith(DELEGATION_PREFIX)) {
+        const claims = verifyDelegationToken(this.orchConfig.delegationKey, bearer);
+        if (!claims) return reply.status(401).send({ error: "unauthorized" });
+        if (!(req.method === "POST" && path === "/tasks")) {
+          return reply.status(403).send({ error: "a delegation token can only create sub-tasks (POST /tasks)" });
+        }
+        if (!this.activeTasks.has(claims.task)) {
+          return reply.status(401).send({ error: "the delegating task is no longer running" });
+        }
+        this.delegations.set(req, claims);
+        return;
       }
+      return reply.status(401).send({ error: "unauthorized" });
     });
   }
 
@@ -1010,13 +1035,22 @@ export class OrchestratorServer {
 
     // ── Submit Task ────────────────────────────────────────────────────
     this.app.post("/tasks", async (req, reply) => {
-      const body = req.body as Partial<TaskManifest>;
+      const raw = req.body as Partial<TaskManifest>;
 
       // Validate required fields
-      if (!body.prompt || !body.agent || !body.context) {
+      if (!raw.prompt || !raw.agent || !raw.context) {
         return reply.status(400).send({
           error: "Missing required fields: prompt, agent, context",
         });
+      }
+
+      // A delegation token pins the task to its parent's workspace, repo and runtime.
+      const claims = this.delegations.get(req);
+      let body = raw as TaskBody;
+      if (claims) {
+        const scoped = scopeDelegatedTask(claims, raw);
+        if (!scoped.ok) return reply.status(403).send({ error: scoped.error });
+        body = scoped.body as TaskBody;
       }
 
       // Build full manifest with defaults.
@@ -1069,6 +1103,7 @@ export class OrchestratorServer {
         metadata: body.metadata,
         profile,
         model,
+        delegation: claims ? { parentTaskId: claims.task, depth: claims.depth + 1 } : undefined,
       };
 
       // Queue it

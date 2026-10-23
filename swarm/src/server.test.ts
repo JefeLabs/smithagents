@@ -13,6 +13,7 @@ import { test } from "node:test";
 import { promisify } from "node:util";
 import { WebSocket } from "ws";
 import type { WorkspaceChannels } from "./channels.js";
+import { delegationKey, mintDelegationToken } from "./delegation-token.js";
 import { createDocument } from "./document-store.js";
 import type { CommandRunner } from "./drivers/types.js";
 import { SMITH_IDENTITY } from "./git-author.js";
@@ -60,6 +61,7 @@ import {
   workspaceProblems,
 } from "./server.js";
 import { appendUpdate, feedPath, readFeed } from "./squad-feed.js";
+import type { TaskManifest } from "./types.js";
 import type { ConnectorInstance, User } from "./users.js";
 import { loadUsersFromDir, saveUser } from "./users.js";
 import { addCard, createBoard } from "./work-items.js";
@@ -1941,4 +1943,143 @@ test("redactTokenQuery: a token in the query string never reaches the log", () =
   // the serializer wired into Fastify's logger applies it
   const logged = requestLogSerializer({ method: "GET", url: "/ws?token=admin-secret", hostname: "h", ip: "1.2.3.4" });
   assert.equal(JSON.stringify(logged).includes("admin-secret"), false);
+});
+
+// ── Delegation tokens: sub-tasks only, in the parent's scope ──
+
+const DELEGATION_PARENT: TaskManifest = {
+  taskId: "parent-1",
+  prompt: "parent",
+  agent: "claude",
+  runtime: "docker",
+  context: { files: [], repository: "", branch: "main", workspace: "pg", repo: "app" },
+  createdAt: new Date().toISOString(),
+  priority: "normal",
+};
+
+async function bootDelegationServer() {
+  const root = await freshStateRoot("smith-deleg-");
+  const ws = await makeSquadWorkspace(root);
+  // makeOrgRepo seeds the subtree with a repo-less record; write the real one over it
+  await saveWorkspace(smithPaths(root), ws);
+  const { server, url } = await bootServer(root, "admin-secret");
+  const internals = server as unknown as { activeTasks: Map<string, unknown>; taskQueue: TaskManifest[] };
+  internals.activeTasks.set("parent-1", {
+    manifest: DELEGATION_PARENT,
+    status: "running",
+    startedAt: new Date().toISOString(),
+    sessionName: "task-parent-1",
+    agentName: null,
+    runtime: null,
+  });
+  const tok = mintDelegationToken(delegationKey("admin-secret"), {
+    task: "parent-1",
+    workspace: "pg",
+    repo: "app",
+    branch: "main",
+    runtime: "docker",
+    depth: 0,
+  });
+  return { root, server, url, tok, activeTasks: internals.activeTasks, taskQueue: internals.taskQueue };
+}
+
+const postTask = (url: string, path: string, bearer: string, body: unknown) =>
+  fetch(`${url}${path}`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+const subTaskBody = { prompt: "p", agent: "claude", context: { files: [], repository: "", branch: "" } };
+
+test("delegation: a running task's token creates a sub-task pinned to its workspace, repo and runtime", async () => {
+  const { root, server, url, tok, taskQueue } = await bootDelegationServer();
+  try {
+    const res = await postTask(url, "/tasks", tok, subTaskBody);
+    assert.equal(res.status, 202);
+    const m = taskQueue[0];
+    assert.equal(m.runtime, "docker"); // server default is tmux
+    assert.equal(m.context.workspace, "pg");
+    assert.equal(m.context.repo, "app");
+    assert.deepEqual(m.delegation, { parentTaskId: "parent-1", depth: 1 });
+    assert.deepEqual(m.metadata, { source: "delegation" });
+  } finally {
+    await server.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("delegation: asking for the host runtime is 403 and nothing is queued", async () => {
+  const { root, server, url, tok, taskQueue } = await bootDelegationServer();
+  try {
+    const res = await postTask(url, "/tasks", tok, { ...subTaskBody, runtime: "tmux" });
+    assert.equal(res.status, 403);
+    assert.deepEqual(await res.json(), { error: "sub-tasks run on this task's runtime (docker)" });
+    assert.equal(taskQueue.length, 0);
+  } finally {
+    await server.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("delegation: the token opens no other route", async () => {
+  const { root, server, url, tok } = await bootDelegationServer();
+  const wsUrl = url.replace(/^http/, "ws");
+  const only = { error: "a delegation token can only create sub-tasks (POST /tasks)" };
+  try {
+    const list = await fetch(`${url}/tasks`, { headers: { authorization: `Bearer ${tok}` } });
+    assert.equal(list.status, 403);
+    assert.deepEqual(await list.json(), only);
+    const sess = await postTask(url, "/agent-sessions", tok, {});
+    assert.equal(sess.status, 403);
+    assert.deepEqual(await sess.json(), only);
+    const opens = await new Promise<boolean>((resolve) => {
+      const ws = new WebSocket(`${wsUrl}/ws?token=${encodeURIComponent(tok)}`);
+      ws.on("open", () => {
+        ws.close();
+        resolve(true);
+      });
+      ws.on("error", () => resolve(false));
+      ws.on("unexpected-response", () => resolve(false));
+    });
+    assert.equal(opens, false);
+  } finally {
+    await server.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("delegation: once the parent is gone the token is refused", async () => {
+  const { root, server, url, tok, activeTasks, taskQueue } = await bootDelegationServer();
+  try {
+    activeTasks.delete("parent-1");
+    const res = await postTask(url, "/tasks", tok, subTaskBody);
+    assert.equal(res.status, 401);
+    assert.deepEqual(await res.json(), { error: "the delegating task is no longer running" });
+    assert.equal(taskQueue.length, 0);
+  } finally {
+    await server.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("delegation: a token signed with another key is 401", async () => {
+  const { root, server, url, taskQueue } = await bootDelegationServer();
+  try {
+    const forged = mintDelegationToken(delegationKey("other"), {
+      task: "parent-1",
+      workspace: "pg",
+      repo: "app",
+      branch: "main",
+      runtime: "docker",
+      depth: 0,
+    });
+    const res = await postTask(url, "/tasks", forged, subTaskBody);
+    assert.equal(res.status, 401);
+    assert.deepEqual(await res.json(), { error: "unauthorized" });
+    assert.equal(taskQueue.length, 0);
+  } finally {
+    await server.stop();
+    await rm(root, { recursive: true, force: true });
+  }
 });
