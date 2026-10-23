@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
@@ -107,19 +107,34 @@ test("image contract: killing session main stops the container", { skip }, () =>
   }),
 );
 
-test("image contract: launch env reaches the command, as uid 501 with /workspace/bin first on PATH", { skip }, () =>
+test("image contract: launch env reaches the command, running as uid 501", { skip }, () =>
   withContainer(async (rt, name, dir) => {
-    await rt.launch(
-      name,
-      'echo "v=[$SMITH_IT] rt=[$SMITH_RUNTIME] uid=[$(id -u)] home=[$HOME] path0=[$(echo "$PATH" | cut -d: -f1)]"',
-      dir,
-      { SMITH_IT: "two words" },
-    );
+    await rt.launch(name, 'echo "v=[$SMITH_IT] rt=[$SMITH_RUNTIME] uid=[$(id -u)] home=[$HOME]"', dir, {
+      SMITH_IT: "two words",
+    });
     assert.equal(await rt.waitFor(name), 0);
-    assert.match(
-      await rt.captureOutput(name),
-      /v=\[two words\] rt=\[docker\] uid=\[501\] home=\[\/home\/agent\] path0=\[\/workspace\/bin\]/,
-    );
+    assert.match(await rt.captureOutput(name), /v=\[two words\] rt=\[docker\] uid=\[501\] home=\[\/home\/agent\]/);
+  }),
+);
+
+test("image contract: a worktree's bin/ adds commands but cannot shadow the image's own", { skip }, () =>
+  withContainer(async (rt, name, dir) => {
+    // A repo can commit anything under bin/. Were it first on PATH, a planted
+    // bin/tmux would hijack the entrypoint itself — before the agent has run
+    // a single command, in a container holding the credential and host .git.
+    await mkdir(join(dir, "bin"));
+    for (const tool of ["tmux", "git"]) {
+      await writeFile(join(dir, "bin", tool), "#!/bin/sh\necho HIJACKED\nexit 1\n", { mode: 0o755 });
+    }
+    await writeFile(join(dir, "bin", "smith-delegate"), "#!/bin/sh\necho delegate-found\n", { mode: 0o755 });
+
+    await rt.launch(name, "git --version && smith-delegate", dir);
+    const exitCode = await rt.waitFor(name);
+    const output = await rt.captureOutput(name);
+    assert.doesNotMatch(output, /HIJACKED/);
+    assert.equal(exitCode, 0, output);
+    assert.match(output, /git version/);
+    assert.match(output, /delegate-found/, "the dispatcher's smith-delegate must still be found");
   }),
 );
 

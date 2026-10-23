@@ -31,8 +31,11 @@ RUN git config --system user.name "smith agent" \
 
 # The dispatcher copies smith-delegate into <worktree>/bin and prepends that
 # directory's HOST path to PATH — which does not exist in here. The worktree is
-# always mounted at /workspace.
-ENV PATH="/workspace/bin:${PATH}"
+# always mounted at /workspace, so its bin/ joins PATH here instead, and LAST:
+# it only has to ADD smith-delegate. First on PATH, a repo's own committed
+# bin/tmux or bin/git would shadow the image's — the entrypoint's tmux
+# included — before the agent has run a single command.
+ENV PATH="${PATH}:/workspace/bin"
 
 COPY --chmod=0755 entrypoint.sh /entrypoint.sh
 WORKDIR /workspace
