@@ -22,6 +22,7 @@ export interface DelegationClaims {
 }
 
 export function delegationKey(adminToken: string): Buffer {
+  if (!adminToken) throw new Error("delegationKey: the admin token must be non-empty");
   return Buffer.from(hkdfSync("sha256", adminToken, "", "smith-delegation-v1", 32));
 }
 
@@ -30,7 +31,15 @@ function sign(key: Buffer, payload: string): Buffer {
 }
 
 export function mintDelegationToken(key: Buffer, claims: DelegationClaims): string {
-  const payload = Buffer.from(JSON.stringify(claims)).toString("base64url");
+  const known: DelegationClaims = {
+    task: claims.task,
+    ...(claims.workspace !== undefined ? { workspace: claims.workspace } : {}),
+    ...(claims.repo !== undefined ? { repo: claims.repo } : {}),
+    ...(claims.branch !== undefined ? { branch: claims.branch } : {}),
+    runtime: claims.runtime,
+    depth: claims.depth,
+  };
+  const payload = Buffer.from(JSON.stringify(known)).toString("base64url");
   return `${DELEGATION_PREFIX}${payload}.${sign(key, payload).toString("base64url")}`;
 }
 
@@ -63,9 +72,19 @@ export function verifyDelegationToken(key: Buffer | undefined, token: string): D
     const [payload, sig] = parts as [string, string];
     const given = Buffer.from(sig, "base64url");
     const expected = sign(key, payload);
+    if (given.toString("base64url") !== sig) return null; // canonical encoding only
     if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
     const claims: unknown = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-    return validClaims(claims) ? claims : null;
+    if (!validClaims(claims)) return null;
+    // Rebuild: never hand back the raw parsed object (extra keys stay out).
+    return {
+      task: claims.task,
+      ...(claims.workspace !== undefined ? { workspace: claims.workspace } : {}),
+      ...(claims.repo !== undefined ? { repo: claims.repo } : {}),
+      ...(claims.branch !== undefined ? { branch: claims.branch } : {}),
+      runtime: claims.runtime,
+      depth: claims.depth,
+    };
   } catch {
     return null;
   }
@@ -75,8 +94,10 @@ export type ScopeResult = { ok: true; body: Partial<TaskManifest> } | { ok: fals
 
 /**
  * Rewrite a delegated POST /tasks body to the parent's scope. Naming a
- * different workspace/repo/runtime is refused (not silently overridden);
- * location and priority are dropped; only metadata.source survives.
+ * different workspace/repo/runtime is refused (not silently overridden).
+ * The result is a WHITELIST built field by field: prompt, agent, runtime,
+ * context {files, repository, workspace, repo, branch} and metadata.source.
+ * Nothing else from the caller's body survives.
  */
 export function scopeDelegatedTask(claims: DelegationClaims, body: Partial<TaskManifest>): ScopeResult {
   if (claims.depth + 1 > MAX_DELEGATION_DEPTH) {
@@ -93,22 +114,21 @@ export function scopeDelegatedTask(claims: DelegationClaims, body: Partial<TaskM
     return { ok: false, error: `sub-tasks run on this task's runtime (${claims.runtime})` };
   }
 
-  const { location: _location, priority: _priority, metadata, context: _context, ...rest } = body;
-  const { repoPath: _repoPath, ...ctxRest } = ctx ?? { files: [], repository: "", branch: "" };
-  const source = metadata?.source;
+  const source = body.metadata?.source;
   const branch = ctx?.branch || claims.branch;
-  const context: TaskManifest["context"] = {
-    ...ctxRest,
-    ...(claims.workspace !== undefined ? { workspace: claims.workspace } : {}),
-    ...(claims.repo !== undefined ? { repo: claims.repo } : {}),
-    branch: branch ?? "",
-  };
   return {
     ok: true,
     body: {
-      ...rest,
+      prompt: body.prompt,
+      agent: body.agent,
       runtime: claims.runtime,
-      context,
+      context: {
+        files: ctx?.files ?? [],
+        repository: ctx?.repository ?? "",
+        ...(claims.workspace !== undefined ? { workspace: claims.workspace } : {}),
+        ...(claims.repo !== undefined ? { repo: claims.repo } : {}),
+        branch: branch ?? "",
+      },
       metadata: { source: typeof source === "string" ? source : "delegation" },
     },
   };
